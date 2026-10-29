@@ -38,9 +38,11 @@ The CLI MUST give the tool to the conversation agent through the `hostTools` lis
 
 The tool input MUST be one of four operations: `start` (the source: a git URL with an optional ref, or a local folder), `exec` (a session id and one command), `commit` (a session id, the build script, and an optional package directory), and `stop` (a session id). Each operation is its own tool call. Thus the agent reads each result before it chooses the next command, and each `exec` carries its own approval.
 
-A session MUST stay usable across the tool calls of the conversation until an operation ends it: `stop`, a completed `commit`, or the end of the host process. The tool description MUST tell the agent to stop the session when the build is done or the user refuses to continue.
+A session MUST stay usable across the tool calls of the conversation until an operation ends it: `stop`, a completed `commit`, or the end of the host process. The tool description MUST tell the agent to stop the session when the build is done or the user refuses to continue. The tool description MUST also tell the agent that a denied call ran nothing and left the session open.
 
-Two calls on one session MUST NOT overlap, in one model round or across turns. A call on a session waits until the earlier call on that session returned, its asks included. Thus a plan restart never removes the container under a command of the same session. Also, no call changes the session between an ask and its approved action.
+Two calls on one session MUST NOT overlap, in one model round or across turns. A call on a session waits until the earlier call on that session returned. Thus a plan restart never removes the container under a command of the same session.
+
+The loop gets the approval of a call before the call waits for the earlier call. Thus each call MUST decide its ask again when it runs. If the call now needs a different ask than the ask that the user answered, the call MUST run nothing. It returns a stale-approval result that tells the agent to send the call again.
 
 #### Scenario: The agent drives the session call by call
 
@@ -66,13 +68,19 @@ Two calls on one session MUST NOT overlap, in one model round or across turns. A
 - **WHEN** both calls run
 - **THEN** neither call waits for the other
 
+#### Scenario: A call whose ask changed since its approval runs nothing
+
+- **GIVEN** an exploration and one round with two `exec` calls, where the first call carries a plan and the second call carries none
+- **WHEN** the second call gets no ask as an exploration read, and the first call binds its approved plan before the second call runs
+- **THEN** the second call runs no command, and it returns a stale-approval result
+
 ### Requirement: The session explores before the plan ask
 
 `start` MUST begin an exploration phase. For a git source, the session egress holds the host of the git source alone. The source is cloned at the pinned commit.
 
 For a local folder, the session has no network, and the folder is copied in. The agent reads the repository through `exec` calls in this phase: the README, the file layout, and the build files. No build command runs.
 
-Each `start` MUST ask the user before the host reads the source. The ask MUST show the source: the folder path, or the git URL and its ref. The ask of a folder MUST say that the session reads the whole folder. A rejection MUST end the call with no session, no clone, and no copy.
+Each `start` MUST ask the user before the host reads the source. The ask MUST show the source: the folder path, or the git URL and its ref. The ask of a folder MUST say that the session reads the whole folder. A denied start does not run, thus it MUST leave no session, no clone, and no copy.
 
 The host MUST resolve the ref before the exploration. A named ref resolves to its commit, and an absent ref resolves to the head commit of the default branch. The commit in the plan and in the build record is the full commit sha that this resolution returned.
 
@@ -91,22 +99,26 @@ The host MUST resolve the ref before the exploration. A named ref resolves to it
 #### Scenario: A folder start asks with the path
 
 - **GIVEN** an agent that calls `start` with the folder `/Users/me/.ssh`
-- **WHEN** the tool runs the call
-- **THEN** the ask shows `/Users/me/.ssh` before any read, and a rejection leaves no session and no copy
+- **WHEN** the loop asks for the approval of the call
+- **THEN** the ask shows `/Users/me/.ssh` before any read, and a denial leaves no session and no copy
 
 #### Scenario: A git start asks with the URL
 
 - **GIVEN** an agent that calls `start` with a git URL and a ref
-- **WHEN** the tool runs the call
-- **THEN** the ask shows the URL and the ref before the clone, and a rejection leaves no session
+- **WHEN** the loop asks for the approval of the call
+- **THEN** the ask shows the URL and the ref before the clone, and a denial leaves no session
 
 ### Requirement: One ask approves the plan before any build command
 
-After the exploration, the tool MUST ask one time, before any build command runs. The ask holds the source (the git URL and its full commit sha, or the local folder), the host list of the session egress, the apt packages, and the build strategy. The host list of the ask MUST be the complete list that the session will carry. Thus the fixed hosts of the class show beside the hosts of the plan.
+After the exploration, the tool MUST ask one time before any build command runs. The first build command carries the plan, and its one ask holds the plan and the command. The ask says so when the command runs as root.
+
+The ask holds the source (the git URL and its full commit sha, or the local folder), the host list of the session egress, the apt packages, and the build strategy. The host list of the ask MUST be the complete list that the session will carry. Thus the fixed hosts of the class show beside the hosts of the plan.
 
 The tool MUST accept a plan host only when it is a DNS host name: two or more labels of letters, digits, and hyphens, a last label of letters alone, and no other character. The host of a git URL MUST obey the same rule, and the URL scheme MUST be `https` or `http`. The check ignores case, and the tool gives each host to the realization in lower case. A refused host fails the call before any ask, and the failure names the host.
 
-An approval MUST move the session to the build phase under the approved egress list. The realization restarts the session container with the approved list. The source tree persists, thus the clone does not run again. A rejection MUST end the session with no store change.
+An approval MUST move the session to the build phase under the approved egress list. The realization restarts the session container with the approved list. The source tree persists, thus the clone does not run again. A denied plan does not run, thus the session MUST stay in its phase under its earlier list, with no store change.
+
+The grant key of a plan ask MUST hold the session id and a digest of the plan, the command, and the root mark. Thus an `always` answer on a plan ask approves that exact plan and command alone. It never approves a later amendment, and it never approves the other commands of the session.
 
 A command that connects to a host outside the approved list MUST fail at the egress wall of the session. The tool MUST then be able to ask again with an amended plan that names the added hosts. An approval restarts the session under the amended list, exactly as the first approval did.
 
@@ -115,14 +127,20 @@ A restart keeps the scratch tree under `/work` alone. The tool description MUST 
 #### Scenario: An approved plan moves the session to the build phase
 
 - **GIVEN** an exploration and a plan ask that the user approves
-- **WHEN** the ask resolves
+- **WHEN** the call runs
 - **THEN** the session runs under the approved host list, and the source tree is the tree the exploration read
 
 #### Scenario: A rejected plan changes nothing
 
-- **GIVEN** a plan ask that the user rejects
-- **WHEN** the ask throws
-- **THEN** no session exists, and the pool holds no new store directory
+- **GIVEN** a plan ask that the user denies
+- **WHEN** the loop denies the call
+- **THEN** the command does not run, the session stays in its exploration phase, and the pool holds no new store directory
+
+#### Scenario: An always answer on a plan approves no amendment
+
+- **GIVEN** an `always` answer on the ask of a first build command and its plan
+- **WHEN** a later call carries an amended plan
+- **THEN** the ask of the amended plan has a different grant key, and the user answers it again
 
 #### Scenario: A host outside the plan fails at the wall
 
@@ -148,9 +166,11 @@ A restart keeps the scratch tree under `/work` alone. The tool description MUST 
 - **WHEN** the agent sends the plan
 - **THEN** the call fails before any ask, and no wall receives the value
 
-### Requirement: Each session command carries a session-scoped ask
+### Requirement: Each session command carries a session-scoped approval
 
-In the build phase, the tool MUST ask one time per session command. The `always` answer MUST grant only within that session, through a grant key that holds the session id. An `exec` that the realization runs as root MUST say so in the ask. A rejection of a command ask MUST end the session. Only the clean run of the commit writes the store, thus a session that ends at any command leaves no store directory behind.
+In the build phase, the tool MUST ask one time per session command. The `always` answer MUST grant only within that session, through a grant key that holds the session id. That grant key MUST NOT answer a plan ask or a commit ask. An `exec` that the realization runs as root MUST say so in the ask.
+
+A denied command does not run, and the session MUST stay open. The agent stops the session when the user refuses to continue. Only the clean run of the commit writes the store, thus a session that ends at any command leaves no store directory behind.
 
 #### Scenario: Always applies to the session alone
 
@@ -158,11 +178,11 @@ In the build phase, the tool MUST ask one time per session command. The `always`
 - **WHEN** the next command of the same session runs, and a later session starts
 - **THEN** the next command of the same session runs with no ask, and the later session asks again
 
-#### Scenario: A rejected command ends the session with the store unchanged
+#### Scenario: A denied command leaves the session open with the store unchanged
 
-- **GIVEN** a session whose command ask the user rejects
-- **WHEN** the ask throws
-- **THEN** the session stops, and the pool holds no new store directory
+- **GIVEN** a session whose command ask the user denies
+- **WHEN** the loop denies the call
+- **THEN** the command does not run, the session stays open, and the pool holds no new store directory
 
 #### Scenario: A root command says so in its ask
 
@@ -263,9 +283,11 @@ An R package whose `DESCRIPTION` is not at the root of the tree MUST name its di
 
 Before the commit, the tool MUST ask one time. The ask shows the build script, the build record preview, and the package directory when the commit names one. An approval runs one clean run of the script in a new provisioner container over the pristine snapshot, and that run alone writes the store.
 
+The grant key of a commit ask MUST hold the session id and a digest of the script, the package directory, and the hosts and apt packages of the plan. Thus an `always` answer never approves a different script, or the same script under a different plan.
+
 The clean run installs the apt packages of the plan itself, and it runs the script as the non-root user with no capabilities. The tool description MUST tell the agent that the script installs no apt package and runs no command as root.
 
-A failure of the clean run MUST return to the same session, because the session build used a state that the script does not make. The agent corrects the script there and starts the clean run again. A rejection ends the session with no store change.
+A failure of the clean run MUST return to the same session, because the session build used a state that the script does not make. The agent corrects the script there and starts the clean run again. A denied commit does not run, thus the session stays open with no store change.
 
 #### Scenario: An approved commit runs the script once
 
@@ -281,9 +303,15 @@ A failure of the clean run MUST return to the same session, because the session 
 
 #### Scenario: A rejected commit changes nothing
 
-- **GIVEN** a commit ask that the user rejects
-- **WHEN** the ask throws
-- **THEN** the session stops, and the pool holds no new store directory
+- **GIVEN** a commit ask that the user denies
+- **WHEN** the loop denies the call
+- **THEN** no clean run starts, the session stays open, and the pool holds no new store directory
+
+#### Scenario: An always answer on a commit approves no other script
+
+- **GIVEN** an `always` answer on a commit ask
+- **WHEN** a later commit of the same session carries a different script
+- **THEN** the later commit ask has a different grant key, and the user answers it again
 
 ### Requirement: A lost session costs no store state
 
@@ -299,7 +327,7 @@ The session is not durable. If the host process stops, the session is lost and i
 
 The host MUST stop the work of a `start`, an `exec`, or a `commit` when the abort signal of the call fires. An aborted `exec` stops its command inside the session container. An aborted `commit` stops the clean-run container. An aborted `start` removes what the start made.
 
-The call then fails, and the tool returns a failed result. The session of an aborted `exec` or `commit` stays open. An abort during a pending ask of the tool also keeps the session open, because only a rejection of the user ends it.
+The call then fails, and the tool returns a failed result. The session of an aborted `exec` or `commit` stays open. An abort while the loop waits for the approval of a call also keeps the session open, because the call does not run.
 
 #### Scenario: A cancel stops a long command
 
