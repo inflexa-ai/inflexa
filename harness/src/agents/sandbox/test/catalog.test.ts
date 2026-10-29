@@ -36,11 +36,13 @@ describe("createSandboxAgents", () => {
         // scratch tree is deleted on completion), so every agent must be able to pull it
         // rather than re-derive the dataset's facts from the raw bytes.
         const ALWAYS_ON_PROFILE = ["inspect_data_profile"];
+        // The two lease tools: the agent holds its sandbox through them, whatever its meta declares.
+        const ALWAYS_ON_LEASE = ["acquire_sandbox", "release_sandbox"];
         for (const [id, def] of Object.entries(agents)) {
             const meta = presentGet(SANDBOX_AGENT_META, id);
             const toolIds = new Set(def.tools.map((t) => t.id));
 
-            for (const required of [...ALWAYS_ON_READ, ...ALWAYS_ON_PROFILE]) {
+            for (const required of [...ALWAYS_ON_READ, ...ALWAYS_ON_PROFILE, ...ALWAYS_ON_LEASE]) {
                 expect(toolIds.has(required), `${id} should have ${required}`).toBe(true);
             }
 
@@ -51,7 +53,7 @@ describe("createSandboxAgents", () => {
             // resolved surface is exactly the always-on tools + meta.tools. The
             // knowledge template is the one allowlist member that resolves to
             // nothing without a knowledge client, thus it does not count here.
-            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + 2;
+            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + ALWAYS_ON_LEASE.length + 2;
             const declared = new Set(meta.tools);
             declared.delete("knowledgeTemplate");
             const expected = alwaysOnCount + declared.size;

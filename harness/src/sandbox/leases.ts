@@ -81,7 +81,10 @@ const POLL_GRACE_MS = 120_000;
 
 const HEALTH_TIMEOUT_MS = 10_000;
 
-/** The health answer of sandbox-server. An image that predates the count answers with no count. */
+/**
+ * The health answer of sandbox-server. An image that predates the count answers with no count, and the module then
+ * reads the machine as busy: an idle removal on a guess could stop a command that runs.
+ */
 const HealthSchema = z.object({ runningExecs: z.number().int().nonnegative().optional() });
 
 const TERMINAL_STATUSES = new Set<string>([StatusString.SUCCESS, StatusString.ERROR, StatusString.CANCELLED, StatusString.MAX_RECOVERY_ATTEMPTS_EXCEEDED]);
@@ -445,7 +448,7 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
             const response = await fetchImpl(`http://${machine.host}:${machine.port}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
             if (!response.ok) return "unreachable";
             const health = HealthSchema.safeParse(await response.json());
-            return health.success ? (health.data.runningExecs ?? 0) : 0;
+            return health.success ? (health.data.runningExecs ?? 1) : 1;
         } catch {
             return "unreachable";
         }

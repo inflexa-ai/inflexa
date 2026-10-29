@@ -737,8 +737,9 @@ Other facts:
   ([harness-tools](openspec/specs/harness-tools/spec.md)). The tool adapter
   (`loop/tool-adapter.ts`) makes an AI SDK tool from each harness tool, and
   `durableTools` wraps each one. The AI SDK starts the calls of one reply
-  together, in stream order. No tool runs in the workflow body. The sandbox exec of
-  `execute_command` runs inside its tool step.
+  together, in stream order. A tool that starts a child workflow (`startsWorkflow`, for
+  example a sub-agent) runs in the workflow body, because a step cannot start a
+  workflow. The sandbox exec of `execute_command` runs inside its tool step.
 
   The adapter changes an `err` and a throw into an error result that the model
   reads. A cancel of the workflow passes out of the loop. The step output holds the

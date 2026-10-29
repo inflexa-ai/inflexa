@@ -75,7 +75,7 @@
 
 ## 11. Verification
 
-- [ ] 11.1 Run `tsc -p tsconfig.build.json` and the full `bun test` of the harness one time, and the Go tests of sandbox-server.
+- [x] 11.1 Run `tsc -p tsconfig.build.json` and the full `bun test` of the harness one time, and the Go tests of sandbox-server.
 - [ ] 11.2 On the Docker backend, run a plan with two steps under a budget that fits one step. Make sure that the second step waits for its grant. Pause and resume a step, and make sure that the resume gets a new machine.
 
 ## Workflow follow-up

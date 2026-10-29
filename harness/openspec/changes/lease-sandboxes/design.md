@@ -87,7 +87,7 @@ A new machine increments the generation, in the same transaction that clears the
 
 1. It reads the lease row. With no active lease, it gives the error `no_lease`. The tool changes that error into an error result that names `acquire_sandbox`.
 2. With no live machine, it sends `machine` to the lease workflow, and it waits for the event of the next machine generation.
-3. It submits the command and polls, as today. It writes `last_used_at` on the lease row at most one time each minute.
+3. It writes `last_used_at` on the lease row before the submit. Then it submits the command and polls, as today. While a command runs, the count of running execs in the health answer keeps its machine (D7).
 
 A machine that dies during the exec gives the synthetic failure of today, with the memory limit of the grant. The exec sends `machine` to the lease workflow, thus the next exec gets a new machine. The module runs no exec again.
 
@@ -97,7 +97,7 @@ The deadline of an exec is the timeout of its command plus a grace for the poll.
 
 At each tick, the lease workflow reads `last_used_at`, and it asks sandbox-server for the count of running execs (`GET /health`). The lease is idle when no exec runs and `last_used_at` is older than the idle period. The idle period is a configuration value with the default of 15 minutes. An idle lease loses its machine and keeps its grant.
 
-The count of running execs is necessary. A host that restarts stops its polls, but the command continues. Without the count, the idle removal can stop a command that runs.
+The count of running execs is necessary. A host that restarts stops its polls, but the command continues. Without the count, the idle removal can stop a command that runs. A health answer with no count, from an image older than this change, reads as busy.
 
 ### D8. The end of the owner
 
