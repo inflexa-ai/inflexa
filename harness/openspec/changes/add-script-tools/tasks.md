@@ -35,6 +35,11 @@
 - [x] 6.4 Point the `dataPath` description of `show_user` at `run_script`. Tell the conversation prompt that light work on a table is no run.
 - [x] 6.5 Map the event in the CLI bridge (`prov.script_run`), and add the `script_run` event to the kernel (`prov-kernel` change `add-script-run-event`).
 
+## 7. The scripts of a report session
+
+- [x] 7.1 Add `read_table` and `write_derived` of a report session (`tools/report-session/script-tools.ts`) over the shared table read (`readTableRows`) and the rows serializer (`rowsText`). Give a nested call the code of its script (`ToolContext.script`).
+- [x] 7.2 Give the report agent its script tools, a scratch directory under `report-sessions/{threadId}/`, and the script runtime of the host. Tell the report prompt to derive in `run_script`. A table over 16 MiB does not derive.
+
 ## Workflow follow-up
 
 - Archive `remove-literature-reviewer` before this change. The `uniprot-tools` delta modifies a requirement that `remove-literature-reviewer` adds, and the `literature-search` delta starts from its text. `openspec validate` gives an info for the `uniprot-tools` delta until then.

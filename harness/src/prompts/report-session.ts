@@ -109,10 +109,16 @@ figure draws beside its table, such as the domains of a protein, binds as the tr
 of the chart block. When a clustering orders an axis of a heatmap, the edge table of
 that clustering binds as the tree of that axis, and the axis takes its leaf order.
 
-A run writes statistical tables, and not plot-ready ones. A chart block reads the
-column that it needs, thus a knob of the chart serves a per-row transform. When a
-block needs a join of two tables, a pivot, or an aggregate that no pinned table
-holds, tell the user which table is absent.
+A run writes statistical tables, and not plot-ready ones. When a real reshaping
+stands between the evidence and the block, derive the table in \`run_script\`:
+\`read_table\` reads a pinned table, and \`write_derived\` pins the result to this
+session with the inputs that the script read. A join of two tables,
+a pivot, and an aggregate are such reshaping. A per-row
+transform of a chart is not: a chart block reads the column that it needs, thus a
+knob of the chart serves it. A table carries no such knob, thus a composed display
+column of a table derives. The derived table binds like any pinned artifact, and its
+record holds your script, the sources, and the hashes. When an input is over the
+16 MiB that a script reads, tell the user which table is absent.
 
 The headline row leads with the cohort and the yield: the n, the group split, the
 yield count, and the event count. A value that carries a caveat is not a headline.
