@@ -2,12 +2,11 @@
  * `execute_command` — the single chokepoint through which sandbox commands
  * run.
  *
- * Dependency-bearing factory (see the harness-durable-runtime spec): captures a
- * `SandboxClient` and the live `SandboxRef` for the step. No other tool, agent,
- * or workflow step is permitted to POST to sandbox-server's `/exec` directly —
- * `SandboxClient` is intentionally injected only here so the durability /
- * idempotency / liveness story `harness-sandbox-exec` owns holds uniformly
- * across all sandbox command execution.
+ * Dependency-bearing factory (see the harness-durable-runtime spec): captures the
+ * lease of the step. The sandbox module gives the machine of the lease, or a new
+ * one when the machine went away, thus the durability, idempotency, and liveness
+ * story of `harness-sandbox-exec` holds for each command. A command with no lease
+ * gives an error result that names `acquire_sandbox`.
  *
  * The loop runs each call as one durable step, and the exec runs inside it,
  * thus the exec id is the id of that step and a replay returns the cached
@@ -28,12 +27,12 @@
 
 import { posix as posixPath } from "node:path";
 
-import { ok, type Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
-import type { SandboxClient } from "../../sandbox/client.js";
-import type { ProvenanceFrame, SandboxRef } from "../../sandbox/types.js";
+import type { BoundLease } from "../../sandbox/leases.js";
+import type { ProvenanceFrame } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame } from "../../provenance/exec-frame.js";
 import { reconcileScriptRecord } from "./decision-record.js";
@@ -62,7 +61,7 @@ const ExecuteCommandInputSchema = z.object({
                 "'/<analysisId>/...' value is used as-is.",
         ),
     env: z.record(z.string(), z.string()).optional().describe("Extra environment variables for this command."),
-    timeoutSeconds: z.number().int().positive().optional().describe("Per-command timeout in seconds; capped by the step deadline."),
+    timeoutSeconds: z.number().int().positive().optional().describe("Per-command timeout in seconds. Default 3600."),
 });
 
 /** Extensions that mark an argv token as the thing being run, not a flag or a data path. */
@@ -88,11 +87,8 @@ type ExecuteCommandResult = { readonly status: "ok" } & BoundedExecResult;
 export type ExecuteCommandDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-    readonly sandboxClient: SandboxClient;
-    /** Live sandbox handle for the step. Created once per step at composition root. */
-    readonly sandbox: SandboxRef;
-    /** Absolute unix-ms deadline of the exec. Typically derived from `step.timeout`. */
-    readonly deadlineMs: () => number;
+    /** The lease of the step: `acquire_sandbox` takes it, and each command runs on its machine. */
+    readonly lease: BoundLease;
     /**
      * In-sandbox absolute path of the agent's working directory (e.g.
      * `/{resourceId}/runs/{runId}/{stepId}`). Used as the default `cwd` so a
@@ -120,7 +116,7 @@ export type ExecuteCommandDeps = {
 export function createExecuteCommandTool(
     deps: ExecuteCommandDeps,
 ): Tool<z.infer<typeof ExecuteCommandInputSchema>, ExecuteCommandResult | WithToolCallRecord<ExecuteCommandResult, ExecCallRecord>> {
-    const { sandboxClient, sandbox, deadlineMs, defaultCwd, lineageCollector, mountRoot } = deps;
+    const { lease, defaultCwd, lineageCollector, mountRoot } = deps;
 
     return defineTool({
         id: "execute_command",
@@ -131,9 +127,11 @@ export function createExecuteCommandTool(
             "of a longer stream is dropped, and the result carries its truncation flag. A long result comes back as an " +
             "excerpt of its start and its end, with a reference to read the rest when the harness keeps it. " +
             "Failures are returned as data, not thrown: `status` is `ok` whenever the call completed, so read " +
-            "`exitCode` for the outcome of the command. `timedOut: true` means the timeout stopped the command, and a " +
-            "`syntheticFailure` with `exitCode: null` means the sandbox died under the command (its reason names an " +
-            "out-of-memory kill). stdout and stderr are not a deliverable: they are ephemeral, " +
+            "`exitCode` for the outcome of the command. `timedOut: true` means the timeout stopped the command. A " +
+            "`syntheticFailure` with `exitCode: null` means the sandbox ended under the command: `sandbox-oom-killed` " +
+            "(the command passed `memoryLimitGb`), `sandbox-dead`, or `sandbox-replaced`. The command may have left " +
+            "partial files, and nothing runs it again. The next command runs on a new sandbox of the same size; call " +
+            "`acquire_sandbox` with a larger size for more memory. stdout and stderr are not a deliverable: they are ephemeral, " +
             "so use them to confirm that a command ran. A result that you compute with 'python -c' or an inline " +
             "one-liner and read from stdout is lost. Write a script and persist its outputs to output/.",
         inputSchema: ExecuteCommandInputSchema,
@@ -179,16 +177,16 @@ export function createExecuteCommandTool(
                 }
             }
 
-            const result = await runSandboxExec({
-                sandboxClient,
-                sandbox,
+            const ran = await runSandboxExec({
+                lease,
                 command,
                 cwd: effectiveCwd,
                 env,
                 timeoutSeconds,
-                deadlineMs: deadlineMs(),
                 emit: ctx.emit,
             });
+            if (ran.isErr()) return err(ran.error);
+            const result = ran.value;
 
             const bounded = { status: "ok" as const, ...boundExecResult(result) };
             if ((!lineageCollector || !mountRoot) && recordWrites.length === 0) return ok(bounded);

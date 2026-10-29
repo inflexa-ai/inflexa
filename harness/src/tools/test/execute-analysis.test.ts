@@ -182,8 +182,7 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
 
 /** A router model that answers each request with one route. The script holds one reply for each request that a test makes. */
 function routeProvider(agentId = "single-cell-agent", packages?: string[]): { provider: ChatProvider; calls: readonly unknown[] } {
-    const route = (n: number) =>
-        callTools(toolCall(`route-${n}`, "submit_route", { agentId, resources: { cpu: 2, memoryGb: 4 }, rationale: `route-${n}`, packages }));
+    const route = (n: number) => callTools(toolCall(`route-${n}`, "submit_route", { agentId, rationale: `route-${n}`, packages }));
     const { provider, calls } = scriptedModel([route(1), route(2), route(3)]);
     return { provider, calls };
 }
@@ -253,7 +252,6 @@ function makeStep(id: string, deps: string[] = []) {
         acceptance_criteria: ["completes"],
         depends_on: deps,
         agent: "bulk-transcriptomics-agent",
-        resources: { cpu: 1, memoryGb: 4 },
         maxSteps: 30,
     };
 }
@@ -700,7 +698,6 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 describe("buildAdHocPlan", () => {
     const route: AdHocRoute = {
         agentId: "single-cell-agent",
-        resources: { cpu: 2, memoryGb: 4 },
         rationale: "A targeted comparison.",
         packages: [],
         droppedPackages: [],

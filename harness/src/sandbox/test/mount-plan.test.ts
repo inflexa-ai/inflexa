@@ -1,16 +1,17 @@
 /**
  * Pure unit tests for the shared mount model — path computation, the
- * writable subdir list, the K8s subPath strings, and the libs-enabled
- * vs libs-unset env split.
+ * writable subdir list, the records mount of the lease, the K8s subPath
+ * strings, and the libs-enabled vs libs-unset env split.
  */
 
 import { describe, expect, test } from "bun:test";
 
 import { buildMountPlan, buildSessionSubPaths, sandboxWriteTail, STEP_SUBDIRS } from "../mount-plan.js";
 
-const COORDS = { analysisId: "an-1", runId: "run-1", stepId: "step-a" };
+const RECORD_TAIL = ".sandbox/exec-records/0123456789abcdef";
+const COORDS = { analysisId: "an-1", runId: "run-1", stepId: "step-a", recordTail: RECORD_TAIL };
 
-/** A declared write tail, in the shape the session derivation gives. */
+/** A declared write tail: a workspace-relative directory in place of the step directory. */
 const TAIL = "report-sessions/thread-1/derived";
 
 describe("buildMountPlan", () => {
@@ -66,6 +67,7 @@ describe("buildMountPlan", () => {
         const plan = buildMountPlan(COORDS, { libs: true, refs: false });
         expect(plan.env).toEqual({
             PROVENANCE_WATCH_DIRS: "/an-1",
+            EXEC_RECORD_DIR: "/mnt/exec-records",
             R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran",
             NODE_PATH: "/mnt/libs/current/node/node_modules",
             PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin",
@@ -157,6 +159,33 @@ describe("buildSessionSubPaths", () => {
     });
 });
 
+describe("the records mount of the lease", () => {
+    test("mounts the records at /mnt/exec-records and names the directory in the env", () => {
+        const plan = buildMountPlan(COORDS, { libs: false, refs: false });
+        expect(plan.recordsPath).toBe("/mnt/exec-records");
+        expect(plan.recordTail).toBe(RECORD_TAIL);
+        expect(plan.env.EXEC_RECORD_DIR).toBe("/mnt/exec-records");
+    });
+
+    test("a read-only sandbox keeps its records mount", () => {
+        const plan = buildMountPlan({ ...COORDS, readOnly: true }, { libs: false, refs: false });
+        expect(plan.recordsPath).toBe("/mnt/exec-records");
+        expect(plan.env.EXEC_RECORD_DIR).toBe("/mnt/exec-records");
+        expect(buildSessionSubPaths({ ...COORDS, readOnly: true }, "an-1").records).toBe(`an-1/${RECORD_TAIL}`);
+    });
+
+    test("nests the records under the workspace subPath on the PVC side", () => {
+        expect(buildSessionSubPaths(COORDS, "tenants/acme/an-1").records).toBe(`tenants/acme/an-1/${RECORD_TAIL}`);
+    });
+
+    test("refuses an empty, absolute, or traversing record tail", () => {
+        for (const recordTail of ["", "/abs/records", "../escape", ".sandbox/../../etc"]) {
+            expect(() => buildMountPlan({ ...COORDS, recordTail }, { libs: false, refs: false })).toThrow("Invalid recordTail");
+            expect(() => buildSessionSubPaths({ ...COORDS, recordTail }, "an-1")).toThrow("Invalid recordTail");
+        }
+    });
+});
+
 describe("buildMountPlan id validation", () => {
     test("rejects a crafted `..` analysisId/runId/stepId", () => {
         expect(() => buildMountPlan({ ...COORDS, analysisId: ".." }, { libs: false, refs: false })).toThrow("Invalid analysisId");
@@ -202,8 +231,8 @@ describe("the declared write tail", () => {
     });
 
     test("validates the two ids even where the tail replaces the step directory", () => {
-        // The ids reach the sandbox name, the ownership labels, and the registry row on every path, thus a
-        // declared tail is no reason to skip their validation.
+        // The ids reach the sandbox name and the ownership labels on every path, thus a declared tail is no
+        // reason to skip their validation.
         expect(() => buildMountPlan({ ...COORDS, runId: "..", writableTail: TAIL }, { libs: false, refs: false })).toThrow("Invalid runId");
         expect(() => buildMountPlan({ ...COORDS, stepId: "a/b", writableTail: TAIL }, { libs: false, refs: false })).toThrow("Invalid stepId");
         expect(() => sandboxWriteTail({ ...COORDS, stepId: "..", readOnly: true })).toThrow("Invalid stepId");
@@ -235,10 +264,12 @@ describe("the declared write tail", () => {
             farmPath: "/mnt/libs/current",
             cachePath: undefined,
             refsPath: "/mnt/refs",
+            recordsPath: "/mnt/exec-records",
+            recordTail: RECORD_TAIL,
             stepSubdirs: STEP_SUBDIRS,
             env: stepPlan.env,
         });
-        expect(buildSessionSubPaths(COORDS, "an-1")).toEqual({ ro: "an-1", rw: "an-1/runs/run-1/step-a" });
+        expect(buildSessionSubPaths(COORDS, "an-1")).toEqual({ ro: "an-1", rw: "an-1/runs/run-1/step-a", records: `an-1/${RECORD_TAIL}` });
     });
 });
 

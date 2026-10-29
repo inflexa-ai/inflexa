@@ -50,17 +50,14 @@ import { defineTool, type ToolError } from "../tools/define-tool.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { renderWorkspace } from "../prompts/briefing.js";
-import type { SandboxClient } from "../sandbox/client.js";
-import { keepSuspendingRefusal, SandboxFailure, type SuspendingRefusal } from "../sandbox/sandbox-error.js";
+import type { BoundLease, SandboxLeases } from "../sandbox/leases.js";
 import { workPause } from "../workflows/pause.js";
 import { clearPausesOfWork } from "../state/paused-work.js";
-import type { SandboxRef } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 
 import { estimateDataProfileResources } from "../sandbox/estimate-data-profile-resources.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
-import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { z } from "zod";
 
@@ -99,13 +96,6 @@ import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 
 const DATA_PROFILE_STEP_LITERAL = "profile" as const;
 const DATA_PROFILE_AGENT_ID = "data-profiler" as const;
-
-/**
- * Sandbox-server exec budget for the profile run. Twenty minutes: the deterministic
- * scan bounds the discovery half, and what remains is the agent's own reading of a
- * bounded number of example files.
- */
-const DEFAULT_DEADLINE_MS = 1_200_000;
 
 /** Index entries embedded and upserted per round trip. */
 const INDEX_BATCH_SIZE = 256;
@@ -175,7 +165,8 @@ export type DataProfileDeps = EnvironmentStorePaths & {
     readonly logger?: Logger;
     readonly provider: ChatProvider;
     readonly pool: Querier;
-    readonly sandboxClient: SandboxClient;
+    /** The sandbox module. The profile acquires its lease from it, and its agent runs commands on that lease. */
+    readonly leases: SandboxLeases;
     readonly workspaceFs: WorkspaceFilesystem;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
@@ -293,20 +284,17 @@ async function readSetHeaders(args: {
     readonly deps: DataProfileDeps;
     readonly analysisId: string;
     readonly detected: DetectedSets;
-    readonly sandbox: SandboxRef;
-    readonly deadlineMs: number;
+    readonly lease: BoundLease;
     readonly logger: Logger;
 }): Promise<ReadonlyMap<string, HeaderReadout>> {
-    const { session, deps, analysisId, detected, sandbox, deadlineMs, logger } = args;
+    const { session, deps, analysisId, detected, lease, logger } = args;
     try {
         return await readHeaders({
             targets: readoutTargets(detected),
             session,
             fs: deps.workspaceFs,
-            sandboxClient: deps.sandboxClient,
-            sandbox,
+            lease,
             mountRoot: `/${analysisId}`,
-            deadlineMs,
             emit: async () => {},
         });
     } catch (err) {
@@ -466,7 +454,7 @@ export function profilerSandboxAgentDeps(deps: DataProfileDeps, step: SandboxAge
     return {
         provider: deps.provider,
         pool: deps.pool,
-        sandboxClient: deps.sandboxClient,
+        toolchainSource: deps.leases.toolchainSource,
         workspaceFs: deps.workspaceFs,
         embedding: deps.embedding,
         model: deps.model,
@@ -670,37 +658,25 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // run panel's activity readout was built to remove.
         await activity.sandboxInit();
 
-        const spawn = async (): Promise<Result<SandboxRef, SuspendingRefusal>> =>
-            keepSuspendingRefusal(
-                await deps.sandboxClient.createSandbox(
-                    forStep(runSession, DATA_PROFILE_STEP_LITERAL),
-                    { childWorkflowId: workflowId, resources: estimateDataProfileResources(stagedInputs) },
-                    mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
-                ),
-            );
-        let spawned = await spawn();
-        // A refusal of the label gate with the suspend flag waits in a pause, and the spawn runs again after the
-        // resume. A body that runs outside a workflow cannot wait, thus the refusal fails the profile there.
-        while (spawned.isErr()) {
-            const waited = await pause.forCause({ kind: "host", reason: spawned.error.reason }, 0);
-            if (waited === undefined) throw new SandboxFailure(spawned.error);
-            spawned = await spawn();
-        }
-        const sandbox = spawned.value;
+        // The lease of the profile. A refused spawn with the suspend flag pauses the lease workflow under the
+        // profile, and the acquire waits through the pause.
+        const lease = deps.leases.bind({
+            leaseKey: workflowId,
+            session: forStep(runSession, DATA_PROFILE_STEP_LITERAL),
+            work: { kind: "profile", id: workflowId },
+            emit: (part) => DBOS.writeStream("events", part),
+        });
+        const acquired = await lease.acquire(estimateDataProfileResources(stagedInputs));
+        if (acquired.kind === "refused") throw new Error(acquired.reason);
+        if (acquired.kind === "failed") throw new Error(`the profiler sandbox did not start: ${acquired.detail}`);
 
         try {
-            // Checkpointed clock, not `Date.now()`: one deadline bounds every exec of the
-            // profile, and a wall-clock deadline would grow on each recovery (see
-            // sandbox-step.ts, which captures its step deadline the same way).
-            const deadlineAbs = (await DBOS.now()) + DEFAULT_DEADLINE_MS;
-
             const headers = await readSetHeaders({
                 session: childSession,
                 deps,
                 analysisId,
                 detected,
-                sandbox,
-                deadlineMs: deadlineAbs,
+                lease,
                 logger,
             });
             const briefingMenu: SetMenu = { ...menu, headers };
@@ -733,14 +709,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             ].join("\n");
 
             const sandboxAgentDeps: SandboxAgentDeps = profilerSandboxAgentDeps(deps, {
-                sandbox,
+                lease,
                 workspaceRoot,
                 analysisId,
                 // The profiler writes Python scripts and intermediate artifacts under
                 // the synthetic step path; the post-agent `rm -rf runs/data-profile/`
                 // cleanup wipes them.
                 allowedWritePrefix: profileWritePrefix,
-                deadlineMs: () => deadlineAbs,
             });
 
             const submitProfileTool = defineTool({
@@ -855,13 +830,14 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // write above, the revoke — is already behind us, so any failure on the way here reaches
             // the catch having emitted no terminal at all and reports `failed` alone. Emitted any
             // earlier, a failing write would produce BOTH terminals and leave the fold's winner
-            // decided by arrival order. The sandbox teardown below emits nothing for the same reason.
+            // decided by arrival order. The release below emits nothing for the same reason.
             await activity.complete();
         } finally {
             try {
-                await deps.sandboxClient.teardown(sandbox);
-            } catch (teardownErr) {
-                logger.warn("teardown failed (non-fatal)", { executionId, ...logger.errorFields(teardownErr) });
+                await lease.release();
+            } catch (releaseErr) {
+                // The owner test of the lease workflow releases a lease that this release missed.
+                logger.warn("release failed (non-fatal)", { executionId, ...logger.errorFields(releaseErr) });
             }
         }
     } catch (err) {

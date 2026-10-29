@@ -15,7 +15,6 @@ export const PlanStepSchema = z.object({
     agent: z.string(),
     question: z.string(),
     depends_on: z.array(z.string()),
-    resources: z.object({ cpu: z.number(), memoryGb: z.number(), gpu: z.object({ count: z.number() }).optional() }).optional(),
     grounding: z
         .object({
             status: z.string(),
@@ -164,7 +163,7 @@ export const RunStartedPartSchema = z.object({
 
 // ── DAG State ───────────────────────────────────────────────────────
 
-export const StepStatusSchema = z.enum(["pending", "queued", "running", "completed", "failed", "skipped"]);
+export const StepStatusSchema = z.enum(["pending", "running", "completed", "failed", "skipped"]);
 
 export const DagStepStateSchema = z
     .object({

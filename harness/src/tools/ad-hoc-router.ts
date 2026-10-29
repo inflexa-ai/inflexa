@@ -9,7 +9,6 @@ import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { forSubAgent, type AgentSession } from "../auth/types.js";
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../app/data-profile-orientation.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
-import type { ResourcePolicy, ResourceSpec } from "../config/resource-limits.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { toThrowable, unwrapOrThrow } from "../lib/result.js";
@@ -17,7 +16,7 @@ import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { AgentRunUsage } from "../loop/metrics.js";
 import { runLoop } from "../loop/run-loop.js";
 import type { AgentDefinition } from "../loop/types.js";
-import { packagesSection, resourceEstimationSection } from "../prompts/planner.js";
+import { packagesSection } from "../prompts/planner.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../providers/types.js";
 import { formatQuery, parseQuery, type PackageQuery } from "../sandbox/package-identity.js";
 import { loadDataProfileStatus } from "../state/index.js";
@@ -29,19 +28,9 @@ export const AD_HOC_ROUTER_TIMEOUT_MS = 10_000;
 export const AD_HOC_FALLBACK_AGENT_ID = "scientific-executor";
 const SUBMIT_ROUTE_TOOL_ID = "submit_route";
 
-const resourcesSchema = z.object({
-    cpu: z.number().positive(),
-    memoryGb: z.number().positive(),
-    gpu: z.object({ count: z.number().int().positive() }).optional(),
-});
 const routeSchema = z.object({
     agentId: z.string().optional().describe("The id of one specialist from the eligible catalog, copied exactly."),
     capability: z.string().optional().describe("The one capability phrase of that specialist which this request uses, copied exactly from its capabilities."),
-    resources: resourcesSchema
-        .optional()
-        .describe(
-            "The sandbox resources of the step, inside the stated ranges. Omit to take the defaults; a value outside the ranges is replaced by the defaults.",
-        ),
     rationale: z.string().optional().describe("One or two sentences on why this specialist fits the request. The step agent reads it."),
     packages: z
         .array(z.string())
@@ -63,7 +52,6 @@ export type DroppedPackage = {
 
 export type AdHocRoute = {
     readonly agentId: string;
-    readonly resources: ResourceSpec;
     readonly rationale: string;
     /** The capability phrase of the chosen agent, when the router copied one that the agent advertises. */
     readonly capability?: string;
@@ -71,14 +59,13 @@ export type AdHocRoute = {
     readonly packages: readonly string[];
     /** Every entry that the validation removed, with the reason for the caveat. */
     readonly droppedPackages: readonly DroppedPackage[];
-    readonly fallbackClass?: "timeout" | "provider_error" | "malformed" | "no_match" | "invalid_agent" | "invalid_resources";
+    readonly fallbackClass?: "timeout" | "provider_error" | "malformed" | "no_match" | "invalid_agent";
 };
 
 export type AdHocRouterDeps = {
     readonly provider: ChatProvider;
     readonly model: string;
     readonly pool: Querier;
-    readonly resourcePolicy?: ResourcePolicy;
     readonly logger?: Logger;
     /**
      * Test seam that sets an explicit deadline. An explicit value overrides the
@@ -97,34 +84,6 @@ export type AdHocRouterDeps = {
     /** Falls back to the no-op recorder when omitted. */
     readonly usageRecorder?: UsageRecorder;
 };
-
-export function defaultAdHocResources(policy?: ResourcePolicy): ResourceSpec {
-    return policy ? { cpu: Math.min(4, policy.perStep.maxCpu), memoryGb: Math.min(8, policy.perStep.maxMemoryGb) } : { cpu: 4, memoryGb: 8 };
-}
-
-export function validAdHocResources(value: unknown, policy?: ResourcePolicy): ResourceSpec | null {
-    const parsed = resourcesSchema.safeParse(value);
-    if (!parsed.success) return null;
-    const r = parsed.data;
-    const maxCpu = policy?.perStep.maxCpu ?? 4;
-    const maxMemoryGb = policy?.perStep.maxMemoryGb ?? 8;
-    const maxGpuCount = policy?.perStep.maxGpuCount ?? 0;
-    if (r.cpu > maxCpu || r.memoryGb > maxMemoryGb || (r.gpu?.count ?? 0) > maxGpuCount) return null;
-    return r;
-}
-
-function resourceBounds(policy?: ResourcePolicy): string {
-    const defaults = defaultAdHocResources(policy);
-    if (!policy) {
-        return `CPU range 1..${defaults.cpu}; default ${defaults.cpu}. Memory range 1..${defaults.memoryGb} GB; default ${defaults.memoryGb}. GPU range 0..0.`;
-    }
-    const { perStep } = policy;
-    return [
-        `CPU range ${Math.min(1, perStep.maxCpu)}..${perStep.maxCpu}; default ${defaults.cpu}.`,
-        `Memory range ${Math.min(1, perStep.maxMemoryGb)}..${perStep.maxMemoryGb} GB; default ${defaults.memoryGb}.`,
-        `GPU range 0..${perStep.maxGpuCount}; omit gpu unless required.`,
-    ].join(" ");
-}
 
 async function profileOrientation(pool: Querier, analysisId: string, logger: Logger): Promise<string> {
     try {
@@ -147,8 +106,7 @@ function suggestedSpelling(rows: readonly CheckedPackage[]): string | undefined 
 
 /**
  * Validate the package entries of a route on their own axis: a bad entry costs
- * that entry and nothing else, because the specialist and the resources are
- * sound without it.
+ * that entry and nothing else, because the specialist is sound without it.
  *
  * A guess of a model reaches here, and no person reviewed it. Thus a name that
  * the pool does not hold leaves the step with a caveat, where the same name in
@@ -223,7 +181,7 @@ async function routePackages(
 function routeTool(): Tool {
     return defineTool({
         id: SUBMIT_ROUTE_TOOL_ID,
-        description: "Submit the single specialist, the resource recommendation, and the packages of the step. This is the only valid response.",
+        description: "Submit the single specialist and the packages of the step. This is the only valid response.",
         inputSchema: routeSchema,
         describeCall: "none",
         execute: () => Promise.resolve(ok({ recorded: true as const })),
@@ -262,10 +220,8 @@ export async function routeAdHocRequest(
         const router: AgentDefinition = {
             id: AD_HOC_ROUTER_AGENT_ID,
             systemPrompt: [
-                "Select exactly one specialist for a targeted one-step analysis, estimate its sandbox resources, and name the packages that the step imports.",
+                "Select exactly one specialist for a targeted one-step analysis, and name the packages that the step imports.",
                 "Choose only from the supplied catalog. Do not create a plan, reject the request, or select scientific-executor.",
-                resourceEstimationSection(deps.resourcePolicy),
-                resourceBounds(deps.resourcePolicy),
                 packagesSection(),
                 "You hold no package census. For a name that both ecosystems hold, the language of the specialist you select and the wording of the request decide the track.",
                 "Respond only by calling submit_route.",
@@ -324,9 +280,6 @@ export async function routeAdHocRequest(
     if (!failure && !requestedAgent) failure = "no_match";
     if (!failure && !validAgent) failure = "invalid_agent";
 
-    const validResources = validAdHocResources(candidate.resources, deps.resourcePolicy);
-    const resources = validResources ?? defaultAdHocResources(deps.resourcePolicy);
-    if (!validResources && candidate.resources !== undefined && !failure) failure = "invalid_resources";
     const rationale =
         typeof candidate.rationale === "string" && candidate.rationale.trim()
             ? candidate.rationale.trim()
@@ -343,10 +296,9 @@ export async function routeAdHocRequest(
     // most requests use a capability that declares nothing.
     const requestedCapability = typeof candidate.capability === "string" ? candidate.capability.trim() : "";
     const capability = (SANDBOX_AGENT_META[agentId]?.capabilities ?? []).includes(requestedCapability) ? requestedCapability : undefined;
-    logger.info("ad hoc route selected", { agentId, resources, rationale, failure, packages, droppedPackages, capability });
+    logger.info("ad hoc route selected", { agentId, rationale, failure, packages, droppedPackages, capability });
     return {
         agentId,
-        resources,
         rationale,
         packages,
         droppedPackages,

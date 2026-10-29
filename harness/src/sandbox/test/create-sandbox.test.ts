@@ -1,6 +1,7 @@
 /**
- * Unit tests for the sandbox client factory: the step-tree pre-creation, the
- * spawn refusals, and the toolchain declaration. Pure composition — no DBOS.
+ * Unit tests for the sandbox client factory: the step-tree and records-directory
+ * pre-creation, the spawn refusals, and the toolchain declaration. Pure
+ * composition — no DBOS.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -8,13 +9,12 @@ import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Querier } from "../../state/db.js";
 
 import { err, errAsync, okAsync } from "neverthrow";
 
-import { createSandboxClient, precreateStepTree } from "../create-sandbox.js";
+import { createSandboxClient, precreateRecordDir, precreateStepTree } from "../create-sandbox.js";
 import * as dockerClient from "../docker-client.js";
-import { mintSandboxIdentity } from "../identity.js";
+import { keyedSandboxIdentity } from "../identity.js";
 import * as k8sClient from "../k8s-client.js";
 import { SandboxFailure as BarrelSandboxFailure } from "@inflexa-ai/harness";
 import { createNoopLogger } from "../../lib/console-logger.js";
@@ -24,6 +24,8 @@ import type { FarmSource, SandboxLabels, SandboxSpec } from "../types.js";
 import type { RunSession, SpawnSession } from "../../auth/types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
 import { presentAt } from "../../lib/present.js";
+
+const RECORD_TAIL = ".sandbox/exec-records/0123456789abcdef";
 
 /** The composed client never drives the backend ops in these tests; each member throws, so a surprise call fails the test. */
 function unusedOps(): ReturnType<typeof k8sClient.createK8sSandboxOps> {
@@ -40,8 +42,6 @@ function unusedOps(): ReturnType<typeof k8sClient.createK8sSandboxOps> {
     };
 }
 
-const unusedPool: Querier = { query: () => Promise.resolve({ rows: [], rowCount: 0 }) };
-
 describe("precreateStepTree — step-tree access mode", () => {
     let root: string;
     beforeEach(async () => {
@@ -55,6 +55,7 @@ describe("precreateStepTree — step-tree access mode", () => {
         runId: "run-1",
         stepId: "step-a",
         analysisId: "an-1",
+        recordTail: RECORD_TAIL,
     };
     const deps = (stepTreeAccess?: "world-writable") => ({ resolveWorkspaceRoot: () => Promise.resolve(root), stepTreeAccess });
     const stepDir = () => join(root, "runs", "run-1", "step-a");
@@ -107,7 +108,7 @@ describe("precreateStepTree — step-tree access mode", () => {
         await expect(stat(stepDir())).rejects.toThrow();
     });
 
-    /** A declared write tail, in the shape the session derivation gives. */
+    /** A declared write tail: one workspace-relative directory in place of the step directory. */
     const TAIL = "report-sessions/thread-1/derived";
     const tailDir = () => join(root, "report-sessions", "thread-1", "derived");
 
@@ -138,6 +139,36 @@ describe("precreateStepTree — step-tree access mode", () => {
     });
 });
 
+describe("precreateRecordDir — the records directory of the lease", () => {
+    let root: string;
+    beforeEach(async () => {
+        root = await mkdtemp(join(tmpdir(), "harness-records-"));
+    });
+    afterEach(async () => {
+        await rm(root, { recursive: true, force: true });
+    });
+
+    const coords: MountPlanCoords = { runId: "run-1", stepId: "step-a", analysisId: "an-1", recordTail: RECORD_TAIL };
+    const deps = (stepTreeAccess?: "world-writable") => ({ resolveWorkspaceRoot: () => Promise.resolve(root), stepTreeAccess });
+    const modeOf = async (p: string): Promise<number> => (await stat(p)).mode & 0o777;
+
+    test("makes the records directory under the workspace root, also for a read-only sandbox", async () => {
+        await precreateRecordDir(deps(undefined), { ...coords, readOnly: true });
+        expect((await stat(join(root, RECORD_TAIL))).isDirectory()).toBe(true);
+    });
+
+    test("world-writable: the records directory ends world-writable, and its ancestors keep their modes", async () => {
+        await precreateRecordDir(deps("world-writable"), coords);
+        expect(await modeOf(join(root, RECORD_TAIL))).toBe(0o777);
+        expect(await modeOf(join(root, ".sandbox"))).not.toBe(0o777);
+    });
+
+    test("a crafted record tail escapes nothing", async () => {
+        await expect(precreateRecordDir(deps(undefined), { ...coords, recordTail: "../escape" })).rejects.toThrow("Invalid");
+        await expect(stat(join(root, "..", "escape"))).rejects.toThrow();
+    });
+});
+
 describe("createSandboxClient — the k8s libs root threading", () => {
     test("libStorePvcRoot reaches the k8s ops, so the host-side lock gate can run", () => {
         // The forward is one optional field: tsc cannot catch its absence, and
@@ -154,7 +185,6 @@ describe("createSandboxClient — the k8s libs root threading", () => {
         const readCaptured = (): k8sClient.K8sClientConfig | null => captured;
         try {
             createSandboxClient({
-                pool: unusedPool,
                 env: { backend: "k8s", namespace: "sandbox" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -183,7 +213,6 @@ describe("createSandboxClient — the k8s libs root threading", () => {
 describe("createSandboxClient — the required-store fact", () => {
     const FIXED: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
     const base = {
-        pool: unusedPool,
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
@@ -308,7 +337,6 @@ describe("createSandboxClient — a spawn failure is a value", () => {
         const spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(() => ({ ...unusedOps(), createSandbox: () => errAsync(variant) }));
         try {
             const client = createSandboxClient({
-                pool: unusedPool,
                 env: { backend: "docker", namespace: "default" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -320,8 +348,15 @@ describe("createSandboxClient — a spawn failure is a value", () => {
 
             const failed = (
                 await client.createSandbox(
-                    ...splitSpawn({ runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } }),
-                    mintSandboxIdentity("run-1"),
+                    ...splitSpawn({
+                        runId: "run-1",
+                        stepId: "step-a",
+                        analysisId: "an-1",
+                        ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
+                        recordTail: RECORD_TAIL,
+                        resources: { cpu: 1, memoryGb: 1 },
+                    }),
+                    keyedSandboxIdentity("run-1", "lease#1"),
                 )
             )._unsafeUnwrapErr();
             expect(failed).toBe(variant);
@@ -358,7 +393,14 @@ describe("createSandboxClient — the label hook", () => {
         readonly hostLabels: SandboxLabels;
     };
 
-    const SPAWN = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } };
+    const SPAWN = {
+        runId: "run-1",
+        stepId: "step-a",
+        analysisId: "an-1",
+        ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
+        recordTail: RECORD_TAIL,
+        resources: { cpu: 1, memoryGb: 1 },
+    };
     const REF = { sandboxId: "sbx-1", host: "127.0.0.1", port: 8765, backend: "docker" as const };
 
     let root: string;
@@ -382,7 +424,6 @@ describe("createSandboxClient — the label hook", () => {
 
     const clientWith = (resolveSandboxLabels?: Parameters<typeof createSandboxClient>[0]["resolveSandboxLabels"]) =>
         createSandboxClient({
-            pool: unusedPool,
             env: { backend: "docker", namespace: "default" },
             image: "sandbox-base:latest",
             resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -392,9 +433,11 @@ describe("createSandboxClient — the label hook", () => {
         });
 
     test("a client with no hook gives the backend no host labels", async () => {
-        (await clientWith().createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await clientWith().createSandbox(...splitSpawn(SPAWN), keyedSandboxIdentity("run-1", "lease#1")))._unsafeUnwrap();
         expect(calls).toHaveLength(1);
         expect(presentAt(calls, 0).hostLabels).toEqual({});
+        // The spawn makes the records directory of the lease before the backend mounts it.
+        expect((await stat(join(root, RECORD_TAIL))).isDirectory()).toBe(true);
     });
 
     test("the hook gets the session of the spawn, and its labels reach the backend as the hook gives them", async () => {
@@ -405,7 +448,7 @@ describe("createSandboxClient — the label hook", () => {
         });
 
         const [session, spec] = splitSpawn(SPAWN);
-        (await client.createSandbox(session, spec, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await client.createSandbox(session, spec, keyedSandboxIdentity("run-1", "lease#1")))._unsafeUnwrap();
 
         expect(seen).toEqual([session]);
         expect(presentAt(calls, 0).session).toBe(session);
@@ -415,11 +458,12 @@ describe("createSandboxClient — the label hook", () => {
     test("a refused spawn gives labels_refused with the reason and the flag, makes no step tree, and calls no backend", async () => {
         const client = clientWith(() => errAsync({ reason: "no_funds", suspend: true }));
 
-        const refusal = (await client.createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1")))._unsafeUnwrapErr();
+        const refusal = (await client.createSandbox(...splitSpawn(SPAWN), keyedSandboxIdentity("run-1", "lease#1")))._unsafeUnwrapErr();
 
         expect(refusal).toEqual({ type: "labels_refused", op: "createSandbox", reason: "no_funds", suspend: true });
         expect(calls).toEqual([]);
         await expect(stat(join(root, "runs", "run-1", "step-a"))).rejects.toThrow();
+        await expect(stat(join(root, RECORD_TAIL))).rejects.toThrow();
         expect(keepSuspendingRefusal(err(refusal))._unsafeUnwrapErr()).toMatchObject({ type: "labels_refused", suspend: true });
     });
 });
@@ -439,7 +483,6 @@ describe("createSandboxClient — engine connection threading", () => {
 
         try {
             const client = createSandboxClient({
-                pool: unusedPool,
                 env: { backend: "docker", namespace: "default" },
                 image: "sandbox-base:latest",
                 resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -458,9 +501,8 @@ describe("createSandboxClient — engine connection threading", () => {
     });
 });
 
-describe("createSandboxClient — the toolchain on the client", () => {
+describe("createSandboxClient — the toolchain and the limits on the client", () => {
     const base = {
-        pool: unusedPool,
         env: { backend: "docker" as const, namespace: "" },
         image: "sandbox-base:latest",
         resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
@@ -474,5 +516,9 @@ describe("createSandboxClient — the toolchain on the client", () => {
 
     test("the declared image toolchain reaches the client", () => {
         expect(createSandboxClient({ ...base, toolchainSource: "image" }).toolchainSource).toBe("image");
+    });
+
+    test("the resource limits of the config reach the client, for the clamp of a lease request", () => {
+        expect(createSandboxClient(base).resourceLimits).toEqual({ maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 });
     });
 });

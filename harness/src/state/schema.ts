@@ -78,10 +78,7 @@ export const CortexRunRowSchema = z.object({
 });
 export type CortexRunRow = z.infer<typeof CortexRunRowSchema>;
 
-/**
- * Persistable sandbox handle — what the active-sandbox registry stores on
- * `cortex_step_executions.sandbox_ref`.
- */
+/** Persistable sandbox handle — the machine that a lease row of `cortex_sandbox_leases` holds. */
 export const PersistedSandboxRefSchema = z.object({
     sandboxId: z.string(),
     host: z.string(),
@@ -111,8 +108,6 @@ export const StepExecutionRowSchema = z.object({
     hitMaxSteps: z.boolean().default(false),
     /** Agent-declared blocker reason (see the harness-sandbox-agents spec); null unless `status === "blocked"`. */
     blockedReason: z.string().nullable().default(null),
-    /** Active-sandbox registry handle; null when no sandbox is live for this step. */
-    sandboxRef: PersistedSandboxRefSchema.nullable().default(null),
     /** DBOS child workflow id (`"${parentWorkflowId}-${N}"`); null on pre-DBOS rows. */
     childWorkflowId: z.string().nullable().default(null),
 });

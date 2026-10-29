@@ -150,7 +150,7 @@ up front.
 
 ## CPU Budget and Parallelism
 
-Your briefing names this step's CPU quota and memory limit. The container's
+The grant of your sandbox names its CPU quota and its memory limit. The container's
 core-count calls (\`parallel::detectCores()\`, \`os.cpu_count()\`) report the
 quota, so worker counts sized from them are safe.
 

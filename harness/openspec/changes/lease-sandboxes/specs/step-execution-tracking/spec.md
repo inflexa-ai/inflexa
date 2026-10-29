@@ -45,7 +45,7 @@ no index on `(status) WHERE sandbox_ref IS NOT NULL`, and no composite
 #### Scenario: The sandbox reference column is dropped
 
 - **GIVEN** a database whose `cortex_step_executions` has the `sandbox_ref` column
-- **WHEN** the migration `20261029120000_lease_the_sandboxes` runs
+- **WHEN** the migration `20261030120000_lease_the_sandboxes` runs
 - **THEN** the table has no `sandbox_ref` column, and each other column keeps its data
 
 ### Requirement: StepExecutionRow schema
@@ -83,7 +83,7 @@ defaults, and the migration MUST be safe to run again. The migration
 `DROP COLUMN IF EXISTS`, and the `idx_cortex_step_exec_active_sandbox` index with
 `DROP INDEX IF EXISTS`.
 
-The migration `20261029120000_lease_the_sandboxes` MUST drop the `sandbox_ref`
+The migration `20261030120000_lease_the_sandboxes` MUST drop the `sandbox_ref`
 column with `DROP COLUMN IF EXISTS`.
 
 #### Scenario: First startup adds columns and indexes
@@ -111,4 +111,4 @@ column with `DROP COLUMN IF EXISTS`.
 
 **Reason**: The lease table `cortex_sandbox_leases` records the current machine of each lease. A step row holds no sandbox reference, and the reaper that read the column goes away.
 
-**Migration**: Read the machine of a step from `cortex_sandbox_leases`, by the lease key of the step workflow. The migration `20261029120000_lease_the_sandboxes` drops the column.
+**Migration**: Read the machine of a step from `cortex_sandbox_leases`, by the lease key of the step workflow. The migration `20261030120000_lease_the_sandboxes` drops the column.

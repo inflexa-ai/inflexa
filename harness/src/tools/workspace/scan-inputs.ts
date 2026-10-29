@@ -26,8 +26,7 @@ function stripEdgeSlashes(value: string): string {
     while (end > start && value.charAt(end - 1) === "/") end--;
     return value.slice(start, end);
 }
-import type { SandboxClient } from "../../sandbox/client.js";
-import type { SandboxRef } from "../../sandbox/types.js";
+import type { BoundLease } from "../../sandbox/leases.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
@@ -35,9 +34,7 @@ export type ScanInputsDeps = {
     readonly workspaceFs: WorkspaceFilesystem;
     readonly analysisId: string;
     /** Omit to skip the container readouts; the prefix readouts run regardless. */
-    readonly sandboxClient?: SandboxClient;
-    readonly sandbox?: SandboxRef;
-    readonly deadlineMs: () => number;
+    readonly lease?: BoundLease;
 };
 
 type ScanInputsOutput = {
@@ -80,10 +77,8 @@ export function createScanInputsTool(deps: ScanInputsDeps): Tool<z.infer<typeof 
                 shapes: scan.manifest.shapes,
                 session: ctx.session,
                 fs: deps.workspaceFs,
-                sandboxClient: deps.sandboxClient,
-                sandbox: deps.sandbox,
+                lease: deps.lease,
                 mountRoot: `/${deps.analysisId}`,
-                deadlineMs: deps.deadlineMs(),
                 emit: ctx.emit,
             });
 

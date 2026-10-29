@@ -98,13 +98,12 @@ type BlockAct = {
  * One observation of a session.
  *
  * The union names one event for each act: the start of a session, the four block operations, the title,
- * the derivation, the preview, the record, the file write of a conversation turn, and the approval of a plan. Each event carries
+ * the preview, the record, the file write of a conversation turn, and the approval of a plan. Each event carries
  * the analysis and the thread, thus a consumer places it with no lookup. The title sits on the document,
  * thus the title event names no block.
  *
  * Each member carries what its own site holds at the moment that the act lands, and nothing more. The
- * derivation carries the chain of the table, because the site pins it and a consumer cannot rebuild it
- * from the path. The preview carries the page and the hash of the draft that it shows, thus a consumer
+ * preview carries the page and the hash of the draft that it shows, thus a consumer
  * ties a page to the document that made it.
  *
  * The `create-session` event names the kind of the new session, and it names the parent thread of a child
@@ -125,15 +124,6 @@ export type SessionProvenanceEvent =
     | ({ type: "remove-block" } & BlockAct)
     | ({ type: "move-block" } & BlockAct)
     | { type: "set-title"; analysisId: string; threadId: string; title: string }
-    | {
-          type: "run-derivation";
-          analysisId: string;
-          threadId: string;
-          outputPath: string;
-          outputHash: string;
-          scriptHash: string;
-          sources: ReadonlyArray<{ path: string; hash: string }>;
-      }
     | { type: "preview"; analysisId: string; threadId: string; pagePath: string; documentHash: string }
     | { type: "record-version"; analysisId: string; threadId: string; versionId: string; replaced: boolean }
     | {

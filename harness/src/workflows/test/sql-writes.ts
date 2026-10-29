@@ -14,9 +14,6 @@ export const PAUSE_RECORD_WRITE = /INSERT INTO cortex_paused_work/i;
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the delete of the row of one waiting workflow
 export const PAUSE_CLEAR_WRITE = /DELETE FROM cortex_paused_work WHERE workflow_id = \$1/i;
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the delete of each row of a pause of one work
-export const PAUSES_OF_WORK_CLEAR_WRITE = /DELETE FROM cortex_paused_work WHERE work_id = \$1/i;
-
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the run status write, across wrapped SQL lines
 export const RUNS_STATUS_WRITE = /UPDATE cortex_runs\s+SET status/;
 

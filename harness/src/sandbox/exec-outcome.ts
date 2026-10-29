@@ -8,13 +8,13 @@
  * keeps that text on the sandbox side of the boundary. A summary gives the
  * SIZE of stderr and never a byte of it.
  *
- * The summary of the last exec of a sandbox lives in one process-local cell,
- * keyed by sandbox id. A sandbox belongs to one step (see the teardown of
- * `create-sandbox.ts`), thus the cell is step-scoped in effect and the step
- * body reads it without a new dependency through the agent factory. A replay
- * re-runs the await loop and writes the cell again, thus a recovered body
- * reads the summary of the same exec. The map is capped, so a sandbox whose
- * step never reaches the read site cannot hold memory.
+ * The summary of the last exec of a lease lives in one process-local cell,
+ * keyed by the lease key. A step holds one lease key, thus the cell is
+ * step-scoped in effect and the step body reads it without a new dependency
+ * through the agent factory. The cell keeps the summary across a machine
+ * replacement. A replay re-runs the await loop and writes the cell again, thus
+ * a recovered body reads the summary of the same exec. The map is capped, so a
+ * lease whose step never reaches the read site cannot hold memory.
  */
 
 import type { SandboxExecOutcome } from "../lib/metrics.js";
@@ -60,27 +60,27 @@ export function summarizeExec(result: ExecResult): ExecOutcomeSummary {
 }
 
 /**
- * How many sandboxes keep a summary. A host runs far fewer sandboxes at once
- * than this, thus the cap only drops the summary of a step that ended long ago.
+ * How many leases keep a summary. A host holds far fewer leases at once than
+ * this, thus the cap only drops the summary of a step that ended long ago.
  */
-const MAX_TRACKED_SANDBOXES = 256;
+const MAX_TRACKED_LEASES = 256;
 
-const lastExecBySandbox = new Map<string, ExecOutcomeSummary>();
+const lastExecByLease = new Map<string, ExecOutcomeSummary>();
 
-/** Keep `summary` as the last known exec of `sandboxId`. */
-export function noteExecOutcome(sandboxId: string, summary: ExecOutcomeSummary): void {
+/** Keep `summary` as the last known exec of the lease `leaseKey`. */
+export function noteExecOutcome(leaseKey: string, summary: ExecOutcomeSummary): void {
     // Delete before set so the key moves to the end of the insertion order and
-    // the eviction below drops the least recently written sandbox.
-    lastExecBySandbox.delete(sandboxId);
-    lastExecBySandbox.set(sandboxId, summary);
-    while (lastExecBySandbox.size > MAX_TRACKED_SANDBOXES) {
-        const oldest = lastExecBySandbox.keys().next();
+    // the eviction below drops the least recently written lease.
+    lastExecByLease.delete(leaseKey);
+    lastExecByLease.set(leaseKey, summary);
+    while (lastExecByLease.size > MAX_TRACKED_LEASES) {
+        const oldest = lastExecByLease.keys().next();
         if (oldest.done) break;
-        lastExecBySandbox.delete(oldest.value);
+        lastExecByLease.delete(oldest.value);
     }
 }
 
-/** The last known exec of `sandboxId`, or `undefined` when it ran none. */
-export function lastExecOutcome(sandboxId: string): ExecOutcomeSummary | undefined {
-    return lastExecBySandbox.get(sandboxId);
+/** The last known exec of the lease `leaseKey`, or `undefined` when it ran none. */
+export function lastExecOutcome(leaseKey: string): ExecOutcomeSummary | undefined {
+    return lastExecByLease.get(leaseKey);
 }

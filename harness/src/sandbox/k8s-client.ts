@@ -159,7 +159,6 @@ export type K8sClientConfig = {
     /** Injected for tests. */
     batchApi?: BatchJobApi;
     coreApi?: CorePodApi;
-    registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
 };
 
 function deleteJobIgnoreMissing(batchApi: BatchJobApi, namespace: string, name: string): ResultAsync<void, SandboxError> {
@@ -299,6 +298,12 @@ async function buildJobSpec(
                 readOnly: false,
             });
         }
+        volumeMounts.push({
+            name: SESSION_VOLUME_NAME,
+            mountPath: plan.recordsPath,
+            subPath: subPaths.records,
+            readOnly: false,
+        });
     }
 
     if (config.libStorePvc && plan.libsPath) {
@@ -394,7 +399,7 @@ async function buildJobSpec(
             name: sandboxId,
             namespace: config.namespace,
             annotations: {
-                [OWNER_WORKFLOW_ANNOTATION]: sandboxSpec.childWorkflowId,
+                [OWNER_WORKFLOW_ANNOTATION]: sandboxSpec.ownerWorkflowId,
             },
             labels,
         },
@@ -686,7 +691,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
 
                     const job = await buildJobSpec(session, spec, hostLabels, config, identity, farm, libsMounted);
 
-                    const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, spec.childWorkflowId, job);
+                    const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, spec.ownerWorkflowId, job);
                     if (adopted.isErr()) return err(adopted.error);
 
                     // A Job whose pod never schedules (quota rejection, no nodes, spot
@@ -703,20 +708,6 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                             port: SANDBOX_SERVER_PORT,
                             backend: "k8s",
                         };
-                        const registered = await trySandbox(
-                            () => config.registerSandbox(session, spec, ref),
-                            (status, cause) => ({
-                                type: "container_create_failed",
-                                op: "k8s.registerSandbox",
-                                sandboxId,
-                                status,
-                                cause,
-                            }),
-                        );
-                        if (registered.isErr()) {
-                            await cleanupFailedJob(batchApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());
-                            return err(registered.error);
-                        }
                         return ok(ref);
                     }
                     await cleanupFailedJob(batchApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());

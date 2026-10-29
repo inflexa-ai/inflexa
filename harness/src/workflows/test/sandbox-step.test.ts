@@ -43,6 +43,7 @@ import { createCapturingLogger, silentLogger, type CapturingLogger } from "../..
 import { classifyReadPath } from "../../provenance/collector.js";
 import type { ChatProvider, ChatUsage } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
+import { fakeLeases, leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
 import type { Querier } from "../../state/db.js";
 import type { SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../../execution/artifact-registry.js";
@@ -283,6 +284,7 @@ function makeSandboxClient(spawns: Array<{ session: SpawnSession; spec: SandboxS
         teardownById: () => Promise.resolve(undefined),
         listManagedSandboxes: () => Promise.resolve([]),
         toolchainSource: "store",
+        resourceLimits: { maxCpu: 4, maxMemoryGb: 16, maxGpuCount: 0 },
     };
 }
 
@@ -317,7 +319,6 @@ function usageStepInput(): SandboxStepInput {
         dependsOn: [],
         level: 0,
         prompt: "run the step",
-        resources: { cpu: 2, memoryGb: 4 },
         runSession: makeRunSession(),
     };
 }
@@ -344,7 +345,7 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
         runAuthorizer: createLocalRunAuthorizer(),
         provider: makeProvider(usage),
         embedding: { dimensions: 3, embed: (texts: readonly string[]) => okAsync(texts.map(() => [0, 0, 0])) },
-        sandboxClient: makeSandboxClient(),
+        leases: fakeLeases(leaseOverClient(makeSandboxClient(), SANDBOX_REF)),
         artifactRegistry: {
             register: () => okAsync({ registered: [], failed: [], failedCount: 0 }),
             sync: () => okAsync(undefined),
@@ -704,16 +705,14 @@ describe("sandbox-step kept tool outputs", () => {
         const deps: SandboxStepDeps = {
             ...usageStepDeps(undefined),
             provider,
-            sandboxClient,
+            leases: fakeLeases(leaseOverClient(sandboxClient, SANDBOX_REF)),
             toolOutputStore: store,
             buildAgent: (ctx) => {
                 if (ctx.toolOutputStore === undefined) return Promise.reject(new Error("the tool output store is absent"));
                 return Promise.resolve(
                     stepAgent(ctx.fileMetadata, [
                         createExecuteCommandTool({
-                            sandboxClient,
-                            sandbox: ctx.sandbox,
-                            deadlineMs: ctx.deadlineMs,
+                            lease: ctx.lease,
                             defaultCwd: `/${ANALYSIS_ID}`,
                         }),
                         createReadToolOutputTool(ctx.toolOutputStore),
@@ -902,19 +901,23 @@ describe("sandbox-step blocker", () => {
 
 // ── the spawn of the step sandbox ───────────────────────────────────
 
-describe("sandbox-step spawn", () => {
-    it("spawns under the step session, thus the sandbox takes the ids of the step from it", async () => {
+describe("sandbox-step lease", () => {
+    it("binds the lease of the step under the step session, spawns nothing itself, and releases the lease at the end", async () => {
         const spawns: Array<{ session: SpawnSession; spec: SandboxSpec }> = [];
-        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), sandboxClient: makeSandboxClient(spawns) };
+        const leases = fakeLeases(leaseOverClient(makeSandboxClient(spawns), SANDBOX_REF));
+        const input = { ...usageStepInput(), image: "sandbox-base:test", extraEnv: { A: "1" } };
 
-        const result = await runSandboxStepBody(usageStepInput(), deps);
+        const result = await runSandboxStepBody(input, { ...usageStepDeps(undefined), leases });
 
         expect(result.status).toBe("complete");
-        expect(spawns).toHaveLength(1);
-        expect(presentAt(spawns, 0).session.runFrame).toEqual({ runId: USAGE_RUN_ID, stepId: USAGE_STEP_ID });
-        expect(presentAt(spawns, 0).session.scope.analysisId).toBe(ANALYSIS_ID);
-        expect(presentAt(spawns, 0).session.provenance.agentId).toBe(USAGE_AGENT_ID);
-        expect(Object.keys(presentAt(spawns, 0).spec).sort()).toEqual(["childWorkflowId", "extraEnv", "image", "resources"]);
+        expect(spawns).toHaveLength(0);
+        expect(leases.bindings).toHaveLength(1);
+        const binding = presentAt(leases.bindings, 0);
+        expect(binding.leaseKey).toBe(`${USAGE_RUN_ID}-${USAGE_STEP_ID}`);
+        expect(binding.session.runFrame).toEqual({ runId: USAGE_RUN_ID, stepId: USAGE_STEP_ID });
+        expect(binding.work).toEqual({ kind: "run", id: USAGE_RUN_ID });
+        expect(binding.spawn).toEqual({ image: "sandbox-base:test", extraEnv: { A: "1" } });
+        expect(leases.releasedKeys).toEqual([binding.leaseKey]);
     });
 });
 
@@ -1010,50 +1013,6 @@ describe("sandbox-step pause", () => {
         expectOnePauseResumed(statements, "payment_required");
         // The failed request had no partial reply, thus the step sent the same messages again.
         expect(presentAt(script.calls, 1).prompt).toEqual(presentAt(script.calls, 0).prompt);
-    });
-
-    it("a refused spawn with the suspend flag pauses the step before any sandbox exists, and the spawn runs again after the resume", async () => {
-        const { pool, statements } = statementPool();
-        const spawns: Array<{ session: SpawnSession; spec: SandboxSpec }> = [];
-        const client = makeSandboxClient(spawns);
-        let attempts = 0;
-        const refusingOnce: SandboxClient = {
-            ...client,
-            createSandbox: (session, spec, identity) => {
-                attempts += 1;
-                if (attempts === 1) return errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true });
-                return client.createSandbox(session, spec, identity);
-            },
-        };
-        let sandboxesAtWait: number | undefined;
-        dbosState.onRecv = () => {
-            sandboxesAtWait = spawns.length;
-        };
-        await runInWorkflow();
-
-        const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, sandboxClient: refusingOnce });
-
-        expect(result.status).toBe("complete");
-        expect(attempts).toBe(2);
-        expect(sandboxesAtWait).toBe(0);
-        expect(spawns).toHaveLength(1);
-        expectOnePauseResumed(statements, "account_frozen");
-    });
-
-    it("a refused spawn without the suspend flag fails the step, and nothing waits", async () => {
-        const { pool, statements } = statementPool();
-        const refusing = {
-            ...makeSandboxClient(),
-            createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
-        };
-        await runInWorkflow();
-
-        await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, sandboxClient: refusing })).rejects.toThrow(
-            "labels_unavailable",
-        );
-
-        expect(pauseStatements(statements).recorded).toEqual([]);
-        expect(dbosState.recvTopics).toEqual([]);
     });
 });
 

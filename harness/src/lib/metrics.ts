@@ -10,6 +10,9 @@
  *   - cortex.sandbox.exec.duration{outcome}       — histogram, the runtime the sandbox reported for that exec
  *   - cortex.sandbox.exec.peak_memory_bytes{outcome} — histogram, the peak resident set of that exec
  *   - cortex.sandbox.exec.cpu_seconds{outcome}    — histogram, the CPU time of that exec
+ *   - cortex.sandbox.lease.wait{backend}          — histogram, from a lease request to its grant
+ *   - cortex.sandbox.machine.start{backend}       — histogram, from a spawn to the health of the machine
+ *   - cortex.sandbox.machine.replaced{cause}      — counter, one per machine of a lease that went away
  *   - cortex.artifact.reconcile.dropped{agent_id}              — counter for missing manifest entries
  *   - cortex.artifact.reconcile.input_dropped{agent_id, reason} — counter for lineage input drops
  *
@@ -85,6 +88,15 @@ export const SANDBOX_PEAK_MEMORY_BOUNDS_BYTES: readonly number[] = [
  */
 export const SANDBOX_CPU_SECONDS_BOUNDS: readonly number[] = [0.5, 1, 5, 15, 60, 300, 900, 1_800, 3_600, 14_400];
 
+/**
+ * Bucket bounds for a cold start and for a wait in the lease queue: 1, 5, 15, 30 s, then 1, 2, 5, 10, 30, 60 min.
+ * A machine on a ready node starts in seconds, and a new node or a full local budget takes minutes.
+ */
+export const SANDBOX_WAIT_BOUNDS_MS: readonly number[] = [1_000, 5_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000];
+
+/** Why a machine of a lease went away. */
+export type MachineReplacementCause = "idle" | "dead" | "oom" | "release";
+
 type Instruments = {
     readonly runCompleted: Counter;
     readonly runDuration: Histogram;
@@ -94,6 +106,9 @@ type Instruments = {
     readonly sandboxExecDuration: Histogram;
     readonly sandboxExecPeakMemory: Histogram;
     readonly sandboxExecCpuSeconds: Histogram;
+    readonly sandboxLeaseWait: Histogram;
+    readonly sandboxMachineStart: Histogram;
+    readonly sandboxMachineReplaced: Counter;
     readonly artifactReconcileDropped: Counter;
     readonly lineageInputDropped: Counter;
 };
@@ -141,6 +156,20 @@ function getInstruments(): Instruments {
                 description: "User plus system CPU time of one sandbox exec. Tagged by outcome.",
                 unit: "s",
                 advice: { explicitBucketBoundaries: [...SANDBOX_CPU_SECONDS_BOUNDS] },
+            }),
+            sandboxLeaseWait: meter.createHistogram("cortex.sandbox.lease.wait", {
+                description: "Wait of a sandbox lease from its request to its grant. Tagged by backend.",
+                unit: "ms",
+                advice: { explicitBucketBoundaries: [...SANDBOX_WAIT_BOUNDS_MS] },
+            }),
+            sandboxMachineStart: meter.createHistogram("cortex.sandbox.machine.start", {
+                description: "Time from the spawn of a sandbox machine to its health. Tagged by backend.",
+                unit: "ms",
+                advice: { explicitBucketBoundaries: [...SANDBOX_WAIT_BOUNDS_MS] },
+            }),
+            sandboxMachineReplaced: meter.createCounter("cortex.sandbox.machine.replaced", {
+                description: "Machines of a lease that went away. Tagged by cause.",
+                unit: "{machine}",
             }),
             artifactReconcileDropped: meter.createCounter("cortex.artifact.reconcile.dropped", {
                 description:
@@ -271,6 +300,21 @@ export function recordSandboxExec(args: {
     if (args.durationMs !== undefined && args.durationMs !== null) sandboxExecDuration.record(Math.max(0, args.durationMs), attributes);
     if (args.peakMemoryBytes !== undefined) sandboxExecPeakMemory.record(Math.max(0, args.peakMemoryBytes), attributes);
     if (args.cpuMillis !== undefined) sandboxExecCpuSeconds.record(Math.max(0, args.cpuMillis) / 1000, attributes);
+}
+
+/** Record the wait of one lease from its request to its grant. Call it in the step that took the grant. */
+export function recordLeaseWait(args: { readonly backend: string; readonly waitMs: number }): void {
+    getInstruments().sandboxLeaseWait.record(Math.max(0, args.waitMs), { backend: args.backend });
+}
+
+/** Record the time from one spawn to the health of the machine. Call it in the step of the spawn. */
+export function recordMachineStart(args: { readonly backend: string; readonly startMs: number }): void {
+    getInstruments().sandboxMachineStart.record(Math.max(0, args.startMs), { backend: args.backend });
+}
+
+/** Record one machine of a lease that went away. Call it in the step that removed it. */
+export function recordMachineReplaced(args: { readonly cause: MachineReplacementCause }): void {
+    getInstruments().sandboxMachineReplaced.add(1, { cause: args.cause });
 }
 
 /** Record one manifest entry dropped at reconcile. */

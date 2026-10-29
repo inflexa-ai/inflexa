@@ -193,9 +193,7 @@ function columnsOf(read: HeaderRead, delimiter: string): string[] | undefined {
 /**
  * The header columns of a file on disk, or `undefined` when the file gives none.
  *
- * `path` decides whether the file carries a header at all, and `absolute` is where the bytes sit. The
- * derivation tool reads the columns of its own output the same way, thus the two surfaces describe a table
- * with one rule.
+ * `path` decides whether the file carries a header at all, and `absolute` is where the bytes sit.
  */
 export async function readHeaderColumns(path: string, absolute: string): Promise<string[] | undefined> {
     const delimiter = delimiterOf(path);

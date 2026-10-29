@@ -66,7 +66,6 @@ function makePostCtx(analysisId: string): PostStepContext {
         runSession: { ...makeRunSession(analysisId), runFrame: { runId: RUN_ID, stepId: STEP_ID } },
         level: 0,
         prompt: "",
-        resources: { cpu: 1, memoryGb: 1 },
     };
     return {
         input,
@@ -75,7 +74,6 @@ function makePostCtx(analysisId: string): PostStepContext {
         agent: { id: AGENT_ID, systemPrompt: "unused", model: "test-model", tools: [], maxIterations: 1 },
         fileMetadata: createFileMetadataCell(),
         writePrefix: "/unused",
-        sandboxId: "sbx-test",
         lineageCollector: new ProvenanceCollector({ stepId: STEP_ID, runId: RUN_ID }),
     };
 }

@@ -39,7 +39,6 @@ import {
     ON_CONFLICT_DO_UPDATE,
     PAUSE_CLEAR_WRITE,
     PAUSE_RECORD_WRITE,
-    PAUSES_OF_WORK_CLEAR_WRITE,
     RUN_STATUS_WRITE_PARAM,
     RUNS_PARTS_WRITE,
     RUNS_STATUS_WRITE,
@@ -472,16 +471,14 @@ function analysisWrites(pool: FakePool): Array<{ text: string; values?: readonly
     return pool.queries.filter((q) => ANALYSIS_STATE_WRITE.test(q.text));
 }
 
-/** The writes of the row of a pause, of its delete, and of the delete of each row of the run. */
+/** The writes of the row of a pause and of its delete. */
 function pauseWrites(pool: FakePool): {
     readonly recorded: Array<{ text: string; values?: readonly unknown[] }>;
     readonly cleared: Array<{ text: string; values?: readonly unknown[] }>;
-    readonly clearedOfWork: Array<{ text: string; values?: readonly unknown[] }>;
 } {
     return {
         recorded: pool.queries.filter((q) => PAUSE_RECORD_WRITE.test(q.text)),
         cleared: pool.queries.filter((q) => PAUSE_CLEAR_WRITE.test(q.text)),
-        clearedOfWork: pool.queries.filter((q) => PAUSES_OF_WORK_CLEAR_WRITE.test(q.text)),
     };
 }
 
@@ -604,17 +601,12 @@ function planStep(id: string, dependsOn: readonly string[]): AnalysisStep {
         acceptance_criteria: [`criterion ${id}`],
         depends_on: [...dependsOn],
         status: "pending",
-        resources: { cpu: 2, memoryGb: 4 },
         agent: "agent-x",
         maxSteps: 10,
     };
 }
 
-function input(
-    steps: Array<{ id: string; depends_on?: readonly string[] }>,
-    budget?: { cpu: number; memoryGb: number },
-    synthesisEnabled?: boolean,
-): ExecuteAnalysisInput {
+function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, synthesisEnabled?: boolean): ExecuteAnalysisInput {
     const ids = steps.map((s) => s.id);
     return {
         analysisId: "a1",
@@ -624,8 +616,6 @@ function input(
         steps: steps.map((s) => ({ id: s.id, depends_on: s.depends_on ?? [] })),
         planStepById: Object.fromEntries(steps.map((s) => [s.id, planStep(s.id, s.depends_on ?? [])])),
         agentByStepId: Object.fromEntries(ids.map((id) => [id, "agent-x"])),
-        resourcesByStepId: Object.fromEntries(ids.map((id) => [id, { cpu: 2, memoryGb: 4 }])),
-        budget,
         synthesisEnabled,
         runSession: {
             identity: { user: "u-1" },
@@ -809,42 +799,6 @@ describe("executeAnalysis body", () => {
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
     });
 
-    // ── Budget admission ────────────────────────────────────────────────
-
-    it("budget admission serializes dispatch, surfaces queued steps, and completes the run", async () => {
-        const pool = makeFakePool();
-        const { deps, record } = makeDeps({
-            pool,
-            childResults: new Map<string, SandboxStepResult | Error>([
-                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
-                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
-                ["C", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
-            ]),
-        });
-
-        // Every step declares { cpu: 2, memoryGb: 4 }; the budget fits exactly
-        // one at a time, so B and C must pass through "queued" before running.
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }], { cpu: 2, memoryGb: 4 }), deps);
-
-        expect(result.status).toBe("completed");
-        expect([...result.completedSteps].sort()).toEqual(["A", "B", "C"]);
-        expect(result.failedSteps).toEqual([]);
-
-        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        const statusesOf = (id: string) => dagParts.map((p) => presentFind(p.steps, (s) => s.id === id).status);
-        // Held steps are visibly queued before they run; the admitted step never is.
-        expect(statusesOf("B")).toContain("queued");
-        expect(statusesOf("C")).toContain("queued");
-        expect(statusesOf("A")).not.toContain("queued");
-        // The final snapshot reconciles everything to completed.
-        const last = presentAt(dagParts, dagParts.length - 1);
-        expect(last.steps.map((s) => s.status)).toEqual(["completed", "completed", "completed"]);
-        // One-at-a-time admission: each dag emit shows at most one running step.
-        for (const part of dagParts) {
-            expect(part.steps.filter((s) => s.status === "running").length).toBeLessThanOrEqual(1);
-        }
-    });
-
     it("dag snapshot: each step carries its plan name, not its id", async () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
@@ -868,47 +822,7 @@ describe("executeAnalysis body", () => {
         }
     });
 
-    it("budget admission: a step that can never fit fails the run with a budget-naming error", async () => {
-        const pool = makeFakePool();
-        // No childResults — nothing may be dispatched.
-        const { deps, record } = makeDeps({ pool, childResults: new Map() });
-
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], { cpu: 1, memoryGb: 1 }), deps);
-
-        expect(result.status).toBe("failed");
-        expect(result.failedSteps).toEqual(["A"]);
-        const terminal = terminalOf(record.emittedParts);
-        expect(terminal?.error).toContain("budget");
-        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        const last = presentAt(dagParts, dagParts.length - 1);
-        expect(presentAt(last.steps, 0).status).toBe("failed");
-        expect(presentAt(last.steps, 0).error).toContain("machine budget");
-    });
-
-    it("budget admission: a failed step frees capacity for a held step", async () => {
-        const pool = makeFakePool();
-        const { deps, record } = makeDeps({
-            pool,
-            childResults: new Map<string, SandboxStepResult | Error>([
-                ["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }],
-                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
-            ]),
-        });
-
-        // The budget fits one step at a time: A runs, B queues. A's failure must
-        // free the declared capacity and admit B in the same settlement round.
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }], { cpu: 2, memoryGb: 4 }), deps);
-
-        expect(result.status).toBe("partial");
-        expect(result.completedSteps).toEqual(["B"]);
-        expect(result.failedSteps).toEqual(["A"]);
-        const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        const statusesOf = (id: string) => dagParts.map((p) => presentFind(p.steps, (s) => s.id === id).status);
-        expect(statusesOf("B")).toContain("queued");
-        expect(statusesOf("B")).toContain("running");
-    });
-
-    it("no budget in the workflow input keeps the legacy full fan-out", async () => {
+    it("each dependency-ready step starts at once", async () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
@@ -923,12 +837,9 @@ describe("executeAnalysis body", () => {
 
         expect(result.status).toBe("completed");
         const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        // First snapshot after dispatch: all three running at once, none queued.
+        // First snapshot after dispatch: all three running at once.
         const first = presentAt(dagParts, 0);
         expect(first.steps.map((s) => s.status)).toEqual(["running", "running", "running"]);
-        for (const part of dagParts) {
-            expect(part.steps.some((s) => s.status === "queued")).toBe(false);
-        }
     });
 
     // ── 10.8 External cancel cascade ───────────────────────────────────
@@ -1168,7 +1079,7 @@ describe("executeAnalysis body", () => {
             ]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }], undefined, false), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }], false), deps);
 
         expect(result.status).toBe("partial");
         expect(result.failedSteps).toEqual(["A"]);
@@ -1218,13 +1129,13 @@ describe("executeAnalysis body", () => {
         };
         await runInWorkflow();
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), refusingOnce);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), refusingOnce);
 
         expect(dispatchedAtOpen).toEqual([0, 0]);
         expect(result.status).toBe("completed");
         expect(result.completedSteps).toEqual(["A"]);
 
-        const { recorded, cleared, clearedOfWork } = pauseWrites(pool);
+        const { recorded, cleared } = pauseWrites(pool);
         expect(recorded).toHaveLength(1);
         const [workflowId, workId, workKind, analysisId, threadId, state, cause, attempt, retryAt, topic] = presentAt(recorded, 0).values ?? [];
         expect([workflowId, workId, workKind, analysisId, threadId, state, attempt, retryAt]).toEqual([
@@ -1243,8 +1154,6 @@ describe("executeAnalysis body", () => {
         expect(topic).toBe(dbosState.recvTopics[0]);
         expect(runWritesAtWait).toBe(0);
         expect(cleared.map((q) => q.values)).toEqual([["run-test"]]);
-        // The end of the run clears each row of a pause of the run.
-        expect(clearedOfWork.map((q) => q.values)).toEqual([["run-test"]]);
 
         const pauses = record.emittedParts.filter((p) => p.type === "data-pause");
         expect(pauses).toMatchObject([
@@ -1342,7 +1251,7 @@ describe("executeAnalysis body", () => {
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
         expect(result.status).toBe("completed");
         expect(synthesisWrites(pool)).toEqual([]);
@@ -1409,7 +1318,7 @@ describe("executeAnalysis body", () => {
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
 
-        await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+        await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
         const seeds = seedWrites(pool);
         expect(seeds.length).toBe(1);
@@ -1521,7 +1430,7 @@ describe("executeAnalysis body", () => {
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "step died" }]]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
         expect(result.status).toBe("failed");
         expect(synthesisMarkRunning(pool)).toEqual([]);
@@ -1595,7 +1504,7 @@ describe("executeAnalysis body", () => {
             ]),
         });
 
-        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }], undefined, false), deps);
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }], false), deps);
 
         const seeds = pool.queries.filter((q) => STEP_SEED_INSERT.test(q.text) && q.text.includes("'pending'"));
         expect(seeds.length).toBe(1);
@@ -1659,7 +1568,7 @@ describe("executeAnalysis body", () => {
         });
 
         expect(deps.provenance).toBeUndefined();
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
         expect(result.status).toBe("completed");
     });
 
@@ -1672,7 +1581,7 @@ describe("executeAnalysis body", () => {
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
         expect(result.status).toBe("completed");
         // Clock reads, in body order: startedAtMs, step-A settlement, terminal.
@@ -1842,7 +1751,7 @@ describe("executeAnalysis body", () => {
             ]),
         });
 
-        const inp = input([{ id: "A" }, { id: "B" }], undefined, false);
+        const inp = input([{ id: "A" }, { id: "B" }], false);
         await runExecuteAnalysisBody(inp, deps);
 
         // Every arm — the run start, both step settlements, the terminal — rides
@@ -1909,7 +1818,7 @@ describe("executeAnalysis run end ownership", () => {
         dbosState.throwErrorOnStep.set("close-running-charge", cancelError());
         dbosState.throwErrorOnStep.set("revoke-run-auth", cancelError());
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), marked);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), marked);
 
         expect(result.status).toBe("completed");
         expect(events).toEqual([
@@ -1934,7 +1843,7 @@ describe("executeAnalysis run end ownership", () => {
         const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
         dbosState.throwErrorOnStep.set("close-running-charge", cancelError());
 
-        await expect(runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }], false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
 
         expect(events).toEqual([]);
         expect(record.chargeCloseCalls).toEqual([]);
@@ -1955,7 +1864,7 @@ describe("executeAnalysis run end ownership", () => {
             childResults: completeA(),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
         expect(result.status).toBe("completed");
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
@@ -1972,7 +1881,7 @@ describe("executeAnalysis run end ownership", () => {
         const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
         dbosState.resultOnStep.set("persist-final-status", "won");
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
         expect(result.status).toBe("completed");
         expect(events).toEqual([
@@ -1988,7 +1897,7 @@ describe("executeAnalysis run end ownership", () => {
         const logger = createCapturingLogger();
         const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), { ...deps, logger });
 
         expect(result.status).toBe("completed");
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
@@ -2005,7 +1914,7 @@ describe("executeAnalysis run end ownership", () => {
         const logger = createCapturingLogger();
         const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), { ...deps, logger });
 
         expect(result.status).toBe("completed");
         expect(events).toHaveLength(1);
@@ -2036,7 +1945,7 @@ describe("executeAnalysis run end ownership", () => {
             const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
             blockSeparateRunEndSteps();
 
-            const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
             expect(result.status).toBe("completed");
             expect(statusWrites(pool)).toHaveLength(2);
@@ -2052,7 +1961,7 @@ describe("executeAnalysis run end ownership", () => {
             const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
             blockSeparateRunEndSteps();
 
-            const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
             expect(result.status).toBe("completed");
             expect(statusWrites(pool)).toHaveLength(2);
@@ -2067,7 +1976,7 @@ describe("executeAnalysis run end ownership", () => {
             const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
             dbosState.cancelBeforeAttempt.set("persist-final-status", 2);
 
-            await expect(runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+            await expect(runExecuteAnalysisBody(input([{ id: "A" }], false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
 
             expect(statusWrites(pool)).toHaveLength(1);
             expect(events).toEqual([]);
@@ -2082,7 +1991,7 @@ describe("executeAnalysis run end ownership", () => {
             const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
             dbosState.cancelBeforeAttempt.set("persist-final-status", 2);
 
-            await expect(runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+            await expect(runExecuteAnalysisBody(input([{ id: "A" }], false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
 
             expect(events).toHaveLength(1);
             expect(record.chargeCloseCalls).toEqual([]);
@@ -2096,7 +2005,7 @@ describe("executeAnalysis run end ownership", () => {
             const logger = createCapturingLogger();
             const { deps, record } = makeDeps({ pool, emitRunEvent: recordRunEnds(pool, events), childResults: completeA() });
 
-            const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), { ...deps, logger });
 
             expect(result.status).toBe("completed");
             expect(statusWrites(pool)).toHaveLength(5);
@@ -2137,7 +2046,7 @@ describe("executeAnalysis run end ownership", () => {
                 },
             };
 
-            await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), marked);
+            await runExecuteAnalysisBody(input([{ id: "A" }], false), marked);
 
             expect(dbosState.events).toEqual([{ key: RUN_END_EVENT_KEY, value: { status: "completed", error: null, closed: true, revoked: true } }]);
             expect(dbosState.timeline).toEqual(["close charge", "revoke authorization", "emit run_completed", `setEvent ${RUN_END_EVENT_KEY}`]);
@@ -2148,7 +2057,7 @@ describe("executeAnalysis run end ownership", () => {
             const { deps } = makeDeps({ pool, childResults: completeA() });
             const refusing: ExecuteAnalysisDeps = { ...deps, runCharge: { ...deps.runCharge, close: () => errAsync({ reason: "host down" }) } };
 
-            await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), refusing);
+            await runExecuteAnalysisBody(input([{ id: "A" }], false), refusing);
 
             expect(dbosState.events).toEqual([{ key: RUN_END_EVENT_KEY, value: { status: "completed", error: null, closed: false, revoked: true } }]);
         });
@@ -2157,7 +2066,7 @@ describe("executeAnalysis run end ownership", () => {
             const pool = makeFakePool(WON_STATUS_WRITE);
             const { deps } = makeDeps({ pool, childResults: completeA() });
 
-            await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+            await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
             expect(dbosState.events).toEqual([]);
         });
@@ -2166,7 +2075,7 @@ describe("executeAnalysis run end ownership", () => {
             const pool = makeFakePool();
             const { deps, record } = makeDeps({ pool, childResults: completeA() });
 
-            await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps);
+            await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
             expect(record.chargeCloseCalls).toHaveLength(1);
             expect(dbosState.events).toEqual([]);
@@ -2178,7 +2087,7 @@ describe("executeAnalysis run end ownership", () => {
             const { deps } = makeDeps({ pool, childResults: completeA() });
             dbosState.setEventError = new Error("event store down");
 
-            const result = await runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), { ...deps, logger });
+            const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), { ...deps, logger });
 
             expect(result.status).toBe("completed");
             expect(pool.queries.some((q) => SKIPPED_SWEEP_WRITE.test(q.text))).toBe(true);
@@ -2191,7 +2100,7 @@ describe("executeAnalysis run end ownership", () => {
             const { deps } = makeDeps({ pool, childResults: completeA() });
             dbosState.setEventError = cancelError();
 
-            await expect(runExecuteAnalysisBody(input([{ id: "A" }], undefined, false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+            await expect(runExecuteAnalysisBody(input([{ id: "A" }], false), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
         });
 
         it("a failed status write does not mask the synthesis error, and the record carries the failed status and its error", async () => {

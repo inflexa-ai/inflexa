@@ -239,7 +239,8 @@ export const ScalarReferenceSchema = z.discriminatedUnion("kind", [ArtifactValue
  * artifact as a table. Two conditions give the second reason. The file type refuses a read of a cell, or
  * the bytes are unrecoverable.
  *
- * `extraction-unavailable` means that the value tier must use an extraction arm that is not wired.
+ * `extraction-unavailable` means that the host read cannot give the cells: the file is over the cap of the
+ * host read, a parse fault stopped it, or its extension names no tabular format. No other reader exists.
  */
 export const UnresolvedReasonSchema = z.enum([
     "artifact-missing",

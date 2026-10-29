@@ -10,6 +10,7 @@ export { assembleCoreRuntime } from "./runtime/assemble.js";
 export type {
     CoreRuntime,
     CoreRuntimeDeps,
+    CoreSandboxDeps,
     CoreWorkflowDeps,
     RegisteredWorkflows,
     ConversationAssemblyDeps,
@@ -140,11 +141,9 @@ export type { ResolvePageUrl, SessionPageAccess } from "./tools/report-session/i
 // back for the report page. Thus the seam and its vocabulary belong on the front door: an embedder
 // cannot type its realization without them. The two binders ride beside the types, because an
 // embedder that calls `prepareChatTurn` or one tool factory directly binds the same total forms
-// that the assembly binds. `DerivationSource` rides beside the event union, because the derivation
-// event carries the chain of the derived table.
+// that the assembly binds.
 export { bindReadExport, bindSessionEmit } from "./provenance/seam.js";
 export type { ProvenanceExport, ProvenanceSeam, RunProvenanceEvent, SessionProvenanceEvent } from "./provenance/seam.js";
-export type { DerivationSource } from "./state/report-session-state.js";
 
 // Run launching.
 export { createDbosRunLauncher } from "./execution/dbos-run-launcher.js";
@@ -668,6 +667,7 @@ export type { ResolveWorkspaceRoot } from "./workspace/paths.js";
 export { createSandboxClient } from "./sandbox/create-sandbox.js";
 export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/create-sandbox.js";
 export type { SandboxClient } from "./sandbox/client.js";
+export type { AcquireOutcome, BoundLease, LeaseBinding, NoLease, SandboxLeases } from "./sandbox/leases.js";
 // Hook: sandbox labels. An optional gate on the config of the sandbox client.
 // The client calls it at each spawn with the `SpawnSession` of the spawn, on
 // both backends, and stamps each label as the hook gives it under the harness
@@ -770,7 +770,6 @@ export type { PlanStep } from "./workflows/execute-analysis-scheduler.js";
 export { planGraphOf } from "./workflows/plan/graph.js";
 export { planPartOf } from "./memory/card-builders.js";
 export { validatePlan } from "./schemas/validate-plan.js";
-export type { ValidatePlanOptions } from "./schemas/validate-plan.js";
 export type { ValidationResult } from "./schemas/validate-plan.js";
 
 // Plan + run + step ledgers around a trigger. `upsertPlan` takes a
@@ -846,10 +845,7 @@ export type { LogFields, LogLevel, Logger } from "./lib/logger.js";
 export { defaultErrorFields } from "./lib/logger.js";
 export { createConsoleLogger, createNoopLogger } from "./lib/console-logger.js";
 
-// Sandbox-hygiene scheduled workflows. Reaper reclaims a dead host's orphaned
-// containers; the sweep prunes stale notifications. Each is a
-// `@DBOS.scheduled` no-op on an idle system.
-export { registerSandboxReaper } from "./sandbox/reaper.js";
-export type { RegisterReaperDeps } from "./sandbox/reaper.js";
+// The scheduled sweep that prunes stale notifications. It is a `@DBOS.scheduled`
+// no-op on an idle system. The sandbox reconciler registers with the runtime.
 export { registerNotificationSweep } from "./sandbox/notification-sweep.js";
 export type { RegisterNotificationSweepDeps } from "./sandbox/notification-sweep.js";

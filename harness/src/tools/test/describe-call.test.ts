@@ -22,6 +22,7 @@ import { createResolveCitationTool } from "../research/resolve-citation.js";
 import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { createEditFileTool, type EditIntentStore } from "../workspace/edit-file.js";
+import { leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
 import { createExecuteCommandTool } from "../workspace/execute-command.js";
 import { createGrepTool } from "../workspace/grep.js";
 import { createListFilesTool } from "../workspace/list-files.js";
@@ -335,9 +336,7 @@ describe("describeCall — sandbox mutate surface", () => {
 
     it("execute_command names the script token, else the joined argv", () => {
         const tool = createExecuteCommandTool({
-            sandboxClient: makeFakeSandboxClient(),
-            sandbox: sandboxRef,
-            deadlineMs: () => 0,
+            lease: leaseOverClient(makeFakeSandboxClient(), sandboxRef),
             defaultCwd: "/a/runs/r1/s1",
         });
 

@@ -38,7 +38,6 @@ function step(id: string) {
         acceptance_criteria: ["completes"],
         depends_on: [],
         agent: "bulk-transcriptomics-agent",
-        resources: { cpu: 1, memoryGb: 4 },
         maxSteps: 30,
     };
 }

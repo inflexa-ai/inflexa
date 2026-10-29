@@ -158,6 +158,19 @@ describe("the poll loop", () => {
         expect(result.stdout).toBe("hello\n");
     });
 
+    test("a record that a restart of the machine cut gives a synthetic failure with the reason sandbox-replaced", async () => {
+        // The lost completion body of sandbox-server: no exit code, no streams, and the reason of the loss.
+        const lost = {
+            status: "failed",
+            events: [],
+            cursor: 0,
+            result: { execId: EXEC_ID, exitCode: null, stdout: "", stderr: "", durationMs: null, lost: { reason: "sandbox-replaced" } },
+        };
+        const result = await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([lost]) });
+        expect(result.exitCode).toBeNull();
+        expect(result.syntheticFailure?.reason).toBe("sandbox-replaced");
+    });
+
     test("forwards incremental events once and advances the cursor", async () => {
         const emitted: unknown[] = [];
         const seen: SeenRequest[] = [];

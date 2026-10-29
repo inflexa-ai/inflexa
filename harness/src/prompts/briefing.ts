@@ -67,9 +67,7 @@ export const STEP_TASK_FIELDS = [
  * threaded separately through the workflow input, execution knobs, and result
  * fields populated after the step runs. `depends_on` is not rendered here
  * because the dependencies appear as {@link renderUpstream} blocks — with their
- * results — rather than as bare ids. `resources` renders as its own
- * {@link renderResources} section, because the budget is an execution bound,
- * not a task instruction.
+ * results — rather than as bare ids.
  */
 export const STEP_NON_TASK_FIELDS = [
     "id",
@@ -77,9 +75,7 @@ export const STEP_NON_TASK_FIELDS = [
     "step_type",
     "depends_on",
     "status",
-    "resources",
     "agent",
-    "timeout",
     "maxSteps",
     "summary",
     "artifactIds",
@@ -396,29 +392,6 @@ export function renderWorkspace(frame: WorkspaceFrame): string {
     );
 }
 
-// ── (2b) Resources ────────────────────────────────────────────────────
-
-/**
- * The cpu and memory budget of the step, with the one rule that keeps a
- * parallel workload inside it. The mounted cpu files make `detectCores()` and
- * `os.cpu_count()` report the quota, thus the fork count is right by default.
- * The thread pools default to one thread (see `sandbox/thread-env.ts`), and
- * only the agent knows when a step is thread-parallel. Thus the briefing names
- * the budget and the rule, and the agent raises a pool per command.
- */
-export function renderResources(resources: AnalysisStep["resources"]): string {
-    if (!resources) return "";
-    const cores = Math.max(1, Math.floor(resources.cpu));
-    const items = [
-        `CPU: ${resources.cpu} ${resources.cpu === 1 ? "core" : "cores"} (hard quota). Memory: ${resources.memoryGb} GB (hard limit — exceeding it kills the process).`,
-        `Core-count calls (\`parallel::detectCores()\`, \`os.cpu_count()\`) report this quota — worker counts sized from them are already right, nothing to raise.`,
-        `BLAS/OpenMP thread pools default to **1 thread** (\`OMP_NUM_THREADS\` etc.). For a thread-parallel single-process step, raise them per command via \`execute_command\`'s \`env\`, up to ${cores}.`,
-        `The one rule: workers × threads-per-worker must stay ≤ ${cores}. A mix is fine while the product holds.`,
-    ];
-    if (resources.gpu) items.push(`GPU: ${resources.gpu.count}.`);
-    return section("Resources (hard limits)", bullets(items));
-}
-
 // ── (3) Data orientation ──────────────────────────────────────────────
 
 /**
@@ -521,7 +494,6 @@ export function composeStepBriefing(briefing: StepBriefing): string {
         renderTemplateContract(briefing.template),
         renderMemory(briefing.memory),
         renderWorkspace(briefing.workspace),
-        renderResources(briefing.step.resources),
         renderOrientation(briefing.profile, briefing.workspace.analysisId),
         renderUpstream(briefing.upstream),
     ]

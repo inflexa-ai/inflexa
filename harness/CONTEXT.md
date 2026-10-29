@@ -30,17 +30,13 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   before `DBOS.startWorkflow`. The session rides in the workflow input, and DBOS
   replay builds it again on resume.
 - **Step** — One node in an analysis plan DAG. Each step runs in its own sandbox
-  container. The DAG is **dependency-gated and budget-admitted**. The parent
-  workflow starts the child workflow of a step under two conditions. Each of its
-  `depends_on` steps must be complete. The machine resource budget must have
-  capacity for the declared resources of the step.
-
-  The budget is a snapshot in the workflow input at launch,
-  when the embedder configures one. There is no wave batching. With no budget,
-  each step with satisfied dependencies starts immediately. A step that has its
-  dependencies but waits for capacity is emitted as `queued` on the dag-state
-  part. A step that waits for a dependency stays `pending`. A topological *level*
-  can be computed for the UI, but it never gates the execution. A step ends in one
+  container. The DAG is **dependency-gated**. The parent
+  workflow starts the child workflow of a step when each of its `depends_on`
+  steps is complete. There is no wave batching, and the scheduler admits no step
+  against a budget. The step agent acquires its sandbox, and the lease grant
+  admits the sandbox against the budget. A step that waits for a dependency stays
+  `pending`. A topological *level* can be computed for the UI, but it never gates
+  the execution. A step ends in one
   of three terminal states:
   - **`completed`** — the agent stored its deliverables and ended cleanly.
   - **`blocked`** — the agent called `report_blocker` to declare, with a reason,

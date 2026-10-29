@@ -12,7 +12,7 @@ import type { ChatProvider } from "../../providers/types.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptEntry } from "../../testing.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
-import { AD_HOC_FALLBACK_AGENT_ID, defaultAdHocResources, routeAdHocRequest, validAdHocResources } from "../ad-hoc-router.js";
+import { AD_HOC_FALLBACK_AGENT_ID, routeAdHocRequest } from "../ad-hoc-router.js";
 import { presentAt, presentGet } from "../../lib/present.js";
 
 function providerReturning(input: Record<string, unknown>, capture?: { system?: string }): ChatProvider {
@@ -50,24 +50,17 @@ const emptyPool: Querier = {
     query: () => Promise.resolve({ rows: [], rowCount: 0 }),
 };
 
-const policy = {
-    perStep: { maxCpu: 8, maxMemoryGb: 16, maxGpuCount: 1 },
-    budget: { cpu: 16, memoryGb: 32 },
-};
-
 describe("ad hoc routing", () => {
-    it("uses a valid specialist and independently accepted resource recommendation", async () => {
+    it("uses a valid specialist", async () => {
         const { ctx } = makeToolContext();
         const route = await routeAdHocRequest(
             {
                 provider: providerReturning({
                     agentId: "single-cell-agent",
-                    resources: { cpu: 6, memoryGb: 12 },
                     rationale: "The request is a targeted single-cell comparison.",
                 }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             {
                 analysisId: "analysis-1",
@@ -78,7 +71,6 @@ describe("ad hoc routing", () => {
         );
 
         expect(route.agentId).toBe("single-cell-agent");
-        expect(route.resources).toEqual({ cpu: 6, memoryGb: 12 });
         expect(route.fallbackClass).toBeUndefined();
     });
 
@@ -87,12 +79,10 @@ describe("ad hoc routing", () => {
         const route = await routeAdHocRequest(
             {
                 provider: providerReturning({
-                    resources: { cpu: 2, memoryGb: 4 },
                     rationale: "No specialist matched.",
                 }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             {
                 analysisId: "analysis-1",
@@ -103,11 +93,10 @@ describe("ad hoc routing", () => {
         );
 
         expect(route.agentId).toBe(AD_HOC_FALLBACK_AGENT_ID);
-        expect(route.resources).toEqual({ cpu: 2, memoryGb: 4 });
         expect(route.fallbackClass).toBe("no_match");
     });
 
-    it("defaults only invalid resources while preserving a valid specialist selection", async () => {
+    it("drops a resource field of the model, and keeps the route", async () => {
         const { ctx } = makeToolContext();
         const route = await routeAdHocRequest(
             {
@@ -118,7 +107,6 @@ describe("ad hoc routing", () => {
                 }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             {
                 analysisId: "analysis-1",
@@ -129,27 +117,24 @@ describe("ad hoc routing", () => {
         );
 
         expect(route.agentId).toBe("cheminformatics-agent");
-        expect(route.resources).toEqual(defaultAdHocResources(policy));
-        expect(route.fallbackClass).toBe("invalid_resources");
+        expect("resources" in route).toBe(false);
+        expect(route.fallbackClass).toBeUndefined();
     });
 
-    it("rejects an unknown or fallback-only agent id while retaining valid resources", async () => {
+    it("rejects an unknown or fallback-only agent id", async () => {
         const { ctx } = makeToolContext();
         const route = await routeAdHocRequest(
             {
                 provider: providerReturning({
                     agentId: "scientific-executor",
-                    resources: { cpu: 3, memoryGb: 5 },
                 }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             { analysisId: "analysis-1", request: "Custom calculation", session: ctx.session, signal: ctx.signal },
         );
 
         expect(route.agentId).toBe(AD_HOC_FALLBACK_AGENT_ID);
-        expect(route.resources).toEqual({ cpu: 3, memoryGb: 5 });
         expect(route.fallbackClass).toBe("invalid_agent");
     });
 
@@ -158,7 +143,6 @@ describe("ad hoc routing", () => {
         const common = {
             model: "utility-model",
             pool: emptyPool,
-            resourcePolicy: policy,
         };
         const malformed = await routeAdHocRequest(
             { ...common, provider: providerWithoutRouteCall() },
@@ -175,7 +159,7 @@ describe("ad hoc routing", () => {
         expect(providerError.agentId).toBe(AD_HOC_FALLBACK_AGENT_ID);
     });
 
-    it("enforces the wall-clock timeout and uses bounded defaults when no policy is configured", async () => {
+    it("enforces the wall-clock timeout", async () => {
         const { ctx } = makeToolContext();
         const timedOut = await routeAdHocRequest(
             {
@@ -186,20 +170,9 @@ describe("ad hoc routing", () => {
             },
             { analysisId: "analysis-1", request: "Custom calculation", session: ctx.session, signal: ctx.signal },
         );
-        const absentPolicy = await routeAdHocRequest(
-            {
-                provider: providerReturning({ agentId: "network-agent", rationale: "Network request." }),
-                model: "utility-model",
-                pool: emptyPool,
-            },
-            { analysisId: "analysis-1", request: "Score this network", session: ctx.session, signal: ctx.signal },
-        );
 
         expect(timedOut.fallbackClass).toBe("timeout");
-        expect(timedOut.resources).toEqual({ cpu: 4, memoryGb: 8 });
-        expect(absentPolicy.agentId).toBe("network-agent");
-        expect(absentPolicy.resources).toEqual({ cpu: 4, memoryGb: 8 });
-        expect(absentPolicy.fallbackClass).toBeUndefined();
+        expect(timedOut.agentId).toBe(AD_HOC_FALLBACK_AGENT_ID);
     });
 
     it("throws on an abort of the caller, and gives no route", async () => {
@@ -245,7 +218,6 @@ describe("ad hoc routing — the packages of the step", () => {
                 provider: providerReturning(
                     {
                         agentId: "single-cell-agent",
-                        resources: { cpu: 4, memoryGb: 8 },
                         rationale: "A targeted clustering comparison.",
                         packages: ["scanpy", "python:igraph"],
                     },
@@ -253,7 +225,6 @@ describe("ad hoc routing — the packages of the step", () => {
                 ),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             { analysisId: "analysis-1", request: "Cluster these cells and score the markers", session: ctx.session, signal: ctx.signal },
         );
@@ -266,19 +237,17 @@ describe("ad hoc routing — the packages of the step", () => {
         expect(capture.system).toContain("the language of the specialist you select and the wording of the request decide the track");
     });
 
-    it("drops an entry that is not a query, and keeps the specialist and the resources", async () => {
+    it("drops an entry that is not a query, and keeps the specialist", async () => {
         const { ctx } = makeToolContext();
         const route = await routeAdHocRequest(
             {
                 provider: providerReturning({
                     agentId: "cheminformatics-agent",
-                    resources: { cpu: 6, memoryGb: 12 },
                     rationale: "A targeted descriptor calculation.",
                     packages: ["rdkit", "./wheels/rdkit-2024.9.1.whl"],
                 }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             { analysisId: "analysis-1", request: "Calculate the descriptors", session: ctx.session, signal: ctx.signal },
         );
@@ -287,7 +256,6 @@ describe("ad hoc routing — the packages of the step", () => {
         expect(route.droppedPackages).toEqual([{ entry: "./wheels/rdkit-2024.9.1.whl", reason: "unparsable" }]);
         // A package failure is its own axis: the route itself did not fall back.
         expect(route.agentId).toBe("cheminformatics-agent");
-        expect(route.resources).toEqual({ cpu: 6, memoryGb: 12 });
         expect(route.fallbackClass).toBeUndefined();
     });
 
@@ -297,13 +265,11 @@ describe("ad hoc routing — the packages of the step", () => {
             {
                 provider: providerReturning({
                     agentId: "single-cell-agent",
-                    resources: { cpu: 4, memoryGb: 8 },
                     rationale: "A targeted integration.",
                     packages: ["scanpy", "seurat", "SEURAT", "r:seurat==5.0.0", "MOFA2"],
                 }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
                 resolvePackages: (names) =>
                     Promise.resolve(
                         names.map((requested) =>
@@ -327,13 +293,12 @@ describe("ad hoc routing — the packages of the step", () => {
 
     it("keeps every parsed entry when the resolution cannot answer, and gives an empty list for a missing field", async () => {
         const { ctx } = makeToolContext();
-        const common = { model: "utility-model", pool: emptyPool, resourcePolicy: policy };
+        const common = { model: "utility-model", pool: emptyPool };
         const unavailable = await routeAdHocRequest(
             {
                 ...common,
                 provider: providerReturning({
                     agentId: "network-agent",
-                    resources: { cpu: 4, memoryGb: 8 },
                     packages: ["scanpy", "MOFA2"],
                 }),
                 resolvePackages: () => Promise.resolve(null),
@@ -341,7 +306,7 @@ describe("ad hoc routing — the packages of the step", () => {
             { analysisId: "analysis-1", request: "Score this network", session: ctx.session, signal: ctx.signal },
         );
         const noField = await routeAdHocRequest(
-            { ...common, provider: providerReturning({ agentId: "network-agent", resources: { cpu: 4, memoryGb: 8 } }) },
+            { ...common, provider: providerReturning({ agentId: "network-agent" }) },
             { analysisId: "analysis-1", request: "Score this network", session: ctx.session, signal: ctx.signal },
         );
 
@@ -351,19 +316,6 @@ describe("ad hoc routing — the packages of the step", () => {
         expect(unavailable.droppedPackages).toEqual([]);
         expect(noField.packages).toEqual([]);
         expect(noField.droppedPackages).toEqual([]);
-    });
-});
-
-describe("ad hoc resource validation", () => {
-    it("checks CPU, memory, and GPU bounds independently", () => {
-        expect(validAdHocResources({ cpu: 4, memoryGb: 8, gpu: { count: 1 } }, policy)).toEqual({
-            cpu: 4,
-            memoryGb: 8,
-            gpu: { count: 1 },
-        });
-        expect(validAdHocResources({ cpu: 9, memoryGb: 8 }, policy)).toBeNull();
-        expect(validAdHocResources({ cpu: 4, memoryGb: 17 }, policy)).toBeNull();
-        expect(validAdHocResources({ cpu: 4, memoryGb: 8, gpu: { count: 2 } }, policy)).toBeNull();
     });
 });
 
@@ -464,10 +416,9 @@ describe("the capability phrase of an ad hoc route", () => {
         const { ctx } = makeToolContext();
         const route = await routeAdHocRequest(
             {
-                provider: providerReturning({ agentId: safetyAgent, capability: realPhrase, resources: { cpu: 2, memoryGb: 4 }, rationale: "Safety." }),
+                provider: providerReturning({ agentId: safetyAgent, capability: realPhrase, rationale: "Safety." }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             { analysisId: "analysis-1", request: "Build matched negatives", session: ctx.session, signal: ctx.signal },
         );
@@ -482,12 +433,10 @@ describe("the capability phrase of an ad hoc route", () => {
                 provider: providerReturning({
                     agentId: safetyAgent,
                     capability: "matched negatives, but in my own words",
-                    resources: { cpu: 2, memoryGb: 4 },
                     rationale: "Safety.",
                 }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             { analysisId: "analysis-1", request: "Build matched negatives", session: ctx.session, signal: ctx.signal },
         );
@@ -500,10 +449,9 @@ describe("the capability phrase of an ad hoc route", () => {
         const { ctx } = makeToolContext();
         const route = await routeAdHocRequest(
             {
-                provider: providerReturning({ agentId: safetyAgent, resources: { cpu: 2, memoryGb: 4 }, rationale: "Safety." }),
+                provider: providerReturning({ agentId: safetyAgent, rationale: "Safety." }),
                 model: "utility-model",
                 pool: emptyPool,
-                resourcePolicy: policy,
             },
             { analysisId: "analysis-1", request: "Assess a CYP liability", session: ctx.session, signal: ctx.signal },
         );

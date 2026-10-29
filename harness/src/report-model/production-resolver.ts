@@ -5,13 +5,13 @@
  * The realization holds three layers. Layer one is identity: membership through `snapshotEntry`, and a
  * streamed hash compare with `computeSha256File`. A hash mismatch fails before any parse. Layer two is
  * the host fast path: an in-process parse of a CSV, a TSV, a JSON, or a parquet file at or under the cap.
- * Layer three is the fall-through: an over-cap file or a host parse fault goes to the extraction arm. On any
- * doubt the read falls through, thus correctness never depends on the host parser. An extension that names
- * no tabular format refuses here, because the host decides the format for both arms.
+ * Layer three is the fall-through: an over-cap file or a host parse fault fails as `extraction-unavailable`.
+ * On any doubt the read falls through, thus the host parser never gives a partial or guessed answer. An
+ * extension that names no tabular format refuses the same way.
  *
  * A read of the bytes is the expensive part, thus an optional `ArtifactReadCache` outlives one resolver. It
- * holds the streamed hash and the extracted rows against a stat signature. Two tool calls of one analysis
- * share one cache, and each call still binds its own extraction arm with its own auth.
+ * holds the streamed hash and the parsed rows against a stat signature. Two tool calls of one analysis
+ * share one cache.
  *
  * The realization calls the shared assert functions in `assert-rules.ts`, and it mirrors the locator walk
  * and the reason choices of `fixture-resolver.ts`. Thus one semantics exists, and the fixture stays the
@@ -35,8 +35,6 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
-import { isWorkflowCancellation } from "../runtime/dbos.js";
-import type { SuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { parseJsonAs } from "../lib/parse-json.js";
@@ -68,37 +66,6 @@ const DEFAULT_CAP_BYTES = 16 * 1024 * 1024;
 const PREPARE_CONCURRENCY = 8;
 
 /**
- * One artifact that the host fast path could not read, addressed for the extraction arm. The `hash` pins
- * the exact bytes, thus the arm reads the same artifact that the identity layer verified.
- *
- * `format` carries the reader that the host decided. The arm never derives a reader from the extension,
- * thus the host arm and the sandbox arm can never read one file two ways.
- */
-export type ExtractionRequest = {
-    readonly path: string;
-    readonly hash: string;
-    readonly format: TabularFormat;
-};
-
-/** The rows that the extraction arm read for one artifact. Downstream the rows share the host path logic. */
-export type ExtractionArtifact = {
-    readonly rows: Array<Record<string, string | number>>;
-};
-
-/**
- * The out-of-process read arm. One `extract` call covers every fall-through artifact of one document
- * pass. The result maps each requested path to its rows. A path that the arm could not read is absent
- * from the map, and the reference at that path fails as `unreadable-artifact`. A refusal of the sandbox of the
- * pass with the suspend flag is the `err`, and each reference of the batch reports its reason.
- *
- * The arm is a seam, thus a test stubs it. While no realization is wired, a fall-through reference fails
- * with `extraction-unavailable`, and the detail names the absent arm.
- */
-export type ExtractionArm = {
-    extract(requests: readonly ExtractionRequest[]): Promise<Result<ReadonlyMap<string, ExtractionArtifact>, SuspendingRefusal>>;
-};
-
-/**
  * The disk facts of one artifact that outlive one resolver.
  *
  * `signature` states the bytes that the pass read: the size, the modification time, and the inode. A later
@@ -113,12 +80,11 @@ export type ArtifactRead = {
 };
 
 /**
- * The read cache of one analysis. It holds what a read of the bytes costs: the streamed hash, and the rows
- * of a file that the host could not parse in process. Two resolvers of one analysis share one cache, thus a
- * preview and the record that follows it hash one unchanged file one time and start one container.
+ * The read cache of one analysis. It holds what a read of the bytes costs: the streamed hash, and the parsed
+ * rows. Two resolvers of one analysis share one cache, thus a preview and the record that follows it hash and
+ * parse one unchanged file one time.
  *
- * The cache holds no authorization and no session value. Each resolver still binds its own extraction arm
- * over the auth of its own call.
+ * The cache holds no authorization and no session value.
  */
 export type ArtifactReadCache = {
     get(absolutePath: string): ArtifactRead | undefined;
@@ -191,22 +157,17 @@ export function createArtifactReadStore(): ArtifactReadStore {
  * The construction deps of the production resolver.
  *
  * `workspaceRoot` and `analysisId` contain the untrusted snapshot path through `resolveWorkspacePath`,
- * the same containment as the preview tool. `cap` gates the cell extraction, and it defaults to 16 MiB.
- * `extractionArm` is optional, because no sandbox realization is wired yet. `readCache` is optional, thus a
- * resolver with no cache reads every artifact itself and its reads die with it.
+ * the same containment as the preview tool. `cap` gates the cell read, and it defaults to 16 MiB.
+ * `readCache` is optional, thus a resolver with no cache reads every artifact itself and its reads die with it.
  */
 export type ProductionResolverDeps = {
     readonly workspaceRoot: string;
     readonly analysisId: string;
     readonly cap?: number;
-    readonly extractionArm?: ExtractionArm;
     readonly readCache?: ArtifactReadCache;
 };
 
-/**
- * The tabular formats that the host fast path reads. The host decides which one a file is, one time, and it
- * carries the decision to the extraction arm. Another extension names no format at all.
- */
+/** The tabular formats that the host fast path reads. Another extension names no format at all. */
 export type TabularFormat = "csv" | "tsv" | "json" | "parquet";
 
 /** The identity of one artifact, computed one time for each path. */
@@ -221,21 +182,13 @@ type ReadyIdentity = Extract<Identity, { kind: "ready" }>;
 /** The cells of one artifact, computed one time for each path that a reference reads. */
 type Cells = { kind: "rows"; rows: Row[] } | { kind: "unavailable"; detail: string } | { kind: "unreadable"; detail: string };
 
-/**
- * The host read outcome, before the extraction arm resolves a fall-through. A fall-through carries the
- * decided format, thus the arm reads the file the same way the host would have. `unsupported-format` never
- * reaches the arm, because no reader is decided and a guess is what this design refuses.
- */
-type HostRead =
-    { kind: "rows"; rows: Row[] } | { kind: "fall-through"; format: TabularFormat; detail: string } | { kind: "unsupported-format"; detail: string };
+/** The host read outcome. A fall-through carries the reason that the host read stopped. */
+type HostRead = { kind: "rows"; rows: Row[] } | { kind: "fall-through"; detail: string } | { kind: "unsupported-format"; detail: string };
 
-/** One fall-through artifact, the reader that the host decided, and the reason that the host arm stopped. */
-type FallThrough = {
-    readonly path: string;
-    readonly hash: string;
-    readonly format: TabularFormat;
-    readonly hostDetail: string;
-};
+/** The cells of a fall-through. No reader outside the host exists, thus the reference fails as `extraction-unavailable`. */
+function fallThroughCells(path: string, hostDetail: string): Cells {
+    return { kind: "unavailable", detail: `the host read of the file at ${path} stopped because ${hostDetail}, and no other reader exists` };
+}
 
 /** Build an `Err` that carries the unresolved reference. The `detail` key is present only when there is a detail to carry. */
 function fail(reference: Reference, reason: UnresolvedReason, detail?: string): Result<ResolvedValue, UnresolvedReference> {
@@ -251,8 +204,7 @@ function describeReference(reference: DerivationInputReference): string {
 /**
  * Map a file extension to the format that the host arm reads. An unknown extension gives back `undefined`.
  *
- * This is the one format decision of the report path. The extraction request carries the answer, thus the
- * sandbox arm never repeats the mapping and the two arms hold no second table between them.
+ * This is the one format decision of the report path.
  */
 function detectFormat(path: string): TabularFormat | undefined {
     switch (extname(path).toLowerCase()) {
@@ -278,8 +230,7 @@ function detectFormat(path: string): TabularFormat | undefined {
  * where the caller detects the loss.
  *
  * A non-finite number is not a cell either. A parquet float column holds a `NaN` or an `Infinity`, thus the
- * coercion drops it and the row omits the key. The extraction script (`tasks/extract-values-script.ts`)
- * drops the same value to `None`, thus the host arm and the sandbox arm read the same bytes the same way.
+ * coercion drops it and the row omits the key.
  */
 export function coerceCell(value: unknown): string | number | undefined {
     if (value === null || value === undefined) {
@@ -491,10 +442,7 @@ async function parseParquet(bytes: Buffer): Promise<Row[] | undefined> {
 
 /**
  * Read the cells of one artifact through the host fast path. An over-cap file and a parse fault each give
- * back a fall-through, thus the arm reads them out of process.
- *
- * An extension that names no tabular format stops here. The arm reads a file by a decided format, and no
- * format is decided, thus the arm has nothing to obey and the read is unavailable.
+ * back a fall-through. An extension that names no tabular format stops here.
  */
 async function hostReadCells(cap: number, path: string, identity: ReadyIdentity): Promise<HostRead> {
     const format = detectFormat(path);
@@ -502,25 +450,25 @@ async function hostReadCells(cap: number, path: string, identity: ReadyIdentity)
         return { kind: "unsupported-format", detail: `the file at ${path} has no supported tabular format, thus no reader is decided for it` };
     }
     if (identity.size > cap) {
-        return { kind: "fall-through", format, detail: `the file size of ${identity.size} bytes is over the ${cap}-byte cap` };
+        return { kind: "fall-through", detail: `the file size of ${identity.size} bytes is over the ${cap}-byte cap` };
     }
     let bytes: Buffer;
     try {
         bytes = await readFile(identity.absolute);
     } catch {
-        return { kind: "fall-through", format, detail: "the file could not be read" };
+        return { kind: "fall-through", detail: "the file could not be read" };
     }
     if (format === "parquet") {
         const rows = await parseParquet(bytes);
-        return rows === undefined ? { kind: "fall-through", format, detail: "the parquet read did not succeed" } : { kind: "rows", rows };
+        return rows === undefined ? { kind: "fall-through", detail: "the parquet read did not succeed" } : { kind: "rows", rows };
     }
     const text = bytes.toString("utf8");
     if (format === "json") {
         const rows = parseJsonTable(text);
-        return rows === undefined ? { kind: "fall-through", format, detail: "the JSON parse did not succeed" } : { kind: "rows", rows };
+        return rows === undefined ? { kind: "fall-through", detail: "the JSON parse did not succeed" } : { kind: "rows", rows };
     }
     const rows = parseDelimited(text, format === "tsv" ? "\t" : ",");
-    return rows === undefined ? { kind: "fall-through", format, detail: "the delimited parse did not succeed" } : { kind: "rows", rows };
+    return rows === undefined ? { kind: "fall-through", detail: "the delimited parse did not succeed" } : { kind: "rows", rows };
 }
 
 /**
@@ -575,60 +523,6 @@ async function computeIdentity(
 }
 
 /**
- * Resolve each fall-through artifact through the extraction arm. One call covers the whole batch. An
- * absent arm gives back `unavailable`, and the detail names the absent arm. An arm that gives no answer
- * for a path gives back `unreadable`.
- */
-async function extractFallThrough(arm: ExtractionArm | undefined, requests: readonly FallThrough[]): Promise<Map<string, Cells>> {
-    const out = new Map<string, Cells>();
-    if (requests.length === 0) {
-        return out;
-    }
-    if (arm === undefined) {
-        for (const request of requests) {
-            out.set(request.path, {
-                kind: "unavailable",
-                detail: `the extraction arm is not wired, and the file at ${request.path} needs it because ${request.hostDetail}`,
-            });
-        }
-        return out;
-    }
-    let answered: Result<ReadonlyMap<string, ExtractionArtifact>, SuspendingRefusal>;
-    try {
-        answered = await arm.extract(requests.map((request) => ({ path: request.path, hash: request.hash, format: request.format })));
-    } catch (cause) {
-        // The arm speaks the throw protocol for a genuine infrastructure fault. This boundary turns the
-        // throw into a value, thus each reference on the batch reads a failure as data. A cancel of the
-        // workflow is not a fault of the read, thus it leaves to DBOS with no change.
-        if (isWorkflowCancellation(cause)) throw cause;
-        for (const request of requests) {
-            out.set(request.path, { kind: "unreadable", detail: `the extraction arm did not read the file at ${request.path}` });
-        }
-        return out;
-    }
-    if (answered.isErr()) {
-        for (const request of requests) {
-            out.set(request.path, {
-                kind: "unavailable",
-                detail: `the host refused the sandbox (${answered.error.reason}), thus the file at ${request.path} was not read`,
-            });
-        }
-        return out;
-    }
-    const answers = answered.value;
-    for (const request of requests) {
-        const answer = answers.get(request.path);
-        out.set(
-            request.path,
-            answer === undefined
-                ? { kind: "unreadable", detail: `the extraction arm did not read the file at ${request.path}` }
-                : { kind: "rows", rows: answer.rows },
-        );
-    }
-    return out;
-}
-
-/**
  * Give back the rows that an earlier pass read for these exact bytes, or `undefined` when nothing shared
  * them. The signature compare is the whole guard: a file that changed on disk holds a different signature,
  * thus the earlier rows never answer for the new bytes.
@@ -639,8 +533,8 @@ function sharedRows(readCache: ArtifactReadCache | undefined, identity: ReadyIde
 }
 
 /**
- * Share the rows of one clean read, thus the next pass over the same bytes starts no second container and
- * parses nothing again. A failed read is transient, thus only rows enter the cache.
+ * Share the rows of one clean read, thus the next pass over the same bytes parses nothing again. A failed
+ * read is transient, thus only rows enter the cache.
  */
 function shareRows(readCache: ArtifactReadCache | undefined, identity: ReadyIdentity, rows: Row[]): void {
     readCache?.set(identity.absolute, { signature: identity.signature, hash: identity.onDiskHash, rows });
@@ -678,7 +572,7 @@ type PathIntent = {
 };
 
 /**
- * Make the production resolver over the workspace root and the optional extraction arm.
+ * Make the production resolver over the workspace root.
  *
  * The resolver holds a per-pass cache. `prepare` groups the references by artifact, reads each file one
  * time, and fills the cache. `resolve` then answers from the cache. A `resolve` with no prior `prepare`
@@ -686,7 +580,7 @@ type PathIntent = {
  * artifact on both paths, and never one read for each reference.
  */
 export function createProductionResolver(deps: ProductionResolverDeps): ReferenceResolver {
-    const { workspaceRoot, analysisId, extractionArm, readCache } = deps;
+    const { workspaceRoot, analysisId, readCache } = deps;
     const cap = deps.cap ?? DEFAULT_CAP_BYTES;
 
     // The per-pass caches. `prepare` clears and refills them, thus a later pass reads the artifacts again.
@@ -709,8 +603,8 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
 
     /**
      * Give back the cells of one path, from the cache after a prepare, or by a fresh read. A fresh read
-     * runs the host fast path, and it resolves a fall-through through the arm as a batch of one. The
-     * outcome enters the cache, thus a second reference at one path opens no second batch.
+     * runs the host fast path. The outcome enters the cache, thus a second reference at one path reads
+     * nothing again.
      */
     async function getCells(path: string, identity: ReadyIdentity): Promise<Cells> {
         const cached = cellsCache.get(path);
@@ -730,18 +624,9 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             cellsCache.set(path, parsed);
             return parsed;
         }
-        if (read.kind === "unsupported-format") {
-            const unavailable: Cells = { kind: "unavailable", detail: read.detail };
-            cellsCache.set(path, unavailable);
-            return unavailable;
-        }
-        const resolved = await extractFallThrough(extractionArm, [{ path, hash: identity.onDiskHash, format: read.format, hostDetail: read.detail }]);
-        const cells = resolved.get(path) ?? { kind: "unreadable", detail: `the extraction arm did not read the file at ${path}` };
-        if (cells.kind === "rows") {
-            shareRows(readCache, identity, cells.rows);
-        }
-        cellsCache.set(path, cells);
-        return cells;
+        const unavailable: Cells = read.kind === "unsupported-format" ? { kind: "unavailable", detail: read.detail } : fallThroughCells(path, read.detail);
+        cellsCache.set(path, unavailable);
+        return unavailable;
     }
 
     /**
@@ -989,7 +874,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             }
         }
         // An earlier pass over these exact bytes already paid for the rows. Take them, thus the second pass
-        // of one analysis parses nothing again and starts no second container.
+        // of one analysis parses nothing again.
         const pending: Array<{ path: string; identity: ReadyIdentity }> = [];
         for (const target of cellTargets) {
             const shared = sharedRows(readCache, target.identity);
@@ -1004,10 +889,6 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             PREPARE_CONCURRENCY,
         );
 
-        // Split the clean reads from the fall-throughs, then resolve every fall-through in one arm call. An
-        // unsupported format reaches no arm, because no reader is decided for it.
-        const fallThrough: FallThrough[] = [];
-        const identityByPath = new Map<string, ReadyIdentity>();
         for (const { target, read } of reads) {
             if (read.kind === "rows") {
                 cellsCache.set(target.path, { kind: "rows", rows: read.rows });
@@ -1015,16 +896,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             } else if (read.kind === "unsupported-format") {
                 cellsCache.set(target.path, { kind: "unavailable", detail: read.detail });
             } else {
-                identityByPath.set(target.path, target.identity);
-                fallThrough.push({ path: target.path, hash: target.identity.onDiskHash, format: read.format, hostDetail: read.detail });
-            }
-        }
-        const resolved = await extractFallThrough(extractionArm, fallThrough);
-        for (const [path, cells] of resolved) {
-            cellsCache.set(path, cells);
-            const identity = identityByPath.get(path);
-            if (cells.kind === "rows" && identity !== undefined) {
-                shareRows(readCache, identity, cells.rows);
+                cellsCache.set(target.path, fallThroughCells(target.path, read.detail));
             }
         }
     }

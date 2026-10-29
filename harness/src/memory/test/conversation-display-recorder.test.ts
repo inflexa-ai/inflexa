@@ -60,7 +60,6 @@ describe("conversation display recorder", () => {
             acceptance_criteria: ["A counts table exists"],
             constraints: ["Use DESeq2"],
             caveats: ["Low depth"],
-            resources: { cpu: 4, memoryGb: 16, gpu: { count: 1 } },
         };
         await recorder.emit({ type: "data-plan", source: TOP, data: { id: "pres-1", planId: "pln-0123abcd", steps: [step] } });
 

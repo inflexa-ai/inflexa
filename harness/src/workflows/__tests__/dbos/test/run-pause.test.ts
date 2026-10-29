@@ -11,7 +11,7 @@
  *     `running`, and the resume completes the run.
  *   - A refused charge with the suspend flag pauses the run before any step, and the charge opens again after the
  *     resume.
- *   - A refused spawn and a refused registration with the suspend flag pause the step at the gate, and the step calls
+ *   - A refused registration with the suspend flag pauses the step at the gate, and the step calls
  *     the gate again after the resume.
  *   - The text `budget_exceeded` in a failed request with the status 400 never pauses: the step fails.
  */
@@ -40,6 +40,7 @@ import { inProcessSubAgent } from "../../../../loop/sub-agent.js";
 import { createWorkingMemory } from "../../../../memory/working-memory.js";
 import { unusedChatProvider } from "../../../../providers/__fixtures__/chat-provider.js";
 import type { SandboxClient } from "../../../../sandbox/client.js";
+import { fakeLeases, leaseOverClient } from "../../../../sandbox/__fixtures__/leases.js";
 import type { SandboxRef } from "../../../../sandbox/types.js";
 import type { AnalysisStep } from "../../../../schemas/workflow-state.js";
 import { insertRun, queryRun, queryStepsByRun, upsertAnalysis } from "../../../../state/index.js";
@@ -114,7 +115,7 @@ function stepDeps(current: RunCase, stepId: string): SandboxStepDeps {
         runAuthorizer: createLocalRunAuthorizer(),
         provider: script.provider,
         embedding: { dimensions: 3, embed: (texts: readonly string[]) => okAsync(texts.map(() => [0, 0, 0])) },
-        sandboxClient: current.sandboxClient,
+        leases: fakeLeases(leaseOverClient(current.sandboxClient, SANDBOX_REF)),
         artifactRegistry: current.artifactRegistry,
         workspaceFs: makeFakeWorkspaceFs(),
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
@@ -184,7 +185,6 @@ function planStep(id: string): AnalysisStep {
         acceptance_criteria: ["noop"],
         depends_on: [],
         status: "pending",
-        resources: { cpu: 2, memoryGb: 4 },
         agent: AGENT_ID,
         maxSteps: 10,
     };
@@ -204,7 +204,6 @@ const parent = DBOS.registerWorkflow(
                 steps: current.stepIds.map((id) => ({ id, depends_on: [] })),
                 planStepById: Object.fromEntries(current.stepIds.map((id) => [id, planStep(id)])),
                 agentByStepId: Object.fromEntries(current.stepIds.map((id) => [id, AGENT_ID])),
-                resourcesByStepId: Object.fromEntries(current.stepIds.map((id) => [id, { cpu: 2, memoryGb: 4 }])),
                 synthesisEnabled: false,
                 runSession: {
                     identity: { user: "u-1" },
@@ -243,6 +242,7 @@ function sandboxClientOf(spawn: SandboxClient["createSandbox"]): SandboxClient {
         teardownById: () => Promise.resolve(undefined),
         listManagedSandboxes: () => Promise.resolve([]),
         toolchainSource: "store",
+        resourceLimits: { maxCpu: 4, maxMemoryGb: 16, maxGpuCount: 0 },
     };
 }
 
@@ -414,35 +414,6 @@ describe("the pause of a run", () => {
         expect(result.status).toBe("completed");
         expect(current.childStarts).toEqual(["S1"]);
         expect(ends).toEqual(["close:ok"]);
-        expect((await queryPausesOfWork(rig.pool, current.analysisId, runId))._unsafeUnwrap()).toEqual([]);
-    }, 60_000);
-
-    it("a refused spawn with the suspend flag pauses the step before any machine, and the step spawns again after the resume", async () => {
-        let attempts = 0;
-        const machines: string[] = [];
-        const { runId, planId, current } = await prepareRun("run-pause-spawn", {
-            scripts: { S1: completesStep() },
-            sandboxClient: sandboxClientOf(() => {
-                attempts += 1;
-                if (attempts === 1) return errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true });
-                machines.push(SANDBOX_REF.sandboxId);
-                return okAsync(SANDBOX_REF);
-            }),
-        });
-        const handle = await DBOS.startWorkflow(parent, { workflowID: runId })({ analysisId: current.analysisId, planId });
-
-        const row = await waitForPause(current, runId);
-        expect(row).toMatchObject({ workId: runId, workKind: "run", cause: { kind: "host", reason: "account_frozen" } });
-        expect(attempts).toBe(1);
-        expect(machines).toEqual([]);
-        expect(current.scripts.get("S1")?.calls).toEqual([]);
-
-        await resume(current, runId);
-        const result = await handle.getResult();
-
-        expect(result.status).toBe("completed");
-        expect(attempts).toBe(2);
-        expect(machines).toEqual([SANDBOX_REF.sandboxId]);
         expect((await queryPausesOfWork(rig.pool, current.analysisId, runId))._unsafeUnwrap()).toEqual([]);
     }, 60_000);
 

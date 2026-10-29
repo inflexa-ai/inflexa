@@ -187,7 +187,6 @@ function validCandidate(stepOverrides: Record<string, unknown> = {}) {
                 depends_on: [],
                 agent: PLANNABLE_AGENT_IDS[0],
                 capability: FIRST_AGENT_CAPABILITY,
-                resources: { cpu: 2, memoryGb: 8 },
                 packages: ["pydeseq2"],
                 ...stepOverrides,
             },

@@ -59,7 +59,7 @@ import { createSearchGithubReposTool } from "./search-github-repos.js";
 import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
-import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/resource-limits.js";
+import { DEFAULT_SANDBOX_MAX_STEPS } from "../../config/resource-limits.js";
 import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
@@ -229,10 +229,9 @@ function traceOf(steps: readonly LoopStep[]): PlannerTrace {
 
 // ── Prompt / catalog ────────────────────────────────────────────────
 
-/** The planner system prompt is deterministic per policy — build it once per
- *  factory (the policy is a construction-time dep, fixed for the process). */
-function plannerInstructions(resourcePolicy?: ResourcePolicy): string {
-    return plannerPrompt(formatAgentCatalog(), resourcePolicy);
+/** The planner system prompt is deterministic for the process: the catalog is fixed at load. */
+function plannerInstructions(): string {
+    return plannerPrompt(formatAgentCatalog());
 }
 
 // ── Shared types ────────────────────────────────────────────────────
@@ -676,7 +675,7 @@ function restoreSkeletonGrounding(
  * Full validation: Zod schema + semantic checks. The plan is valid only if
  * BOTH pass.
  */
-function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
+function fullyValidate(candidate: unknown): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
     // The permissive arg schema of the planner tools accepts a string, thus the
     // loop-boundary repair never sees a plan that a model sent as a JSON-encoded
     // string. A small model does this on a large nested schema. Decode it here,
@@ -690,20 +689,17 @@ function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { v
 
     // Semantic checks operate on the AnalysisPlan shape — PlannerPlan omits
     // maxSteps, so inject the execution-time default to satisfy the validator.
-    const semantic = validatePlan(
-        {
-            analytical_narrative: parsed.data.analytical_narrative,
-            steps: parsed.data.steps.map((s) => ({
-                ...s,
-                status: "pending" as const,
-                maxSteps: DEFAULT_SANDBOX_MAX_STEPS,
-            })),
-            created_at: parsed.data.created_at,
-            omicsType: parsed.data.omicsType,
-            omicsSubtype: parsed.data.omicsSubtype,
-        },
-        { perStepCeiling: resourcePolicy?.perStep },
-    );
+    const semantic = validatePlan({
+        analytical_narrative: parsed.data.analytical_narrative,
+        steps: parsed.data.steps.map((s) => ({
+            ...s,
+            status: "pending" as const,
+            maxSteps: DEFAULT_SANDBOX_MAX_STEPS,
+        })),
+        created_at: parsed.data.created_at,
+        omicsType: parsed.data.omicsType,
+        omicsSubtype: parsed.data.omicsSubtype,
+    });
 
     if (!semantic.valid) {
         return {
@@ -735,7 +731,7 @@ type InnerTools = {
  * Build the planner's inner tools for one invocation. `memory` holds the last
  * `knowledge_recommend` answer of the run, which the loop folds after each round.
  */
-function buildInnerTools(resourcePolicy: ResourcePolicy | undefined, logger: Logger, memory: RecommendMemory): InnerTools {
+function buildInnerTools(logger: Logger, memory: RecommendMemory): InnerTools {
     const submitPlanTool = defineTool({
         id: SUBMIT_PLAN_TOOL_ID,
         description:
@@ -762,7 +758,7 @@ function buildInnerTools(resourcePolicy: ResourcePolicy | undefined, logger: Log
             if (stamped.length > 0) logger.info("submit_plan stamped the snapshot digest of the answer on steps", { steps: stamped });
             if (restored.length > 0) logger.info("submit_plan restored the template of skeleton steps", { steps: restored });
             if (repaired.length > 0) logger.info("submit_plan repaired the claim ids of plan steps", { claims: repaired });
-            const result = fullyValidate(candidate, resourcePolicy);
+            const result = fullyValidate(candidate);
             // An unknown claim rejects a plan that the schema accepts, beside the
             // schema issues when the schema rejects it, thus one attempt shows both.
             if (!result.valid || unknown.length > 0) {
@@ -1038,12 +1034,6 @@ export type GeneratePlanDeps = EnvironmentStorePaths & {
     };
     /** Database pool — plan persistence and prior-plan loading. */
     readonly pool: Pool;
-    /**
-     * Host resource policy — stated to the planner as concrete per-step
-     * ceilings and enforced by `submit_plan`. Absent, the prompt keeps its
-     * default guidance and validation skips the ceiling check.
-     */
-    readonly resourcePolicy?: ResourcePolicy;
     /** Diagnostic sink. Absent, the tool runs silently — see `LoopOptions.logger`. */
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the planner loop; omitted falls back to the no-op recorder. */
@@ -1327,7 +1317,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         // and repairs or refuses a claim id the answer did not return. The loop
         // folds each answer after its round, on the first run and on a replay.
         const memory: RecommendMemory = { steps: new Map(), claims: new Set() };
-        const innerTools = buildInnerTools(deps.resourcePolicy, logger, memory);
+        const innerTools = buildInnerTools(logger, memory);
         // Built here rather than at construction: a `describeCall` hook reads no
         // dep, thus the tool must stay constructible from an empty bag. The tool
         // definitions are identical across invocations, thus the request prefix
@@ -1338,7 +1328,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         const readTools = deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : [];
         const planner: AgentDefinition = {
             id: PLANNER_AGENT_ID,
-            systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
+            systemPrompt: composeSystemPrompt(plannerInstructions()),
             model: deps.conversation.model,
             // The search tools come first, and the terminal tools come last.
             // The order is the order of the prompt, and it is stable across

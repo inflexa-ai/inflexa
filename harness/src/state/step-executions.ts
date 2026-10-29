@@ -1,7 +1,5 @@
 /**
  * `cortex_step_executions` operations — step lifecycle and retry telemetry.
- * The `sandbox_ref` column is read/written by the sibling `active-sandboxes`
- * module.
  */
 
 import type { ResultAsync } from "neverthrow";
@@ -229,7 +227,7 @@ export function queryStepsByRun(pool: StepRowQuerier, runId: string): ResultAsyn
             text: `SELECT run_id, step_id, analysis_id, wave, agent_id,
                  status, started_at, completed_at, duration_ms, error,
                  attempts, last_error_class, finish_reason, hit_max_steps,
-                 blocked_reason, sandbox_ref, child_workflow_id
+                 blocked_reason, child_workflow_id
           FROM cortex_step_executions
           WHERE run_id = $1
           ORDER BY wave, started_at NULLS LAST, step_id`,
@@ -257,7 +255,6 @@ function mapStepExecutionRow(row: Record<string, unknown>): StepExecutionRow {
         finishReason: row.finish_reason ?? null,
         hitMaxSteps: row.hit_max_steps === 1 || row.hit_max_steps === true,
         blockedReason: row.blocked_reason ?? null,
-        sandboxRef: row.sandbox_ref ?? null,
         childWorkflowId: row.child_workflow_id ?? null,
     });
 }

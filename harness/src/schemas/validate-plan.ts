@@ -9,13 +9,11 @@
  * 1. Topological sort succeeds (no cycles, no missing deps)
  * 2. Output prefix uniqueness
  * 3. All agent assignments exist in the agent catalog
- * 4. All steps have resources defined
  */
 
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
-import type { ResourceLimits } from "../config/resource-limits.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
 import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js";
 import { isLabelValue } from "../sandbox/labels.js";
@@ -37,18 +35,6 @@ const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([...STEP_SUBDIRS, SYNTHES
 export type ValidationResult = {
     valid: boolean;
     errors: string[];
-};
-
-export type ValidatePlanOptions = {
-    /**
-     * Host per-step resource ceilings. When present, a step whose declared
-     * `resources` exceed them is an error — the planner gets actionable
-     * feedback at plan time instead of a silent clamp at sandbox creation.
-     * The plan-generation path passes this; `execute_analysis` plan mode deliberately does
-     * not, so stored plans that predate the policy keep running (the
-     * sandbox-creation clamp remains their backstop).
-     */
-    readonly perStepCeiling?: ResourceLimits;
 };
 
 /**
@@ -105,7 +91,7 @@ export function deriveOutputPrefix(stepId: string): string {
  * Returns `valid: true` if the plan passes all checks, or `valid: false`
  * with a list of human-readable error strings.
  */
-export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions): ValidationResult {
+export function validatePlan(plan: AnalysisPlan): ValidationResult {
     const errors: string[] = [];
 
     if (plan.steps.length === 0) {
@@ -151,29 +137,7 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         }
     }
 
-    // 4. Resources validation
-    const ceiling = options?.perStepCeiling;
-    for (const step of plan.steps) {
-        if (!step.resources) {
-            errors.push(`Step "${step.id}" has no resources defined — cpu and memoryGb are required`);
-            continue;
-        }
-        if (!ceiling) continue;
-        if (step.resources.cpu > ceiling.maxCpu) {
-            errors.push(
-                `Step "${step.id}" requests cpu: ${step.resources.cpu} but this host allows at most ` +
-                    `${ceiling.maxCpu} per step — reduce cpu or restructure the step`,
-            );
-        }
-        if (step.resources.memoryGb > ceiling.maxMemoryGb) {
-            errors.push(
-                `Step "${step.id}" requests memoryGb: ${step.resources.memoryGb} but this host allows at most ` +
-                    `${ceiling.maxMemoryGb} per step — reduce memoryGb or restructure the step`,
-            );
-        }
-    }
-
-    // 5. Reserved step-id names (collide with artifact subdirectories or the
+    // 4. Reserved step-id names (collide with artifact subdirectories or the
     //    run-phase synthesis ledger row)
     for (const step of plan.steps) {
         if (RESERVED_STEP_IDS.has(step.id.toLowerCase())) {
@@ -185,7 +149,7 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         }
     }
 
-    // 6. Each package entry is a query of the one grammar. The validation IS
+    // 5. Each package entry is a query of the one grammar. The validation IS
     //    the parse, thus no second reader of the grammar can disagree with the
     //    link pass. An absent array passes, because stored plans from before
     //    the field carry none.
@@ -196,7 +160,7 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         }
     }
 
-    // 7. Step-id path safety. The id becomes the `runs/{runId}/{stepId}` directory
+    // 6. Step-id path safety. The id becomes the `runs/{runId}/{stepId}` directory
     //    segment and a `/{analysisId}/…` container mount path; an unsafe segment
     //    (a slash, or `.`/`..`) could traverse or widen the mount. The sandbox
     //    mount boundary also rejects these (assertSafeId), but catching it here
@@ -211,7 +175,7 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
         }
     }
 
-    // 8. Step-id label safety. The id also becomes the value of the sandbox
+    // 7. Step-id label safety. The id also becomes the value of the sandbox
     //    label `cortex/step-id`, and the harness stamps a label value with no
     //    change (sandbox-labels spec). A safe id can be too long for a label
     //    value, or it can start or end with a separator. Refused here, the

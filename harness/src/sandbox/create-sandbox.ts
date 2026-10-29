@@ -2,13 +2,8 @@
  * Backend-selected `SandboxClient` factory.
  *
  * Docker for local dev, K8s for production — the single place the
- * `SANDBOX_BACKEND` env decision lives. Injected at the composition root
- * as a construction-time dependency (see the harness-durable-runtime spec); callers do NOT import a
- * backend module directly.
- *
- * Registry write/clear callbacks are wired here so the per-backend
- * `createSandbox` / `teardown` implementations stay free of state-layer
- * coupling (they just call the closures we hand them). `exec` is
+ * `SANDBOX_BACKEND` env decision lives. The embedder makes the client and gives
+ * it to `assembleCoreRuntime`, and only the sandbox module calls it. `exec` is
  * backend-agnostic — it only needs the SandboxRef.
  */
 
@@ -18,7 +13,6 @@ import { join } from "node:path";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { V1Toleration } from "@kubernetes/client-node";
 import { ResultAsync, err, okAsync, type Result } from "neverthrow";
-import type { Querier } from "../state/db.js";
 
 import type { SpawnSession } from "../auth/types.js";
 import { passGate } from "../lib/hooks.js";
@@ -27,14 +21,12 @@ import { recordSandboxExec } from "../lib/metrics.js";
 import { ATTR_INFLEXA_EXEC_ID, stableSpan } from "../lib/otel-spans.js";
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
-import { tryMutation } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import { setSandboxRef } from "../state/index.js";
 import { capExecStreams, EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
 import { runExec, stepExecId, type ExecDeps } from "./exec.js";
-import { noteExecOutcome, sandboxExecOutcomeOf, summarizeExec } from "./exec-outcome.js";
+import { sandboxExecOutcomeOf } from "./exec-outcome.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { mountCoordsOf, sandboxWriteTail, type MountPlanCoords } from "./mount-plan.js";
 import { SandboxFailure, type SandboxError } from "./sandbox-error.js";
@@ -51,8 +43,6 @@ export type SandboxBackendConfig = {
 };
 
 export type CreateSandboxClientConfig = {
-    /** App pool — used for registry writes inside the create/teardown steps. */
-    pool: Querier;
     /** Backend default + namespace fallback source. */
     env: SandboxBackendConfig;
     /** Default sandbox-base image when the workflow doesn't override per-step. */
@@ -210,6 +200,16 @@ export async function precreateStepTree(
     }
 }
 
+/** Pre-create the directory of the exec records of the lease, which each machine of the lease mounts read-write. */
+export async function precreateRecordDir(
+    deps: { resolveWorkspaceRoot: ResolveWorkspaceRoot; stepTreeAccess?: "world-writable" },
+    coords: MountPlanCoords,
+): Promise<void> {
+    const recordDir = tailWritePrefix({ workspaceRoot: await deps.resolveWorkspaceRoot(coords.analysisId), tail: coords.recordTail });
+    await mkdir(recordDir, { recursive: true });
+    if (deps.stepTreeAccess === "world-writable") await chmod(recordDir, 0o777);
+}
+
 export function createSandboxClient(config: CreateSandboxClientConfig): SandboxClient {
     const backend = config.backend ?? config.env.backend;
     // Normalized once, here, and handed to the backends and to the client
@@ -250,10 +250,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
      */
     const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);
 
-    const registerSandbox = async (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef): Promise<void> => {
-        unwrapOrThrow(await setSandboxRef(config.pool, session.runFrame.runId, session.runFrame.stepId, ref));
-    };
-
     const ops =
         backend === "k8s"
             ? createK8sSandboxOps({
@@ -272,7 +268,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   tolerations: config.tolerations,
                   runtimeClassName: config.runtimeClassName,
                   logger: config.logger,
-                  registerSandbox,
               })
             : createDockerSandboxOps({
                   image: config.image,
@@ -285,30 +280,10 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   platform: config.platform,
                   engineSocketPath: config.engineSocketPath,
                   logger: config.logger,
-                  registerSandbox,
               });
 
-    // `teardown` needs the registry-clear closure but the SandboxRef alone
-    // doesn't carry runId/stepId. Wrap the backend impl so callers pass the
-    // ref + step coordinates and the wrapper does the clear after the
-    // backend-level removal.
     const teardown = async (ref: SandboxRef): Promise<void> => {
         unwrapOrThrow((await ops.teardown(ref)).mapErr(failing));
-        // Sandboxes are 1-per-step (see `sandbox-step.ts` body — each child
-        // workflow calls `createSandbox` once then `teardown` once), so the
-        // broad WHERE clause matches exactly one row. If that invariant ever
-        // changes (e.g. a step reuses a sibling's sandbox), this clear must
-        // be scoped to (run, step) to avoid wiping prior steps' provenance.
-        unwrapOrThrow(
-            await tryMutation("createSandbox.teardownClearSandboxRef", async () => {
-                await config.pool.query({
-                    text: `UPDATE cortex_step_executions
-            SET sandbox_ref = NULL
-            WHERE sandbox_ref->>'sandboxId' = $1`,
-                    values: [ref.sandboxId],
-                });
-            }),
-        );
     };
 
     // One arbiter for both surfaces: the client's `isAlive` method and the
@@ -347,14 +322,13 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         // The config states an engine fact (binds preserve host ownership);
         // which remediation that fact demands — today, a world-writable step
         // write tree — is harness-owned and chosen here, not by the embedder.
+        const treeDeps = {
+            resolveWorkspaceRoot: config.resolveWorkspaceRoot,
+            stepTreeAccess: config.engineBindOwnership === "host-preserved" ? ("world-writable" as const) : undefined,
+        };
+        const coords = mountCoordsOf(session, spec);
         const precreated = await ResultAsync.fromPromise(
-            precreateStepTree(
-                {
-                    resolveWorkspaceRoot: config.resolveWorkspaceRoot,
-                    stepTreeAccess: config.engineBindOwnership === "host-preserved" ? "world-writable" : undefined,
-                },
-                mountCoordsOf(session, spec),
-            ),
+            Promise.all([precreateStepTree(treeDeps, coords), precreateRecordDir(treeDeps, coords)]),
             createFailed("createSandbox.precreateStepTree"),
         );
         if (precreated.isErr()) return err(precreated.error);
@@ -365,6 +339,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
 
     return {
         toolchainSource,
+        resourceLimits: config.resourceLimits,
         createSandbox: (session, spec, identity) => new ResultAsync(createSandbox(session, spec, identity)),
         // The one place an ExecResult crosses from the wire into the process, so
         // the cap lands here rather than at each consumer. Every downstream use —
@@ -393,7 +368,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                         peakMemoryBytes: result.usage?.peakMemoryBytes,
                         cpuMillis: result.usage?.cpuMillis,
                     });
-                    noteExecOutcome(ref.sandboxId, summarizeExec(result));
                     return result;
                 },
                 { name: "sandbox.exec" },
@@ -405,6 +379,3 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         listManagedSandboxes: async () => unwrapOrThrow((await ops.listManagedSandboxes()).mapErr(failing)),
     };
 }
-
-/** Re-exports so consumers import once from this module. */
-export { clearSandboxRef } from "../state/index.js";

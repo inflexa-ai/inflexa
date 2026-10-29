@@ -6,6 +6,7 @@ import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js
 import type { ExecRequest, ExecResult } from "../../sandbox/types.js";
 import type { ListResult, ReadBytesResult, ReadFileResult, StatResult, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { enrichShapes, readHeaders, type EnrichShapesArgs } from "../enrich.js";
+import { leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
 import { observeShapes } from "../shapes.js";
 import type { ScannedFile } from "../types.js";
 import type { AgentSession } from "../../auth/types.js";
@@ -79,7 +80,6 @@ function enrichArgs(overrides: Pick<EnrichShapesArgs, "shapes" | "fs"> & Partial
     return {
         session: SESSION,
         mountRoot: "/a1",
-        deadlineMs: Date.now() + 60_000,
         emit: async () => {},
         ...overrides,
     };
@@ -92,7 +92,7 @@ describe("enrichShapes", () => {
         const { client, submitted } = recordingSandbox();
 
         const shapes = await enrichShapes(
-            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+            enrichArgs({ shapes: observed.shapes, fs, lease: leaseOverClient(client, { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" }) }),
         );
 
         expect(reads.map((read) => read.path).sort()).toEqual([
@@ -148,7 +148,7 @@ describe("enrichShapes", () => {
         const { client, submitted } = recordingSandbox();
 
         const shapes = await enrichShapes(
-            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+            enrichArgs({ shapes: observed.shapes, fs, lease: leaseOverClient(client, { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" }) }),
         );
 
         expect(submitted.map((body) => body.command.slice(3))).toEqual([["/a1/data/inputs/tables/counts_1.parquet"]]);
@@ -175,7 +175,7 @@ describe("enrichShapes", () => {
         const client = failingSandbox({ exitCode: 1, stderr: "python3: not found" });
 
         const shapes = await enrichShapes(
-            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+            enrichArgs({ shapes: observed.shapes, fs, lease: leaseOverClient(client, { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" }) }),
         );
 
         expect(presentAt(shapes, 0).header?.unavailable).toBe("container decoder exited 1: python3: not found");
@@ -187,7 +187,7 @@ describe("enrichShapes", () => {
         const client = failingSandbox({ exitCode: null, timedOut: true });
 
         const shapes = await enrichShapes(
-            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+            enrichArgs({ shapes: observed.shapes, fs, lease: leaseOverClient(client, { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" }) }),
         );
 
         expect(presentAt(shapes, 0).header?.unavailable).toBe("container decoder timed out after 120s");
@@ -199,7 +199,7 @@ describe("enrichShapes", () => {
         const client = failingSandbox({ exitCode: 0 });
 
         const shapes = await enrichShapes(
-            enrichArgs({ shapes: observed.shapes, fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+            enrichArgs({ shapes: observed.shapes, fs, lease: leaseOverClient(client, { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" }) }),
         );
 
         expect(presentAt(shapes, 0).header?.unavailable).toBe("container decoder reported nothing for this member");
@@ -215,8 +215,7 @@ describe("enrichShapes", () => {
             ...enrichArgs({
                 shapes: [],
                 fs: readSeam({}).fs,
-                sandboxClient: failingSandbox({ stdout }),
-                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+                lease: leaseOverClient(failingSandbox({ stdout }), { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" }),
             }),
             targets: [
                 { path: "data/a.parquet", format: "parquet" },
@@ -236,8 +235,12 @@ describe("enrichShapes", () => {
             ...enrichArgs({
                 shapes: [],
                 fs: readSeam({}).fs,
-                sandboxClient: failingSandbox({ stdout, stdoutTruncated: true }),
-                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+                lease: leaseOverClient(failingSandbox({ stdout, stdoutTruncated: true }), {
+                    sandboxId: "s1",
+                    host: "127.0.0.1",
+                    port: 8080,
+                    backend: "docker",
+                }),
             }),
             targets: [
                 { path: "data/a.parquet", format: "parquet" },
@@ -255,8 +258,12 @@ describe("enrichShapes", () => {
             ...enrichArgs({
                 shapes: [],
                 fs: readSeam({}).fs,
-                sandboxClient: failingSandbox({ stdout, stdoutTruncated: true }),
-                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+                lease: leaseOverClient(failingSandbox({ stdout, stdoutTruncated: true }), {
+                    sandboxId: "s1",
+                    host: "127.0.0.1",
+                    port: 8080,
+                    backend: "docker",
+                }),
             }),
             targets: [
                 { path: "data/a.parquet", format: "parquet" },
@@ -272,8 +279,12 @@ describe("enrichShapes", () => {
             ...enrichArgs({
                 shapes: [],
                 fs: readSeam({}).fs,
-                sandboxClient: failingSandbox({ stdout: "", stdoutTruncated: true, exitCode: 2, stderr: "boom" }),
-                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+                lease: leaseOverClient(failingSandbox({ stdout: "", stdoutTruncated: true, exitCode: 2, stderr: "boom" }), {
+                    sandboxId: "s1",
+                    host: "127.0.0.1",
+                    port: 8080,
+                    backend: "docker",
+                }),
             }),
             targets: [{ path: "data/b.h5ad", format: "h5ad" }],
         });
@@ -288,8 +299,12 @@ describe("enrichShapes", () => {
             ...enrichArgs({
                 shapes: [],
                 fs: readSeam({}).fs,
-                sandboxClient: failingSandbox({ stdout: "", stdoutTruncated: true, timedOut: true, exitCode: null }),
-                sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" },
+                lease: leaseOverClient(failingSandbox({ stdout: "", stdoutTruncated: true, timedOut: true, exitCode: null }), {
+                    sandboxId: "s1",
+                    host: "127.0.0.1",
+                    port: 8080,
+                    backend: "docker",
+                }),
             }),
             targets: [{ path: "data/b.h5ad", format: "h5ad" }],
         });
@@ -304,7 +319,7 @@ describe("enrichShapes", () => {
         const { client, submitted } = recordingSandbox();
 
         const shapes = await enrichShapes(
-            enrichArgs({ shapes: [], fs, sandboxClient: client, sandbox: { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" } }),
+            enrichArgs({ shapes: [], fs, lease: leaseOverClient(client, { sandboxId: "s1", host: "127.0.0.1", port: 8080, backend: "docker" }) }),
         );
 
         expect(shapes).toEqual([]);

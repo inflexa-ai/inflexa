@@ -21,6 +21,7 @@
 import type { ResultAsync } from "neverthrow";
 
 import type { SpawnSession } from "../auth/types.js";
+import type { ResourceLimits } from "../config/resource-limits.js";
 import type { SandboxError } from "./sandbox-error.js";
 import type { ExecEmit, ExecRequest, ExecResult, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
 
@@ -34,6 +35,9 @@ export type SandboxClient = {
      * optional field would carry two meanings, undeclared and unknown.
      */
     readonly toolchainSource: ToolchainSource;
+
+    /** The per-machine ceilings that the client clamps each spawn to. The sandbox module clamps a lease request to the same values. */
+    readonly resourceLimits: ResourceLimits;
 
     /**
      * DBOS step (`sandbox.create`) — the spawn half of the two-step create
