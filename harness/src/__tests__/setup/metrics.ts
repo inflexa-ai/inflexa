@@ -28,11 +28,13 @@ export function captureMetrics(): MetricsCapture {
 
     const find = async (name: string): Promise<MetricData | undefined> => {
         await provider.forceFlush();
-        return exporter
+        // The exporter keeps each export, and each export is cumulative, thus the last one holds the current value.
+        const matches = exporter
             .getMetrics()
             .flatMap((rm) => rm.scopeMetrics)
             .flatMap((sm) => sm.metrics)
-            .find((m) => m.descriptor.name === name);
+            .filter((m) => m.descriptor.name === name);
+        return matches.at(-1);
     };
 
     return {

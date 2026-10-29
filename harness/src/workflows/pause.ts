@@ -20,6 +20,7 @@ import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
+import { trackWorkPaused } from "../lib/metrics.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isTurnCredentialMissing } from "../loop/turn-credentials.js";
 import { modelFailureOf } from "../providers/errors.js";
@@ -173,35 +174,40 @@ export function workPause(scope: PauseScope): WorkPause {
         await scope.emit({ type: "data-pause", id: workflowId, ...work, state, cause, attempt, retryAt });
         log.warn("work paused", { workflowId, ...work, state, cause: cause.kind, attempt });
 
-        const waited = await waitForMessage(topic, delayMs, signal);
         let end: PauseEnd;
-        if (waited === "hold") {
-            // A person held the work: the timer stops, and the work waits for a resume.
-            await DBOS.runStep(
-                async () =>
-                    unwrapOrThrow(
-                        await recordPause(scope.pool, {
-                            workflowId,
-                            ...work,
-                            analysisId: scope.analysisId,
-                            threadId: scope.threadId,
-                            state: "paused",
-                            cause,
-                            attempt,
-                            topic,
-                            pausedAt: new Date(pausedAt).toISOString(),
-                            runSession: scope.run?.session,
-                        }),
-                    ),
-                { name: "pause.hold" },
-            );
-            await suspendCredential("pause.hold.suspend");
-            await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "paused", cause, attempt });
-            log.info("work held", { workflowId, ...work, attempt });
-            const held = await waitForMessage(topic, undefined, signal);
-            end = held === "hold" ? "resume" : held;
-        } else {
-            end = waited;
+        const untrack = trackWorkPaused({ workKind: scope.workKind });
+        try {
+            const waited = await waitForMessage(topic, delayMs, signal);
+            if (waited === "hold") {
+                // A person held the work: the timer stops, and the work waits for a resume.
+                await DBOS.runStep(
+                    async () =>
+                        unwrapOrThrow(
+                            await recordPause(scope.pool, {
+                                workflowId,
+                                ...work,
+                                analysisId: scope.analysisId,
+                                threadId: scope.threadId,
+                                state: "paused",
+                                cause,
+                                attempt,
+                                topic,
+                                pausedAt: new Date(pausedAt).toISOString(),
+                                runSession: scope.run?.session,
+                            }),
+                        ),
+                    { name: "pause.hold" },
+                );
+                await suspendCredential("pause.hold.suspend");
+                await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "paused", cause, attempt });
+                log.info("work held", { workflowId, ...work, attempt });
+                const held = await waitForMessage(topic, undefined, signal);
+                end = held === "hold" ? "resume" : held;
+            } else {
+                end = waited;
+            }
+        } finally {
+            untrack();
         }
 
         await DBOS.runStep(async () => unwrapOrThrow(await clearPause(scope.pool, workflowId)), { name: "pause.clear" });

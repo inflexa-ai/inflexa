@@ -26,7 +26,7 @@ import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Connectable } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
-import { recordLeaseWait, recordMachineReplaced, recordMachineStart, type MachineReplacementCause } from "../lib/metrics.js";
+import { recordLeaseWait, recordMachineReplaced, recordMachineStart, trackLeaseWorkflow, type MachineReplacementCause } from "../lib/metrics.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
@@ -252,174 +252,183 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
 
     // ── The lease workflow ────────────────────────────────────────────
 
-    const leaseWorkflow = DBOS.registerWorkflow(
-        async (input: LeaseWorkflowInput): Promise<void> => {
-            const log = logger.with({ leaseWorkflowId: input.leaseWorkflowId, ownerWorkflowId: input.ownerWorkflowId });
-            const id = input.leaseWorkflowId;
-            const pause = workPause({
-                pool,
-                workId: input.work.id,
-                workKind: input.work.kind,
-                analysisId: input.analysisId,
-                // A host reads the streams of the work, not of the lease workflow. The wait of the consumer mirrors the pause.
-                emit: () => Promise.resolve(),
-                retryDelaysMs: config.pauseRetryDelaysMs,
-                run: { session: input.session, authorizer: config.runAuthorizer },
-                logger: log,
-            });
+    const runLease = async (input: LeaseWorkflowInput): Promise<void> => {
+        const log = logger.with({ leaseWorkflowId: input.leaseWorkflowId, ownerWorkflowId: input.ownerWorkflowId });
+        const id = input.leaseWorkflowId;
+        const pause = workPause({
+            pool,
+            workId: input.work.id,
+            workKind: input.work.kind,
+            analysisId: input.analysisId,
+            // A host reads the streams of the work, not of the lease workflow. The wait of the consumer mirrors the pause.
+            emit: () => Promise.resolve(),
+            retryDelaysMs: config.pauseRetryDelaysMs,
+            run: { session: input.session, authorizer: config.runAuthorizer },
+            logger: log,
+        });
 
-            const ownerEnded = (): Promise<boolean> =>
-                DBOS.runStep(
-                    async () => {
-                        const status = await DBOS.getWorkflowStatus(input.ownerWorkflowId);
-                        return status === null || TERMINAL_STATUSES.has(status.status);
-                    },
-                    { name: "lease.owner" },
-                );
+        const ownerEnded = (): Promise<boolean> =>
+            DBOS.runStep(
+                async () => {
+                    const status = await DBOS.getWorkflowStatus(input.ownerWorkflowId);
+                    return status === null || TERMINAL_STATUSES.has(status.status);
+                },
+                { name: "lease.owner" },
+            );
 
-            const wakeNext = async (): Promise<void> => {
-                const next = await DBOS.runStep(async () => unwrapOrThrow(await oldestWaiting(pool)), { name: "lease.next" });
-                if (next !== undefined && next !== id) await DBOS.send(next, { kind: "capacity" } satisfies LeaseMessage, LEASE_TOPIC);
-            };
+        const wakeNext = async (): Promise<void> => {
+            const next = await DBOS.runStep(async () => unwrapOrThrow(await oldestWaiting(pool)), { name: "lease.next" });
+            if (next !== undefined && next !== id) await DBOS.send(next, { kind: "capacity" } satisfies LeaseMessage, LEASE_TOPIC);
+        };
 
-            const end = async (reason: string): Promise<void> => {
-                await DBOS.runStep(
-                    async () => {
-                        const released = unwrapOrThrow(await releaseLease(pool, id, reason));
-                        if (released?.machine !== undefined) await teardownQuietly(released.machine, "release");
-                        await removeRecords(input.analysisId, input.leaseKey);
-                    },
-                    { name: "lease.release" },
-                );
-                log.info("lease released", { reason });
-                await wakeNext();
-            };
-
-            /** `grantedAtMs`: the time of the grant, given only for the first machine, whose start ends the wait of the request. */
-            const spawn = (machineGeneration: number, grantedAtMs?: number): Promise<SpawnOutcome> =>
-                DBOS.runStep(
-                    async (): Promise<SpawnOutcome> => {
-                        const identity = keyedSandboxIdentity(input.session.runFrame.runId, `${id}#${machineGeneration}`);
-                        const startedAt = Date.now();
-                        const created = await client.createSandbox(
-                            input.session,
-                            {
-                                ownerWorkflowId: id,
-                                recordTail: leaseRecordTail(input.leaseKey),
-                                resources: input.size,
-                                image: input.spawn.image,
-                                extraEnv: input.spawn.extraEnv === undefined ? undefined : { ...input.spawn.extraEnv },
-                                readOnly: input.spawn.readOnly,
-                                writableTail: input.spawn.writableTail,
-                            },
-                            identity,
-                        );
-                        if (created.isErr()) {
-                            const failure = created.error;
-                            if (failure.type === "labels_refused") {
-                                return failure.suspend ? { kind: "suspended", reason: failure.reason } : { kind: "refused", reason: failure.reason };
-                            }
-                            return { kind: "failed", detail: new SandboxFailure(failure).message };
-                        }
-                        unwrapOrThrow(await setMachine(pool, id, created.value, machineGeneration));
-                        recordMachineStart({ backend: created.value.backend, startMs: Date.now() - startedAt });
-                        if (grantedAtMs !== undefined) recordLeaseWait({ backend: created.value.backend, waitMs: grantedAtMs - input.requestedAtMs });
-                        return { kind: "ready", ref: created.value };
-                    },
-                    { name: "lease.spawn" },
-                );
-
-            /** Start a machine. A gate refusal with the suspend flag waits in a pause under the work of the consumer. */
-            const startMachine = async (machineGeneration: number, grantedAtMs?: number): Promise<SpawnOutcome> => {
-                for (;;) {
-                    const outcome = await spawn(machineGeneration, grantedAtMs);
-                    if (outcome.kind === "suspended") {
-                        await pauseAtGate(pause, outcome.reason);
-                        if (await ownerEnded()) return { kind: "refused", reason: "owner-ended" };
-                        continue;
-                    }
-                    const event: MachineEvent =
-                        outcome.kind === "ready" ? outcome : { kind: "failed", detail: outcome.kind === "refused" ? outcome.reason : outcome.detail };
-                    await DBOS.setEvent(machineEventKey(machineGeneration), event);
-                    return outcome;
-                }
-            };
-
-            // 1. The grant.
-            let size: ResourceSpec | undefined;
-            let grantedAtMs = 0;
-            while (size === undefined) {
-                const grant = await DBOS.runStep(
-                    async () => ({ outcome: unwrapOrThrow(await tryGrant(pool, id, config.resourcePolicy?.budget)), atMs: Date.now() }),
-                    { name: "lease.grant" },
-                );
-                if (grant.outcome.kind === "granted") {
-                    size = grant.outcome.size;
-                    grantedAtMs = grant.atMs;
-                    break;
-                }
-                if (grant.outcome.kind === "released") {
-                    await DBOS.setEvent(GRANTED_EVENT, { kind: "refused", reason: "released" } satisfies AcquireOutcome);
-                    return;
-                }
-                const message = await DBOS.recv<LeaseMessage>(LEASE_TOPIC, tickSeconds);
-                if (message?.kind === "release" || (await ownerEnded())) {
-                    await DBOS.setEvent(GRANTED_EVENT, { kind: "refused", reason: "released" } satisfies AcquireOutcome);
-                    await end(message?.kind === "release" ? message.reason : "owner-ended");
-                    return;
-                }
-            }
-            // A free capacity can admit the next request too.
+        const end = async (reason: string): Promise<void> => {
+            await DBOS.runStep(
+                async () => {
+                    const released = unwrapOrThrow(await releaseLease(pool, id, reason));
+                    if (released?.machine !== undefined) await teardownQuietly(released.machine, "release");
+                    await removeRecords(input.analysisId, input.leaseKey);
+                },
+                { name: "lease.release" },
+            );
+            log.info("lease released", { reason });
             await wakeNext();
+        };
 
-            // 2. The first machine.
-            let machineGeneration = 1;
-            const first = await startMachine(machineGeneration, grantedAtMs);
-            if (first.kind !== "ready") {
-                const outcome: AcquireOutcome =
-                    first.kind === "failed"
-                        ? { kind: "failed", detail: first.detail }
-                        : { kind: "refused", reason: first.kind === "refused" ? first.reason : "suspended" };
-                await DBOS.setEvent(GRANTED_EVENT, outcome);
-                await end(outcome.kind === "failed" ? "spawn-failed" : `refused:${outcome.reason}`);
+        /** `grantedAtMs`: the time of the grant, given only for the first machine, whose start ends the wait of the request. */
+        const spawn = (machineGeneration: number, grantedAtMs?: number): Promise<SpawnOutcome> =>
+            DBOS.runStep(
+                async (): Promise<SpawnOutcome> => {
+                    const identity = keyedSandboxIdentity(input.session.runFrame.runId, `${id}#${machineGeneration}`);
+                    const startedAt = Date.now();
+                    const created = await client.createSandbox(
+                        input.session,
+                        {
+                            ownerWorkflowId: id,
+                            recordTail: leaseRecordTail(input.leaseKey),
+                            resources: input.size,
+                            image: input.spawn.image,
+                            extraEnv: input.spawn.extraEnv === undefined ? undefined : { ...input.spawn.extraEnv },
+                            readOnly: input.spawn.readOnly,
+                            writableTail: input.spawn.writableTail,
+                        },
+                        identity,
+                    );
+                    if (created.isErr()) {
+                        const failure = created.error;
+                        if (failure.type === "labels_refused") {
+                            return failure.suspend ? { kind: "suspended", reason: failure.reason } : { kind: "refused", reason: failure.reason };
+                        }
+                        return { kind: "failed", detail: new SandboxFailure(failure).message };
+                    }
+                    unwrapOrThrow(await setMachine(pool, id, created.value, machineGeneration));
+                    recordMachineStart({ backend: created.value.backend, startMs: Date.now() - startedAt });
+                    if (grantedAtMs !== undefined) recordLeaseWait({ backend: created.value.backend, waitMs: grantedAtMs - input.requestedAtMs });
+                    return { kind: "ready", ref: created.value };
+                },
+                { name: "lease.spawn" },
+            );
+
+        /** Start a machine. A gate refusal with the suspend flag waits in a pause under the work of the consumer. */
+        const startMachine = async (machineGeneration: number, grantedAtMs?: number): Promise<SpawnOutcome> => {
+            for (;;) {
+                const outcome = await spawn(machineGeneration, grantedAtMs);
+                if (outcome.kind === "suspended") {
+                    await pauseAtGate(pause, outcome.reason);
+                    if (await ownerEnded()) return { kind: "refused", reason: "owner-ended" };
+                    continue;
+                }
+                const event: MachineEvent =
+                    outcome.kind === "ready" ? outcome : { kind: "failed", detail: outcome.kind === "refused" ? outcome.reason : outcome.detail };
+                await DBOS.setEvent(machineEventKey(machineGeneration), event);
+                return outcome;
+            }
+        };
+
+        // 1. The grant.
+        let size: ResourceSpec | undefined;
+        let grantedAtMs = 0;
+        while (size === undefined) {
+            const grant = await DBOS.runStep(
+                async () => ({ outcome: unwrapOrThrow(await tryGrant(pool, id, config.resourcePolicy?.budget)), atMs: Date.now() }),
+                { name: "lease.grant" },
+            );
+            if (grant.outcome.kind === "granted") {
+                size = grant.outcome.size;
+                grantedAtMs = grant.atMs;
+                break;
+            }
+            if (grant.outcome.kind === "released") {
+                await DBOS.setEvent(GRANTED_EVENT, { kind: "refused", reason: "released" } satisfies AcquireOutcome);
                 return;
             }
-            await DBOS.setEvent(GRANTED_EVENT, { kind: "granted", size } satisfies AcquireOutcome);
+            const message = await DBOS.recv<LeaseMessage>(LEASE_TOPIC, tickSeconds);
+            if (message?.kind === "release" || (await ownerEnded())) {
+                await DBOS.setEvent(GRANTED_EVENT, { kind: "refused", reason: "released" } satisfies AcquireOutcome);
+                await end(message?.kind === "release" ? message.reason : "owner-ended");
+                return;
+            }
+        }
+        // A free capacity can admit the next request too.
+        await wakeNext();
 
-            // 3. The life of the lease.
-            let reason = "released";
-            for (;;) {
-                const message = await DBOS.recv<LeaseMessage>(LEASE_TOPIC, tickSeconds);
-                if (message === null) {
-                    const generation = machineGeneration;
-                    const tick = await DBOS.runStep(() => tickOnce(id, generation, input.ownerWorkflowId), { name: "lease.tick" });
-                    if (tick === "owner-ended") {
-                        reason = "owner-ended";
-                        break;
-                    }
-                    continue;
-                }
-                if (message.kind === "release") {
-                    reason = message.reason;
+        // 2. The first machine.
+        let machineGeneration = 1;
+        const first = await startMachine(machineGeneration, grantedAtMs);
+        if (first.kind !== "ready") {
+            const outcome: AcquireOutcome =
+                first.kind === "failed"
+                    ? { kind: "failed", detail: first.detail }
+                    : { kind: "refused", reason: first.kind === "refused" ? first.reason : "suspended" };
+            await DBOS.setEvent(GRANTED_EVENT, outcome);
+            await end(outcome.kind === "failed" ? "spawn-failed" : `refused:${outcome.reason}`);
+            return;
+        }
+        await DBOS.setEvent(GRANTED_EVENT, { kind: "granted", size } satisfies AcquireOutcome);
+
+        // 3. The life of the lease.
+        let reason = "released";
+        for (;;) {
+            const message = await DBOS.recv<LeaseMessage>(LEASE_TOPIC, tickSeconds);
+            if (message === null) {
+                const generation = machineGeneration;
+                const tick = await DBOS.runStep(() => tickOnce(id, generation, input.ownerWorkflowId), { name: "lease.tick" });
+                if (tick === "owner-ended") {
+                    reason = "owner-ended";
                     break;
                 }
-                if (message.kind === "machine") {
-                    // A request names the generation that its exec found empty. A later generation already answers it.
-                    if (message.after < machineGeneration) continue;
-                    const next = await startMachine(machineGeneration + 1);
-                    if (next.kind !== "ready") {
-                        reason = next.kind === "failed" ? "spawn-failed" : `refused:${next.kind === "refused" ? next.reason : "suspended"}`;
-                        break;
-                    }
-                    machineGeneration += 1;
-                    continue;
-                }
-                if (message.kind === "machine-lost") {
-                    // The exec that saw the death cleared the machine from the row. The teardown removes what remains.
-                    await DBOS.runStep(() => teardownQuietly(message.machine, message.oomKilled ? "oom" : "dead"), { name: "lease.lost" });
-                }
+                continue;
             }
-            await end(reason);
+            if (message.kind === "release") {
+                reason = message.reason;
+                break;
+            }
+            if (message.kind === "machine") {
+                // A request names the generation that its exec found empty. A later generation already answers it.
+                if (message.after < machineGeneration) continue;
+                const next = await startMachine(machineGeneration + 1);
+                if (next.kind !== "ready") {
+                    reason = next.kind === "failed" ? "spawn-failed" : `refused:${next.kind === "refused" ? next.reason : "suspended"}`;
+                    break;
+                }
+                machineGeneration += 1;
+                continue;
+            }
+            if (message.kind === "machine-lost") {
+                // The exec that saw the death cleared the machine from the row. The teardown removes what remains.
+                await DBOS.runStep(() => teardownQuietly(message.machine, message.oomKilled ? "oom" : "dead"), { name: "lease.lost" });
+            }
+        }
+        await end(reason);
+    };
+
+    const leaseWorkflow = DBOS.registerWorkflow(
+        async (input: LeaseWorkflowInput): Promise<void> => {
+            const untrack = trackLeaseWorkflow();
+            try {
+                await runLease(input);
+            } finally {
+                untrack();
+            }
         },
         { name: LEASE_WORKFLOW },
     );

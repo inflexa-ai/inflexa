@@ -16,6 +16,7 @@ import type { Pool } from "pg";
 import { z } from "zod";
 
 import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
+import { captureMetrics } from "../../../../__tests__/setup/metrics.js";
 import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.js";
 import { createWork } from "../../../../app/work.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
@@ -169,6 +170,27 @@ describe("the pause of a loop inside a workflow", () => {
         expect(calls[2]?.prompt).toEqual(calls[1]?.prompt);
         expect((await queryPausesOfWork(pool, ANALYSIS_ID, workId))._unsafeUnwrap()).toEqual([]);
         expect(current.parts.at(-1)).toEqual({ type: "data-pause", id: workId, workId, workKind: "run", state: "running" });
+    });
+
+    it("counts the body as paused in this process while it waits, and not after the resume", async () => {
+        const capture = captureMetrics();
+        const pausedRuns = async (): Promise<number> =>
+            (await capture.sums("cortex.work.paused")).find(([attributes]) => attributes.work_kind === "run")?.[1] ?? 0;
+        try {
+            const before = await pausedRuns();
+            const { workId } = start([failure(402), reply([text("done")])]);
+            const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+            await waitForPause(workId, "paused");
+            const during = await pausedRuns();
+
+            await createWork({ pool, ...WORK_DEPS }).resume(session, workId);
+            await handle.getResult();
+            const after = await pausedRuns();
+
+            expect({ during: during - before, after: after - before }).toEqual({ during: 1, after: 0 });
+        } finally {
+            await capture.dispose();
+        }
     });
 
     it("retries an outage on its timer, and waits in paused after the last delay", async () => {
