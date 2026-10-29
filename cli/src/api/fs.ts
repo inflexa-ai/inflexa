@@ -29,6 +29,8 @@ export type FolderEntryView = {
     type: FolderEntryType;
     /** The kind of the file from the kind map. `null` for a folder, for a link to a folder, and for a name that the map does not know. */
     kind: FileKind | null;
+    /** The shiki language id of the file from the map. `null` for a folder and for a link to a folder, and `text` for a name that the map does not know. */
+    language: string | null;
     /** `null` for an entry that is not a link. */
     link: FolderEntryLink | null;
     /** The size in bytes. `null` for a folder, and for a link to a folder. For a link it describes the target. */
@@ -91,7 +93,7 @@ export type FsSearch = {
 };
 
 /** Each kind of a file, in the order of the kind map. The count list of a folder preview follows this order. */
-export const FILE_KINDS = ["table", "figure", "code", "log", "data", "doc"] as const;
+export const FILE_KINDS = ["table", "figure", "code", "log", "data", "doc", "structure"] as const;
 
 /** The kind of a file, from the extension of its name. A client shows it as a badge and keeps no map of its own. */
 export type FileKind = (typeof FILE_KINDS)[number];
@@ -112,7 +114,7 @@ export type TablePreview = {
 /** The preview of a text file: the head of the file. */
 export type TextPreview = {
     kind: "text";
-    /** The id of the highlighter language, from the extension of the name. `text` for an extension that the server does not map. */
+    /** The shiki language id, from the map of the file name. `text` for a name that the map does not know. */
     language: string;
     /** The text of the head. */
     code: string;
@@ -143,6 +145,8 @@ export type CardPreview = {
     kind: "card";
     /** The extension of the name in lower case, or `null` for a name with no extension. */
     format: string | null;
+    /** The `Content-Type` that `GET /api/v1/fs/read` gives for the name. A client selects a renderer with it, for example for a PDF file. */
+    mediaType: string;
 };
 
 /** The body of `GET /api/v1/fs/preview`: one member, told by `kind`. */

@@ -40,6 +40,7 @@ import { DEFAULT_SEARCH_LIMITS, spawnWalkChildWith, type SearchIndexCache, type 
 import { readFolderEntries } from "../../modules/fs/walk_child.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { freshDb } from "../../test_support/db.ts";
+import { SPEC_FILE_TYPES } from "../../test_support/file_types.ts";
 import { idleBoot } from "../../test_support/server.ts";
 import { inProcessSpawner } from "../../test_support/walk_spawner.ts";
 import type { ServerBoot } from "../boot.ts";
@@ -266,6 +267,7 @@ describe("GET /api/v1/fs/list", () => {
             path: join(root, "gone"),
             type: "symlink",
             kind: null,
+            language: "text",
             link: { target: join(root, "missing"), broken: true, targetKind: null },
             size: null,
             modifiedAt: null,
@@ -356,6 +358,24 @@ describe("GET /api/v1/fs/list", () => {
         ]);
     });
 
+    test("gives the kind and the language of each key of the map, and null and text for a name that the map does not know", async () => {
+        const expected = [...SPEC_FILE_TYPES, ["g.unknown", null, "text"] as const];
+        for (const [name] of expected) writeFileSync(join(root, name), "x");
+        const body = await listBody(root, "&hidden=true&perPage=200");
+        const byName = new Map(body.entries.map((entry) => [entry.name, [entry.kind, entry.language]] as const));
+        for (const [name, kind, language] of expected) expect([name, ...(byName.get(name) ?? [])]).toEqual([name, kind, language]);
+    });
+
+    test("gives the language null for a folder and for a link to a folder", async () => {
+        mkdirSync(join(root, "sub.py"));
+        symlinkSync(join(root, "sub.py"), join(root, "link.py"));
+        const body = await listBody(root);
+        expect(body.entries.map((e) => [e.name, e.kind, e.language])).toEqual([
+            ["sub.py", null, null],
+            ["link.py", null, null],
+        ]);
+    });
+
     test("gives the item count of a folder and of a link to a folder, and null for a file", async () => {
         mkdirSync(join(root, "sub"));
         writeFileSync(join(root, "sub", "a.csv"), "x");
@@ -419,6 +439,7 @@ describe("GET /api/v1/fs/list", () => {
                 "isInput",
                 "itemCount",
                 "kind",
+                "language",
                 "link",
                 "mode",
                 "modifiedAt",
@@ -895,6 +916,11 @@ describe("GET /api/v1/fs/preview", () => {
             expect(await previewBody(join(root, "odd.xyz"))).toMatchObject({ kind: "text", language: "text" });
         });
 
+        test("gives the language of a name entry of the map", async () => {
+            writeFileSync(join(root, "Snakefile"), "rule all:\n");
+            expect(await previewBody(join(root, "Snakefile"))).toEqual({ kind: "text", language: "python", code: "rule all:\n" });
+        });
+
         test("gives an empty file as text", async () => {
             writeFileSync(join(root, "empty.py"), "");
             expect(await previewBody(join(root, "empty.py"))).toEqual({ kind: "text", language: "python", code: "" });
@@ -928,13 +954,18 @@ describe("GET /api/v1/fs/preview", () => {
         test("gives a card for a head that holds a NUL byte, with the extension in lower case as the format", async () => {
             writeFileSync(join(root, "matrix.H5AD"), Buffer.from([0x89, 0x48, 0x00, 0x46]));
             writeFileSync(join(root, "blob"), Buffer.from([0x00]));
-            expect(await previewBody(join(root, "matrix.H5AD"))).toEqual({ kind: "card", format: "h5ad" });
-            expect(await previewBody(join(root, "blob"))).toEqual({ kind: "card", format: null });
+            expect(await previewBody(join(root, "matrix.H5AD"))).toEqual({ kind: "card", format: "h5ad", mediaType: "application/octet-stream" });
+            expect(await previewBody(join(root, "blob"))).toEqual({ kind: "card", format: null, mediaType: "application/octet-stream" });
         });
 
         test("gives a card for a head that is not UTF-8, with no NUL byte", async () => {
             writeFileSync(join(root, "latin.csv"), Buffer.from([0x63, 0xe9, 0x0a]));
-            expect(await previewBody(join(root, "latin.csv"))).toEqual({ kind: "card", format: "csv" });
+            expect(await previewBody(join(root, "latin.csv"))).toEqual({ kind: "card", format: "csv", mediaType: "text/csv; charset=utf-8" });
+        });
+
+        test("gives a card for a PDF file with the media type of the read route", async () => {
+            writeFileSync(join(root, "paper.pdf"), Buffer.from([0x25, 0x50, 0x44, 0x46, 0xe2, 0xe3, 0x0a]));
+            expect(await previewBody(join(root, "paper.pdf"))).toEqual({ kind: "card", format: "pdf", mediaType: "application/pdf" });
         });
 
         test("gives a folder with the count of its entries, the kinds, and the first names", async () => {
@@ -1150,13 +1181,21 @@ describe("GET /api/v1/fs/search", () => {
         writeFileSync(join(root, "figures", "volcano.png"), "x");
     }
 
-    test("gives a nested hit with its path, its subpath, and its kind", async () => {
+    test("gives a nested hit with its path, its subpath, its kind, and its language", async () => {
         seedData();
         const body = await searchBody(searchRoutes(idleBoot()), root, "&q=volc");
         expect(body.truncated).toBe(false);
         expect(body.hits).toHaveLength(1);
         expect(body.hits[0]).toMatchObject({
-            entry: { name: "volcano.png", path: join(root, "figures", "volcano.png"), type: "file", kind: "figure", isInput: false, origin: null },
+            entry: {
+                name: "volcano.png",
+                path: join(root, "figures", "volcano.png"),
+                type: "file",
+                kind: "figure",
+                language: "text",
+                isInput: false,
+                origin: null,
+            },
             subpath: "figures",
         });
     });

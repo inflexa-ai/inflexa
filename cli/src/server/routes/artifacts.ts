@@ -16,6 +16,7 @@ import type {
 } from "../../api/artifacts.ts";
 import { getLogger } from "../../lib/log.ts";
 import { locateWorkspaceReadRoot } from "../../modules/analysis/boundary.ts";
+import { fileKindOf, languageOf } from "../../modules/fs/file_kind.ts";
 import { entryDegraded, materializeTarget, resolveEntryPath, workspaceFileResolvable, type OpenArtifactError } from "../../modules/harness/artifact_open.ts";
 import type { OpenTarget } from "../../types/session.ts";
 import type { ServerBoot } from "../boot.ts";
@@ -118,6 +119,8 @@ export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFA
         const entries = listed.value.entries.map((entry): ArtifactEntry => ({
             ...entry,
             absolutePath: base === null ? null : join(base.canonical, entry.path),
+            kind: fileKindOf(entry.path),
+            language: languageOf(entry.path),
         }));
         const extensionCounts = listed.value.extensionCounts.map((count): ArtifactExtensionCount => ({ ...count }));
         return c.json<ArtifactList>({ ...listEnvelope("artifacts", entries, listed.value.total, page), extensionCounts });
