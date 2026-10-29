@@ -13,6 +13,7 @@ import { asStr256 } from "../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
 import { freshDb } from "../../test_support/db.ts";
+import { SPEC_FILE_TYPES } from "../../test_support/file_types.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { ServerBoot } from "../boot.ts";
 import type { OpenTarget } from "../../types/session.ts";
@@ -246,7 +247,7 @@ describe("GET {A}/artifacts", () => {
 
         expect(response.status).toBe(200);
         expect(list).toEqual({
-            artifacts: [{ ...entry, absolutePath: null }],
+            artifacts: [{ ...entry, absolutePath: null, kind: "figure", language: "text" }],
             total: 2,
             page: 0,
             perPage: 100,
@@ -256,6 +257,18 @@ describe("GET {A}/artifacts", () => {
         expect(reads).toEqual([
             { analysisId: "a1", query: { fileType: "figure", q: "volcano", runId: "r1", stepId: "s1", sort: "path", limit: 100, offset: 0 } },
         ]);
+    });
+
+    test("gives each row the kind and the language of its file name, and null and text for a name that the map does not know", async () => {
+        const expected = [...SPEC_FILE_TYPES, ["notes.xyz", null, "text"] as const];
+        const entries = expected.map(([name]) => ({ ...entry, path: `runs/r1/s1/output/${name}` }));
+        const { app: routes } = listing({ entries, total: entries.length, extensionCounts: [] });
+
+        const list = (await (await routes.request("/api/v1/analyses/a1/artifacts")).json()) as ArtifactList;
+
+        expect(list.artifacts.map((row) => [row.path, row.kind, row.language])).toEqual(
+            expected.map(([name, kind, language]) => [`runs/r1/s1/output/${name}`, kind, language]),
+        );
     });
 
     test("gives each entry its absolute path under the canonical workspace root", async () => {

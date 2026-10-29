@@ -41,6 +41,11 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
     bcif: "application/x-bcif",
 };
 
+/** The `Content-Type` that the read route gives for a file name: from its extension, or `application/octet-stream` for an extension that the server does not know. */
+export function contentTypeOf(name: string): string {
+    return getMimeType(name, CONTENT_TYPES) ?? "application/octet-stream";
+}
+
 type ByteRange = { start: number; end: number };
 
 /** What the `Range` header asks for: one range, nothing (absent, ignored, or a form that the route does not serve), or a range that no byte satisfies. */
@@ -177,7 +182,7 @@ async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: F
 
     // The requested name, not the name of the real path, gives the type and the download name.
     const name = basename(path);
-    const type = getMimeType(name, CONTENT_TYPES) ?? "application/octet-stream";
+    const type = contentTypeOf(name);
     headers.set("Content-Type", type);
     headers.set("X-Content-Type-Options", "nosniff");
     headers.set("Accept-Ranges", "bytes");

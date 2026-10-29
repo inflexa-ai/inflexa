@@ -55,7 +55,7 @@ import { canonicalPathAsync } from "../../lib/paths.ts";
 import { ABSENT_CODES, contains, locateWorkspaceReadRoot } from "../../modules/analysis/boundary.ts";
 import { inputAbsolutePaths } from "../../modules/analysis/input.ts";
 import { defaultOutputSubdir } from "../../modules/analysis/output.ts";
-import { extensionOf, fileKindOf } from "../../modules/fs/file_kind.ts";
+import { extensionOf, fileKindOf, languageOf } from "../../modules/fs/file_kind.ts";
 import {
     createSearchIndexCache,
     DEFAULT_SEARCH_LIMITS,
@@ -69,7 +69,16 @@ import type { PickerPin } from "../../types/picker.ts";
 import { analysisQueryGuard, DEFAULT_ANALYSIS_GUARD_OPTS, guardAnalysisId, type AnalysisGuardOpts } from "../analysis_guard.ts";
 import type { ServerBoot } from "../boot.ts";
 import { apiError, filterValue, holdConnection, internalError, listEnvelope, parseCount, parsePage, readBody, type ServerEnv } from "../http.ts";
-import { closeHandle, DEFAULT_FILE_ROUTE_OPTS, openRealPath, serveFile, unreadable, type FileResponseOpts, type FileRouteOpts } from "./files.ts";
+import {
+    closeHandle,
+    contentTypeOf,
+    DEFAULT_FILE_ROUTE_OPTS,
+    openRealPath,
+    serveFile,
+    unreadable,
+    type FileResponseOpts,
+    type FileRouteOpts,
+} from "./files.ts";
 
 /**
  * A place from which the server finds mounted volumes. A `parent` root is a folder whose entries are the candidates, for
@@ -221,6 +230,7 @@ async function entryView(entry: FolderEntry, list: ListContext, opts: FsRouteOpt
         path: entry.path,
         type: entry.kind,
         kind: isFolder ? null : fileKindOf(entry.name),
+        language: isFolder ? null : languageOf(entry.name),
         link: details.link,
         size: details.size,
         modifiedAt: details.modifiedMs === null ? null : new Date(details.modifiedMs).toISOString(),
@@ -371,22 +381,6 @@ async function locatePath(c: Context<ServerEnv>, path: string): Promise<Result<{
 /** How many entries of a folder the folder preview names. */
 const FOLDER_PREVIEW_NAMES = 10;
 
-/** The ids of the highlighter language for the extensions that the server maps. Each other extension is `text`. */
-const LANGUAGE_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
-    ["py", "python"],
-    ["r", "r"],
-    ["sh", "bash"],
-    ["toml", "toml"],
-    ["json", "json"],
-    ["ipynb", "json"],
-    ["md", "markdown"],
-    ["yaml", "yaml"],
-    ["yml", "yaml"],
-    ["csv", "csv"],
-    ["tsv", "tsv"],
-    ["log", "log"],
-]);
-
 // A fatal decoder throws a `TypeError` on a byte sequence that is not UTF-8. Stream mode holds back an incomplete
 // character at the end, which a cut head always risks.
 const decodeUtf8 = Result.fromThrowable(
@@ -453,10 +447,10 @@ function countRecords(text: string, start: number): number {
  * or a byte sequence that is not UTF-8, gives `card`. A table needs a full line in the head and a separator in the header.
  */
 function previewHead(name: string, head: Uint8Array, cut: boolean): TablePreview | TextPreview | CardPreview {
-    const format = extensionOf(name);
-    if (head.includes(0)) return { kind: "card", format };
+    const card: CardPreview = { kind: "card", format: extensionOf(name), mediaType: contentTypeOf(name) };
+    if (head.includes(0)) return card;
     const decoded = decodeUtf8(head, cut);
-    if (decoded.isErr()) return { kind: "card", format };
+    if (decoded.isErr()) return card;
 
     let text = decoded.value;
     // The end of a cut head is a line that the cut may have split, thus the text stops at the last line end. A head with no line end keeps its text.
@@ -479,7 +473,7 @@ function previewHead(name: string, head: Uint8Array, cut: boolean): TablePreview
             };
         }
     }
-    return { kind: "text", language: LANGUAGE_BY_EXTENSION.get(format ?? "") ?? "text", code: text };
+    return { kind: "text", language: languageOf(name), code: text };
 }
 
 /** Insert `entry` in `names`, which is in the order of the folder list, and keep the first {@link FOLDER_PREVIEW_NAMES}. */

@@ -144,6 +144,7 @@ function appOver(fixture: Fixture, over: Partial<AttentionRouteOpts> = {}, runOp
                 listActiveRuns: () => errAsync({ type: "query_failed", op: "test", cause: "unused" }),
                 getRun: () => okAsync(null),
                 countArtifacts: () => errAsync({ type: "query_failed", op: "test", cause: "unused" }),
+                countSteps: () => errAsync({ type: "query_failed", op: "test", cause: "unused" }),
                 readSynthesis: () => Promise.resolve(null),
                 listSteps: () => errAsync({ type: "query_failed", op: "test", cause: "unused" }),
                 loadPlan: () => okAsync(null),

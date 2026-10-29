@@ -3,6 +3,7 @@ import type { ArtifactRole } from "@inflexa-ai/harness/state/schema.js";
 
 import type { OpenTarget } from "../types/session.ts";
 import type { ListEnvelope } from "./common.ts";
+import type { FileKind } from "./fs.ts";
 
 /**
  * The body of `POST {A}/artifacts/resolve`: the semantic references of the openable entries of one card.
@@ -57,6 +58,10 @@ export type ArtifactEntry = {
     /** Bytes. */
     size: number;
     fileType: string | null;
+    /** The kind of the file name of `path`, from the map of the file system routes. `null` for a name that the map does not know. */
+    kind: FileKind | null;
+    /** The shiki language id of the file name of `path`, from the same map. `text` for a name that the map does not know. */
+    language: string;
     role: ArtifactRole;
     runId: string | null;
     stepId: string | null;

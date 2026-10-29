@@ -1046,6 +1046,7 @@ Each entry MUST give these fields:
 - `name`, and `path`: the canonical folder path joined with the name
 - `type`: `file`, `folder`, or `symlink`, from the folder read. Each other type of entry is `file`.
 - `kind`: the kind of the file from the kind map of the file system routes. It is `null` for a folder, for a link whose `targetKind` is `folder`, and for a name that the map does not know.
+- `language`: the highlighter language of the file from the map of the file system routes. It is `null` for a folder and for a link whose `targetKind` is `folder`. It is `text` for a name that the map does not know.
 - `link`: `null` for an entry that is not a link. For a link, it is `{target, broken, targetKind}`:
   - `target`: the text that the link stores, or `null` when the server cannot read it
   - `broken`: true when the read of the target fails with `ENOENT` or `ENOTDIR` (the target does not exist), or with `ELOOP` (the chain of links loops). Each other failure, for example `EACCES`, gives `false`.
@@ -1441,36 +1442,81 @@ A route that a later change adds under `/api/v1/fs` MUST get the same guard.
 
 ### Requirement: The file system routes take the kind of a file from its extension
 
-The server MUST hold one map from the extension of a file name to the kind of the file. A route that gives the kind of a file MUST use this map, thus a client keeps no map of its own. The kinds and their extensions are:
+The server MUST hold one map from the extension or the name of a file to the kind and the highlighter language of the file. Each route that gives the kind or the language of a file MUST use this map, thus a client keeps no map of its own. Each language MUST be a language id of the shiki highlighter, or `text`. The map is:
 
-- `table`: `csv`, `tsv`, `txt`, `xlsx`, `parquet`
-- `figure`: `png`, `svg`, `jpg`
-- `code`: `py`, `r`, `ipynb`, `toml`, `sh`
-- `log`: `log`
-- `data`: `json`, `h5ad`, `gz`, `bam`
-- `doc`: `md`, `docx`, `pdf`
+| Kind | Language | Extensions and names |
+| --- | --- | --- |
+| `table` | `text` | `txt`, `xlsx`, `xls`, `parquet` |
+| `table` | `csv` | `csv` |
+| `table` | `tsv` | `tsv`, `tab` |
+| `figure` | `text` | `png`, `jpg`, `jpeg`, `gif`, `webp` |
+| `figure` | `xml` | `svg` |
+| `code` | `python` | `py`, `smk`, the name `Snakefile` |
+| `code` | `r` | `r` |
+| `code` | `json` | `ipynb` |
+| `code` | `bash` | `sh`, `bash`, `zsh`, `sbatch`, `slurm` |
+| `code` | `awk` | `awk` |
+| `code` | `perl` | `pl`, `pm` |
+| `code` | `julia` | `jl` |
+| `code` | `matlab` | `m` |
+| `code` | `sql` | `sql` |
+| `code` | `nextflow` | `nf`, the name `nextflow.config` |
+| `code` | `groovy` | `groovy` |
+| `code` | `text` | `wdl` |
+| `code` | `yaml` | `cwl`, `yaml`, `yml` |
+| `code` | `stata` | `do` |
+| `code` | `sas` | `sas` |
+| `code` | `jinja` | `j2`, `jinja` |
+| `code` | `make` | `mk`, the name `Makefile` |
+| `code` | `docker` | the names `Dockerfile` and `Containerfile` |
+| `code` | `toml` | `toml` |
+| `code` | `ini` | `ini`, `cfg` |
+| `code` | `dotenv` | the name `.env` |
+| `code` | `gnuplot` | `gp` |
+| `code` | `c` | `c`, `h` |
+| `code` | `cpp` | `cpp`, `cc`, `hpp` |
+| `code` | `rust` | `rs` |
+| `code` | `go` | `go` |
+| `code` | `java` | `java` |
+| `code` | `fortran-fixed-form` | `f` |
+| `code` | `fortran-free-form` | `f90` |
+| `code` | `diff` | `diff`, `patch` |
+| `log` | `log` | `log` |
+| `data` | `json` | `json` |
+| `data` | `jsonl` | `jsonl` |
+| `data` | `xml` | `xml` |
+| `data` | `text` | `h5ad`, `h5`, `hdf5`, `loom`, `rds`, `rdata`, `rda`, `npy`, `npz`, `pkl`, `feather`, `mtx`, `bam`, `sam`, `cram`, `bai`, `vcf`, `bcf`, `bed`, `gff`, `gff3`, `gtf`, `fa`, `fasta`, `fna`, `faa`, `fastq`, `fq`, `bw`, `bigwig`, `bedgraph`, `fai`, `nwk`, `newick`, `sdf`, `mol2`, `tif`, `tiff`, `zip`, `tar`, `bz2`, `xz`, `zst` |
+| `doc` | `markdown` | `md`, `rmd`, `qmd` |
+| `doc` | `html` | `html`, `htm` |
+| `doc` | `latex` | `tex` |
+| `doc` | `bibtex` | `bib` |
+| `doc` | `rst` | `rst` |
+| `doc` | `text` | `docx`, `pdf` |
+| `structure` | `text` | `pdb`, `ent`, `cif`, `mmcif`, `bcif` |
 
-The extension of a file name is the text after its last dot. The match MUST have no regard to case. A file name has no extension in each of these cases:
+The extension of a file name is the text after its last dot. A file name has no extension in each of these cases:
 
 - It has no dot.
 - Its only dot is its first character.
 - It ends with a dot.
 
-A file name with no extension, and a file name whose extension the map does not know, MUST give `null`.
+A name entry of the map MUST match the whole file name, and it wins over the extension. The match of an extension and of a name MUST have no regard to case.
 
-A file name whose extension is `gz` MUST take the kind of the extension before `.gz`, when the map knows that extension. Otherwise it MUST take the kind `data`.
+A file name that the map does not know MUST give the kind `null` and the language `text`.
 
-The kind MUST come from the file name only. The folder of the file does not change the kind. Thus the kind can differ from the `fileType` of the artifact ledger, which comes from the folder.
+A file name whose extension is `gz` MUST take the kind of the extension before `.gz`, when the map knows that extension. Otherwise it MUST take the kind `data`. Its language MUST be `text`.
+
+The kind and the language MUST come from the file name only. The folder of the file does not change them. Thus the kind can differ from the `fileType` of the artifact ledger, which comes from the folder.
 
 #### Scenario: A table
 
 - **WHEN** the server takes the kind of `counts.csv` and of `Counts.CSV`
-- **THEN** each kind is `table`
+- **THEN** each kind is `table`, and each language is `csv`
 
 #### Scenario: A compressed table
 
 - **WHEN** the server takes the kind of `counts.csv.gz`
-- **THEN** the kind is `table`
+- **THEN** the kind is `table`, and the language is `text`
 
 #### Scenario: A compressed file of an unknown kind
 
@@ -1480,12 +1526,22 @@ The kind MUST come from the file name only. The folder of the file does not chan
 #### Scenario: An R script
 
 - **WHEN** the server takes the kind of `analysis.R`
-- **THEN** the kind is `code`
+- **THEN** the kind is `code`, and the language is `r`
+
+#### Scenario: A workflow file with no extension
+
+- **WHEN** the server takes the kind of `Snakefile` and of `Dockerfile`
+- **THEN** each kind is `code`, and the languages are `python` and `docker`
+
+#### Scenario: A protein structure
+
+- **WHEN** the server takes the kind of `1abc.cif`
+- **THEN** the kind is `structure`
 
 #### Scenario: A name with no known kind
 
-- **WHEN** the server takes the kind of `notes.xyz`, `Makefile`, `.bashrc`, and `draft.`
-- **THEN** each kind is `null`
+- **WHEN** the server takes the kind of `notes.xyz`, `README`, `.bashrc`, and `draft.`
+- **THEN** each kind is `null`, and each language is `text`
 
 ### Requirement: The server gives a preview of a file or a folder
 
@@ -1498,8 +1554,8 @@ The kind of a file comes from the name of the real path, through the kind map of
 - `figure`, for a regular file of the kind `figure`: `{kind, src, alt}`. `src` is the URL of the read route for the real path, `/api/v1/fs/read?path=<the encoded real path>`, relative to the origin of the server. `alt` is the name of the file. The server MUST NOT read the bytes of a figure.
 - `folder`, for a folder: `{kind, items, kinds, names}`. `items` is the count of the entries that are not hidden, in one level of the folder. `kinds` gives `{kind, count}` for each kind with a count above 0: `folder` first, then the order of the kind map. An entry whose name has no kind counts in `items` only. `names` gives `{name, dir, kind}` for the first 10 entries in the order of the folder list. `dir` is true for a folder, and `kind` is `null` for a folder. The kind and `dir` come from the folder read. Thus the server takes no `stat` of an entry, and a link to a folder counts as a file.
 - `table`, for a file of the kind `table` whose head holds the full header record, and whose header holds a tab or a comma: `{kind, text, separator, columnCount, rowCount}`. The header record is the text before the first line end outside double quotes. `text` is the text of the head. `separator` is a tab when the header holds one, and a comma otherwise. `columnCount` is the count of the fields of the header. A separator inside double quotes does not split a field. `rowCount` is the count of the records after the header when the head holds the full file, and `null` otherwise. A line end inside double quotes does not end a record. An empty last line does not count.
-- `text`, for each other file whose head is text: `{kind, language, code}`. `code` is the text of the head. `language` comes from the extension of the name: `python`, `r`, `bash`, `toml`, `json`, `markdown`, `yaml`, `csv`, `tsv`, or `log`. It is `text` for an extension that the server does not map.
-- `card`, for a file whose head holds a NUL byte, or a byte sequence that is not UTF-8: `{kind, format}`. `format` is the extension of the name in lower case, or `null` for a name with no extension.
+- `text`, for each other file whose head is text: `{kind, language, code}`. `code` is the text of the head. `language` comes from the map of the file system routes. It is `text` for a name that the map does not know.
+- `card`, for a file whose head holds a NUL byte, or a byte sequence that is not UTF-8: `{kind, format, mediaType}`. `format` is the extension of the name in lower case, or `null` for a name with no extension. `mediaType` is the `Content-Type` that `GET /api/v1/fs/read` gives for the name. Thus a client can select a renderer, for example for a PDF file, with no map of its own.
 
 The server MUST read at most a fixed maximum count of bytes from the start of a file, the head. When the file is longer than the head, the text of the head MUST end at its last line end. A head with no line end keeps its text, and it ends at its last whole character. A head holds the full header record when it holds the full file, or when it holds a line end outside double quotes. A head that does not hold the full header record never gives `table`.
 
@@ -1535,7 +1591,7 @@ The server MUST run each disk operation of the route off the event loop. A file 
 
 - **GIVEN** the file `matrix.h5ad`, whose head holds a NUL byte
 - **WHEN** a client asks for its preview
-- **THEN** the member is `card` with the format `h5ad`
+- **THEN** the member is `card` with the format `h5ad` and the media type `application/octet-stream`
 
 #### Scenario: A figure
 
@@ -1568,6 +1624,12 @@ The server MUST run each disk operation of the route off the event loop. A file 
 - **GIVEN** a file whose last part becomes a symbolic link after the server resolved the path
 - **WHEN** the server opens the real path
 - **THEN** the server answers 403 `forbidden`, and the response holds no byte of the target
+
+#### Scenario: A PDF file
+
+- **GIVEN** the file `paper.pdf`, whose head holds a byte sequence that is not UTF-8
+- **WHEN** a client asks for its preview
+- **THEN** the member is `card` with the format `pdf` and the media type `application/pdf`
 
 ### Requirement: The preview route refuses a bad request with a named error
 
@@ -2266,6 +2328,7 @@ A route MUST read the pending asks one time and the live turns one time for each
 - `absolutePath`: the canonical path of the workspace folder joined with `path`. `GET /api/v1/fs/read?path=` takes this form. It is `null` when the server cannot locate the workspace folder. When the located folder does not exist on disk, the server joins the path of the folder as it located it.
 - `size`, in bytes
 - `fileType`, or `null`
+- `kind` and `language`: the kind and the highlighter language of the file name of `path`, from the map of the file system routes. `kind` is `null` and `language` is `text` for a name that the map does not know.
 - `role`, `input` or `step_output`
 - `runId` and `stepId`, or `null`
 - `createdAt`, the time of the first registration of the path
@@ -2342,6 +2405,14 @@ Each request MUST send one paged read of the harness ledger, with the limit and 
 - **THEN** the server answers with one item, and `total` is 4
 - **AND** `extensionCounts` is `[{ "extension": "csv", "count": 1 }, { "extension": "png", "count": 2 }, { "extension": null, "count": 1 }]`
 
+#### Scenario: The kind and the language of each row
+
+- **GIVEN** analysis `a1` with the rows `runs/r1/s1/scripts/de.R`, `runs/r1/s1/figures/a.webp`, and `runs/r1/s1/output/notes.xyz`
+- **WHEN** a client lists the artifacts of `a1`
+- **THEN** `de.R` has the kind `code` and the language `r`
+- **AND** `a.webp` has the kind `figure` and the language `text`
+- **AND** `notes.xyz` has the kind `null` and the language `text`
+
 ### Requirement: The run list finds the runs by a text
 
 `GET {A}/runs` MUST take the query value `q`. It MUST select the runs whose run id holds the text, and the runs whose plan title holds the text. The match MUST have no regard to case, and each character of `q` MUST match only itself. The plan title is the `title` of the stored plan of the run. Thus a run with no plan, or with a plan that is gone, matches by its run id only. An absent or empty `q` MUST select each run.
@@ -2409,6 +2480,32 @@ The runs of one page MUST get their counts from one grouped read of the harness,
 - **GIVEN** a count read that fails
 - **WHEN** a client lists the runs of the analysis
 - **THEN** the server answers 200, and no run has `artifactCount`
+
+### Requirement: A run summary gives the step counts of the run
+
+Each run of `GET {A}/runs` and the run of `GET {A}/run/:runId` MUST carry `doneSteps`, `runningSteps`, and `totalSteps`. The counts come from the step ledger of the run:
+
+- `doneSteps`: the steps that completed
+- `runningSteps`: the steps that run now
+- `totalSteps`: each step of the ledger of the run, the synthesis step included
+
+A step that waits counts in `totalSteps` only. A run with no step in the ledger MUST give 0 for each count. The rule for `doneSteps` and `totalSteps` is the rule of the analysis summary.
+
+The runs of one page MUST get their counts from one grouped read of the harness, whatever the page size. A failed count read MUST NOT fail the response. Then the three counts MUST be absent on each run of the response, and the failure MUST go to the log.
+
+#### Scenario: The step counts of a page of runs
+
+- **GIVEN** run `r1` with two steps that completed, one step that runs, and two steps that wait, and run `r2` with no step
+- **WHEN** a client lists the runs of the analysis
+- **THEN** `r1` has `doneSteps` 2, `runningSteps` 1, and `totalSteps` 5
+- **AND** `r2` has `doneSteps` 0, `runningSteps` 0, and `totalSteps` 0
+- **AND** the server sends one step count read for the page
+
+#### Scenario: A failed step count read
+
+- **GIVEN** a step count read that fails
+- **WHEN** a client lists the runs of the analysis
+- **THEN** the server answers 200, and no run has `doneSteps`, `runningSteps`, or `totalSteps`
 
 ### Requirement: The server gives the synthesis of a run
 

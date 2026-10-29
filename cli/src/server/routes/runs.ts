@@ -7,6 +7,7 @@ import PQueue from "p-queue";
 import { z } from "zod";
 import {
     countArtifactsByRuns,
+    countStepsByRuns,
     countRunsByAnalysis,
     createRunEventStream,
     FARM_LOCK_FILE,
@@ -33,6 +34,7 @@ import {
     type PlanApproval,
     type PlanRecord,
     type RunArtifactCount,
+    type RunStepCounts,
     type RunEventSubscribeOptions,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
@@ -132,6 +134,8 @@ export type RunRoutesOpts = {
     readonly getRun: (pool: Pool, runId: string) => ResultAsync<CortexRunRow | null, DbError>;
     /** The step-output count of each run of the list, in one read. A run with no step output has no entry. */
     readonly countArtifacts: (pool: Pool, analysisId: string, runIds: readonly string[]) => ResultAsync<RunArtifactCount[], DbError>;
+    /** The step counts of each run of the list, in one read. A run with no step has no entry. */
+    readonly countSteps: (pool: Pool, analysisId: string, runIds: readonly string[]) => ResultAsync<RunStepCounts[], DbError>;
     /** The flat synthesis part of the record on disk, or `null` when the record cannot be read. The route asks only for a run whose outcome is `produced`. */
     readonly readSynthesis: (analysisId: string, runId: string) => Promise<RunSynthesisPart | null>;
     readonly listSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
@@ -171,6 +175,7 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     listActiveRuns: queryActiveRunsByAnalysis,
     getRun: queryRun,
     countArtifacts: countArtifactsByRuns,
+    countSteps: countStepsByRuns,
     readSynthesis: readSynthesisOf,
     listSteps: queryStepsByRun,
     loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
@@ -224,13 +229,16 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
         if (steps.isErr()) return internalError(c, steps.error, "read the steps of the run");
         const stepNames = planStepNames(planDoc);
 
-        const artifactCounts = await readArtifactCounts(pool, analysisId, [runId], opts);
+        const [artifactCounts, stepCounts] = await Promise.all([
+            readArtifactCounts(pool, analysisId, [runId], opts),
+            readStepCounts(pool, analysisId, [runId], opts),
+        ]);
         const stepUsage = listRunUsageByStep(analysisId, runId).unwrapOr([]);
         const usageByStep = new Map(stepUsage.flatMap((group) => (group.stepId === null ? [] : [[group.stepId, group.totals] as const])));
         const runUsage = getRunUsageTotals(analysisId, runId).unwrapOr(null);
 
         const detail: RunDetail = {
-            ...toRunSummary(run, planTitleOf(planDoc), runUsage, artifactCountOf(artifactCounts, runId)),
+            ...toRunSummary(run, planTitleOf(planDoc), runUsage, artifactCountOf(artifactCounts, runId), stepCountsOf(stepCounts, runId)),
             steps: steps.value.map((step) => toStepSummary(step, stepNames.get(step.stepId), usageByStep.get(step.stepId))),
             plan: planOf(run.planId, planDoc),
             // SQLite groups the NULL step ids as one group: the calls of the run outside each step.
@@ -619,18 +627,18 @@ async function summarizeRuns(pool: Pool, analysisId: string, rows: readonly Cort
             .unwrapOr([])
             .map((group) => [group.runId, group.totals] as const),
     );
-    const artifactCounts = await readArtifactCounts(
-        pool,
-        analysisId,
-        rows.map((row) => row.runId),
-        opts,
-    );
+    const runIds = rows.map((row) => row.runId);
+    const [artifactCounts, stepCounts] = await Promise.all([
+        readArtifactCounts(pool, analysisId, runIds, opts),
+        readStepCounts(pool, analysisId, runIds, opts),
+    ]);
     return rows.map((row) =>
         toRunSummary(
             row,
             row.planId === null ? null : (titles.get(row.planId) ?? null),
             usageByRun.get(row.runId) ?? null,
             artifactCountOf(artifactCounts, row.runId),
+            stepCountsOf(stepCounts, row.runId),
         ),
     );
 }
@@ -654,7 +662,36 @@ function artifactCountOf(counts: ReadonlyMap<string, number> | null, runId: stri
     return counts === null ? null : (counts.get(runId) ?? 0);
 }
 
-function toRunSummary(row: CortexRunRow, planTitle: string | null, usage: UsageTotals | null, artifactCount: number | null): RunSummary {
+type StepCounts = Omit<RunStepCounts, "runId">;
+
+const NO_STEPS: StepCounts = { doneSteps: 0, runningSteps: 0, totalSteps: 0 };
+
+/**
+ * The step counts of each run of the list, from one grouped read. A failed read gives `null` and a log line: the
+ * runs then carry no counts, because a false 0 would state that a run has no steps.
+ */
+async function readStepCounts(pool: Pool, analysisId: string, runIds: readonly string[], opts: RunRoutesOpts): Promise<ReadonlyMap<string, StepCounts> | null> {
+    return opts.countSteps(pool, analysisId, runIds).match(
+        (counts) => new Map(counts.map(({ runId, ...entry }) => [runId, entry] as const)),
+        (error) => {
+            getLogger("server").warn({ err: error, analysisId }, "could not count the steps of the runs");
+            return null;
+        },
+    );
+}
+
+/** The counts of one run, 0 for each count of a run with no entry, and `null` when the read failed. */
+function stepCountsOf(counts: ReadonlyMap<string, StepCounts> | null, runId: string): StepCounts | null {
+    return counts === null ? null : (counts.get(runId) ?? NO_STEPS);
+}
+
+function toRunSummary(
+    row: CortexRunRow,
+    planTitle: string | null,
+    usage: UsageTotals | null,
+    artifactCount: number | null,
+    stepCounts: StepCounts | null,
+): RunSummary {
     return {
         runId: row.runId,
         threadId: row.threadId,
@@ -670,6 +707,7 @@ function toRunSummary(row: CortexRunRow, planTitle: string | null, usage: UsageT
         // A run with no ledger call has a zero count: no figure, the same as a run with no ledger row.
         ...(usage === null || usage.calls === 0 ? {} : { usage }),
         ...(artifactCount === null ? {} : { artifactCount }),
+        ...(stepCounts === null ? {} : stepCounts),
     };
 }
 

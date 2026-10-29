@@ -17,6 +17,7 @@ import {
     type PlanApproval,
     type PlanRecord,
     type RunArtifactCount,
+    type RunStepCounts,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
 
@@ -79,6 +80,7 @@ const UNEXPECTED: RunRoutesOpts = {
     listActiveRuns: failing("listActiveRuns"),
     getRun: failing("getRun"),
     countArtifacts: failing("countArtifacts"),
+    countSteps: failing("countSteps"),
     readSynthesis: failing("readSynthesis"),
     listSteps: failing("listSteps"),
     loadPlan: failing("loadPlan"),
@@ -99,7 +101,13 @@ const UNEXPECTED: RunRoutesOpts = {
 function appWith(opts: Partial<RunRoutesOpts>, boot: ServerBoot = readyBoot): Hono<ServerEnv> {
     return new Hono<ServerEnv>().route(
         "/api/v1/analyses/:analysisId",
-        runRoutes(boot, { ...UNEXPECTED, sandboxRefusal: () => Promise.resolve(null), countArtifacts: () => okAsync([]), ...opts }),
+        runRoutes(boot, {
+            ...UNEXPECTED,
+            sandboxRefusal: () => Promise.resolve(null),
+            countArtifacts: () => okAsync([]),
+            countSteps: () => okAsync([]),
+            ...opts,
+        }),
     );
 }
 
@@ -310,6 +318,57 @@ describe("GET {A}/runs", () => {
         expect(list.runs[0]).not.toHaveProperty("artifactCount");
     });
 
+    test("each run carries its step counts from one grouped read, and a run with no step gets 0 for each count", async () => {
+        const analysisId = seedAnalysis();
+        const reads: string[][] = [];
+        const app = appWith({
+            listRuns: () => okAsync({ rows: [runRow({ runId: "r1", analysisId }), runRow({ runId: "r2", analysisId })], total: 2 }),
+            countSteps: (_pool, id, runIds) => {
+                reads.push([id, ...runIds]);
+                // Two steps completed, one runs, and two wait: the waiting steps count in the total only.
+                return okAsync([{ runId: "r1", doneSteps: 2, runningSteps: 1, totalSteps: 5 }]);
+            },
+        });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs`)).json()) as RunList;
+
+        expect(list.runs.map((run) => [run.runId, run.doneSteps, run.runningSteps, run.totalSteps])).toEqual([
+            ["r1", 2, 1, 5],
+            ["r2", 0, 0, 0],
+        ]);
+        expect(reads).toEqual([[analysisId, "r1", "r2"]]);
+    });
+
+    test.each([1, 200])("a page of %i runs sends one step count read", async (perPage) => {
+        const analysisId = seedAnalysis();
+        const rows = Array.from({ length: perPage }, (_, index) => runRow({ runId: `r${index}`, analysisId }));
+        let reads = 0;
+        const app = appWith({
+            listRuns: (_pool, _id, page) => okAsync({ rows: rows.slice(0, page.limit), total: perPage }),
+            countSteps: () => {
+                reads += 1;
+                return okAsync<RunStepCounts[], never>([]);
+            },
+        });
+        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?perPage=${perPage}`)).json()) as RunList;
+
+        expect(list.runs).toHaveLength(perPage);
+        expect(reads).toBe(1);
+    });
+
+    test("a failed step count read costs the counts, never the response", async () => {
+        const analysisId = seedAnalysis();
+        const app = appWith({
+            listRuns: () => okAsync({ rows: [runRow({ runId: "r1", analysisId })], total: 1 }),
+            countSteps: () => errAsync({ type: "query_failed", op: "test", cause: "down" }),
+        });
+        const response = await app.request(`/api/v1/analyses/${analysisId}/runs`);
+        const list = (await response.json()) as RunList;
+
+        expect(response.status).toBe(200);
+        expect(list.runs).toHaveLength(1);
+        for (const field of ["doneSteps", "runningSteps", "totalSteps"]) expect(list.runs[0]).not.toHaveProperty(field);
+    });
+
     test("a plan that cannot be read costs its title, never the row", async () => {
         const analysisId = seedAnalysis();
         const app = appWith({
@@ -500,6 +559,23 @@ describe("GET {A}/run/:runId", () => {
         const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
 
         expect(detail.artifactCount).toBe(4);
+        expect(reads).toEqual([["r1"]]);
+    });
+
+    test("the run carries its step counts, from a read of the one run", async () => {
+        const analysisId = seedAnalysis();
+        const reads: string[][] = [];
+        const app = appWith({
+            getRun: () => okAsync(runRow({ runId: "r1", analysisId })),
+            listSteps: () => okAsync([]),
+            countSteps: (_pool, _id, runIds) => {
+                reads.push([...runIds]);
+                return okAsync([{ runId: "r1", doneSteps: 1, runningSteps: 1, totalSteps: 3 }]);
+            },
+        });
+        const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+
+        expect([detail.doneSteps, detail.runningSteps, detail.totalSteps]).toEqual([1, 1, 3]);
         expect(reads).toEqual([["r1"]]);
     });
 
@@ -1035,7 +1111,6 @@ describe("POST {A}/run/:runId/cancel", () => {
         expect(await response.json()).toEqual({ error: "internal_error", message: "The server failed to handle the request." });
     });
 });
-
 
 describe("GET {A}/chat-context", () => {
     test("runs the parity drive in the profile queue, then gives the profile state and the outcome", async () => {

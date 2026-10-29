@@ -56,6 +56,15 @@ export type RunSummary = {
     usage?: UsageTotals;
     /** The count of the step outputs that the run registered. Absent when the count read failed. */
     artifactCount?: number;
+    /** The count of the steps of the run that completed. Absent when the step count read failed. */
+    doneSteps?: number;
+    /** The count of the steps of the run that run now. Absent when the step count read failed. */
+    runningSteps?: number;
+    /**
+     * The count of the steps in the ledger of the run, the synthesis step included. A step that waits counts here only.
+     * Absent when the step count read failed.
+     */
+    totalSteps?: number;
 };
 
 /**
