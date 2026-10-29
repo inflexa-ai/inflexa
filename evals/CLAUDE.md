@@ -46,12 +46,18 @@ A report is a JSON file. It holds each trial: the grade, the calls, the text, an
 the token usage. The prompt digest of a report identifies the prompt variant that
 ran.
 
+A run writes its report to `results/`, under the commit that ran, the start time,
+and the prompt digest. Commit the report with the change that it measures. A
+report of a commit with uncommitted changes carries `-dirty`, thus it is not a
+baseline that a later run can trust.
+
 ## Measure a change
 
 Do these steps for each change of a prompt or of a tool description:
 
-1. Run the baseline on the code before the change. Give `--out` a path that you
-   can find again.
+1. Find the baseline in `results/`: a report of the commit before the change, with
+   the same prompt digest, provider, cases, and trial count. If none exists, run
+   the baseline on that commit, for example in a worktree.
 2. Make one change.
 3. Run the candidate with the same provider, cases, and trial count.
 4. Run `compare` on the two reports. A regression of a case, a regression of a
