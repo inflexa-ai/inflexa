@@ -340,3 +340,18 @@ The model binding MUST accept `onRetry`. The retry envelope of the provider MUST
 - **GIVEN** a provider with one retry, and a model whose first attempt fails with `503`
 - **WHEN** the loop sends the request
 - **THEN** the loop emits one `data-model-retry` part with the retry 1 of 1 and the status `503`, and the second attempt gives the reply
+
+### Requirement: The loop repairs a tool name that a proxy alias left behind
+
+When the model calls a tool that the request does not declare, and the name is one lowercase word, an underscore, and the id of a declared tool, the loop MUST run the call as a call of that declared tool, and it MUST log the alias. The loop MUST NOT change the name of a call of a declared tool. Each other unknown name MUST stay an unknown tool.
+
+#### Scenario: An alias runs its tool
+
+- **GIVEN** an agent that declares `search_gene`
+- **WHEN** the model calls `art_search_gene`
+- **THEN** the loop runs `search_gene`, and the recorded call names `search_gene`
+
+#### Scenario: An unknown name stays unknown
+
+- **WHEN** the model calls `art_write_file`, and no tool `write_file` is declared
+- **THEN** the call stays a call of an unknown tool

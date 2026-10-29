@@ -1,10 +1,9 @@
-# Spec Delta
+# run-synthesizer Specification
 
 ## Purpose
-
 Defines the `run-synthesizer` agent loop that writes the literature-grounded synthesis of a run: its tools, its own lookups, the checks of `submit_synthesis`, and the selection of its outcome.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Run synthesis is the agentic run-synthesizer loop
 

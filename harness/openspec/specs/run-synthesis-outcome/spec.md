@@ -55,56 +55,6 @@ remain empty for every non-`produced` outcome.
 - **WHEN** the synthesizer submits a schema-valid, semantically-valid synthesis
 - **THEN** the outcome is `produced`, `synthesis.json` is persisted under `runs/{runId}/`, and the findings are returned
 
-### Requirement: Non-fatal synthesis skips are logged
-
-Both non-fatal skip paths (`skipped_no_summaries`, `skipped_blocker`) SHALL emit
-a `logger.warn` through the injected `Logger` (namespace `synthesize-run`),
-carrying `runId` and the skip reason as structured fields. A skip is an anomaly
-worth an operator's attention — it SHALL NOT be silent in logs. The `produced`
-path SHALL NOT warn. A `skipped_blocker` warn SHALL additionally carry the count
-of `submit_synthesis` semantic-re-validation rejections that preceded the blocker
-and a summary of the rejected issue paths, so an operator can distinguish a
-blocker reached by misjudgment (zero rejections) from one reached by defensive
-give-up (repeated rejections). Identifiers, counts, and issue-path summaries ride as structured
-fields, never interpolated into the message text.
-
-#### Scenario: A blocker skip warns with the reason and attempt telemetry
-
-- **WHEN** `synthesizeRun` resolves to `skipped_blocker`
-- **THEN** a `warn` record is emitted with `runId`, the blocker reason, the count of `submit_synthesis` rejections, and a summary of the rejected issue paths as fields
-
-#### Scenario: A no-summaries skip warns
-
-- **WHEN** `synthesizeRun` resolves to `skipped_no_summaries`
-- **THEN** a `warn` record is emitted with `runId` and a `no-summaries` reason
-
-### Requirement: Validation-rejection telemetry is captured and surfaced
-
-`generateRunSynthesis` SHALL count how many `submit_synthesis` calls were
-rejected by its semantic re-validation during its loop — the checks the arg
-schema cannot express (stepId refs, theme→finding refs, keyReferences cited,
-numeric PMIDs) — and SHALL capture the rejected issue paths. A schema-malformed
-payload is rejected at the agent-loop boundary before the tool runs and is not
-counted. It SHALL carry the rejection count (and, for a skip, the captured
-issue paths) on its resolved result for every non-throwing terminal
-(`produced`, `skipped`). `synthesizeRun` SHALL populate the `validationAttempts`
-field on the `skipped` progress emission (`onProgress("skipped", …)`) from that
-count. This telemetry SHALL NOT alter the classified outcome, the persisted
-`synthesis_status`/`synthesis_reason`, or the re-throw-on-failure invariant — it
-is additive observability only.
-
-#### Scenario: A blocker skip surfaces the rejection count on progress
-
-- **GIVEN** the synthesizer submitted twice, was rejected both times, then called `report_blocker`
-- **WHEN** `synthesizeRun` resolves to `skipped_blocker`
-- **THEN** the `onProgress("skipped", …)` emission carries `validationAttempts` = 2
-
-#### Scenario: A clean blocker reports zero rejections
-
-- **GIVEN** the synthesizer called `report_blocker` without any prior `submit_synthesis` call
-- **WHEN** `synthesizeRun` resolves to `skipped_blocker`
-- **THEN** the `onProgress("skipped", …)` emission carries `validationAttempts` = 0
-
 ### Requirement: inspect_run gates the synthesis path on the produced outcome
 
 `inspect_run` SHALL advertise a `synthesisPath` (`runs/{runId}/synthesis.json`)
@@ -132,19 +82,6 @@ the formatted run, so a consumer can distinguish "synthesis produced" from
 - **GIVEN** a pre-migration run with `status = "completed"` and `synthesis_status = NULL`
 - **WHEN** `inspect_run` formats that run
 - **THEN** `synthesisPath` is `null` and `synthesisStatus` is `null`
-
-### Requirement: Conversation guidance treats synthesis as present only when produced
-
-The conversation agent's "Interpreting Results" guidance SHALL describe
-`synthesis.json` as available only when the run reports its synthesis was
-produced, and SHALL direct the agent to fall back to the per-step `summary.md`
-files when synthesis was skipped or failed — rather than presenting
-`synthesis.json` as an unconditional "primary source" for any completed run.
-
-#### Scenario: Guidance directs a fallback on a skipped synthesis
-
-- **WHEN** the conversation guidance is composed
-- **THEN** it states that `synthesis.json` exists only for a run whose synthesis was produced, and that step summaries are the fallback when it was not
 
 ### Requirement: inspect_run surfaces the synthesis row without a per-step summary path
 
@@ -268,3 +205,17 @@ whether `synthesis.json` exists.
 - **THEN** the `synthesis` row is `failed` with `error` = the synthesis failure
   reason, stamped before the run row reports `failed` — a reader watching the
   ledger sees which phase died
+
+### Requirement: A non-fatal synthesis skip is logged
+
+Each non-fatal skip path (`skipped_no_summaries`, `skipped_blocker`) MUST emit a `logger.warn` through the injected `Logger`, in the namespace `synthesize-run`. The record MUST carry `runId` and the skip reason as structured fields. A skip is an anomaly for an operator, thus it MUST NOT be silent in the logs. A `produced` outcome MUST NOT emit a skip warn. An identifier and a reason are structured fields, and the message text holds neither.
+
+#### Scenario: A blocker skip warns with the reason
+
+- **WHEN** `synthesizeRun` resolves to `skipped_blocker`
+- **THEN** a `warn` record is emitted with `runId` and the blocker reason as fields
+
+#### Scenario: A no-summaries skip warns
+
+- **WHEN** `synthesizeRun` resolves to `skipped_no_summaries`
+- **THEN** a `warn` record is emitted with `runId` and a `no-summaries` reason

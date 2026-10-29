@@ -153,29 +153,30 @@ schema MUST be exported, so that the golden-fixture table drives it.
 - **WHEN** UniProt splits the subcellular locations over more than one comment and repeats one of them
 - **THEN** `subcellularLocations` holds each distinct location one time, in the order UniProt lists them
 
-### Requirement: search_protein reaches the conversation agent and the literature reviewer
+### Requirement: search_protein reaches the conversation agent and the run synthesizer
 
-The tool MUST be wired into the conversation agent
-(`harness/src/agents/conversation-agent.ts`) and into the literature reviewer
-(`harness/src/tools/research/literature-reviewer.ts`). The prompt of the
-literature reviewer names each tool that it holds, thus
-`harness/src/prompts/literature-reviewer.ts` MUST carry a usage note for this
-one.
+The tool MUST be a script tool of the conversation agent
+(`harness/src/agents/conversation-agent.ts`), which calls it from `run_script`
+(refer to the script-tools capability). It MUST also be a lookup of the run
+synthesizer (`harness/src/tools/research/synthesis-lookups.ts`). The tool
+describes itself, thus no prompt carries a usage note for it.
+
+#### Scenario: Conversation agent has the tool
+
+- **WHEN** the conversation agent is created
+- **THEN** its script tools include `searchProteinTool`, and its tools do not
+
+#### Scenario: The run synthesizer has the tool
+
+- **WHEN** `createSynthesisLookupTools` builds the lookups of the synthesizer
+- **THEN** the lookups include `searchProteinTool`
+
+### Requirement: No sandbox agent holds search_protein
 
 The tool MUST NOT be an entry in the sandbox tool registry, and
 `SandboxToolName` (`harness/src/agents/sandbox/types.ts`) MUST NOT name it.
 Identifier resolution answers a question of the conversation, thus no sandbox
 agent reaches for one yet.
-
-#### Scenario: Conversation agent has the tool
-
-- **WHEN** the conversation agent is created
-- **THEN** its tool array includes `searchProteinTool`
-
-#### Scenario: The literature reviewer has the tool and its prompt says so
-
-- **WHEN** the literature reviewer tool is built
-- **THEN** its tool array includes `searchProteinTool`, and its prompt names `search_protein` in the tool usage notes
 
 #### Scenario: No sandbox agent can declare the tool
 

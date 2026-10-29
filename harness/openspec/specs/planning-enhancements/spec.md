@@ -405,3 +405,37 @@ The planner run MUST have a step cap that `PLANNER_MAX_ITERATIONS` owns. When th
 
 - **WHEN** the planner reaches its cap with no outcome
 - **THEN** one salvage request follows, and only `submit_plan`, `request_clarification`, and `report_blocker` can run in it
+
+### Requirement: generate_plan shows the card of the plan that it makes
+
+When the planner of `generate_plan` ends with an accepted plan, the tool MUST emit one `data-plan` part for that plan, with the provenance of the caller. It MUST build the card from the result of the planner, with no read of the plan store, thus a replay gives the same card under the same id. Any other outcome MUST emit no plan card.
+
+#### Scenario: A completed plan shows its card
+
+- **WHEN** `generate_plan` ends with `plan_complete` for the plan `pln-1a2b3c4d`
+- **THEN** the call emits one `data-plan` part whose `planId` is `pln-1a2b3c4d`
+- **AND** the part carries the provenance of the conversation agent
+
+#### Scenario: A blocker shows no card
+
+- **WHEN** the planner reports a blocker
+- **THEN** `generate_plan` emits no `data-plan` part
+
+### Requirement: show_plan shows an earlier plan again
+
+The conversation prompt and the description of `show_plan` MUST NOT tell the agent to show a new plan with `show_plan`, because `generate_plan` shows it. `show_plan` shows a stored plan again.
+
+#### Scenario: The prompt has no show step after a new plan
+
+- **WHEN** the conversation prompt and the `show_plan` description are read
+- **THEN** neither tells the agent to call `show_plan` for the plan that `generate_plan` just made
+
+### Requirement: The planner reads the workspace and writes nothing
+
+The planner MUST declare the read tools of the workspace after its search tools: `read_file`, `list_files`, `file_stat`, `grep`, `workspace_search` when an embedding provider is bound, and `inspect_data_profile`. `read_table` and `read_pdf` MUST be script tools of `run_script`. The planner MUST hold no tool that writes. A paper or a protocol that the user staged can decide the steps of a plan.
+
+#### Scenario: The planner holds the read tools
+
+- **WHEN** the tools of the planner are resolved
+- **THEN** they hold `read_file` and `inspect_data_profile`, and no `write_file`
+- **AND** the script tools are `read_table` and `read_pdf`

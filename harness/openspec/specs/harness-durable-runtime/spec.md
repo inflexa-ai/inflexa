@@ -485,7 +485,7 @@ host-hooks spec). Thus `executeAnalysis` MUST NOT put a `try` or a `catch` aroun
 
 #### Scenario: Agent surfaces share pacing state
 
-- **WHEN** the conversation agent and literature reviewer resolve citations in the same runtime
+- **WHEN** the conversation agent and the run synthesizer resolve citations in the same runtime
 - **THEN** both tool instances close over the same resolver service and per-source limiter state
 
 #### Scenario: Workflow uses the service boundary

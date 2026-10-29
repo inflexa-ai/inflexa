@@ -25,31 +25,25 @@ upstream failures are thrown out of `execute` so the agent loop wraps them as
 
 ## Requirements
 
-### Requirement: search_pubmed tool
+### Requirement: The search action of the pubmed tool
 
-The system SHALL provide `createSearchPubMedTool({ ncbiApiKey })` (on-wire id
-`search_pubmed`, built with `defineTool`) that searches PubMed via the
-E-utilities `esearch` + `esummary` endpoints. It accepts `query` (PubMed syntax —
-MeSH terms, field tags, Boolean operators), `maxResults` (default 10, max 50),
-`sort` (`relevance` | `date`, default `relevance`), and an optional `dateRange`
-of `{ from, to }` in YYYY/MM/DD form. It SHALL return `ok({ totalFound, results })`
-where each result carries `pmid`, `title`, `journal`, `year`, and `authors`. The
-description SHALL teach PubMed query syntax (MeSH, `[Title/Abstract]`,
-`[Author]`, `[Gene]`, Boolean operators) so the model builds effective queries.
+The system MUST give `createPubMedTool({ ncbiApiKey })` (`harness/src/tools/bio/pubmed.ts`), with the on-wire id `pubmed`, built with `defineTool`. `createNcbiTools(keys)` in `harness/src/tools/bio/keys.ts` builds it. The input is a flat object with an `action` of `search`, `details`, or `fulltext`. The schema refuses a call that does not give the argument of its action, before `execute` runs.
+
+The `search` action searches PubMed through the E-utilities `esearch` and `esummary` endpoints. It takes `query` (PubMed syntax: MeSH terms, field tags, and Boolean operators), `maxResults` (default 10, max 50), `sort` (`relevance` or `date`, default `relevance`), and an optional `dateRange` of `{ from, to }` in the YYYY/MM/DD form. It MUST return `ok({ totalFound, results })`, where each result carries `pmid`, `title`, `journal`, `year`, and `authors`. The description of `query` MUST teach the PubMed query syntax (MeSH, `[Title/Abstract]`, `[Author]`, `[Gene]`, and the Boolean operators), thus the model writes an effective query.
 
 #### Scenario: Basic keyword search
 
-- **WHEN** the tool is called with `query: "BRCA1 breast cancer"` and `maxResults: 5`
+- **WHEN** the tool is called with `action: "search"`, `query: "BRCA1 breast cancer"`, and `maxResults: 5`
 - **THEN** it returns `ok({ totalFound, results })` with up to 5 results, each having `pmid`, `title`, `journal`, `year`, and `authors`
 
 #### Scenario: MeSH-qualified search with date range
 
-- **WHEN** the tool is called with a MeSH query, `sort: "date"`, and `dateRange: { from: "2023/01/01", to: "2024/12/31" }`
+- **WHEN** the tool is called with `action: "search"`, a MeSH query, `sort: "date"`, and `dateRange: { from: "2023/01/01", to: "2024/12/31" }`
 - **THEN** it returns date-sorted results within the range, each with the standard fields
 
 #### Scenario: No results found
 
-- **WHEN** the query matches no articles
+- **WHEN** the query of a `search` matches no articles
 - **THEN** it returns `ok({ totalFound: 0, results: [] })`
 
 #### Scenario: Upstream error surfaces as an error tool result
@@ -57,57 +51,65 @@ description SHALL teach PubMed query syntax (MeSH, `[Title/Abstract]`,
 - **WHEN** the NCBI API fails (5xx, timeout, or retry exhaustion)
 - **THEN** `execute` throws and the agent loop records the call as `tool_result { is_error: true }`
 
-### Requirement: get_article_details tool
+#### Scenario: A call without the argument of its action is refused
 
-The system SHALL provide `createGetArticleDetailsTool({ ncbiApiKey })` (on-wire
-id `get_article_details`, built with `defineTool`) that fetches metadata for a
-batch of PMIDs via `efetch` (XML). It accepts `pmids` (string array, min 1, max
-20) and SHALL return `ok({ articles, notFound })` where each article carries
-`pmid`, `title`, `abstract`, `authors`, `journal`, `year`, `doi`, `meshTerms`,
-and `pmcId` (string or null). `pmcId` SHALL be resolved via the NCBI ID Converter
-(`idconv`), called in parallel with `efetch`. PMIDs with no returned article
-SHALL be listed in `notFound`.
+- **WHEN** the tool is called with `action: "fulltext"` and no `pmcId`
+- **THEN** the input validation refuses the call with a message that names `pmcId`, and `execute` does not run
+
+### Requirement: The details action of the pubmed tool
+
+The `details` action of the `pubmed` tool fetches the metadata of a batch of PMIDs through `efetch` (XML). It takes `pmids` (a string array, min 1, max 20), `maxAuthors` (default 5), and `maxMeshTerms` (default 10). It MUST return `ok({ articles, notFound })`, where each article carries `pmid`, `title`, `abstract`, `authors`, `authorCount`, `journal`, `year`, `doi`, `meshTerms`, `meshTermCount`, and `pmcId` (a string or null).
+
+`authors` and `meshTerms` keep the leading entries up to `maxAuthors` and `maxMeshTerms`. `authorCount` and `meshTermCount` give the full counts. `pmcId` MUST come from the NCBI ID Converter (`idconv`), which the action calls in parallel with `efetch`. Each PMID with no returned article MUST be in `notFound`.
 
 #### Scenario: Batch detail retrieval
 
-- **WHEN** the tool is called with three valid PMIDs
+- **WHEN** the tool is called with `action: "details"` and three valid PMIDs
 - **THEN** it returns `ok({ articles, notFound })` with details for all three, each including `abstract`, `authors`, `meshTerms`, `doi`, and `pmcId`
 
 #### Scenario: Mixed PMC availability
 
 - **WHEN** some PMIDs have PMC full text and others do not
-- **THEN** articles in PMC have a non-null `pmcId` (e.g. `"PMC1234567"`) and the rest have `pmcId: null`
+- **THEN** articles in PMC have a non-null `pmcId` (for example `"PMC1234567"`) and the rest have `pmcId: null`
 
 #### Scenario: Invalid PMID in batch
 
-- **WHEN** the tool is called with a mix of valid and invalid PMIDs
+- **WHEN** the tool is called with `action: "details"` and a mix of valid and invalid PMIDs
 - **THEN** valid articles are returned in `articles` and unmatched PMIDs appear in `notFound`
 
 #### Scenario: Batch size exceeded
 
-- **WHEN** the tool is called with more than 20 PMIDs
+- **WHEN** the tool is called with `action: "details"` and more than 20 PMIDs
 - **THEN** Zod input validation rejects the request before `execute` runs
 
-### Requirement: get_article_full_text tool
+#### Scenario: A long author list is cut to the cap
 
-The system SHALL provide `createGetArticleFullTextTool({ ncbiApiKey })` (on-wire
-id `get_article_full_text`, built with `defineTool`) that fetches open-access
-full text from PMC via `efetch` with `db=pmc`. It accepts a single `pmcId`. When
-the article is open-access it SHALL return
-`ok({ pmcId, available: true, fullText, sections })`, where `sections` is an
-array of `{ heading, text }`; when it is not available it SHALL return
-`ok({ pmcId, available: false })`. Figure/table markup SHALL be omitted from the
-plain-text body.
+- **WHEN** an article has 40 authors, and the call gives no `maxAuthors`
+- **THEN** the article carries the first 5 authors, and `authorCount` is 40
+
+### Requirement: The fulltext action of the pubmed tool
+
+The `fulltext` action of the `pubmed` tool fetches the open-access full text from PMC through `efetch` with `db=pmc`. It takes one `pmcId`, an optional `sections` filter, and an optional `maxChars` (default 12,000, min 500, max 200,000). The `sections` filter holds case-insensitive substrings of the section headings.
+
+When the article is open-access, the action MUST return `ok({ pmcId, available: true, fullText, outline, totalChars, returnedChars, truncated })`. `fullText` holds each admitted section under its heading. A section that the filter matches is admitted whole, in document order, when it fits in the rest of `maxChars`. The first matched section is admitted also when it alone is larger than `maxChars`. `outline` lists each section of the article with its size and whether it came back. `truncated` is true when `returnedChars` is less than `totalChars`.
+
+When the article is not available, the action MUST return `ok({ pmcId, available: false })`. Figure and table markup MUST stay out of the plain-text body.
 
 #### Scenario: Successful full text retrieval
 
-- **WHEN** the tool is called with a valid `pmcId` for an open-access article
-- **THEN** it returns `ok({ pmcId, available: true, fullText, sections })`
+- **WHEN** the tool is called with `action: "fulltext"` and a valid `pmcId` of an open-access article
+- **THEN** it returns `ok({ pmcId, available: true, fullText, outline, totalChars, returnedChars, truncated })`
 
 #### Scenario: Article not available in PMC
 
 - **WHEN** the `pmcId` does not resolve to an open-access article
 - **THEN** it returns `ok({ pmcId, available: false })`
+
+#### Scenario: A section filter narrows the body
+
+- **WHEN** the tool is called with `action: "fulltext"` and `sections: ["methods"]`
+- **THEN** `fullText` holds only the sections whose heading contains "methods"
+- **AND** `outline` lists each section of the article, with `included: false` for each other section
 
 ### Requirement: NCBI API key is threaded from the embedder
 
@@ -128,24 +130,26 @@ factory as `deps.ncbiApiKey`, and applied as the `api_key` query parameter by
 
 ### Requirement: Literature tools available to the conversation agent, sub-agents, and sandbox agents
 
-The three literature tools SHALL be wired into the conversation agent
-(`harness/src/agents/conversation-agent.ts`, via `createNcbiTools`), the
-literature-reviewer sub-agent (`harness/src/tools/research/literature-reviewer.ts`),
-and the analogical-reasoner sub-agent
-(`harness/src/tools/research/generate-analogy-report.ts`); sandbox agents receive
-them via the central tool registry when their `meta.tools` allowlist names them.
-The in-process report builder does not wire literature tools — it reports on
-existing analysis artifacts only.
+The literature tool `pubmed` (`createNcbiTools`) MUST be a script tool of the
+conversation agent (`harness/src/agents/conversation-agent.ts`), which calls it
+from `run_script` (refer to the script-tools capability). It MUST be a declared
+tool of the lookups of the run synthesizer
+(`harness/src/tools/research/synthesis-lookups.ts`) and of the
+analogical-reasoner sub-agent
+(`harness/src/tools/research/generate-analogy-report.ts`). Sandbox agents
+receive it through the central tool registry when their `meta.tools` allowlist
+names it. The in-process report builder does not wire literature tools — it
+reports on existing analysis artifacts only.
 
 #### Scenario: Conversation agent can search literature
 
-- **WHEN** the conversation agent's tool array is inspected
-- **THEN** it includes `search_pubmed`, `get_article_details`, and `get_article_full_text`
+- **WHEN** the script tools of the conversation agent are inspected
+- **THEN** they include `pubmed`, and the tools of the agent do not
 
 #### Scenario: Sandbox agents get literature tools via the allowlist
 
-- **WHEN** a sandbox agent declares the literature tool names in `meta.tools`
-- **THEN** `createSandboxAgent` resolves and adds them to that agent's tool array
+- **WHEN** a sandbox agent declares `pubmed` in `meta.tools`
+- **THEN** `createSandboxAgent` resolves it and adds it to the tool array of that agent
 
 ### Requirement: XML parsing for PubMed and PMC responses
 

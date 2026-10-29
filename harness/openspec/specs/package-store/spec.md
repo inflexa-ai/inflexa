@@ -412,31 +412,19 @@ these vars MUST be emitted.
 
 The base image MUST NOT bake in analysis packages, and sandbox steps MUST
 NOT install packages at runtime — only what the farm links is importable. An
-acquisition MUST be a host action. Sandbox agent instructions MUST direct
-agents to call `list_available_packages` before an import of a package that
-is not certainly staged. The instructions MUST state that an acquisition is
-a host action. They MUST direct the agent to report a missing package, not
-to retry an install. The lookup is targeted and conditional — a catalog dump
-up front is exactly what it is not.
-
-When the composition binds the `ExtendAnalysisFarm` seam, the instructions
-MUST route an absent package through `link_packages` first. The agent then
-reports the package as missing only after the link tool answers `absent` or
-`unavailable`. The reason: the pool is staged on the same mount, thus a farm
-lookup alone does not bound what an import can reach.
+acquisition MUST be a host action.
 
 #### Scenario: Sandbox standards forbid runtime installs
 
-- **GIVEN** the shared sandbox-agent standards prompt
-- **THEN** it directs the agent to call `list_available_packages` before an uncertain import
-- **AND** it states that an acquisition is a host action
-- **AND** it directs the agent to report a missing package
+- **GIVEN** a sandbox step whose farm does not link a package
+- **WHEN** the step tries to install the package
+- **THEN** the install fails, because the sandbox has no egress, and the farm does not change
 
 #### Scenario: A bound link seam routes an absent package through the link tool
 
 - **GIVEN** a composition with the `ExtendAnalysisFarm` seam bound
-- **WHEN** the composed system prompt is inspected
-- **THEN** it directs the agent to call `link_packages` before it reports a package missing
+- **WHEN** the description of `list_available_packages` is inspected
+- **THEN** it directs the agent to call `link_packages` before it treats a package as missing
 
 ### Requirement: The farm lock path resolves for the analysis of each read
 

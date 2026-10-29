@@ -74,7 +74,9 @@ five fields `runLoop` consumes: `id`, `systemPrompt`, `model`, `tools`, and
 
 `read_tool_output` reads the kept text of a tool result that the loop cut (refer to the harness-tools capability). `SandboxAgentDeps.toolOutputStore` supplies the store, and the step body gives the same store to the loop of the agent. Under `readOnly`, the agent MUST keep `read_tool_output`, because a read of a kept text is not a mutation.
 
-An unknown `SandboxToolName` MUST throw at composition time, not at the first LLM call. A tool with a dependency (the sandbox module, `WorkspaceFilesystem`, `ChatProvider`, `Pool`, the tool output store) MUST get it through its factory closure at the root, never through `ToolContext` or ambient state. Each agent MUST spread `BASE_SANDBOX_TOOLS` (`listAvailablePackages`, `listAvailableRefs`, `resolveLibraryId`, `queryDocs`, `inspectRun`) into its `meta.tools`. Thus the planner metadata and the resolved tool record stay in sync.
+An unknown `SandboxToolName` MUST throw at composition time, not at the first LLM call. A tool with a dependency (the sandbox module, `WorkspaceFilesystem`, `ChatProvider`, `Pool`, the tool output store) MUST get it through its factory closure at the root, never through `ToolContext` or ambient state. Each agent MUST spread `BASE_SANDBOX_TOOLS` into its `meta.tools`. Thus the planner metadata and the resolved tool record stay in sync.
+
+A sandbox agent MUST NOT get `inspect_run`. A step runs inside its own run, and `inspect_run` gives the step paths only for a finished run. The briefing names the path of each completed dependency instead.
 
 #### Scenario: Compute-pipeline agent receives only its allowlisted tools
 
@@ -82,6 +84,11 @@ An unknown `SandboxToolName` MUST throw at composition time, not at the first LL
 - **WHEN** the resolved tool list is inspected
 - **THEN** it MUST contain exactly those tools plus the always-on substrate
 - **AND** it MUST NOT contain `searchCompounds`, `searchFaers`, `searchToxcast`, or any tool outside the allowlist
+
+#### Scenario: No sandbox agent inspects a run
+
+- **WHEN** the resolved tool list of any sandbox agent is inspected
+- **THEN** it does not contain `inspect_run`
 
 #### Scenario: inspect_data_profile is wired without any meta declaring it
 
@@ -150,8 +157,9 @@ The `ExtendAnalysisFarm` seam MUST ride as an optional field of the sandbox
 agent deps. When the embedder binds the seam, the composition MUST add a
 `link_packages` tool to the always-on substrate of every sandbox agent. No
 `meta.tools` allowlist names the tool, because an allowlist entry would break
-an embedder that binds no seam. Without the seam, the tool and its prompt
-layer MUST NOT exist.
+an embedder that binds no seam. Without the seam, the tool MUST NOT exist.
+The seam MUST NOT change the system prompt. Thus a bound seam does not split
+the prompt cache.
 
 The tool MUST take `packages` as an array of strings in the one grammar
 of the `package-identity` capability, and it MUST parse each with
@@ -171,13 +179,11 @@ carry the reason that the link pass cannot answer. It MUST NOT render as
 an absence, because a false absence sends the agent after packages the
 pool holds. A realization throw MUST read as `unavailable` with the thrown
 reason, at each call site of the seam. A link MUST be live in the running
-sandbox, with no restart. The tool description MUST state these facts.
+sandbox, with no restart.
 
-The description MUST also state the remedy of a `collision` of one
-spelling in two tracks: call the tool again with the prefixed form,
-`python:<name>` or `r:<name>`. It MUST state that a collision is terminal
-only after that call also refuses, or when the collision is two versions
-of one distribution.
+With the seam bound, the description of `list_available_packages` MUST NOT
+state that only its own report is importable. The reason: the link tool can
+extend the farm from the pool.
 
 #### Scenario: A bound seam adds the tool
 
@@ -190,6 +196,12 @@ of one distribution.
 - **GIVEN** sandbox agent deps without the seam
 - **WHEN** the resolved tool list is inspected
 - **THEN** `link_packages` is absent, and the composition does not throw
+
+#### Scenario: The seam does not change the system prompt
+
+- **GIVEN** two compositions of one agent, one with the seam bound and one without
+- **WHEN** the two system prompts are compared
+- **THEN** they are byte-identical
 
 #### Scenario: A refusal tells the agent whether an acquisition can help
 
@@ -224,55 +236,18 @@ of one distribution.
 - **WHEN** the description of `link_packages` is inspected
 - **THEN** it directs the agent to call the tool again with `python:<name>` or `r:<name>` after a two-track `collision`
 
-### Requirement: The package-link prompt layer appends only with the seam
-
-A static prompt layer for the link tool MUST append to the sandbox system
-prompt only when the seam is bound. The layer MUST teach: call
-`link_packages` after a failed import, and after `list_available_packages`
-reports a package absent. It MUST teach: pass the module name verbatim, a
-refusal is a real answer, and a version collision is terminal. It MUST
-teach the one grammar: after a `collision` of one spelling in two tracks,
-call the tool again with `python:<name>` or `r:<name>`. It MUST teach:
-drop the package only when that call also refuses. It MUST place the
-report of a missing package after an `absent` or `unavailable` answer of
-the link tool. With the seam bound, the description of
-`list_available_packages` MUST NOT state that only its own report is
-importable. The reason: the link tool can extend the farm from the pool.
-The layer is a composition-time constant, thus the prompt stays
-byte-identical across the steps of one composition.
-
-#### Scenario: The layer follows the seam
-
-- **GIVEN** two compositions, one with the seam bound and one without
-- **WHEN** the two system prompts are compared
-- **THEN** only the bound one carries the package-link layer, and each is stable across its own steps
-
-#### Scenario: An absent lookup routes through the link tool
-
-- **GIVEN** a composition with the seam bound
-- **WHEN** the system prompt and the description of `list_available_packages` are inspected
-- **THEN** both direct the agent to call `link_packages` before it reports a package missing
-
-#### Scenario: The layer teaches the prefixed retry
-
-- **GIVEN** a composition with the seam bound
-- **WHEN** the system prompt is inspected
-- **THEN** it directs the agent to retry `link_packages` with `python:<name>` or `r:<name>` after a two-track `collision`, and to drop the package only after that refusal
-
 ### Requirement: Sandbox agent system prompt is a pure function of the agent type
 
 Each sandbox `AgentDefinition.systemPrompt` MUST be assembled at construction
 time by `composeSystemPrompt` (with the conversational style disabled). The
 composition concatenates the per-agent prompt body
-(`harness/src/prompts/sandbox/<agent>.ts`), `sandboxOrientCorePrompt`, the
-package-link layer when the seam is bound, and
+(`harness/src/prompts/sandbox/<agent>.ts`), the orient core, and
 `sandboxAnalysisStepStandardsPrompt` (the last omitted under
 `appendAnalysisStepStandards: false`). The composed string MUST be a pure
-function of the composition-time constants: the agent type, the bound seam,
-and the declared `toolchainSource`. Nothing from `SandboxStepCoords` MUST
-reach it: no path, no `analysisId`/`runId`/`stepId`, and no placeholder for
-one. Two steps of one run — and two runs of one analysis — send a
-byte-identical prefix.
+function of the agent type and the declared `toolchainSource`. Nothing from
+`SandboxStepCoords` MUST reach it: no path, no `analysisId`/`runId`/`stepId`,
+and no placeholder for one. Two steps of one run — and two runs of one
+analysis — send a byte-identical prefix.
 
 This is a **prompt-cache** invariant, not a style rule. The cache keys on an
 exact prefix. A single interpolated id or path makes every step's system
@@ -283,17 +258,15 @@ analysis root, the dataset, and each dependency's output. The prompt MUST be
 a frozen string by the time `runLoop` sees it — there is no request-time
 processor pipeline.
 
-The orient-core environment section MUST key its text on the
-`toolchainSource` of the sandbox client, and on no field of the agent deps.
-With `"image"` it states that an acquisition is a host action and directs
-the agent to report a missing package. With `"store"` it keeps the legacy
-text, thus an embedder that declares no toolchain keeps its cached prefix.
+The orient core MUST key its text on the `toolchainSource` of the sandbox
+client, and on no field of the agent deps. With `"store"`, it is
+`sandboxOrientCorePrompt` unchanged.
 
 #### Scenario: System prompt is a single composed string
 
 - **GIVEN** any sandbox `AgentDefinition`
 - **WHEN** `definition.systemPrompt` is read
-- **THEN** it is a `string` containing the agent prompt body, `sandboxOrientCorePrompt`, and `sandboxAnalysisStepStandardsPrompt`
+- **THEN** it is a `string` that holds the agent prompt body, the orient core, and `sandboxAnalysisStepStandardsPrompt` unless the agent opts out
 
 #### Scenario: The prompt is byte-identical across steps and leaks no per-step value
 
@@ -304,9 +277,9 @@ text, thus an embedder that declares no toolchain keeps its cached prefix.
 
 #### Scenario: The legacy embedder keeps its prefix
 
-- **GIVEN** a sandbox client composed with no `toolchainSource` and no bound seam
-- **WHEN** the system prompt is compared with the prompt of the legacy embedder
-- **THEN** the orient-core section is unchanged
+- **GIVEN** a sandbox client composed with no `toolchainSource`
+- **WHEN** the system prompt is composed
+- **THEN** it contains `sandboxOrientCorePrompt` unchanged
 
 ### Requirement: Planner catalog derives from the sandbox-agent meta
 

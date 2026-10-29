@@ -69,17 +69,6 @@ Expose bounded, unambiguous run listing and targeted inspection, including an op
 - **WHEN** `waitForTerminalSeconds` is outside 1 through 30 or is supplied without `runId`
 - **THEN** input validation fails without querying run state
 
-### Requirement: A workflow cannot wait for its own terminal state
-
-When `inspect_run` executes under a `RunSession` and the requested `runId` equals `ctx.session.runFrame.runId`, the tool SHALL NOT wait for terminal state. It SHALL return immediately with the current inspection state and explain that the enclosing workflow cannot finish while its current step waits for itself.
-
-#### Scenario: Sandbox agent requests a self-run wait
-
-- **GIVEN** a sandbox agent executing inside run `R`
-- **WHEN** it calls `inspect_run` with `runId: "R"` and `waitForTerminalSeconds`
-- **THEN** the tool performs no wait loop
-- **AND** it immediately reports that self-waiting cannot reach terminal state
-
 ### Requirement: Run listing gives the running runs before the terminal runs
 
 `inspect_run` list mode SHALL order runs deterministically as running newest-first, then terminal runs newest-first. A run with a paused step is a running run. The ordering SHALL be applied before pagination. List mode SHALL accept optional `page` and `pageSize`, defaulting to page 1 and 50 rows, with `pageSize` limited to 100, and SHALL return `runs`, `total`, `page`, `pageSize`, and `hasMore`.

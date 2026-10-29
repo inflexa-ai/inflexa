@@ -107,30 +107,6 @@ so metadata travels with the data through the pipeline.
 - **THEN** cluster assignments are stored in `.obs` and UMAP coordinates in `.obsm['X_umap']`
 - **AND** they are NOT written as separate CSV files for the result itself (a summary CSV for human readability is allowed)
 
-### Requirement: The orient prompt teaches the path model without naming a path
-
-`sandboxOrientCorePrompt` SHALL teach the sandbox filesystem layout in terms of
-the *roles* — "your working directory", "the analysis root" — and SHALL NOT name
-a concrete path, id, or placeholder for one. It SHALL state that the working
-directory is writable and is the agent's cwd, that relative paths resolve against
-it in every workspace tool and every script, that a write outside it returns an
-`out_of_prefix` result, that the rest of the analysis is mounted read-only at the
-analysis root and reached by absolute path, that absolute analysis-root paths are
-canonical for any file the step did not create, and that shell `cd` does not
-persist across `execute_command` calls. It SHALL direct the agent to the paths its
-briefing names rather than to invent or guess one.
-
-#### Scenario: The path model is taught by role, not by value
-
-- **WHEN** a sandbox agent's system prompt is assembled
-- **THEN** the orient prompt names the working directory as the writable cwd and the analysis root as the read-only mount reached by absolute path
-- **AND** it contains no concrete path, no `resourceId`/`runId`/`stepId`, and no unsubstituted placeholder
-
-#### Scenario: cd non-persistence is taught
-
-- **WHEN** the orient prompt is read
-- **THEN** it states `cd` does NOT persist across calls and directs the agent to pass `cwd` or chain with `&&`
-
 ### Requirement: The five writable subdirectories are taught for analysis steps
 
 `sandboxAnalysisStepStandardsPrompt` SHALL describe the working directory's five
@@ -150,6 +126,7 @@ The seed of a step is its sole initial user message. `composeStepBriefing` (`har
 - a Workspace section from `renderWorkspace`, which names the two in-sandbox paths as they are.
 - a Template contract section from `renderTemplateContract(brief)`, when the parent retrieved the contract of the template that the step renders.
 - a read-only copy of the goal and the constraints of the working memory of the analysis, under its own heading (see the harness-working-memory capability).
+- the request that the plan answers, under `## The request of the analysis`, when the stored plan carries one. `generate_plan` stores the `researchQuestion` it received as the `request` of the plan, and the run input snapshots it. The seed bounds it to 8000 characters.
 
 Each value for one step MUST be in the seed and MUST NOT be in the system prompt. These values are the paths, the data orientation, the slots and the bound settings of the template, the copy of the analysis memory, and the result of each completed dependency. Thus the composed `systemPrompt` stays a pure function of the agent type. The prompt cache of the provider can then use its prefix again for each step of each run.
 
@@ -179,63 +156,12 @@ Each value for one step MUST be in the seed and MUST NOT be in the system prompt
 - **THEN** the seed carries the `Template contract` section with the adaptable slots and the settings the plan binds
 - **AND** the system prompt of the agent carries no slot name, no template reference, and no bound value
 
-### Requirement: Command-execution discipline keeps execute_command primary
+#### Scenario: The seed carries the request of the plan
 
-The Command Execution section of `sandboxOrientCorePrompt` SHALL frame
-`execute_command` as the primary way to run scripts, bioinformatics CLI tools,
-and shell pipelines — not a fallback — while redirecting a fixed set of
-operations to dedicated workspace tools: `list_files` instead of `ls`/`find -name`,
-`read_file` instead of `cat`/`less`, `grep` (ripgrep-based content search)
-instead of shell `grep`/`rg`, and `file_stat` instead of `stat`/`wc -c`. The
-section SHALL preserve legitimate exec uses (running scripts, previewing
-huge/binary files, shell pipes, `find` with non-name predicates, real CLI tools)
-and is the sole steering mechanism — there is no tool-description override layer.
-
-#### Scenario: execute_command framed as the primary runner
-
-- **WHEN** a sandbox agent reads the Command Execution section
-- **THEN** it describes `execute_command` as the primary runner for scripts, CLI tools, and shell pipelines, not a fallback
-
-#### Scenario: Operations redirected to workspace tools
-
-- **WHEN** a sandbox agent reads the Command Execution section
-- **THEN** it directs the agent to `list_files`, `read_file`, `grep`, and `file_stat` in place of the corresponding shell idioms
-
-#### Scenario: Legitimate exec uses preserved
-
-- **WHEN** the section lists exec-appropriate operations
-- **THEN** it includes running scripts, previewing huge/binary files, shell pipes, `find` with non-name predicates, and real CLI tools
-
-### Requirement: Data-profiler orients via workspace tools, not cd and ls
-
-The `data-profiler` agent prompt SHALL orient from the menu carried in its briefing —
-the detected sets with their slots and value samples, the quarantine summary, and the
-leftover aggregate (see the input-scan-manifest spec) — rather than by enumerating the
-tree itself, and where it does need to explore it SHALL use the workspace tools rather
-than shelling out with `cd`/`ls`.
-
-The menu is the orientation pass. It is produced deterministically before the agent's
-first turn, so an agent that began by listing the tree would spend turns rediscovering
-what it was handed. The prompt SHALL frame the agent's job as operating on the menu —
-use, split, merge, group — plus reading the small number of files that resolve meaning:
-metadata sheets, one example member per set, the leftovers.
-
-For exploration beyond the menu the prompt SHALL direct the agent to `scan_inputs` with
-a path to re-scan a subtree — stating that a re-scan informs judgement but operations
-address the menu — or to `list_files`, recursing by calling it again on a subdirectory
-it returned.
-
-#### Scenario: Data-profiler orientation uses the menu
-
-- **WHEN** the data-profiler prompt is read
-- **THEN** it directs the agent to orient from the menu in its briefing
-- **AND** it does not direct the agent to enumerate the input tree as its orientation pass
-
-#### Scenario: Exploration beyond the menu uses workspace tools
-
-- **WHEN** the data-profiler prompt directs exploration beyond the menu
-- **THEN** it names `scan_inputs` with a path, or `list_files`
-- **AND** it states that operations address the menu, not a re-scan's output
+- **GIVEN** a plan that `generate_plan` stored for a request that names the format of a deliverable
+- **WHEN** `composeStepBriefing` composes the seed of a step of a run of that plan
+- **THEN** the seed holds the section `## The request of the analysis` with the text of the request
+- **AND** the system prompt holds no text of the request
 
 ### Requirement: The data-profiler prompt states that profiling is orientation, not quality control
 
