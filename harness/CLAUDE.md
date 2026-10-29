@@ -515,10 +515,10 @@ The agent prompts are in `prompts/`. Each prompt obeys these conventions:
 7. **A per-step value rides in the seed, never in the system prompt.** The
    `systemPrompt` of a sandbox agent is a pure function of its agent type. It is
    byte-identical across each step of each run, thus the prompt cache of the
-   provider can reuse the prefix of about 20k characters. One interpolated path or
-   id makes the prefix of each step unique, and each step then pays a full cache
-   write and reads nothing back. The paths, the dataset, and the dependency
-   handoffs belong in the briefing.
+   provider can reuse the prefix. One interpolated path or id makes the prefix of
+   each step unique, and each step then pays a full cache write and reads nothing
+   back. The paths, the dataset, and the dependency handoffs belong in the
+   briefing.
 8. **A prompt names a tool. It never names data.** The prompt layer has the
    *mechanism*: which tool to reach for, and when. It states the rules that
    constrain it, for example "never assume a reference path exists and never
