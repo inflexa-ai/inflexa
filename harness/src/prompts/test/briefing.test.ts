@@ -166,6 +166,7 @@ describe("renderRequest", () => {
         const rendered = renderRequest(request);
         expect(rendered).toStartWith("## The request of the analysis");
         expect(rendered).toContain(request);
+        expect(rendered).toContain("`output/`");
     });
 
     it("renders nothing for an absent or blank request", () => {
