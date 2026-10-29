@@ -107,7 +107,7 @@ On a release, the lease workflow MUST remove the machine of the lease and delete
 
 ### Requirement: The lease ends when its owner ends
 
-The lease workflow MUST read the status of the owner workflow at each tick. When the status is terminal, the lease workflow MUST release the lease. A lease that waits in a pause MUST also end when its owner ends. A run cancel MUST end the leases of the canceled workflows at once, without a wait for the next tick.
+The lease workflow MUST read the status of the owner workflow at each tick. When the status is terminal, the lease workflow MUST release the lease. A lease that waits in a pause MUST also end when its owner ends. A run cancel and a profile stop MUST end the leases of the stopped workflows at once, without a wait for the next tick.
 
 #### Scenario: A run cancel removes the machines at once
 

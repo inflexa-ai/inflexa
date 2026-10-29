@@ -22,7 +22,7 @@ import { createReportSessionAgent } from "../agents/report-session-agent.js";
 import { approvePlan, type ApprovePlanInput, type ApprovePlanRefusal, type PlanApproval } from "../app/approve-plan.js";
 import { registerChatTurns, type ChatTurns } from "../app/chat-turn-workflow.js";
 import { createWork, type WorkSurface } from "../app/work.js";
-import { createRunCanceler } from "../execution/run-canceler.js";
+import { createRunCanceler, type RunCanceler } from "../execution/run-canceler.js";
 import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/report-session-runtime.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -322,6 +322,8 @@ export type CoreRuntime = {
      * ends one work in each state, and `resume` and `hold` reach the waits of one work. Only a client resumes paused work.
      */
     readonly work: WorkSurface;
+    /** The run canceler of `work`. It also ends the sandbox leases of the canceled workflows at once. */
+    readonly runCanceler: RunCanceler;
     /**
      * Approve a stored plan by its id and start its run with no model call. It runs over the deps that
      * reach the `execute_analysis` tool of the conversation agent, thus the approval and the tool launch
@@ -516,8 +518,19 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         pauseRetryDelaysMs,
     });
 
+    const runCanceler = createRunCanceler({
+        pool: conversation.pool,
+        runCharge: executeAnalysisDeps.runCharge,
+        runAuthorizer: conversation.runAuthorizer,
+        // The end of a canceled run goes where the run engine emits the rest of the run.
+        provenance: executeAnalysisDeps.provenance,
+        logger: conversation.logger,
+        releaseLeasesOf: (workflowIds) => leases.releaseOwnedBy(workflowIds),
+    });
+
     return {
         agents: agentResolver,
+        runCanceler,
         askGateway,
         chatTurns,
         work: createWork({
@@ -525,21 +538,19 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             runAuthorizer: conversation.runAuthorizer,
             logger: conversation.logger,
             stopTurn: (turnId) => chatTurns.stop(turnId),
-            runCanceler: createRunCanceler({
-                pool: conversation.pool,
-                runCharge: executeAnalysisDeps.runCharge,
-                runAuthorizer: conversation.runAuthorizer,
-                // The end of a canceled run goes where the run engine emits the rest of the run.
-                provenance: executeAnalysisDeps.provenance,
-                logger: conversation.logger,
-                releaseLeasesOf: (workflowIds) => leases.releaseOwnedBy(workflowIds),
-            }),
-            stopProfile: (analysisId, workflowId) =>
-                stopDataProfile(
+            runCanceler,
+            stopProfile: async (analysisId, workflowId) => {
+                await stopDataProfile(
                     { pool: conversation.pool, logger: conversation.logger, notifyDataProfileSettled: wf.dataProfile.notifyDataProfileSettled },
                     analysisId,
                     workflowId,
-                ),
+                );
+                // A canceled body runs no teardown, thus the lease of the profile ends here and not at its owner check.
+                await leases.releaseOwnedBy([workflowId]).catch((failure: unknown) => {
+                    const logger = conversation.logger ?? createNoopLogger();
+                    logger.error("the sandbox lease of a stopped profile did not end", { analysisId, ...logger.errorFields(failure) });
+                });
+            },
         }),
         reportSession: { ensureSessionState: reportSession.ensureSessionState.bind(reportSession) },
         workflows: {
