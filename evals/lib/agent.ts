@@ -20,6 +20,9 @@ import { createConversationAgent } from "@inflexa-ai/harness/agents/conversation
 import { createReportSessionAgent } from "@inflexa-ai/harness/agents/report-session-agent.js";
 import { createNoopLogger } from "@inflexa-ai/harness/lib/console-logger.js";
 import { analogyAgentOf } from "@inflexa-ai/harness/tools/research/generate-analogy-report.js";
+import { synthesizerAgentOf } from "@inflexa-ai/harness/execution/run-synthesis.js";
+import type { StepSummary } from "@inflexa-ai/harness/schemas/step-summary.js";
+import { createSynthesisLookupTools } from "@inflexa-ai/harness/tools/research/synthesis-lookups.js";
 import { buildPlannerSearchTools, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "@inflexa-ai/harness/tools/research/generate-plan.js";
 import { makeFakeWorkspaceFs } from "@inflexa-ai/harness/agents/sandbox/__fixtures__/deps.js";
 import { createLocalRunAuthorizer } from "@inflexa-ai/harness/auth/local-run-authorizer.js";
@@ -52,10 +55,10 @@ export const REAL_TOOL = "real";
 export type ToolScript = ScriptedResult | ((input: unknown) => ScriptedResult) | typeof REAL_TOOL;
 
 /** The agents that a case can run. A sandbox agent is built for each trial, over the tree of the trial. */
-export type AgentKind = "conversation" | "planner" | "report" | "analogy" | "sandbox";
+export type AgentKind = "conversation" | "planner" | "report" | "analogy" | "synthesis" | "sandbox";
 
 /** The agents that one composition serves for the whole run. */
-export type StaticAgentKind = Exclude<AgentKind, "sandbox">;
+export type StaticAgentKind = Exclude<AgentKind, "sandbox" | "synthesis">;
 
 export const UNSCRIPTED_ERROR = "This tool is not available now.";
 
@@ -135,6 +138,7 @@ export function plannerAgent(): AgentDefinition {
         farmLockFile: "/eval/farm.lock",
         imagePackagesFile: "/eval/image-packages.json",
         toolOutputStore: unusedToolOutputStore,
+        workspace: evalWorkspace(),
     };
     return plannerAgentOf(deps, buildPlannerSearchTools(deps), plannerTerminalTools(createNoopLogger()));
 }
@@ -160,6 +164,27 @@ export function reportAgent(): AgentDefinition {
 /** The analogical reasoner that `generate_analogy_report` runs. */
 export function analogyAgent(): AgentDefinition {
     return analogyAgentOf({ model: "eval", bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, toolOutputStore: unusedToolOutputStore });
+}
+
+/** The read-only workspace of the planner and the synthesizer. Each read tool is scripted, thus nothing below is reached. */
+function evalWorkspace() {
+    return {
+        workspaceFs: makeFakeWorkspaceFs(),
+        pool: unconnectedPool(),
+        embedding: unusedEmbedding,
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/eval", id)),
+    };
+}
+
+/** The synthesizer of a run with these step summaries. Its submit tool checks the step ids of the summaries. */
+export function synthesisAgent(summaries: readonly StepSummary[]): AgentDefinition {
+    return synthesizerAgentOf({
+        model: "eval",
+        synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
+        summaries,
+        toolOutputStore: unusedToolOutputStore,
+        workspace: evalWorkspace(),
+    });
 }
 
 /** The agent of each kind. */

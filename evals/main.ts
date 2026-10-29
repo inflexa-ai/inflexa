@@ -21,7 +21,7 @@ import { parseArgs } from "node:util";
 import { createNoopLogger } from "@inflexa-ai/harness/lib/console-logger.js";
 import { parseJsonAs } from "@inflexa-ai/harness/lib/parse-json.js";
 import { allCases } from "./cases/index.js";
-import { evalAgents } from "./lib/agent.js";
+import { evalAgents, synthesisAgent } from "./lib/agent.js";
 import type { EvalCase } from "./lib/case.js";
 import { cliProvider, identityOf, providerOf, readProviderFile } from "./lib/provider.js";
 import { buildReport, compareReports, comparisonTable, regressions, reportTable, ReportSchema, type Report } from "./lib/report.js";
@@ -99,7 +99,7 @@ async function run(args: readonly string[]): Promise<void> {
     const sandbox = sandboxCases.length === 0 || values.provider !== undefined ? undefined : await cliProvider(logger, "sandbox");
     const agents = evalAgents();
     const startedAt = new Date().toISOString();
-    const digest = promptDigest(agents, await sandboxAgentsOf(sandboxCases));
+    const digest = promptDigest(agents, [...(await sandboxAgentsOf(sandboxCases)), synthesisAgent([])]);
 
     process.stderr.write(
         `${cases.length} cases x ${trials} trials on ${identity.model}${sandbox === undefined ? "" : ` (sandbox ${sandbox.identity.model})`}, prompt ${digest}\n`,

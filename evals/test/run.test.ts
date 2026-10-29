@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { synthesisAgent } from "../lib/agent.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "@inflexa-ai/harness/testing.js";
 import { evalAgents, UNSCRIPTED_ERROR } from "../lib/agent.js";
 import { asked, decides, never, plans, type EvalCase } from "../lib/case.js";
@@ -156,6 +157,10 @@ describe("the CLI host tools", () => {
 /** The tools of the agent of a case. A sandbox case builds its agent over a tree that the helper removes again. */
 async function toolsOf(c: EvalCase): Promise<readonly Tool[]> {
     const kind = c.agent ?? "conversation";
+    if (kind === "synthesis") {
+        const agent = synthesisAgent(c.synthesis?.summaries ?? []);
+        return [...agent.tools, ...(agent.scriptTools ?? [])];
+    }
     if (kind !== "sandbox") return [...agents[kind].tools, ...(agents[kind].scriptTools ?? [])];
     if (c.sandbox === undefined) throw new Error(`the sandbox case ${c.id} has no setup`);
     const trial = await openSandboxTrial(c.sandbox, { toolOutputStore: { put: () => okAsync(undefined), get: () => okAsync(null) }, label: "tools" });

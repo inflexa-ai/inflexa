@@ -8,6 +8,7 @@
  * a persisted data profile, and a working-memory row read through the real store.
  */
 
+import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -111,6 +112,7 @@ function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: Knowledg
             return Promise.reject(new Error("sandboxStepCallable should not be invoked in the seed tests"));
         },
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
+        workspaceFs: makeFakeWorkspaceFs(),
         synthesisModel: "test-synthesis-model",
         synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
         runCharge: createNoopRunCharge(),

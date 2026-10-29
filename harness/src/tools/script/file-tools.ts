@@ -139,7 +139,7 @@ type ReadTableOutput = WithToolCallRecord<
     ScriptFileEffect
 >;
 
-function createReadTableTool(deps: ScriptFileToolsDeps): Tool<z.infer<typeof readTableInput>, ReadTableOutput> {
+function createReadTableTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">): Tool<z.infer<typeof readTableInput>, ReadTableOutput> {
     return defineTool({
         id: "read_table",
         description:
@@ -418,6 +418,11 @@ function createExportPdfTool(deps: DocumentToolsDeps): Tool<z.infer<typeof expor
 
 export function createScriptFileTools(deps: ScriptFileToolsDeps): Tool[] {
     return [createReadTableTool(deps), createReadPdfTool(deps), createWriteDerivedTool(deps), ...createDocumentTools(deps)];
+}
+
+/** The script tools that read a table and a PDF of the workspace, and write nothing. */
+export function createReadScriptTools(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">): Tool[] {
+    return [createReadTableTool(deps), createReadPdfTool(deps)];
 }
 
 /** The tools that make a document in a script: a chart as an SVG file, and a PDF from markdown. */

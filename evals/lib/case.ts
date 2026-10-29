@@ -6,6 +6,7 @@
  * No model judges a trial.
  */
 
+import type { StepSummary } from "@inflexa-ai/harness/schemas/step-summary.js";
 import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
@@ -88,6 +89,8 @@ export type EvalCase = {
     readonly maxSteps: number;
     /** The tree, the farm, and the exec rules of a sandbox case. */
     readonly sandbox?: SandboxSetup;
+    /** The narrative of the plan and the step summaries of a synthesis case. They make the seed of the synthesizer. */
+    readonly synthesis?: { readonly narrative: string; readonly summaries: readonly StepSummary[] };
     /** The bound of one trial, in milliseconds. Absent: the bound of the run. */
     readonly timeoutMs?: number;
     /** The answer of the user to each approval that a call asks for. Absent: the user approves. */
@@ -200,6 +203,21 @@ export function callsAny(tools: readonly string[]): Grader {
         return hit === undefined
             ? { pass: false, detail: `no call of ${tools.join(", ")} (calls: ${describeCalls(trial.calls)})` }
             : { pass: true, detail: `called ${hit.tool}` };
+    };
+}
+
+/** A call of `tool` whose input holds each of `words`, in any case. */
+export function submits(tool: string, words: readonly string[]): Grader {
+    return (trial) => {
+        const calls = trial.calls.filter((call) => call.tool === tool);
+        if (calls.length === 0) return { pass: false, detail: `no call of ${tool} (calls: ${describeCalls(trial.calls)})` };
+        const hit = calls.find((call) => {
+            const text = JSON.stringify(call.input).toLowerCase();
+            return words.every((word) => text.includes(word.toLowerCase()));
+        });
+        return hit === undefined
+            ? { pass: false, detail: `${tool} names none of ${words.join(", ")}` }
+            : { pass: true, detail: `${tool} names ${words.join(", ")}` };
     };
 }
 

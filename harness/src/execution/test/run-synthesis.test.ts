@@ -13,6 +13,7 @@
  *      `buildRunSynthesisPart` emits the chat data part shape.
  */
 
+import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
@@ -37,6 +38,7 @@ import {
     loadStepSummariesFromDisk,
     persistSynthesis,
     readRunSynthesis,
+    synthesizerAgentOf,
     type GenerateRunSynthesisInput,
 } from "../run-synthesis.js";
 import { flattenDataPart } from "../../contracts/chat-frame.js";
@@ -155,6 +157,11 @@ function synthesize(script: readonly ScriptStep[], extra: Partial<GenerateRunSyn
         session: makeRunSession(),
         model: "claude-test",
         synthesisLookups: [pubmedLookup],
+        workspace: {
+            workspaceFs: makeFakeWorkspaceFs(),
+            pool: { query: () => Promise.resolve({ rows: [], rowCount: 0 }) },
+            resolveWorkspaceRoot: () => Promise.resolve("/workspace"),
+        },
         summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
         planNarrative: "Compare stimulated vs resting T-cells.",
         runId: RUN_ID,
@@ -342,7 +349,17 @@ describe("generateRunSynthesis", () => {
 
         await run;
 
-        expect(toolNamesOf(presentAt(calls, 0))).toEqual(["submit_synthesis", "report_blocker", "read_tool_output", "run_script"]);
+        expect(toolNamesOf(presentAt(calls, 0))).toEqual([
+            "read_file",
+            "list_files",
+            "file_stat",
+            "grep",
+            "inspect_data_profile",
+            "submit_synthesis",
+            "report_blocker",
+            "read_tool_output",
+            "run_script",
+        ]);
     });
 
     it("returns skipped with the reason when the agent records only a blocker", async () => {
@@ -436,6 +453,26 @@ describe("generateRunSynthesis", () => {
         const { run } = synthesize([], { summaries: [] });
 
         await expect(run).rejects.toThrow("no step summaries");
+    });
+});
+
+describe("synthesizerAgentOf", () => {
+    it("gives the synthesizer the read-only workspace, and the script reads of a PDF and a table", () => {
+        const agent = synthesizerAgentOf({
+            model: "claude-test",
+            synthesisLookups: [pubmedLookup],
+            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
+            workspace: {
+                workspaceFs: makeFakeWorkspaceFs(),
+                pool: { query: () => Promise.resolve({ rows: [], rowCount: 0 }) },
+                resolveWorkspaceRoot: () => Promise.resolve("/workspace"),
+            },
+        });
+
+        const tools = agent.tools.map((tool) => tool.id);
+        for (const id of ["read_file", "list_files", "file_stat", "grep", "inspect_data_profile"]) expect(tools).toContain(id);
+        expect(tools).not.toContain("write_file");
+        expect((agent.scriptTools ?? []).map((tool) => tool.id)).toEqual(["pubmed", "read_table", "read_pdf"]);
     });
 });
 

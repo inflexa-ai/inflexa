@@ -8,6 +8,7 @@
  * tested in `execution/test/run-synthesis.test.ts`; here we assert the wiring.
  */
 
+import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
@@ -138,6 +139,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             provider,
             embedding,
             resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
+            workspaceFs: makeFakeWorkspaceFs(),
             synthesisModel: "claude-test",
             synthesisLookups: createSynthesisLookupTools({ bioKeys: BIO_KEYS, citationResolver: unusedCitationResolver }),
         },

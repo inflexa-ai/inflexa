@@ -28,6 +28,7 @@
  * resume, 10.12 synthesis) need a real DBOS context and live outside this file.
  */
 
+import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { collapseWhitespace } from "../../lib/text.js";
@@ -539,6 +540,7 @@ function makeDeps(opts: {
             return Promise.reject(new Error("sandboxStepCallable should not be invoked directly"));
         },
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/tmp/cortex-execute-analysis-test", id)),
+        workspaceFs: makeFakeWorkspaceFs(),
         workingMemory: createWorkingMemory({
             query: () => Promise.resolve({ rows: [], rowCount: 0 }),
             connect: () => {
