@@ -438,29 +438,4 @@ describe("inspectRun (dependency-bearing factory)", () => {
             }).execute({ runId: "run-1", waitForTerminalSeconds: 2 }, ctx),
         ).rejects.toBe(aborted);
     });
-
-    it("prevents a workflow from waiting for its own run", async () => {
-        let waits = 0;
-        const pool = poolForRunDetail(runRow({ status: "running", completed_at: null }), []);
-        const { ctx: baseCtx } = makeToolContext();
-        const ctx = { ...baseCtx, session: { ...baseCtx.session, runFrame: { runId: "run-1" } } };
-
-        const result = (
-            await createInspectRunTool(pool, {
-                now: () => 0,
-                wait: () => {
-                    waits++;
-
-                    return Promise.resolve();
-                },
-            }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
-        )._unsafeUnwrap();
-
-        expect(result).toMatchObject({
-            inspectionState: "in_progress",
-            selfWaitPrevented: true,
-            wait: { requestedSeconds: 30, cutoffReached: false },
-        });
-        expect(waits).toBe(0);
-    });
 });

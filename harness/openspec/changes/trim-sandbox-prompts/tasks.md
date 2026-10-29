@@ -4,6 +4,7 @@
 
 - [x] 1.1 Delete the package-link layer and its append in `createSandboxAgent`. Delete the image-toolchain clause that orders a missing report. Tests: `agents/sandbox/test/shared.test.ts` pins the `link_packages` description and a system prompt that the seam does not change.
 - [x] 1.2 List each completed dependency past the first five by its absolute paths in `renderUpstream`, with a cap and a count. Remove `inspectRun` from `BASE_SANDBOX_TOOLS`, `SandboxToolName`, and the registry. Tests: `prompts/test/briefing.test.ts`, `agents/sandbox/test/shared.test.ts`.
+- [x] 1.6 Remove the guard of `inspect_run` against a wait on the run of the caller, and `selfWaitPrevented`. Test: `tools/research/test/misc-tools.test.ts`.
 - [x] 1.3 Move the briefing and scope sections from the orient core to the step standards. Render the resource budget in the first message of the profiler. Remove the output-directory clause from `renderWorkspace`. Test: `tasks/test/data-profile-suspension.test.ts`.
 - [x] 1.4 State the full resubmit of `submit_profile` and the true reason to preview a data file in the profiler prompt and its first message.
 - [x] 1.5 Delete the Cleanup section of the step standards. Make the keyed-source descriptions true for a headless caller.
