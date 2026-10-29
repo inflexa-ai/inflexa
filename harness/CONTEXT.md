@@ -273,7 +273,7 @@ never branches on which realization is bound, and a unit test passes a fake.
   `auth` (`makeLocalAuth`, `auth/local-auth-context.ts`), and the local harness
   never inspects it.
 
-### The four seams and the two hooks
+### The four seams and the three hooks
 
 The harness declares each seam as an interface. An embedder binds one realization
 at the composition root.
@@ -320,8 +320,8 @@ fact after the operation. Its `err` goes to the log, and the operation continues
   host-neutral realization, `createDbosRunLauncher`
   (`execution/dbos-run-launcher.ts`), is shared by each embedder.
 
-The two hooks are optional gates. The harness does not read the values that they
-give:
+The first two hooks are optional gates, and the third is an optional notice. The
+harness does not read the values that the gates give:
 
 - **`resolveRequestHeaders`** (`providers/request-headers.ts`) — a gate on each
   model provider and on the embedding provider. The provider adds the headers
@@ -331,6 +331,12 @@ give:
   of the sandbox client. The client calls it at each spawn, on the Docker backend
   and on the K8s backend. It stamps each host label as the host gives it. If the
   hook is absent, the sandbox has only the harness labels.
+- **`syncSessionFile`** (`workspace/session-files.ts`) — a notice for each file
+  that a chat thread or a report session writes outside a run, with its bytes and
+  its owner: the thread for a scratch file of the session, and the analysis for a
+  `write_file` or `edit_file` write. The call runs inside the tool step of the
+  write. A host that keeps the files of an analysis in its own store binds it. If
+  the hook is absent, the files stay in the workspace tree alone.
 
 ### Embedder and composition roots
 

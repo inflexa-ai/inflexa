@@ -457,7 +457,7 @@ describe("generateRunSynthesis", () => {
 });
 
 describe("synthesizerAgentOf", () => {
-    it("gives the synthesizer the read-only workspace, and the script reads of a PDF and a table", () => {
+    it("gives the synthesizer the read-only workspace, and the script reads of a PDF, a table, and a compressed file", () => {
         const agent = synthesizerAgentOf({
             model: "claude-test",
             synthesisLookups: [pubmedLookup],
@@ -472,7 +472,7 @@ describe("synthesizerAgentOf", () => {
         const tools = agent.tools.map((tool) => tool.id);
         for (const id of ["read_file", "list_files", "file_stat", "grep", "inspect_data_profile"]) expect(tools).toContain(id);
         expect(tools).not.toContain("write_file");
-        expect((agent.scriptTools ?? []).map((tool) => tool.id)).toEqual(["pubmed", "read_table", "read_pdf"]);
+        expect((agent.scriptTools ?? []).map((tool) => tool.id)).toEqual(["pubmed", "read_table", "read_pdf", "list_archive"]);
     });
 });
 

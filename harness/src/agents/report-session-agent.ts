@@ -46,6 +46,7 @@ import type { ReportVersionStore } from "../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../tools/report-authoring/authoring-tools.js";
 import { createReportAuthoringTools } from "../tools/report-authoring/authoring-tools.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
+import type { SyncSessionFile } from "../workspace/session-files.js";
 import {
     createExaminePageTool,
     createListPinnedArtifactsTool,
@@ -152,6 +153,8 @@ export type ReportSessionAgentDeps = {
      * document. An unbound member emits nothing, or gives absence, and every tool acts the same.
      */
     readonly provenance?: ProvenanceSeam;
+    /** The host copy of each file that the session writes. See `SyncSessionFile`. */
+    readonly syncSessionFile?: SyncSessionFile;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /** Adds `read_tool_output`. The loop of a report turn must keep its texts in the same store. */
@@ -163,7 +166,7 @@ export type ReportSessionAgentDeps = {
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
 export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
-    const { derivations, makeSessionPages, resolvePageUrl, provenance } = deps;
+    const { derivations, makeSessionPages, resolvePageUrl, provenance, syncSessionFile } = deps;
     // The seam rides into each tool that lands an act of the session, thus the composition binds it one
     // time and no tool reads a second source.
     const observation = provenance ? { provenance } : {};
@@ -233,11 +236,11 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
 
     // A derivation of a table of up to the read cap runs in a script, thus it starts no container. The scripts
     // of a session stay beside its page.
-    const scriptScratch = createScriptScratch({ resolveWorkspaceRoot, sessionDir: reportSessionDir, provenance, logger });
+    const scriptScratch = createScriptScratch({ resolveWorkspaceRoot, sessionDir: reportSessionDir, provenance, syncSessionFile, logger });
     // A PDF of the report is a document that a script builds from the content of the session, not a print of the
     // page. Its images come from the directory of the session alone, thus no unpinned file reaches it.
     const scriptTools = [
-        ...createReportScriptTools({ gateway, workspaceFs, resolveWorkspaceRoot, derivations, provenance, logger }),
+        ...createReportScriptTools({ gateway, workspaceFs, resolveWorkspaceRoot, derivations, provenance, syncSessionFile, logger }),
         createReadPdfTool({ workspaceFs, resolveWorkspaceRoot }),
         ...createDocumentTools({
             workspaceFs,

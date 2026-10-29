@@ -30,6 +30,7 @@ import { openReportThread, type ReportSessionStateGateway } from "../report-auth
 import { ReadTableOutputSchema, readTableRows, rowsText, type ScriptFileEffect } from "../script/file-tools.js";
 import { DERIVED_FILE_CAP_BYTES } from "../script/scratch.js";
 import { confinedWrite } from "../workspace/mutator.js";
+import { syncWrittenFile, type SyncSessionFile } from "../../workspace/session-files.js";
 
 export type ReportScriptToolsDeps = {
     readonly gateway: ReportSessionStateGateway;
@@ -37,6 +38,8 @@ export type ReportScriptToolsDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     readonly derivations: Pick<ReportSessionStateStore, "appendDerivation">;
     readonly provenance?: ProvenanceSeam;
+    /** The host copy of each derived table, owned by the thread of the session. */
+    readonly syncSessionFile?: SyncSessionFile;
     readonly logger?: Logger;
 };
 
@@ -78,7 +81,7 @@ function createReadTableTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeof r
                 tooLarge: "a larger table does not derive",
             });
             if (table.isErr()) return refused(table.error);
-            const hash = computeSha256(table.value.content);
+            const hash = computeSha256(table.value.source);
             if (hash !== entry.hash) return refused(`${path} changed after the session pinned it, thus its bytes are not the evidence of this session`);
             const { rows } = table.value;
             return ok(withToolCallRecord({ path, columns: table.value.columns, rowCount: rows.length, rows }, { reads: [{ path, hash }] }));
@@ -195,6 +198,14 @@ function createWriteDerivedTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeo
             if (appended.value === "duplicate") return refused(`another turn recorded ${outputPath} first, thus this table takes a new name`);
             if (appended.value === "absent") return refused("no report session state row exists to hold the derivation");
             observeDerived(analysisId, threadId, record);
+            await syncWrittenFile(deps.syncSessionFile, logger, {
+                session: ctx.session,
+                owner: { kind: "thread", threadId },
+                path: outputPath,
+                hash: record.outputHash,
+                size: landed.bytes.length,
+                content: landed.bytes,
+            });
             return ok(derivedOutput(record, landed.bytes.length, columns));
         },
     });

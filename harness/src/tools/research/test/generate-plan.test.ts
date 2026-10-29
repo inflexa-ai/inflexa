@@ -1230,7 +1230,7 @@ describe("generatePlan loop-driving tool", () => {
 });
 
 describe("plannerAgentOf", () => {
-    it("gives the planner the read-only workspace, and the script reads of a PDF and a table", () => {
+    it("gives the planner the read-only workspace, and the script reads of a PDF, a table, and a compressed file", () => {
         const pool = new Pool();
         const deps: GeneratePlanDeps = {
             conversation: { provider: makeFakeChatProvider(), model: "claude-test" },
@@ -1243,6 +1243,6 @@ describe("plannerAgentOf", () => {
         const tools = agent.tools.map((tool) => tool.id);
         for (const id of ["read_file", "list_files", "file_stat", "grep", "inspect_data_profile"]) expect(tools).toContain(id);
         expect(tools).not.toContain("write_file");
-        expect((agent.scriptTools ?? []).map((tool) => tool.id)).toEqual(["read_table", "read_pdf"]);
+        expect((agent.scriptTools ?? []).map((tool) => tool.id)).toEqual(["read_table", "read_pdf", "list_archive"]);
     });
 });

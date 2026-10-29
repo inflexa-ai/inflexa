@@ -71,7 +71,8 @@ export type NoticeName =
     | "RunCharge.close"
     | "ArtifactRegistry.sync"
     | "UsageRecorder.record"
-    | "notifyDataProfileSettled";
+    | "notifyDataProfileSettled"
+    | "syncSessionFile";
 
 export type GateRefusal =
     | { readonly kind: "failed"; readonly gate: GateName; readonly reason: string }

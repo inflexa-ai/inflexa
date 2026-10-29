@@ -26,6 +26,7 @@ import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
 import { computeSha256 } from "../../../lib/fs-helpers.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 import { stepWritePrefix } from "../../../workspace/paths.js";
+import type { SessionFileWrite } from "../../../workspace/session-files.js";
 import { presentAt } from "../../../lib/present.js";
 
 const ANALYSIS = "analysis-001";
@@ -293,6 +294,24 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
             tool: "write_file",
             invocationId: "inv-1",
         });
+    });
+
+    test("a landed write reaches the file sync of the host, owned by the analysis, with its bytes", async () => {
+        const synced: SessionFileWrite[] = [];
+        const mutator = createSessionWorkspaceMutator({
+            resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)),
+            syncSessionFile: (write) => {
+                synced.push(write);
+                return okAsync(undefined);
+            },
+        });
+
+        await writeAndRecord(mutator, { path: "notes/summary.md", content: "# notes\n", toolName: "write_file", invocationId: "inv-1", session: chatSession });
+
+        expect(synced).toHaveLength(1);
+        expect(synced[0]).toMatchObject({ owner: { kind: "analysis" }, path: "notes/summary.md", hash: computeSha256(Buffer.from("# notes\n")), size: 8 });
+        expect(Buffer.from(synced[0]?.content ?? []).toString("utf8")).toBe("# notes\n");
+        expect(synced[0]?.session).toBe(chatSession);
     });
 
     test("a scope with no thread emits the event with no threadId key", async () => {

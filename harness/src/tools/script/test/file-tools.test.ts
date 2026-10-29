@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
+import { zipSync } from "fflate";
+import { okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { computeSha256 } from "../../../lib/fs-helpers.js";
@@ -17,6 +20,7 @@ import { createWorkspaceReadLineage } from "../../../provenance/workspace-reads.
 import { createReadPdfTool, createScriptFileTools } from "../file-tools.js";
 import { createRunScriptTool } from "../run-script.js";
 import { createScriptScratch, type ScriptScratch } from "../scratch.js";
+import type { SessionFileWrite } from "../../../workspace/session-files.js";
 
 const ANALYSIS = "analysis-001";
 const THREAD = "thread-1";
@@ -168,6 +172,61 @@ describe("read_table", () => {
     });
 });
 
+describe("a compressed file", () => {
+    const COUNTS = "gene,n\nTP53,4\nKIT,9\n";
+
+    beforeEach(() => {
+        const zip = zipSync({
+            "GSE1/counts.csv": Buffer.from(COUNTS),
+            "GSE1/paper.pdf": buildPdf(2),
+            "GSE1/big.csv": Buffer.from(`a\n${"1\n".repeat(9 * 1024 * 1024)}`),
+        });
+        writeFileSync(join(root, "runs/r1/s1/output/GSE1.zip"), zip);
+        writeFileSync(join(root, "runs/r1/s1/output/counts.csv.gz"), gzipSync(Buffer.from(COUNTS)));
+    });
+
+    test("list_archive lists its files, and read_table reads one as its entry, with the hash of the compressed file", async () => {
+        const listed = (await tool("list_archive").execute({ path: "runs/r1/s1/output/GSE1.zip" }, ctx()))._unsafeUnwrap();
+        expect(listed).toMatchObject({ entries: [{ name: "GSE1/counts.csv", bytes: COUNTS.length }, { name: "GSE1/paper.pdf" }, { name: "GSE1/big.csv" }] });
+
+        const table = (await tool("read_table").execute({ path: "runs/r1/s1/output/GSE1.zip", entry: "GSE1/counts.csv" }, ctx()))._unsafeUnwrap();
+        expect(table).toMatchObject({
+            rowCount: 2,
+            rows: [
+                { gene: "TP53", n: 4 },
+                { gene: "KIT", n: 9 },
+            ],
+        });
+        const zip = readFileSync(join(root, "runs/r1/s1/output/GSE1.zip"));
+        expect(readToolCallRecord(table)).toEqual({ reads: [{ path: "runs/r1/s1/output/GSE1.zip", hash: computeSha256(zip) }] });
+    });
+
+    test("read_pdf reads a PDF inside it", async () => {
+        const pdf = (await tool("read_pdf").execute({ path: "runs/r1/s1/output/GSE1.zip", entry: "GSE1/paper.pdf" }, ctx()))._unsafeUnwrap();
+        expect(pdf).toMatchObject({ totalPages: 2 });
+    });
+
+    test("a gzip-compressed table reads with no entry", async () => {
+        const table = (await tool("read_table").execute({ path: "runs/r1/s1/output/counts.csv.gz" }, ctx()))._unsafeUnwrap();
+        expect(table).toMatchObject({ columns: ["gene", "n"], rowCount: 2 });
+    });
+
+    test("refuses a read with no entry, an absent entry, and an entry over the cap", async () => {
+        const noEntry = await tool("read_table").execute({ path: "runs/r1/s1/output/GSE1.zip" }, ctx());
+        const absent = await tool("read_table").execute({ path: "runs/r1/s1/output/GSE1.zip", entry: "GSE1/none.csv" }, ctx());
+        const big = await tool("read_table").execute({ path: "runs/r1/s1/output/GSE1.zip", entry: "GSE1/big.csv" }, ctx());
+
+        expect(noEntry._unsafeUnwrapErr().error).toBe("runs/r1/s1/output/GSE1.zip is a compressed file; list_archive gives its files, and an entry names one");
+        expect(absent._unsafeUnwrapErr().error).toBe("runs/r1/s1/output/GSE1.zip holds no file GSE1/none.csv; list_archive gives its files");
+        expect(big._unsafeUnwrapErr().error).toContain("GSE1/big.csv in runs/r1/s1/output/GSE1.zip is over the 16 MiB cap of a script read");
+    });
+
+    test("list_archive refuses a file that is not compressed", async () => {
+        const result = await tool("list_archive").execute({ path: "runs/r1/s1/output/de.csv" }, ctx());
+        expect(result._unsafeUnwrapErr().error).toBe("runs/r1/s1/output/de.csv is not a compressed file that a script opens (zip, tar, tar.gz, gz)");
+    });
+});
+
 describe("write_derived", () => {
     test("writes rows as CSV in the derived directory of the conversation, with each cell quoted where it must be", async () => {
         const result = (
@@ -262,6 +321,30 @@ describe("export_pdf", () => {
 });
 
 describe("the scratch directory", () => {
+    test("each file that lands reaches the file sync of the host, owned by the thread, and an unbound sync changes nothing", async () => {
+        const synced: SessionFileWrite[] = [];
+        const resolveWorkspaceRoot = (): Promise<string> => Promise.resolve(root);
+        const syncing = createScriptScratch({
+            resolveWorkspaceRoot,
+            sessionDir: conversationSessionDir,
+            syncSessionFile: (write) => {
+                synced.push(write);
+                return okAsync(undefined);
+            },
+        });
+        const session = ctx().session;
+
+        await syncing.saveScript({ session, invocationId: "call-9", code: "return 1;" });
+        const written = await syncing.writeDerived({ session, invocationId: "call-9", name: "top.csv", content: "gene\nTP53\n" });
+
+        expect(written.status).toBe("written");
+        expect(synced.map((write) => [write.owner, write.path])).toEqual([
+            [{ kind: "thread", threadId: THREAD }, `${conversationSessionDir(THREAD)}/scripts/call-9.js`],
+            [{ kind: "thread", threadId: THREAD }, `${DERIVED}/top.csv`],
+        ]);
+        expect(Buffer.from(synced[1]?.content ?? []).toString("utf8")).toBe("gene\nTP53\n");
+    });
+
     test("saves a script under the id of its call, and a scope with no thread saves nothing", async () => {
         const saved = await scratch.saveScript({ session: ctx().session, invocationId: "toolu_01", code: "return 1;" });
         const none = await scratch.saveScript({ session: makeSession(), invocationId: "toolu_02", code: "return 2;" });

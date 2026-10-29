@@ -48,6 +48,7 @@ import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { bindSessionEmit, type ProvenanceSeam, type SessionProvenanceEvent } from "../../provenance/seam.js";
+import { syncWrittenFile, type SyncSessionFile } from "../../workspace/session-files.js";
 import { resolveForWrite, STAGED_INPUT_ROOT, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 
 /** Outcome of a confined write. Expected outcomes are data variants — never throws on them. */
@@ -402,6 +403,8 @@ export type SessionWorkspaceMutatorDeps = {
      * proceeds unchanged.
      */
     readonly provenance?: ProvenanceSeam;
+    /** The host copy of each file that lands, owned by the analysis: the path is anywhere in its tree. */
+    readonly syncSessionFile?: SyncSessionFile;
     readonly logger?: Logger;
 };
 
@@ -452,7 +455,16 @@ export function createSessionWorkspaceMutator(deps: SessionWorkspaceMutatorDeps)
                 refuseStagedInputs: true,
             });
             if (landed.status !== "ok") return { ...landed, path };
-            return landedWrite(landed);
+            const write = landedWrite(landed);
+            await syncWrittenFile(deps.syncSessionFile, logger, {
+                session,
+                owner: { kind: "analysis" },
+                path: write.record.path,
+                hash: write.record.hash,
+                size: write.record.size,
+                content: landed.bytes,
+            });
+            return write;
         },
         recordWrite(record) {
             const event: Extract<SessionProvenanceEvent, { type: "write-file" }> = {

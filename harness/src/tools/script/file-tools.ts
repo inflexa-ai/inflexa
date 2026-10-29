@@ -7,7 +7,8 @@
  * directory of the scratch of the session.
  *
  * A table read holds at most 16 MiB, and the parse runs on the host. A larger table, or a format with no parser
- * here, is work for an analysis run, and the refusal says so.
+ * here, is work for an analysis run, and the refusal says so. `list_archive` lists the files of a compressed file, and
+ * a read names one of them as its `entry`. A gzip-compressed table reads with no entry.
  *
  * Each tool gives the files that it read or wrote as its call record. `run_script` collects the records of the
  * calls of one script, thus the provenance of the script chains each derived file to the tables that it read.
@@ -29,6 +30,7 @@ import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { normalizeEchartSpec } from "../display/normalize-echart-spec.js";
+import { ARCHIVE_SCAN_CAP_BYTES, archiveKindOf, gzipEntryName, listArchive, readArchiveEntry, type ArchiveEntry } from "./archive.js";
 import { recordReadBytes, recordReadRefusal } from "./metrics.js";
 import type { ScratchFile, ScriptRead, ScriptScratch } from "./scratch.js";
 
@@ -70,8 +72,70 @@ function numericCell(text: string): string | number {
     return value;
 }
 
-/** The rows of one table, the bytes that they came from, and the columns that they keep. */
-export type TableRows = { readonly content: Buffer; readonly columns: string[]; readonly rows: Row[] };
+/** The cap of the compressed file that a read of an entry reads. */
+const ARCHIVE_READ_CAP_BYTES = 64 * 1024 * 1024;
+
+/** The bytes of one read: the file or the entry that the read names, and the file on disk that holds them. */
+type ReadBytes = { readonly content: Buffer; readonly source: Buffer };
+
+const entryInput = z
+    .string()
+    .min(1)
+    .optional()
+    .describe("The file inside a compressed file at `path` (zip, tar, tar.gz), as `list_archive` names it. Absent: `path` itself.");
+
+/**
+ * Read one file of the workspace through the read seam, or one entry of a compressed file. A gzip-compressed file
+ * with no entry reads as its one entry. A refusal is the line that the script reads.
+ */
+async function readScriptFile(args: {
+    readonly workspaceFs: WorkspaceFilesystem;
+    readonly session: AgentSession;
+    readonly path: string;
+    readonly entry: string | undefined;
+    readonly maxBytes: number;
+    readonly tooLarge: string;
+}): Promise<Result<ReadBytes, string>> {
+    const { path, maxBytes } = args;
+    const kind = archiveKindOf(path);
+    const entry = args.entry ?? (kind === "gzip" ? gzipEntryName(path) : undefined);
+    if (entry !== undefined && kind === undefined) return err(`${path} is not a compressed file that a script opens (zip, tar, tar.gz, gz)`);
+    const cap = kind === undefined ? maxBytes : ARCHIVE_READ_CAP_BYTES;
+    const read = await args.workspaceFs.readFile({ session: args.session, path, maxBytes: cap });
+    if (read.isErr()) return err(`${path} could not be read`);
+    const file = read.value;
+    if (file.kind === "not_found") return err(`${path} does not exist; find the path with workspace_search or list_files`);
+    if (file.kind === "out_of_scope") return err(`${path} is outside this analysis`);
+    if (file.kind === "truncated") {
+        recordReadRefusal("too_large");
+        return err(`${path} is ${String(file.totalSize)} bytes, over the ${String(cap / (1024 * 1024))} MiB cap of a script read; ${args.tooLarge}`);
+    }
+    if (kind === undefined || entry === undefined) return ok({ content: file.content, source: file.content });
+    const opened = readArchiveEntry(kind, path, file.content, entry, maxBytes);
+    if (opened.isOk()) return ok({ content: opened.value, source: file.content });
+    switch (opened.error.kind) {
+        case "not_found":
+            return err(`${path} holds no file ${entry}; list_archive gives its files`);
+        case "too_large":
+            recordReadRefusal("too_large");
+            return err(
+                `${entry} in ${path} is over the ${String(maxBytes / (1024 * 1024))} MiB cap of a script read, or its archive decompresses past ${String(ARCHIVE_SCAN_CAP_BYTES / (1024 * 1024))} MiB; ${args.tooLarge}`,
+            );
+        case "unparsable":
+            recordReadRefusal("unparsable");
+            return err(`${path} did not open: ${opened.error.detail}`);
+        default: {
+            const unhandled: never = opened.error;
+            throw new Error(`unhandled entry refusal: ${JSON.stringify(unhandled)}`);
+        }
+    }
+}
+
+/**
+ * The rows of one table, the columns that they keep, and the bytes of the file on disk that held them. A read of an
+ * entry names the compressed file, thus its hash is the hash of that file.
+ */
+export type TableRows = { readonly source: Buffer; readonly columns: string[]; readonly rows: Row[] };
 
 /**
  * Read one table through the read seam, parse it on the host, and keep the named columns. A refusal is the line
@@ -81,30 +145,29 @@ export async function readTableRows(args: {
     readonly workspaceFs: WorkspaceFilesystem;
     readonly session: AgentSession;
     readonly path: string;
+    readonly entry?: string;
     readonly columns: readonly string[] | undefined;
     readonly tooLarge: string;
 }): Promise<Result<TableRows, string>> {
     const { path, columns } = args;
-    const format = detectFormat(path);
+    const kind = archiveKindOf(path);
+    const name = args.entry ?? (kind === "gzip" ? gzipEntryName(path) : path);
+    const format = detectFormat(name);
     if (format === undefined) {
         recordReadRefusal("unsupported_format");
-        return err(`${path} has no table format that a script reads (csv, tsv, json, parquet); an analysis run reads it`);
+        if (kind !== undefined && kind !== "gzip" && args.entry === undefined)
+            return err(`${path} is a compressed file; list_archive gives its files, and an entry names one`);
+        return err(`${name} has no table format that a script reads (csv, tsv, json, parquet); an analysis run reads it`);
     }
-    const read = await args.workspaceFs.readFile({ session: args.session, path, maxBytes: TABLE_READ_CAP_BYTES });
-    if (read.isErr()) return err(`${path} could not be read`);
-    const file = read.value;
-    if (file.kind === "not_found") return err(`${path} does not exist; find the path with workspace_search or list_files`);
-    if (file.kind === "out_of_scope") return err(`${path} is outside this analysis`);
-    if (file.kind === "truncated") {
-        recordReadRefusal("too_large");
-        return err(`${path} is ${String(file.totalSize)} bytes, over the 16 MiB cap of a script read; ${args.tooLarge}`);
-    }
-    const parsed = await parseTable(format, file.content);
+    const read = await readScriptFile({ ...args, entry: args.entry, maxBytes: TABLE_READ_CAP_BYTES });
+    if (read.isErr()) return err(read.error);
+    const { content, source } = read.value;
+    const parsed = await parseTable(format, content);
     if (parsed === undefined) {
         recordReadRefusal("unparsable");
-        return err(`${path} did not parse as ${format}: a ragged row, a repeated header, or a nested JSON value`);
+        return err(`${name} did not parse as ${format}: a ragged row, a repeated header, or a nested JSON value`);
     }
-    recordReadBytes(file.content.length);
+    recordReadBytes(content.length);
 
     const header = [...new Set(parsed.flatMap((row) => Object.keys(row)))];
     const missing = (columns ?? []).filter((column) => !header.includes(column));
@@ -118,11 +181,12 @@ export async function readTableRows(args: {
         }
         return out;
     });
-    return ok({ content: file.content, columns: kept, rows });
+    return ok({ source, columns: kept, rows });
 }
 
 const readTableInput = z.object({
     path: z.string().min(1).describe("Analysis-rooted path of the table, for example 'runs/<runId>/<stepId>/output/de_results.csv'."),
+    entry: entryInput,
     columns: z.array(z.string()).min(1).optional().describe("Keep only these columns. Absent: each column."),
 });
 
@@ -146,20 +210,85 @@ function createReadTableTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "re
         description:
             "Read one table of the workspace as rows: CSV, TSV, JSON (an array of flat objects), or parquet, up to 16 MiB. " +
             "Each row is an object keyed by column, and a cell that holds a plain number reads as a number. " +
+            "A gzip-compressed table reads as it is, and `entry` reads one table inside a zip or a tar. " +
             "A larger table, or another format such as h5ad, is work for an analysis run.",
         inputSchema: readTableInput,
         outputSchema: ReadTableOutputSchema,
-        describeCall: ({ path }) => path,
+        describeCall: ({ path, entry }) => (entry === undefined ? path : `${path} : ${entry}`),
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
-        execute: async ({ path, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
-            const table = await readTableRows({ workspaceFs: deps.workspaceFs, session: ctx.session, path, columns, tooLarge: "an analysis run reads it" });
+        execute: async ({ path, entry, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
+            const table = await readTableRows({
+                workspaceFs: deps.workspaceFs,
+                session: ctx.session,
+                path,
+                entry,
+                columns,
+                tooLarge: "an analysis run reads it",
+            });
             if (table.isErr()) return refused(table.error);
-            const { content, rows } = table.value;
+            const { source, rows } = table.value;
             const { analysisId } = ctx.session.scope;
             const resolved = resolveWorkspacePath({ workspaceRoot: await deps.resolveWorkspaceRoot(analysisId), analysisId, path });
             const relative = resolved.kind === "ok" ? resolved.relative.split("\\").join("/") : path;
-            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(content) }] };
+            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(source) }] };
             return ok(withToolCallRecord({ path: relative, columns: table.value.columns, rowCount: rows.length, rows }, effect));
+        },
+    });
+}
+
+const listArchiveInput = z.object({
+    path: z.string().min(1).describe("Analysis-rooted path of a compressed file: .zip, .tar, .tar.gz, .tgz, or .gz."),
+});
+
+const ListArchiveOutputSchema = z.object({
+    path: z.string(),
+    entries: z.array(z.object({ name: z.string(), bytes: z.number() })).readonly(),
+});
+
+type ListArchiveOutput = WithToolCallRecord<{ readonly path: string; readonly entries: readonly ArchiveEntry[] }, ScriptFileEffect>;
+
+function createListArchiveTool(
+    deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">,
+): Tool<z.infer<typeof listArchiveInput>, ListArchiveOutput> {
+    return defineTool({
+        id: "list_archive",
+        description:
+            "List the files inside a compressed file of the workspace (zip, tar, tar.gz, gz), each with its decompressed size. " +
+            "`read_table` and `read_pdf` then read one of them as their `entry`.",
+        inputSchema: listArchiveInput,
+        outputSchema: ListArchiveOutputSchema,
+        describeCall: ({ path }) => path,
+        describeResult: (_input, result) => `${String(result.entries.length)} files`,
+        execute: async ({ path }, ctx): Promise<Result<ListArchiveOutput, ToolError>> => {
+            const kind = archiveKindOf(path);
+            if (kind === undefined) {
+                recordReadRefusal("unsupported_format");
+                return refused(`${path} is not a compressed file that a script opens (zip, tar, tar.gz, gz)`);
+            }
+            const read = await readScriptFile({
+                workspaceFs: deps.workspaceFs,
+                session: ctx.session,
+                path,
+                entry: undefined,
+                maxBytes: ARCHIVE_READ_CAP_BYTES,
+                tooLarge: "an analysis run opens it",
+            });
+            if (read.isErr()) return refused(read.error);
+            const { source } = read.value;
+            const listed = listArchive(kind, path, source);
+            if (listed.isErr()) {
+                if (listed.error.kind === "too_large") {
+                    recordReadRefusal("too_large");
+                    return refused(`${path} decompresses past ${String(ARCHIVE_SCAN_CAP_BYTES / (1024 * 1024))} MiB; an analysis run opens it`);
+                }
+                recordReadRefusal("unparsable");
+                return refused(`${path} did not open${listed.error.kind === "unparsable" ? `: ${listed.error.detail}` : ""}`);
+            }
+            const { analysisId } = ctx.session.scope;
+            const resolved = resolveWorkspacePath({ workspaceRoot: await deps.resolveWorkspaceRoot(analysisId), analysisId, path });
+            const relative = resolved.kind === "ok" ? resolved.relative.split("\\").join("/") : path;
+            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(source) }] };
+            return ok(withToolCallRecord({ path: relative, entries: listed.value }, effect));
         },
     });
 }
@@ -170,6 +299,7 @@ const PDF_PAGES_PER_READ = 50;
 
 const readPdfInput = z.object({
     path: z.string().min(1).describe("Analysis-rooted path of the PDF, for example 'data/inputs/<fileId>/paper.pdf'."),
+    entry: entryInput,
     firstPage: z.number().int().min(1).optional().describe("The first page to read, 1-based. Absent: 1."),
     lastPage: z
         .number()
@@ -200,39 +330,46 @@ export function createReadPdfTool(
             "A scanned page with no text layer reads as an empty text.",
         inputSchema: readPdfInput,
         outputSchema: ReadPdfOutputSchema,
-        describeCall: ({ path, firstPage, lastPage }) =>
-            firstPage === undefined && lastPage === undefined ? path : `${path}, pages ${String(firstPage ?? 1)}-${String(lastPage ?? "")}`,
+        describeCall: ({ path, entry, firstPage, lastPage }) => {
+            const file = entry === undefined ? path : `${path} : ${entry}`;
+            return firstPage === undefined && lastPage === undefined ? file : `${file}, pages ${String(firstPage ?? 1)}-${String(lastPage ?? "")}`;
+        },
         describeResult: (_input, result) => `${String(result.pages.length)} of ${String(result.totalPages)} pages`,
         // `run_script` folds the record of a nested call only into a tool that folds records.
         foldCallRecord: lineage === undefined ? undefined : (effect: ScriptFileEffect) => lineage.track(effect.reads ?? []),
-        execute: async ({ path, firstPage, lastPage }, ctx): Promise<Result<ReadPdfOutput, ToolError>> => {
-            if (!path.toLowerCase().endsWith(".pdf")) {
+        execute: async ({ path, entry, firstPage, lastPage }, ctx): Promise<Result<ReadPdfOutput, ToolError>> => {
+            const kind = archiveKindOf(path);
+            const name = entry ?? (kind === "gzip" ? gzipEntryName(path) : path);
+            if (!name.toLowerCase().endsWith(".pdf")) {
                 recordReadRefusal("unsupported_format");
-                return refused(`${path} is not a PDF; read_table reads a table, and read_file reads text`);
+                if (kind !== undefined && kind !== "gzip" && entry === undefined)
+                    return refused(`${path} is a compressed file; list_archive gives its files, and an entry names one`);
+                return refused(`${name} is not a PDF; read_table reads a table, and read_file reads text`);
             }
-            const read = await deps.workspaceFs.readFile({ session: ctx.session, path, maxBytes: PDF_READ_CAP_BYTES });
-            if (read.isErr()) return refused(`${path} could not be read`);
-            const file = read.value;
-            if (file.kind === "not_found") return refused(`${path} does not exist; find the path with workspace_search or list_files`);
-            if (file.kind === "out_of_scope") return refused(`${path} is outside this analysis`);
-            if (file.kind === "truncated") {
-                recordReadRefusal("too_large");
-                return refused(`${path} is ${String(file.totalSize)} bytes, over the 64 MiB cap of a PDF read`);
-            }
+            const read = await readScriptFile({
+                workspaceFs: deps.workspaceFs,
+                session: ctx.session,
+                path,
+                entry,
+                maxBytes: PDF_READ_CAP_BYTES,
+                tooLarge: "an analysis run reads it",
+            });
+            if (read.isErr()) return refused(read.error);
+            const { content, source } = read.value;
             const first = firstPage ?? 1;
             const last = Math.min(lastPage ?? first + PDF_PAGES_PER_READ - 1, first + PDF_PAGES_PER_READ - 1);
             let text: PdfText;
             try {
-                text = await readPdfText(file.content, { first, last });
+                text = await readPdfText(content, { first, last });
             } catch {
                 recordReadRefusal("unparsable");
                 return refused(`${path} did not open as a PDF: a damaged file, or a file with a password`);
             }
-            recordReadBytes(file.content.length);
+            recordReadBytes(content.length);
             const { analysisId } = ctx.session.scope;
             const resolved = resolveWorkspacePath({ workspaceRoot: await deps.resolveWorkspaceRoot(analysisId), analysisId, path });
             const relative = resolved.kind === "ok" ? resolved.relative.split("\\").join("/") : path;
-            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(file.content) }] };
+            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(source) }] };
             return ok(withToolCallRecord({ path: relative, totalPages: text.totalPages, pages: text.pages }, effect));
         },
     });
@@ -424,12 +561,12 @@ function createExportPdfTool(deps: DocumentToolsDeps): Tool<z.infer<typeof expor
 }
 
 export function createScriptFileTools(deps: ScriptFileToolsDeps): Tool[] {
-    return [createReadTableTool(deps), createReadPdfTool(deps), createWriteDerivedTool(deps), ...createDocumentTools(deps)];
+    return [createReadTableTool(deps), createReadPdfTool(deps), createListArchiveTool(deps), createWriteDerivedTool(deps), ...createDocumentTools(deps)];
 }
 
-/** The script tools that read a table and a PDF of the workspace, and write nothing. */
+/** The script tools that read a table, a PDF, and the files of a compressed file of the workspace, and write nothing. */
 export function createReadScriptTools(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">): Tool[] {
-    return [createReadTableTool(deps), createReadPdfTool(deps)];
+    return [createReadTableTool(deps), createReadPdfTool(deps), createListArchiveTool(deps)];
 }
 
 /** The tools that make a document in a script: a chart as an SVG file, and a PDF from markdown. */
