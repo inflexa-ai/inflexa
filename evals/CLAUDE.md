@@ -42,8 +42,9 @@ The conversation agent holds the host tools of the CLI. Thus the CLI must resolv
 the harness of this checkout. If the run refuses the CLI, run `bun run
 harness:local` in `cli/`.
 
-A report is a JSON file. It holds each trial: the grade, the calls, the text, and
-the token usage. The prompt digest of a report identifies the prompt variant that
+A report is a JSON file. It holds the grade and the token usage of each trial.
+Only a failed trial also keeps its calls and its text, because they explain the
+failure. The prompt digest of a report identifies the prompt variant that
 ran.
 
 A run writes its report to `results/`, under the commit that ran, the start time,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { compareReports, regressions, type CaseReport, type Report } from "../lib/report.js";
+import { buildReport, compareReports, regressions, type CaseReport, type Report } from "../lib/report.js";
+import type { TrialResult } from "../lib/run.js";
 import { wilson } from "../lib/stats.js";
 
 function caseReport(id: string, passes: number, trials: number, set: CaseReport["set"] = "dev"): CaseReport {
@@ -70,5 +71,30 @@ describe("compareReports", () => {
             "case kept has 4 trials that failed with an error",
             "case lost has 5 trials that failed with an error",
         ]);
+    });
+});
+
+describe("buildReport", () => {
+    test("keeps the calls and the text of a failed trial only", () => {
+        const trial = (pass: boolean): TrialResult => ({
+            kind: "graded",
+            pass,
+            detail: pass ? "ok" : "no export",
+            calls: [{ step: 1, tool: "read_file", input: { path: "a.txt" }, refused: false, ok: true }],
+            asks: [],
+            text: "the reply",
+            finishReason: "stop",
+            stepFinishes: ["tool-calls", "stop"],
+            capped: false,
+        });
+        const report = buildReport(
+            { startedAt: "2026-10-29T00:00:00Z", promptDigest: "d", provider: { kind: "anthropic", model: "m" }, trialsPerCase: 2, k: 1 },
+            [{ id: "c", set: "dev", source: "test", user: "hi", maxSteps: 1, grade: () => ({ pass: true, detail: "ok" }) }],
+            new Map([["c", [trial(true), trial(false)]]]),
+        );
+
+        const [passed, failed] = report.cases[0]?.results ?? [];
+        expect(passed).toEqual({ kind: "graded", pass: true, detail: "ok", finishReason: "stop", capped: false });
+        expect(JSON.stringify(failed)).toBe(JSON.stringify(trial(false)));
     });
 });
