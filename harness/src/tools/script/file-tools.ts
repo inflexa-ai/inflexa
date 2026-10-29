@@ -186,7 +186,7 @@ const ReadPdfOutputSchema = z.object({
 
 type ReadPdfOutput = WithToolCallRecord<z.infer<typeof ReadPdfOutputSchema>, ScriptFileEffect>;
 
-function createReadPdfTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">): Tool<z.infer<typeof readPdfInput>, ReadPdfOutput> {
+export function createReadPdfTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">): Tool<z.infer<typeof readPdfInput>, ReadPdfOutput> {
     return defineTool({
         id: "read_pdf",
         description:

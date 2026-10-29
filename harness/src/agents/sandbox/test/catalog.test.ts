@@ -38,12 +38,14 @@ describe("createSandboxAgents", () => {
         const ALWAYS_ON_PROFILE = ["inspect_data_profile"];
         // The two lease tools: the agent holds its sandbox through them, whatever its meta declares.
         const ALWAYS_ON_LEASE = ["acquire_sandbox", "release_sandbox"];
+        // A paper of the analysis is a PDF, thus each agent reads PDFs in a script.
+        const ALWAYS_ON_SCRIPT = ["read_pdf"];
         for (const [id, def] of Object.entries(agents)) {
             const meta = presentGet(SANDBOX_AGENT_META, id);
             const all = [...def.tools, ...(def.scriptTools ?? [])];
             const toolIds = new Set(all.map((t) => t.id));
 
-            for (const required of [...ALWAYS_ON_READ, ...ALWAYS_ON_PROFILE, ...ALWAYS_ON_LEASE]) {
+            for (const required of [...ALWAYS_ON_READ, ...ALWAYS_ON_PROFILE, ...ALWAYS_ON_LEASE, ...ALWAYS_ON_SCRIPT]) {
                 expect(toolIds.has(required), `${id} should have ${required}`).toBe(true);
             }
 
@@ -54,7 +56,7 @@ describe("createSandboxAgents", () => {
             // resolved surface is exactly the always-on tools + meta.tools. The
             // knowledge template is the one allowlist member that resolves to
             // nothing without a knowledge client, thus it does not count here.
-            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + ALWAYS_ON_LEASE.length + 2;
+            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + ALWAYS_ON_LEASE.length + ALWAYS_ON_SCRIPT.length + 2;
             const declared = new Set(meta.tools);
             declared.delete("knowledgeTemplate");
             const expected = alwaysOnCount + declared.size;

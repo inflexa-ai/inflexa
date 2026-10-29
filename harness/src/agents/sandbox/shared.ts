@@ -82,6 +82,7 @@ import type { CitationResolver } from "../../citations/types.js";
 import { createResolveCitationTool } from "../../tools/research/resolve-citation.js";
 import { createKnowledgeTemplateTool, type KnowledgeClient, type TemplateBinding } from "../../tools/knowledge/index.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
+import { createReadPdfTool } from "../../tools/script/file-tools.js";
 import type { ScriptRuntime } from "../../tools/script/run-script.js";
 
 /**
@@ -383,7 +384,11 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         systemPrompt,
         model: deps.model,
         tools,
-        scriptTools: allowlisted.filter((tool) => !DIRECT_ALLOWLIST_TOOLS.has(tool.id)),
+        // A paper of the analysis is a PDF, and each step can need it, thus each agent reads PDFs in a script.
+        scriptTools: [
+            ...allowlisted.filter((tool) => !DIRECT_ALLOWLIST_TOOLS.has(tool.id)),
+            createReadPdfTool({ workspaceFs: deps.workspaceFs, resolveWorkspaceRoot: () => Promise.resolve(deps.step.workspaceRoot) }),
+        ],
         scriptRuntime: deps.scriptRuntime,
         maxIterations: meta.defaultMaxSteps ?? SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS,
     };
