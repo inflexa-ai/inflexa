@@ -27,6 +27,7 @@ import { RunCardBlock } from "../components/run_card_block.tsx";
 import { ErrorBlock } from "../components/error_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock } from "../components/openable_card_block.tsx";
+import { ReportRenderedBlock } from "../components/report_rendered_block.tsx";
 import { ReportSessionBlock } from "../components/report_session_block.tsx";
 import { CompactionBlock } from "../components/compaction_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
@@ -1141,6 +1142,8 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         listing holds the live sessions alone, thus an archived session leaves the
                         transcript rather than gaining a state here. */}
                     <ReportSessionBlock title={mockReportSession.title} activityLabel={mockReportSession.activityLabel} onOpen={noop} />
+                    <text fg={theme().fgMuted}>inside the session, each render of its page is one line that opens the page in the browser:</text>
+                    <ReportRenderedBlock title={mockReportSession.title} renderedLabel="2m" onOpen={noop} />
                 </State>
                 <State n="26" label="footer scope word — which session the typing reaches">
                     {/* A report session renders exactly as the conversation that spawned it, so the footer
