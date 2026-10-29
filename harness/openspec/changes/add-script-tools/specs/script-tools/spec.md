@@ -214,6 +214,16 @@ Inside a workflow, a `run_script` call MUST be one durable step of the loop, the
 - **WHEN** a script reads pages 2 to 3 of a PDF of three pages
 - **THEN** the result holds the text of pages 2 and 3, and the page count 3
 
+### Requirement: Each agent that reads the workspace reads a PDF
+
+The conversation agent, the report agent, each sandbox step agent, and the data profiler MUST hold `read_pdf` as a script tool. A paper of an analysis is a PDF, and each of these agents can need it.
+
+#### Scenario: A step agent reads a paper
+
+- **GIVEN** a sandbox step agent of any type
+- **WHEN** its tools are resolved
+- **THEN** its script tools hold `read_pdf`
+
 ### Requirement: A script makes a PDF with no sandbox and no browser
 
 `export_pdf` MUST make a PDF from markdown in the derived directory of the session, in the process of the host, with no container and no browser. An image of the markdown MUST be a file of the workspace that the tool reads, and the PDF MUST read no URL and no other file.

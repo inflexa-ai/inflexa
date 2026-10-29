@@ -163,7 +163,7 @@ describe("createReportSessionAgent", () => {
     test("a script derives a small table from the pinned evidence, and builds a chart file and a PDF", () => {
         const agent = buildAgent();
 
-        expect(agent.scriptTools?.map((tool) => tool.id)).toEqual(["read_table", "write_derived", "render_chart", "export_pdf"]);
+        expect(agent.scriptTools?.map((tool) => tool.id)).toEqual(["read_table", "write_derived", "read_pdf", "render_chart", "export_pdf"]);
         expect(agent.scriptScratch).toBeDefined();
     });
 

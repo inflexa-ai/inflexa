@@ -36,7 +36,7 @@ import type { Tool } from "../tools/define-tool.js";
 import type { EmbeddingProvider, ProviderOptions } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { reportSessionDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
-import { createDocumentTools } from "../tools/script/file-tools.js";
+import { createDocumentTools, createReadPdfTool } from "../tools/script/file-tools.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import type { AcquireEyes } from "../lib/eyes.js";
 import type { Logger } from "../lib/logger.js";
@@ -238,6 +238,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
     // page. Its images come from the directory of the session alone, thus no unpinned file reaches it.
     const scriptTools = [
         ...createReportScriptTools({ gateway, workspaceFs, resolveWorkspaceRoot, derivations, provenance, logger }),
+        createReadPdfTool({ workspaceFs, resolveWorkspaceRoot }),
         ...createDocumentTools({
             workspaceFs,
             resolveWorkspaceRoot,
