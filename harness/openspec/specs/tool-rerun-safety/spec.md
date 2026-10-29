@@ -7,7 +7,7 @@ A tool call that runs again after a crash gives the same effect and the same res
 
 ### Requirement: A tool call that writes keys its write by the call
 
-A tool that writes MUST key its write by the step of its call. A second run of the same call MUST find the first write, and it MUST give the result of the first run. It MUST NOT write a second row, start a second run, or refuse its own earlier write.
+A tool that writes MUST key its write by the step of its call. A tool that a script calls MUST also key its write by its call, because the calls of one script share the step of `run_script`. A second run of the same call MUST find the first write, and it MUST give the result of the first run. It MUST NOT write a second row, start a second run, or refuse its own earlier write.
 
 #### Scenario: A rerun of execute_analysis
 
@@ -24,6 +24,11 @@ A tool that writes MUST key its write by the step of its call. A second run of t
 
 - **WHEN** an `add_block` call runs again after its block landed
 - **THEN** it gives its stored result, and it does not refuse its own block id
+
+#### Scenario: Two edits of one script
+
+- **WHEN** one script calls `add_block` two times with two blocks
+- **THEN** both blocks land, and the second call does not give the stored result of the first
 
 #### Scenario: A rerun of a memory edit
 

@@ -139,7 +139,7 @@ function plainJson(value: unknown): unknown {
 }
 
 function describeTool(tool: Tool): string {
-    return renderToolSample({ name: tool.id, description: tool.description, inputSchema: tool.jsonSchema, outputSchema: tool.outputJsonSchema });
+    return renderToolSample({ name: tool.id, description: tool.description, inputSchema: inputSchemaOf(tool), outputSchema: tool.outputJsonSchema });
 }
 
 function issuesOf(error: z.ZodError): string {
@@ -230,7 +230,7 @@ function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Log
     return {
         name: tool.id,
         description: tool.description,
-        inputSchema: tool.jsonSchema,
+        inputSchema: inputSchemaOf(tool),
         outputSchema: tool.outputJsonSchema,
         execute: (args, options) => inCallContext(() => runNestedCall(tool, ctx, state, log, args, options.signal)),
     };
@@ -302,6 +302,34 @@ function withoutProse(schema: unknown): unknown {
     );
 }
 
+/**
+ * A JSON schema as a script reads it. A tool can union its real shape with the empty schema to keep its runtime parse
+ * permissive (`add_block` does, thus a malformed block reaches its typed refusal). The type of such a union is
+ * `unknown`, which hides the real shape, thus the empty member goes. The VM only renders the schema and validates
+ * nothing, and the tool still parses each input with its own schema.
+ */
+function printableSchema(schema: unknown): unknown {
+    const array = UnknownArraySchema.safeParse(schema);
+    if (array.success) return array.data.map(printableSchema);
+    const record = parseUnknownRecord(schema);
+    if (record === undefined) return schema;
+    let out: Record<string, unknown> = Object.fromEntries(Object.entries(record).map(([key, value]) => [key, printableSchema(value)]));
+    for (const key of ["anyOf", "oneOf"]) {
+        const members = UnknownArraySchema.safeParse(out[key]);
+        if (!members.success) continue;
+        const shaped = members.data.filter((member) => Object.keys(parseUnknownRecord(member) ?? {}).length > 0);
+        if (shaped.length === 0 || shaped.length === members.data.length) continue;
+        const rest = Object.fromEntries(Object.entries(out).filter(([name]) => name !== key));
+        out = shaped.length > 1 ? { ...rest, [key]: shaped } : { ...rest, ...parseUnknownRecord(shaped[0]) };
+    }
+    return out;
+}
+
+/** The input schema of a tool as a script reads it. See {@link printableSchema}. */
+function inputSchemaOf(tool: Tool): Record<string, unknown> {
+    return parseUnknownRecord(printableSchema(tool.jsonSchema)) ?? tool.jsonSchema;
+}
+
 /** The longest result type that the catalog shows. A longer type shows as `unknown`, and `describe()` gives it whole. */
 const MAX_CATALOG_RESULT_TYPE_CHARS = 800;
 
@@ -310,7 +338,7 @@ function catalogEntry(tool: Tool): string {
     const output = tool.outputJsonSchema === undefined ? undefined : parseUnknownRecord(withoutProse(tool.outputJsonSchema));
     const resultType = output === undefined ? "unknown" : schemaToType(output, { maxChars: MAX_CATALOG_RESULT_TYPE_CHARS });
     // pi renders a signature with no result schema as `...: Promise<unknown>;`, thus the catalog puts its capped type there.
-    const untyped = renderToolSignature({ name: tool.id, inputSchema: parseUnknownRecord(withoutProse(tool.jsonSchema)) ?? {} });
+    const untyped = renderToolSignature({ name: tool.id, inputSchema: parseUnknownRecord(withoutProse(inputSchemaOf(tool))) ?? {} });
     const signature = `${untyped.slice(0, -"unknown>;".length)}${resultType}>;`;
     return `/** ${firstSentence(tool.description)} */\n${signature}`;
 }

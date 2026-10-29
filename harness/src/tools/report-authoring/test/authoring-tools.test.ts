@@ -941,6 +941,16 @@ describe("the report observation", () => {
         expect(peeked(gateway, "t1").document.sections[0]?.blocks.map((block) => block.id)).toEqual(["t1", "t2", "t3"]);
     });
 
+    it("lands each call of one step, as the calls of a script share the step of run_script", async () => {
+        const { tools, gateway } = seeded({ stepKey: () => "wf-1:4" });
+        const inScript = (invocationId: string): ToolContext => ({ ...ctxForThread("t1"), invocationId });
+
+        (await tools.add_block.execute({ block: { kind: "text", id: "t3", content: { prose: "c" } }, parentId: "s1" }, inScript("toolu_1:1")))._unsafeUnwrap();
+        (await tools.add_block.execute({ block: { kind: "text", id: "t4", content: { prose: "d" } }, parentId: "s1" }, inScript("toolu_1:2")))._unsafeUnwrap();
+
+        expect(peeked(gateway, "t1").document.sections[0]?.blocks.map((block) => block.id)).toEqual(["t1", "t2", "t3", "t4"]);
+    });
+
     it("names the kind of a section that the call adds", async () => {
         const events: SessionProvenanceEvent[] = [];
         const { tools } = seeded({ provenance: { emitSessionEvent: (event) => events.push(event) } });

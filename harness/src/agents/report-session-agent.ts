@@ -182,15 +182,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         createWorkspaceSearchTool(pool, embedding),
         createInspectRunTool(pool),
         createInspectDataProfileTool(pool),
-        // The composition surface. Each authoring tool binds to the gateway, thus
-        // two threads never share one draft.
-        authoring.add_block,
-        authoring.change_block,
-        authoring.remove_block,
-        authoring.move_block,
-        authoring.set_title,
-        authoring.read_outline,
-        authoring.read_block,
+        // The gate of the draft. The edits of the draft are script tools below.
         authoring.finish_draft,
         // The orientation source of the pinned evidence. It reads the snapshot of the
         // thread, and it resolves the workspace root per call for the header columns.
@@ -240,6 +232,15 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
     // A PDF of the report is a document that a script builds from the content of the session, not a print of the
     // page. Its images come from the directory of the session alone, thus no unpinned file reaches it.
     const scriptTools = [
+        // The edits of the draft. Each binds to the gateway, thus two threads never share one draft, and a script
+        // builds a section in one call. A refused edit comes back as data, thus the script reads `applied`.
+        authoring.add_block,
+        authoring.change_block,
+        authoring.remove_block,
+        authoring.move_block,
+        authoring.set_title,
+        authoring.read_outline,
+        authoring.read_block,
         ...createReportScriptTools({ gateway, workspaceFs, resolveWorkspaceRoot, derivations, provenance, syncSessionFile, logger }),
         createReadPdfTool({ workspaceFs, resolveWorkspaceRoot }),
         ...createDocumentTools({

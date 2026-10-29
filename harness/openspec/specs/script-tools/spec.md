@@ -334,3 +334,12 @@ Each read of a compressed file MUST be capped: the compressed file at 64 MiB, th
 
 - **WHEN** a script reads an entry of a zip whose decompressed size passes 16 MiB
 - **THEN** the call throws an Error that names the cap, and the entry does not decompress
+
+### Requirement: The catalog shows the real shape of a permissive input
+
+The catalog of `run_script` and `describe` MUST drop each empty member of a union of an input schema. A tool can union its real shape with the empty schema to keep its parse permissive, and the type of such a union is `unknown`. The tool MUST still parse each input with its own schema.
+
+#### Scenario: The block of add_block
+
+- **WHEN** the catalog of the report agent is built
+- **THEN** the signature of `add_block` shows the block grammar, and not `block: unknown`

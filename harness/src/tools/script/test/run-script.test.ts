@@ -8,6 +8,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
+import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
+
 import { runLoop, withRunScript } from "../../../loop/run-loop.js";
 import type { AgentDefinition } from "../../../loop/types.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
@@ -131,6 +133,24 @@ describe("run_script", () => {
         expect(result.ok).toBe(false);
         expect(result.error).toContain("search_gene: identifiers:");
         expect(result.calls).toEqual([{ tool: "search_gene", ok: false }]);
+    });
+
+    test("shows the real shape of an input that a tool unions with the empty schema", async () => {
+        const strict = defineTool({
+            id: "add_item",
+            description: "Add one item. A malformed item comes back as a refusal.",
+            inputSchema: z.object({ item: z.object({ kind: z.literal("note"), text: z.string() }) }),
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ applied: true })),
+        });
+        // The JSON schema that a union with the empty schema gives, as `add_block` publishes it.
+        const item = parseUnknownRecord(strict.jsonSchema.properties)?.item;
+        const permissive: Tool = { ...strict, jsonSchema: { ...strict.jsonSchema, properties: { item: { anyOf: [item, {}] } } } };
+        const catalog = createRunScriptTool([permissive]).description;
+        const described = await run(`return await describe("add_item");`, [permissive]);
+
+        expect(catalog).toContain('kind: "note"');
+        expect(described.value).toContain('kind: "note"');
     });
 
     test("describe gives the full description and the input type of one tool", async () => {
