@@ -179,7 +179,7 @@ The reconciler replaces the reaper, with the same sweep each 5 minutes. The owne
 - `machine` (`{ sandboxId, host, port, backend }`) and `machine_generation`
 - `requested_at`, `granted_at`, `last_used_at`, and `released_at`
 
-A unique partial index on `lease_key` for the rows that are not `released` keeps one active lease for each key. The row holds no secret and no exec id.
+A unique partial index on `lease_key` for the rows that are not `released` keeps one active lease for each key. The row holds no exec id. It holds the exec salt: a random value that the database makes at the request, and that no machine receives. The exec id is `sha256(salt:workflowId:functionId)`. A replay gives the same id, but the ids in the records, which a command can read, do not give the id of a later exec. Thus a command cannot submit a later exec through loopback to plant its result. The salt is not a host secret: each lease has its own, and no configuration carries it.
 
 ### D19. Metrics
 

@@ -54,8 +54,10 @@ type lostReason struct {
 // The commands run under the uid of this server, thus a command can change a
 // record file. A changed record changes only the result that a later machine of
 // the same lease serves for that exec id. The trust boundary already admits as
-// much: a command controls its own output, and it can submit an exec to this
-// server through loopback.
+// much: a command controls its own output. A command can also submit an exec
+// to this server through loopback, but the harness hashes each exec id with a
+// salt that no machine receives, thus a command cannot plant the result of a
+// later exec.
 type recordStore struct {
 	dir string
 }

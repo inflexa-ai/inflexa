@@ -32,10 +32,12 @@ export type LeaseRecord = {
     readonly releaseReason?: string;
     readonly machine?: PersistedSandboxRef;
     readonly machineGeneration: number;
+    /** The random value of the exec ids of the lease. No machine receives it, thus a command cannot derive a later exec id. */
+    readonly execSalt: string;
 };
 
 /** What a request writes. The row starts in `requested`, and the time of the insert orders the queue. */
-export type LeaseRequest = Omit<LeaseRecord, "granted" | "state" | "releaseReason" | "machine" | "machineGeneration">;
+export type LeaseRequest = Omit<LeaseRecord, "granted" | "state" | "releaseReason" | "machine" | "machineGeneration" | "execSalt">;
 
 const LeaseRowSchema = z.object({
     lease_workflow_id: z.string(),
@@ -51,10 +53,11 @@ const LeaseRowSchema = z.object({
     release_reason: z.string().nullable(),
     machine: PersistedSandboxRefSchema.nullable(),
     machine_generation: z.number(),
+    exec_salt: z.string(),
 });
 
 const COLUMNS =
-    "lease_workflow_id, lease_key, generation, analysis_id, owner_workflow_id, work_kind, work_id, requested, granted, state, release_reason, machine, machine_generation";
+    "lease_workflow_id, lease_key, generation, analysis_id, owner_workflow_id, work_kind, work_id, requested, granted, state, release_reason, machine, machine_generation, exec_salt";
 
 /** The one key of the advisory lock of the grant. Any constant works; it only has to be the same for each grant. */
 const GRANT_LOCK_KEY = 74_210_031;
@@ -75,6 +78,7 @@ function recordOf(row: unknown): LeaseRecord {
         releaseReason: parsed.release_reason ?? undefined,
         machine: parsed.machine ?? undefined,
         machineGeneration: parsed.machine_generation,
+        execSalt: parsed.exec_salt,
     };
 }
 

@@ -134,12 +134,18 @@ A lease is idle when no exec runs on its machine, and no exec used the lease for
 
 ### Requirement: An exec gets a machine of its lease
 
-`exec` with no active lease MUST give the error `no_lease`, and it MUST submit nothing. When the lease has no live machine, `exec` MUST get a new machine from the lease workflow before it submits. The consumer does not see the new machine.
+`exec` with no active lease MUST give the error `no_lease`, and it MUST submit nothing. The exec id MUST be the SHA-256 of the exec salt of the lease and the step key (the workflow id and the function id of the step). Thus a recovered step gives the same id, and a command in the sandbox cannot find the id of a later exec. When the lease has no live machine, `exec` MUST get a new machine from the lease workflow before it submits. The consumer does not see the new machine.
 
 #### Scenario: An exec with no lease
 
 - **WHEN** a sandbox agent calls `execute_command` before `acquire_sandbox`
 - **THEN** the tool gives an error result that names `acquire_sandbox`, and no command runs
+
+#### Scenario: A command cannot find the id of a later exec
+
+- **GIVEN** a command that reads the exec records of its lease
+- **WHEN** it computes an id from the ids in the records
+- **THEN** the id is not the id of a later exec of the lease, because the host derives each id from the salt of the lease
 
 #### Scenario: An exec after a pause
 
@@ -222,7 +228,7 @@ The harness MUST register a scheduled reconciler that runs each 5 minutes. It MU
 
 ### Requirement: The lease table records each lease
 
-The table `cortex_sandbox_leases` MUST hold one row for each lease workflow. The row MUST hold the lease key, the generation, the analysis, the owner workflow, and the work of the owner. It MUST hold the requested size, the granted size, the state, the current machine, and the machine generation. It MUST hold no secret and no exec id.
+The table `cortex_sandbox_leases` MUST hold one row for each lease workflow. The row MUST hold the lease key, the generation, the analysis, the owner workflow, and the work of the owner. It MUST hold the requested size, the granted size, the state, the current machine, and the machine generation. It MUST hold the exec salt, a random value that the database makes at the request and that no machine receives. It MUST hold no exec id.
 
 #### Scenario: One active lease for each key
 

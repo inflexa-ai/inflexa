@@ -14,6 +14,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { errAsync, okAsync } from "neverthrow";
 import type { Pool, QueryConfig, QueryResultRow } from "pg";
+import { z } from "zod";
 
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
 import { silentLogger } from "../../__tests__/setup/logger.js";
@@ -57,6 +58,7 @@ type Backend = {
     readonly spawned: { session: SpawnSession; spec: SandboxSpec; sandboxId: string }[];
     readonly torn: string[];
     readonly refusals: { reason: string; suspend: boolean }[];
+    readonly execIds: (string | undefined)[];
     exec: (ref: SandboxRef, request: ExecRequest) => Promise<ExecResult>;
     /** The running execs that the health answer counts. A count above 0 keeps each machine from the idle removal. */
     runningExecs: number;
@@ -66,6 +68,7 @@ const backend: Backend = {
     spawned: [],
     torn: [],
     refusals: [],
+    execIds: [],
     exec: (_ref, request) => Promise.resolve({ execId: request.command.join(" "), exitCode: 0, stdout: "ok", stderr: "", durationMs: 1, timedOut: false }),
     runningExecs: 1,
 };
@@ -79,7 +82,10 @@ const client: SandboxClient = {
         backend.spawned.push({ session, spec, sandboxId: identity.sandboxId });
         return okAsync({ sandboxId: identity.sandboxId, host: "127.0.0.1", port: 8765, backend: "docker" });
     },
-    exec: (ref, request) => backend.exec(ref, request),
+    exec: (ref, request, _emit, _deadline, execId) => {
+        backend.execIds.push(execId);
+        return backend.exec(ref, request);
+    },
     isAlive: () => Promise.resolve({ alive: true, oomKilled: false }),
     isAliveById: () => Promise.resolve({ alive: true, oomKilled: false }),
     teardown: (ref) => {
@@ -185,6 +191,7 @@ beforeEach(() => {
     backend.spawned.length = 0;
     backend.torn.length = 0;
     backend.refusals.length = 0;
+    backend.execIds.length = 0;
     backend.runningExecs = 1;
     backend.exec = (_ref, request) =>
         Promise.resolve({ execId: request.command.join(" "), exitCode: 0, stdout: "ok", stderr: "", durationMs: 1, timedOut: false });
@@ -209,6 +216,9 @@ describe("a lease", () => {
             exec: { exitCode: 0, stdout: "ok" },
         });
         expect(backend.spawned).toHaveLength(1);
+        // The id hides the workflow id and the step, thus a command cannot count up to a later exec id.
+        expect(backend.execIds).toHaveLength(1);
+        expect(z.hash("sha256").safeParse(backend.execIds[0]).success).toBe(true);
         expect(backend.torn).toEqual([presentAt(backend.spawned, 0).sandboxId]);
         expect(presentAt(backend.spawned, 0).spec.recordTail).toBe(leaseRecordTail(run.caseId));
         expect(await leaseOf(run.caseId)).toBeUndefined();

@@ -23,6 +23,7 @@ export const leaseTheSandboxes: Migration = {
             release_reason TEXT,
             machine JSONB,
             machine_generation INTEGER NOT NULL DEFAULT 0,
+            exec_salt TEXT NOT NULL DEFAULT gen_random_uuid()::text,
             requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             granted_at TIMESTAMPTZ,
             last_used_at TIMESTAMPTZ,
