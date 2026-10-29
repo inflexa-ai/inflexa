@@ -28,7 +28,7 @@ const SANDBOX_BASENAME = "sandbox-base";
 const PROVISIONER_BASENAME = "sandbox-provisioner";
 
 /** The one published runtime image a sandbox launches on, pinned to a build tag. */
-export const SANDBOX_IMAGE = `${SANDBOX_REPOSITORY}:20261006-cdbff09`;
+export const SANDBOX_IMAGE = `${SANDBOX_REPOSITORY}:20261029-c94d23e`;
 
 /** The retired variant basenames of the baked-image model that the package store replaced. */
 const RETIRED_SANDBOX_BASENAMES = new Set(["sandbox-python", "sandbox-python-r"]);
