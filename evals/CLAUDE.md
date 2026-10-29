@@ -55,9 +55,11 @@ baseline that a later run can trust.
 
 Do these steps for each change of a prompt or of a tool description:
 
-1. Find the baseline in `results/`: a report of the commit before the change, with
-   the same prompt digest, provider, cases, and trial count. If none exists, run
-   the baseline on that commit, for example in a worktree.
+1. Find the baseline in `results/`: a report with the prompt digest of the code
+   before the change, and the same provider, cases, and trial count. Match on the
+   digest, not on the commit: a rebase merge gives each commit a new id, and the
+   digest names what the model saw. If none exists, run the baseline on the code
+   before the change, for example in a worktree.
 2. Make one change.
 3. Run the candidate with the same provider, cases, and trial count.
 4. Run `compare` on the two reports. A regression of a case, a regression of a
