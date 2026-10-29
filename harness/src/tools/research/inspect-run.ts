@@ -76,7 +76,6 @@ type InspectRunOutput =
           steps: FormattedStep[];
           elapsedMs?: number;
           wait?: WaitMetadata;
-          selfWaitPrevented?: boolean;
       };
 
 type InspectRunClock = {
@@ -191,7 +190,6 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
             "or terminal (run.status completed, partial, failed, or canceled). " +
             "Output paths appear only on a terminal run: run.synthesisPath when synthesisStatus is produced, and the summaryPath of each step that ran. " +
             "For a user-directed check, waitForTerminalSeconds can wait once for 1-30 seconds; if the cutoff returns in_progress, stop polling for that turn and tell the user that the run still runs. " +
-            "A wait on the run that the caller itself runs inside returns at once with selfWaitPrevented. " +
             "Default response is lightweight — pass includeDiagnostics:true to add error/duration/retry telemetry.",
         inputSchema,
         // The two calls do different work: one inspects a named run, the other
@@ -226,13 +224,12 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
                 });
             }
 
-            const selfWait = waitSeconds !== undefined && ctx.session.runFrame?.runId === input.runId;
             const runId = input.runId;
             const pausesOf = async (status: CortexRunRow["status"]): Promise<PauseRecord[]> =>
                 status === "running" ? unwrapOrThrow(await queryPausesOfWork(pool, resourceId, runId)) : [];
             let pauses = await pausesOf(run.status);
             let cutoffReached = false;
-            if (waitSeconds !== undefined && run.status === "running" && pauses.length === 0 && !selfWait) {
+            if (waitSeconds !== undefined && run.status === "running" && pauses.length === 0) {
                 const deadline = clock.now() + waitSeconds * 1_000;
                 while (run.status === "running" && pauses.length === 0) {
                     const remaining = deadline - clock.now();
@@ -272,11 +269,9 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
             }
 
             if (run.status === "running") {
-                const message = selfWait
-                    ? "This run is still in progress. Results are not ready, and the enclosing workflow cannot finish while its current step waits for itself."
-                    : cutoffReached
-                      ? "This run is still in progress after the requested wait cutoff. Results are not ready; stop polling for this turn."
-                      : "This run is in progress. Results are not ready.";
+                const message = cutoffReached
+                    ? "This run is still in progress after the requested wait cutoff. Results are not ready; stop polling for this turn."
+                    : "This run is in progress. Results are not ready.";
                 return ok({
                     inspectionState: "in_progress",
                     message,
@@ -284,7 +279,6 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
                     steps,
                     elapsedMs: Math.max(0, clock.now() - Date.parse(run.startedAt)),
                     ...wait,
-                    selfWaitPrevented: selfWait ? true : undefined,
                 });
             }
 

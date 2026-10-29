@@ -15,7 +15,7 @@ A copy of a rule in a prompt drifts from the text that the model reads at the ca
 ## What Changes
 
 - The package-link layer is deleted. The descriptions of `link_packages` and `list_available_packages` carry each rule, and the system prompt is the same with and without the seam.
-- The briefing lists each completed dependency past the first five by its absolute summary path and output directory, with a cap and a count. `inspect_run` leaves `BASE_SANDBOX_TOOLS`.
+- The briefing lists each completed dependency past the first five by its absolute summary path and output directory, with a cap and a count. `inspect_run` leaves `BASE_SANDBOX_TOOLS`. Then no agent that runs under a `RunSession` holds `inspect_run`, thus its guard against a wait on the run of the caller goes.
 - The briefing and scope sections move from the orient core to the step standards. The first message of the profiler names its resource budget.
 - The orient core and the step standards keep only the facts that no tool description carries. The `cd` rule and the quote rule move into the `execute_command` schema.
 - The per-agent prompts lose the call recipes that the bio tool descriptions carry. The keyed-source descriptions no longer tell a headless agent to "tell the user".
@@ -29,4 +29,5 @@ The composed system prompt falls from 25,754 to 19,089 characters for `bulk-tran
 - `harness/src/agents/sandbox/shared.ts`, `harness/src/agents/sandbox/types.ts`
 - `harness/src/tasks/data-profile.ts`
 - The descriptions of `execute_command`, `read_file`, `grep`, `file_stat`, `drug_gene_interactions`, `gene_disease_evidence`, `comptox`, and `search_regulatory_approvals`
-- Specs: harness-sandbox-agents, sandbox-format-standards, package-store, cheminformatics-agent, per-agent-tool-allowlist. Requirements that only pinned prompt wording are removed. A mixed requirement keeps only its code contract.
+- `harness/src/tools/research/inspect-run.ts`: the guard against a wait on the run of the caller, and `selfWaitPrevented`.
+- Specs: harness-sandbox-agents, sandbox-format-standards, package-store, cheminformatics-agent, per-agent-tool-allowlist, run-inspection. Requirements that only pinned prompt wording are removed. A mixed requirement keeps only its code contract.
