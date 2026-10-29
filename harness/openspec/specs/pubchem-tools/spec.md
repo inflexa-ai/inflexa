@@ -25,12 +25,11 @@ hold.
 
 ## Requirements
 
-### Requirement: PubChem compound search tool
+### Requirement: The compound action of the pubchem tool
 
-The system MUST give a `searchPubchemCompoundTool` (on-wire id
-`search_pubchem_compound`, built with `defineTool`). The tool resolves compounds
-by name, SMILES, InChI, InChIKey, or CID through a required `searchBy` enum. It
-MUST return `ok({ results })` where each result carries compound identity
+The system MUST give one harness tool, `pubchemTool` (`harness/src/tools/bio/pubchem.ts`), with the on-wire id `pubchem`, built with `defineTool`. The input is a flat object with an `action` of `compound`, `crossrefs`, or `assays`. The schema refuses a call that does not give the argument of its action, before `execute` runs.
+
+The `compound` action resolves compounds by name, SMILES, InChI, InChIKey, or CID through a required `searchBy` enum. It MUST return `ok({ results })` where each result carries compound identity
 (`cid`, `canonicalSmiles`, `inchi`, `inchiKey`, `iupacName`,
 `molecularFormula`) and computed properties (`molecularWeight`, `xlogp`,
 `tpsa`, `hbondDonorCount`, `hbondAcceptorCount`, `rotatableBondCount`,
@@ -43,12 +42,12 @@ serializes it as a string.
 
 #### Scenario: Search by compound name
 
-- **WHEN** the tool is called with `query: "aspirin"` and `searchBy: "name"`
+- **WHEN** the tool is called with `action: "compound"`, `query: "aspirin"`, and `searchBy: "name"`
 - **THEN** it returns `ok({ results })` with at least one result whose `cid` is 2244, plus its `canonicalSmiles` and `molecularWeight`
 
 #### Scenario: Search by CID
 
-- **WHEN** the tool is called with `query: "2244"` and `searchBy: "cid"`
+- **WHEN** the tool is called with `action: "compound"`, `query: "2244"`, and `searchBy: "cid"`
 - **THEN** it returns the compound with CID 2244 and all identity + property fields
 
 #### Scenario: Compound not found returns empty results
@@ -66,10 +65,14 @@ serializes it as a string.
 - **WHEN** PubChem returns a 5xx after retries are exhausted
 - **THEN** `execute` throws and the agent loop records the call as `tool_result { is_error: true }`
 
-### Requirement: PubChem cross-references tool
+#### Scenario: A call without the argument of its action is refused
 
-The system MUST give a `getPubchemCrossRefsTool` (on-wire id
-`get_pubchem_cross_refs`, built with `defineTool`) that takes a numeric `cid`.
+- **WHEN** the tool is called with `action: "crossrefs"` and no `cid`
+- **THEN** the input validation refuses the call with a message that names `cid`, and `execute` does not run
+
+### Requirement: The crossrefs action of the pubchem tool
+
+The `crossrefs` action of the `pubchem` tool takes a numeric `cid`.
 It returns `ok({ crossRefs })`, where `crossRefs` is a flat array of
 `{ source, id }` entries drawn from PubChem's `RegistryID` list. The `source`
 of an entry MUST come from the identifier pattern of a fixed registry table:
@@ -79,11 +82,11 @@ pattern MUST carry `source: null`.
 The client MUST NOT pair `RegistryID` with `SourceName` by index, because the
 two arrays are not parallel and have different lengths. This enables bridging:
 resolve a compound in PubChem, read its ChEMBL id from `crossRefs`, then query
-the ChEMBL tools.
+the `chembl` tool.
 
 #### Scenario: Compound with cross-references
 
-- **WHEN** the tool is called with a CID that has registry links, for example aspirin CID 2244
+- **WHEN** the `crossrefs` action is called with a CID that has registry links, for example aspirin CID 2244
 - **THEN** it returns `ok({ crossRefs })` as a flat array whose entries include `{ source: "ChEMBL", id: "CHEMBL25" }`
 
 #### Scenario: An unmatched id keeps a null source
@@ -93,17 +96,17 @@ the ChEMBL tools.
 
 #### Scenario: CID with no external references
 
-- **WHEN** the tool is called with a CID that has no registry links, or a CID that does not exist (404)
+- **WHEN** the `crossrefs` action is called with a CID that has no registry links, or a CID that does not exist (404)
 - **THEN** it returns `ok({ crossRefs: [] })`
 
-### Requirement: PubChem bioassay summary tool
+### Requirement: The assays action of the pubchem tool
 
-The system MUST give a `getPubchemAssaysTool` (on-wire id
-`get_pubchem_assays`, built with `defineTool`) that takes a numeric `cid`. It
+The `assays` action of the `pubchem` tool takes a numeric `cid`. It
 returns `ok({ assays })`, where each assay carries `aid`, `assayName`,
 `targetName`, `activityOutcome`, and `activityValue`. It MUST accept
-`activeOnly` (default false) to keep only assays whose outcome is "active". It
-MUST accept a `limit` (default 50, max 500) that caps the returned records.
+`activeOnly` (default true) to keep only assays whose outcome is "active". It
+MUST accept a `limit` (default 25, max 500) that caps the returned records,
+after the `activeOnly` filter.
 
 The schema MUST model the wire shape of the assay table: `Table.Columns.Column`
 is an array of plain strings, and each `Row.Cell` is an array of plain strings
@@ -114,7 +117,7 @@ which carry spaces, for example `"Assay Name"`, `"Activity Outcome"`, and
 
 #### Scenario: Compound with bioassay data
 
-- **WHEN** the tool is called with a CID screened in PubChem BioAssays
+- **WHEN** the `assays` action is called with a CID screened in PubChem BioAssays
 - **THEN** it returns assay summaries with `activityOutcome` and `targetName`
 
 #### Scenario: The real table shape parses
@@ -124,17 +127,22 @@ which carry spaces, for example `"Assay Name"`, `"Activity Outcome"`, and
 
 #### Scenario: Filter by active results
 
-- **WHEN** the tool is called with `activeOnly: true`
+- **WHEN** the `assays` action is called with `activeOnly: true`
+- **THEN** only assays whose `activityOutcome` is "active" (case-insensitive) are returned
+
+#### Scenario: The default keeps only active assays
+
+- **WHEN** the `assays` action is called with no `activeOnly`
 - **THEN** only assays whose `activityOutcome` is "active" (case-insensitive) are returned
 
 #### Scenario: Limit caps the result count
 
-- **WHEN** the tool is called with `limit: 10`
+- **WHEN** the `assays` action is called with `limit: 10`
 - **THEN** at most 10 assay records are returned
 
 #### Scenario: No assay data returns empty
 
-- **WHEN** the tool is called with a CID that has not been screened (404)
+- **WHEN** the `assays` action is called with a CID that has not been screened (404)
 - **THEN** it returns `ok({ assays: [] })`
 
 ### Requirement: PubChem config module
@@ -149,37 +157,19 @@ PUG-REST base URL and shared request headers, mirroring `chembl-config.ts`.
 
 ### Requirement: PubChem tools are available via the per-agent allowlist and the conversation agent
 
-The three PubChem tools SHALL be entries in the central sandbox tool registry
-that `resolveSandboxTools` (`harness/src/agents/sandbox/shared.ts`) resolves —
-reaching a sandbox agent only when its `meta.tools` allowlist names them — and
-SHALL also be wired directly into the conversation agent
-(`harness/src/agents/conversation-agent.ts`).
+The PubChem tool `pubchem` MUST be an entry in the central sandbox tool
+registry that `resolveSandboxTools` (`harness/src/agents/sandbox/shared.ts`)
+resolves. It reaches a sandbox agent only when the `meta.tools` allowlist of
+that agent names it. It MUST also be a script tool of the conversation agent
+(`harness/src/agents/conversation-agent.ts`), which calls it from `run_script`
+(refer to the script-tools capability).
 
 #### Scenario: Sandbox agent resolves PubChem tools from its allowlist
 
-- **WHEN** a sandbox-agent meta lists the PubChem tool names in `meta.tools`
-- **THEN** `createSandboxAgent` resolves them via `resolveSandboxTools` and adds them to that agent's tool array
+- **WHEN** a sandbox-agent meta lists `pubchem` in `meta.tools`
+- **THEN** `createSandboxAgent` resolves it through `resolveSandboxTools` and adds it to the tool array of that agent
 
 #### Scenario: Conversation agent has the PubChem tools
 
 - **WHEN** the conversation agent is created
-- **THEN** its tool array includes `searchPubchemCompoundTool`, `getPubchemCrossRefsTool`, and `getPubchemAssaysTool`
-
-### Requirement: Cheminformatics agent teaches PubChem as Mode C
-
-The cheminformatics agent prompt SHALL present a dedicated **Mode C — PubChem
-Compound Resolution** path that resolves compounds via `search_pubchem_compound`,
-bridges to ChEMBL via `get_pubchem_cross_refs`, and supplements activity data via
-`get_pubchem_assays`. The prompt SHALL teach when to prefer PubChem (broader
-compound coverage, cross-database bridging) versus ChEMBL (curated bioactivity,
-target–compound relationships).
-
-#### Scenario: Agent uses PubChem for compound resolution
-
-- **WHEN** the agent receives a compound name ChEMBL does not recognize
-- **THEN** it uses `search_pubchem_compound` to resolve the compound
-
-#### Scenario: Agent bridges PubChem to ChEMBL
-
-- **WHEN** the agent resolves a compound in PubChem and needs curated bioactivity
-- **THEN** it uses `get_pubchem_cross_refs` to obtain the ChEMBL id, then queries the ChEMBL tools
+- **THEN** its script tools include `pubchemTool`, and its tools do not

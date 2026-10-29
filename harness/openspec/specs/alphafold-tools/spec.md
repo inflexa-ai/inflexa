@@ -177,9 +177,10 @@ and not `.nullable()`.
 
 ### Requirement: alphafold_prediction is available to the conversation agent only
 
-The tool MUST be wired directly into the conversation agent
-(`harness/src/agents/conversation-agent.ts`). It MUST NOT be an entry in the
-sandbox tool registry, and `SandboxToolName`
+The tool MUST be a script tool of the conversation agent
+(`harness/src/agents/conversation-agent.ts`), thus the agent calls it from
+`run_script` (refer to the script-tools capability). It MUST NOT be an entry in
+the sandbox tool registry, and `SandboxToolName`
 (`harness/src/agents/sandbox/types.ts`) MUST NOT name it. A structural lookup
 answers a question of the conversation, thus no sandbox agent reaches for one
 yet.
@@ -187,7 +188,7 @@ yet.
 #### Scenario: Conversation agent has the tool
 
 - **WHEN** the conversation agent is created
-- **THEN** its tool array includes `alphafoldPredictionTool`
+- **THEN** its script tools include `alphafoldPredictionTool`, and its tools do not
 
 #### Scenario: No sandbox agent can declare the tool
 

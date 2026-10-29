@@ -179,7 +179,9 @@ The entries reach the handler in write order among themselves. A live reader tha
 
 `at` is optional in the part contract, because a stream that an older harness wrote holds activity parts with no time.
 
-The synthesis SHALL report its progress the same way. It SHALL set `at` on each `data-synthesis-progress` part, and after each such part it SHALL write one `data-activity-entry` part with the step id `synthesis`, the `SynthesisPhase` of the report as `phase`, and the same `activity` and `at`. Thus the `phase` of an entry is a `StepPhase` or a `SynthesisPhase`. The synthesis runs inside one step of the parent workflow, thus its `at` comes from the wall clock, and a rerun of that step after a crash writes its entries again under the same ids. A reader SHALL treat two entries with the same id as one entry.
+The synthesis SHALL report its progress the same way. It SHALL set `at` on each `data-synthesis-progress` part, and after each such part it SHALL write one `data-activity-entry` part with the step id `synthesis`, the `SynthesisPhase` of the report as `phase`, and the same `activity` and `at`. Thus the `phase` of an entry is a `StepPhase` or a `SynthesisPhase`.
+
+The synthesis runs in the body of the run workflow (`synthesizeFindings` in `harness/src/workflows/execute-analysis.ts`). Each read and each write of a file or a row is a step. Each model call and each tool call of the synthesizer loop is a step too. The progress writes are operations of the body. Thus the `at` of the synthesis comes from the checkpointed clock of the run workflow, and a replay of the body writes no entry again.
 
 #### Scenario: A late subscriber gets each synthesis line with its time
 
@@ -200,6 +202,12 @@ The synthesis SHALL report its progress the same way. It SHALL set `at` on each 
 - **GIVEN** a step workflow that wrote activity entries before a restart
 - **WHEN** the workflow recovers and runs its body again
 - **THEN** the stream holds each entry one time, with the same id and the same `at`
+
+#### Scenario: A replay of the synthesis writes no entry again
+
+- **GIVEN** a run workflow whose synthesis wrote progress entries before a restart
+- **WHEN** the workflow recovers and runs its body again
+- **THEN** the stream holds each synthesis entry one time, with the same id and the same `at`
 
 #### Scenario: A failed entry write does not fail the step
 

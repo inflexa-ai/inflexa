@@ -36,24 +36,19 @@ tools (the latter wired from `meta.skills`).
 
 ### Requirement: Base tools plus ChEMBL/PubChem via meta.tools
 
-The agent's `meta.tools` SHALL spread `BASE_SANDBOX_TOOLS` — which is exactly
-`["listAvailablePackages", "listAvailableRefs", "resolveLibraryId", "queryDocs",
-"inspectRun"]` — and SHALL add its compound-data tools explicitly. The ChEMBL
-tools (`searchCompounds`, `getBioactivity`, `searchTargets`, `getMechanism`,
-`getDrugInfo`, `searchDgidb`) and PubChem tools (`searchPubchemCompound`,
-`getPubchemCrossRefs`, `getPubchemAssays`) SHALL be granted through `meta.tools`,
-NOT through `BASE_SANDBOX_TOOLS`.
+The agent's `meta.tools` SHALL spread `BASE_SANDBOX_TOOLS` and SHALL add its
+compound-data tools explicitly. The `chembl` and `pubchem` tools SHALL be
+granted through `meta.tools`, NOT through `BASE_SANDBOX_TOOLS`.
 
 #### Scenario: Base set excludes compound-data tools
 
 - **WHEN** `BASE_SANDBOX_TOOLS` is inspected
-- **THEN** it is exactly the five introspection/docs/inspection tools
-- **AND** it contains no ChEMBL or PubChem tool
+- **THEN** it contains neither `chembl` nor `pubchem`
 
 #### Scenario: ChEMBL and PubChem are present via the allowlist
 
 - **WHEN** the cheminformatics `meta.tools` is inspected
-- **THEN** it includes the ChEMBL tools (e.g. `searchTargets`, `getBioactivity`) and PubChem tools (e.g. `searchPubchemCompound`, `getPubchemCrossRefs`)
+- **THEN** it includes `chembl` and `pubchem`
 
 ### Requirement: Agent metadata
 

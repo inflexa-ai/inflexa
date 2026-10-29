@@ -1,10 +1,9 @@
-# Spec Delta
+# script-tools Specification
 
 ## Purpose
-
 Defines script tools: the tools that an agent calls from one JavaScript script through the `run_script` tool, and that no request declares. It holds the declaration on the agent, the tool that the loop adds, and the script API. It also holds the isolation, the limits, the result, and the durable step of a script, the file tools and the scratch directory of a script, its provenance, its display, its metrics, and the script tools of the conversation agent.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: An agent declares its script tools, and the loop adds run_script
 
@@ -168,7 +167,7 @@ Inside a workflow, a `run_script` call MUST be one durable step of the loop, the
 
 ### Requirement: A script reads a table through read_table
 
-`read_table` MUST read one table through the read seam of the workspace, thus a path outside the analysis and a symbolic link are refused. It MUST read CSV, TSV, a JSON array of flat objects, and parquet, up to 16 MiB. It MUST give each row as an object keyed by column. A plain decimal number MUST read as a number, and a cell with a leading zero MUST stay text. A larger table and a format with no parser MUST be an error that names an analysis run.
+`read_table` MUST read one table through the guarded read of the workspace, thus a path outside the analysis and a symbolic link are refused. It MUST read CSV, TSV, a JSON array of flat objects, and parquet, up to 16 MiB. It MUST give each row as an object keyed by column. A plain decimal number MUST read as a number, and a cell with a leading zero MUST stay text. A larger table and a format with no parser MUST be an error that names an analysis run.
 
 #### Scenario: A table with a numeric column and an identifier
 
@@ -255,7 +254,7 @@ Each file tool MUST give the files that it read or wrote, with the hash of the e
 #### Scenario: A derived file chains to the table that it came from
 
 - **WHEN** a script reads `runs/r1/s1/output/de.csv` and writes `top.csv`, and the call record folds
-- **THEN** the seam receives one `run-script` event with the script, the read of `de.csv`, and the write of `top.csv`
+- **THEN** the provenance of the embedder receives one `run-script` event with the script, the read of `de.csv`, and the write of `top.csv`
 
 ### Requirement: A nested call shows while the script runs
 

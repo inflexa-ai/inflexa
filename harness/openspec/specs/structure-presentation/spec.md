@@ -2,7 +2,9 @@
 
 ## Purpose
 How the agent shows a predicted protein structure from AlphaFold to the user. `show_user` accepts a structure by URL, and one shared grammar admits only a versioned AlphaFold model file. The card builder makes the content from the parse, and it refuses each URL that the grammar refuses.
+
 ## Requirements
+
 ### Requirement: A structure presentation kind names one versioned AlphaFold model file
 
 `PresentationContent` MUST carry a `structure` member of the shape `{ kind: "structure"; format: "pdb" | "mmcif"; url: string; provider: "alphafold"; accession: string; version: number }`. The `url` is the coordinate file that the card shows. The `format` comes from the URL. The `accession` and the `version` are the values that the harness derived from the URL. The `version` is the model version that was shown, and a host MUST NOT rewrite it. The Zod schema in `contracts/schemas/chat-parts.ts` MUST mirror the member. The new module MUST import only `zod` or a module under `contracts/`, thus `contracts/` stays a leaf.
@@ -79,18 +81,3 @@ The input schema of `show_user` MUST list `"structure"` in `kind`. It MUST carry
 
 - **WHEN** an identical structure call is made again
 - **THEN** the emitted part carries the same id as the first emission
-
-### Requirement: The agent is told where a structure is shown
-
-The description of `alphafold_prediction` MUST name `show_user(kind: "structure", url)` with `pdbUrl` or `cifUrl` as the way to show the predicted structure. The description MUST keep its rule that the tool never returns file contents, and that the agent never reads the file to show a structure. The section "Showing Things to the User" of the conversation prompt MUST name the structure card, and it MUST keep an existing `.pdb` or `.cif` artifact on `show_file`.
-
-#### Scenario: The description names the display path
-
-- **WHEN** the `alphafold_prediction` tool definition is read
-- **THEN** its description names `show_user` with `kind: "structure"` and the URL fields to pass
-
-#### Scenario: An artifact structure stays on show_file
-
-- **WHEN** a step wrote `runs/run-abc/step-1/output/model.pdb` and the agent wants to show it
-- **THEN** the prompt directs it to `show_file`, not to `show_user(kind: "structure")`
-

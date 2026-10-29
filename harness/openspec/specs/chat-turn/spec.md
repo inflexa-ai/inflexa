@@ -241,7 +241,6 @@ The policy rides on the run, not on the provider configuration. Thus it reaches 
 
 - the planner
 - the analogy report
-- the literature reviewer
 - each workflow loop
 
 The requests of such a loop start less than 5 minutes apart, thus a 1-hour write would cost more than it saves.

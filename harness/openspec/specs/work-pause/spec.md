@@ -112,10 +112,10 @@ A lease workflow cannot write to the stream of its consumer. Thus the `acquire` 
 
 #### Scenario: A paused sub-agent shows under its turn
 
-- **GIVEN** a turn whose literature reviewer meets a `suspend` error
-- **WHEN** the reviewer pauses
-- **THEN** the row of the reviewer holds the turn id as its work id
-- **AND** the stream of the turn holds a `data-pause` part of the reviewer
+- **GIVEN** a turn whose planner meets a `suspend` error
+- **WHEN** the planner pauses
+- **THEN** the row of the planner holds the turn id as its work id
+- **AND** the stream of the turn holds a `data-pause` part of the planner
 
 #### Scenario: A resume clears the row and the part
 

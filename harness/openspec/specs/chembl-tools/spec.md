@@ -28,92 +28,81 @@ conversation agent. It is deliberately absent from `BASE_SANDBOX_TOOLS`.
 
 ## Requirements
 
-### Requirement: ChEMBL tools wrap the ChEMBL REST API
+### Requirement: The chembl tool wraps the ChEMBL REST API
 
-The system SHALL provide five harness tools defined in `harness/src/tools/bio/`,
-each built with `defineTool` from `harness/src/tools/define-tool.ts`, each
-accepting a Zod-validated input schema and issuing server-side HTTP requests to
-the ChEMBL REST API via the shared `apiFetch` helper. The exported symbols
-SHALL be `searchCompoundsTool`, `getBioactivityTool`, `searchTargetsTool`,
-`getMechanismTool`, and `getDrugInfoTool`, with on-wire ids `search_compounds`,
-`get_bioactivity`, `search_targets`, `get_mechanism`, and `get_drug_info`.
+The system MUST give one harness tool, `chemblTool` (`harness/src/tools/bio/chembl.ts`), with the on-wire id `chembl`, built with `defineTool`. The input is a flat object with an `action` of `compounds`, `drug`, `mechanism`, `bioactivity`, or `targets`. The schema refuses a call that does not give the argument of its action, before `execute` runs. Each action sends server-side HTTP requests to the ChEMBL REST API through the shared client (`harness/src/tools/lib/chembl-client.ts`) and the shared `apiFetch` helper.
 
 #### Scenario: Tools are importable with snake_case ids
 
 - **WHEN** importing from `harness/src/tools/bio/index.js`
-- **THEN** `searchCompoundsTool`, `getBioactivityTool`, `searchTargetsTool`, `getMechanismTool`, and `getDrugInfoTool` are available
-- **AND** their on-wire ids are `search_compounds`, `get_bioactivity`, `search_targets`, `get_mechanism`, and `get_drug_info`
+- **THEN** `chemblTool` is available
+- **AND** its on-wire id is `chembl`
 
-### Requirement: search_compounds tool
+#### Scenario: A call without the argument of its action is refused
 
-`searchCompoundsTool` SHALL search for compounds by target name/ChEMBL ID,
-compound name, or SMILES substring, selected by a required `searchType` of
-`target` | `compound` | `smiles`. It SHALL return `ok({ compounds })` where each
-compound carries `chemblId`, `preferredCompoundName`, `canonicalSmiles`,
-`molecularWeight`, `alogp`, and `molecularFormula`. The `limit` SHALL default to
-500 (max 500). Results SHALL NOT be re-sorted by relevance — they are returned
-in the order ChEMBL yields them.
+- **WHEN** the tool is called with `action: "mechanism"` and no `chemblId`
+- **THEN** the input validation refuses the call with a message that names `chemblId`, and `execute` does not run
+
+### Requirement: The compounds action of the chembl tool
+
+The `compounds` action of the `chembl` tool searches compounds by a target, by a compound name, or by a SMILES substring. A required `searchType` of `target`, `compound`, or `smiles` selects the search. It MUST return `ok({ compounds })`, where each compound carries `chemblId`, `preferredCompoundName`, `canonicalSmiles`, `molecularWeight`, `alogp`, and `molecularFormula`. The `limit` MUST default to 25 (max 500).
+
+The action MUST NOT sort the results again by relevance. They come back in the order that ChEMBL gives them. A `target` search takes a target name or a target ChEMBL ID, and it resolves the top target hit only. Its `limit` caps the activity rows that it scans, thus fewer unique compounds can come back.
 
 #### Scenario: Search compounds by target
 
-- **WHEN** `search_compounds` is called with `{ query: "EGFR", searchType: "target" }`
+- **WHEN** the `compounds` action is called with `{ query: "EGFR", searchType: "target" }`
 - **THEN** it resolves the target, fetches its activities, and returns the unique active compounds
 - **AND** each result includes `chemblId`, `canonicalSmiles`, and `molecularWeight`
 
 #### Scenario: Search compounds by name
 
-- **WHEN** `search_compounds` is called with `{ query: "imatinib", searchType: "compound" }`
+- **WHEN** the `compounds` action is called with `{ query: "imatinib", searchType: "compound" }`
 - **THEN** it returns compound(s) matching the name, each with its `canonicalSmiles`
 
 #### Scenario: Result limit is honored
 
-- **WHEN** `search_compounds` is called with `{ query: "EGFR", searchType: "target", limit: 100 }`
+- **WHEN** the `compounds` action is called with `{ query: "EGFR", searchType: "target", limit: 100 }`
 - **THEN** at most 100 activity records drive the molecule fan-out
 
-### Requirement: get_bioactivity tool
+### Requirement: The bioactivity action of the chembl tool
 
-`getBioactivityTool` SHALL retrieve bioactivity data for a compound or target by
-ChEMBL ID, with a required `type` of `compound` | `target`. It SHALL return
-`ok({ activities })` where each activity carries `activityId`,
-`compoundChemblId`, `targetChemblId`, `standardType`, `standardValue`,
-`standardUnits`, `assayChemblId`, `assayType`, and `pchemblValue`. An optional
-`activityType` SHALL filter by `standard_type`; `limit` defaults to 500.
+The `bioactivity` action of the `chembl` tool retrieves the bioactivity rows of a compound, a target, or an assay by ChEMBL ID. A required `idType` of `compound`, `target`, or `assay` names the column of the activity table that `chemblId` indexes. It MUST return `ok({ activities })`, where each activity carries `activityId`, `compoundChemblId`, `targetChemblId`, `standardType`, `standardValue`, `standardUnits`, `assayChemblId`, `assayType`, and `pchemblValue`. An optional `activityType` MUST filter by `standard_type`. `limit` defaults to 25 (max 500).
 
 #### Scenario: Get bioactivity for a compound
 
-- **WHEN** `get_bioactivity` is called with `{ chemblId: "CHEMBL25", type: "compound" }`
+- **WHEN** the `bioactivity` action is called with `{ chemblId: "CHEMBL25", idType: "compound" }`
 - **THEN** it returns activity records, each including `standardType`, `standardValue`, and `standardUnits`
 
 #### Scenario: Filter by activity type
 
-- **WHEN** `get_bioactivity` is called with `{ chemblId: "CHEMBL203", type: "target", activityType: "IC50" }`
+- **WHEN** the `bioactivity` action is called with `{ chemblId: "CHEMBL203", idType: "target", activityType: "IC50" }`
 - **THEN** only IC50 records are returned
 
-### Requirement: search_targets tool
+#### Scenario: Read one assay back
 
-`searchTargetsTool` SHALL search for biological targets by gene symbol, protein
-name, or ChEMBL ID and SHALL return `ok({ targets })` where each target carries
-`targetChemblId`, `preferredName`, `targetType`, `organism`, and `geneNames`.
-`limit` SHALL default to 25 (max 25).
+- **WHEN** the `bioactivity` action is called with the `assayChemblId` of an earlier row and `idType: "assay"`
+- **THEN** it returns the rows of that one assay
+
+### Requirement: The targets action of the chembl tool
+
+The `targets` action of the `chembl` tool searches biological targets by gene symbol, protein name, or ChEMBL ID. It MUST return `ok({ targets })`, where each target carries `targetChemblId`, `preferredName`, `targetType`, `organism`, and `geneNames`. `limit` MUST default to 10 (max 25).
 
 #### Scenario: Search target by gene symbol
 
-- **WHEN** `search_targets` is called with `{ query: "BRAF" }`
+- **WHEN** the `targets` action is called with `{ query: "BRAF" }`
 - **THEN** it returns target(s) matching BRAF, each with `targetChemblId`, `preferredName`, and `organism`
 
-### Requirement: get_mechanism tool
+### Requirement: The mechanism action of the chembl tool
 
-`getMechanismTool` SHALL retrieve mechanism-of-action data for a compound by
-ChEMBL ID and SHALL return `ok({ mechanisms })` where each mechanism carries
-`mechanismOfAction`, `actionType`, `targetChemblId`, `targetName`, and
-`moleculeChemblId`. Target names SHALL be resolved by a batched follow-up lookup.
+The `mechanism` action of the `chembl` tool retrieves the mechanism-of-action data of one molecule by ChEMBL ID. It MUST return `ok({ mechanisms })`, where each mechanism carries `mechanismOfAction`, `actionType`, `targetChemblId`, `targetName`, and `moleculeChemblId`. The target names MUST come from separate lookups of the targets, at most 5 at a time.
 
 #### Scenario: Get mechanism for a drug
 
-- **WHEN** `get_mechanism` is called with `{ chemblId: "CHEMBL941" }`
+- **WHEN** the `mechanism` action is called with `{ chemblId: "CHEMBL941" }`
 - **THEN** it returns the mechanism of action including `actionType` and the resolved target
 
-### Requirement: get_drug_info tool
+### Requirement: The drug action of the chembl tool
 
 The drug lookup (the `drug` action of the `chembl` tool) MUST search approved drugs by name or by indication. It MUST return `ok({ drugs })` where each drug carries `moleculeChemblId`, `preferredName`, `maxPhase`, `moleculeType`, `firstApproval`, and `indication`.
 
@@ -138,27 +127,28 @@ The client MUST NOT call `/drug/search.json`, because that endpoint does not exi
 
 ### Requirement: ChEMBL tools are available via the per-agent allowlist
 
-The five ChEMBL tools SHALL be entries in the central sandbox tool registry that
-`resolveSandboxTools` (`harness/src/agents/sandbox/shared.ts`) resolves, reaching
-a sandbox agent only when that agent's `meta.tools` allowlist names them. They
-SHALL also be wired directly into the conversation agent
-(`harness/src/agents/conversation-agent.ts`). They SHALL NOT be members of
-`BASE_SANDBOX_TOOLS`, so they are not granted to every sandbox agent.
+The ChEMBL tool `chembl` MUST be an entry in the central sandbox tool registry
+that `resolveSandboxTools` (`harness/src/agents/sandbox/shared.ts`) resolves. It
+reaches a sandbox agent only when the `meta.tools` allowlist of that agent names
+it. It MUST also be a script tool of the conversation agent
+(`harness/src/agents/conversation-agent.ts`), which calls it from `run_script`
+(refer to the script-tools capability). It MUST NOT be a member of
+`BASE_SANDBOX_TOOLS`, thus it is not granted to each sandbox agent.
 
 #### Scenario: Sandbox agent resolves ChEMBL tools from its allowlist
 
-- **WHEN** a sandbox-agent meta lists ChEMBL tool names in `meta.tools`
-- **THEN** `createSandboxAgent` resolves them via `resolveSandboxTools` and adds them to that agent's tool array
+- **WHEN** a sandbox-agent meta lists `chembl` in `meta.tools`
+- **THEN** `createSandboxAgent` resolves it through `resolveSandboxTools` and adds it to the tool array of that agent
 
 #### Scenario: ChEMBL tools are not granted by default
 
-- **WHEN** a sandbox agent's `meta.tools` does not name any ChEMBL tool
-- **THEN** the resolved tool array contains none of `search_compounds`, `get_bioactivity`, `search_targets`, `get_mechanism`, `get_drug_info`
+- **WHEN** the `meta.tools` of a sandbox agent does not name `chembl`
+- **THEN** the resolved tool array does not contain `chembl`
 
 #### Scenario: Conversation agent has the ChEMBL tools
 
 - **WHEN** the conversation agent is created
-- **THEN** its tool array includes `searchCompoundsTool`, `getBioactivityTool`, `searchTargetsTool`, `getMechanismTool`, and `getDrugInfoTool`
+- **THEN** its script tools include `chemblTool`, and its tools do not
 
 ### Requirement: Error handling, retry, and timeout
 
@@ -166,7 +156,7 @@ ChEMBL tools MUST treat a `404` as an expected "not found" and return an empty r
 
 #### Scenario: Target not found returns empty
 
-- **WHEN** `search_targets` is called with a query that resolves to no target (404)
+- **WHEN** the `targets` action is called with a query that resolves to no target (404)
 - **THEN** it returns an empty `targets` array, not an error
 
 #### Scenario: Rate limit triggers backoff retry

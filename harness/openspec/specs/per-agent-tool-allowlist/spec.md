@@ -123,7 +123,7 @@ declare a non-empty `tools` array.
 
 - **GIVEN** a meta whose `tools` is exactly `BASE_SANDBOX_TOOLS`
 - **WHEN** `createSandboxAgent(deps, meta, body)` is invoked
-- **THEN** the tool array of the agent contains the five base tools plus the always-on workspace substrate
+- **THEN** the tool array of the agent contains each base tool that resolves, plus the always-on workspace substrate
 - **AND** no other research or bio-lookup tool is present
 
 #### Scenario: Agent with extra declared tools receives them all

@@ -47,7 +47,7 @@ Working memory SHALL be one `cortex_working_memory` row per analysis, holding a 
 
 ### Requirement: The agent maintains working memory through one section-addressable tool
 
-The harness SHALL expose a single `update_working_memory` tool as the agent's interface for maintaining working memory, and SHALL expose no read tool for it (the rendered document is already injected every turn). It SHALL be section-addressable: `goal` is set whole; `constraint`, `hypothesis`, and `finding` each take `add`/`revise`/`retire` operations addressing an entry by its id. `add` on a `finding` SHALL require a `runId`; `revise`/`retire` SHALL NOT, addressing the finding by its own id instead. A `runId` that names no run of this analysis SHALL be refused with a model-correctable error — never stored as a dangling reference. The conversation prompt SHALL state the promotion criteria — capture user-stated binding rules to `constraints`, durable conclusions to `findings`, and keep `goal` current.
+The harness SHALL expose a single `update_working_memory` tool as the agent's interface for maintaining working memory, and SHALL expose no read tool for it (the rendered document is already injected every turn). It SHALL be section-addressable: `goal` is set whole; `constraint`, `hypothesis`, and `finding` each take `add`/`revise`/`retire` operations addressing an entry by its id. `add` on a `finding` SHALL require a `runId`; `revise`/`retire` SHALL NOT, addressing the finding by its own id instead. A `runId` that names no run of this analysis SHALL be refused with a model-correctable error — never stored as a dangling reference.
 
 #### Scenario: Adding a finding requires a runId
 

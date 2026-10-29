@@ -122,7 +122,7 @@ This SHALL hold for the phase's whole agent tree. Sub-agents derive from the pha
 
 #### Scenario: The synthesis phase's calls carry its step id
 
-- **GIVEN** a run whose synthesis phase makes LLM calls, including calls by sub-agents it dispatches
+- **GIVEN** a run whose synthesis phase makes LLM calls
 - **WHEN** those calls are recorded
 - **THEN** every record carries the synthesis step id, not the run alone
 

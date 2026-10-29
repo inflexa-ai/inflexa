@@ -252,7 +252,6 @@ Each agent that the harness assembles with a tool MUST declare `read_tool_output
 - each sandbox agent and the data profiler, through the substrate
 - the planner of `generate_plan`
 - the analogical reasoner of `generate_analogy_report`
-- the literature reviewer
 - the run synthesizer
 
 The agent MUST declare the tool from its first request, thus the tool set of each conversation stays fixed. The loop of an agent MUST keep each text where the tool of that agent reads it. Thus each reference of an excerpt names a record that the agent can read.
@@ -266,8 +265,8 @@ A composition with no store MUST NOT declare the tool. The loop of such an agent
 
 #### Scenario: A sub-agent reads a kept text of its own loop
 
-- **GIVEN** a literature reviewer whose search gives a result of 60,000 characters
-- **WHEN** the reviewer calls `read_tool_output` with the reference of its excerpt
+- **GIVEN** an analogical reasoner whose search gives a result of 60,000 characters
+- **WHEN** the reasoner calls `read_tool_output` with the reference of its excerpt
 - **THEN** the call gives a page of the kept text
 
 #### Scenario: A sandbox agent with no store has no read tool

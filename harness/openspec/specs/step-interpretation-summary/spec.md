@@ -103,21 +103,6 @@ step.
 - **WHEN** embedding or upsert throws
 - **THEN** the error is logged and the step still completes
 
-### Requirement: Sandbox standards teach literature grounding during execution
-
-`sandbox-standards` MUST tell sandbox agents to ground their findings in the research literature as they work. The standards direct an agent to search PubMed (`search_pubmed`) and to read abstracts (`get_article_details`). The agent assesses the novelty of each finding during the primary execution turns. The standards MUST NOT defer this work to a final step. The post-step summary continuation MUST NOT search the literature. Its mask lets only `read_file`, `grep`, and `read_tool_output` run, and it grounds claims in persisted files through `read_file`.
-
-#### Scenario: Agent searches literature while working
-
-- **WHEN** a sandbox agent finds a significant result during its primary analysis turns
-- **THEN** the standards direct it to search PubMed for related prior work at that point, not in the summary continuation
-
-#### Scenario: Summary turn does not search literature
-
-- **GIVEN** a step agent that declares `search_pubmed`, and a summary continuation whose model calls it
-- **WHEN** the loop dispatches the call
-- **THEN** the call gets the error result of the mask, and no search runs
-
 ### Requirement: The step summary continues the conversation of the step agent
 
 `generateStepSummary` MUST run a continuation of the conversation of the step agent (refer to the harness-agent-loop capability), under the accounting agent id `"step-summary-writer"`. The continuation derives its session through `forSubAgent(session, "step-summary-writer")`. It MUST use the agent definition, the provider, and the transcript of the task. When a file-metadata exchange exists, the conversation MUST also hold the messages of that exchange.

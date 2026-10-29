@@ -32,7 +32,7 @@ The Run Activity renderer SHALL explicitly state when the analysis has no non-te
 
 ### Requirement: Launch and prompt contracts prevent inspect polling loops
 
-`execute_analysis` SHALL return the launched or deduplicated run's `runId` with `status: "in_progress"`. The conversation prompt and `inspect_run` description SHALL teach that workflows execute autonomously, bounded waiting is only for an explicit user request to wait, at most one bounded wait may be performed in a turn, and an `in_progress` cutoff result must be reported to the user without another immediate inspection.
+`execute_analysis` MUST return the launched or deduplicated run's `runId` with `status: "in_progress"`. `inspect_run` MUST end a bounded wait at its cutoff with `inspectionState: "in_progress"` and `wait.cutoffReached: true`, thus a turn never blocks on a run.
 
 #### Scenario: Newly launched run is explicitly in progress
 
@@ -47,10 +47,9 @@ The Run Activity renderer SHALL explicitly state when the analysis has no non-te
 
 #### Scenario: Wait cutoff ends inspection for the turn
 
-- **GIVEN** `inspect_run` returns `inspectionState: "in_progress"` with `cutoffReached: true`
-- **WHEN** the conversation agent follows its prompt
-- **THEN** it reports that the run is still executing
-- **AND** it does not call `inspect_run` again in that turn
+- **GIVEN** a run that stays in progress past the wait of an `inspect_run` call
+- **WHEN** the wait reaches its cutoff
+- **THEN** the result carries `inspectionState: "in_progress"` and `wait.cutoffReached: true`
 
 ### Requirement: Run completion remains pull-only
 
