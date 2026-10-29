@@ -12,7 +12,7 @@
  *                          (so a stale grant cannot resurrect it); an `auto`
  *                          command spawns prompt-free when every explicitly-set
  *                          option is safe-listed, else escalates to the prompt;
- *                          an `approval` command pauses on `ctx.ask`; a command
+ *                          an `approval` command asks through the approval hook; a command
  *                          with no declared policy fails closed as `blocked`.
  *
  * The subprocess is a plain child process — the same way the agent shells out to
@@ -92,7 +92,7 @@ const TRANSFER_DETAIL = "This command downloads data. It has no time limit. ";
  * the registration-declared policy — no I/O, so the escalation and fail-closed
  * branches (unreachable through the real registry, which stamps every command) are
  * directly unit-testable. `blocked` carries the model-facing message; `ask` means
- * run the `ctx.ask` approval flow; `spawn` means run with no prompt.
+ * the approval hook asks the user first; `spawn` means run with no prompt.
  */
 export type ActionDecision = { readonly kind: "blocked"; readonly message: string } | { readonly kind: "ask" } | { readonly kind: "spawn" };
 
@@ -160,8 +160,8 @@ export function decideAction(policy: AgentPolicy | undefined, grantKey: string, 
 
 /**
  * The outcome the model sees, as data on the ok channel — every expected result
- * is a variant here, never a thrown error (a denied `ctx.ask` is the one throw,
- * and it is the harness loop's to map). `invalid` is a rejected argv; `blocked`
+ * is a variant here, never a thrown error (a denied call never reaches `execute`:
+ * the harness loop denies it after the approval hook). `invalid` is a rejected argv; `blocked`
  * is a command the agent may not run — a `blocked` policy (a TUI launcher or an
  * infrastructure-lifecycle command) or the fail-closed case of a command carrying
  * no declared policy; `ran` is a

@@ -750,7 +750,7 @@ export type DebrisSweepOutcome = {
     readonly swept: boolean;
     /** The store directories the pass removed. */
     readonly dirs: readonly string[];
-    /** How many stale acquire reports the pass removed. */
+    /** How many stale acquire and source-build reports the pass removed. */
     readonly reports: number;
 };
 
@@ -762,7 +762,7 @@ export type DebrisDeps = {
 
 /**
  * Collect the debris tier silently: the store directories with no farm link
- * and no graph node, plus the stale acquire reports. No user command starts
+ * and no graph node, plus the stale acquire and source-build reports. No user command starts
  * this — the tail of a flush that ended with refusals and the one boot pass
  * of the app call it, and `store reclaim` keeps its meaning and its approval
  * gate.
@@ -814,10 +814,10 @@ async function runDebrisPass(storeRoot: string, deps: DebrisDeps): Promise<Resul
 
 /**
  * The debris tier as the host previews it: the directories with no farm link
- * and no graph node, plus the count of the stale acquire reports. An
- * unreadable or absent graph names NO directory, because the pass cannot then
- * prove that a directory is unadvertised — the conservative branch frees
- * nothing.
+ * and no graph node, plus the count of the stale acquire and source-build
+ * reports. An unreadable or absent graph names NO directory, because the pass
+ * cannot then prove that a directory is unadvertised — the conservative branch
+ * frees nothing.
  */
 async function debrisPreview(storeRoot: string): Promise<Result<{ dirs: readonly string[]; reports: number }, StoreActionError>> {
     try {
@@ -838,7 +838,7 @@ async function debrisPreview(storeRoot: string): Promise<Result<{ dirs: readonly
         }
         const downloadDir = join(storeRoot, ".inflexa-download");
         const reports = existsSync(downloadDir)
-            ? (await readdir(downloadDir)).filter((name) => name.startsWith("acquire-") && name.endsWith(".json")).length
+            ? (await readdir(downloadDir)).filter((name) => (name.startsWith("acquire-") || name.startsWith("source-")) && name.endsWith(".json")).length
             : 0;
         return ok({ dirs: dirs.sort((a, b) => a.localeCompare(b)), reports });
     } catch (cause) {
@@ -1213,6 +1213,13 @@ export function describeRequestRefusal(error: RequestResolutionError, query: Pac
                 `Both ecosystems hold "${query.spelling}" (${error.candidates.join(" and ")}), and the request names none. ` +
                 "Run the command again with `--lang python` or `--lang r`."
             );
+        case "ambiguous_version": {
+            const asked = error.version === undefined ? query.spelling : `${query.spelling}==${error.version}`;
+            return (
+                `Two store directories of the pool answer "${asked}": ${error.candidates.join(" and ")}. ` +
+                "One of the two is a source build, and the request named neither. Nothing was linked."
+            );
+        }
         default: {
             // The union is closed, thus the compiler proves that this is unreachable.
             const unreachable: never = error;

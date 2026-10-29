@@ -259,8 +259,8 @@ describe("run_inflexa — execute", () => {
     //
     // This is also the whole proof of spec scenario "A standing grant cannot resurrect a blocked
     // command" — no DB-grant e2e is built because none is needed. An "always" grant is consulted
-    // ONLY inside ctx.ask (that seam resolves a matching grant to auto-approve), and decideAction
-    // returns `blocked` BEFORE the tool ever reaches ctx.ask. So the `ask.calls.length === 0`
+    // ONLY behind the approval hook (the gateway resolves a matching grant to auto-approve), and decideAction
+    // returns `blocked` BEFORE the hook gives a request. So the `ask.calls.length === 0`
     // assertion below IS the guarantee: the grant-lookup path is provably unreachable for a blocked
     // command, which is exactly why a stale grant keyed on its grantKey can never revive it.
     test.each([
@@ -368,7 +368,7 @@ describe("run_inflexa — execute", () => {
 
         // `ls` is auto with safeFlags ["project"]; `--analysis` is declared only on the root, never on `ls`,
         // yet the classifier's chain walk counts it as explicitly set. Outside safeFlags, so the auto tier
-        // escalates through ctx.ask rather than free-running — proving the shadowed/inherited detection feeds
+        // escalates through the approval hook rather than free-running — proving the shadowed/inherited detection feeds
         // the decision. (There is no free spawn: the only spawn here is the tail of the APPROVED ask.)
         const result = (await runCall(tool, { argv: ["ls", "--analysis", "a"] }, ask.fn))._unsafeUnwrap();
 

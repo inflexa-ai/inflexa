@@ -203,10 +203,10 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   `emit_deps.py` of the provisioner writes it, and a farm composition walks
   it as a lookup, never a resolution.
 - **Provisioner** — The network-enabled container
-  (`images/sandbox-provisioner`) that writes the pool and the farms. Five
-  subcommands, one mode each: `build`, `acquire`, `prepare`, `reclaim`,
-  `remove-farm`. It holds the compilers and an egress allowlist. The runtime
-  image holds neither.
+  (`images/sandbox-provisioner`) that writes the pool and the farms. Each
+  subcommand has one mode: `build`, `acquire`, `acquire-source`, `prepare`,
+  `reclaim`, and `remove-farm`. It holds the compilers and an egress
+  allowlist. The runtime image holds neither.
 - **Acquisition** — An install into the pool, by the provisioner, with no
   farm work. It is two-phase. The run stages its graph nodes in a report
   file, and it never touches `deps.json`. The host commits after the load

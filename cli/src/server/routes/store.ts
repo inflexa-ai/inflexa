@@ -23,6 +23,7 @@ import {
     describeRecordedFlightFailure,
     describeStoreFlightSpec,
     enqueueStoreAdd,
+    isSourceFlightSpecifier,
     readStoreFlights,
     storeFlightKey,
     type StoreFlightReport,
@@ -110,6 +111,16 @@ export function storeRoutes(opts: StoreRouteOpts = DEFAULT_STORE_ROUTE_OPTS): Ho
         if (flight.isErr()) return internalError(c, flight.error, "read the flight");
         const row = flight.value;
         if (row === null) return apiError(c, "not_found", `No failed flight ${c.req.param("flightId")}.`);
+        // A source row is keyed by a qualified pin, and only the source-build
+        // tool can produce one again: the index acquire cannot clone, build, or
+        // resolve the qualifier. The refusal names the way back.
+        if (isSourceFlightSpecifier(row.specifier)) {
+            return apiError(
+                c,
+                "conflict",
+                `The failed flight of ${describeStoreFlightSpec(row)} is a source build, and an index store add cannot retry it. Start the build again through the install-from-source tool of the conversation agent.`,
+            );
+        }
         // The retry is a new query, and the row already holds it: the spelling, the track, and the specifier.
         const enqueued = enqueueStoreAdd({
             query: {

@@ -3,6 +3,11 @@ import { createReadStream } from "node:fs";
 import { ResultAsync } from "neverthrow";
 import type { FsError } from "./fs.ts";
 
+/** SHA-256 hash a string, UTF-8 encoded. Returns the hex-encoded digest. */
+export function sha256Text(text: string): string {
+    return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
 /** SHA-256 hash a file by streaming its content. Returns the hex-encoded digest. */
 export function sha256File(path: string): ResultAsync<string, FsError> {
     return ResultAsync.fromPromise(

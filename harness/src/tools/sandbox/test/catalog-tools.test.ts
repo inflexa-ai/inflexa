@@ -250,6 +250,33 @@ describe("queryPackages — listing", () => {
         expect(result.content).not.toContain("Python (pip)");
     });
 
+    it("a source-built section lists under the R track", () => {
+        // The `source` subtree of a farm lock holds the source-built R packages,
+        // and the one mapping reads it as the R track — a source build is a
+        // source, not an identity rule of its own.
+        const lock: FarmLock = {
+            schema: 1,
+            arch: "arm64",
+            packages: [
+                { name: "SeedMatchR", version: "2.0.0", track: "source", store_dir: "seedmatchr-2.0.0-abcd1234abcd1234", hash: "a".repeat(64), requested: true },
+            ],
+            languages: {},
+        };
+
+        const result = queryPackages(lockSections(lock), { language: "r" });
+        if (!result.available || !("total" in result)) throw new Error("expected a listing result");
+
+        expect(result.total).toBe(1);
+        expect(result.content).toContain("SeedMatchR==2.0.0");
+        expect(result.content).toContain("R (source-built)");
+        // A `names` check resolves the section through the track it carries.
+        const checked = queryPackages(lockSections(lock), { names: ["r:SeedMatchR"] });
+        if (!checked.available || !("checked" in checked)) throw new Error("expected a checked result");
+        expect(checked.checked).toEqual([
+            { requested: "r:SeedMatchR", present: true, name: "SeedMatchR", section: "R (source-built)", version: "2.0.0", storeDir: "seedmatchr-2.0.0-abcd1234abcd1234", hash: "a".repeat(64) },
+        ]);
+    });
+
     it("the language filter reads the track of a section, not its title", () => {
         // A title is display text. A filter that read it would answer a
         // different set the moment a heading is reworded.

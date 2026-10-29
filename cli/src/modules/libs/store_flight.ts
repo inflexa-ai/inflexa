@@ -58,9 +58,11 @@ import {
     classifyProvisionerRun,
     runLoadCheck,
     runProvisioner,
+    runSourceBuild,
     type LoadCheckRunner,
     type ProvisionerError,
     type ProvisionerRunner,
+    type SourceBuildRunner,
 } from "./provisioner.ts";
 import { withStoreMetadataMutex } from "./store_download.ts";
 import { readTransferReport } from "./transfers.ts";
@@ -219,7 +221,7 @@ const reportNodeSchema = z
 const reportOutcomeSchema = z
     .object({
         spec: z.string(),
-        outcome: z.enum(["acquired", "refused", "both_hit"]),
+        outcome: z.enum(["acquired", "refused", "both_hit", "source"]),
         reason: z.string().optional(),
         // The candidates of a both-hit are IDENTITY KEYS, `<track>:<name>`, the
         // form `identityKey` of the harness mints and the provisioner writes.
@@ -227,6 +229,13 @@ const reportOutcomeSchema = z
         // schema, because a report that misses drops the whole run.
         candidates: z.array(z.string()).optional(),
         store_dirs: z.array(z.string()).optional(),
+        // The fields of a `source` outcome, written by `acquire-source`. They
+        // ride the same schema because the clean run writes the same report
+        // shape; an `acquire` outcome never carries them.
+        pin: z.string().optional(),
+        ecosystem: z.enum(["python", "r"]).optional(),
+        name: z.string().optional(),
+        store_dir: z.string().optional(),
     })
     .passthrough();
 
@@ -693,6 +702,11 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
                     );
                     break;
                 }
+                case "source":
+                    // An `acquire` run never writes this outcome; the schema admits
+                    // it because the clean run of a source build writes the same
+                    // report shape. The batch holds no entry for it.
+                    break;
                 default: {
                     const unreachable: never = outcome.outcome;
                     throw new Error(`unhandled acquire outcome: ${JSON.stringify(unreachable)}`);
@@ -783,6 +797,210 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
             if (message === undefined) deleteStoreFlight(key).unwrapOr(0);
             else settleStoreFlightFailure({ id: key, message }).unwrapOr(0);
         }
+    }
+}
+
+// --- The source-build flight ----------------------------------------------------
+
+/** What one clean source-build run of a session needs, beside the container it runs in. */
+export type SourceFlightParams = {
+    readonly storeRoot: string;
+    /** The analysis whose farm the flight extends. `null` lands the package with no farm. */
+    readonly analysisId: string | null;
+    /** The host paths of the pristine snapshot and the approved build script. */
+    readonly snapshotHost: string;
+    readonly scriptHost: string;
+    /** The approved session egress list of the session that approved the script. */
+    readonly egressAllow: string;
+    /** The resolved git source, or `null` for a folder source. */
+    readonly git: { readonly url: string; readonly commit: string } | null;
+    /** The qualified source of the build — `@git:<full sha>` or `@tree:<sha16>` — which keys the flight row before the run resolves the metadata version. */
+    readonly pinQualifier: string;
+    /** The spelling of the source — the repository name or the folder name — which the row the surfaces render carries. */
+    readonly sourceSpelling: string;
+    readonly aptSnapshotDate: string;
+    readonly aptPackages: readonly string[];
+    readonly imageDigests: { readonly provisioner: string; readonly base: string };
+    /** The directory of the source tree that holds the R `DESCRIPTION`, relative to the snapshot root. */
+    readonly packageDir?: string;
+    /** The abort signal of the commit. */
+    readonly signal?: AbortSignal;
+};
+
+/** What one source flight produced: the qualified pin that landed, or the phase-named reason it did not. */
+export type SourceFlightOutcome =
+    | { readonly kind: "committed"; readonly pin: string; readonly storeDir: string; readonly storeDirs: readonly string[] }
+    | { readonly kind: "failed"; readonly reason: string };
+
+/** The launch and the check a source-flight caller can replace. Production passes none; a test pins the runners. */
+export type SourceFlightDeps = {
+    readonly run?: SourceBuildRunner;
+    readonly loadCheck?: LoadCheckRunner;
+    readonly onProgress?: (line: string) => void;
+    readonly reclaimWaitMs?: number;
+    readonly pollMs?: number;
+};
+
+/** Whether one flight-row specifier is the qualified pin of a source build. The retry route reads this, because an index `store add` cannot refly a source build. */
+export function isSourceFlightSpecifier(specifier: string): boolean {
+    return specifier.includes("@");
+}
+
+/**
+ * Fly the clean run of one source build: one `acquire-source` provisioner run,
+ * then the unchanged two-phase tail — the load check inside the sandbox image,
+ * the graph commit, and the farm extension of the subscribed analysis.
+ *
+ * The source flight row is created HERE, keyed by the qualified source of the
+ * build — the pin qualifier plus the source spelling — because the metadata
+ * version of the pin exists only after the run built the artifact, and the row
+ * MUST be claimed BEFORE the run launches so a reclamation sees the live work.
+ * A claim another process owns refuses the run as joined: that flight does the
+ * work, and this one starts no second container over the same source. A
+ * refusal of the run itself (the `resolve` phase) settles the claimed row as
+ * `failed`, and the caller — the build session, still open — reads the reason
+ * directly. A failed check or commit settles as a terminal `failed` row with
+ * the phase in front, exactly as an index acquisition does, and the retry
+ * route refuses it. A farm-extension failure does not fail the flight: the
+ * packages are in the pool and the graph, and a later link extends the farm.
+ */
+export async function flySourceBuild(params: SourceFlightParams, deps: SourceFlightDeps = {}): Promise<SourceFlightOutcome> {
+    const progress = (line: string): void => {
+        try {
+            deps.onProgress?.(line);
+        } catch {
+            // A progress readout is decoration over work that is otherwise succeeding.
+        }
+    };
+    const blocker = await waitForReclaim(deps.reclaimWaitMs ?? RECLAIM_WAIT_MS, deps.pollMs ?? FLIGHT_POLL_MS);
+    if (blocker !== null) {
+        return { kind: "failed", reason: `resolve: a package-store reclamation (pid ${blocker}) runs right now — commit again when it ends` };
+    }
+
+    // The claim precedes the launch, so a reclamation sees the live work while
+    // the container builds. A claim QUERY failure is its own refusal, never
+    // "joined": a broken ledger must not read as a live duplicate, because
+    // "joined" tells the caller that somebody else does the work, and here
+    // nobody does.
+    const flightId = storeFlightKey({ ecosystem: null, spelling: params.sourceSpelling, specifier: params.pinQualifier });
+    const claim = claimStoreFlight({
+        id: flightId,
+        ecosystem: null,
+        spelling: params.sourceSpelling,
+        specifier: params.pinQualifier,
+        holderPid: process.pid,
+    });
+    if (claim.isErr()) {
+        return { kind: "failed", reason: `resolve: the flight ledger could not be claimed (${describeDbError(claim.error)}) — the build did not run` };
+    }
+    if (!claim.value) {
+        return {
+            kind: "failed",
+            reason: `resolve: another process already flies the source build of ${params.sourceSpelling}${params.pinQualifier} — its flight owns the work; commit again when it ends`,
+        };
+    }
+    subscribeStoreFlight({ flightId, analysisId: params.analysisId }).unwrapOr(0);
+    const settleResolve = (message: string): SourceFlightOutcome => {
+        settleStoreFlightFailure({ id: flightId, message: `resolve: ${message}` }).unwrapOr(0);
+        return { kind: "failed", reason: `resolve: ${message}` };
+    };
+
+    const reportName = join(".inflexa-download", `source-${process.pid}-${randomUUIDv7()}.json`);
+    const reportPath = join(params.storeRoot, reportName);
+    // The report leaves on every path after the launch. The check container reads it through the store
+    // mount and the commit reads the parsed copy, thus nothing needs the file once the flight returns.
+    try {
+        const ran = await (deps.run ?? runSourceBuild)(
+            {
+                containerName: `inflexa-source-${randomUUIDv7()}`,
+                storeRoot: params.storeRoot,
+                egressAllow: params.egressAllow,
+                snapshotHost: params.snapshotHost,
+                scriptHost: params.scriptHost,
+                reportName,
+                git: params.git,
+                ...(params.packageDir === undefined ? {} : { packageDir: params.packageDir }),
+                aptSnapshotDate: params.aptSnapshotDate,
+                aptPackages: params.aptPackages,
+                imageDigests: params.imageDigests,
+            },
+            progress,
+            params.signal,
+        );
+        // An aborted commit kills the run, and the runner removes its container. The signal is the verdict,
+        // because the kill surfaces as a nonzero exit or as a spawn error, never as a refusal of the script.
+        if (params.signal?.aborted === true) return settleResolve("the source build was cancelled");
+        if (ran.isErr()) return settleResolve(ran.error.message);
+        const classified = classifyProvisionerRun(ran.value);
+        if (classified.isErr()) return settleResolve(classified.error.message);
+
+        const rawReport = await readFile(reportPath, "utf8").catch(() => null);
+        const report: AcquireReport | null = rawReport === null ? null : JSON.parseWith(rawReport, acquireReportSchema);
+        if (report === null) {
+            return settleResolve(`the source build wrote no readable report at ${reportPath}`);
+        }
+        const outcome = report.outcomes[0];
+        if (outcome === undefined) {
+            return settleResolve("the source build wrote no outcome");
+        }
+        if (outcome.outcome === "refused") {
+            return settleResolve(outcome.reason ?? "the source build was refused");
+        }
+        if (
+            outcome.outcome !== "source" ||
+            outcome.pin === undefined ||
+            outcome.ecosystem === undefined ||
+            outcome.name === undefined ||
+            outcome.store_dir === undefined
+        ) {
+            return settleResolve(`the source build answered "${outcome.outcome}", which names no stored package`);
+        }
+        const storeDirs = outcome.store_dirs ?? [outcome.store_dir];
+        const settle = (phase: "load_check" | "commit", message: string): SourceFlightOutcome => {
+            settleStoreFlightFailure({ id: flightId, message: `${phase}: ${message}` }).unwrapOr(0);
+            return { kind: "failed", reason: `${phase}: ${message}` };
+        };
+
+        // The signal is the verdict at each edge before the graph commit: a cancelled commit lands nothing.
+        // A function, because the narrowing of the earlier check would otherwise freeze the read.
+        const cancelled = (): boolean => params.signal?.aborted === true;
+        if (cancelled()) return settle("load_check", "the source build was cancelled");
+        progress("[flight] load check of the source-built set (sandbox image, no network)");
+        const check = await (deps.loadCheck ?? runLoadCheck)({
+            storeRoot: params.storeRoot,
+            reportName,
+            ...(params.signal === undefined ? {} : { signal: params.signal }),
+        });
+        if (cancelled()) return settle("load_check", "the source build was cancelled");
+        if (check.isErr()) return settle("load_check", check.error.message);
+        if (check.value.code !== 0) {
+            const failed = failedLoadResults(check.value.stdout, Object.keys(report.nodes));
+            const detail = [...failed.entries()].map(([dir, reason]) => `${dir}: ${reason}`).join("\n");
+            return settle("load_check", `the load check failed inside the sandbox image — nothing was advertised:\n${detail}`);
+        }
+
+        const committed = await commitStagedNodes(params.storeRoot, report.nodes);
+        if (committed.isErr()) return settle("commit", committed.error.message);
+        const refused = new Set(committed.value.refused.map((refusal) => refusal.storeDir));
+        if (storeDirs.some((dir) => refused.has(dir))) {
+            const reason = committed.value.refused.find((refusal) => refused.has(refusal.storeDir))?.reason ?? "a dependency of the build did not commit";
+            return settle("commit", reason);
+        }
+
+        // A farm extension never fails the flight: the pool and the graph hold the
+        // build, and a later link extends the farm.
+        if (params.analysisId !== null && existsSync(analysisFarmPath(params.storeRoot, params.analysisId))) {
+            const extended = await extendFarm({ storeRoot: params.storeRoot, analysisId: params.analysisId, roots: [outcome.store_dir] });
+            extended.match(
+                () => progress(`[flight] extended the farm of the analysis ${params.analysisId} with ${outcome.pin}`),
+                (error) => progress(`[flight] the farm of the analysis ${params.analysisId} was not extended: ${describeFarmCompositionError(error)}`),
+            );
+        }
+        deleteStoreFlight(flightId).unwrapOr(0);
+        return { kind: "committed", pin: outcome.pin, storeDir: outcome.store_dir, storeDirs };
+    } finally {
+        // A failed removal never changes the outcome: the debris pass of the harness frees a stale report.
+        await rm(reportPath, { force: true }).catch(() => undefined);
     }
 }
 

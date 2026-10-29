@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 
 import {
+    capture,
     ContainerRuntimeError,
     firstReadyRuntime,
     pullImageThroughEngine,
@@ -401,5 +402,68 @@ describe("resolveImageTotalBytes", () => {
 
         expect(await resolveImageTotalBytes(rt, "postgres:16")).toBe(15);
         expect(calls()).toEqual(["manifest inspect postgres:16"]);
+    });
+});
+
+describe("capture bounds", () => {
+    /** A runtime whose binary is the shell, so each test spells the child as `sh -c <script>` arguments. */
+    const shell: ContainerRuntime = { ...runtimes.docker, bin: "/bin/sh" };
+
+    /** A script that writes `count` bytes of `letter`. */
+    const bytesOf = (letter: string, count: number, fd = ""): string => `head -c ${count} /dev/zero | tr '\\0' '${letter}' ${fd}`;
+
+    test("keeps the head and the tail of a long stream with one marker that counts the dropped bytes", async () => {
+        const result = await capture(shell, ["-c", `${bytesOf("a", 3000)}; ${bytesOf("m", 4000)}; ${bytesOf("z", 3000)}`], { maxBytesPerStream: 1000 });
+
+        expect(result.code).toBe(0);
+        // The budget splits in two halves: the first 500 bytes and the last 500 bytes.
+        expect(result.stdout.startsWith("a".repeat(500) + "\n[... ")).toBe(true);
+        expect(result.stdout.endsWith("\n" + "z".repeat(500))).toBe(true);
+        expect(result.stdout.match(/\[\.\.\. \d+ bytes not captured \.\.\.\]/g)).toEqual(["[... 9000 bytes not captured ...]"]);
+        expect(result.stdout).not.toContain("mm");
+    });
+
+    test("bounds each stream on its own", async () => {
+        const result = await capture(shell, ["-c", `${bytesOf("o", 5000)}; ${bytesOf("e", 5000, ">&2")}`], { maxBytesPerStream: 100 });
+
+        expect(result.stdout).toContain("[... 4900 bytes not captured ...]");
+        expect(result.stderr).toContain("[... 4900 bytes not captured ...]");
+        // The marker holds single letters, thus a doubled letter proves the other stream's bytes.
+        expect(result.stdout).not.toContain("ee");
+        expect(result.stderr).not.toContain("oo");
+    });
+
+    test("an output at or under the limit comes back whole with no marker", async () => {
+        const exact = await capture(shell, ["-c", bytesOf("q", 1000)], { maxBytesPerStream: 1000 });
+        const small = await capture(shell, ["-c", "printf 'hello\\n'"], { maxBytesPerStream: 1000 });
+
+        expect(exact.stdout).toBe("q".repeat(1000));
+        expect(small.stdout).toBe("hello\n");
+        expect(small.stderr).toBe("");
+    });
+
+    test("with no limit the whole output returns", async () => {
+        const result = await capture(shell, ["-c", bytesOf("w", 200_000)]);
+
+        expect(result.stdout).toBe("w".repeat(200_000));
+    });
+
+    test("an abort kills the child, and an already aborted signal kills it at once", async () => {
+        // `exec` makes `sleep` the child itself. Without it, the dash `/bin/sh` of Linux forks `sleep`, which
+        // survives the kill of the shell and holds both pipes open for its 30 s.
+        const controller = new AbortController();
+        const started = Date.now();
+        const pending = capture(shell, ["-c", "exec sleep 30"], { signal: controller.signal });
+        setTimeout(() => controller.abort(), 50);
+
+        const killed = await pending;
+
+        expect(Date.now() - started).toBeLessThan(10_000);
+        expect(killed.code).not.toBe(0);
+
+        const early = Date.now();
+        const stopped = await capture(shell, ["-c", "exec sleep 30"], { signal: AbortSignal.abort() });
+        expect(Date.now() - early).toBeLessThan(10_000);
+        expect(stopped.code).not.toBe(0);
     });
 });

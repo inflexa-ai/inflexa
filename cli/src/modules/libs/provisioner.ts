@@ -20,7 +20,7 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { ensureRuntime } from "../../lib/config.ts";
-import { stream, type CaptureResult } from "../../lib/container.ts";
+import { capture, stream, type CaptureResult, type ContainerRuntime } from "../../lib/container.ts";
 import { provisionerImageFor } from "./images.ts";
 import { configuredSandboxImage, ensureImagePresent } from "./pull.ts";
 
@@ -39,6 +39,25 @@ export const LIB_MOUNT = "/mnt/libs";
  * cache miss. Without the pair, an R acquisition blocks at the wall.
  */
 export const ACQUIRE_EGRESS_ALLOW = "pypi.org,files.pythonhosted.org,packagemanager.posit.co,p3m.dev,rspm-sync.rstudio.com,cran.r-project.org,bioconductor.org";
+
+/**
+ * The egress class of a source build: the hosts the approved plan names, plus
+ * the fixed hosts of the class, which the plan cannot widen or drop because the
+ * session needs them by construction — the dated Ubuntu snapshot host the apt
+ * pin writes to, and the acquisition classes' index and pak entries, which the
+ * dependency resolve of the clean run reads. A session never gains a host of
+ * the acquisition classes beyond these entries, and an `acquire` run never
+ * gains a host of this class.
+ */
+export const APT_SNAPSHOT_HOST = "snapshot.ubuntu.com";
+
+/** The fixed hosts of the source-build class, in the order the ask shows them. */
+export const SESSION_CLASS_HOSTS: readonly string[] = [...new Set([APT_SNAPSHOT_HOST, ...ACQUIRE_EGRESS_ALLOW.split(",")])];
+
+export function sessionEgressAllow(planHosts: readonly string[]): string {
+    const hosts = [...planHosts, ...SESSION_CLASS_HOSTS].map((host) => host.trim()).filter((host) => host !== "");
+    return [...new Set(hosts)].join(",");
+}
 
 /**
  * The message the provisioner prints when a second run finds the store lock
@@ -110,6 +129,133 @@ export const runProvisioner: ProvisionerRunner = async (invocation, onLine, sign
     }
 };
 
+// --- The source-build run -------------------------------------------------------
+
+/** The pristine source snapshot of a clean run, mounted read-only at a fixed container path. */
+export const SOURCE_SNAPSHOT_MOUNT = "/work/src";
+
+/** The approved build script of a clean run, mounted read-only at a fixed container path. */
+export const SOURCE_SCRIPT_MOUNT = "/work/build.sh";
+
+/** The read-only view of the store that a clean run hands the build script for its dependency library. The read-write mount stays at {@link LIB_MOUNT} for the run itself. */
+export const SOURCE_LIB_VIEW_MOUNT = "/opt/inflexa/libs-ro";
+
+/** The output directory the script contract names: exactly one root artifact, and nothing else. */
+const BUILD_OUT = "/work/out";
+
+/** What one clean source-build run needs, beside the store it writes into. */
+export type SourceBuildRun = {
+    /** The container name. The runner removes the container by this name when the run aborts, because killing the engine client does not stop it. */
+    readonly containerName: string;
+    readonly storeRoot: string;
+    /** The approved session egress list, exactly as the user approved it. */
+    readonly egressAllow: string;
+    /** The host paths of the pristine snapshot and the approved script. Both mount read-only: the snapshot must stay pristine for a corrected second commit, and the script is the approved bytes. */
+    readonly snapshotHost: string;
+    readonly scriptHost: string;
+    /** The report path, relative to the store root. */
+    readonly reportName: string;
+    /** The resolved git source, or `null` for a folder source whose hash covers the snapshot. */
+    readonly git: { readonly url: string; readonly commit: string } | null;
+    /** The directory of the source tree that holds the R `DESCRIPTION`, relative to the snapshot root. */
+    readonly packageDir?: string;
+    readonly aptSnapshotDate: string;
+    readonly aptPackages: readonly string[];
+    /** The digests the build record copies. A process inside the container cannot read its own image digest, thus the launch names both. */
+    readonly imageDigests: { readonly provisioner: string; readonly base: string };
+};
+
+/** How one clean source-build run is started. The default resolves the runtime and streams the run, exactly as {@link runProvisioner} does. */
+export type SourceBuildRunner = (run: SourceBuildRun, onLine: (line: string) => void, signal?: AbortSignal) => Promise<Result<CaptureResult, ProvisionerError>>;
+
+/** The container arguments of one clean source-build run. Exported so a test pins the launch shape without an engine. */
+export function acquireSourceArgs(rt: ContainerRuntime, image: string, run: SourceBuildRun): string[] {
+    return [
+        "run",
+        "--rm",
+        "--name",
+        run.containerName,
+        "--cap-add",
+        "NET_ADMIN",
+        "-e",
+        `INFLEXA_EGRESS_ALLOW=${run.egressAllow}`,
+        "-e",
+        `INFLEXA_PROVISIONER_DIGEST=${run.imageDigests.provisioner}`,
+        "-e",
+        `INFLEXA_BASE_IMAGE_DIGEST=${run.imageDigests.base}`,
+        "-v",
+        rt.mountArg(run.storeRoot, LIB_MOUNT),
+        "-v",
+        rt.mountArgRo(run.storeRoot, SOURCE_LIB_VIEW_MOUNT),
+        "-v",
+        rt.mountArgRo(run.snapshotHost, SOURCE_SNAPSHOT_MOUNT),
+        "-v",
+        rt.mountArgRo(run.scriptHost, SOURCE_SCRIPT_MOUNT),
+        image,
+        "acquire-source",
+        "--report",
+        `${LIB_MOUNT}/${run.reportName}`,
+        "--snapshot",
+        SOURCE_SNAPSHOT_MOUNT,
+        "--script",
+        SOURCE_SCRIPT_MOUNT,
+        "--output",
+        BUILD_OUT,
+        "--lib-view",
+        SOURCE_LIB_VIEW_MOUNT,
+        ...(run.packageDir === undefined ? [] : ["--package-dir", run.packageDir]),
+        ...(run.git === null ? [] : ["--git-url", run.git.url, "--commit", run.git.commit]),
+        "--apt-snapshot-date",
+        run.aptSnapshotDate,
+        // The `=` form keeps a name that starts with a dash a value of the flag: argparse reads a separate dash-leading word as an option and exits 2 with no report.
+        ...run.aptPackages.map((name) => `--apt-package=${name}`),
+    ];
+}
+
+/** The parts of the host the clean-run runner uses. Every piece is injectable, and each default is the real one. */
+export type SourceBuildOpts = {
+    /** Resolves and pins the container runtime. Default: `ensureRuntime`. */
+    readonly resolveRuntime?: typeof ensureRuntime;
+    /** Whether the engine holds the image. Default: `ensureImagePresent`. */
+    readonly ensureImage?: typeof ensureImagePresent;
+    /** Streams the run container. Default: `stream`. */
+    readonly stream?: typeof stream;
+    /** Runs the removal of the container of an aborted run. Default: `capture`. */
+    readonly capture?: typeof capture;
+};
+
+/**
+ * The default clean-run runner: one one-shot provisioner container over the pristine snapshot.
+ * When `signal` aborts, the engine client dies but the container does not, thus the runner removes the
+ * container by name once the client is gone.
+ */
+export async function runSourceBuild(
+    run: SourceBuildRun,
+    onLine: (line: string) => void,
+    signal?: AbortSignal,
+    opts: SourceBuildOpts = {},
+): Promise<Result<CaptureResult, ProvisionerError>> {
+    const rtResult = await (opts.resolveRuntime ?? ensureRuntime)();
+    if (rtResult.isErr()) return err({ type: "runtime_unavailable", message: rtResult.error.message });
+    const rt = rtResult.value;
+    const image = provisionerImageFor(configuredSandboxImage());
+    const present = await (opts.ensureImage ?? ensureImagePresent)(rt, image);
+    if (present.isErr()) return err({ type: "image_unavailable", message: present.error.message });
+    try {
+        return ok(await (opts.stream ?? stream)(rt, acquireSourceArgs(rt, image, run), onLine, signal));
+    } catch (cause) {
+        return err({
+            type: "runtime_unavailable",
+            message: `Could not start the source build with ${rt.label}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        });
+    } finally {
+        if (signal?.aborted === true) {
+            // The container can already be gone, and a failed removal leaves the abort outcome unchanged.
+            await (opts.capture ?? capture)(rt, ["rm", "-f", run.containerName]).catch(() => undefined);
+        }
+    }
+}
+
 /** Turn a completed container run into a Result, mapping a store-lock conflict to its own actionable error. */
 export function classifyProvisionerRun(res: CaptureResult): Result<void, ProvisionerError> {
     if (res.code === 0) return ok(undefined);
@@ -144,6 +290,8 @@ export type LoadCheckRunner = (params: {
     readonly storeRoot: string;
     /** The path of the acquire report, relative to the store root. */
     readonly reportName: string;
+    /** An aborted signal kills the engine client of the check. The check container has no network and ends on its own. */
+    readonly signal?: AbortSignal;
 }) => Promise<Result<CaptureResult, ProvisionerError>>;
 
 /** The default load-check runner. */
@@ -169,7 +317,7 @@ export const runLoadCheck: LoadCheckRunner = async (params) => {
         `${LIB_MOUNT}/${params.reportName}`,
     ];
     try {
-        return ok(await stream(rt, args, () => undefined));
+        return ok(await stream(rt, args, () => undefined, params.signal));
     } catch (cause) {
         return err({
             type: "runtime_unavailable",

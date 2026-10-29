@@ -102,6 +102,18 @@ describe("collectStoreDebris", () => {
         expect(invocations).toEqual([["reclaim", "--debris"]]);
     });
 
+    test("a source-build report left by a stopped host alone starts the pass and counts as a stale report", async () => {
+        const root = tempStore();
+        mkdirSync(join(root, ".inflexa-download"), { recursive: true });
+        writeFileSync(join(root, ".inflexa-download", "source-4242-x.json"), "{}\n");
+        const invocations: (readonly string[])[] = [];
+
+        const outcome = (await collectStoreDebris(root, { run: countingRunner(invocations) }))._unsafeUnwrap();
+
+        expect(outcome).toEqual({ swept: true, dirs: [], reports: 1 });
+        expect(invocations).toEqual([["reclaim", "--debris"]]);
+    });
+
     test("a quiet store starts no container", async () => {
         const root = tempStore();
         const invocations: (readonly string[])[] = [];
@@ -380,6 +392,15 @@ describe("describeRequestRefusal", () => {
         // The two candidates are store directories, and they stay verbatim —
         // only the asked SPELLING obeys the echo rule.
         expect(both).toContain("--lang python");
+
+        const forked = describeRequestRefusal(
+            { type: "ambiguous_version", version: "2.0.0", candidates: ["seedmatchr-2.0.0-cran", "seedmatchr-2.0.0-src"] },
+            { spelling: "SeedMatchR", track: "r", version: "2.0.0" },
+        );
+        expect(forked).toContain('"SeedMatchR==2.0.0"');
+        expect(forked).toContain("seedmatchr-2.0.0-cran");
+        expect(forked).toContain("seedmatchr-2.0.0-src");
+        expect(forked).toContain("source build");
     });
 
     test("an unknown name renders the spelling of its suggestion before the store-add ask", () => {

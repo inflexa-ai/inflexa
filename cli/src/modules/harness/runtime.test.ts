@@ -7,6 +7,7 @@ import { ok, okAsync, err, errAsync } from "neverthrow";
 import {
     createAskGateway,
     createCitationResolver,
+    createConversationAgent,
     createNoopUsageRecorder,
     createSandboxClient,
     makeLocalAuth,
@@ -20,8 +21,10 @@ import {
     type ThreadAgentResolver,
 } from "@inflexa-ai/harness";
 import { inProcessChatTurns } from "@inflexa-ai/harness/testing";
+import { inProcessSubAgent } from "@inflexa-ai/harness/loop/sub-agent.js";
 
 import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
+import { createBuildSession, type BuildSessionHost } from "../libs/build-session.ts";
 import { env } from "../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
@@ -254,6 +257,7 @@ function recordingSeams(calls: string[]): BootSeams {
             calls.push("probeEmbedding");
             return ok(undefined);
         },
+        createBuildSession,
     };
 }
 
@@ -1000,6 +1004,74 @@ describe("bootHarnessRuntime — the web-search engine", () => {
             globalThis.fetch = realFetch;
         }
         expect(requested).toBe(`${env.searxngBaseUrl}/search?q=q&format=json`);
+    });
+});
+
+// The build-session binding behind `install_from_source`. The CLI adds the tool to the
+// conversation agent through `hostTools`, with the build-session realization behind it.
+// The gate is the boot's engine resolution itself: the session holds containers on the
+// pinned runtime, and a boot with no working engine fails before the conversation
+// composes, so the tool lands on no roster at all. Both phases share one boot sequence,
+// which is why they share one test: the roster is a fact of the whole composition, not
+// of a field.
+describe("bootHarnessRuntime — the build-session binding", () => {
+    test("an unresolvable engine composes no conversation at all; a resolved engine puts the tool on the host tool list and the roster holds it exactly once", async () => {
+        // The dead engine runs FIRST: a successful boot memoizes the runtime on
+        // `active`, and a second boot call would short-circuit on it.
+        const deadEngine: BootSeams = {
+            ...recordingSeams([]),
+            resolveSandboxEngine: async () =>
+                err(
+                    new ContainerRuntimeError(
+                        "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.",
+                    ),
+                ),
+        };
+        const refused = await bootHarnessRuntime({ seams: deadEngine, config: testConfig() });
+
+        expect(refused._unsafeUnwrapErr().type).toBe("sandbox_engine_unresolved");
+        // No conversation composition exists to hold the tool, because the gate sits
+        // ahead of the whole boot tail.
+        expect(lastCore).toBeNull();
+
+        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
+
+        const conversation = lastCore?.conversation;
+        expect(conversation).toBeDefined();
+        // The roster over the SAME deps the assembly receives holds the tool
+        // exactly once: the host tool list carries it, and nothing else registers it.
+        expect((conversation?.hostTools ?? []).filter((tool) => tool.id === "install_from_source")).toHaveLength(1);
+        const agent = createConversationAgent({
+            ...conversation!,
+            executeAnalysisWorkflow: () => Promise.reject(new Error("not used at composition time")),
+            anchorReportSession: () => {
+                throw new Error("not used at composition time");
+            },
+            citationResolver: createCitationResolver(),
+            registerSubAgent: inProcessSubAgent,
+        });
+        const ids = agent.tools.map((tool) => tool.id);
+        expect(ids.filter((id) => id === "install_from_source")).toHaveLength(1);
+    });
+});
+
+describe("bootHarnessRuntime — the build-session limits", () => {
+    test("the session container ceilings are the per-step ceilings of the resource policy", async () => {
+        let received: BuildSessionHost | undefined;
+        const seams: BootSeams = {
+            ...recordingSeams([]),
+            createBuildSession: (storeRoot, host) => {
+                received = host;
+                return createBuildSession(storeRoot, host);
+            },
+        };
+
+        await bootHarnessRuntime({
+            seams,
+            config: testConfig({ resourcePolicy: { perStep: { maxCpu: 6, maxMemoryGb: 24, maxGpuCount: 0 }, budget: { cpu: 8, memoryGb: 32 } } }),
+        });
+
+        expect(received?.limits).toEqual({ cpu: 6, memoryGb: 24 });
     });
 });
 
