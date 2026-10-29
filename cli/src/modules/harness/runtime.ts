@@ -37,6 +37,7 @@ import {
     type ResolvePageAsset,
     type RunAuthorizer,
     type ChatTurns,
+    type RunCanceler,
     type WorkSurface,
     type RunLauncher,
     type ThreadAgentResolver,
@@ -179,6 +180,8 @@ export type HarnessRuntime = {
      * their waits, and `resume` ends each wait of one work. Only a client resumes paused work, through the local server.
      */
     readonly work: WorkSurface;
+    /** The run canceler of the core runtime. It ends the sandbox leases of a canceled run at once. */
+    readonly runCanceler: RunCanceler;
     /**
      * The shared connection's identity (provider slug + mode) the runtime booted on — the fact the TUI
      * status surface renders beside the per-agent models. Stamped once
@@ -1330,6 +1333,7 @@ async function bootHarnessRuntimeOnce(
             approvePlan: core.approvePlan,
             chatTurns: core.chatTurns,
             work: core.work,
+            runCanceler: core.runCanceler,
             // The connection's identity the boot resolved — surfaced by the status UI, immutable across
             // live role-model swaps (the connection is shared by all roles, so a swap changes only a
             // model), so `provider`/`mode` are read straight off the connection.
