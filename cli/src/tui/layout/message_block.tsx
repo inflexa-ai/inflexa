@@ -1,14 +1,14 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import { unwrap } from "solid-js/store";
-import type { ChatMessage, TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
+import type { ChatMessage, SubAgentActivityEntry, TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
 import type { ToolCallOutcome } from "@inflexa-ai/harness/contracts/chat-events.js";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { space, GLYPHS, MARKERS, type ThemeColors } from "../../lib/design_system.ts";
 import { formatTokenFigureLabelled } from "../../lib/usage_format.ts";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
-import { ToolBlock, type ToolBlockProps } from "../components/tool_block.tsx";
+import { ToolBlock, type NestedCallView, type ToolBlockProps } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { RunCardBlock, type RunCardState } from "../components/run_card_block.tsx";
@@ -134,6 +134,32 @@ function toolStatus(outcome: ToolCallOutcome | undefined): ToolBlockProps["statu
     }
 }
 
+/** The nested calls under one root tool call, as {@link ToolBlock} draws them. */
+type NestedCalls = { readonly nested: NestedCallView[]; readonly dropped: number };
+
+function nestedCallOf(entry: SubAgentActivityEntry): NestedCallView {
+    const durationMs = entry.endedAt === undefined ? undefined : Date.parse(entry.endedAt) - Date.parse(entry.startedAt);
+    return {
+        tool: entry.tool,
+        ...(entry.label === undefined ? {} : { label: entry.label }),
+        status: toolStatus(entry.outcome),
+        ...(durationMs === undefined || Number.isNaN(durationMs) ? {} : { durationMs }),
+    };
+}
+
+/**
+ * The nested calls of each root tool call of a turn, by the id of that call. The harness gives them as one
+ * `data-subagent-activity` part for each root call, and the tool block of that call draws them.
+ */
+export function nestedCallsByCall(parts: readonly Part[]): ReadonlyMap<string, NestedCalls> {
+    const byCall = new Map<string, NestedCalls>();
+    for (const part of parts) {
+        if (!isKnownPart(part) || part.type !== "data-subagent-activity") continue;
+        byCall.set(part.toolCallId, { nested: part.entries.map(nestedCallOf), dropped: part.dropped });
+    }
+    return byCall;
+}
+
 /** The one-line tagged mention of a part that has no renderer here — observed, never swallowed. */
 function mention(type: string): string {
     return `[part:${type}]`;
@@ -201,6 +227,7 @@ export function MessageBlock(props: MessageBlockProps) {
     const dividerOnly = (): boolean => props.role === "system" && props.parts.length === 1 && props.parts[0]?.type === "data-compaction";
     // A part object never changes in place: each edit of the store gives a fresh object, which `<For>`
     // mounts as a new item. Thus a card reads its part through the shared reader one time, here.
+    const nestedByCall = (): ReadonlyMap<string, NestedCalls> => nestedCallsByCall(props.parts);
     const parts = (): JSX.Element => (
         <For each={props.parts}>
             {(part): JSX.Element => {
@@ -227,6 +254,8 @@ export function MessageBlock(props: MessageBlockProps) {
                                     status={toolStatus(part.outcome)}
                                     durationMs={part.durationMs}
                                     activity={part.activity}
+                                    nested={nestedByCall().get(part.toolCallId)?.nested}
+                                    nestedDropped={nestedByCall().get(part.toolCallId)?.dropped}
                                 />
                             );
                         case "file-edit":
@@ -279,6 +308,9 @@ export function MessageBlock(props: MessageBlockProps) {
                     // ended reads `running`, which has nothing to show. Thus the transcript shows no pause.
                     case "data-pause":
                         return null;
+                    // The tool block of the root call draws these. See `nestedCallsByCall`.
+                    case "data-subagent-activity":
+                        return null;
                     // The parts that the conversation has no first-class renderer for: the sidebar parts
                     // of a run, and the record of a report render.
                     case "data-report-rendered":
@@ -286,7 +318,6 @@ export function MessageBlock(props: MessageBlockProps) {
                     case "data-dag-state":
                     case "data-step-activity":
                     case "data-activity-entry":
-                    case "data-subagent-activity":
                     case "data-step-file-tree":
                     case "data-step-output":
                     case "data-step-summary":

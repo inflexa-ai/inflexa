@@ -70,6 +70,7 @@ import {
     mockPlanGraphExhibits,
     mockPlanStepDetail,
     mockRunCard,
+    mockScriptLookups,
     mockRunCardIds,
     galleryProfile,
     galleryRun,
@@ -550,6 +551,15 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     />
                     <text fg={theme().fgMuted}>a tool that declares no describeCall hook renders exactly as before:</text>
                     <ToolBlock name="search_semantic_scholar" status="ok" durationMs={890} inlineStatus={true} />
+                    <text fg={theme().fgMuted}>a script lists its lookups under it — the newest rows, and one count row for the rest:</text>
+                    <ToolBlock
+                        name="run_script"
+                        detail="Fetch PubMed details for shortlisted GEO series"
+                        status="ok"
+                        durationMs={1100}
+                        inlineStatus={true}
+                        nested={mockScriptLookups}
+                    />
                 </State>
                 <State n="16" label="harness cards — plan card & run card">
                     <MessageBlock index={1} role="assistant" parts={[mockPlanCard]} streamPartId={noStreamId} streamText={noStreamText} />

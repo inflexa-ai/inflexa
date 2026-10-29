@@ -1,5 +1,5 @@
 import { useTerminalDimensions } from "@opentui/solid";
-import { Show } from "solid-js";
+import { For, Show } from "solid-js";
 import type { Accessor } from "solid-js";
 
 import { syntaxStyle, theme } from "../theme.ts";
@@ -23,6 +23,19 @@ const MIN_CONTENT_WIDTH = 24;
 function cells(text: string): number {
     return Bun.stringWidth(text);
 }
+
+/** The most nested calls that a block lists. The earlier calls collapse into one count row. */
+export const MAX_NESTED_ROWS = 5;
+
+/** One call that a script or a sub-agent made inside a tool call. */
+export type NestedCallView = {
+    /** Tool name, e.g. `get_pubmed_articles`. */
+    tool: string;
+    /** The opaque one-line detail of the call. */
+    label?: string;
+    status: ToolBlockProps["status"];
+    durationMs?: number;
+};
 
 /** Props for {@link ToolBlock}. */
 export type ToolBlockProps = {
@@ -54,6 +67,13 @@ export type ToolBlockProps = {
      */
     activity?: string;
     /**
+     * The calls made inside this call, in call order: the lookups of a script, or the tools of a sub-agent. Kept
+     * after the call ends, because they are what the call did. Only the last {@link MAX_NESTED_ROWS} show.
+     */
+    nested?: readonly NestedCallView[];
+    /** Nested calls that the harness counted but did not list, past its own cap. */
+    nestedDropped?: number;
+    /**
      * Whether the outcome is folded onto the name line (`▸ name target  ✓ ok · 14ms`) instead of a
      * standalone completion line below the result panel. Defaults to `props.result === undefined`: a
      * live event carries no output, so its status reads best inline, whereas a result-carrying block
@@ -71,6 +91,13 @@ function statusView(status: ToolBlockProps["status"]): { glyph: string; role: "s
     if (status === "denied") return { glyph: GLYPHS.warning, role: "warning", label: "denied" };
     if (status === "running") return { glyph: GLYPHS.triangleRight, role: "warning", label: "running" };
     return { glyph: GLYPHS.check, role: "success", label: "ok" };
+}
+
+/** The status suffix of a row, `✓ ok · 14ms`: the glyph, the label, and the duration when there is one. */
+function statusText(status: ToolBlockProps["status"], durationMs: number | undefined): { glyph: string; rest: string } {
+    const view = statusView(status);
+    const duration = durationMs === undefined ? "" : ` ${GLYPHS.middot} ${Date.formatDuration(durationMs)}`;
+    return { glyph: `${view.glyph} ${view.label}`, rest: duration };
 }
 
 /**
@@ -122,6 +149,8 @@ export function ToolBlock(props: ToolBlockProps) {
     };
     const inlineDetail = (): string | undefined => (detailFitsNameLine() ? props.detail : undefined);
     const reflowedDetail = (): string | undefined => (detailFitsNameLine() ? undefined : props.detail);
+    const shownNested = (): readonly NestedCallView[] => (props.nested ?? []).slice(-MAX_NESTED_ROWS);
+    const hiddenNested = (): number => (props.nested?.length ?? 0) - shownNested().length + (props.nestedDropped ?? 0);
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>
@@ -169,6 +198,26 @@ export function ToolBlock(props: ToolBlockProps) {
                         </text>
                     </box>
                 )}
+            </Show>
+            {/* The nested calls: one muted row each, under the call. A long script would bury the conversation, thus
+                only the newest rows show, and one row counts the rest. */}
+            <Show when={(props.nested?.length ?? 0) > 0}>
+                <box flexDirection="column" paddingLeft={space.md}>
+                    <Show when={hiddenNested() > 0}>
+                        <text>
+                            <Fg role="fgMuted">{`${GLYPHS.ellipsis} ${hiddenNested()} earlier ${hiddenNested() === 1 ? "call" : "calls"}`}</Fg>
+                        </text>
+                    </Show>
+                    <For each={shownNested()}>
+                        {(call) => (
+                            <text>
+                                <Fg role="fgMuted">{`${MARKERS.tool.glyph} ${call.tool}${call.label === undefined ? "" : ` ${call.label}`}  `}</Fg>
+                                <Fg role={statusView(call.status).role}>{statusText(call.status, call.durationMs).glyph}</Fg>
+                                <Fg role="fgMuted">{statusText(call.status, call.durationMs).rest}</Fg>
+                            </text>
+                        )}
+                    </For>
+                </box>
             </Show>
             <Show when={props.result}>
                 <box

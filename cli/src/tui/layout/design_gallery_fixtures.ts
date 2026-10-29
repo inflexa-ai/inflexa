@@ -13,7 +13,7 @@ import type { PlanPart, RunCardPart, TextPart } from "@inflexa-ai/harness/contra
 import type { PausedWaitView } from "../../lib/pause_words.ts";
 import { formatTokenFigure } from "../../lib/usage_format.ts";
 import type { LiveAskPart, ThinkingPart, FileEditPart, PlanCardStepView } from "../../types/session.ts";
-import type { ToolBlockProps } from "../components/tool_block.tsx";
+import type { NestedCallView, ToolBlockProps } from "../components/tool_block.tsx";
 import type { ActiveProfileProgress, ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import type { SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
 import type { UsageTotals } from "../../api/usage.ts";
@@ -673,3 +673,14 @@ export const mockRunDetail: RunDetail = {
  * time that a reader opens it.
  */
 export const mockReportSession = { title: "Differential expression report", activityLabel: "12m04s" } as const;
+
+/** MOCK: the lookups of one `run_script` call, more than the tool block lists, the last one in flight. */
+export const mockScriptLookups: readonly NestedCallView[] = [
+    { tool: "search_geo", label: "breast cancer RNA-seq", status: "ok", durationMs: 610 },
+    { tool: "get_geo_series", label: "GSE183947", status: "ok", durationMs: 240 },
+    { tool: "get_geo_series", label: "GSE162187", status: "ok", durationMs: 210 },
+    { tool: "get_pubmed_articles", label: "34880123", status: "ok", durationMs: 380 },
+    { tool: "get_pubmed_articles", label: "33951234", status: "error", durationMs: 95 },
+    { tool: "get_pubmed_articles", label: "35012345", status: "ok", durationMs: 402 },
+    { tool: "get_pubmed_articles", label: "36123456", status: "running" },
+];

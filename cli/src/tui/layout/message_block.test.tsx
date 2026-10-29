@@ -190,3 +190,36 @@ describe("MessageBlock unknown parts", () => {
         expect(frame).toContain("[part:data-widget]");
     });
 });
+
+describe("MessageBlock nested calls", () => {
+    test("the activity part draws under its root call, and not as a part of its own", async () => {
+        const parts: Part[] = [
+            { type: "tool-call", toolCallId: "tc-1", toolName: "run_script", outcome: "ok", durationMs: 1100 },
+            {
+                type: "data-subagent-activity",
+                id: "subagent-activity-tc-1",
+                toolCallId: "tc-1",
+                entries: [
+                    {
+                        agentId: "run_script",
+                        callPath: ["conversation", "run_script"],
+                        tool: "get_pubmed_articles",
+                        label: "GSE12345",
+                        startedAt: "2026-10-29T10:00:00.000Z",
+                        endedAt: "2026-10-29T10:00:00.400Z",
+                        outcome: "ok",
+                    },
+                ],
+                dropped: 0,
+            },
+        ];
+        const frame = await frameWith(
+            () => <MessageBlock index={1} role="assistant" parts={parts} streamPartId={() => null} streamText={() => ""} />,
+            "get_pubmed_articles",
+            { width: 80, height: 10 },
+        );
+        expect(frame).toContain("get_pubmed_articles GSE12345");
+        expect(frame).toContain("400ms");
+        expect(frame).not.toContain("part:data-subagent-activity");
+    });
+});
