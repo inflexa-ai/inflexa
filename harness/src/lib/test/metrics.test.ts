@@ -20,6 +20,8 @@ import {
     recordSandboxExec,
     recordStepCompleted,
     stepOutcomeOf,
+    trackLeaseWorkflow,
+    trackWorkPaused,
 } from "../metrics.js";
 import { presentFind } from "../present.js";
 
@@ -47,6 +49,38 @@ async function collect(): Promise<MetricData[]> {
         .flatMap((rm) => rm.scopeMetrics)
         .flatMap((sm) => sm.metrics);
 }
+
+describe("the counts of waiting workflows in this process", () => {
+    it("counts each paused body by work kind until it stops, and a second stop changes nothing", async () => {
+        metrics.setGlobalMeterProvider(provider);
+
+        const run = trackWorkPaused({ workKind: "run" });
+        trackWorkPaused({ workKind: "run" });
+        const profile = trackWorkPaused({ workKind: "profile" });
+        profile();
+        profile();
+        run();
+
+        const exported = await collect();
+        const paused = presentFind(exported, (m) => m.descriptor.name === "cortex.work.paused");
+        expect(paused.dataPoints.map((p) => [p.attributes, p.value])).toEqual([
+            [{ work_kind: "run" }, 1],
+            [{ work_kind: "profile" }, 0],
+        ]);
+    });
+
+    it("counts each lease workflow until it stops", async () => {
+        metrics.setGlobalMeterProvider(provider);
+
+        const first = trackLeaseWorkflow();
+        trackLeaseWorkflow();
+        first();
+
+        const exported = await collect();
+        const leases = presentFind(exported, (m) => m.descriptor.name === "cortex.sandbox.lease.workflows");
+        expect(leases.dataPoints.map((p) => p.value)).toEqual([1]);
+    });
+});
 
 describe("reconcile metrics", () => {
     it("bind to a MeterProvider registered after the module was imported", async () => {

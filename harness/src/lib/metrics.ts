@@ -35,8 +35,9 @@
  * on the no-op provider for the life of the process.
  */
 
-import { type Counter, type Histogram, metrics } from "@opentelemetry/api";
+import { type Counter, type Histogram, metrics, type UpDownCounter } from "@opentelemetry/api";
 
+import type { WorkKind } from "../contracts/chat-parts.js";
 import type { StepExecutionStatus } from "../state/schema.js";
 
 /** Terminal status of a run, the same as the run ledger. */
@@ -109,6 +110,8 @@ type Instruments = {
     readonly sandboxLeaseWait: Histogram;
     readonly sandboxMachineStart: Histogram;
     readonly sandboxMachineReplaced: Counter;
+    readonly sandboxLeaseWorkflows: UpDownCounter;
+    readonly workPaused: UpDownCounter;
     readonly artifactReconcileDropped: Counter;
     readonly lineageInputDropped: Counter;
 };
@@ -170,6 +173,14 @@ function getInstruments(): Instruments {
             sandboxMachineReplaced: meter.createCounter("cortex.sandbox.machine.replaced", {
                 description: "Machines of a lease that went away. Tagged by cause.",
                 unit: "{machine}",
+            }),
+            sandboxLeaseWorkflows: meter.createUpDownCounter("cortex.sandbox.lease.workflows", {
+                description: "Lease workflows that run in this process. Each one waits in memory for the life of its lease.",
+                unit: "{workflow}",
+            }),
+            workPaused: meter.createUpDownCounter("cortex.work.paused", {
+                description: "Workflow bodies that wait in a pause in this process. Tagged by work_kind.",
+                unit: "{workflow}",
             }),
             artifactReconcileDropped: meter.createCounter("cortex.artifact.reconcile.dropped", {
                 description:
@@ -315,6 +326,30 @@ export function recordMachineStart(args: { readonly backend: string; readonly st
 /** Record one machine of a lease that went away. Call it in the step that removed it. */
 export function recordMachineReplaced(args: { readonly cause: MachineReplacementCause }): void {
     getInstruments().sandboxMachineReplaced.add(1, { cause: args.cause });
+}
+
+/**
+ * Count one value in this process until the returned function runs. The count is of this process only, thus a
+ * dashboard can put it beside the memory of the same process. A second call of the returned function does nothing.
+ */
+function track(counter: UpDownCounter, attributes?: Record<string, string>): () => void {
+    counter.add(1, attributes);
+    let open = true;
+    return () => {
+        if (!open) return;
+        open = false;
+        counter.add(-1, attributes);
+    };
+}
+
+/** Count one lease workflow that runs in this process, until the returned function runs. */
+export function trackLeaseWorkflow(): () => void {
+    return track(getInstruments().sandboxLeaseWorkflows);
+}
+
+/** Count one workflow body that waits in a pause in this process, until the returned function runs. */
+export function trackWorkPaused(args: { readonly workKind: WorkKind }): () => void {
+    return track(getInstruments().workPaused, { work_kind: args.workKind });
 }
 
 /** Record one manifest entry dropped at reconcile. */
