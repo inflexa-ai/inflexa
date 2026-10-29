@@ -85,23 +85,13 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
 // The read surface toward the analysis. The roster roams the tree read-only.
 const READ_SURFACE = ["read_file", "list_files", "file_stat", "grep", "workspace_search", "inspect_run", "inspect_data_profile"] as const;
 
-// The composition surface: the eight authoring tools, the pinned-artifact listing
-// tool, the render-and-preview tool, the eyes tool, and the record tool. These ids
-// are what makes the report path a report path.
-const COMPOSITION_SURFACE = [
-    "add_block",
-    "change_block",
-    "remove_block",
-    "move_block",
-    "set_title",
-    "read_outline",
-    "read_block",
-    "finish_draft",
-    "list_pinned_artifacts",
-    "preview_report",
-    "examine_page",
-    "record_report_version",
-] as const;
+// The composition surface: the draft gate, the pinned-artifact listing tool, the
+// render-and-preview tool, the eyes tool, and the record tool. These ids are what
+// makes the report path a report path.
+const COMPOSITION_SURFACE = ["finish_draft", "list_pinned_artifacts", "preview_report", "examine_page", "record_report_version"] as const;
+
+// The edits of the draft run in a script, thus a script builds a section in one call.
+const DRAFT_EDITS = ["add_block", "change_block", "remove_block", "move_block", "set_title", "read_outline", "read_block"] as const;
 
 // A tool that starts a run or writes an analysis has no place on this roster. Its
 // absence is the whole guarantee — no runtime guard blocks these; the roster omits
@@ -139,10 +129,16 @@ describe("createReportSessionAgent", () => {
         }
     });
 
-    test("holds the composition tools", () => {
-        const ids = new Set(buildAgent().tools.map((tool) => tool.id));
+    test("holds the composition tools, and the edits of the draft as script tools", () => {
+        const agent = buildAgent();
+        const ids = new Set(agent.tools.map((tool) => tool.id));
         for (const expected of COMPOSITION_SURFACE) {
             expect(ids.has(expected)).toBe(true);
+        }
+        const scripted = new Set(agent.scriptTools?.map((tool) => tool.id));
+        for (const edit of DRAFT_EDITS) {
+            expect(scripted.has(edit)).toBe(true);
+            expect(ids.has(edit)).toBe(false);
         }
     });
 
@@ -163,7 +159,7 @@ describe("createReportSessionAgent", () => {
     test("a script derives a small table from the pinned evidence, and builds a chart file and a PDF", () => {
         const agent = buildAgent();
 
-        expect(agent.scriptTools?.map((tool) => tool.id)).toEqual(["read_table", "write_derived", "read_pdf", "render_chart", "export_pdf"]);
+        expect(agent.scriptTools?.map((tool) => tool.id)).toEqual([...DRAFT_EDITS, "read_table", "write_derived", "read_pdf", "render_chart", "export_pdf"]);
         expect(agent.scriptScratch).toBeDefined();
     });
 

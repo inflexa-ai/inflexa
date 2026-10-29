@@ -514,3 +514,18 @@ The gateway MUST serve each derivation record of the session as a member of the 
 - **GIVEN** a session whose derivation record names `report-sessions/t-1/derived/by_group.csv`
 - **WHEN** a chart block binds that path
 - **THEN** the reference resolves against the output hash of the record
+
+### Requirement: The edits of the draft run in a script
+
+The report agent MUST hold `add_block`, `change_block`, `remove_block`, `move_block`, `set_title`, `read_outline`, and `read_block` as script tools, and it MUST NOT declare one of them as a tool. It MUST hold `finish_draft`, `list_pinned_artifacts`, `preview_report`, `examine_page`, and `record_report_version` as tools. Each edit MUST declare its result type, thus a script reads `applied` and the refusal of a refused edit.
+
+#### Scenario: The roster of the report agent
+
+- **WHEN** the report agent is built
+- **THEN** its script tools hold the seven edits and reads of the draft, and its tools hold none of them
+- **AND** its tools hold `preview_report`, `examine_page`, and `record_report_version`
+
+#### Scenario: A refused edit in a script
+
+- **WHEN** a script calls `add_block` with a block id that the draft holds
+- **THEN** the call gives `applied: false` with the refusal, and the script continues

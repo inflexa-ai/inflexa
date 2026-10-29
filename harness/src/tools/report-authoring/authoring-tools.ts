@@ -16,8 +16,8 @@
  * The primitive admits a flat object input only. Thus a destination is four optional fields, and not a
  * nested union. A conflict between the flat fields refuses before the core runs.
  *
- * Inside a durable step, a mutation stores its result for the thread and the step, in the transaction of
- * the document and under the lock of the row. A rerun of the step after the landing, before its
+ * Inside a durable step, a mutation stores its result for the thread, the step, and the call, in the
+ * transaction of the document and under the lock of the row. A rerun of the step after the landing, before its
  * checkpoint, gives the stored result. Thus a rerun of `add_block` does not refuse its own block id, and a
  * rerun of `remove_block` does not refuse its own removed target.
  */
@@ -227,6 +227,28 @@ const LandedResultSchema: z.ZodType<LandedResult> = z.object({
         }),
     ),
 });
+
+/** A refusal as a script reads it: the closed reason and the prose detail. */
+const RefusalOutputSchema = z.object({ reason: z.string(), detail: z.string() });
+
+const OutlineEntryOutputSchema = z.object({ id: z.string(), kind: z.string(), depth: z.number(), label: z.string() });
+
+/** The result of an edit, as `run_script` shows it to a script. A refused edit lands nothing. */
+const MutationOutputSchema = z.union([
+    z.object({
+        applied: z.literal(true),
+        changed: z.array(z.object({ parentId: z.string().optional(), children: z.array(OutlineEntryOutputSchema) })),
+    }),
+    z.object({ applied: z.literal(false), refusal: RefusalOutputSchema }),
+]);
+
+const OutlineOutputSchema = z.union([z.object({ outline: z.array(OutlineEntryOutputSchema) }), z.object({ refused: RefusalOutputSchema })]);
+
+const ReadBlockOutputSchema = z.union([
+    z.object({ found: z.literal(true), block: z.record(z.string(), z.unknown()) }),
+    z.object({ found: z.literal(false) }),
+    z.object({ refused: RefusalOutputSchema }),
+]);
 
 /** The result of `read_outline`. A load that gives no state refuses instead of an outline. */
 export type OutlineResult = { outline: OutlineEntry[] } | { refused: SessionRefusal };
@@ -724,7 +746,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
      * the landing of its own earlier run.
      */
     const openMutation = async (ctx: ToolContext): Promise<{ readonly done: MutationResult } | { readonly opened: OpenedMutation }> => {
-        const callKey = stepKey();
+        // The calls of one script share the step of `run_script`, thus the key names the call inside its step.
+        const step = stepKey();
+        const callKey = step === undefined ? undefined : `${step}:${ctx.invocationId}`;
         const opened = await openReportThread(gateway, ctx.session.scope, callKey);
         if (opened.isErr()) return { done: refuse(opened.error) };
         if (opened.value.landed !== undefined) return { done: replayed(opened.value.landed) };
@@ -795,6 +819,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "The root admits a section only, and an atom needs a section as its parent. " +
             "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
         inputSchema: addBlockInput,
+        outputSchema: MutationOutputSchema,
         describeCall: (input): string => {
             const block = decodeBlockPayload(input.block);
             const kind = readKind(block);
@@ -833,10 +858,11 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
     const change_block = defineTool({
         id: "change_block",
         description:
-            "Change one block by its id. Give a `title` to retitle a section, or a `block` to replace an atom, and never both. " +
+            "Change one block by its id: a `title` retitles a section, or a `block` replaces an atom, and never both. " +
             "The change keeps the id of the target, thus the `id` of the payload does not matter. A kind change is permitted. " +
             "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
         inputSchema: changeBlockInput,
+        outputSchema: MutationOutputSchema,
         describeCall: (input): string => `change ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opening = await openMutation(ctx);
@@ -866,6 +892,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         id: "remove_block",
         description: "Remove one block by its id. A removed section takes its whole subtree with it, and the id is free for a later add.",
         inputSchema: removeBlockInput,
+        outputSchema: MutationOutputSchema,
         describeCall: (input): string => `remove ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opening = await openMutation(ctx);
@@ -893,6 +920,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "Move one block by its id to a new destination. Name the destination with `parentId` and one of `place`, `before`, or `after`. " +
             "A section cannot move into its own subtree.",
         inputSchema: moveBlockInput,
+        outputSchema: MutationOutputSchema,
         describeCall: (input): string => `move ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opening = await openMutation(ctx);
@@ -918,10 +946,9 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
 
     const set_title = defineTool({
         id: "set_title",
-        description:
-            "Set the title of the report document. A draft starts with no title, and a document needs one. " +
-            "The title names the whole report, and it is not the title of a section.",
+        description: "Set the title of the whole report, not the title of a section. A draft starts with no title, and a document needs one.",
         inputSchema: setTitleInput,
+        outputSchema: MutationOutputSchema,
         describeCall: (input): string => `title the report ${input.title}`,
         // The title sits on the document, thus no container changes its child order.
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
@@ -956,6 +983,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "A label that ends with the character … is clipped. Use the outline as the primary view of the draft, " +
             "and read one block when the label is not enough.",
         inputSchema: readOutlineInput,
+        outputSchema: OutlineOutputSchema,
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<OutlineResult, ToolError>> => {
@@ -974,6 +1002,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "because the session owns the hash. A section gives its title and the id of each child, " +
             "because the outline already names every block under it. Use it when the outline label is not enough.",
         inputSchema: readBlockInput,
+        outputSchema: ReadBlockOutputSchema,
         describeCall: (input): string => `read ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<ReadBlockResult, ToolError>> => {
             const opened = await openThread(ctx);

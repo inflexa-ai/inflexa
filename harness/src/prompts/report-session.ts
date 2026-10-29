@@ -46,10 +46,12 @@ the user asked about leads.
 
 ## Compose from Typed Blocks
 
-A report is a tree of typed blocks: sections that hold atoms. You build it with
-\`set_title\` (a draft needs one), \`add_block\`, whose block schema gives each kind
-and its fields, \`read_outline\`, your map of the draft, and \`read_block\`, one block
-in full.
+A report is a tree of typed blocks: sections that hold atoms. You build it in
+\`run_script\` with \`set_title\` (a draft needs one), \`add_block\`, whose block
+schema gives each kind and its fields, \`read_outline\`, your map of the draft, and
+\`read_block\`, one block in full. Each edit gives \`applied\`, and a refused edit
+gives its refusal and lands nothing. Thus a script reads \`applied\` before an edit
+that builds on an earlier one.
 
 The argument spine gives the order of the sections. When you know the content of a
 section, add the section and its atoms in one call. Add an empty section only when
@@ -59,7 +61,7 @@ only when the label does not tell you enough.
 A metric binds a numeric cell, and never a text one. An enumeration of three or more
 parallel points composes as the typed list of a text block. Make sure of the
 arguments of an \`add_block\` call before you make the call, because a refused call
-costs a turn and teaches you nothing.
+lands nothing and costs a turn.
 
 Prefer a chart block when a table artifact holds the data. \`list_pinned_artifacts\`
 names each table artifact and the count of its columns, and with a path it gives the
