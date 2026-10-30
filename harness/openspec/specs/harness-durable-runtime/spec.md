@@ -191,7 +191,9 @@ checkpointed in `DBOS.runStep`.
 
 The host SHALL call `launchDbos` after configuring and registering workflows.
 `launchDbos` SHALL apply the schedule of each scheduled workflow after the launch,
-because DBOS stores a schedule only after its launch.
+because DBOS stores a schedule only after its launch. `launchDbos` SHALL then delete
+each stored schedule of the application that no code registers, because DBOS only
+upserts a schedule and a schedule of a removed workflow finds no function.
 Configuration SHALL set `executorID` from the host's stable process identity,
 and an optional `applicationVersion`. `launchDbos` SHALL set `enablePatching`. Thus,
 when the host gives no `applicationVersion`, DBOS keeps one version across upgrades,
@@ -219,6 +221,12 @@ a host concern.
 - **GIVEN** a workflow that waits in `paused`, and a host that gives no `applicationVersion`
 - **WHEN** a later build of the host, with a changed system prompt and a later DBOS, launches under the same `executorID`
 - **THEN** DBOS recovers the workflow, and it waits in `paused` again
+
+#### Scenario: A stored schedule of a removed workflow goes at the launch
+
+- **GIVEN** the system database stores a schedule that no code registers
+- **WHEN** `launchDbos` applies the registered schedules
+- **THEN** the stored schedule is deleted, and each registered schedule stays
 
 ### Requirement: Lifecycle flags are process-local
 
