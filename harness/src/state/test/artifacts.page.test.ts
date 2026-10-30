@@ -256,6 +256,53 @@ describe("queryArtifactPage", () => {
         expect(page.extensionCounts).toEqual([{ extension: "png", count: 1 }]);
     });
 
+    describe("the role filter", () => {
+        const analysisId = "role-a1";
+
+        beforeAll(async () => {
+            await seed(pool, { analysisId, path: "data/inputs/f1/counts.csv", role: "input" });
+            await seed(pool, { analysisId, path: "runs/r1/s1/output/a.csv", runId: "r1", stepId: "s1" });
+            await seed(pool, { analysisId, path: "runs/r1/s1/figures/b.png", runId: "r1", stepId: "s1" });
+            await seed(pool, { analysisId, path: "runs/r2/s1/output/c.csv", runId: "r2", stepId: "s1" });
+            await seed(pool, { analysisId: "role-a2", path: "runs/r1/s1/output/other.csv", runId: "r1", stepId: "s1" });
+        });
+
+        it("gives only the run outputs for step_output, and a total equal to the grouped run counts", async () => {
+            const page = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, role: "step_output" }))._unsafeUnwrap();
+            const perRun = (await countArtifactsByRuns(pool, analysisId, ["r1", "r2"]))._unsafeUnwrap();
+
+            expect(page.entries.map((e) => e.path)).toEqual(["runs/r1/s1/figures/b.png", "runs/r1/s1/output/a.csv", "runs/r2/s1/output/c.csv"]);
+            expect(page.total).toBe(3);
+            expect(page.extensionCounts).toEqual([
+                { extension: "csv", count: 2 },
+                { extension: "png", count: 1 },
+            ]);
+            expect(page.total).toBe(perRun.reduce((sum, r) => sum + r.count, 0));
+        });
+
+        it("gives only the input rows for input", async () => {
+            const page = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, role: "input" }))._unsafeUnwrap();
+
+            expect(page.entries.map((e) => e.path)).toEqual(["data/inputs/f1/counts.csv"]);
+            expect(page.total).toBe(1);
+            expect(page.extensionCounts).toEqual([{ extension: "csv", count: 1 }]);
+        });
+
+        it("combines with the other filters, and selects each row when absent", async () => {
+            const combined = (await queryArtifactPage(pool, analysisId, { ...PATH_SORT, role: "input", extensions: ["png"] }))._unsafeUnwrap();
+            const all = (await queryArtifactPage(pool, analysisId, PATH_SORT))._unsafeUnwrap();
+
+            expect(combined).toMatchObject({ entries: [], total: 0, extensionCounts: [] });
+            expect(all.total).toBe(4);
+        });
+
+        it("sends two statements with the role filter", async () => {
+            const counting = countingQuerier(pool);
+            (await queryArtifactPage(counting.querier, analysisId, { sort: "recent", limit: 200, offset: 0, role: "step_output" }))._unsafeUnwrap();
+            expect(counting.calls()).toBe(2);
+        });
+    });
+
     it("sends two statements with each filter, whatever the limit", async () => {
         const analysisId = "stmt-a1";
         for (let i = 0; i < 5; i += 1) await seed(pool, { analysisId, path: `runs/r1/s1/output/f${i}.csv`, runId: "r1", stepId: "s1", fileType: "output" });

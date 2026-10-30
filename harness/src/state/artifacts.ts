@@ -265,6 +265,8 @@ export type ArtifactPageQuery = {
     q?: string;
     /** The whole path, with case. It selects the one row of that path. */
     path?: string;
+    /** The role of the row. `step_output` selects the rows that the grouped run count of {@link countArtifactsByRuns} counts. */
+    role?: ArtifactRole;
     /**
      * Extensions in lower case, with no dot. A row is selected when the extension of its path is a member. A row with
      * no extension never matches, and an empty list selects each row. The read compares the members as they are.
@@ -308,7 +310,8 @@ export type ArtifactPage = {
  * select, grouped by extension, and the page. The count is a separate statement because a page past the end has no
  * row to carry it. `total` is the sum of the groups.
  *
- * Every row of the analysis is a member, an `input` row and a row with `unrecoverable_at` included. The cost
+ * Every row of the analysis is a member, an `input` row and a row with `unrecoverable_at` included, unless the `role`
+ * filter selects one role. `total` and `extensionCounts` follow the filters. The cost
  * grows with the ledger of the one analysis, because the count reads each filtered row.
  */
 export function queryArtifactPage(pool: Querier, analysisId: string, query: ArtifactPageQuery): ResultAsync<ArtifactPage, DbError> {
@@ -325,6 +328,7 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
         // `LIKE` would turn `%` and `_` of the input into wildcards.
         if (query.q !== undefined) conditions.push(`strpos(lower(path), lower(${bind(query.q)}::text)) > 0`);
         if (query.path !== undefined) conditions.push(`path = ${bind(query.path)}`);
+        if (query.role !== undefined) conditions.push(`role = ${bind(query.role)}`);
         if (query.extensions !== undefined && query.extensions.length > 0) {
             conditions.push(`${EXTENSION_SQL} = ANY(${bind([...query.extensions])}::text[])`);
         }

@@ -72,8 +72,8 @@ export {
 } from "./step-executions.js";
 export type { InsertStepExecutionInput, RunStepCounts, SeedStepExecutionRow, UpdateStepExecutionInput } from "./step-executions.js";
 
-export { insertPlan, upsertPlan, loadPlan, loadPlanRecord } from "./plans.js";
-export type { InsertPlanInput, UpsertPlanInput, PlanRecord, PlanRowQuerier } from "./plans.js";
+export { insertPlan, upsertPlan, loadPlan, loadPlanRecord, queryPlanPage } from "./plans.js";
+export type { InsertPlanInput, UpsertPlanInput, PlanRecord, PlanRowQuerier, PlanPage, PlanPageEntry } from "./plans.js";
 
 export {
     tryStartDataProfile,
