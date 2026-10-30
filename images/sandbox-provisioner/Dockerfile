@@ -65,8 +65,10 @@ RUN bash /tmp/install-build-toolchain.sh python3-yaml python3-packaging iptables
 # Pinned to sandbox-base's uv so resolution and wheel selection are identical to
 # what the runtime image environment expects.
 ARG UV_VERSION=0.12.5
-RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
+RUN curl -LsSf --retry 5 --retry-all-errors "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
+# uv tries each request of a resolve or an install again after a network error.
+ENV UV_HTTP_RETRIES=5
 
 # pak resolves and installs the R tracks. gen-r-lock.R is the bulk resolver of
 # the catalog build, and acquire_r.R is the incremental resolver of one

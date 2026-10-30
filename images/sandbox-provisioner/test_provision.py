@@ -1973,8 +1973,8 @@ class BuildGithubPakTests(StoreTestCase):
         self.assertIn("pak::pkg_install('owner/widget'", expr)
         self.assertNotIn("remotes::install_github", expr)
 
-    def test_a_failed_github_install_runs_a_second_attempt(self):
-        # A pinned CDN edge can sour mid-run, thus one retry heals a transient
+    def test_a_failed_github_install_runs_each_download_attempt(self):
+        # A pinned CDN edge can sour mid-run, thus a retry heals a transient
         # download fault from the pak cache.
         recorded: list[list[str]] = []
 
@@ -1996,7 +1996,38 @@ class BuildGithubPakTests(StoreTestCase):
 
         installs = [argv for argv in recorded
                     if argv[:1] == ["R"] and any("owner/widget" in a for a in argv)]
-        self.assertEqual(len(installs), 2)
+        self.assertEqual(len(installs), provision.DOWNLOAD_ATTEMPTS)
+
+
+class RunDownloadingTests(unittest.TestCase):
+    """A command that downloads runs again after a failure, and a success stops the attempts."""
+
+    def test_a_transient_failure_heals_on_a_later_attempt(self):
+        codes = iter([1, 0, 0])
+        calls: list[str] = []
+        cleared: list[int] = []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd[0])
+            return SimpleNamespace(returncode=next(codes))
+
+        with unittest.mock.patch.object(provision.subprocess, "run", run), \
+                contextlib.redirect_stdout(io.StringIO()):
+            proc = provision.run_downloading(["uv"], "the install", before_retry=lambda: cleared.append(1))
+
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(cleared), 1)
+
+    def test_the_last_failure_returns_its_exit_code(self):
+        def run(cmd, **kwargs):
+            return SimpleNamespace(returncode=2)
+
+        with unittest.mock.patch.object(provision.subprocess, "run", run), \
+                contextlib.redirect_stdout(io.StringIO()):
+            proc = provision.run_downloading(["uv"], "the install")
+
+        self.assertEqual(proc.returncode, 2)
 
 
 class REntryRequestedTests(unittest.TestCase):

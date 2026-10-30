@@ -138,7 +138,13 @@ jobs:
 
       - name: Pull the published runtime image
         if: steps.candidate.outputs.present == 'true'
-        run: docker pull "${{ steps.candidate.outputs.image }}"
+        run: |
+          for attempt in 1 2 3; do
+            docker pull "${{ steps.candidate.outputs.image }}" && break
+            [ "$attempt" -lt 3 ] || exit 1
+            echo "::warning::docker pull attempt $attempt failed; trying again"
+            sleep 15
+          done
 
       - name: Install ORAS
         if: steps.candidate.outputs.present == 'true'
@@ -155,7 +161,7 @@ jobs:
           esac
           dir="$RUNNER_TEMP/oras"
           mkdir -p "$dir"
-          curl -fsSL -o "$dir/oras.tar.gz" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$dir/oras.tar.gz" \
             "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${ARCH}.tar.gz"
           echo "${ORAS_SHA256}  $dir/oras.tar.gz" | sha256sum -c -
           tar -C "$dir" -xzf "$dir/oras.tar.gz" oras
@@ -181,7 +187,13 @@ jobs:
           fi
           rm -rf layers store
           mkdir -p layers store
-          oras pull "$REF" --output layers
+          for attempt in 1 2 3; do
+            oras pull "$REF" --output layers && break
+            [ "$attempt" -lt 3 ] || exit 1
+            echo "::warning::oras pull attempt $attempt failed; trying again"
+            rm -rf layers && mkdir -p layers
+            sleep 15
+          done
           # Each layer drops after its extraction, thus the compressed set and
           # the extracted tree never coexist whole — the peak disk use stays
           # near the extracted tree alone.

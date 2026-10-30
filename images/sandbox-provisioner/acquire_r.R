@@ -61,7 +61,14 @@ if (identical(mode, "probe")) {
   lock <- args[2]
   lib <- args[3]
   dir.create(lib, recursive = TRUE, showWarnings = FALSE)
-  pak::lockfile_install(lock, lib = lib)
+  # One failed download aborts the install. A later attempt installs only the
+  # packages that the library does not hold yet.
+  for (attempt in 1:3) {
+    err <- tryCatch({ pak::lockfile_install(lock, lib = lib); NULL }, error = function(e) e)
+    if (is.null(err)) break
+    if (attempt == 3) stop(err)
+    message(sprintf("lockfile_install attempt %d of 3 failed: %s; trying again", attempt, conditionMessage(err)))
+  }
 } else {
   stop(sprintf("unknown mode: %s", mode))
 }
