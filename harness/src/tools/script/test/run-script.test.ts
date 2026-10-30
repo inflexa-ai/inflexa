@@ -11,7 +11,8 @@ import { z } from "zod";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 
 import { runLoop, withRunScript } from "../../../loop/run-loop.js";
-import type { AgentDefinition } from "../../../loop/types.js";
+import type { AgentDefinition, EmitFn } from "../../../loop/types.js";
+import { toChatFrame } from "../../../contracts/chat-frame.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../../testing.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -314,6 +315,23 @@ describe("run_script with a scratch directory", () => {
         expect(result).toMatchObject({ ok: true, value: 2, script: `${dir}/scripts/toolu_1.js`, files: [`${dir}/derived/top.csv`] });
         expect(readFileSync(join(root, dir, "scripts/toolu_1.js"), "utf8")).toBe(code);
         expect(readFileSync(join(root, dir, "derived/top.csv"), "utf8")).toBe("gene,padj\nTP53,0.001\nKIT,0.03\n");
+    });
+
+    test("gives no value for a nested call, in an event or in a frame", async () => {
+        const { tool, ctx } = setup();
+        const seen: Array<Parameters<EmitFn>[0]> = [];
+
+        (await tool.execute({ description: "Significant genes", code }, { ...ctx, emit: (event) => void seen.push(event) }))._unsafeUnwrap();
+
+        const nested = seen.filter((event) => event.type === "tool-started" || event.type === "tool-finished");
+        expect(nested.map((event) => event.type)).toContain("tool-started");
+        expect(nested.map((event) => event.type)).toContain("tool-finished");
+        for (const event of nested) {
+            for (const key of ["inputValue", "resultValue", "errorValue"]) expect(key in event).toBe(false);
+            const frame = parseUnknownRecord(toChatFrame(event, { agentId: RUN_SCRIPT_TOOL_ID, callPath: ["conversation-agent", RUN_SCRIPT_TOOL_ID] }));
+            expect(frame).toBeDefined();
+            for (const key of ["input", "result", "error"]) expect(frame?.[key]).toBeUndefined();
+        }
     });
 
     test("streams each nested call under the run_script call, and shows the derived file and the script in one card", async () => {

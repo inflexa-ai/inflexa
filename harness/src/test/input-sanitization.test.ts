@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { normalizeUnicode, redactSecrets, stripNulCharacters } from "../input-sanitization.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
+import { normalizeUnicode, redactSecretAssignments, redactSecretFields, redactSecrets, stripNulCharacters } from "../input-sanitization.js";
 
 describe("redactSecrets", () => {
     const cases: ReadonlyArray<{ label: string; secret: string }> = [
@@ -82,5 +83,75 @@ describe("stripNulCharacters", () => {
         // a form feed in captured stdout is content, and storage accepts it.
         const ESC = String.fromCharCode(0x1b);
         expect(stripNulCharacters(`a${ESC}[0mb`)).toBe(`a${ESC}[0mb`);
+    });
+});
+
+describe("redactSecretFields", () => {
+    it("replaces the value of a secret field at depth, in an object and in an array", () => {
+        const out = redactSecretFields({
+            cmd: "run",
+            env: { GITHUB_TOKEN: "ghp_value", PATH: "/bin" },
+            list: [{ db_password: "hunter2" }, { name: "ana" }],
+        });
+        expect(JSON.stringify(out)).not.toContain("ghp_value");
+        expect(JSON.stringify(out)).not.toContain("hunter2");
+        expect(out).toMatchObject({ cmd: "run", env: { PATH: "/bin" }, list: [{}, { name: "ana" }] });
+    });
+
+    it("matches a name with the case, underscore, and hyphen removed", () => {
+        const out = redactSecretFields({ "x-api-key": "a", Private_Key: "b", Authorization: "c", credentials: { user: "d" }, ACCESS_KEY: "e" });
+        expect(Object.values(parseUnknownRecord(out) ?? {}).every((value) => typeof value === "string" && value.startsWith("[REDACTED:"))).toBe(true);
+    });
+
+    it("keeps a name that holds a secret word without an end on it", () => {
+        const input = { max_tokens: 100, tokenizer: "bpe", tokenCount: 7, sequence: "ACGT".repeat(10), secretary: "ana" };
+        expect(redactSecretFields(input)).toEqual(input);
+    });
+
+    it("does not change its input", () => {
+        const input = { env: { API_TOKEN: "abc" } };
+        redactSecretFields(input);
+        expect(input).toEqual({ env: { API_TOKEN: "abc" } });
+    });
+});
+
+describe("redactSecretAssignments", () => {
+    it("replaces the value of an assignment whose name ends with a secret word", () => {
+        const out = redactSecretAssignments("export API_KEY=abc123 && AWS_SECRET_ACCESS_KEY='s3cr3t value' run --token=xyz");
+        expect(out).not.toContain("abc123");
+        expect(out).not.toContain("s3cr3t");
+        expect(out).not.toContain("xyz");
+        expect(out).toContain("API_KEY=[REDACTED:");
+        expect(out).toContain("&& ");
+    });
+
+    it("replaces the value of a quoted JSON field", () => {
+        const out = redactSecretAssignments('{"user": "ana", "password": "hunter2", "note": "ok"}');
+        expect(out).not.toContain("hunter2");
+        expect(out).toContain('"user": "ana"');
+        expect(out).toContain('"note": "ok"');
+    });
+
+    it("ends a quoted value at its closing quote, not at an escaped quote", () => {
+        const assignment = redactSecretAssignments('export API_KEY="abc\\" def" && run');
+        expect(assignment).toBe("export API_KEY=[REDACTED: Secret Assignment] && run");
+        const field = redactSecretAssignments('{"password":"ab\\"cd","user":"ana"}');
+        expect(field).toBe('{"password":"[REDACTED: Secret Field]","user":"ana"}');
+    });
+
+    it("replaces the value of a SECRET_KEY assignment and field", () => {
+        expect(redactSecretAssignments("SECRET_KEY=abcd1234 run")).toBe("SECRET_KEY=[REDACTED: Secret Assignment] run");
+        expect(redactSecretFields({ SECRET_KEY: "abcd1234" })).toEqual({ SECRET_KEY: "[REDACTED: Secret Field]" });
+    });
+
+    it("replaces a double-quoted assignment value that holds spaces", () => {
+        const out = redactSecretAssignments('API_KEY="abc 123" run');
+        expect(out).not.toContain("abc 123");
+        expect(out).toContain("run");
+    });
+
+    it("keeps a sequence, a token count, and a comparison unchanged", () => {
+        const text = `{"sequence":"${"ACGT".repeat(10)}","max_tokens":100} if token == other max_tokens=5`;
+        expect(redactSecretAssignments(text)).toBe(text);
     });
 });

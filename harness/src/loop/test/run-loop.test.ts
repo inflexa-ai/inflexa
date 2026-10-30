@@ -2,15 +2,16 @@ import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { APICallError } from "@ai-sdk/provider";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
-import { err, ok } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { forSubAgent } from "../../auth/types.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { isInterruptedMessage } from "../../memory/ai-sdk-message-storage.js";
 import { modelFailureOf } from "../../providers/errors.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { defineTool, withToolCallRecord, withToolResultImages, type Tool } from "../../tools/define-tool.js";
+import { defineTool, withToolCallRecord, withToolResultImages, type Tool, type ToolError } from "../../tools/define-tool.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { continueLoop, runLoop, runWithSalvage, type AgentRound, type LoopOptions, type LoopStep } from "../run-loop.js";
 import type { AgentDefinition, EmitEvent, EmitFn, LoopMessage } from "../types.js";
@@ -621,5 +622,132 @@ describe("the classifier of a failed model call", () => {
     it("names each other failure other", async () => {
         expect(modelFailureOf(await failureOfRun([{ fail: failing(422) }]))).toEqual({ kind: "other" });
         expect(modelFailureOf(new Error("a bug"))).toEqual({ kind: "other" });
+    });
+});
+
+describe("runLoop — the values of a call", () => {
+    const writer = (execute: (input: { path: string }) => Promise<Result<unknown, ToolError>>): Tool =>
+        defineTool({
+            id: "writer",
+            description: "Takes a path.",
+            inputSchema: z.object({ path: z.string() }),
+            describeCall: "none",
+            execute,
+        });
+
+    function finishedOf(events: readonly EmitEvent[]): Extract<EmitEvent, { type: "tool-finished" }> {
+        const finished = events.find((e) => e.type === "tool-finished");
+        if (finished?.type !== "tool-finished") throw new Error("the loop emitted no tool-finished");
+        return finished;
+    }
+
+    it("gives the input and the result of an ok call on both events", async () => {
+        const { provider } = scriptedModel([callTools(toolCall("c1", "writer", { path: "data/a.csv" })), reply([text("done")])]);
+        const { emit, events } = recordingEmit();
+
+        await runLoop(agentWith([writer(() => Promise.resolve(ok({ rows: 3 })))]), [user("go")], makeSession(), options(provider, emit));
+
+        const started = events.find((e) => e.type === "tool-started");
+        const finished = finishedOf(events);
+        expect(started).toMatchObject({ inputValue: { text: '{"path":"data/a.csv"}', cut: false } });
+        expect(finished).toMatchObject({
+            outcome: "ok",
+            inputValue: { text: '{"path":"data/a.csv"}', cut: false },
+            resultValue: { text: '{"rows":3}', cut: false },
+        });
+        expect(finished.errorValue).toBeUndefined();
+    });
+
+    it("gives the error text that the model reads on a failed call, and no result", async () => {
+        const { provider } = scriptedModel([callTools(toolCall("c1", "writer", { path: "data/b.csv" })), reply([text("done")])]);
+        const { emit, events } = recordingEmit();
+
+        const result = await runLoop(
+            agentWith([writer(() => Promise.resolve(err({ error: "file not found: data/b.csv", retryable: false })))]),
+            [user("go")],
+            makeSession(),
+            options(provider, emit),
+        );
+
+        const finished = finishedOf(events);
+        const modelText = JSON.stringify({ error: "file not found: data/b.csv", retryable: false });
+        expect(toolResultsOf(result.messages)[0]).toMatchObject({ output: { type: "error-text", value: modelText } });
+        expect(finished).toMatchObject({ outcome: "error", inputValue: { text: '{"path":"data/b.csv"}' }, errorValue: { text: modelText, cut: false } });
+        expect(finished.resultValue).toBeUndefined();
+    });
+
+    it("gives the refusal as the error of a refused call", async () => {
+        const { provider } = scriptedModel([callTools(toolCall("c1", "writer", { path: "data/a.csv" })), reply([text("done")])]);
+        const { emit, events } = recordingEmit();
+
+        const result = await runLoop(
+            agentWith([writer(() => Promise.resolve(ok({})))]),
+            [user("go")],
+            makeSession(),
+            options(provider, emit, { policy: { mask: "none" } }),
+        );
+
+        const refusal = toolResultsOf(result.messages)[0]?.output;
+        const refusalValue = parseUnknownRecord(refusal)?.value;
+        const refusalText = typeof refusalValue === "string" ? refusalValue : "";
+        expect(refusalText.length).toBeGreaterThan(0);
+        expect(events.find((e) => e.type === "tool-started")).toMatchObject({ inputValue: { text: '{"path":"data/a.csv"}' } });
+        expect(finishedOf(events)).toMatchObject({
+            outcome: "error",
+            inputValue: { text: '{"path":"data/a.csv"}' },
+            errorValue: { text: refusalText, cut: false },
+        });
+    });
+
+    it("gives the input only for a call that the user denies", async () => {
+        const asking = defineTool({
+            id: "asking",
+            description: "Asks for approval.",
+            inputSchema: z.object({ path: z.string() }),
+            describeCall: "none",
+            approval: () => ({ title: "Edit a file", command: "edit notes.md" }),
+            execute: () => Promise.resolve(ok({ ran: true })),
+        });
+        const { provider } = scriptedModel([callTools(toolCall("c1", "asking", { path: "notes.md" }))]);
+        const { emit, events } = recordingEmit();
+
+        await runLoop(
+            agentWith([asking]),
+            [user("go")],
+            makeSession(),
+            options(provider, emit, { approve: () => Promise.resolve({ kind: "denied", feedback: "no" }) }),
+        );
+
+        const finished = finishedOf(events);
+        expect(finished).toMatchObject({ outcome: "denied", inputValue: { text: '{"path":"notes.md"}' } });
+        expect(finished.resultValue).toBeUndefined();
+        expect(finished.errorValue).toBeUndefined();
+    });
+
+    it("cuts a result over the cap and marks it, while the model reads the whole result", async () => {
+        const long = "x".repeat(20_000);
+        const { provider } = scriptedModel([callTools(toolCall("c1", "writer", { path: "a" })), reply([text("done")])]);
+        const { emit, events } = recordingEmit();
+
+        const result = await runLoop(agentWith([writer(() => Promise.resolve(ok(long)))]), [user("go")], makeSession(), options(provider, emit));
+
+        const finished = finishedOf(events);
+        expect(finished).toMatchObject({ resultValue: { cut: true } });
+        const shown = finished.resultValue?.text;
+        expect(shown).toBe(`${"x".repeat(3072)}\n[... 11808 characters not shown ...]\n${"x".repeat(5120)}`);
+        expect(toolResultsOf(result.messages)[0]).toMatchObject({ output: { type: "json", value: long } });
+    });
+
+    it("shows the result before the cut for the model", async () => {
+        const long = `${"a".repeat(40_000)}END`;
+        const { provider } = scriptedModel([callTools(toolCall("c1", "writer", { path: "a" })), reply([text("done")])]);
+        const { emit, events } = recordingEmit();
+
+        await runLoop(agentWith([writer(() => Promise.resolve(ok({ text: long })))]), [user("go")], makeSession(), options(provider, emit));
+
+        const finished = finishedOf(events);
+        const shown = finished.resultValue?.text;
+        expect(shown?.endsWith('END"}')).toBe(true);
+        expect(shown).toContain("[... 31822 characters not shown ...]");
     });
 });

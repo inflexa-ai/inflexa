@@ -12,6 +12,8 @@ import { z } from "zod";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { forSubAgent } from "../../auth/types.js";
+import type { ChatFrame } from "../../contracts/chat-events.js";
+import { toChatFrame } from "../../contracts/chat-frame.js";
 import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
 import type { CompactionRules } from "../../loop/compaction.js";
@@ -551,9 +553,75 @@ describe("the run of a chat turn", () => {
         const [toolCallPart, textPart] = presentAt(replay, 1).parts;
         if (toolCallPart?.type !== "tool-call") throw new Error("the reply did not store the tool call");
         const { durationMs, ...call } = toolCallPart;
-        expect(call).toEqual({ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok" });
+        const shown = { text: '{"label":"tu-1"}', cut: false };
+        expect(call).toEqual({ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", input: shown, result: shown });
         expect(durationMs).toBeTypeOf("number");
         expect(textPart).toEqual({ type: "text", text: "the groups differ" });
+    });
+
+    it("stores no secret of the input or of the result of a call, and the stream carries none", async () => {
+        const token = "ghp_0123456789abcdefghij0123456789abcdef";
+        const leaky = defineTool({
+            id: "leaky",
+            description: "Takes an environment and gives a login.",
+            inputSchema: z.object({ env: z.record(z.string(), z.string()) }),
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ user: "ana", password: "hunter2" })),
+        });
+        const model = scriptedModel([callTools(toolCall("tu-1", "leaky", { env: { GITHUB_TOKEN: token, REGION: "eu" } })), reply([text("the groups differ")])]);
+        const root = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
+        const frames: ChatFrame[] = [];
+        await runInProcessTurn(
+            depsFor(resolverFor(agentWith([leaky])), model),
+            params({
+                emit: (event) => {
+                    const frame = toChatFrame(event, root);
+                    if (frame !== null) frames.push(frame);
+                },
+            }),
+        );
+
+        const [call] = presentAt(storedMessagesToChat(await storedRows()), 1).parts;
+        expect(call).toMatchObject({
+            type: "tool-call",
+            input: { text: '{"env":{"GITHUB_TOKEN":"[REDACTED: Secret Field]","REGION":"eu"}}', cut: false },
+            result: { text: '{"user":"ana","password":"[REDACTED: Secret Field]"}', cut: false },
+        });
+        for (const secret of [token, "hunter2"]) {
+            expect(JSON.stringify(call)).not.toContain(secret);
+            expect(JSON.stringify(frames)).not.toContain(secret);
+        }
+        expect(frames.find((frame) => frame.type === "tool-finished")).toMatchObject({ input: { cut: false }, result: { cut: false } });
+    });
+
+    it("stores no part of a quoted secret with an escaped quote, and the stream carries none", async () => {
+        const runner = defineTool({
+            id: "runner",
+            description: "Runs a command.",
+            inputSchema: z.object({ cmd: z.string() }),
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ done: true })),
+        });
+        const cmd = 'export API_KEY="abc\\" def" && run';
+        const model = scriptedModel([callTools(toolCall("tu-1", "runner", { cmd })), reply([text("the groups differ")])]);
+        const root = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
+        const frames: ChatFrame[] = [];
+        await runInProcessTurn(
+            depsFor(resolverFor(agentWith([runner])), model),
+            params({
+                emit: (event) => {
+                    const frame = toChatFrame(event, root);
+                    if (frame !== null) frames.push(frame);
+                },
+            }),
+        );
+
+        const [call] = presentAt(storedMessagesToChat(await storedRows()), 1).parts;
+        expect(call).toMatchObject({ type: "tool-call", input: { text: '{"cmd":"export API_KEY=[REDACTED: Secret Assignment] && run"}', cut: false } });
+        for (const secret of ["abc", "def"]) {
+            expect(JSON.stringify(call)).not.toContain(secret);
+            expect(JSON.stringify(frames)).not.toContain(secret);
+        }
     });
 
     it("announces the id of the user message and of the assistant message, and stores the turn under those ids", async () => {
@@ -1100,7 +1168,17 @@ describe("the compaction of a chat turn", () => {
             id: "<id>",
             createdAt: "<createdAt>",
             role: "assistant",
-            parts: [{ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", durationMs: "<durationMs>" }],
+            parts: [
+                {
+                    type: "tool-call",
+                    toolCallId: "tu-1",
+                    toolName: "echo",
+                    outcome: "ok",
+                    durationMs: "<durationMs>",
+                    input: { text: '{"label":"tu-1"}', cut: false },
+                    result: { text: '{"label":"tu-1"}', cut: false },
+                },
+            ],
         },
         storedDivider("mid-turn"),
         { ...STORED_REPLY, usage: { inputTokens: OVER } },

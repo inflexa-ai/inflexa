@@ -45,6 +45,7 @@ import type { AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import type { ToolOutcome } from "./tool-outcome.js";
 import { excerptOf, keptTextOf, TOOL_RESULT_CAP, toolOutputRef, type ToolOutputStore } from "./tool-output.js";
+import { errorToolValue, jsonToolValue } from "./tool-value.js";
 import type { EmitFn, EventSource } from "./types.js";
 
 const ToolResultImageSchema = z.object({ base64: z.string(), mediaType: z.string() });
@@ -215,7 +216,16 @@ async function runToolCall(
     const detail = computeDetail(tool, input, run.log);
     // The emit and the call start before the first await: a call that runs in the body of a workflow takes its
     // function ids in the order of the calls, thus a replay gives each call its own child.
-    const started = run.emit({ type: "tool-started", source: run.source, toolUseId: toolCallId, name: tool.id, input, ...detailField(detail) });
+    const inputValue = jsonToolValue(input);
+    const started = run.emit({
+        type: "tool-started",
+        source: run.source,
+        toolUseId: toolCallId,
+        name: tool.id,
+        input,
+        ...detailField(detail),
+        inputValue,
+    });
     const ctx: ToolContext = {
         invocationId: toolCallId,
         session: run.session,
@@ -225,6 +235,9 @@ async function runToolCall(
     };
     // One wait reads the two, thus a failed emit leaves no rejection of the call unread.
     const [, settled] = await Promise.all([started, settleCall(tool, input, ctx, run)]);
+    // The values come from the output before the cut for the model, thus a host shows the start and the end of the whole text.
+    const resultValue = settled.output.outcome === "ok" ? jsonToolValue(settled.output.value) : undefined;
+    const errorValue = settled.output.outcome === "error" ? errorToolValue(settled.output.text) : undefined;
     const output = await cutLongOutput(settled.output, tool.id, toolCallId, run);
     await run.emit({
         type: "tool-finished",
@@ -234,6 +247,9 @@ async function runToolCall(
         outcome: output.outcome,
         ...detailField(settled.detail ?? detail),
         durationMs: Math.round(performance.now() - startedAt),
+        inputValue,
+        resultValue,
+        errorValue,
     });
     return output;
 }

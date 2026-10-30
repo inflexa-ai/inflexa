@@ -71,6 +71,7 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
                 toolUseId: event.toolUseId,
                 name: event.name,
                 detail: event.detail,
+                input: event.inputValue,
                 source: toSource(event.source),
             };
 
@@ -82,6 +83,9 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
                 outcome: event.outcome,
                 detail: event.detail,
                 durationMs: event.durationMs,
+                input: event.inputValue,
+                result: event.resultValue,
+                error: event.errorValue,
                 source: toSource(event.source),
             };
 
@@ -185,6 +189,7 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
                     toolCallId: frame.toolUseId,
                     toolName: frame.name,
                     detail: frame.detail,
+                    input: frame.input,
                 } satisfies ToolCallPart,
             ];
         case "tool-finished": {
@@ -196,6 +201,9 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
             };
             if (frame.detail !== undefined) finished.detail = frame.detail;
             if (frame.durationMs !== undefined) finished.durationMs = frame.durationMs;
+            if (frame.input !== undefined) finished.input = frame.input;
+            if (frame.result !== undefined) finished.result = frame.result;
+            if (frame.error !== undefined) finished.error = frame.error;
             const started = parts.some((p) => p.type === "tool-call" && p.toolCallId === frame.toolUseId);
             if (!started) {
                 // The stored transcript keeps a call whose start never arrived, thus a live view keeps it too.

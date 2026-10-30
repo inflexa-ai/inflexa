@@ -86,6 +86,61 @@ describe("toChatFrame", () => {
         });
     });
 
+    test("keeps the input of a tool-started", () => {
+        const ev: EmitEvent = {
+            type: "tool-started",
+            source: topLevel,
+            toolUseId: "tu_1",
+            name: "search_gene",
+            input: { secret: "raw" },
+            inputValue: { text: '{"gene":"TP53"}', cut: false },
+        };
+        const frame = toChatFrame(ev, fallback);
+        expect(frame).toEqual({
+            type: "tool-started",
+            toolUseId: "tu_1",
+            name: "search_gene",
+            input: { text: '{"gene":"TP53"}', cut: false },
+            source: topLevel,
+        });
+        expect(JSON.stringify(frame)).not.toContain("raw");
+    });
+
+    test("keeps the input and the error of a tool-finished, and gives no result", () => {
+        const ev: EmitEvent = {
+            type: "tool-finished",
+            source: topLevel,
+            toolUseId: "tu_1",
+            name: "search_gene",
+            outcome: "error",
+            inputValue: { text: '{"gene":"TP53"}', cut: false },
+            errorValue: { text: "not found", cut: true },
+        };
+        const frame = toChatFrame(ev, fallback);
+        expect(frame).toEqual({
+            type: "tool-finished",
+            toolUseId: "tu_1",
+            name: "search_gene",
+            outcome: "error",
+            input: { text: '{"gene":"TP53"}', cut: false },
+            error: { text: "not found", cut: true },
+            source: topLevel,
+        });
+        expect(ChatEventSchema.safeParse(frame).success).toBe(true);
+    });
+
+    test("keeps the result of a tool-finished", () => {
+        const ev: EmitEvent = {
+            type: "tool-finished",
+            source: topLevel,
+            toolUseId: "tu_1",
+            name: "search_gene",
+            outcome: "ok",
+            resultValue: { text: '{"rows":3}', cut: false },
+        };
+        expect(toChatFrame(ev, fallback)).toMatchObject({ result: { text: '{"rows":3}', cut: false } });
+    });
+
     test("keeps the tool events of a sub-agent with their source", () => {
         const started: EmitEvent = { type: "tool-started", source: nested, toolUseId: "tu_2", name: "search_pubmed", input: {} };
         const finished: EmitEvent = { type: "tool-finished", source: nested, toolUseId: "tu_2", name: "search_pubmed", outcome: "ok" };
@@ -243,6 +298,32 @@ describe("applyChatFrame", () => {
         expect(presentAt(messages, 0).parts).toEqual([
             { type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", outcome: "ok", detail: "TP53", durationMs: 420 },
         ]);
+    });
+
+    test("sets the input and the result of a finished call on its part", () => {
+        const input = { text: '{"gene":"TP53"}', cut: false };
+        const result = { text: '{"rows":3}', cut: false };
+        const { messages } = applyMany(
+            [],
+            [
+                { type: "tool-started", toolUseId: "tu_1", name: "searchGene", input, source: SOURCE },
+                { type: "tool-finished", toolUseId: "tu_1", name: "searchGene", outcome: "ok", input, result, source: SOURCE },
+            ],
+        );
+        expect(presentAt(messages, 0).parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "searchGene", outcome: "ok", input, result }]);
+    });
+
+    test("a call in flight shows its input", () => {
+        const input = { text: "{}", cut: false };
+        const { messages } = applyMany([], [{ type: "tool-started", toolUseId: "tu_1", name: "x", input, source: SOURCE }]);
+        expect(presentAt(messages, 0).parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "x", input }]);
+    });
+
+    test("a finish with no start keeps its input and its error", () => {
+        const input = { text: "{}", cut: false };
+        const error = { text: "nope", cut: false };
+        const { messages } = applyMany([], [{ type: "tool-finished", toolUseId: "tu_1", name: "x", outcome: "error", input, error, source: SOURCE }]);
+        expect(presentAt(messages, 0).parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "x", outcome: "error", input, error }]);
     });
 
     test("a finish with no start appends the finished call", () => {

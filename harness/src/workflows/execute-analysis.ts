@@ -120,6 +120,7 @@ import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, Template
 import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
+import { withoutToolValues } from "../loop/tool-value.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
@@ -863,7 +864,7 @@ export function synthesizeFindings(args: {
             ? flattenDataPart(event)
             : {
                   type: "data-loop-event" as const,
-                  data: { stepId: "synthesis", event },
+                  data: { stepId: "synthesis", event: withoutToolValues(event) },
               };
         return DBOS.writeStream("events", part);
     };

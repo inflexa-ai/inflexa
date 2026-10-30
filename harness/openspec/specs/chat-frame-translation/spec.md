@@ -11,8 +11,8 @@ The harness MUST export `applyChatFrame(messages, frame, assistantId)`. The func
 
 - A frame whose `source.callPath` has more than one entry comes from a sub-agent, and it changes nothing. The root agent of a chat turn has the call path `[agent.id]`.
 - A `text-delta` adds its text to the last part if that part is text. If the last part is not text, the frame adds a text part.
-- A `tool-started` adds a tool-call part with no outcome.
-- A `tool-finished` sets the outcome on the tool-call part with the same call id. It also sets the detail and `durationMs` when the frame has them. If no part has that call id, the frame adds a tool-call part with the outcome.
+- A `tool-started` adds a tool-call part with no outcome. The part holds the `input` when the frame has one.
+- A `tool-finished` sets the outcome on the tool-call part with the same call id. It also sets the detail, `durationMs`, `input`, `result`, and `error` when the frame has them. If no part has that call id, the frame adds a tool-call part with the outcome and these fields.
 - A `data-*` part goes at the end. A part of a type that the registry marks `reconciling` replaces the part with the same type and id, in the position of that part.
 - The source of a `data-*` frame MUST NOT go into the part.
 - An `iteration` changes nothing, and it does not end the turn.
@@ -32,6 +32,12 @@ The harness MUST export `applyChatFrame(messages, frame, assistantId)`. The func
 - **GIVEN** a `tool-started` frame and a `tool-finished` frame with `durationMs` 420 for the same call
 - **WHEN** `applyChatFrame` applies them
 - **THEN** the message holds one tool-call part with the outcome and `durationMs` 420
+
+#### Scenario: A finished call shows its input and its result
+
+- **GIVEN** a `tool-started` frame with an `input`, and a `tool-finished` frame with the same `input` and a `result` for the same call
+- **WHEN** `applyChatFrame` applies them
+- **THEN** the message holds one tool-call part with the outcome, the `input`, and the `result`
 
 #### Scenario: A finished call with no start stays
 
@@ -171,8 +177,8 @@ The harness MUST export `toChatFrame(event, fallbackSource)`. The function takes
 
 - A loop `iteration` of a sub-agent gives `{ type: "iteration", source }`, with a copy of the source and no other field. Its call path has more than one entry.
 - A loop `iteration` of the root agent and the provider `done` give `null`.
-- A `tool-started` gives the call id, the tool name, the detail when there is one, and a copy of the source.
-- A `tool-finished` gives the same fields, the outcome, and `durationMs` when the event has one.
+- A `tool-started` gives the call id, the tool name, the detail and the `input` when the event has them, and a copy of the source.
+- A `tool-finished` gives the same fields, the outcome, and `durationMs`, `result`, and `error` when the event has them.
 - A `text-delta` gives the text and `fallbackSource`, because a provider event has no source.
 - A `message-start` gives the message id, the role, the text of a user message, and a copy of the source.
 - A `data-*` part gives a flat frame, `{ type, ...data }`, and a copy of the source when the emitter gave one.
@@ -204,6 +210,12 @@ The module of the function MUST import only types from outside `src/contracts/`.
 - **GIVEN** a `tool-finished` event with `durationMs` 420
 - **WHEN** `toChatFrame` translates the event
 - **THEN** the frame holds `durationMs` 420
+
+#### Scenario: The frame of a finished call holds its values
+
+- **GIVEN** a `tool-finished` event with an `input` and an `error`
+- **WHEN** `toChatFrame` translates the event
+- **THEN** the frame holds the same `input` and `error`, and no `result`
 
 #### Scenario: An iteration of a sub-agent gives a frame
 

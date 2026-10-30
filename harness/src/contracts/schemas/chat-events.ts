@@ -29,11 +29,15 @@ export const ToolOutcomeSchema = z.enum(["ok", "error", "denied"]);
 /** Mirrors `ToolCallOutcome` — the live three plus the record-only `incomplete`. */
 export const ToolCallOutcomeSchema = z.enum(["ok", "error", "denied", "incomplete"]);
 
+/** Mirrors `ToolCallValue`. */
+export const ToolCallValueSchema = z.object({ text: z.string(), cut: z.boolean() });
+
 export const ToolStartedEventSchema = z.object({
     type: z.literal("tool-started"),
     toolUseId: z.string(),
     name: z.string(),
     detail: z.string().optional(),
+    input: ToolCallValueSchema.optional(),
     source: EventSourceSchema,
 });
 
@@ -45,6 +49,9 @@ export const ToolFinishedEventSchema = z.object({
     detail: z.string().optional(),
     /** Optional and absent when unmeasured — never a zero in place of a figure. */
     durationMs: z.number().optional(),
+    input: ToolCallValueSchema.optional(),
+    result: ToolCallValueSchema.optional(),
+    error: ToolCallValueSchema.optional(),
     source: EventSourceSchema,
 });
 
