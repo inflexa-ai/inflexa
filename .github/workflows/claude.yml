@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Claude Code
-        uses: anthropics/claude-code-action@9cdae7f0d995e3ba7c33f226087fdf82a59cd520 # v1
+        uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # NOTE: do NOT set `prompt:` here. Providing `prompt` forces the
