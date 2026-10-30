@@ -1,4 +1,4 @@
-name: Build Sandbox Images
+name: "Build: sandbox images"
 
 # Builds the ONE sandbox runtime image, sandbox-base, from
 # images/sandbox-base/Dockerfile + images/package-store/manifest.yaml and publishes it
