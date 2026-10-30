@@ -1444,32 +1444,41 @@ def read_committed_lock(path: Path | None) -> dict:
 def resolve_manifest_python(entries: list[dict], committed: dict) -> dict[str, list[str]]:
     """Resolve the manifest python track, with the committed lock second.
 
-    The model is `npm install` with a committed lock: an entry whose manifest
-    constraint still matches resolves from the lock, and a changed entry
-    resolves fresh. The unchanged pins ride in a constraints file, thus uv
-    keeps them while the changed entries re-resolve around them. When the
-    constrained resolve conflicts, the run drops the constraints and resolves
-    fresh, and the workflow commits the new lock back.
+    The model is `npm install` with a committed lock: the locked closure holds,
+    and only a changed entry resolves fresh. The constraints file carries each
+    pin of the lock except the root of a changed entry, thus a dependency keeps
+    its locked version too, and a new upstream release reaches the farm only
+    through a manifest change. When that closure conflicts, the run keeps only
+    the unchanged root pins. When those conflict too, it resolves fresh. The
+    workflow commits the new lock back.
     """
     specs = [e["name"] + e["constraint"] for e in entries]
+    roots = committed.get("roots", {})
     unchanged_pins: list[str] = []
+    changed_roots: set[str] = set()
     for entry in entries:
-        recorded = committed.get("entries", {}).get(python_identity(entry["name"]).name)
-        if recorded == entry["constraint"]:
-            root_pin = committed.get("roots", {}).get(python_identity(entry["name"]).name)
+        name = python_identity(entry["name"]).name
+        root_pin = roots.get(name)
+        if committed.get("entries", {}).get(name) == entry["constraint"]:
             if root_pin:
                 unchanged_pins.append(root_pin)
-    constraints: Path | None = None
-    if unchanged_pins:
+        elif root_pin:
+            changed_roots.add(root_pin)
+    closure_pins = [pin for pin in committed.get("pins", {}) if pin not in changed_roots]
+
+    attempts = [("the locked closure", closure_pins), ("the unchanged root pins", unchanged_pins)]
+    for label, pins in attempts:
+        if not pins:
+            continue
         constraints = run_temp("constraints.txt")
-        constraints.write_text("\n".join(unchanged_pins) + "\n")
-    try:
-        return resolve(specs, constraints)
-    except ResolveError:
-        if constraints is None:
-            raise
-        log("the committed lock conflicts with the manifest; resolving fresh")
-        return resolve(specs)
+        constraints.write_text("\n".join(pins) + "\n")
+        try:
+            return resolve(specs, constraints)
+        except ResolveError:
+            log(f"{label} conflicts with the manifest")
+    if any(pins for _label, pins in attempts):
+        log("resolving fresh")
+    return resolve(specs)
 
 
 def committed_lock_of(entries: list[dict], pins: dict[str, list[str]]) -> dict:
