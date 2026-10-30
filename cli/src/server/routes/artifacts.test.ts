@@ -407,6 +407,52 @@ describe("GET {A}/artifacts", () => {
         expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { sort: expect.any(Array) } } });
     });
 
+    test.each(["input", "step_output"] as const)("`role=%s` reaches the read, and the filter rides with the other filters", async (role) => {
+        const { app: routes, reads } = listing();
+
+        const response = await routes.request(`/api/v1/analyses/a1/artifacts?role=${role}&runId=r1`);
+
+        expect(response.status).toBe(200);
+        expect(reads).toEqual([{ analysisId: "a1", query: { runId: "r1", role, sort: "path", limit: 100, offset: 0 } }]);
+    });
+
+    test("`role=step_output` gives the run outputs, and `total` is the count of the read", async () => {
+        const outputs = [
+            entry,
+            { ...entry, path: "runs/r1/s1/output/de.csv", fileType: "output" },
+            { ...entry, path: "runs/r2/s1/output/de.csv", runId: "r2" },
+        ];
+        const { app: routes } = listing({
+            entries: outputs,
+            total: 3,
+            extensionCounts: [
+                { extension: "csv", count: 2 },
+                { extension: "png", count: 1 },
+            ],
+        });
+
+        const list = (await (await routes.request("/api/v1/analyses/a1/artifacts?role=step_output")).json()) as ArtifactList;
+
+        expect(list.artifacts.map((item) => item.role)).toEqual(["step_output", "step_output", "step_output"]);
+        expect(list.total).toBe(3);
+    });
+
+    test("an empty `role` is no filter", async () => {
+        const { app: routes, reads } = listing();
+
+        const response = await routes.request("/api/v1/analyses/a1/artifacts?role=");
+
+        expect(response.status).toBe(200);
+        expect(reads).toEqual([{ analysisId: "a1", query: { sort: "path", limit: 100, offset: 0 } }]);
+    });
+
+    test.each(["output", "STEP_OUTPUT", "input,step_output"])("400 `validation_error` for the role value %p, with no read", async (role) => {
+        const response = await appWith(UNEXPECTED).request(`/api/v1/analyses/a1/artifacts?role=${role}`);
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { role: expect.any(Array) } } });
+    });
+
     test("503 `unavailable` before the runtime is ready", async () => {
         const response = await appWith(UNEXPECTED, startingBoot).request("/api/v1/analyses/a1/artifacts");
 

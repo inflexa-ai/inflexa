@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { ResultAsync } from "neverthrow";
 import PQueue from "p-queue";
 import { z } from "zod";
+import { ArtifactRole } from "@inflexa-ai/harness/state/schema.js";
 
 import type {
     ArtifactEntry,
@@ -68,8 +69,8 @@ const RESOLVE_WIDTH = 8;
  * The routes under `{A}/artifacts`.
  *
  * `GET /` lists the artifact ledger of the analysis, one page for each request. It needs the harness runtime.
- * `runId`, `stepId`, `fileType`, `path` (an exact path), `q` (a part of the path), and `extension` (a list with
- * a comma between the members) combine with AND. The response adds `extensionCounts` for the selected rows.
+ * `role` (`input` or `step_output`), `runId`, `stepId`, `fileType`, `path` (an exact path), `q` (a part of the
+ * path), and `extension` (a list with a comma between the members) combine with AND. The response adds `extensionCounts` for the selected rows.
  * The cost of a request grows with the ledger of the one analysis, because the exact `total` reads each
  * filtered row. Each entry gets `absolutePath`: the canonical workspace root, located one time for each
  * request, joined with its relative `path`. It is `null` for each entry when the folder cannot be located.
@@ -89,6 +90,11 @@ export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFA
         if (!sort.success) {
             return apiError(c, "validation_error", "`sort` must be `path` or `recent`.", { fieldErrors: { sort: ["must be path or recent"] } });
         }
+        const roleValue = filterValue(c.req.query("role"));
+        const role = roleValue === undefined ? undefined : ArtifactRole.safeParse(roleValue);
+        if (role !== undefined && !role.success) {
+            return apiError(c, "validation_error", "`role` must be `input` or `step_output`.", { fieldErrors: { role: ["must be input or step_output"] } });
+        }
         const runId = filterValue(c.req.query("runId"));
         const stepId = filterValue(c.req.query("stepId"));
         const fileType = filterValue(c.req.query("fileType"));
@@ -96,6 +102,7 @@ export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFA
         const path = filterValue(c.req.query("path"));
         const extensions = parseExtensions(filterValue(c.req.query("extension")));
         const query: ArtifactPageQuery = {
+            ...(role === undefined ? {} : { role: role.data }),
             ...(runId === undefined ? {} : { runId }),
             ...(stepId === undefined ? {} : { stepId }),
             ...(fileType === undefined ? {} : { fileType }),
