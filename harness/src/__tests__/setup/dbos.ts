@@ -45,6 +45,12 @@ import type { Pool } from "pg";
 import { getTestPool, withSchema } from "./postgres.js";
 import { launchDbos, shutdownDbos } from "../../runtime/dbos.js";
 
+/**
+ * A registered workflow with no body, for a test that only needs a workflow function, for example as the target of a
+ * schedule. DBOS refuses a registration after the launch, and each test that launches imports this module first.
+ */
+export const noopTestWorkflow = DBOS.registerWorkflow(async () => {}, { name: "test-noop-workflow" });
+
 const DBOS_TEST_APP_NAME = "cortex-test";
 const DBOS_TEST_APPLICATION_VERSION = "test-1";
 const DBOS_TEST_EXECUTOR_ID = "test";

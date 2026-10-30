@@ -206,6 +206,18 @@ export function scheduleWorkflow(schedule: WorkflowSchedule): void {
     pendingSchedules.set(schedule.scheduleName, schedule);
 }
 
+/**
+ * Store each schedule of {@link scheduleWorkflow} in the system database, and delete each stored schedule of this
+ * application that no code registers. DBOS only upserts, thus a schedule of a removed workflow fires on each tick and
+ * finds no function. Each schedule of the harness goes through `scheduleWorkflow`.
+ */
+export async function applyWorkflowSchedules(): Promise<void> {
+    if (pendingSchedules.size > 0) await DBOS.applySchedules([...pendingSchedules.values()]);
+    for (const stored of await DBOS.listSchedules()) {
+        if (!pendingSchedules.has(stored.scheduleName)) await DBOS.deleteSchedule(stored.scheduleName);
+    }
+}
+
 let resultRecipesRegistered = false;
 
 /**
@@ -239,7 +251,7 @@ export async function launchDbos({ config, logger: injected }: { config: DbosCon
 
     const start = performance.now();
     await DBOS.launch();
-    if (pendingSchedules.size > 0) await DBOS.applySchedules([...pendingSchedules.values()]);
+    await applyWorkflowSchedules();
     state.launched = true;
     state.recoveryStarted = true;
     logger.info("launched", {
