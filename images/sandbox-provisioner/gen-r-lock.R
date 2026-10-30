@@ -69,8 +69,18 @@ unlink(stage, recursive = TRUE); dir.create(stage, recursive = TRUE)
 message("NOTE: pak prints 'Missing N system packages' without a dpkg check here ",
         "(PKG_SYSREQS=false). The line is the unmanaged-requirement list, not a gap ",
         "report. The dpkg-verified report prints after the install.")
-install_err <- tryCatch({ pak::lockfile_install(lock_out, lib = stage); NULL },
-                        error = function(e) conditionMessage(e))
+# One failed download aborts the whole install, and the repositories of
+# Bioconductor drop a download now and then. A later attempt installs only the
+# packages that the library does not hold yet, thus a retry costs only those.
+install_attempts <- 3L
+for (attempt in seq_len(install_attempts)) {
+  install_err <- tryCatch({ pak::lockfile_install(lock_out, lib = stage); NULL },
+                          error = function(e) conditionMessage(e))
+  if (is.null(install_err)) break
+  if (attempt < install_attempts)
+    message(sprintf("WARNING: lockfile_install attempt %d of %d did not finish cleanly: %s\n  installing the rest again.",
+                    attempt, install_attempts, install_err))
+}
 if (!is.null(install_err))
   message("WARNING: lockfile_install did not finish cleanly: ", install_err,
           "\n  keeping the packages that did install; the load check is the gate.")
