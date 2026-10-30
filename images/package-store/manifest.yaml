@@ -504,6 +504,9 @@ python:
             - celltypist
             - symphonypy
             - "cellrank>=2"
+            # Pin pyro-ppl <1.9.2: 1.9.2 removed deep_getattr from
+            # pyro.infer.autoguide.utils, and cell2location 0.1.5 still imports it.
+            - "pyro-ppl<1.9.2"
             - name: cell2location
               reason: "Spatial deconvolution; its warm run proves the regression entry point."
               warm: warm/cell2location.py
