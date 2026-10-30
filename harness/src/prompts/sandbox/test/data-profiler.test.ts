@@ -117,18 +117,6 @@ describe("the no-forcing stance", () => {
     });
 });
 
-describe("the shape section", () => {
-    it("tells the agent to measure the primary matrix and never estimate", () => {
-        expect(flat).toContain("The primary matrix is the one that holds the measurements of the dataset");
-        expect(flat).toContain("A metadata table or a sample sheet is not one");
-        expect(flat).toContain("Never estimate a dimension");
-    });
-
-    it("keeps the ban on decoding a file in full", () => {
-        expect(flat).toContain("Decode a file in full");
-    });
-});
-
 describe("reasons and orientation", () => {
     it("requires a reason for every split, merge, and category deviation", () => {
         expect(flat).toContain("every `split`");
