@@ -150,6 +150,7 @@ function appOver(fixture: Fixture, over: Partial<AttentionRouteOpts> = {}, runOp
                 loadPlan: () => okAsync(null),
                 loadPlanRecord: () => okAsync(null),
                 listPlanRunIds: () => okAsync([]),
+                listPlans: () => okAsync({ entries: [], total: 0 }),
                 loadProfile: () => okAsync(null),
                 subscribeRun: () => Promise.resolve(),
                 cancelRun: () => Promise.reject(new Error("unused")),

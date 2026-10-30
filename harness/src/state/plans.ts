@@ -176,6 +176,14 @@ const PlanRecordRowSchema = z.object({
 });
 
 /**
+ * The `superseded_by` column of a plan read: the newest plan of the same analysis that names the plan as its parent.
+ * The text refers to the plan row of the outer query as `p`.
+ */
+const SUPERSEDED_BY_SQL = `(SELECT c.plan_id FROM cortex_plans c
+                       WHERE c.parent_plan_id = p.plan_id AND c.analysis_id = p.analysis_id
+                       ORDER BY c.created_at DESC, c.plan_id DESC LIMIT 1) AS superseded_by`;
+
+/**
  * Analysis-scoped read of one plan with its parent and the newest plan that
  * replaced it, in one statement. Returns `ok(null)` for an unknown planId OR a
  * planId of a different analysis, as {@link loadPlan} does.
@@ -187,9 +195,7 @@ export function loadPlanRecord(pool: PlanRowQuerier, planId: string, opts: { ana
     return tryQuery("plans.loadPlanRecord", async () => {
         const result = await pool.query({
             text: `SELECT p.plan, p.parent_plan_id, p.created_at,
-                     (SELECT c.plan_id FROM cortex_plans c
-                       WHERE c.parent_plan_id = p.plan_id AND c.analysis_id = p.analysis_id
-                       ORDER BY c.created_at DESC, c.plan_id DESC LIMIT 1) AS superseded_by
+                     ${SUPERSEDED_BY_SQL}
                 FROM cortex_plans p
                WHERE p.plan_id = $1 AND p.analysis_id = $2`,
             values: [planId, opts.analysisId],
@@ -198,5 +204,75 @@ export function loadPlanRecord(pool: PlanRowQuerier, planId: string, opts: { ana
         if (!raw) return null;
         const row = PlanRecordRowSchema.parse(raw);
         return { planId, plan: row.plan, parentPlanId: row.parent_plan_id, supersededBy: row.superseded_by, createdAt: row.created_at };
+    });
+}
+
+/** One plan of {@link queryPlanPage}. */
+export type PlanPageEntry = {
+    planId: string;
+    createdAt: string;
+    /** The `title` of the stored document when it is a string, as the document holds it, else `null`. */
+    title: string | null;
+    parentPlanId: string | null;
+    /** The newest plan of the same analysis that names this plan as its parent. */
+    supersededBy: string | null;
+    /** The newest run of the plan, in the order of {@link queryRunIdsByPlan}, or `null` for a plan with no run. */
+    newestRunId: string | null;
+};
+
+/** One page of the plans of an analysis, and the exact count of them. */
+export type PlanPage = {
+    entries: PlanPageEntry[];
+    total: number;
+};
+
+const PlanPageRowSchema = z.object({
+    plan_id: z.string(),
+    created_at: z.string(),
+    title: z.string().nullable(),
+    parent_plan_id: z.string().nullable(),
+    superseded_by: z.string().nullable(),
+    newest_run_id: z.string().nullable(),
+});
+
+/**
+ * One page of the plans of an analysis, newest first, in two statements: the count of the plans and the page. The
+ * count is a separate statement because a page past the end has no row to carry it. The order is the one of
+ * `supersededBy`: the creation time, then the highest plan id. The page gives the title of the document, not the
+ * document, because a page holds up to 200 plans.
+ */
+export function queryPlanPage(pool: Querier, analysisId: string, opts: { limit: number; offset: number }): ResultAsync<PlanPage, DbError> {
+    return tryQuery("plans.queryPlanPage", async () => {
+        const countResult = await pool.query<{ total: number }>({
+            text: "SELECT COUNT(*)::int AS total FROM cortex_plans WHERE analysis_id = $1",
+            values: [analysisId],
+        });
+        const rowsResult = await pool.query({
+            text: `SELECT p.plan_id, p.created_at, p.parent_plan_id,
+                     CASE WHEN jsonb_typeof(p.plan->'title') = 'string' THEN p.plan->>'title' END AS title,
+                     ${SUPERSEDED_BY_SQL},
+                     (SELECT r.run_id FROM cortex_runs r
+                       WHERE r.analysis_id = p.analysis_id AND r.plan_id = p.plan_id
+                       ORDER BY r.started_at DESC, r.run_id DESC LIMIT 1) AS newest_run_id
+                FROM cortex_plans p
+               WHERE p.analysis_id = $1
+               ORDER BY p.created_at DESC, p.plan_id DESC
+               LIMIT $2 OFFSET $3`,
+            values: [analysisId, opts.limit, opts.offset],
+        });
+        return {
+            entries: rowsResult.rows.map((raw) => {
+                const row = PlanPageRowSchema.parse(raw);
+                return {
+                    planId: row.plan_id,
+                    createdAt: row.created_at,
+                    title: row.title,
+                    parentPlanId: row.parent_plan_id,
+                    supersededBy: row.superseded_by,
+                    newestRunId: row.newest_run_id,
+                };
+            }),
+            total: countResult.rows[0]?.total ?? 0,
+        };
     });
 }

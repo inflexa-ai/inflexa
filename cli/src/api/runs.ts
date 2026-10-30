@@ -148,6 +148,25 @@ export type PlanApprovalConflict =
     | { reason: "references_missing"; missing: string[]; unavailable?: string }
     | { reason: "not_authorized" | "suspended" };
 
+/** One plan of `GET {A}/plans`: its identity, its title, and its references. Timestamps are ISO 8601. */
+export type PlanSummary = {
+    /** The id of the plan. */
+    planId: string;
+    /** When the plan was made. */
+    createdAt: string;
+    /** The title of the plan with the spaces at its start and end removed, or `null` when the plan has no title. */
+    title: string | null;
+    /** The plan that this plan revised, or `null` for a first plan. */
+    parentPlanId: string | null;
+    /** The newest plan of the analysis that revised this plan, or `null`. */
+    supersededBy: string | null;
+    /** The id of the newest run of the plan, or `null` when the plan has no run. */
+    newestRunId: string | null;
+};
+
+/** The body of `GET {A}/plans`: one page of the plans of an analysis, newest first. */
+export type PlanList = ListEnvelope<"plans", PlanSummary>;
+
 /** The body of `GET {A}/plans/:planId`: a plan with its lineage and the ids of its runs. */
 export type PlanView = {
     /** The `data-plan` part of the stored plan, or `null` when the plan document gives no part. */

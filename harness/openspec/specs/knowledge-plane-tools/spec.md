@@ -1,7 +1,7 @@
 # knowledge-plane-tools Specification
 
 ## Purpose
-TBD - created by archiving change add-knowledge-plane-tools. Update Purpose after archive.
+The tools that ground a plan on the knowledge service: the optional knowledge client, the recommend and check tools of the planner, and the template tool of a step. The client is an interface that an embedder binds at its composition root, or does not bind. A plan pins one release of the service. A local slot never leaves the machine, and a decision record follows each rendered script.
 
 ## Requirements
 

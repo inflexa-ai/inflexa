@@ -423,7 +423,7 @@ The routes MUST be under `/api/v1`, in these groups:
 - the attention read (`/api/v1/attention`): the work that waits for the person, over each analysis
 - one analysis `{A}` (`/api/v1/analyses/:analysisId`): the analysis itself, its output folder, and its inputs
 - the conversation of `{A}`: the threads, the chat, the turns, the asks, and the access of a report-session page
-- the runs of `{A}`: the runs, one run, its stream, its synthesis, its cancel, its seen mark, one plan, and its approval
+- the runs of `{A}`: the runs, one run, its stream, its synthesis, its cancel, its seen mark, the plans, one plan, and its approval
 - the profile of `{A}`: the chat context, the data profile, the sandbox readiness, and the farm heal and link
 - the records of `{A}`: the usage, the provenance, and the artifacts
 - the package store: the state, the transfers, and the failed flights (retry and delete)
@@ -2347,6 +2347,8 @@ The query value `extension` MUST be a list of extensions with a comma between th
 
 The response MUST add `extensionCounts` to the list shape. It MUST give one entry `{ extension, count }` for each extension that a selected row has, in the order of the extension. It MUST give one last entry with `extension` `null` for the selected rows that have no extension. It MUST give no entry with a count of 0. The counts MUST sum to `total`, and they MUST NOT depend on the page.
 
+The query value `role` MUST select the rows with that role, `input` or `step_output`. An absent or empty `role` MUST select each row. A different value MUST give 400 `validation_error` with the field error under `role`, and the server MUST then send no ledger read. The filter applies to `total` and to `extensionCounts`, as each filter does. Each `step_output` row carries its run. Thus with `role=step_output` and no `runId`, `total` is equal to the sum of the `artifactCount` of the runs of the analysis.
+
 The `sort` query value MUST select the order. `path` orders by the path, and it is the default. `recent` orders by `createdAt`, newest first, and the path breaks a tie. An absent or empty `sort` MUST select the default. A different value MUST give 400 `validation_error` with the field error under `sort`.
 
 Each request MUST send one paged read of the harness ledger, with the limit and the offset of the page. The count of its statements MUST NOT depend on the page size. The route needs the harness runtime, thus it MUST answer 503 `unavailable` before the phase is `ready`. A failed ledger read MUST give 500 `internal_error`.
@@ -2379,6 +2381,19 @@ Each request MUST send one paged read of the harness ledger, with the limit and 
 
 - **WHEN** a client sends `GET /api/v1/analyses/a1/artifacts?sort=size`
 - **THEN** the server answers 400 `validation_error` with a field error under `sort`
+
+#### Scenario: The run outputs of an analysis
+
+- **GIVEN** analysis `a1` with one `input` row, two run outputs of run `r1`, and one run output of run `r2`
+- **WHEN** a client sends `GET /api/v1/analyses/a1/artifacts?role=step_output`
+- **THEN** the server sends one ledger read with the role `step_output`
+- **AND** it answers with the three run outputs, and `total` is 3
+
+#### Scenario: A bad role value
+
+- **WHEN** a client sends `GET /api/v1/analyses/a1/artifacts?role=output`
+- **THEN** the server answers 400 `validation_error` with a field error under `role`
+- **AND** the server sends no ledger read
 
 #### Scenario: One read for each page
 
@@ -2594,6 +2609,57 @@ A plan step with no ledger row MUST be in `plan.steps`, and it MUST NOT be in `s
 - **GIVEN** run `r1` of plan `p1`, and run `r2` with no plan
 - **WHEN** a client lists the runs of the analysis
 - **THEN** `r1` has `planId` `p1`, and `r2` has `planId` `null`
+
+### Requirement: The server lists the plans of an analysis
+
+`GET {A}/plans` MUST give one page of the plans of the analysis in the list shape, with the key `plans`. The items MUST be in the order of the creation time, newest first, and the plan id MUST break a tie, highest first. Thus the first item of page 0 is the latest plan of the analysis. Each item MUST carry these fields:
+
+- `planId`, the id of the plan
+- `createdAt`, the creation time of the plan, ISO 8601
+- `title`, the title of the plan with the spaces at the start and the end removed. It is `null` when the plan has no title or an empty title. This is the rule of the `planTitle` of a run summary.
+- `parentPlanId`, the plan that this plan revised, or `null` for a first plan
+- `supersededBy`, the newest plan of the analysis that revised this plan, or `null`. It is the `supersededBy` of `GET {A}/plans/:planId`.
+- `newestRunId`, the id of the newest run of the plan, or `null` for a plan with no run. It is the first id of the `runIds` of `GET {A}/plans/:planId`.
+
+`total` MUST count each plan of the analysis. The list MUST give each plan of the analysis, also a plan whose document gives no `data-plan` part. The list has no filter by thread. A plan of a different analysis MUST NOT be an item.
+
+Each request MUST send one paged read of the harness plan store, with the limit and the offset of the page. The count of its statements MUST NOT depend on the page size. The route needs the harness runtime, thus it MUST answer 503 `unavailable` before the phase is `ready`. A failed read MUST give 500 `internal_error`.
+
+#### Scenario: The latest plan in one request
+
+- **GIVEN** plan `pln-0000000a` of analysis `a1`, and plan `pln-0000000b` that revised it later
+- **WHEN** a client sends `GET /api/v1/analyses/a1/plans?perPage=1`
+- **THEN** the one item is `pln-0000000b`, with `parentPlanId` `pln-0000000a` and `supersededBy` `null`
+- **AND** `total` is 2, and `hasMore` is `true`
+
+#### Scenario: An older plan carries its superseded mark
+
+- **GIVEN** the plans of the scenario above
+- **WHEN** a client sends `GET /api/v1/analyses/a1/plans?page=1&perPage=1`
+- **THEN** the one item is `pln-0000000a`, with `supersededBy` `pln-0000000b`
+- **AND** `hasMore` is `false`
+
+#### Scenario: The newest run of each plan
+
+- **GIVEN** plan `p1` with runs `r1` and `r2`, where `r2` started later, and plan `p2` with no run
+- **WHEN** a client lists the plans of the analysis
+- **THEN** `p1` has `newestRunId` `r2`, and `p2` has `newestRunId` `null`
+
+#### Scenario: The title of a plan
+
+- **GIVEN** a plan with the stored title `  Liver DE  `, and a plan with no title
+- **WHEN** a client lists the plans of the analysis
+- **THEN** the first plan has the title `Liver DE`, and the second plan has the title `null`
+
+#### Scenario: One read for each page
+
+- **WHEN** a client sends `GET /api/v1/analyses/a1/plans?page=2&perPage=50`
+- **THEN** the server sends one read of the plan store with the limit 50 and the offset 100
+
+#### Scenario: The list before the runtime is ready
+
+- **WHEN** a client sends `GET /api/v1/analyses/a1/plans` before the phase is `ready`
+- **THEN** the server answers 503 `unavailable`, and it sends no read
 
 ### Requirement: The server gives one plan with its lineage and its runs
 
