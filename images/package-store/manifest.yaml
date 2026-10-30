@@ -354,8 +354,9 @@ r:
         # PK/PD simulation
         - InsightRX/PKPDsim
 
-        # Mendelian randomization
-        - MRCIEU/TwoSampleMR
+        # Mendelian randomization. Pinned to v0.7.10: v0.7.11 and later need
+        # ieugwasr >= 1.2.0, and the P3M snapshot of the base image holds 1.1.0.
+        - MRCIEU/TwoSampleMR@v0.7.10
 
         # Spatial deconvolution
         - dmcable/spacexr
