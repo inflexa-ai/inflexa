@@ -11,7 +11,8 @@ import type { Pool } from "pg";
 import { countingQuerier } from "../../__tests__/setup/counting-querier.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { upsertAnalysis } from "../analyses.js";
-import { loadPlan, loadPlanRecord, upsertPlan } from "../plans.js";
+import type { Querier } from "../db.js";
+import { loadPlan, loadPlanRecord, queryPlanPage, upsertPlan } from "../plans.js";
 
 async function countPlans(pool: Pool, planId: string): Promise<number> {
     const r = await pool.query<{ n: number }>({
@@ -174,6 +175,171 @@ describe("loadPlanRecord", () => {
         const absent = countingQuerier(pool);
         (await loadPlanRecord(absent.querier, "pln-ffffffff", { analysisId: "a1" }))._unsafeUnwrap();
         expect(absent.calls()).toBe(1);
+    });
+});
+
+async function seedRun(pool: Pool, row: { runId: string; analysisId: string; planId: string | null; startedAt: string }): Promise<void> {
+    await pool.query({
+        text: `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at, plan_id)
+               VALUES ($1, $2, 'executeAnalysis', 'completed', $3, $4)`,
+        values: [row.runId, row.analysisId, row.startedAt, row.planId],
+    });
+}
+
+describe("queryPlanPage", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("plans_page"));
+        for (const analysisId of ["pg-order", "pg-tie", "pg-runs", "pg-title", "pg-pages", "pg-iso-1", "pg-iso-2", "pg-stmt", "pg-empty", "pg-bad"]) {
+            (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();
+        }
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("gives the newest plan first, with the lineage of each plan", async () => {
+        await seedPlan(pool, { planId: "pln-0000000a", analysisId: "pg-order", createdAt: "2026-10-01T00:00:00.000Z" });
+        await seedPlan(pool, { planId: "pln-0000000b", analysisId: "pg-order", parentPlanId: "pln-0000000a", createdAt: "2026-10-02T00:00:00.000Z" });
+
+        const page = (await queryPlanPage(pool, "pg-order", { limit: 10, offset: 0 }))._unsafeUnwrap();
+
+        expect(page.total).toBe(2);
+        expect(page.entries).toEqual([
+            {
+                planId: "pln-0000000b",
+                createdAt: "2026-10-02T00:00:00.000Z",
+                title: null,
+                parentPlanId: "pln-0000000a",
+                supersededBy: null,
+                newestRunId: null,
+            },
+            {
+                planId: "pln-0000000a",
+                createdAt: "2026-10-01T00:00:00.000Z",
+                title: null,
+                parentPlanId: null,
+                supersededBy: "pln-0000000b",
+                newestRunId: null,
+            },
+        ]);
+    });
+
+    it("orders equal creation times by the highest plan id first", async () => {
+        const at = "2026-10-01T00:00:00.000Z";
+        await seedPlan(pool, { planId: "pln-00000901", analysisId: "pg-tie", createdAt: at });
+        await seedPlan(pool, { planId: "pln-00000902", analysisId: "pg-tie", createdAt: at });
+
+        const page = (await queryPlanPage(pool, "pg-tie", { limit: 10, offset: 0 }))._unsafeUnwrap();
+
+        expect(page.entries.map((e) => e.planId)).toEqual(["pln-00000902", "pln-00000901"]);
+    });
+
+    it("gives the newest run of each plan, null for a plan with no run, and ignores the runs of a different analysis", async () => {
+        await seedPlan(pool, { planId: "pln-00000a01", analysisId: "pg-runs", createdAt: "2026-10-02T00:00:00.000Z" });
+        await seedPlan(pool, { planId: "pln-00000a02", analysisId: "pg-runs", createdAt: "2026-10-01T00:00:00.000Z" });
+        await seedRun(pool, { runId: "pg-r1", analysisId: "pg-runs", planId: "pln-00000a01", startedAt: "2026-10-03T00:00:00.000Z" });
+        await seedRun(pool, { runId: "pg-r2", analysisId: "pg-runs", planId: "pln-00000a01", startedAt: "2026-10-04T00:00:00.000Z" });
+        await seedRun(pool, { runId: "pg-r3", analysisId: "pg-order", planId: "pln-00000a02", startedAt: "2026-10-05T00:00:00.000Z" });
+
+        const page = (await queryPlanPage(pool, "pg-runs", { limit: 10, offset: 0 }))._unsafeUnwrap();
+
+        expect(page.entries.map((e) => [e.planId, e.newestRunId])).toEqual([
+            ["pln-00000a01", "pg-r2"],
+            ["pln-00000a02", null],
+        ]);
+    });
+
+    it("gives the string title of the document, and null for a missing or a non-string title", async () => {
+        await seedPlan(pool, { planId: "pln-00000b01", analysisId: "pg-title", createdAt: "2026-10-04T00:00:00.000Z", plan: { title: "Liver DE", steps: [] } });
+        await seedPlan(pool, { planId: "pln-00000b02", analysisId: "pg-title", createdAt: "2026-10-03T00:00:00.000Z", plan: { steps: [] } });
+        await seedPlan(pool, { planId: "pln-00000b03", analysisId: "pg-title", createdAt: "2026-10-02T00:00:00.000Z", plan: { title: 7 } });
+        await seedPlan(pool, { planId: "pln-00000b04", analysisId: "pg-title", createdAt: "2026-10-01T00:00:00.000Z", plan: "not a document" });
+
+        const page = (await queryPlanPage(pool, "pg-title", { limit: 10, offset: 0 }))._unsafeUnwrap();
+
+        expect(page.entries.map((e) => [e.planId, e.title])).toEqual([
+            ["pln-00000b01", "Liver DE"],
+            ["pln-00000b02", null],
+            ["pln-00000b03", null],
+            ["pln-00000b04", null],
+        ]);
+    });
+
+    it("gives disjoint pages, and an empty page past the end with the total", async () => {
+        for (const [planId, day] of [
+            ["pln-00000c01", "01"],
+            ["pln-00000c02", "02"],
+            ["pln-00000c03", "03"],
+        ] as const) {
+            await seedPlan(pool, { planId, analysisId: "pg-pages", createdAt: `2026-10-${day}T00:00:00.000Z` });
+        }
+
+        const first = (await queryPlanPage(pool, "pg-pages", { limit: 2, offset: 0 }))._unsafeUnwrap();
+        const second = (await queryPlanPage(pool, "pg-pages", { limit: 2, offset: 2 }))._unsafeUnwrap();
+        const past = (await queryPlanPage(pool, "pg-pages", { limit: 2, offset: 4 }))._unsafeUnwrap();
+
+        expect(first.entries.map((e) => e.planId)).toEqual(["pln-00000c03", "pln-00000c02"]);
+        expect(second.entries.map((e) => e.planId)).toEqual(["pln-00000c01"]);
+        expect(past.entries).toEqual([]);
+        expect([first.total, second.total, past.total]).toEqual([3, 3, 3]);
+    });
+
+    it("leaves the plans of a different analysis out of the entries, the total, and supersededBy", async () => {
+        await seedPlan(pool, { planId: "pln-00000d01", analysisId: "pg-iso-1", createdAt: "2026-10-01T00:00:00.000Z" });
+        await seedPlan(pool, { planId: "pln-00000d02", analysisId: "pg-iso-2", parentPlanId: "pln-00000d01", createdAt: "2026-10-02T00:00:00.000Z" });
+
+        const page = (await queryPlanPage(pool, "pg-iso-1", { limit: 10, offset: 0 }))._unsafeUnwrap();
+
+        expect(page.total).toBe(1);
+        expect(page.entries).toMatchObject([{ planId: "pln-00000d01", supersededBy: null }]);
+    });
+
+    it("gives an empty page for an analysis with no plan", async () => {
+        const page = (await queryPlanPage(pool, "pg-empty", { limit: 10, offset: 0 }))._unsafeUnwrap();
+
+        expect(page).toEqual({ entries: [], total: 0 });
+    });
+
+    it("gives the same supersededBy as loadPlanRecord", async () => {
+        await seedPlan(pool, { planId: "pln-00000e00", analysisId: "pg-bad", createdAt: "2026-10-01T00:00:00.000Z" });
+        const at = "2026-10-02T00:00:00.000Z";
+        await seedPlan(pool, { planId: "pln-00000e01", analysisId: "pg-bad", parentPlanId: "pln-00000e00", createdAt: at });
+        await seedPlan(pool, { planId: "pln-00000e02", analysisId: "pg-bad", parentPlanId: "pln-00000e00", createdAt: at });
+
+        const page = (await queryPlanPage(pool, "pg-bad", { limit: 10, offset: 0 }))._unsafeUnwrap();
+        const record = (await loadPlanRecord(pool, "pln-00000e00", { analysisId: "pg-bad" }))._unsafeUnwrap();
+
+        expect(page.entries.find((e) => e.planId === "pln-00000e00")?.supersededBy).toBe("pln-00000e02");
+        expect(record?.supersededBy).toBe("pln-00000e02");
+    });
+
+    it("sends two statements whatever the limit", async () => {
+        for (let i = 0; i < 5; i += 1) {
+            await seedPlan(pool, { planId: `pln-00000f0${i}`, analysisId: "pg-stmt", createdAt: `2026-10-0${i + 1}T00:00:00.000Z` });
+        }
+        const small = countingQuerier(pool);
+        const large = countingQuerier(pool);
+
+        (await queryPlanPage(small.querier, "pg-stmt", { limit: 1, offset: 0 }))._unsafeUnwrap();
+        (await queryPlanPage(large.querier, "pg-stmt", { limit: 200, offset: 0 }))._unsafeUnwrap();
+
+        expect(small.calls()).toBe(2);
+        expect(large.calls()).toBe(2);
+    });
+
+    it("rides the error channel with the op on a driver failure", async () => {
+        const rejecting: Querier = { query: () => Promise.reject(new Error("connection lost")) };
+
+        const error = (await queryPlanPage(rejecting, "a1", { limit: 10, offset: 0 })).match(
+            () => null,
+            (failure) => failure,
+        );
+
+        expect(error).toMatchObject({ type: "query_failed", op: "plans.queryPlanPage" });
     });
 });
 

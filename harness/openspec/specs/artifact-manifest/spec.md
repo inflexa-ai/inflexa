@@ -519,6 +519,7 @@ The filters MUST combine with AND. A filter that is absent MUST select each row:
 - `fileType` selects the rows whose `file_type` is equal to the value.
 - `q` selects the rows whose path holds the value, with no regard to case. Each character of `q` MUST match only itself, thus `%` and `_` are not wildcards.
 - `path` selects the row whose path is equal to the value. Case is significant.
+- `role` is `input` or `step_output`. It selects the rows whose `role` is equal to the value.
 - `extensions` is a list of extensions in lower case. It selects the rows whose path has an extension that is in the list. A row with no extension never matches. An empty list MUST select each row.
 
 `extensionCounts` MUST give one entry `{ extension, count }` for each extension that a selected row has. It MUST give one entry with `extension` `null` for the selected rows that have no extension. It MUST give no entry with a count of 0. The entries MUST be in the order of the extension, and the `null` entry MUST come last. The sum of the counts MUST be equal to `total`. The entries do not depend on the sort, the limit, or the offset.
@@ -588,6 +589,20 @@ The read MUST send at most two statements, whatever the filters, the limit, and 
 - **GIVEN** analysis `a1` with `runs/r1/s1/figures/a.png` and `runs/r1/s1/output/c.csv`
 - **WHEN** the read runs with `extensions` `png`
 - **THEN** `extensionCounts` is `png` with 1 only
+
+#### Scenario: The run outputs of an analysis
+
+- **GIVEN** analysis `a1` with the `input` row `data/inputs/f1/counts.csv`, two `step_output` rows of run `r1`, and one `step_output` row of run `r2`
+- **WHEN** the read runs for `a1` with `role` `step_output` and no `runId`
+- **THEN** it gives the three run outputs, and `total` is 3
+- **AND** `extensionCounts` counts only the three run outputs
+- **AND** `total` is equal to the sum of the counts that the grouped run count gives for `r1` and `r2`
+
+#### Scenario: The input rows of an analysis
+
+- **GIVEN** the rows of the scenario above
+- **WHEN** the read runs for `a1` with `role` `input`
+- **THEN** it gives only `data/inputs/f1/counts.csv`, and `total` is 1
 
 #### Scenario: The statement count does not grow with the page
 

@@ -776,8 +776,8 @@ export type { ValidationResult } from "./schemas/validate-plan.js";
 // Plan + run + step ledgers around a trigger. `upsertPlan` takes a
 // caller-derived id and inserts-if-absent (the deterministic-id intake path);
 // the run-state calls mirror the chat trigger's reserve → dedup → status flow.
-export { upsertPlan, loadPlan, loadPlanRecord } from "./state/plans.js";
-export type { UpsertPlanInput, PlanRecord } from "./state/plans.js";
+export { upsertPlan, loadPlan, loadPlanRecord, queryPlanPage } from "./state/plans.js";
+export type { UpsertPlanInput, PlanRecord, PlanPage, PlanPageEntry } from "./state/plans.js";
 export {
     insertRun,
     reserveRunById,
