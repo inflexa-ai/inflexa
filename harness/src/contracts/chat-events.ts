@@ -75,6 +75,16 @@ export type ToolCallOutcome = ToolOutcome | "incomplete";
 export type ToolCallDetail = string;
 
 /**
+ * The shown text of one value of a tool call: its input, its result, or its error. The harness removes the control
+ * characters and each secret from the text, and it cuts a text over its cap. `cut` is true when the cap cut the text.
+ * A host shows `text` and reads no structure from it, because a cut text is not valid JSON.
+ */
+export type ToolCallValue = {
+    text: string;
+    cut: boolean;
+};
+
+/**
  * A sub-agent loop started a request to its model. Only a sub-agent gives this frame, thus a consumer that
  * keeps the root frames only (`isRootFrame`) never sees it. A host reads it as "the sub-agent thinks".
  */
@@ -92,6 +102,8 @@ export type ToolStartedEvent = {
     name: string;
     /** See {@link ToolCallDetail}. Absent — never empty — when none was produced. */
     detail?: ToolCallDetail;
+    /** See {@link ToolCallValue}. The input of the call. */
+    input?: ToolCallValue;
     source: EventSource;
 };
 
@@ -118,6 +130,12 @@ export type ToolFinishedEvent = {
      * it dispatches anything. Thus the fallback is correct only for one call.
      */
     durationMs?: number;
+    /** See {@link ToolCallValue}. The input again, because a replay of a tool step does not give its `tool-started`. */
+    input?: ToolCallValue;
+    /** The value of a call with the outcome `ok`. */
+    result?: ToolCallValue;
+    /** The error text of a call with the outcome `error`. */
+    error?: ToolCallValue;
     source: EventSource;
 };
 

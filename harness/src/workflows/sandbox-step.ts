@@ -47,6 +47,7 @@ import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { maskExcept } from "../loop/call-policy.js";
 import { runLoop, withRunScript, type LoopStep } from "../loop/run-loop.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
+import { withoutToolValues } from "../loop/tool-value.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import {
     activityEmission,
@@ -602,7 +603,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         }
         // Forward the raw orchestration / model-delta event under the loop-event
         // envelope, and surface each tool call as live step activity.
-        await safeEmit({ type: "data-loop-event" as const, data: { stepId: input.stepId, event } });
+        await safeEmit({ type: "data-loop-event" as const, data: { stepId: input.stepId, event: withoutToolValues(event) } });
         if (event.type === "tool-started") {
             await emitActivity("executing", activityForTool(event.name, event.input, resolveDetail), event.toolUseId);
         }

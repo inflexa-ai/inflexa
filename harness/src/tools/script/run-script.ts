@@ -243,9 +243,9 @@ async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, l
     const invocationId = state.nextInvocationId();
     const detail = computeDetail(tool, args, log);
     const started = performance.now();
-    const startFrame = { type: "tool-started", source: state.source, toolUseId: invocationId, name: tool.id, input: args, detail } as const;
+    const startFrame = { type: "tool-started", source: state.source, toolUseId: invocationId, name: tool.id, detail } as const;
     state.observe(startFrame);
-    await ctx.emit(startFrame);
+    await ctx.emit({ ...startFrame, input: args });
     const finish = async (outcome: "ok" | "error", finishedDetail: string | undefined): Promise<void> => {
         state.calls.push({ tool: tool.id, ok: outcome === "ok" });
         const endFrame = {

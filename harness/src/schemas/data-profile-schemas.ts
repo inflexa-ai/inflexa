@@ -366,6 +366,15 @@ export type ProbeReport = z.infer<typeof ProbeReportSchema>;
 
 // ── The submission ─────────────────────────────────────────────────────────
 
+const ShapeSchema = z
+    .object({
+        rows: z.number().int().positive().describe("The count of rows of the primary matrix, measured in the sandbox."),
+        rowUnit: z.string().trim().min(1).describe("What one row represents, for example genes."),
+        columns: z.number().int().positive().describe("The count of columns of the primary matrix, measured in the sandbox."),
+        columnUnit: z.string().trim().min(1).describe("What one column represents, for example samples."),
+    })
+    .strict();
+
 export const ProfileSubmissionSchema = z
     .object({
         operations: z
@@ -400,6 +409,10 @@ export const ProfileSubmissionSchema = z
                     "GEO (GSE/GSM), SRA (SRP/SRR/SRX), BioProject (PRJNA/PRJEB/PRJDB), ArrayExpress (E-MTAB-xxxx), dbGaP (phs), EGA (EGAS/EGAD).",
             ),
         experimentalDesign: z.string().optional().describe("Conditions, groups, comparisons, replicates, pairing — the design as far as it is observable."),
+        shape: ShapeSchema.optional().describe(
+            "The dimensions of the primary matrix of the full dataset, measured in the sandbox. " +
+                "Leave it out when the dataset holds no such matrix, when none is clearly primary, or when you cannot measure it. Never estimate.",
+        ),
         caveats: z
             .array(z.string())
             .max(MAX_CAVEATS)

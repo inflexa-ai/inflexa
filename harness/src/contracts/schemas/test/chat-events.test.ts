@@ -72,6 +72,26 @@ describe("ToolFinishedEventSchema", () => {
         expect("durationMs" in ToolFinishedEventSchema.parse(event)).toBe(false);
     });
 
+    it("carries the three values of a call, and omits the keys when they are absent", () => {
+        // `z.object` strips an undeclared key, thus the round-trip pins each declaration.
+        const event: ToolFinished = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", outcome: "ok", source };
+        const value = { text: "{}", cut: true };
+
+        expect(ToolFinishedEventSchema.parse({ ...event, input: value, result: value, error: value })).toMatchObject({
+            input: value,
+            result: value,
+            error: value,
+        });
+        const bare = ToolFinishedEventSchema.parse(event);
+        expect(["input", "result", "error"].some((key) => key in bare)).toBe(false);
+    });
+
+    it("rejects a value with no cut flag", () => {
+        const event = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", outcome: "ok", result: { text: "{}" }, source };
+
+        expect(ToolFinishedEventSchema.safeParse(event).success).toBe(false);
+    });
+
     it("rejects a non-numeric duration", () => {
         const event = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", outcome: "ok", durationMs: "42", source };
 

@@ -809,6 +809,20 @@ describe("sandbox-step blocker", () => {
         expect(blockedParts().map((part) => part.reason)).toEqual([REASON]);
     });
 
+    it("forwards the tool events of the loop to the run stream with none of the three shown values", async () => {
+        const { provider } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: REASON }))]);
+
+        await runSandboxStepBody(usageStepInput(), blockerDeps(provider));
+
+        const events = dbosState.emittedParts
+            .filter((part) => part.type === "data-loop-event")
+            .flatMap((part) => parseUnknownRecord(parseUnknownRecord(part.data)?.event) ?? []);
+        expect(events).toContainEqual(expect.objectContaining({ type: "tool-finished", toolUseId: "b1", outcome: "ok" }));
+        for (const event of events) {
+            for (const key of ["inputValue", "resultValue", "errorValue"]) expect(event).not.toHaveProperty(key);
+        }
+    });
+
     it("refuses a placeholder reason with an error result, records no blocker, and the run continues", async () => {
         const { provider, calls } = scriptedModel([
             callTools(toolCall("b1", "report_blocker", { reason: "TODO: fill in the reason" })),

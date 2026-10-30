@@ -419,6 +419,7 @@ export type {
     ToolOutcome,
     ToolCallOutcome,
     ToolCallDetail,
+    ToolCallValue,
     FinishEvent,
     ChatErrorEvent,
     MessageStartEvent,
@@ -579,6 +580,7 @@ export type {
     DataProfileQuarantine,
     DataProfileRecipeStep,
     DataProfileResult,
+    DataProfileShape,
     DataProfileSubjectSource,
 } from "./contracts/data-profile.js";
 export type { DataProfileStatus } from "./state/data-profile.js";

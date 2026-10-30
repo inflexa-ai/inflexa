@@ -36,6 +36,10 @@ const USER_TEXT = "Compare the two groups.";
 const CLIENT_USER_ID = "client-user";
 const CLIENT_ASSISTANT_ID = "client-assistant";
 const USAGE: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+const READ_INPUT = { text: '{"path":"data/counts.csv"}', cut: false };
+const READ_RESULT = { text: '{"rows":61533}', cut: false };
+const GREP_INPUT = { text: '{"pattern":"TP53"}', cut: false };
+const GREP_ERROR = { text: "no match for TP53", cut: true };
 const ASK = { id: "ask-1", title: "Run the plan?", command: "inflexa run pln-0a1b2c3d" };
 
 const CLOCK_START = Date.parse("2026-10-12T10:00:00.000Z");
@@ -130,13 +134,23 @@ describe("the live path and the replay of one turn", () => {
             { type: "text-delta", text: "I read the counts " },
             { type: "text-delta", text: "and ask the reviewer." },
             { type: "iteration", source: ROOT, index: 0, final: false },
-            { type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {}, detail: "data/counts.csv" },
+            { type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {}, detail: "data/counts.csv", inputValue: READ_INPUT },
             { type: "tool-started", source: ROOT, toolUseId: "t2", name: "literature_review", input: {}, detail: "TP53 in colorectal cancer" },
             { type: "iteration", source: SUB, index: 0, final: false },
             { type: "tool-started", source: SUB, toolUseId: "s1", name: "search_pubmed", input: {}, detail: "TP53" },
             { type: "tool-finished", source: SUB, toolUseId: "s1", name: "search_pubmed", outcome: "ok", detail: "TP53", durationMs: 800 },
             { type: "data-presentation", source: SUB, data: { id: "sub-card", content: { kind: "markdown", body: "A note of the reviewer" } } },
-            { type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok", detail: "data/counts.csv", durationMs: 12 },
+            {
+                type: "tool-finished",
+                source: ROOT,
+                toolUseId: "t1",
+                name: "read_file",
+                outcome: "ok",
+                detail: "data/counts.csv",
+                durationMs: 12,
+                inputValue: READ_INPUT,
+                resultValue: READ_RESULT,
+            },
             {
                 type: "tool-finished",
                 source: ROOT,
@@ -151,10 +165,20 @@ describe("the live path and the replay of one turn", () => {
             { type: "text-delta", text: "Here is the plan." },
             { type: "iteration", source: ROOT, index: 1, final: false },
             { type: "tool-started", source: ROOT, toolUseId: "t3", name: "show_plan", input: {} },
-            { type: "tool-started", source: ROOT, toolUseId: "t4", name: "grep", input: {}, detail: "TP53" },
+            { type: "tool-started", source: ROOT, toolUseId: "t4", name: "grep", input: {}, detail: "TP53", inputValue: GREP_INPUT },
             { type: "data-plan", source: ROOT, data: { id: "plan-card", planId: "pln-0a1b2c3d", title: "Differential expression" } },
             { type: "tool-finished", source: ROOT, toolUseId: "t3", name: "show_plan", outcome: "ok" },
-            { type: "tool-finished", source: ROOT, toolUseId: "t4", name: "grep", outcome: "error", detail: "TP53", durationMs: 3 },
+            {
+                type: "tool-finished",
+                source: ROOT,
+                toolUseId: "t4",
+                name: "grep",
+                outcome: "error",
+                detail: "TP53",
+                durationMs: 3,
+                inputValue: GREP_INPUT,
+                errorValue: GREP_ERROR,
+            },
         ]),
         round([
             { type: "iteration", source: ROOT, index: 2, final: false },
@@ -180,7 +204,16 @@ describe("the live path and the replay of one turn", () => {
 
         expect(presentAt(shown, 1).parts).toEqual([
             { type: "text", text: "I read the counts and ask the reviewer." },
-            { type: "tool-call", toolCallId: "t1", toolName: "read_file", outcome: "ok", detail: "data/counts.csv", durationMs: 12 },
+            {
+                type: "tool-call",
+                toolCallId: "t1",
+                toolName: "read_file",
+                outcome: "ok",
+                detail: "data/counts.csv",
+                durationMs: 12,
+                input: READ_INPUT,
+                result: READ_RESULT,
+            },
             { type: "tool-call", toolCallId: "t2", toolName: "literature_review", outcome: "ok", detail: "TP53 in colorectal cancer", durationMs: 4200 },
             {
                 type: "data-subagent-activity",
@@ -202,7 +235,7 @@ describe("the live path and the replay of one turn", () => {
             },
             { type: "text", text: "Here is the plan." },
             { type: "tool-call", toolCallId: "t3", toolName: "show_plan", outcome: "ok" },
-            { type: "tool-call", toolCallId: "t4", toolName: "grep", outcome: "error", detail: "TP53", durationMs: 3 },
+            { type: "tool-call", toolCallId: "t4", toolName: "grep", outcome: "error", detail: "TP53", durationMs: 3, input: GREP_INPUT, error: GREP_ERROR },
             { type: "data-plan", id: "plan-card", planId: "pln-0a1b2c3d", title: "Differential expression" },
             { type: "tool-call", toolCallId: "t5", toolName: "execute_plan", outcome: "ok", detail: "pln-0a1b2c3d", durationMs: 95 },
             { type: "data-ask", ...ASK, status: "resolved" },

@@ -2514,6 +2514,14 @@ describe("synthesizeFindings run stream", () => {
             expect(part).not.toHaveProperty("data");
             expect(part).toMatchObject({ id: "synthesis-run-test", runId: "run-test", overview: synthesis.overview });
             expect(RunSynthesisPartSchema.safeParse(part).success).toBe(true);
+
+            const loopEvents = dbosState.emittedParts
+                .filter((p) => p.type === "data-loop-event")
+                .flatMap((p) => parseUnknownRecord(parseUnknownRecord(p.data)?.event) ?? []);
+            expect(loopEvents).toContainEqual(expect.objectContaining({ type: "tool-finished" }));
+            for (const event of loopEvents) {
+                for (const key of ["inputValue", "resultValue", "errorValue"]) expect(event).not.toHaveProperty(key);
+            }
         } finally {
             await rm(base, { recursive: true, force: true });
         }

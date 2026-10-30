@@ -7,6 +7,9 @@
  * results. `stripNulCharacters` is the exception — it applies to tool results.
  */
 
+import { isUnknownArray } from "./lib/unknown-array.js";
+import { parseUnknownRecord } from "./lib/unknown-containers.js";
+
 /**
  * C0/C1 control characters and DEL, excluding `\t` (U+0009) and `\n`
  * (U+000A) which are legitimate whitespace in user prose.
@@ -97,4 +100,65 @@ export function redactSecrets(text: string): string {
         out = out.replace(pattern, `[REDACTED: ${name}]`);
     }
     return out;
+}
+
+/**
+ * The words that end the name of a field that holds a secret. A name is compared with the case, `_`, and `-` removed.
+ * The name must END with the word, not hold it: `max_tokens`, `tokenizer`, and `tokenCount` hold no secret.
+ */
+const SECRET_NAME_WORDS: readonly string[] = [
+    "password",
+    "passwd",
+    "secret",
+    "secretkey",
+    "token",
+    "apikey",
+    "accesskey",
+    "privatekey",
+    "credential",
+    "credentials",
+    "authorization",
+];
+
+function isSecretName(name: string): boolean {
+    const folded = name.toLowerCase().replaceAll("_", "").replaceAll("-", "");
+    return SECRET_NAME_WORDS.some((word) => folded.endsWith(word));
+}
+
+const SECRET_FIELD_MARKER = "[REDACTED: Secret Field]";
+const SECRET_ASSIGNMENT_MARKER = "[REDACTED: Secret Assignment]";
+
+/**
+ * A copy of a JSON value in which the value of each object field with a secret name is the redaction marker. The
+ * walk goes to each depth, thus the `GITHUB_TOKEN` field of an `env` object is found. The rule belongs to the values
+ * of a tool call only. `redactSecrets` stays free of any name-based rule, because a user message holds prose and
+ * sequences that such a rule would mark.
+ */
+export function redactSecretFields(value: unknown): unknown {
+    if (isUnknownArray(value)) return value.map(redactSecretFields);
+    const record = parseUnknownRecord(value);
+    if (record === undefined) return value;
+    const out: Record<string, unknown> = {};
+    for (const [name, field] of Object.entries(record)) {
+        out[name] = isSecretName(name) && field !== null && field !== undefined ? SECRET_FIELD_MARKER : redactSecretFields(field);
+    }
+    return out;
+}
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the shell and environment form NAME=value, with a quoted value that ends at its closing quote (an escaped quote inside a double-quoted value does not end it) or a value up to the next separator. A value does not start with `=`, thus a comparison `token == x` stays whole.
+const ASSIGNMENT = /([A-Za-z0-9_.-]+)=(?!=)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'\\&;,]+)/g;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a quoted JSON field with a string value, `"name": "value"`. The value ends at its closing quote, and an escaped quote inside it does not end it.
+const QUOTED_FIELD = /"([^"\\\s]{1,80})"(\s*:\s*)"((?:[^"\\]|\\.)*)"/g;
+
+/**
+ * Replace the value of each `NAME=value` assignment and of each quoted `"name": "value"` field whose name ends with a
+ * secret word. A caller runs it on a plain text or on one string of a JSON value, never on serialized JSON, because a
+ * JSON escape hides the quotes that the rules read. It runs on the text of a tool call value only. See
+ * {@link redactSecretFields}.
+ */
+export function redactSecretAssignments(text: string): string {
+    return text
+        .replace(ASSIGNMENT, (whole, name: string) => (isSecretName(name) ? `${name}=${SECRET_ASSIGNMENT_MARKER}` : whole))
+        .replace(QUOTED_FIELD, (whole, name: string, colon: string) => (isSecretName(name) ? `"${name}"${colon}"${SECRET_FIELD_MARKER}"` : whole));
 }

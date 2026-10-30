@@ -397,6 +397,19 @@ export type DataProfileCoverage = {
 };
 
 /**
+ * The dimensions of the dataset's primary matrix, as the profiler measured them.
+ *
+ * It describes the matrix and not the form of the record: a matrix of 61,533 genes by 28
+ * samples is `{ rows: 61533, rowUnit: "genes", columns: 28, columnUnit: "samples" }`.
+ */
+export type DataProfileShape = {
+    rows: number;
+    rowUnit: string;
+    columns: number;
+    columnUnit: string;
+};
+
+/**
  * The profile snapshot stored in `cortex_analysis_state.data_profile_result`.
  *
  * It carries the profiler's full finding rather than a summary of it: this row is the
@@ -438,6 +451,8 @@ export type DataProfileResult = {
     axes?: DataProfileAxis[];
     /** The record of the profiled kept input set. */
     inputSignature?: DataProfileInputSignature;
+    /** The dimensions of the primary matrix of the full dataset. Absent when the profiler measured none. */
+    shape?: DataProfileShape;
     /** How much of the scanned tree the kinds describe, on a snapshot of the kinds era. Superseded by `partition`. */
     coverage?: DataProfileCoverage;
     /** ISO 8601 timestamp of profile completion. */

@@ -56,6 +56,7 @@ export type {
     IterationEvent,
     ToolStartedEvent,
     ToolFinishedEvent,
+    ToolCallValue,
     FinishEvent,
     ChatErrorEvent,
     MessageStartEvent,
@@ -86,6 +87,7 @@ export type {
     DataProfileQuarantine,
     DataProfileRecipeStep,
     DataProfileResult,
+    DataProfileShape,
     DataProfileSubjectSource,
 } from "./data-profile.js";
 export {

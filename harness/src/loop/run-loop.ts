@@ -74,6 +74,7 @@ import {
     type ToolCallOutput,
 } from "./tool-adapter.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "./tool-output.js";
+import { jsonToolValue, textToolValue } from "./tool-value.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage } from "./types.js";
 
 export type AgentFinish = {
@@ -871,8 +872,24 @@ async function runSeries(
             const refusal = calls.refusalOf({ toolName: toolCall.toolName, input: toolCall.input }, spec.mask);
             if (refusal !== undefined) {
                 // A refused call does not run, thus its two events come from here.
-                await opts.emit({ type: "tool-started", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, input: toolCall.input });
-                await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "error" });
+                const inputValue = jsonToolValue(toolCall.input);
+                await opts.emit({
+                    type: "tool-started",
+                    source,
+                    toolUseId: toolCall.toolCallId,
+                    name: toolCall.toolName,
+                    input: toolCall.input,
+                    inputValue,
+                });
+                await opts.emit({
+                    type: "tool-finished",
+                    source,
+                    toolUseId: toolCall.toolCallId,
+                    name: toolCall.toolName,
+                    outcome: "error",
+                    inputValue,
+                    errorValue: textToolValue(refusal),
+                });
                 return { type: "denied", reason: refusal };
             }
             let denial: string | undefined;
@@ -885,8 +902,23 @@ async function runSeries(
             }
             if (denial === undefined) return undefined;
             deniedByTheUser.set(toolCall.toolCallId, denial);
-            await opts.emit({ type: "tool-started", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, input: toolCall.input });
-            await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "denied" });
+            const inputValue = jsonToolValue(toolCall.input);
+            await opts.emit({
+                type: "tool-started",
+                source,
+                toolUseId: toolCall.toolCallId,
+                name: toolCall.toolName,
+                input: toolCall.input,
+                inputValue,
+            });
+            await opts.emit({
+                type: "tool-finished",
+                source,
+                toolUseId: toolCall.toolCallId,
+                name: toolCall.toolName,
+                outcome: "denied",
+                inputValue,
+            });
             return { type: "denied", reason: denial };
         },
         stopWhen: () => stops(),
