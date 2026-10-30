@@ -144,6 +144,13 @@ describe("redactSecretAssignments", () => {
         expect(redactSecretFields({ SECRET_KEY: "abcd1234" })).toEqual({ SECRET_KEY: "[REDACTED: Secret Field]" });
     });
 
+    it("replaces the rest of the text after a quote that does not close", () => {
+        expect(redactSecretAssignments('export API_KEY="abc')).toBe("export API_KEY=[REDACTED: Secret Assignment]");
+        expect(redactSecretAssignments("export API_KEY='abc\ndef")).toBe("export API_KEY=[REDACTED: Secret Assignment]");
+        expect(redactSecretAssignments('API_KEY="abc\\')).toBe("API_KEY=[REDACTED: Secret Assignment]");
+        expect(redactSecretAssignments('{"user": "ana", "password": "hunter2')).toBe('{"user": "ana", "password": "[REDACTED: Secret Field]"');
+    });
+
     it("replaces a double-quoted assignment value that holds spaces", () => {
         const out = redactSecretAssignments('API_KEY="abc 123" run');
         expect(out).not.toContain("abc 123");
