@@ -200,7 +200,7 @@ jobs:
           esac
           dir="$RUNNER_TEMP/oras"
           mkdir -p "$dir"
-          curl -fsSL -o "$dir/oras.tar.gz" \
+          curl -fsSL --retry 5 --retry-all-errors -o "$dir/oras.tar.gz" \
             "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${ARCH}.tar.gz"
           echo "${ORAS_SHA256}  $dir/oras.tar.gz" | sha256sum -c -
           tar -C "$dir" -xzf "$dir/oras.tar.gz" oras
@@ -668,10 +668,17 @@ jobs:
                 b=$(basename "$f")
                 if [ "$b" = "base.tar.zst" ]; then refs+=("$b:$MT_BASE"); else refs+=("$b:$MT_TRACK"); fi
               done
-              ( cd dist/oci && oras push "$REF" \
-                  --artifact-type "$ARTIFACT_TYPE" \
-                  --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-                  "${refs[@]}" )
+              # A push re-uploads only the blobs that the registry lacks, thus a
+              # retry after a dropped connection costs only the rest.
+              for attempt in 1 2 3; do
+                ( cd dist/oci && oras push "$REF" \
+                    --artifact-type "$ARTIFACT_TYPE" \
+                    --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+                    "${refs[@]}" ) && break
+                [ "$attempt" -lt 3 ] || exit 1
+                echo "::warning::oras push attempt $attempt failed; trying again"
+                sleep 15
+              done
               echo "::notice::pushed $REF (${#refs[@]} layers)."
               # A tag move only; it re-uploads no blob. Only the push path
               # moves it — a skip must not move it backward.

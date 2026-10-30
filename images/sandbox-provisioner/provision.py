@@ -119,6 +119,25 @@ PYTHON = "/usr/bin/python3"
 # network half of the same boundary; this is the resolver half.
 INDEX_URL = os.environ.get("INFLEXA_INDEX_URL", "https://pypi.org/simple")
 
+# Each download of a build can drop: an index, a CDN edge, a git host. A failed
+# command runs again up to this count, thus a transient costs one more attempt.
+DOWNLOAD_ATTEMPTS = 3
+
+
+def run_downloading(cmd: list[str], what: str, before_retry=None, **kwargs) -> subprocess.CompletedProcess:
+    """Run a command that downloads, again after a failure, up to DOWNLOAD_ATTEMPTS times.
+
+    `before_retry` clears what a failed attempt left, for example a half-written target.
+    """
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        proc = subprocess.run(cmd, **kwargs)
+        if proc.returncode == 0 or attempt == DOWNLOAD_ATTEMPTS:
+            return proc
+        log(f"{what} failed (attempt {attempt} of {DOWNLOAD_ATTEMPTS}); trying again")
+        if before_retry is not None:
+            before_retry()
+    raise AssertionError("unreachable")
+
 # Marker written inside each store directory: the exact pin it was installed
 # from, thus a name+version glob can be confirmed rather than trusted.
 PIN_MARKER = ".inflexa-pin"
@@ -309,10 +328,12 @@ def ensure_stored(pin: str, hashes: list[str]) -> tuple[Path, bool]:
     frag.write_text(pin + "".join(f" --hash={h}" for h in hashes) + "\n")
 
     log(f"installing {pin}")
-    proc = subprocess.run(
+    proc = run_downloading(
         ["uv", "pip", "install", "--python", PYTHON, "--no-deps", "--no-cache",
          "--require-hashes", "--index-url", INDEX_URL, "--no-config",
          "--break-system-packages", "--target", str(staging), "-r", str(frag)],
+        f"the install of {pin}",
+        before_retry=lambda: (shutil.rmtree(staging), staging.mkdir(parents=True)),
         capture_output=True, text=True,
     )
     if proc.returncode != 0:
@@ -1580,12 +1601,10 @@ def cmd_build(args) -> int:
                     f"'{stage_root}/r/cran', .libPaths())); "
                     f"pak::pkg_install('{repo}', lib='{github_lib}', upgrade=FALSE)"
                 )
-                if subprocess.run(["R", "-q", "-e", rexpr]).returncode != 0:
-                    # A pinned CDN edge can sour mid-run. The second attempt
-                    # reuses the pak cache, thus a transient heals cheaply.
-                    log(f"github install of {repo} failed; one more attempt")
-                    if subprocess.run(["R", "-q", "-e", rexpr]).returncode != 0:
-                        log(f"WARNING: github install of {repo} did not finish cleanly; keeping what installed")
+                # A pinned CDN edge can sour mid-run. A later attempt reuses the
+                # pak cache, thus a transient heals cheaply.
+                if run_downloading(["R", "-q", "-e", rexpr], f"the github install of {repo}").returncode != 0:
+                    log(f"WARNING: github install of {repo} did not finish cleanly; keeping what installed")
 
             stored, r_packages = stage_r_subtrees(stage_root, r_names)
             packages.extend(r_packages)
