@@ -1,4 +1,4 @@
-name: Release
+name: "Publish: cli"
 
 # Ships the inflexa binaries. The trigger is a version bump landing on main
 # (guarded by version-guard.yml): every push checks whether cli/package.json's

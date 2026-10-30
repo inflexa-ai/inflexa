@@ -17,7 +17,7 @@ name: Package Store Acceptance
 # it promotes nothing and rolls nothing back.
 #
 # TWO ways in:
-#   * workflow_run — the automatic path, after a *successful* "Build Sandbox Images".
+#   * workflow_run — the automatic path, after a *successful* "Build: sandbox images".
 #     It reads the candidate artifact that build uploaded (the exact per-arch image
 #     version) and mounts the current `latest-<arch>` store artifact.
 #   * workflow_dispatch — the manual path. Give it an image `version` and a
@@ -28,7 +28,7 @@ name: Package Store Acceptance
 
 on:
   workflow_run:
-    workflows: ["Build Sandbox Images"]
+    workflows: ["Build: sandbox images"]
     types: [completed]
   workflow_dispatch:
     inputs:

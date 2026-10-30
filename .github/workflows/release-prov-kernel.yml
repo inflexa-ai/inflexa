@@ -1,4 +1,4 @@
-name: Release Prov Kernel
+name: "Publish: prov-kernel"
 
 # Publishes @inflexa-ai/prov-kernel to the public npm registry. The trigger is a
 # version bump landing on main (guarded by version-guard.yml): every push
