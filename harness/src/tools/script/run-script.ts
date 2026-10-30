@@ -350,6 +350,7 @@ function descriptionOf(tools: readonly Tool[]): string {
         "Run a JavaScript script that calls the tools below as functions, in a JavaScript VM on the host with no files and no network. " +
         "Use it for lookups and for light work on tables: call several tools in parallel with Promise.all, filter, join, and count their results, and print only what you need. " +
         "Only the printed output and the returned value come back to you.\n" +
+        "Each file that the script writes is already shown to the user in one card with the script.\n" +
         "API: `await tools.<name>(args)` returns the JSON result of the tool and throws an Error on a failed call. " +
         '`await describe("<name>")` returns the full description of a tool, with the meaning of each argument. ' +
         "`text(value)` and `console.log` print. `return` gives a value. There are no timers, no fetch, and no modules.\n" +
