@@ -848,7 +848,8 @@ class CommittedLockTests(StoreTestCase):
         return {"schema": 1,
                 "entries": {"alpha": "", "beta": ">=2"},
                 "roots": {"alpha": "alpha==1.0", "beta": "beta==2.5"},
-                "pins": {"alpha==1.0": ["sha256:a"], "beta==2.5": ["sha256:b"]}}
+                "pins": {"alpha==1.0": ["sha256:a"], "beta==2.5": ["sha256:b"],
+                         "dep==0.9": ["sha256:z"]}}
 
     def test_an_unchanged_entry_rides_as_a_constraint(self):
         captured: list[tuple[list[str], str | None]] = []
@@ -865,9 +866,11 @@ class CommittedLockTests(StoreTestCase):
         self.assertEqual(list(pins), ["alpha==1.0", "beta==2.5"])
         specs, constraints = captured[0]
         self.assertEqual(specs, ["alpha", "beta>=2"])
-        # Both constraints match the committed record, thus both root pins ride.
+        # Both constraints match the committed record, thus the whole locked
+        # closure rides: both root pins and the pin of their dependency.
         self.assertIn("alpha==1.0", constraints)
         self.assertIn("beta==2.5", constraints)
+        self.assertIn("dep==0.9", constraints)
 
     def test_a_changed_entry_resolves_fresh(self):
         changed = [{"name": "alpha", "constraint": "", "warm": None},
@@ -882,9 +885,27 @@ class CommittedLockTests(StoreTestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             provision.resolve_manifest_python(changed, self._committed())
 
-        # The changed beta rides free; the unchanged alpha keeps its pin.
+        # The changed beta rides free; the unchanged alpha and the dependency keep their pins.
         self.assertIn("alpha==1.0", captured[0])
+        self.assertIn("dep==0.9", captured[0])
         self.assertNotIn("beta==2.5", captured[0])
+
+    def test_a_conflicting_closure_falls_back_to_the_root_pins(self):
+        calls: list[str] = []
+
+        def spy(specs, constraints=None):
+            text = Path(constraints).read_text() if constraints else ""
+            calls.append("closure" if "dep==0.9" in text else "roots" if text else "fresh")
+            if "dep==0.9" in text:
+                raise provision.ResolveError("the dependency pin conflicts")
+            return {"alpha==1.0": ["sha256:a"], "beta==2.5": ["sha256:b"], "dep==1.0": ["sha256:y"]}
+
+        with unittest.mock.patch.object(provision, "resolve", spy), \
+                contextlib.redirect_stdout(io.StringIO()):
+            pins = provision.resolve_manifest_python(self.ENTRIES, self._committed())
+
+        self.assertEqual(calls, ["closure", "roots"])
+        self.assertEqual(list(pins), ["alpha==1.0", "beta==2.5", "dep==1.0"])
 
     def test_a_conflicting_lock_falls_back_to_a_fresh_resolve(self):
         calls: list[str | None] = []
@@ -899,7 +920,7 @@ class CommittedLockTests(StoreTestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             pins = provision.resolve_manifest_python(self.ENTRIES, self._committed())
 
-        self.assertEqual(calls, ["constrained", "fresh"])
+        self.assertEqual(calls, ["constrained", "constrained", "fresh"])
         self.assertEqual(list(pins), ["alpha==1.1", "beta==2.6"])
 
     def test_committed_lock_of_records_the_roots_and_the_pins(self):
