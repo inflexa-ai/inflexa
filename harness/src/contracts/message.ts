@@ -45,7 +45,9 @@ export type ToolCallPart = {
     durationMs?: number;
     /** See {@link ToolCallValue}. Absent when the call gave none, and in a row stored before the values. */
     input?: ToolCallValue;
+    /** The shown result of a call with the outcome `ok`. Absent for each other outcome, and in a row stored before the values. */
     result?: ToolCallValue;
+    /** The shown error of a call with the outcome `error`. Absent for each other outcome, and in a row stored before the values. */
     error?: ToolCallValue;
 };
 
