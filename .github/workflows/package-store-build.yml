@@ -1,4 +1,4 @@
-name: Build the package store
+name: "Build: package store"
 
 # Builds the content-addressed package store with the provisioner container
 # (images/sandbox-provisioner) and publishes it to GHCR as an OCI artifact,

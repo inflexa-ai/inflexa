@@ -1,4 +1,4 @@
-name: Release npm
+name: "Publish: npm"
 
 # Publishes the @inflexa-ai/inflexa wrapper and its four platform binary
 # packages for a released version. release.yml dispatches this after creating
