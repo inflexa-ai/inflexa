@@ -36,9 +36,9 @@ beforeEach(() => {
     writeFileSync(join(outsideDir, "matrix.mtx"), "x");
     // The rows of `GET {A}/inputs`: two inputs under the anchor (stored relative), one outside it.
     inputs = [
-        { path: "counts.tsv", isDir: false, anchorId: analysis.anchorId, absolutePath: join(anchorDir, "counts.tsv") },
-        { path: "data", isDir: true, anchorId: analysis.anchorId, absolutePath: join(anchorDir, "data") },
-        { path: join(outsideDir, "matrix.mtx"), isDir: false, anchorId: null, absolutePath: join(outsideDir, "matrix.mtx") },
+        { path: "counts.tsv", isDir: false, anchorId: analysis.anchorId, absolutePath: join(anchorDir, "counts.tsv"), size: 2048, kind: "table" },
+        { path: "data", isDir: true, anchorId: analysis.anchorId, absolutePath: join(anchorDir, "data"), size: null, kind: null },
+        { path: join(outsideDir, "matrix.mtx"), isDir: false, anchorId: null, absolutePath: join(outsideDir, "matrix.mtx"), size: 1, kind: "data" },
     ];
 });
 

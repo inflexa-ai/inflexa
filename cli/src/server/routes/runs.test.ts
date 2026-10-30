@@ -1299,6 +1299,21 @@ describe("GET {A}/data-profile", () => {
         });
     });
 
+    test("the stored shape reaches the response, and a result with no shape gives none", async () => {
+        const shape = { rows: 61533, rowUnit: "genes", columns: 28, columnUnit: "samples" };
+        const profiledAt = "2026-10-02T00:00:00.000Z";
+        const withShape = appWith({ loadProfile: () => okAsync(profileRow({ result: { summary: "Counts.", profiledAt, shape } })) });
+        const shown = (await (await withShape.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView;
+        if (!("result" in shown)) throw new Error("expected a profile row");
+        expect(shown.result?.shape).toEqual(shape);
+
+        const withoutShape = appWith({ loadProfile: () => okAsync(profileRow({ result: { summary: "No matrix.", profiledAt } })) });
+        const bare = (await (await withoutShape.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView;
+        if (!("result" in bare)) throw new Error("expected a profile row");
+        expect(bare.result).toEqual({ summary: "No matrix.", profiledAt });
+        expect(bare.result).not.toHaveProperty("shape");
+    });
+
     test("a profile drive that is queued or runs shows as work that the row does not show yet", async () => {
         const app = appWith({ loadProfile: () => okAsync(null) });
         let release: () => void = () => undefined;
