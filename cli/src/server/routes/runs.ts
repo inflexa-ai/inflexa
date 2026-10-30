@@ -20,6 +20,7 @@ import {
     queryActiveRunsByAnalysis,
     queryRun,
     queryRunIdsByPlan,
+    queryPlanPage,
     queryRunsByAnalysis,
     queryStepsByRun,
     readRunSynthesis,
@@ -32,6 +33,7 @@ import {
     type DbError,
     type Pool,
     type PlanApproval,
+    type PlanPage,
     type PlanRecord,
     type RunArtifactCount,
     type RunStepCounts,
@@ -53,6 +55,8 @@ import type {
     FarmHealResult,
     PlanApprovalConflict,
     PlanApprovalResult,
+    PlanList,
+    PlanSummary,
     PlanView,
     ProfileOutcome,
     ProfileRerunResult,
@@ -145,6 +149,8 @@ export type RunRoutesOpts = {
     readonly loadPlanRecord: (pool: Pool, planId: string, analysisId: string) => ResultAsync<PlanRecord | null, DbError>;
     /** The ids of the runs of one plan, newest first, at most `limit`. */
     readonly listPlanRunIds: (pool: Pool, analysisId: string, planId: string, limit: number) => ResultAsync<string[], DbError>;
+    /** One page of the plans of an analysis, newest first, and the count of all its plans. */
+    readonly listPlans: (pool: Pool, analysisId: string, query: { limit: number; offset: number }) => ResultAsync<PlanPage, DbError>;
     readonly loadProfile: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, DbError>;
     /** Deliver each part of the run, and of its children, until the run is terminal or the signal aborts. */
     readonly subscribeRun: (pool: Pool, options: RunEventSubscribeOptions) => Promise<void>;
@@ -181,6 +187,7 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
     loadPlanRecord: (pool, planId, analysisId) => loadPlanRecord(pool, planId, { analysisId }),
     listPlanRunIds: (pool, analysisId, planId, limit) => queryRunIdsByPlan(pool, { analysisId, planId, limit }),
+    listPlans: queryPlanPage,
     loadProfile: loadDataProfileStatus,
     subscribeRun: (pool, options) => createRunEventStream({ pool }).subscribe(options),
     cancelRun: (runtime, runId, session) => runtime.runCanceler.cancel(runId, session),
@@ -242,6 +249,16 @@ export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_RO
             unattributedUsage: stepUsage.find((group) => group.stepId === null)?.totals ?? null,
         };
         return c.json(detail);
+    });
+
+    routes.get("/plans", runtimeGate, async (c) => {
+        const analysisId = analysisParam(c);
+        const page = parsePage(c.req.query("page"), c.req.query("perPage"));
+        const listed = await opts.listPlans(c.get("runtime").pool, analysisId, { limit: page.perPage, offset: page.page * page.perPage });
+        if (listed.isErr()) return internalError(c, listed.error, "list the plans");
+
+        const plans = listed.value.entries.map((entry): PlanSummary => ({ ...entry, title: trimmedTitle(entry.title) }));
+        return c.json<PlanList>(listEnvelope("plans", plans, listed.value.total, page));
     });
 
     routes.get("/plans/:planId", runtimeGate, async (c) => {
@@ -749,8 +766,14 @@ function planOf(planId: string | null, document: unknown): RunPlan | null {
  */
 export function planTitleOf(plan: unknown): string | null {
     if (typeof plan !== "object" || plan === null || !("title" in plan)) return null;
-    const title = plan.title;
-    return typeof title === "string" && title.trim().length > 0 ? title.trim() : null;
+    return trimmedTitle(plan.title);
+}
+
+/** The title with the spaces at its start and end removed, or `null` when it is not a string or has no text. The one title rule of the run summary and the plan list. */
+function trimmedTitle(title: unknown): string | null {
+    if (typeof title !== "string") return null;
+    const trimmed = title.trim();
+    return trimmed.length > 0 ? trimmed : null;
 }
 
 /**

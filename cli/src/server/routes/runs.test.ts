@@ -15,6 +15,8 @@ import {
     type DataProfileStatus,
     type Pool,
     type PlanApproval,
+    type PlanPage,
+    type PlanPageEntry,
     type PlanRecord,
     type RunArtifactCount,
     type RunStepCounts,
@@ -29,6 +31,7 @@ import type {
     DataProfileView,
     FarmHealResult,
     PlanApprovalResult,
+    PlanList,
     PlanView,
     ProfileRerunResult,
     RunDetail,
@@ -86,6 +89,7 @@ const UNEXPECTED: RunRoutesOpts = {
     loadPlan: failing("loadPlan"),
     loadPlanRecord: failing("loadPlanRecord"),
     listPlanRunIds: failing("listPlanRunIds"),
+    listPlans: failing("listPlans"),
     loadProfile: failing("loadProfile"),
     subscribeRun: failing("subscribeRun"),
     cancelRun: failing("cancelRun"),
@@ -772,6 +776,121 @@ describe("GET {A}/plans/:planId", () => {
         expect(response.status).toBe(503);
         expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
         expect(reads).toEqual({ record: [], runIds: [] });
+    });
+});
+
+describe("GET {A}/plans", () => {
+    type Read = { analysisId: string; limit: number; offset: number };
+
+    function entry(overrides: Partial<PlanPageEntry> = {}): PlanPageEntry {
+        return {
+            planId: "pln-0000000a",
+            createdAt: "2026-10-01T00:00:00.000Z",
+            title: "Liver DE",
+            parentPlanId: null,
+            supersededBy: null,
+            newestRunId: null,
+            ...overrides,
+        };
+    }
+
+    /** The routes over a plan read that records its arguments and gives `page`. */
+    function planList(page: PlanPage, boot: ServerBoot = readyBoot): { app: Hono<ServerEnv>; reads: Read[] } {
+        const reads: Read[] = [];
+        const app = appWith(
+            {
+                listPlans: (_pool, analysisId, query) => {
+                    reads.push({ analysisId, ...query });
+                    return okAsync(page);
+                },
+            },
+            boot,
+        );
+        return { app, reads };
+    }
+
+    async function listOf(app: Hono<ServerEnv>, query = ""): Promise<PlanList> {
+        return (await (await app.request(`/api/v1/analyses/a1/plans${query}`)).json()) as PlanList;
+    }
+
+    const newer = entry({ planId: "pln-0000000b", createdAt: "2026-10-02T00:00:00.000Z", parentPlanId: "pln-0000000a", newestRunId: "r2" });
+    const older = entry({ supersededBy: "pln-0000000b" });
+
+    test("the latest plan is the first item of the first page, and the page says that more follow", async () => {
+        const { app } = planList({ entries: [newer], total: 2 });
+        const list = await listOf(app, "?perPage=1");
+
+        expect(list).toEqual({
+            plans: [
+                {
+                    planId: "pln-0000000b",
+                    createdAt: "2026-10-02T00:00:00.000Z",
+                    title: "Liver DE",
+                    parentPlanId: "pln-0000000a",
+                    supersededBy: null,
+                    newestRunId: "r2",
+                },
+            ],
+            total: 2,
+            page: 0,
+            perPage: 1,
+            hasMore: true,
+        });
+    });
+
+    test("an older plan carries its superseded mark, and the last page has no more", async () => {
+        const { app } = planList({ entries: [older], total: 2 });
+        const list = await listOf(app, "?page=1&perPage=1");
+
+        expect(list.plans).toEqual([entry({ supersededBy: "pln-0000000b" })]);
+        expect(list).toMatchObject({ total: 2, page: 1, hasMore: false });
+    });
+
+    test("the newest run id and its absence ride the items", async () => {
+        const { app } = planList({ entries: [entry({ planId: "p1", newestRunId: "r2" }), entry({ planId: "p2", newestRunId: null })], total: 2 });
+        const list = await listOf(app);
+
+        expect(list.plans.map((plan) => plan.newestRunId)).toEqual(["r2", null]);
+    });
+
+    test("the title is trimmed, and a title with no text is null", async () => {
+        const titles = ["  Liver DE  ", null, "", "   "];
+        const { app } = planList({ entries: titles.map((title, i) => entry({ planId: `p${i}`, title })), total: 4 });
+        const list = await listOf(app);
+
+        expect(list.plans.map((plan) => plan.title)).toEqual(["Liver DE", null, null, null]);
+    });
+
+    test("an analysis with no plan gives an empty page", async () => {
+        const { app } = planList({ entries: [], total: 0 });
+
+        expect(await listOf(app)).toEqual({ plans: [], total: 0, page: 0, perPage: 100, hasMore: false });
+    });
+
+    test("sends one read with the limit and the offset of the page", async () => {
+        const { app, reads } = planList({ entries: [], total: 0 });
+
+        await listOf(app, "?page=2&perPage=50");
+
+        expect(reads).toEqual([{ analysisId: "a1", limit: 50, offset: 100 }]);
+    });
+
+    test("500 `internal_error` when the read fails", async () => {
+        const app = appWith({ listPlans: () => errAsync({ type: "query_failed", cause: new Error("down") } as never) });
+        const response = await app.request("/api/v1/analyses/a1/plans");
+
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
+    });
+
+    test("503 `unavailable` while the runtime boots, with no read", async () => {
+        const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
+        const { app, reads } = planList({ entries: [], total: 0 }, { state: () => starting, runtime: () => null, start: async () => undefined });
+        const response = await app.request("/api/v1/analyses/a1/plans");
+
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+        expect(reads).toEqual([]);
     });
 });
 
