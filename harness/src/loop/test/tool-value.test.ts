@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { hasLoneHighSurrogate, hasLoneLowSurrogate } from "../../lib/test/text-shapes.js";
 import { errorToolValue, jsonToolValue, TOOL_VALUE_CAP, textToolValue, withoutToolValues } from "../tool-value.js";
+import type { ToolCallValue } from "../../contracts/chat-events.js";
 import type { EmitEvent } from "../types.js";
 
 const source = { agentId: "a", callPath: ["a"] };
@@ -113,6 +114,10 @@ describe("textToolValue", () => {
         expect(value.text).toBe("export API_KEY=[REDACTED: Secret Assignment] && run");
     });
 
+    it("removes an assignment value whose quote does not close", () => {
+        expect(textToolValue('run --env API_KEY="abc123').text).toBe("run --env API_KEY=[REDACTED: Secret Assignment]");
+    });
+
     it("removes a quoted field value that holds an escaped quote", () => {
         const value = textToolValue('{"password":"ab\\"cd"}');
         expect(value.text).toBe('{"password":"[REDACTED: Secret Field]"}');
@@ -121,6 +126,62 @@ describe("textToolValue", () => {
     it("removes an assignment, a quoted field, and a prefixed token in one text", () => {
         const value = textToolValue('{"cmd":"AWS_SECRET_ACCESS_KEY=abc run","password":"hunter2","h":"Bearer abcdef1234567890XYZ"}');
         for (const secret of ["abc run", "hunter2", "abcdef1234567890XYZ"]) expect(value.text).not.toContain(secret);
+    });
+});
+
+describe("the value of a long text or a long JSON value", () => {
+    const secret = "ghp_0123456789abcdefghij0123456789abcdef";
+
+    function plainCut(raw: string): ToolCallValue {
+        return { text: `${raw.slice(0, 3072)}\n[... ${raw.length - 8192} characters not shown ...]\n${raw.slice(-5120)}`, cut: true };
+    }
+
+    it("removes a secret that the start cut divides", () => {
+        // The cut falls inside the redaction marker, thus only the absence of the secret is certain.
+        const value = textToolValue(`${"a".repeat(3060)} ${secret} ${"b".repeat(40_000)}`);
+        expect(value.text.includes("[REDACTED: ")).toBe(true);
+        expect(value.text.includes("ghp_")).toBe(false);
+    });
+
+    it("removes a secret that the end cut divides, and an assignment whose quote the start window does not close", () => {
+        const value = textToolValue(`${"a".repeat(40_000)} ${secret} ${"b".repeat(5110)}`);
+        expect(value.text.includes("Token]")).toBe(true);
+        expect(value.text.includes("0123456789abcdef")).toBe(false);
+        const open = textToolValue(`${"a".repeat(3000)} API_KEY="${"s".repeat(30_000)}" ${"b".repeat(10_000)}`);
+        expect(open.text.includes("API_KEY=[REDACTED: Secret Assignment]")).toBe(true);
+        expect(open.text.includes("sss")).toBe(false);
+    });
+
+    it("counts the original text of a long text in its marker", () => {
+        const text = `${"x".repeat(20_000)} ${secret} ${"y".repeat(20_000)}`;
+        expect(textToolValue(text).text).toContain(`[... ${text.length - 8192} characters not shown ...]`);
+    });
+
+    it("shows a long string value as a long text", () => {
+        const text = `${"s".repeat(3072)}${"m".repeat(40_000)}${"e".repeat(5120)}`;
+        expect(jsonToolValue(text)).toEqual(textToolValue(text));
+    });
+
+    it("shows the start and the end of the JSON text of a long value", () => {
+        const rows = Array.from({ length: 2000 }, (_, i) => ({ gene: `GENE${i}`, note: 'a "quoted"\nline', value: i / 3, gone: undefined }));
+        const values: unknown[] = [
+            { rows },
+            [rows, [[1, 2], [3]], null],
+            { first: "h".repeat(100_000), rows, when: new Date(0), last: "t".repeat(100_000) },
+            { first: { deep: { deeper: rows } }, list: rows.map((row) => [row.gene, row.value]) },
+        ];
+        for (const value of values) expect(jsonToolValue(value)).toEqual(plainCut(JSON.stringify(value)));
+    });
+
+    it("removes a secret field and a secret string at each end of a long value", () => {
+        const rows = Array.from({ length: 2000 }, (_, i) => ({ gene: `GENE${i}` }));
+        const value = jsonToolValue({ token: "hunter1", note: `key ${secret}`, rows, last: { password: "hunter2", cmd: "API_KEY=abc123 run" } });
+        expect(value?.cut).toBe(true);
+        expect(value?.text).not.toContain("hunter");
+        expect(value?.text).not.toContain("abcdefghij");
+        expect(value?.text).not.toContain("abc123");
+        expect(value?.text).toContain('"gene":"GENE0"');
+        expect(value?.text).toContain('"gene":"GENE1999"');
     });
 });
 

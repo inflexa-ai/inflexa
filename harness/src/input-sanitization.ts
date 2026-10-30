@@ -145,11 +145,11 @@ export function redactSecretFields(value: unknown): unknown {
     return out;
 }
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the shell and environment form NAME=value, with a quoted value that ends at its closing quote (an escaped quote inside a double-quoted value does not end it) or a value up to the next separator. A value does not start with `=`, thus a comparison `token == x` stays whole.
-const ASSIGNMENT = /([A-Za-z0-9_.-]+)=(?!=)("(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'\\&;,]+)/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the shell and environment form NAME=value, with a quoted value that ends at its closing quote (an escaped quote inside a double-quoted value does not end it) or a value up to the next separator. A quote that does not close holds the rest of the text, because a cut text can end inside a secret. A value does not start with `=`, thus a comparison `token == x` stays whole.
+const ASSIGNMENT = /([A-Za-z0-9_.-]+)=(?!=)("(?:[^"\\]|\\.)*(?:"|\\?$)|'[^']*(?:'|$)|[^\s"'\\&;,]+)/g;
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a quoted JSON field with a string value, `"name": "value"`. The value ends at its closing quote, and an escaped quote inside it does not end it.
-const QUOTED_FIELD = /"([^"\\\s]{1,80})"(\s*:\s*)"((?:[^"\\]|\\.)*)"/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a quoted JSON field with a string value, `"name": "value"`. The value ends at its closing quote, and an escaped quote inside it does not end it. A quote that does not close holds the rest of the text.
+const QUOTED_FIELD = /"([^"\\\s]{1,80})"(\s*:\s*)"((?:[^"\\]|\\.)*)(?:"|\\?$)/g;
 
 /**
  * Replace the value of each `NAME=value` assignment and of each quoted `"name": "value"` field whose name ends with a
