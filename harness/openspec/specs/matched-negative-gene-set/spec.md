@@ -1,7 +1,7 @@
 # matched-negative-gene-set Specification
 
 ## Purpose
-TBD - created by archiving change add-matched-negative-gene-set. Update Purpose after archive.
+A run that makes a matched negative gene set for a tissue risk benchmark. The catalog holds the reference data, and the `translational-safety` skill pack gives the method. The negatives match the positives on the tissue expression and on the PPI connectivity, with the mouse and the human phenotype exclusions. The request names the definition, `annotation_free` or `tested_clean`, and one run writes the deliverable.
 
 ## Requirements
 
