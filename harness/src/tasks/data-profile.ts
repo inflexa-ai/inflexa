@@ -329,7 +329,6 @@ export function buildDataProfileResult(
         condition: submission.condition,
         accessions: submission.accessions,
         experimentalDesign: submission.experimentalDesign,
-        shape: submission.shape,
     };
 }
 
@@ -403,10 +402,6 @@ function withoutMembers(groups: readonly ResolvedGroup[]): DataProfileGroup[] {
  * probes, the caveats — is the profile's existing finding and is carried verbatim. An
  * absorb re-derives arithmetic, and re-deciding judgement without a model is not something
  * this path is entitled to do.
- *
- * The one exception is `shape`: nothing here can re-measure it, and new or changed inputs
- * can change the dimensions. It is kept only when the input signature is unchanged, which
- * is the case of a deliberate re-profile of an untouched tree.
  */
 export function buildAbsorbedResult(
     prior: DataProfileResult,
@@ -414,8 +409,7 @@ export function buildAbsorbedResult(
     stagedInputs: readonly StagedInput[],
     profiledAt: string,
 ): DataProfileResult {
-    const inputSignature = computeInputSignature(stagedInputs);
-    const absorbed: DataProfileResult = {
+    return {
         ...prior,
         groups: withoutMembers(resolution.groups),
         // Re-resolved, not carried: a slot observation's cardinality and values are computed
@@ -424,13 +418,9 @@ export function buildAbsorbedResult(
         dimensions: [...resolution.dimensions],
         partition: resolution.partition,
         recipe: [...resolution.recipe],
-        inputSignature,
+        inputSignature: computeInputSignature(stagedInputs),
         profiledAt,
     };
-    const priorSignature = prior.inputSignature;
-    const unchanged = priorSignature !== undefined && priorSignature.digest === inputSignature.digest && priorSignature.count === inputSignature.count;
-    if (!unchanged) delete absorbed.shape;
-    return absorbed;
 }
 
 /**

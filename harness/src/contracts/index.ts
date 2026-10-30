@@ -87,7 +87,6 @@ export type {
     DataProfileQuarantine,
     DataProfileRecipeStep,
     DataProfileResult,
-    DataProfileShape,
     DataProfileSubjectSource,
 } from "./data-profile.js";
 export {

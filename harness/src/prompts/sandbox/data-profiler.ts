@@ -295,23 +295,6 @@ Record in \`caveats\` what a planner must know before designing an analysis:
 Do NOT restate computed facts here. Companion gaps, incomplete crossings, and
 reconciliation deltas are recorded in structured fields already.
 
-## Stage 5: Shape — the dimensions of the primary matrix
-
-When the dataset has a primary matrix, report its \`shape\`: \`rows\` and \`columns\`, with
-\`rowUnit\` and \`columnUnit\` that name what one row and one column represent, for example
-genes and samples.
-
-- The primary matrix is the one that holds the measurements of the dataset, such as the
-  count matrix of an expression dataset. A metadata table or a sample sheet is not one.
-- The shape describes the full dataset. When each sample is a file of its own, the count of
-  those files is one dimension.
-- Measure it in the sandbox with a method that reads no more than a line count: \`wc -l\`
-  on a delimited text, the header of a Matrix Market file, or the metadata of an HDF5 or
-  Parquet file.
-- Leave \`shape\` out when there is no such matrix, when different matrices hold different
-  measurements and none is clearly primary, or when you cannot measure it. Never estimate a
-  dimension.
-
 ## Submitting Results
 
 Deliver the profile with \`submit_profile\`, not as JSON in your message text. A
