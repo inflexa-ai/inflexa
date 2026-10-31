@@ -143,6 +143,7 @@ export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }): T
             "Requires AMASS_API_KEY — a missing key fails terminally: do NOT retry; state that the key is not configured, and proceed without " +
             "Amass regulatory data. Every call spends the user's Amass credits.",
         inputSchema,
+        view: "none",
         describeCall: "none",
         execute: async (input): Promise<Result<RegulatoryApprovalsOutput, ToolError>> => {
             const headers = getAmassHeaders(deps.apiKey);

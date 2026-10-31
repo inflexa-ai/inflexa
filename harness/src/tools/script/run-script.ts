@@ -47,6 +47,7 @@ import {
     type ToolError,
     type WithToolCallRecord,
 } from "../define-tool.js";
+import { viewCode, viewFields, viewJson, viewText, type ViewFields } from "../tool-view.js";
 import { ScriptFileEffectSchema } from "./file-tools.js";
 import { recordScriptRun, type ScriptFailure } from "./metrics.js";
 import type { ScratchFile, ScriptRead, ScriptRunRecord, ScriptScratch } from "./scratch.js";
@@ -243,7 +244,7 @@ async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, l
     const invocationId = state.nextInvocationId();
     const detail = computeDetail(tool, args, log);
     const started = performance.now();
-    const startFrame = { type: "tool-started", source: state.source, toolUseId: invocationId, name: tool.id, input: args, detail } as const;
+    const startFrame = { type: "tool-started", source: state.source, toolUseId: invocationId, name: tool.id, detail } as const;
     state.observe(startFrame);
     await ctx.emit(startFrame);
     const finish = async (outcome: "ok" | "error", finishedDetail: string | undefined): Promise<void> => {
@@ -384,6 +385,19 @@ function filesCard(
     return buildFileReferenceCardData({ title: description ?? "Derived files", files: shown });
 }
 
+/**
+ * The shown result of a script. A failed script puts its failure first, because the failure is what the reader looks for.
+ * The nested calls and the files stay out: the activity part and the file card of the call carry them. A script that
+ * printed nothing and returned nothing gives no result.
+ */
+function scriptResultView(result: RunScriptOutput): ViewFields | undefined {
+    const output = result.output === "" ? undefined : viewText(result.output);
+    const fields = !result.ok
+        ? viewFields({ error: result.error === undefined ? undefined : viewText(result.error), output })
+        : viewFields({ output, value: result.value === undefined ? undefined : viewJson(result.value) });
+    return fields.fields.length === 0 ? undefined : fields;
+}
+
 type RunScriptResult = RunScriptOutput | WithToolCallRecord<RunScriptOutput, RunScriptRecord>;
 
 /** The `run_script` tool over the script tools of an agent. */
@@ -400,6 +414,11 @@ export function createRunScriptTool(
         id: RUN_SCRIPT_TOOL_ID,
         description: descriptionOf(scriptTools),
         inputSchema,
+        view: {
+            input: ({ code }) => viewCode("javascript", code),
+            result: (_input, result) => scriptResultView(result),
+            error: true,
+        },
         describeCall: ({ description }) => description,
         describeResult: ({ description }, result) => {
             const tools = result.calls.length === 0 ? undefined : result.calls.map((call) => call.tool).join(", ");

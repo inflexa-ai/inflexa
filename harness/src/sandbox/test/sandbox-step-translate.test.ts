@@ -3,7 +3,8 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../../tools/define-tool.js";
-import { createDetailResolver } from "../../tools/detail-resolver.js";
+import { computeDetail } from "../../loop/tool-detail.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
 import { createEditFileTool, type EditIntentStore } from "../../tools/workspace/edit-file.js";
 import { createWriteFileTool } from "../../tools/workspace/write-file.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
@@ -53,7 +54,7 @@ describe("activityForTool", () => {
             throw new Error("mutator.recordWrite: not driven by this test");
         },
     };
-    const resolveDetail = createDetailResolver([
+    const tools = [
         createWriteFileTool({ mutator: notDrivenMutator }),
         createEditFileTool({ mutator: notDrivenMutator, workspaceFilesystem: makeFakeWorkspaceFs(), workingDir: "/a/runs/r1/s1", intents: notDrivenIntents }),
         // Deliberately NOT a real tool id. The fallback needs a hookless tool to exercise, and
@@ -64,40 +65,44 @@ describe("activityForTool", () => {
             description: "Declares no hook, so the fallback is what it exercises.",
             inputSchema: z.object({ dir: z.string() }),
             describeCall: "none",
+            view: "none",
             execute: () => Promise.resolve(ok({})),
         }),
-    ]);
+    ];
+    // The detail that the loop puts on the event of a call: the hook of the tool, run on the input of the call.
+    const phrase = (name: string, input: unknown): string => {
+        const tool = tools.find((candidate) => candidate.id === name);
+        return activityForTool(name, tool === undefined ? undefined : computeDetail(tool, input, createNoopLogger()));
+    };
 
     it("phrases a call as the tool's name plus its own hook's description", () => {
-        expect(activityForTool("write_file", { path: "scripts/run.py", content: "" }, resolveDetail)).toBe("write_file scripts/run.py");
-        expect(activityForTool("edit_file", { path: "output/sub/result.csv", old_string: "a", new_string: "b" }, resolveDetail)).toBe(
-            "edit_file output/sub/result.csv",
-        );
+        expect(phrase("write_file", { path: "scripts/run.py", content: "" })).toBe("write_file scripts/run.py");
+        expect(phrase("edit_file", { path: "output/sub/result.csv", old_string: "a", new_string: "b" })).toBe("edit_file output/sub/result.csv");
     });
 
     // This phrase renders alone, with no tool name beside it — so a bare detail would make a write and
     // an edit of the same path indistinguishable, which is the very confusion the hook exists to end.
     it("keeps a write and an edit of the same path apart", () => {
         const path = { path: "output/result.csv" };
-        const write = activityForTool("write_file", { ...path, content: "" }, resolveDetail);
-        const edit = activityForTool("edit_file", { ...path, old_string: "a", new_string: "b" }, resolveDetail);
+        const write = phrase("write_file", { ...path, content: "" });
+        const edit = phrase("edit_file", { ...path, old_string: "a", new_string: "b" });
         expect(write).not.toBe(edit);
     });
 
     it("names the tool when it declares no hook", () => {
-        expect(activityForTool("hookless_probe", { dir: "output" }, resolveDetail)).toBe("hookless_probe");
+        expect(phrase("hookless_probe", { dir: "output" })).toBe("hookless_probe");
     });
 
-    it("names the tool when no resolver is supplied at all", () => {
-        expect(activityForTool("write_file", { path: "scripts/run.py" })).toBe("write_file");
+    it("names the tool when the event has no detail", () => {
+        expect(activityForTool("write_file")).toBe("write_file");
         expect(activityForTool("list_available_packages")).toBe("list_available_packages");
     });
 
-    it("names the tool for a call the resolver cannot describe", () => {
-        // Absent from the supplied list.
-        expect(activityForTool("execute_command", { command: ["python", "run.py"] }, resolveDetail)).toBe("execute_command");
+    it("names the tool for a call that has no detail", () => {
+        // Absent from the list.
+        expect(phrase("execute_command", { command: ["python", "run.py"] })).toBe("execute_command");
         // Present, but the input does not satisfy its schema.
-        expect(activityForTool("write_file", { pathname: "scripts/run.py" }, resolveDetail)).toBe("write_file");
+        expect(phrase("write_file", { pathname: "scripts/run.py" })).toBe("write_file");
     });
 });
 

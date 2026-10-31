@@ -1,7 +1,8 @@
 /**
  * The durable stream of a chat turn: a workflow runs a loop that writes its text and its frames to the stream, and
- * the reader gives the frames of the turn, with no tool input and no tool output. A crash during a reply runs the
- * model call again, and a read after the recovery shows the text of the second attempt only.
+ * the reader gives the frames of the turn. A frame of a tool call carries its shown input, result, and error, and no
+ * raw value of the model record. A crash during a reply runs the model call again, and a read after the recovery
+ * shows the text of the second attempt only.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -9,7 +10,7 @@ import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { closeDurableStream } from "@dbos-inc/vercel-ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
@@ -27,20 +28,26 @@ if (DBOS.isInitialized()) {
 }
 
 const ROOT: EventSource = { agentId: "stream-agent", callPath: ["stream-agent"] };
-const SECRET_INPUT = "the-secret-input";
-const SECRET_OUTPUT = "the-secret-output";
+const SECRET_INPUT = "ghp_0123456789abcdefghij0123456789abcdef";
+const SECRET_OUTPUT = "hunter2";
 
 const lookup = defineTool({
     id: "lookup",
     description: "Look a value up.",
-    inputSchema: z.object({ query: z.string() }),
+    inputSchema: z.object({ query: z.string(), env: z.record(z.string(), z.string()) }),
     describeCall: (input) => `lookup ${input.query.length}`,
-    execute: () => Promise.resolve(ok({ found: SECRET_OUTPUT })),
+    view: { input: (input) => input, result: (_input, result) => result, error: true },
+    execute: ({ query }) =>
+        Promise.resolve(query === "missing" ? err({ error: "no record for missing", retryable: false }) : ok({ found: "TP53", password: SECRET_OUTPUT })),
 });
 
 const agent = { id: "stream-agent", systemPrompt: "Test.", model: "scripted-model", tools: [lookup], maxIterations: 5 };
 
-const freshModel = () => scriptedModel([callTools(toolCall("c1", "lookup", { query: SECRET_INPUT })), reply([text("The answer is 42.")])]);
+const freshModel = () =>
+    scriptedModel([
+        callTools(toolCall("c1", "lookup", { query: "TP53", env: { GITHUB_TOKEN: SECRET_INPUT } }), toolCall("c2", "lookup", { query: "missing", env: {} })),
+        reply([text("The answer is 42.")]),
+    ]);
 
 /** Each turn of the test gets its own script, because a script answers each request one time. */
 let scripted = freshModel();
@@ -163,7 +170,7 @@ afterAll(async () => {
 });
 
 describe("the durable stream of a chat turn", () => {
-    it("gives the text, the tool frames, and the end, with no tool input and no tool output", async () => {
+    it("gives the text, the tool frames with their input and result, and the end, with no secret", async () => {
         const turnId = rig.nextWorkflowId("chat-stream-");
         const handle = await DBOS.startWorkflow(streamWorkflow, { workflowID: turnId })();
         await handle.getResult();
@@ -171,11 +178,23 @@ describe("the durable stream of a chat turn", () => {
         const frames = await readAll(turnId);
 
         expect(textOf(frames)).toBe("The answer is 42.");
-        expect(frames.filter((frame) => frame.type === "tool-started" || frame.type === "tool-finished").map((frame) => frame.type)).toEqual([
-            "tool-started",
-            "tool-finished",
-        ]);
-        expect(frames.find((frame) => frame.type === "tool-finished")).toMatchObject({ outcome: "ok", detail: `lookup ${SECRET_INPUT.length}` });
+        expect(frames.filter((frame) => frame.type === "tool-started")).toHaveLength(2);
+        expect(frames.filter((frame) => frame.type === "tool-finished")).toHaveLength(2);
+        const input = { kind: "json", text: '{"query":"TP53","env":{"GITHUB_TOKEN":"[REDACTED: Secret Field]"}}', cut: false };
+        expect(frames.find((frame) => frame.type === "tool-started" && frame.toolUseId === "c1")).toMatchObject({ input });
+        expect(frames.find((frame) => frame.type === "tool-finished" && frame.toolUseId === "c1")).toMatchObject({
+            outcome: "ok",
+            detail: "lookup 4",
+            input,
+            result: { kind: "json", text: '{"found":"TP53","password":"[REDACTED: Secret Field]"}', cut: false },
+        });
+        const failed = frames.find((frame) => frame.type === "tool-finished" && frame.toolUseId === "c2");
+        expect(failed).toMatchObject({
+            outcome: "error",
+            input: { kind: "json", text: '{"query":"missing","env":{}}', cut: false },
+            error: { kind: "text", text: "no record for missing", cut: false },
+        });
+        expect(JSON.stringify(failed)).not.toContain('"result"');
         expect(frames.at(-1)?.type).toBe("finish");
         const serialized = JSON.stringify(frames);
         expect(serialized).not.toContain(SECRET_INPUT);

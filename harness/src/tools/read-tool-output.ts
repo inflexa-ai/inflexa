@@ -143,6 +143,10 @@ export function createReadToolOutputTool(store: ToolOutputStore): Tool {
             `${MAX_MATCHES} matches, each with its offset and the text around it. When a result gives \`more: true\`, ` +
             "call again with `offset` set to its `end`.",
         inputSchema: ReadToolOutputInputSchema,
+        view: {
+            input: (input) => input,
+            error: true,
+        },
         // The reference alone repeats across the pages of one text, and the pattern is what tells two searches apart.
         describeCall: ({ ref, pattern }) => (pattern === undefined ? ref : `${pattern} in ${ref}`),
         execute: async ({ ref, offset = 0, limit, pattern }, ctx): Promise<Result<ReadToolOutputResult, ToolError>> => {

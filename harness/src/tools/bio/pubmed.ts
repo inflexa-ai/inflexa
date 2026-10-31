@@ -196,6 +196,7 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }): Tool<z.infer<ty
             "Report it and continue, do not retry it.",
         inputSchema,
         outputSchema,
+        view: "none",
         // One tool, three jobs. The action alone would still render three
         // different searches identically, so each action names its own subject:
         // the query, how many articles, or which article.

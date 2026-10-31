@@ -94,6 +94,7 @@ export const searchFaersTool = defineTool({
             message: `limit is capped at ${LABEL_MAX_LIMIT} for action 'label' — each label version carries whole prose sections`,
             path: ["limit"],
         }),
+    view: "none",
     describeCall: "none",
     execute: async ({ action, drugName, limit, serious }): Promise<Result<FaersOutput, ToolError>> => {
         switch (action) {

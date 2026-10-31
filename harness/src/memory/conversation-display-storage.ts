@@ -48,7 +48,7 @@ import {
     SubAgentActivityEntrySchema,
     SubAgentActivityPartSchema,
 } from "../contracts/schemas/chat-parts.js";
-import { ToolCallOutcomeSchema } from "../contracts/schemas/chat-events.js";
+import { ToolCallOutcomeSchema, ToolCallValueSchema } from "../contracts/schemas/chat-events.js";
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
 import type { ChatMessage, MessagePart, ToolCallPart } from "../contracts/message.js";
 import type { Logger } from "../lib/logger.js";
@@ -113,6 +113,9 @@ const ToolCallDisplaySchema = z.object({
     outcome: ToolCallOutcomeSchema,
     detail: z.string().optional(),
     durationMs: z.number().optional(),
+    input: ToolCallValueSchema.optional(),
+    result: ToolCallValueSchema.optional(),
+    error: ToolCallValueSchema.optional(),
 });
 
 /**

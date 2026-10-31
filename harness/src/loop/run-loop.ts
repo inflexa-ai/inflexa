@@ -71,9 +71,13 @@ import {
     modelViewOf,
     recordedInputOf,
     ToolCallOutputSchema,
+    viewInputValue,
     type ToolCallOutput,
 } from "./tool-adapter.js";
+import { computeDetail, type ToolCallDetail } from "./tool-detail.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "./tool-output.js";
+import { textToolValue } from "./tool-value.js";
+import type { ToolCallValue } from "../contracts/chat-events.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage } from "./types.js";
 
 export type AgentFinish = {
@@ -837,6 +841,19 @@ async function runSeries(
         return decision.kind === "approved" ? undefined : deniedReason(decision.feedback);
     };
 
+    // A refused call and a denied call do not run, thus the loop gives their events the detail and the view input of the tool.
+    // Only a root loop shows values, as the tool adapter does.
+    const shownRoot = source.callPath.length <= 1;
+    const callShownOf = (toolCall: {
+        readonly toolName: string;
+        readonly input: unknown;
+    }): { detail: { detail?: ToolCallDetail }; input: ToolCallValue | undefined } => {
+        const tool = toolsById.get(toolCall.toolName);
+        if (tool === undefined) return { detail: {}, input: undefined };
+        const detail = computeDetail(tool, toolCall.input, log);
+        return { detail: detail === undefined ? {} : { detail }, input: shownRoot ? viewInputValue(tool, toolCall.input, log) : undefined };
+    };
+
     const seriesSteps: LoopStep[] = [];
     let open = openStep();
     let failure: unknown;
@@ -871,8 +888,25 @@ async function runSeries(
             const refusal = calls.refusalOf({ toolName: toolCall.toolName, input: toolCall.input }, spec.mask);
             if (refusal !== undefined) {
                 // A refused call does not run, thus its two events come from here.
-                await opts.emit({ type: "tool-started", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, input: toolCall.input });
-                await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "error" });
+                const shown = callShownOf(toolCall);
+                await opts.emit({
+                    type: "tool-started",
+                    source,
+                    toolUseId: toolCall.toolCallId,
+                    name: toolCall.toolName,
+                    ...shown.detail,
+                    input: shown.input,
+                });
+                await opts.emit({
+                    type: "tool-finished",
+                    source,
+                    toolUseId: toolCall.toolCallId,
+                    name: toolCall.toolName,
+                    outcome: "error",
+                    ...shown.detail,
+                    input: shown.input,
+                    error: shownRoot ? textToolValue(refusal) : undefined,
+                });
                 return { type: "denied", reason: refusal };
             }
             let denial: string | undefined;
@@ -885,8 +919,24 @@ async function runSeries(
             }
             if (denial === undefined) return undefined;
             deniedByTheUser.set(toolCall.toolCallId, denial);
-            await opts.emit({ type: "tool-started", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, input: toolCall.input });
-            await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "denied" });
+            const shown = callShownOf(toolCall);
+            await opts.emit({
+                type: "tool-started",
+                source,
+                toolUseId: toolCall.toolCallId,
+                name: toolCall.toolName,
+                ...shown.detail,
+                input: shown.input,
+            });
+            await opts.emit({
+                type: "tool-finished",
+                source,
+                toolUseId: toolCall.toolCallId,
+                name: toolCall.toolName,
+                outcome: "denied",
+                ...shown.detail,
+                input: shown.input,
+            });
             return { type: "denied", reason: denial };
         },
         stopWhen: () => stops(),

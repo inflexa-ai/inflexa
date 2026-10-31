@@ -2,15 +2,17 @@ import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { APICallError } from "@ai-sdk/provider";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
-import { err, ok } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { forSubAgent } from "../../auth/types.js";
+import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { isInterruptedMessage } from "../../memory/ai-sdk-message-storage.js";
 import { modelFailureOf } from "../../providers/errors.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { defineTool, withToolCallRecord, withToolResultImages, type Tool } from "../../tools/define-tool.js";
+import { defineTool, withToolCallRecord, withToolResultImages, type Tool, type ToolError } from "../../tools/define-tool.js";
+import { viewCode, viewFields, viewJson, viewText, type ToolCallView } from "../../tools/tool-view.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { continueLoop, runLoop, runWithSalvage, type AgentRound, type LoopOptions, type LoopStep } from "../run-loop.js";
 import type { AgentDefinition, EmitEvent, EmitFn, LoopMessage } from "../types.js";
@@ -20,6 +22,7 @@ function echoTool(calls: string[] = []): Tool {
         id: "echo",
         description: "Echo the text.",
         inputSchema: z.object({ text: z.string() }),
+        view: "none",
         describeCall: (input) => `echo ${input.text}`,
         execute: (input) => {
             calls.push(input.text);
@@ -51,6 +54,7 @@ function namedTool(id: string, runs: string[], execute: () => Promise<unknown> =
         id,
         description: `The tool ${id}.`,
         inputSchema: z.looseObject({}),
+        view: "none",
         describeCall: "none",
         execute: async () => {
             runs.push(id);
@@ -144,6 +148,7 @@ describe("runLoop", () => {
             id: "fails",
             description: "Fails.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(err({ error: "nope", retryable: false })),
         });
@@ -243,6 +248,7 @@ describe("runLoop — tool failures", () => {
             id: "thrower",
             description: "Throws.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.reject(new Error("the disk is full")),
         });
@@ -262,6 +268,7 @@ describe("runLoop — tool failures", () => {
             id: "cancelled",
             description: "Meets a cancel.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.reject(new DBOSErrors.DBOSWorkflowCancelledError("wf-1")),
         });
@@ -281,6 +288,7 @@ describe("runLoop — a denial of the user", () => {
             id: "asking",
             description: "Asks for approval.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             approval: () => ({ title: "Edit a file", command: "edit notes.md" }),
             execute: () => Promise.resolve(ok({ ran: true })),
@@ -427,6 +435,7 @@ describe("runLoop — tool results", () => {
             id: "recording",
             description: "Records.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok(withToolCallRecord({ shown: "yes" }, { lineage: "exec-1" }))),
             foldCallRecord: (record) => {
@@ -448,6 +457,7 @@ describe("runLoop — tool results", () => {
             id: "eyes",
             description: "Looks.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () =>
                 Promise.resolve(
@@ -503,6 +513,7 @@ describe("runLoop — a sub-agent", () => {
             id: "delegate",
             description: "Runs the child.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: async (_input, ctx) => {
                 const result = await runLoop({ ...child, id: "child-agent" }, [user("child task")], forSubAgent(ctx.session, "child-agent"), {
@@ -621,5 +632,372 @@ describe("the classifier of a failed model call", () => {
     it("names each other failure other", async () => {
         expect(modelFailureOf(await failureOfRun([{ fail: failing(422) }]))).toEqual({ kind: "other" });
         expect(modelFailureOf(new Error("a bug"))).toEqual({ kind: "other" });
+    });
+});
+
+describe("runLoop — the values of a call", () => {
+    type View = ToolCallView<{ path: string }, unknown>;
+
+    const viewed = (view: View | "none", execute: (input: { path: string }) => Promise<Result<unknown, ToolError>>): Tool =>
+        defineTool({
+            id: "viewed",
+            description: "Takes a path.",
+            inputSchema: z.object({ path: z.string() }),
+            describeCall: (input) => input.path,
+            view,
+            execute,
+        });
+
+    const showing: View = { input: (input) => input, result: (_input, result) => result, error: true };
+
+    function finishedOf(events: readonly EmitEvent[]): Extract<EmitEvent, { type: "tool-finished" }> {
+        const finished = events.find((e) => e.type === "tool-finished");
+        if (finished?.type !== "tool-finished") throw new Error("the loop emitted no tool-finished");
+        return finished;
+    }
+
+    function startedOf(events: readonly EmitEvent[]): Extract<EmitEvent, { type: "tool-started" }> {
+        const started = events.find((e) => e.type === "tool-started");
+        if (started?.type !== "tool-started") throw new Error("the loop emitted no tool-started");
+        return started;
+    }
+
+    async function run(tool: Tool, input: unknown, extra: Partial<LoopOptions> = {}, session: ReturnType<typeof makeSession> = makeSession()) {
+        const { provider } = scriptedModel([callTools(toolCall("c1", "viewed", input)), reply([text("done")])]);
+        const { emit, events } = recordingEmit();
+        const result = await runLoop(agentWith([tool]), [user("go")], session, options(provider, emit, extra));
+        return { events, result };
+    }
+
+    it("gives the input and the result of an ok call on both events", async () => {
+        const { events } = await run(
+            viewed(showing, () => Promise.resolve(ok({ rows: 3 }))),
+            { path: "data/a.csv" },
+        );
+
+        expect(startedOf(events)).toMatchObject({ detail: "data/a.csv", input: { kind: "json", text: '{"path":"data/a.csv"}', cut: false } });
+        const finished = finishedOf(events);
+        expect(finished).toMatchObject({
+            outcome: "ok",
+            input: { kind: "json", text: '{"path":"data/a.csv"}', cut: false },
+            result: { kind: "json", text: '{"rows":3}', cut: false },
+        });
+        expect(finished.error).toBeUndefined();
+    });
+
+    it("gives the error text that the model reads on a failed call, and no result", async () => {
+        const { events, result } = await run(
+            viewed(showing, () => Promise.resolve(err({ error: "file not found: data/b.csv", retryable: false }))),
+            { path: "data/b.csv" },
+        );
+
+        const finished = finishedOf(events);
+        const modelText = JSON.stringify({ error: "file not found: data/b.csv", retryable: false });
+        expect(toolResultsOf(result.messages)[0]).toMatchObject({ output: { type: "error-text", value: modelText } });
+        expect(finished).toMatchObject({
+            outcome: "error",
+            input: { kind: "json", text: '{"path":"data/b.csv"}' },
+            error: { kind: "text", text: "file not found: data/b.csv", cut: false },
+        });
+        expect(finished.result).toBeUndefined();
+    });
+
+    it("shows only the members that the view declares", async () => {
+        const { events } = await run(
+            viewed({ input: (input) => input }, () => Promise.resolve(ok({ rows: 3 }))),
+            { path: "data/a.csv" },
+        );
+
+        const finished = finishedOf(events);
+        expect(finished.input).toMatchObject({ kind: "json" });
+        expect(finished.result).toBeUndefined();
+        expect(finished.error).toBeUndefined();
+    });
+
+    it("shows the error of a failed call only when the view declares error", async () => {
+        const { events } = await run(
+            viewed({ input: (input) => input }, () => Promise.resolve(err({ error: "no", retryable: false }))),
+            { path: "a" },
+        );
+
+        const finished = finishedOf(events);
+        expect(finished).toMatchObject({ outcome: "error" });
+        expect(finished.error).toBeUndefined();
+    });
+
+    it("gives no value for a tool that declares none", async () => {
+        const { events } = await run(
+            viewed("none", () => Promise.resolve(ok({ rows: 3 }))),
+            { path: "data/a.csv" },
+        );
+
+        for (const event of [startedOf(events), finishedOf(events)]) {
+            expect(event.input).toBeUndefined();
+            expect(event).toMatchObject({ detail: "data/a.csv" });
+        }
+        const finished = finishedOf(events);
+        expect(finished.result).toBeUndefined();
+        expect(finished.error).toBeUndefined();
+    });
+
+    it("gives the kind of a helper object, and keeps a result field named kind as json", async () => {
+        const view: View = {
+            input: (input) => viewCode("javascript", input.path),
+            result: (_input, result) => viewFields({ output: viewText("hello"), value: viewJson(result) }),
+        };
+        const { events } = await run(
+            viewed(view, () => Promise.resolve(ok({ kind: "text", rows: 2 }))),
+            { path: "return 1 + 1" },
+        );
+
+        const finished = finishedOf(events);
+        expect(finished.input).toEqual({ kind: "code", language: "javascript", text: "return 1 + 1", cut: false });
+        expect(finished.result).toEqual({
+            kind: "fields",
+            fields: [
+                { name: "output", kind: "text", text: "hello", cut: false },
+                { name: "value", kind: "json", text: '{"kind":"text","rows":2}', cut: false },
+            ],
+        });
+    });
+
+    it("gives no result for a member that throws, and the call gives its result to the model", async () => {
+        const logger = createCapturingLogger();
+        const view: View = {
+            input: (input) => input,
+            result: () => {
+                throw new Error("the view broke");
+            },
+        };
+        const { events, result } = await run(
+            viewed(view, () => Promise.resolve(ok({ rows: 3 }))),
+            { path: "a" },
+            { logger },
+        );
+
+        const finished = finishedOf(events);
+        expect(finished).toMatchObject({ outcome: "ok", input: { kind: "json" } });
+        expect(finished.result).toBeUndefined();
+        expect(toolResultsOf(result.messages)[0]).toMatchObject({ output: { type: "json", value: { rows: 3 } } });
+        expect(logger.records.some((record) => record.level === "warn" && record.msg.includes("the result view of a tool failed"))).toBe(true);
+    });
+
+    it("gives no input for a member that throws", async () => {
+        const view: View = {
+            input: () => {
+                throw new Error("the view broke");
+            },
+            result: (_input, result) => result,
+        };
+        const { events } = await run(
+            viewed(view, () => Promise.resolve(ok({ rows: 3 }))),
+            { path: "a" },
+        );
+
+        expect(startedOf(events).input).toBeUndefined();
+        expect(finishedOf(events)).toMatchObject({ outcome: "ok", result: { kind: "json" } });
+    });
+
+    it("gives no value and one warning with the reason for a view that breaks a rule of the kinds", async () => {
+        const logger = createCapturingLogger();
+        const view: View = { result: () => viewFields({ a: viewText("1"), b: viewText("2"), c: viewText("3"), d: viewText("4"), e: viewText("5") }) };
+        const { events, result } = await run(
+            viewed(view, () => Promise.resolve(ok({}))),
+            { path: "a" },
+            { logger },
+        );
+
+        expect(finishedOf(events).result).toBeUndefined();
+        expect(toolResultsOf(result.messages)[0]).toMatchObject({ output: { type: "json", value: {} } });
+        const warns = logger.records.filter((record) => record.level === "warn" && record.msg.includes("cannot show"));
+        expect(warns).toHaveLength(1);
+        expect(warns[0]?.msg).toContain("result view");
+        expect(warns[0]?.fields).toMatchObject({ tool: "viewed", reason: "a fields value holds more than 4 fields" });
+    });
+
+    it("gives no input and one warning for an input value that cannot serialize", async () => {
+        const logger = createCapturingLogger();
+        const cycle: Record<string, unknown> = {};
+        cycle.self = cycle;
+        const view: View = { input: () => cycle };
+        const { events } = await run(
+            viewed(view, () => Promise.resolve(ok({}))),
+            { path: "a" },
+            { logger },
+        );
+
+        expect(startedOf(events).input).toBeUndefined();
+        expect(finishedOf(events).input).toBeUndefined();
+        const warns = logger.records.filter((record) => record.level === "warn" && record.msg.includes("cannot show"));
+        expect(warns).toHaveLength(1);
+        expect(warns[0]?.msg).toContain("input view");
+        expect(warns[0]?.fields).toMatchObject({ tool: "viewed", reason: "the value does not serialize to JSON" });
+    });
+
+    it("gives no warning for a member that gives undefined", async () => {
+        const logger = createCapturingLogger();
+        const view: View = { input: () => undefined, result: () => undefined };
+        const { events } = await run(
+            viewed(view, () => Promise.resolve(ok({}))),
+            { path: "a" },
+            { logger },
+        );
+
+        expect(startedOf(events).input).toBeUndefined();
+        expect(finishedOf(events).result).toBeUndefined();
+        expect(logger.records.filter((record) => record.level === "warn")).toEqual([]);
+    });
+
+    it("gives one warning for the invalid input view of a refused call", async () => {
+        const logger = createCapturingLogger();
+        const view: View = { input: () => viewCode("JavaScript", "1") };
+        const { events } = await run(
+            viewed(view, () => Promise.resolve(ok({}))),
+            { path: "a" },
+            { policy: { mask: "none" }, logger },
+        );
+
+        expect(startedOf(events).input).toBeUndefined();
+        expect(finishedOf(events)).toMatchObject({ outcome: "error" });
+        const warns = logger.records.filter((record) => record.level === "warn" && record.msg.includes("cannot show"));
+        expect(warns).toHaveLength(1);
+        expect(warns[0]?.fields).toMatchObject({ tool: "viewed" });
+    });
+
+    it("gives no input for an input that fails the parse, and still shows the error", async () => {
+        const { events } = await run(
+            viewed(showing, () => Promise.resolve(ok({}))),
+            { path: 3 },
+        );
+
+        const finished = finishedOf(events);
+        expect(startedOf(events).input).toBeUndefined();
+        expect(finished).toMatchObject({ outcome: "error", error: { kind: "text" } });
+        expect(finished.error?.kind === "text" ? finished.error.text : "").toContain("input validation failed");
+        expect(finished.input).toBeUndefined();
+    });
+
+    it("gives no value for a call of a sub-agent", async () => {
+        const session = makeSession({ agentId: "child-agent", callPath: ["root-agent", "child-agent"] });
+        const { events } = await run(
+            viewed(showing, () => Promise.resolve(ok({ rows: 3 }))),
+            { path: "data/a.csv" },
+            {},
+            session,
+        );
+
+        for (const event of [startedOf(events), finishedOf(events)]) {
+            expect(event.input).toBeUndefined();
+            expect(event).toMatchObject({ detail: "data/a.csv" });
+        }
+        expect(finishedOf(events).result).toBeUndefined();
+    });
+
+    it("gives the refusal as the error of a refused call of a tool that declares none, with the detail of the call", async () => {
+        const { events, result } = await run(
+            viewed("none", () => Promise.resolve(ok({}))),
+            { path: "data/a.csv" },
+            { policy: { mask: "none" } },
+        );
+
+        const refusal = toolResultsOf(result.messages)[0]?.output;
+        const refusalValue = parseUnknownRecord(refusal)?.value;
+        const refusalText = typeof refusalValue === "string" ? refusalValue : "";
+        expect(refusalText.length).toBeGreaterThan(0);
+        expect(startedOf(events)).toMatchObject({ detail: "data/a.csv" });
+        expect(startedOf(events).input).toBeUndefined();
+        const finished = finishedOf(events);
+        expect(finished).toMatchObject({ outcome: "error", detail: "data/a.csv", error: { kind: "text", text: refusalText, cut: false } });
+        expect(finished.input).toBeUndefined();
+    });
+
+    it("gives the view input and the detail of a refused call of a tool that declares an input", async () => {
+        const { events } = await run(
+            viewed({ input: (input) => input }, () => Promise.resolve(ok({}))),
+            { path: "data/a.csv" },
+            { policy: { mask: "none" } },
+        );
+
+        expect(startedOf(events)).toMatchObject({ detail: "data/a.csv", input: { kind: "json", text: '{"path":"data/a.csv"}' } });
+        expect(finishedOf(events)).toMatchObject({ outcome: "error", detail: "data/a.csv", input: { kind: "json" }, error: { kind: "text" } });
+    });
+
+    it("gives no value for a refused call of a sub-agent", async () => {
+        const session = makeSession({ agentId: "child-agent", callPath: ["root-agent", "child-agent"] });
+        const { events } = await run(
+            viewed(showing, () => Promise.resolve(ok({}))),
+            { path: "a" },
+            { policy: { mask: "none" } },
+            session,
+        );
+
+        expect(startedOf(events).input).toBeUndefined();
+        const finished = finishedOf(events);
+        expect(finished).toMatchObject({ outcome: "error", detail: "a" });
+        expect(finished.input).toBeUndefined();
+        expect(finished.error).toBeUndefined();
+    });
+
+    it("gives the input and the detail only for a call that the user denies", async () => {
+        const asking = defineTool({
+            id: "asking",
+            description: "Asks for approval.",
+            inputSchema: z.object({ path: z.string() }),
+            describeCall: (input) => input.path,
+            view: showing,
+            approval: () => ({ title: "Edit a file", command: "edit notes.md" }),
+            execute: () => Promise.resolve(ok({ ran: true })),
+        });
+        const { provider } = scriptedModel([callTools(toolCall("c1", "asking", { path: "notes.md" }))]);
+        const { emit, events } = recordingEmit();
+
+        await runLoop(
+            agentWith([asking]),
+            [user("go")],
+            makeSession(),
+            options(provider, emit, { approve: () => Promise.resolve({ kind: "denied", feedback: "no" }) }),
+        );
+
+        const finished = finishedOf(events);
+        expect(startedOf(events)).toMatchObject({ detail: "notes.md", input: { kind: "json", text: '{"path":"notes.md"}' } });
+        expect(finished).toMatchObject({ outcome: "denied", detail: "notes.md", input: { kind: "json", text: '{"path":"notes.md"}' } });
+        expect(finished.result).toBeUndefined();
+        expect(finished.error).toBeUndefined();
+    });
+
+    it("cuts a result over the cap and marks it, while the model reads the whole result", async () => {
+        const long = "x".repeat(20_000);
+        const { events, result } = await run(
+            viewed({ result: (_input, value) => value }, () => Promise.resolve(ok(long))),
+            { path: "a" },
+        );
+
+        const finished = finishedOf(events);
+        expect(finished).toMatchObject({ result: { kind: "text", cut: true } });
+        const shown = finished.result?.kind === "text" ? finished.result.text : undefined;
+        expect(shown).toBe(`${"x".repeat(3072)}\n[... 11808 characters not shown ...]\n${"x".repeat(5120)}`);
+        expect(toolResultsOf(result.messages)[0]).toMatchObject({ output: { type: "json", value: long } });
+    });
+
+    it("shows the result before the cut for the model", async () => {
+        const long = `${"a".repeat(40_000)}END`;
+        const { events } = await run(
+            viewed({ result: (_input, value) => value }, () => Promise.resolve(ok({ text: long }))),
+            { path: "a" },
+        );
+
+        const finished = finishedOf(events);
+        const shown = finished.result?.kind === "json" ? finished.result.text : undefined;
+        expect(shown?.endsWith('END"}')).toBe(true);
+        expect(shown).toContain("[... 31822 characters not shown ...]");
+    });
+
+    it("removes a listed secret form from the shown input", async () => {
+        const { events } = await run(
+            viewed({ input: (input) => ({ command: input.path }) }, () => Promise.resolve(ok({}))),
+            { path: "mysql --password hunter2" },
+        );
+
+        expect(JSON.stringify(startedOf(events).input)).not.toContain("hunter2");
     });
 });

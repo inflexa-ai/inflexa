@@ -75,6 +75,25 @@ export type ToolCallOutcome = ToolOutcome | "incomplete";
 export type ToolCallDetail = string;
 
 /**
+ * One shown text of a tool call value. The harness removes the control characters and each listed secret form from
+ * the text, and it cuts a text over its cap. `cut` is true when the cap cut the text.
+ *
+ * - `text`: plain text.
+ * - `json`: the JSON text of a value. A host can parse it only when `cut` is false, because a cut text is not valid JSON.
+ * - `code`: source code in `language`.
+ */
+export type ToolCallLeaf =
+    | { kind: "text"; text: string; cut: boolean }
+    | { kind: "json"; text: string; cut: boolean }
+    | { kind: "code"; language: string; text: string; cut: boolean };
+
+/**
+ * The shown value of a tool call: its input, its result, or its error. A host selects a renderer from `kind`.
+ * `fields` holds an ordered list of at most 4 named leaves, and a leaf never holds a `fields` value.
+ */
+export type ToolCallValue = ToolCallLeaf | { kind: "fields"; fields: Array<{ name: string } & ToolCallLeaf> };
+
+/**
  * A sub-agent loop started a request to its model. Only a sub-agent gives this frame, thus a consumer that
  * keeps the root frames only (`isRootFrame`) never sees it. A host reads it as "the sub-agent thinks".
  */
@@ -92,6 +111,8 @@ export type ToolStartedEvent = {
     name: string;
     /** See {@link ToolCallDetail}. Absent — never empty — when none was produced. */
     detail?: ToolCallDetail;
+    /** See {@link ToolCallValue}. The input of the call. */
+    input?: ToolCallValue;
     source: EventSource;
 };
 
@@ -118,6 +139,12 @@ export type ToolFinishedEvent = {
      * it dispatches anything. Thus the fallback is correct only for one call.
      */
     durationMs?: number;
+    /** See {@link ToolCallValue}. The input again, because a replay of a tool step does not give its `tool-started`. */
+    input?: ToolCallValue;
+    /** The value of a call with the outcome `ok`. */
+    result?: ToolCallValue;
+    /** The error text of a call with the outcome `error`. */
+    error?: ToolCallValue;
     source: EventSource;
 };
 

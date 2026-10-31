@@ -732,6 +732,7 @@ export function createWebFetchTool(deps: WebFetchToolDeps = {}): Tool<z.infer<ty
             "private, link-local, or reserved), http_error, redirect_limit, body_too_large, unextractable, and request_failed each name what " +
             "happened. Report the status and continue, do not retry unchanged.",
         inputSchema: WebFetchInputSchema,
+        view: "none",
         describeCall: ({ url }) => url,
         execute: async ({ url }, ctx): Promise<Result<WebFetchOutput, ToolError>> => ok(await fetchOneUrl(url, deps, ctx)),
     });

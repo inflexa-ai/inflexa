@@ -778,6 +778,7 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory): InnerTools {
             // structured issue reporting.
             plan: z.union([PlannerPlanSchema, z.unknown()]).describe("Candidate plan; malformed values are reported in issues."),
         }),
+        view: "none",
         describeCall: "none",
         execute: (input): Promise<Result<SubmitPlanOutput, ToolError>> => {
             // The host owns the grounding fields: it fills them from the last answer of the run.
@@ -814,6 +815,7 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory): InnerTools {
             question: terminalTextSchema("One short question that names each missing fact, and the step that needs it."),
             questionContext: z.string().optional().describe("Optional context: why the plan needs the fact, and what the inputs already say about it."),
         }),
+        view: "none",
         describeCall: "none",
         execute: (input) =>
             Promise.resolve(
@@ -1482,6 +1484,10 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
             "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
         inputSchema: generatePlanInputSchema,
+        view: {
+            input: (input) => input,
+            error: true,
+        },
         describeCall: ({ researchQuestion }) => researchQuestion,
         startsWorkflow: true,
         execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => {

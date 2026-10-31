@@ -75,6 +75,21 @@ describe("countTokens", () => {
         expect(countTokens(content)).toBeGreaterThan(5);
     });
 
+    it("counts a long unbroken run in bounded time", () => {
+        // A repeated character is the worst case of the BPE merge: one pre-token of 20,000 characters.
+        const started = performance.now();
+        const count = countTokens("y".repeat(20_000));
+        expect(performance.now() - started).toBeLessThan(1000);
+        expect(count).toBeGreaterThan(4000);
+        expect(count).toBeLessThan(6000);
+    }, 5000);
+
+    it("counts prose with no long run exactly as one encoding does", () => {
+        const prose = "The quick brown fox jumps over the lazy dog. ".repeat(500);
+        expect(countTokens(prose)).toBe(countTokens([{ type: "text", text: prose }]));
+        expect(countTokens(prose)).toBe(5001);
+    });
+
     it("counts empty content as 0", () => {
         expect(countTokens([])).toBe(0);
         expect(countTokens("")).toBe(0);

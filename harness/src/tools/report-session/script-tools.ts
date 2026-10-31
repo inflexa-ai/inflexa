@@ -66,6 +66,7 @@ function createReadTableTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeof r
             "A larger table does not derive; tell the user which table is absent.",
         inputSchema: readTableInput,
         outputSchema: ReadTableOutputSchema,
+        view: "none",
         describeCall: ({ path }) => path,
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
         execute: async ({ path, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
@@ -133,6 +134,7 @@ function createWriteDerivedTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeo
             "Name each pinned table that the script read in `inputs`. A name that this session already holds is refused, thus a second derivation of one table takes a new name.",
         inputSchema: writeDerivedInput,
         outputSchema: DerivedOutputSchema,
+        view: "none",
         describeCall: ({ name }) => name,
         describeResult: (_input, result) => result.path,
         execute: async ({ name, rows, inputs }, ctx): Promise<Result<DerivedOutput, ToolError>> => {

@@ -59,6 +59,7 @@ const echoTool = defineTool({
     id: "echo",
     description: "A no-op tool.",
     inputSchema: z.object({}),
+    view: "none",
     describeCall: "none",
     execute: () => Promise.resolve(ok({ ok: true })),
 });

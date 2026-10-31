@@ -95,6 +95,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             id: "echo",
             description: "Echo the label back.",
             inputSchema: z.object({ label: z.string() }),
+            view: "none",
             describeCall: "none",
             execute: async ({ label }) => ok({ label }),
         });

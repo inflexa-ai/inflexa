@@ -73,6 +73,7 @@ function createRecordProblemTool(): Tool {
             "Record the extraction of phase 1: the problem summary, objects, relations, key terms, and the analogies " +
             "that phase 2 searches. A later call replaces the record.",
         inputSchema: RecordProblemInputSchema,
+        view: "none",
         describeCall: "none",
         execute: () => Promise.resolve(ok({ recorded: true as const })),
     });
@@ -85,6 +86,7 @@ function createRecordAnalogyTool(): Tool {
             "Record one analogy with its coverage and its cited solutions, when its search is done. A later call " +
             "with the same analogyTitle replaces the record.",
         inputSchema: AnalogySchema,
+        view: "none",
         describeCall: ({ analogyTitle }) => analogyTitle,
         execute: () => Promise.resolve(ok({ recorded: true as const })),
     });
@@ -341,6 +343,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
             "A retry with the same or a similar problem statement meets the same " +
             "failure, thus surface the message and ask the user to narrow the problem.",
         inputSchema: generateAnalogyReportInputSchema,
+        view: "none",
         describeCall: "none",
         startsWorkflow: true,
         execute: async (input, ctx) => ok(await research(input, ctx)),

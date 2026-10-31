@@ -12,6 +12,8 @@ import { z } from "zod";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { forSubAgent } from "../../auth/types.js";
+import type { ChatFrame } from "../../contracts/chat-events.js";
+import { toChatFrame } from "../../contracts/chat-frame.js";
 import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
 import type { CompactionRules } from "../../loop/compaction.js";
@@ -43,6 +45,7 @@ import { createToolOutputStore } from "../../state/tool-outputs.js";
 import type { SessionProvenanceEvent } from "../../provenance/seam.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptedReply, type ScriptEntry, type ScriptStep } from "../../testing.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
+import { viewCode, viewFields, viewJson, viewText } from "../../tools/tool-view.js";
 import { createUpdateWorkingMemoryTool } from "../../tools/memory/update-working-memory.js";
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { pauseCauseOf } from "../../workflows/pause.js";
@@ -438,6 +441,7 @@ describe("the run of a chat turn", () => {
             id: "echo",
             description: "Echo the label back.",
             inputSchema: z.object({ label: z.string() }),
+            view: { input: (input) => input, result: (_input, result) => result, error: true },
             describeCall: "none",
             execute: ({ label }) => Promise.resolve(ok({ label })),
         });
@@ -551,9 +555,127 @@ describe("the run of a chat turn", () => {
         const [toolCallPart, textPart] = presentAt(replay, 1).parts;
         if (toolCallPart?.type !== "tool-call") throw new Error("the reply did not store the tool call");
         const { durationMs, ...call } = toolCallPart;
-        expect(call).toEqual({ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok" });
+        const shown = { kind: "json", text: '{"label":"tu-1"}', cut: false } as const;
+        expect(call).toEqual({ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", input: shown, result: shown });
         expect(durationMs).toBeTypeOf("number");
         expect(textPart).toEqual({ type: "text", text: "the groups differ" });
+    });
+
+    it("stores no secret of the input or of the result of a call, and the stream carries none", async () => {
+        const token = "ghp_0123456789abcdefghij0123456789abcdef";
+        const leaky = defineTool({
+            id: "leaky",
+            description: "Takes an environment and gives a login.",
+            inputSchema: z.object({ env: z.record(z.string(), z.string()) }),
+            view: { input: (input) => input, result: (_input, result) => result },
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ user: "ana", password: "hunter2" })),
+        });
+        const model = scriptedModel([callTools(toolCall("tu-1", "leaky", { env: { GITHUB_TOKEN: token, REGION: "eu" } })), reply([text("the groups differ")])]);
+        const root = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
+        const frames: ChatFrame[] = [];
+        await runInProcessTurn(
+            depsFor(resolverFor(agentWith([leaky])), model),
+            params({
+                emit: (event) => {
+                    const frame = toChatFrame(event, root);
+                    if (frame !== null) frames.push(frame);
+                },
+            }),
+        );
+
+        const [call] = presentAt(storedMessagesToChat(await storedRows()), 1).parts;
+        expect(call).toMatchObject({
+            type: "tool-call",
+            input: { kind: "json", text: '{"env":{"GITHUB_TOKEN":"[REDACTED: Secret Field]","REGION":"eu"}}', cut: false },
+            result: { kind: "json", text: '{"user":"ana","password":"[REDACTED: Secret Field]"}', cut: false },
+        });
+        for (const secret of [token, "hunter2"]) {
+            expect(JSON.stringify(call)).not.toContain(secret);
+            expect(JSON.stringify(frames)).not.toContain(secret);
+        }
+        expect(frames.find((frame) => frame.type === "tool-finished")).toMatchObject({ input: { cut: false }, result: { cut: false } });
+    });
+
+    it("stores no part of a quoted secret with an escaped quote, and the stream carries none", async () => {
+        const runner = defineTool({
+            id: "runner",
+            description: "Runs a command.",
+            inputSchema: z.object({ cmd: z.string() }),
+            view: { input: (input) => input },
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ done: true })),
+        });
+        const cmd = 'export API_KEY="abc\\" def" && run';
+        const model = scriptedModel([callTools(toolCall("tu-1", "runner", { cmd })), reply([text("the groups differ")])]);
+        const root = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
+        const frames: ChatFrame[] = [];
+        await runInProcessTurn(
+            depsFor(resolverFor(agentWith([runner])), model),
+            params({
+                emit: (event) => {
+                    const frame = toChatFrame(event, root);
+                    if (frame !== null) frames.push(frame);
+                },
+            }),
+        );
+
+        const [call] = presentAt(storedMessagesToChat(await storedRows()), 1).parts;
+        expect(call).toMatchObject({
+            type: "tool-call",
+            input: { kind: "json", text: '{"cmd":"export API_KEY=[REDACTED: Secret Assignment] && run"}', cut: false },
+        });
+        for (const secret of ["abc", "def"]) {
+            expect(JSON.stringify(call)).not.toContain(secret);
+            expect(JSON.stringify(frames)).not.toContain(secret);
+        }
+    });
+
+    it("gives the same kinded input, result, and error from the stream and from the reloaded transcript, and a cut value", async () => {
+        const long = "TP53 7 ".repeat(3_334).slice(0, 20_000);
+        const probe = defineTool({
+            id: "probe",
+            description: "Gives a long result, or fails.",
+            inputSchema: z.object({ fail: z.boolean() }),
+            view: {
+                input: (input) => viewCode("javascript", `probe(${String(input.fail)})`),
+                result: (_input, result: string) => viewFields({ output: viewText(result), value: viewJson({ length: result.length }) }),
+                error: true,
+            },
+            describeCall: "none",
+            execute: ({ fail }) => Promise.resolve(fail ? err({ error: "the probe failed", retryable: false }) : ok(long)),
+        });
+        const model = scriptedModel([callTools(toolCall("tu-1", "probe", { fail: false }), toolCall("tu-2", "probe", { fail: true })), reply([text("done")])]);
+        const root = { agentId: "conversation-agent", callPath: ["conversation-agent"] };
+        const frames: ChatFrame[] = [];
+        await runInProcessTurn(
+            depsFor(resolverFor(agentWith([probe])), model),
+            params({
+                emit: (event) => {
+                    const frame = toChatFrame(event, root);
+                    if (frame !== null) frames.push(frame);
+                },
+            }),
+        );
+
+        const cutOutput = {
+            name: "output",
+            kind: "text",
+            text: `${long.slice(0, 3072)}\n[... 11808 characters not shown ...]\n${long.slice(-5120)}`,
+            cut: true,
+        };
+        const okResult = { kind: "fields", fields: [cutOutput, { name: "value", kind: "json", text: '{"length":20000}', cut: false }] };
+        const okInput = { kind: "code", language: "javascript", text: "probe(false)", cut: false };
+        const failInput = { kind: "code", language: "javascript", text: "probe(true)", cut: false };
+        const failError = { kind: "text", text: "the probe failed", cut: false };
+
+        const finished = frames.filter((frame) => frame.type === "tool-finished");
+        expect(finished.find((frame) => frame.toolUseId === "tu-1")).toMatchObject({ outcome: "ok", input: okInput, result: okResult });
+        expect(finished.find((frame) => frame.toolUseId === "tu-2")).toMatchObject({ outcome: "error", input: failInput, error: failError });
+
+        const calls = presentAt(storedMessagesToChat(await storedRows()), 1).parts.filter((part) => part.type === "tool-call");
+        expect(calls.find((part) => part.toolCallId === "tu-1")).toMatchObject({ outcome: "ok", input: okInput, result: okResult });
+        expect(calls.find((part) => part.toolCallId === "tu-2")).toMatchObject({ outcome: "error", input: failInput, error: failError });
     });
 
     it("announces the id of the user message and of the assistant message, and stores the turn under those ids", async () => {
@@ -699,6 +821,7 @@ describe("the run of a chat turn", () => {
             id: "stall",
             description: "Throws an AbortError that no abort of the turn caused.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => {
                 return Promise.reject(new DOMException("The operation was aborted", "AbortError"));
@@ -834,6 +957,7 @@ describe("the run of a chat turn", () => {
             id: "long",
             description: "Give a long text.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok(value)),
         });
@@ -881,6 +1005,7 @@ describe("the run of a chat turn", () => {
             id: "delegate",
             description: "Run a sub-agent.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: async (_input, ctx) => {
                 const sub = await runLoop(agentWith([], SUB_PROMPT), [{ role: "user", content: "brief" }], forSubAgent(ctx.session, "sub-agent"), {
@@ -956,6 +1081,7 @@ describe("the run of a chat turn", () => {
             id: "run_script",
             description: "Run a script after the user approves it.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             approval: () => ({ title: "Run a script", command: "Rscript de.R" }),
             execute: () => Promise.resolve(ok({ ran: "Rscript de.R" })),
@@ -991,6 +1117,7 @@ describe("the compaction of a chat turn", () => {
             id: "echo",
             description: "Echo the label back.",
             inputSchema: z.object({ label: z.string() }),
+            view: { input: (input) => input, result: (_input, result) => result, error: true },
             describeCall: "none",
             execute: ({ label }) => Promise.resolve(ok({ label })),
         });
@@ -1100,7 +1227,17 @@ describe("the compaction of a chat turn", () => {
             id: "<id>",
             createdAt: "<createdAt>",
             role: "assistant",
-            parts: [{ type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok", durationMs: "<durationMs>" }],
+            parts: [
+                {
+                    type: "tool-call",
+                    toolCallId: "tu-1",
+                    toolName: "echo",
+                    outcome: "ok",
+                    durationMs: "<durationMs>",
+                    input: { kind: "json", text: '{"label":"tu-1"}', cut: false },
+                    result: { kind: "json", text: '{"label":"tu-1"}', cut: false },
+                },
+            ],
         },
         storedDivider("mid-turn"),
         { ...STORED_REPLY, usage: { inputTokens: OVER } },
@@ -1456,6 +1593,7 @@ describe("the compaction of a chat turn", () => {
             id: "delegate",
             description: "Run a sub-agent over a brief whose last request passed the budget.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: async (_input, ctx) => {
                 const sub = await runLoop(

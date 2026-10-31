@@ -65,6 +65,11 @@ export function createScanInputsTool(deps: ScanInputsDeps): Tool<z.infer<typeof 
             "or to check a grouping you are unsure about. " +
             "It reports observations only: which files are one KIND of data, and what a varying position MEANS, are yours to decide.",
         inputSchema: ScanInputsInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         describeCall: ({ path }) => path,
         execute: async ({ path }, ctx): Promise<Result<ScanInputsOutput, ToolError>> => {
             const scan = await scanInputTree({

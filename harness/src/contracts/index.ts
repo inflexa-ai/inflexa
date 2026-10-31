@@ -56,6 +56,8 @@ export type {
     IterationEvent,
     ToolStartedEvent,
     ToolFinishedEvent,
+    ToolCallLeaf,
+    ToolCallValue,
     FinishEvent,
     ChatErrorEvent,
     MessageStartEvent,

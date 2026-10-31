@@ -37,7 +37,7 @@ import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
-import { runWithSalvage, withRunScript, type LoopStep } from "../loop/run-loop.js";
+import { runWithSalvage, type LoopStep } from "../loop/run-loop.js";
 import { recordedInputOf } from "../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -48,7 +48,6 @@ import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
-import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
 import { renderResources, renderWorkspace } from "../prompts/briefing.js";
@@ -161,6 +160,7 @@ export function createSubmitProfileTool(detected: DetectedSets, menu: SetMenu): 
             "A submission whose operations do not resolve, or that leaves kept files unclaimed, comes back with " +
             "the errors; the repair is a FULL resubmit of the whole operation list. The last accepted submission is the profile.",
         inputSchema: ProfileSubmissionSchema,
+        view: "none",
         describeCall: "none",
         execute: (input): Promise<Result<SubmitOutcome, ToolError>> => {
             const resolution = resolveProfileSubmission(input, detected, menu, { finalRound: false });
@@ -773,10 +773,6 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
 
             const baseAgent = createDataProfilerAgent(sandboxAgentDeps);
             const agentDef = { ...baseAgent, tools: [...baseAgent.tools, submitProfileTool] };
-            // The profiler's own roster, `submit_profile` included, so every call it
-            // makes is phrased by the tool that was called.
-            const resolveDetail = createDetailResolver([...withRunScript(agentDef).tools, ...(agentDef.scriptTools ?? [])], logger);
-
             const signal = new AbortController().signal;
 
             // Covers the gap between a ready sandbox and the agent's first tool call, which would
@@ -797,7 +793,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     // feeds carries a single line whose value is that it always names what is
                     // happening now. The events of a tool call arrive from inside its step.
                     emit: async (event) => {
-                        if (event.type === "tool-started") await activity.forTool(event.toolUseId, event.name, event.input, resolveDetail);
+                        if (event.type === "tool-started") await activity.forTool(event.toolUseId, event.name, event.detail);
                     },
                     invocationId: workflowId,
                     usageRecorder: deps.usageRecorder,

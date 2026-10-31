@@ -62,6 +62,7 @@ export const searchProteinTool = defineTool({
                     "this only for a reviewedOnly=false survey, where a gene carries many TrEMBL rows.",
             ),
     }),
+    view: "none",
     describeCall: ({ query }) => query,
     execute: async ({ query, organismId, reviewedOnly, limit }): Promise<Result<SearchProteinOutput, ToolError>> => {
         const result = await searchProteins(query, {

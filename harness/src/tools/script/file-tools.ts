@@ -214,6 +214,7 @@ function createReadTableTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "re
             "A larger table, or another format such as h5ad, is work for an analysis run.",
         inputSchema: readTableInput,
         outputSchema: ReadTableOutputSchema,
+        view: "none",
         describeCall: ({ path, entry }) => (entry === undefined ? path : `${path} : ${entry}`),
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
         execute: async ({ path, entry, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
@@ -257,6 +258,7 @@ function createListArchiveTool(
             "`read_table` and `read_pdf` then read one of them as their `entry`.",
         inputSchema: listArchiveInput,
         outputSchema: ListArchiveOutputSchema,
+        view: "none",
         describeCall: ({ path }) => path,
         describeResult: (_input, result) => `${String(result.entries.length)} files`,
         execute: async ({ path }, ctx): Promise<Result<ListArchiveOutput, ToolError>> => {
@@ -330,6 +332,7 @@ export function createReadPdfTool(
             "A scanned page with no text layer reads as an empty text.",
         inputSchema: readPdfInput,
         outputSchema: ReadPdfOutputSchema,
+        view: "none",
         describeCall: ({ path, entry, firstPage, lastPage }) => {
             const file = entry === undefined ? path : `${path} : ${entry}`;
             return firstPage === undefined && lastPage === undefined ? file : `${file}, pages ${String(firstPage ?? 1)}-${String(lastPage ?? "")}`;
@@ -426,6 +429,7 @@ function createWriteDerivedTool(deps: ScriptFileToolsDeps): Tool<z.infer<typeof 
             "A name holds one file: a second write of the name with other content is refused.",
         inputSchema: writeDerivedInput,
         outputSchema: WrittenOutputSchema,
+        view: "none",
         describeCall: ({ name }) => name,
         describeResult: (_input, result) => result.path,
         execute: async ({ name, content, rows }, ctx): Promise<Result<WrittenOutput, ToolError>> => {
@@ -467,6 +471,7 @@ function createRenderChartTool(deps: ScriptFileToolsDeps): Tool<z.infer<typeof r
             "To show a chart in the chat, use `show_user`.",
         inputSchema: renderChartInput,
         outputSchema: WrittenOutputSchema,
+        view: "none",
         describeCall: ({ name }) => name,
         describeResult: (_input, result) => result.path,
         execute: async ({ name, spec, width }, ctx): Promise<Result<WrittenOutput, ToolError>> => {
@@ -528,6 +533,7 @@ function createExportPdfTool(deps: DocumentToolsDeps): Tool<z.infer<typeof expor
             "Charts that `render_chart` wrote can appear in it as images. The PDF reads no URL.",
         inputSchema: exportPdfInput,
         outputSchema: ExportPdfOutputSchema,
+        view: "none",
         describeCall: ({ name }) => name,
         describeResult: (_input, result) => result.path,
         execute: async ({ name, markdown, title }, ctx): Promise<Result<ExportPdfOutput, ToolError>> => {

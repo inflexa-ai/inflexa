@@ -5,7 +5,7 @@
 
 import type { ModelMessage } from "ai";
 
-import type { ToolCallDetail, ToolOutcome } from "../contracts/chat-events.js";
+import type { ToolCallDetail, ToolCallValue, ToolOutcome } from "../contracts/chat-events.js";
 import type { ChatStreamEvent, ProviderOptions } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { CompactionRules } from "./compaction.js";
@@ -83,13 +83,14 @@ export type EmitEvent =
           readonly source: EventSource;
           readonly toolUseId: string;
           readonly name: string;
-          readonly input: unknown;
           /**
            * One line naming what this call is doing, from the tool's own
            * `describeCall` hook. Absent — never empty — when the tool declares no
            * hook or the detail could not be produced (see `tool-detail.ts`).
            */
           readonly detail?: ToolCallDetail;
+          /** The input that the view of the tool declares, with each listed secret form removed and a cap. Absent for a call that is not a root call. */
+          readonly input?: ToolCallValue;
       }
     | {
           readonly type: "tool-finished";
@@ -110,6 +111,12 @@ export type EmitEvent =
            * can fall back to its own observation.
            */
           readonly durationMs?: number;
+          /** The input again: a replay of a tool step does not give its `tool-started`. */
+          readonly input?: ToolCallValue;
+          /** The result of a call with the outcome `ok`. */
+          readonly result?: ToolCallValue;
+          /** The error text of a call with the outcome `error`. */
+          readonly error?: ToolCallValue;
       }
     | {
           /** The display recorder of a chat turn emits it, not the loop. See `MessageStartEvent`. */

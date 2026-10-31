@@ -670,6 +670,11 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
             "An empty result means the dataset is absent right now — not that it is unobtainable. Say so; never guess a path, and never silently substitute a different dataset. " +
             "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path between runs, and whatever is added shows up in a later run. Within one run the listing does not change, thus one call per question is enough.",
         inputSchema: ListAvailableRefsInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         // `execute` resolves `path ?? category` for the subtree it inspects, and
         // it ignores `category` when `path` is present. `query` is an ADDITIVE
         // filter over that subtree, thus the target keeps naming the call and the

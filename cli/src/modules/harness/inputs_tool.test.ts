@@ -240,3 +240,32 @@ describe("manage_inputs — describeCall", () => {
         expect(describeCall({ action: "add", paths: [] })).toBe("add");
     });
 });
+
+describe("manage_inputs — view", () => {
+    const tool = createManageInputsTool();
+    let dir = "";
+    let analysisId = "";
+
+    beforeEach(async () => {
+        freshDb();
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-mi-")));
+        analysisId = (await createAnalysis({ cwd: dir, name: str256("mi")._unsafeUnwrap() }))._unsafeUnwrap().id;
+    });
+
+    afterEach(() => {
+        releaseInstanceLock(analysisId);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("an add call shows its input and its result, and the view declares the error", async () => {
+        writeFileSync(join(dir, "data.csv"), "x,y\n1,2\n");
+        acquireInstanceLock(analysisId);
+        const input = { action: "add" as const, paths: ["data.csv"] };
+        const result = (await runCall(tool, input, analysisId, recordingAsk().fn))._unsafeUnwrap();
+
+        expect(result).toEqual({ status: "added", added: ["data.csv"] });
+        expect(tool.view?.input?.(input)).toEqual(input);
+        expect(tool.view?.result?.(input, result)).toEqual({ status: "added", added: ["data.csv"] });
+        expect(tool.view?.error).toBe(true);
+    });
+});

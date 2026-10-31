@@ -53,6 +53,7 @@ export const showFileTool = defineTool({
         "calls in one batch, in reading order: a section, then the `show_file` for its figures, then the next section " +
         "(markdown image syntax pointing at a workspace file does NOT render — this tool is the only way to show one).",
     inputSchema: ShowFileInputSchema,
+    view: "none",
     // `.min(1)` on `files` makes index 0 total after the parse.
     describeCall: ({ files }) => (files.length === 1 ? presentFirst(files, "the shown file").path : `${files.length} files`),
     execute: async (input, ctx): Promise<Result<ShowFileOutput, ToolError>> => {

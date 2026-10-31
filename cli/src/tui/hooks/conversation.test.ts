@@ -279,7 +279,7 @@ describe("send() drives the adapter over the turn stream", () => {
 
     test("tool started/finished pair into one part with an outcome + duration", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -296,8 +296,8 @@ describe("send() drives the adapter over the turn stream", () => {
         // every start before it dispatches and every finish after the round
         // settles. Only the harness figure separates the two calls.
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "slow", name: "read_file", input: {} });
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "fast", name: "list_files", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "slow", name: "read_file" });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "fast", name: "list_files" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "slow", name: "read_file", outcome: "ok", durationMs: 480 });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "fast", name: "list_files", outcome: "ok", durationMs: 3 });
         });
@@ -312,7 +312,7 @@ describe("send() drives the adapter over the turn stream", () => {
         // a real `0`, and `||` would discard it for the round-wide bracket — the
         // exact false figure this requirement removes.
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t0", name: "list_files", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t0", name: "list_files" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t0", name: "list_files", outcome: "ok", durationMs: 0 });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -322,7 +322,7 @@ describe("send() drives the adapter over the turn stream", () => {
 
     test("a frame without a duration falls back to the observed elapsed time", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -345,7 +345,7 @@ describe("send() drives the adapter over the turn stream", () => {
 
     test("tool error outcome is honored", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t9", name: "write_file", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t9", name: "write_file" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t9", name: "write_file", outcome: "error" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -356,7 +356,7 @@ describe("send() drives the adapter over the turn stream", () => {
     // decision as a fault of the tool, which is why the harness reports three outcomes and not two.
     test("a denied outcome is distinct from an error", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t7", name: "execute_analysis", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t7", name: "execute_analysis" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t7", name: "execute_analysis", outcome: "denied" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -365,7 +365,7 @@ describe("send() drives the adapter over the turn stream", () => {
 
     test("a described call carries its detail from tool-started onward", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t2", name: "update_working_memory", input: {}, detail: "hypothesis retire h3" });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t2", name: "update_working_memory", detail: "hypothesis retire h3" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t2", name: "update_working_memory", outcome: "ok", detail: "hypothesis retire h3" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -378,7 +378,7 @@ describe("send() drives the adapter over the turn stream", () => {
     // version it recorded. That fact does not exist at dispatch, so the chip must take the newer line.
     test("a present finished detail replaces the one the start showed", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t4", name: "preview_report", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t4", name: "preview_report" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t4", name: "preview_report", outcome: "ok", detail: "page /w/t4/index.html" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -391,7 +391,7 @@ describe("send() drives the adapter over the turn stream", () => {
     // and blanking the started line there would lose the only description the call ever had.
     test("an absent finished detail never blanks the one the start showed", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t5", name: "read_file", input: {}, detail: "output/summary.md" });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t5", name: "read_file", detail: "output/summary.md" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t5", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -402,7 +402,7 @@ describe("send() drives the adapter over the turn stream", () => {
     // call. The chip must show that line beside the failure, and not fall back to the bare tool name.
     test("a failed call keeps the detail its start showed", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t6", name: "add_block", input: {}, detail: 'add section "Summary"' });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t6", name: "add_block", detail: 'add section "Summary"' });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t6", name: "add_block", outcome: "error", detail: 'add section "Summary"' });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -413,7 +413,7 @@ describe("send() drives the adapter over the turn stream", () => {
 
     test("a call from a tool with no hook carries no detail", async () => {
         const server = fakeServer(done(), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t3", name: "search_semantic_scholar", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t3", name: "search_semantic_scholar" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t3", name: "search_semantic_scholar", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -448,9 +448,9 @@ describe("send() drives the adapter over the turn stream", () => {
 
         test("a sub-agent's frames update the running tool's activity line and create no block of their own", async () => {
             const activity = await activityDuring((emit) => {
-                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis", input: {} });
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis" });
                 void emit({ type: "iteration", source: SUB, index: 1, final: false });
-                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
+                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers" });
             });
             // The activity carries the sub-agent's newest work, attributed to who is doing it.
             expect(activity).toBe("planner: search_papers");
@@ -465,7 +465,7 @@ describe("send() drives the adapter over the turn stream", () => {
         // an empty line there reads as a wedged call.
         test("a sub-agent that starts a model request shows its thinking line", async () => {
             const activity = await activityDuring((emit) => {
-                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis", input: {} });
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis" });
                 void emit({ type: "iteration", source: SUB, index: 0, final: false });
             });
             expect(activity).toBe("planner: thinking");
@@ -473,18 +473,18 @@ describe("send() drives the adapter over the turn stream", () => {
 
         test("the INNERMOST sub-agent owns the line — a shallower caller does not overwrite it", async () => {
             const activity = await activityDuring((emit) => {
-                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis", input: {} });
-                void emit({ type: "tool-started", source: DEEPER, toolUseId: "sub-2", name: "fetch_abstract", input: {} });
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis" });
+                void emit({ type: "tool-started", source: DEEPER, toolUseId: "sub-2", name: "fetch_abstract" });
                 // The planner is merely WAITING on the reviewer; its own call is not what is happening.
-                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-3", name: "rank_papers", input: {} });
+                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-3", name: "rank_papers" });
             });
             expect(activity).toBe("literature-reviewer: fetch_abstract");
         });
 
         test("the activity line is cleared when the call finishes", async () => {
             const server = fakeServer(done(), (emit) => {
-                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis", input: {} });
-                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis" });
+                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers" });
                 void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "plan_analysis", outcome: "ok" });
             });
             await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -498,7 +498,7 @@ describe("send() drives the adapter over the turn stream", () => {
 
         test("a sub-agent frame outside any tool call is dropped, not rendered at the root", async () => {
             const server = fakeServer(done(), (emit) => {
-                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
+                void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers" });
             });
             await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
             // Nothing to be subordinate TO — and putting it at the root is the burial the rule prevents.
@@ -637,7 +637,6 @@ describe("send() drives the adapter over the turn stream", () => {
                 source: { agentId: "planner", callPath: ["tui-chat", "planner"] },
                 toolUseId: "sub",
                 name: "hidden_tool",
-                input: {},
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -1209,7 +1208,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
     test("text -> tool -> text renders three parts in order [text][tool][text]", async () => {
         const server = fakeServer(done(), (emit) => {
             void emit({ type: "text-delta", text: "Reading the schema. " });
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
             void emit({ type: "text-delta", text: "It carries a slug column." });
         });
@@ -1300,7 +1299,7 @@ describe("send() turn cleanup", () => {
     test("aborting with an open tool resolves the chip to a terminal state", async () => {
         const server = fakeServer({ status: "aborted", opened: true }, (emit) => {
             // A tool-started with no matching tool-finished — still running when the turn aborts.
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
 
@@ -1710,7 +1709,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
     test("deltas -> tool -> no further deltas: the fallback renders as a trailing part", async () => {
         const server = fakeServer(done({ fallbackText: "THE FINAL ANSWER" }), (emit) => {
             void emit({ type: "text-delta", text: "thinking..." });
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, server);
@@ -1737,7 +1736,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         // `fallbackText` on top of it would print the answer twice. The turn's FIRST frame is a tool
         // (the common bare-tool_use first iteration), so the prose must render BELOW the chip.
         const server = fakeServer(done({ fallbackText: "streamed answer" }), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
             void emit({ type: "text-delta", text: "streamed answer" });
         });
@@ -1753,7 +1752,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
 
     test("tool-first with the answer only as fallback: prose renders below the tool, not above it", async () => {
         const server = fakeServer(done({ fallbackText: "the answer" }), (emit) => {
-            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
             void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, server);
@@ -1862,7 +1861,7 @@ describe("live emission order matches transcript reload order", () => {
         {
             name: "tool-first, answer streamed",
             drive: (emit) => {
-                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
                 void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
                 void emit({ type: "text-delta", text: "answer" });
             },
@@ -1872,7 +1871,7 @@ describe("live emission order matches transcript reload order", () => {
         {
             name: "tool-first, answer only as fallback",
             drive: (emit) => {
-                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
                 void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
             },
             fallbackText: "final",
@@ -1882,7 +1881,7 @@ describe("live emission order matches transcript reload order", () => {
             name: "text, tool, text",
             drive: (emit) => {
                 void emit({ type: "text-delta", text: "before " });
-                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file", input: {} });
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
                 void emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
                 void emit({ type: "text-delta", text: "after" });
             },

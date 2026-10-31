@@ -18,7 +18,7 @@
  */
 
 import type { ToolCallDetail } from "../contracts/chat-events.js";
-import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
+import { normalizeUnicode, redactSecretForms, redactSecrets } from "../input-sanitization.js";
 import { collapseWhitespace } from "../lib/text.js";
 import type { Logger } from "../lib/logger.js";
 import type { Tool } from "../tools/define-tool.js";
@@ -84,13 +84,17 @@ export function capCodePoints(text: string, max: number): string {
  * Normalize whatever a hook returned into an emittable detail, or `undefined`.
  *
  * In order: reject anything that is not a usable string, strip control
- * characters, collapse to one line, redact secrets, then cap the length.
+ * characters, redact the text forms of the tool call values (a flag, an
+ * assignment, a pair, a cookie, a URL password), collapse to one line, redact
+ * the prefixed secret formats, then cap the length.
  *
  * The control-character strip is the harness's existing `normalizeUnicode`,
  * which is also what the chat route applies to user prose — a detail is
  * rendered by a host, so a terminal escape sequence in it is an injection.
  * Redaction runs before the cap, so a secret cannot survive by being cut in
  * half, and after the strip, so an embedded control byte cannot break a pattern.
+ * The text forms run before the collapse, because a form such as a cookie header
+ * or a `name: value` pair ends at the end of its line.
  */
 export function normalizeDetail(raw: unknown): ToolCallDetail | undefined {
     if (typeof raw !== "string" || raw.length === 0) return undefined;
@@ -98,7 +102,7 @@ export function normalizeDetail(raw: unknown): ToolCallDetail | undefined {
     // `normalizeUnicode` leaves tab, newline and carriage return in place (they
     // are legitimate whitespace in prose); the collapse below is what turns them
     // into the single line this contract promises.
-    const oneLine = collapseWhitespace(normalizeUnicode(raw));
+    const oneLine = collapseWhitespace(redactSecretForms(normalizeUnicode(raw)));
     if (oneLine.length === 0) return undefined;
 
     const capped = capCodePoints(redactSecrets(oneLine), DETAIL_MAX_LENGTH);

@@ -1451,7 +1451,9 @@ describe("GET /api/v1/fs/search", () => {
         } finally {
             rmSync(outside, { recursive: true, force: true });
         }
-    });
+        // Each search starts a walk child of the source build, and a loaded machine starts one slowly. The limit is the
+        // first wait of the app, thus the test ends on a failed expectation, not on the default limit of 5 s.
+    }, 30_000);
 
     test("searches the canonical scope of a path through a link", async () => {
         seedData();

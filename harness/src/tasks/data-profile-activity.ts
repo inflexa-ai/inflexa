@@ -23,7 +23,6 @@
 import type { StepPhase } from "../contracts/chat-parts.js";
 import type { Logger } from "../lib/logger.js";
 import { activityEmission, activityForTool, toolActivityKey } from "../sandbox/sandbox-step-translate.js";
-import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
 /**
  * Writes one part to the run-event stream. Injected rather than imported so this
@@ -69,15 +68,12 @@ export type ProfileActivityEmitter = {
      * Reported per tool call the profiler agent makes, phrased by the shared
      * translator.
      *
-     * `resolveDetail` is built over the profiler agent's own tool list, so the
-     * phrase comes from the called tool's `describeCall` hook. It is passed per
-     * call rather than held by the emitter because the emitter exists before the
-     * agent does — `sandboxInit` is reported before the sandbox the agent's tools
-     * are bound to. The call site supplies a RESOLVER, never a phrase: the
+     * `detail` is the detail of the loop event, which the `describeCall` hook of
+     * the called tool made. The call site supplies a detail, never a phrase: the
      * phrases are this capability's observable contract, and a call site that
      * composed its own is a call site that can drift from it.
      */
-    forTool(toolUseId: string, name: string, input: unknown, resolveDetail?: ToolDetailResolver): Promise<void>;
+    forTool(toolUseId: string, name: string, detail?: string): Promise<void>;
     /** Reported for the vector-store pass that indexes per-file descriptions. */
     indexing(): Promise<void>;
     /** The success terminal. Emitted only after the terminal ledger write has landed. */
@@ -145,7 +141,7 @@ export function createProfileActivityEmitter(
         sandboxInit: () => emit("sandbox-init", "Starting sandbox"),
         scanning: () => emit("executing", "Scanning input files"),
         agentStarting: () => emit("executing", "Running data-profiler"),
-        forTool: (toolUseId, name, input, resolveDetail) => emit("executing", activityForTool(name, input, resolveDetail), toolUseId),
+        forTool: (toolUseId, name, detail) => emit("executing", activityForTool(name, detail), toolUseId),
         indexing: () => emit("indexing", "Indexing input descriptions for search"),
         complete: () => emit("complete", "Profile complete"),
         failed: (reason) => emit("failed", reason),
