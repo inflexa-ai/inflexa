@@ -785,3 +785,47 @@ describe("run_inflexa — describeCall", () => {
         expect(tool.describeCall!({ argv })).toBe(prompt.slice("inflexa ".length));
     });
 });
+
+describe("run_inflexa — view", () => {
+    const tool = makeTool(recordingSubprocess().fn);
+
+    function shown(result: Parameters<NonNullable<NonNullable<typeof tool.view>["result"]>>[1]): Array<[string, string]> {
+        const value: unknown = tool.view?.result?.({ argv: [] }, result);
+        if (value === undefined || value === null || typeof value !== "object" || !("fields" in value) || !Array.isArray(value.fields)) {
+            throw new Error("the view gave no fields");
+        }
+        return value.fields.map((field: { name: string; leaf: { kind: string } }) => [field.name, field.leaf.kind]);
+    }
+
+    test("shows the argv as the input and declares the error", () => {
+        expect(tool.view?.input?.({ argv: ["refs", "list"] })).toEqual({ argv: ["refs", "list"] });
+        expect(tool.view?.error).toBe(true);
+    });
+
+    test("a ran call shows the status, the exit code, and each stream that holds text", () => {
+        expect(shown({ status: "ran", exitCode: 0, stdout: "out", stderr: "" })).toEqual([
+            ["status", "text"],
+            ["exitCode", "json"],
+            ["stdout", "text"],
+        ]);
+    });
+
+    test("a timed out call shows the status and each stream that holds text", () => {
+        expect(shown({ status: "timed_out", stdout: "", stderr: "late" })).toEqual([
+            ["status", "text"],
+            ["stderr", "text"],
+        ]);
+    });
+
+    test("an invalid or blocked call shows the status and the message, and a cancelled call shows the status alone", () => {
+        expect(shown({ status: "invalid", message: "bad" })).toEqual([
+            ["status", "text"],
+            ["message", "text"],
+        ]);
+        expect(shown({ status: "blocked", message: "no" })).toEqual([
+            ["status", "text"],
+            ["message", "text"],
+        ]);
+        expect(shown({ status: "cancelled" })).toEqual([["status", "text"]]);
+    });
+});

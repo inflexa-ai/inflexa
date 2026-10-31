@@ -56,7 +56,7 @@ describe("createChatPrinter", () => {
 
     test("sub-agent traffic outside any tool call is dropped — it has nothing to be subordinate to", () => {
         const h = harness();
-        h.emit({ type: "tool-started", source: SUB, toolUseId: "t1", name: "grep", input: {} });
+        h.emit({ type: "tool-started", source: SUB, toolUseId: "t1", name: "grep" });
         h.emit({ type: "tool-finished", source: SUB, toolUseId: "t1", name: "grep", outcome: "ok" });
         h.emit({ type: "data-plan", source: SUB, data: { planId: "pln-deadbeef", title: "hidden", steps: [] } });
         expect(h.out()).toBe("");
@@ -67,8 +67,8 @@ describe("createChatPrinter", () => {
         // Dropping it outright made a long tool call indistinguishable from a wedged one; emitting it
         // at the root would bury the conversation. Routed under its call, it is neither.
         const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "plan_analysis", input: {} });
-        h.emit({ type: "tool-started", source: SUB, toolUseId: "s1", name: "search_papers", input: {} });
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "plan_analysis" });
+        h.emit({ type: "tool-started", source: SUB, toolUseId: "s1", name: "search_papers" });
         const out = h.out();
         expect(out).toContain("[tool] plan_analysis running...");
         expect(out).toContain("planner: search_papers");
@@ -78,7 +78,7 @@ describe("createChatPrinter", () => {
 
     test("a sub-agent data part still renders nothing — only activity is routed", () => {
         const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "plan_analysis", input: {} });
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "plan_analysis" });
         h.emit({ type: "data-plan", source: SUB, data: { planId: "pln-deadbeef", title: "hidden", steps: [] } });
         // A sub-agent's plan card is content for its own caller, not activity — it must not surface.
         expect(h.out()).not.toContain("hidden");
@@ -87,7 +87,7 @@ describe("createChatPrinter", () => {
 
     test("tool chip: one line on start, outcome on finish", () => {
         const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep", input: { q: "gene" } });
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep" });
         h.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "grep", outcome: "ok" });
         const out = h.out();
         expect(out).toContain("[tool] grep running...");
@@ -96,7 +96,7 @@ describe("createChatPrinter", () => {
 
     test("tool chip: error outcome is marked", () => {
         const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "read_file", input: {} });
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "read_file" });
         h.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "read_file", outcome: "error" });
         expect(h.out()).toContain("[tool] read_file error");
     });
@@ -104,7 +104,7 @@ describe("createChatPrinter", () => {
     // A denial is the user's refusal, not a tool fault, so it gets its own word rather than `error`.
     test("tool chip: a denied outcome reads as denied, not as an error", () => {
         const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "execute_analysis", input: {} });
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "execute_analysis" });
         h.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "execute_analysis", outcome: "denied" });
         const out = h.out();
         expect(out).toContain("[tool] execute_analysis denied");
@@ -113,14 +113,14 @@ describe("createChatPrinter", () => {
 
     test("tool chip: a described call names what it is doing", () => {
         const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "run_inflexa", input: {}, detail: "refs list --json" });
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "run_inflexa", detail: "refs list --json" });
         h.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "run_inflexa", outcome: "ok", detail: "refs list --json" });
         expect(h.out()).toContain("[tool] run_inflexa refs list --json running...");
     });
 
     test("tool chip: a tool with no hook prints the bare name, as before", () => {
         const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "search_gene", input: {} });
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "search_gene" });
         expect(h.out()).toContain("[tool] search_gene running...");
     });
 
@@ -289,7 +289,7 @@ describe("createChatPrinter", () => {
 
     test("finishTurn closes a tool chip left open by an aborted turn", () => {
         const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep", input: {} });
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep" });
         h.finishTurn();
         expect(h.out()).toContain("[tool] grep interrupted");
     });
@@ -329,11 +329,11 @@ describe("createChatPrinter", () => {
         try {
             const h = harness();
             clock = 1000;
-            h.emit({ type: "tool-started", source: TOP, toolUseId: "fast", name: "grep", input: {} });
+            h.emit({ type: "tool-started", source: TOP, toolUseId: "fast", name: "grep" });
             clock = 1300; // 300ms elapsed → the `ms` branch
             h.emit({ type: "tool-finished", source: TOP, toolUseId: "fast", name: "grep", outcome: "ok" });
             clock = 2000;
-            h.emit({ type: "tool-started", source: TOP, toolUseId: "slow", name: "align", input: {} });
+            h.emit({ type: "tool-started", source: TOP, toolUseId: "slow", name: "align" });
             clock = 4500; // 2500ms elapsed → the `s` branch
             h.emit({ type: "tool-finished", source: TOP, toolUseId: "slow", name: "align", outcome: "ok" });
             const out = h.out();
