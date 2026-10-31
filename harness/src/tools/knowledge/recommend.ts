@@ -101,10 +101,10 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
     return defineTool({
         id: "knowledge_recommend",
         description:
-            "Get the cited, versioned procedure for a bulk RNA-seq analysis situation from the Inflexa knowledge service, folded into plan steps: " +
-            "which method for each step (QC, filter, normalize, model, test, shrinkage, multiple testing, enrichment, report), " +
+            "Get the cited, versioned procedure for an expression analysis situation (bulk RNA-seq, a microarray, or a TempO-Seq panel) from the Inflexa knowledge service, folded into plan steps: " +
+            "which method for each step (for example QC, filter, normalize, model, test, shrinkage, multiple testing, enrichment, dose-response fit, point of departure, report), " +
             "its settings with their sources, a tested script template per step, the rules that select them, and the evidence. " +
-            "Call it BEFORE you draft a method step for bulk RNA-seq differential expression, enrichment, or QC. " +
+            "Call it BEFORE you draft a method step for a differential expression, an enrichment, a QC, a dose response, or any other question that `question` names. " +
             "Fill the situation from the Data Context (the design, the replicate counts, the batch structure, the data state, the quality concerns); never send a sample name or a file path. " +
             `Example input: ${SITUATION_EXAMPLE}. ` +
             "The answer holds one representation: `plan_skeleton`, the plan steps with the id, the name, the track, the agent, the packages, the dependencies, " +
