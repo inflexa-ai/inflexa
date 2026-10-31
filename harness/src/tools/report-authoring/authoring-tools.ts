@@ -820,6 +820,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
         inputSchema: addBlockInput,
         outputSchema: MutationOutputSchema,
+        view: "none",
         describeCall: (input): string => {
             const block = decodeBlockPayload(input.block);
             const kind = readKind(block);
@@ -863,6 +864,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "A reference names the path of a pinned artifact, and the session stamps the hash from the pinned evidence.",
         inputSchema: changeBlockInput,
         outputSchema: MutationOutputSchema,
+        view: "none",
         describeCall: (input): string => `change ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opening = await openMutation(ctx);
@@ -893,6 +895,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         description: "Remove one block by its id. A removed section takes its whole subtree with it, and the id is free for a later add.",
         inputSchema: removeBlockInput,
         outputSchema: MutationOutputSchema,
+        view: "none",
         describeCall: (input): string => `remove ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opening = await openMutation(ctx);
@@ -921,6 +924,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "A section cannot move into its own subtree.",
         inputSchema: moveBlockInput,
         outputSchema: MutationOutputSchema,
+        view: "none",
         describeCall: (input): string => `move ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
             const opening = await openMutation(ctx);
@@ -949,6 +953,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
         description: "Set the title of the whole report, not the title of a section. A draft starts with no title, and a document needs one.",
         inputSchema: setTitleInput,
         outputSchema: MutationOutputSchema,
+        view: "none",
         describeCall: (input): string => `title the report ${input.title}`,
         // The title sits on the document, thus no container changes its child order.
         execute: async (input, ctx): Promise<Result<MutationResult, ToolError>> => {
@@ -984,6 +989,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "and read one block when the label is not enough.",
         inputSchema: readOutlineInput,
         outputSchema: OutlineOutputSchema,
+        view: "none",
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<OutlineResult, ToolError>> => {
@@ -1003,6 +1009,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "because the outline already names every block under it. Use it when the outline label is not enough.",
         inputSchema: readBlockInput,
         outputSchema: ReadBlockOutputSchema,
+        view: "none",
         describeCall: (input): string => `read ${input.targetId}`,
         execute: async (input, ctx): Promise<Result<ReadBlockResult, ToolError>> => {
             const opened = await openThread(ctx);
@@ -1029,6 +1036,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
             "preview_report and record_report_version run the same check before they act, thus a finish directly before one of them does that check a second time. " +
             "Use it to make sure that the draft passes the whole document schema, the id rule, and the structural tier.",
         inputSchema: finishDraftInput,
+        view: "none",
         // The input carries no field, thus a hook can only restate the name of the tool.
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<FinishToolResult, ToolError>> => {

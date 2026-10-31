@@ -11,7 +11,6 @@ import { z } from "zod";
 import type { ActivityEntryPart, StepActivityPart, StepPhase, SynthesisPhase, SynthesisProgressPart } from "../contracts/chat-parts.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
-import type { ToolDetailResolver } from "../tools/detail-resolver.js";
 
 /**
  * Stable reconciliation id for a step's reconciling parts
@@ -78,11 +77,9 @@ export function synthesisEmission(
  * The live-activity phrase for one tool call: the tool's name, then its own
  * description of this call when it has one.
  *
- * The description comes from the tool's `describeCall` hook, resolved through
- * `resolveDetail` — the same resolver the chat chip and the reloaded transcript
- * use. A caller supplies the resolver for the agent whose calls it is
- * describing, because a sandbox agent's tool list is not the conversation
- * roster's and no single list serves both.
+ * The description is the `detail` of the loop event of the call, which the loop
+ * computed with the `describeCall` hook of the tool. The phrase never reads the
+ * input of the call.
  *
  * The name always leads, and that is load-bearing rather than cosmetic. This
  * phrase is rendered alone, with no tool name beside it — unlike the chat chip,
@@ -90,12 +87,10 @@ export function synthesisEmission(
  * `edit_file` both describe a call by its path, so a detail on its own would
  * render a write and an edit of the same file identically.
  *
- * A tool with no hook, an unknown tool, and an input its schema rejects all fall
- * back to the name alone. No verb is added: the phrase is carried on a part that
+ * An event with no detail falls back to the name alone. No verb is added: the phrase is carried on a part that
  * already states the phase, so "Running" would only restate it.
  */
-export function activityForTool(name: string, input?: unknown, resolveDetail?: ToolDetailResolver): string {
-    const detail = resolveDetail?.(name, input);
+export function activityForTool(name: string, detail?: string): string {
     return detail === undefined ? name : `${name} ${detail}`;
 }
 

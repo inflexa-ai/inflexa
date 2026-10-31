@@ -82,6 +82,10 @@ export function createGrepTool(
             "in its first KiB is skipped as binary. A `truncated` status means the match cap or the file cap cut the search; " +
             "narrow your path or pattern. No matches, missing paths, and out-of-scope paths return data variants, not errors.",
         inputSchema: GrepInputSchema,
+        view: {
+            input: (input) => input,
+            error: true,
+        },
         // Both fields, because either alone loses the call: the same pattern over
         // two trees and two patterns over one tree are both ordinary sequences.
         describeCall: ({ pattern, path }) => `${pattern} in ${path}`,

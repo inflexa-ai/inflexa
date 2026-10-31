@@ -43,6 +43,7 @@ export function createAcquireSandboxTool(lease: BoundLease): Tool<z.infer<typeof
             "size replaces your sandbox: the files of your working directory stay, and the next command runs on the new " +
             "size. Your files and your outputs live in the workspace, not in the sandbox.",
         inputSchema: AcquireSandboxInputSchema,
+        view: "none",
         describeCall: ({ cpu, memoryGb }) => `Waiting for a sandbox (${cpu} CPU, ${memoryGb} GB)`,
         execute: async ({ cpu, memoryGb, gpuCount }) => {
             const size: ResourceSpec = gpuCount === undefined || gpuCount === 0 ? { cpu, memoryGb } : { cpu, memoryGb, gpu: { count: gpuCount } };
@@ -72,6 +73,7 @@ export function createReleaseSandboxTool(lease: BoundLease): Tool<z.infer<typeof
             "Release your sandbox when your commands are done and you work only with files or research. The files stay. " +
             "A later `execute_command` needs `acquire_sandbox` again.",
         inputSchema: ReleaseSandboxInputSchema,
+        view: "none",
         describeCall: () => "Releasing the sandbox",
         execute: async () => {
             await lease.release();

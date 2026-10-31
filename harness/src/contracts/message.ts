@@ -43,11 +43,11 @@ export type ToolCallPart = {
     detail?: ToolCallDetail;
     /** The time in milliseconds around the dispatch of the call, from `tool-finished`. Absent when no measurement was taken. */
     durationMs?: number;
-    /** See {@link ToolCallValue}. Absent when the call gave none, and in a row stored before the values. */
+    /** See {@link ToolCallValue}. Absent when the tool declares no input view, and in a row stored without one. */
     input?: ToolCallValue;
-    /** The shown result of a call with the outcome `ok`. Absent for each other outcome, and in a row stored before the values. */
+    /** The shown result of a call with the outcome `ok`. Absent when the tool declares no result view, for each other outcome, and in a row stored without one. */
     result?: ToolCallValue;
-    /** The shown error of a call with the outcome `error`. Absent for each other outcome, and in a row stored before the values. */
+    /** The shown error of a call with the outcome `error`. Absent when the tool declares no error view, for each other outcome, and in a row stored without one. */
     error?: ToolCallValue;
 };
 

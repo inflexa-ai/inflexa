@@ -71,10 +71,13 @@ import {
     modelViewOf,
     recordedInputOf,
     ToolCallOutputSchema,
+    viewInputValue,
     type ToolCallOutput,
 } from "./tool-adapter.js";
+import { computeDetail, type ToolCallDetail } from "./tool-detail.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "./tool-output.js";
-import { jsonToolValue, textToolValue } from "./tool-value.js";
+import { textToolValue } from "./tool-value.js";
+import type { ToolCallValue } from "../contracts/chat-events.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage } from "./types.js";
 
 export type AgentFinish = {
@@ -838,6 +841,19 @@ async function runSeries(
         return decision.kind === "approved" ? undefined : deniedReason(decision.feedback);
     };
 
+    // A refused call and a denied call do not run, thus the loop gives their events the detail and the view input of the tool.
+    // Only a root loop shows values, as the tool adapter does.
+    const shownRoot = source.callPath.length <= 1;
+    const callShownOf = (toolCall: {
+        readonly toolName: string;
+        readonly input: unknown;
+    }): { detail: { detail?: ToolCallDetail }; input: ToolCallValue | undefined } => {
+        const tool = toolsById.get(toolCall.toolName);
+        if (tool === undefined) return { detail: {}, input: undefined };
+        const detail = computeDetail(tool, toolCall.input, log);
+        return { detail: detail === undefined ? {} : { detail }, input: shownRoot ? viewInputValue(tool, toolCall.input, log) : undefined };
+    };
+
     const seriesSteps: LoopStep[] = [];
     let open = openStep();
     let failure: unknown;
@@ -872,14 +888,14 @@ async function runSeries(
             const refusal = calls.refusalOf({ toolName: toolCall.toolName, input: toolCall.input }, spec.mask);
             if (refusal !== undefined) {
                 // A refused call does not run, thus its two events come from here.
-                const inputValue = jsonToolValue(toolCall.input);
+                const shown = callShownOf(toolCall);
                 await opts.emit({
                     type: "tool-started",
                     source,
                     toolUseId: toolCall.toolCallId,
                     name: toolCall.toolName,
-                    input: toolCall.input,
-                    inputValue,
+                    ...shown.detail,
+                    input: shown.input,
                 });
                 await opts.emit({
                     type: "tool-finished",
@@ -887,8 +903,9 @@ async function runSeries(
                     toolUseId: toolCall.toolCallId,
                     name: toolCall.toolName,
                     outcome: "error",
-                    inputValue,
-                    errorValue: textToolValue(refusal),
+                    ...shown.detail,
+                    input: shown.input,
+                    error: shownRoot ? textToolValue(refusal) : undefined,
                 });
                 return { type: "denied", reason: refusal };
             }
@@ -902,14 +919,14 @@ async function runSeries(
             }
             if (denial === undefined) return undefined;
             deniedByTheUser.set(toolCall.toolCallId, denial);
-            const inputValue = jsonToolValue(toolCall.input);
+            const shown = callShownOf(toolCall);
             await opts.emit({
                 type: "tool-started",
                 source,
                 toolUseId: toolCall.toolCallId,
                 name: toolCall.toolName,
-                input: toolCall.input,
-                inputValue,
+                ...shown.detail,
+                input: shown.input,
             });
             await opts.emit({
                 type: "tool-finished",
@@ -917,7 +934,8 @@ async function runSeries(
                 toolUseId: toolCall.toolCallId,
                 name: toolCall.toolName,
                 outcome: "denied",
-                inputValue,
+                ...shown.detail,
+                input: shown.input,
             });
             return { type: "denied", reason: denial };
         },

@@ -157,6 +157,7 @@ export function createComptoxTool(deps: { apiKey: string }): Tool<z.infer<typeof
             "This is environmental/industrial-chemical data: for drug-like compounds prefer PubChem or ChEMBL — dataset 'chemical' returns " +
             "`detail.pubchemCid` to bridge back.",
         inputSchema,
+        view: "none",
         describeCall: "none",
         execute: async (input): Promise<Result<ComptoxOutput, ToolError>> => {
             const headers = getEpaCcteHeaders(deps.apiKey);

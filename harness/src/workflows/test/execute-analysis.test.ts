@@ -2492,14 +2492,20 @@ describe("synthesizeFindings run stream", () => {
             await mkdir(outDir, { recursive: true });
             await writeFile(join(outDir, "summary.md"), "## results\n\nFOXP3 up.");
             const synthesis = synthesisOfStepA();
-            const { provider } = scriptedModel([callTools(toolCall("tu-1", "submit_synthesis", { synthesis })), reply([text("done")])]);
+            // list_files declares a view of its input, its result, and its error: without the strip, its forwarded events would carry them.
+            const { provider } = scriptedModel([
+                callTools(toolCall("tu-0", "list_files", { path: "/a1" })),
+                callTools(toolCall("tu-1", "submit_synthesis", { synthesis })),
+                reply([text("done")]),
+            ]);
             const { deps } = makeDeps({ pool: makeFakePool(), childResults: new Map() });
 
             const result = await synthesizeFindings({
                 analysisId: "a1",
                 runId: "run-test",
                 completedSteps: ["A"],
-                session: input([{ id: "A" }]).runSession,
+                // A call path of one entry makes the synthesizer a root loop, which is the only loop whose calls carry values.
+                session: { ...input([{ id: "A" }]).runSession, provenance: { agentId: "executeAnalysis", callPath: [] } },
                 deps: {
                     ...deps,
                     provider,
@@ -2518,9 +2524,10 @@ describe("synthesizeFindings run stream", () => {
             const loopEvents = dbosState.emittedParts
                 .filter((p) => p.type === "data-loop-event")
                 .flatMap((p) => parseUnknownRecord(parseUnknownRecord(p.data)?.event) ?? []);
-            expect(loopEvents).toContainEqual(expect.objectContaining({ type: "tool-finished" }));
+            expect(loopEvents).toContainEqual(expect.objectContaining({ type: "tool-started", name: "list_files", toolUseId: "tu-0" }));
+            expect(loopEvents).toContainEqual(expect.objectContaining({ type: "tool-finished", name: "list_files", toolUseId: "tu-0", outcome: "ok" }));
             for (const event of loopEvents) {
-                for (const key of ["inputValue", "resultValue", "errorValue"]) expect(event).not.toHaveProperty(key);
+                for (const key of ["input", "result", "error"]) expect(event).not.toHaveProperty(key);
             }
         } finally {
             await rm(base, { recursive: true, force: true });

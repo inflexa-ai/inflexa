@@ -96,9 +96,9 @@ describe("recorded conversation display replay", () => {
             agentId: SOURCE.agentId,
             sink: () => {},
         });
-        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "read_file", input: {}, detail: "scripts/run.py" });
+        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "read_file", detail: "scripts/run.py" });
         await recorder.emit({ type: "tool-finished", source: SOURCE, toolUseId: "t1", name: "read_file", outcome: "ok", detail: "scripts/run.py" });
-        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t2", name: "execute_command", input: {} });
+        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t2", name: "execute_command" });
         await recorder.emit({ type: "tool-finished", source: SOURCE, toolUseId: "t2", name: "execute_command", outcome: "denied" });
 
         const model = { role: "user" as const, content: "run it" };
@@ -119,7 +119,7 @@ describe("recorded conversation display replay", () => {
             agentId: SOURCE.agentId,
             sink: () => {},
         });
-        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "read_file", input: {}, detail: "scripts/run.py" });
+        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "read_file", detail: "scripts/run.py" });
 
         const model = { role: "user" as const, content: "run it" };
         const replay = storedMessagesToChat([
@@ -142,8 +142,8 @@ describe("recorded conversation display replay", () => {
             now: () => Date.parse("2026-10-12T10:00:00.000Z"),
         });
         const planner = { agentId: "planner", callPath: ["conversation", "planner"], invocationId: "t1" };
-        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "generate_plan", input: {} });
-        await recorder.emit({ type: "tool-started", source: planner, toolUseId: "s1", name: "search_pubmed", input: {}, detail: "TP53" });
+        await recorder.emit({ type: "tool-started", source: SOURCE, toolUseId: "t1", name: "generate_plan" });
+        await recorder.emit({ type: "tool-started", source: planner, toolUseId: "s1", name: "search_pubmed", detail: "TP53" });
         await recorder.emit({ type: "tool-finished", source: planner, toolUseId: "s1", name: "search_pubmed", outcome: "ok", durationMs: 800 });
         await recorder.emit({ type: "tool-finished", source: SOURCE, toolUseId: "t1", name: "generate_plan", outcome: "ok" });
 

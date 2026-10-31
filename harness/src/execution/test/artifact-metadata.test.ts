@@ -248,6 +248,7 @@ describe("generateFileMetadata", () => {
             id: "execute_command",
             description: "Run a command.",
             inputSchema: z.object({ command: z.array(z.string()) }),
+            view: "none",
             describeCall: "none",
             execute: () => {
                 ran = true;

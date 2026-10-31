@@ -98,6 +98,7 @@ export function createSkillTools(deps: SkillToolsDeps): {
             "and the first line that holds a query word — ranked by how many distinct query words the file " +
             "holds. Then `skill_read` the file. No matches returns a data variant.",
         inputSchema: SkillSearchInputSchema,
+        view: "none",
         describeCall: "none",
         execute: async ({ query, topK }): Promise<Result<SkillSearchOutput, ToolError>> => {
             if (allowed.size === 0) {
@@ -158,6 +159,7 @@ export function createSkillTools(deps: SkillToolsDeps): {
             "found via skill_search). Confined to your declared skills. Undeclared " +
             "skills and missing paths return a data variant.",
         inputSchema: SkillReadInputSchema,
+        view: "none",
         describeCall: "none",
         execute: async ({ skill, path }): Promise<Result<SkillReadOutput, ToolError>> => {
             if (!allowed.has(skill)) {

@@ -93,6 +93,7 @@ export const searchClinicalTrialsTool = defineTool({
             message: "nctId is required when action is 'details' — one NCT ID, e.g. 'NCT00000102'. Find one with action 'search'.",
             path: ["nctId"],
         }),
+    view: "none",
     describeCall: "none",
     execute: async ({ action, query, nctId, phase, status, limit, includeSummaries }): Promise<Result<ClinicalTrialsOutput, ToolError>> => {
         if (action === "details") {

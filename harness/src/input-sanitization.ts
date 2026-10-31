@@ -3,8 +3,14 @@
  * What runs is exactly what is declared here.
  *
  * `normalizeUnicode` and `redactSecrets` are applied once to the incoming user
- * message by the chat route (change 6), and never to assistant messages or tool
- * results. `stripNulCharacters` is the exception — it applies to tool results.
+ * message by the chat route, and never to assistant messages or to the result
+ * that a tool gives the model. `stripNulCharacters` is the exception — it
+ * applies to tool results.
+ *
+ * `redactSecretForms`, `redactSecretFields`, and `redactSecretAssignments` are
+ * the value-only rules: only the shown values of a tool call (`loop/tool-value.ts`)
+ * get them. They are name-based rules that would mark prose and sequences in a
+ * user message. The model reads the unchanged result.
  */
 
 import { isUnknownArray } from "./lib/unknown-array.js";
@@ -104,11 +110,13 @@ export function redactSecrets(text: string): string {
 
 /**
  * The words that end the name of a field that holds a secret. A name is compared with the case, `_`, and `-` removed.
- * The name must END with the word, not hold it: `max_tokens`, `tokenizer`, and `tokenCount` hold no secret.
+ * The name must END with the word, not hold it: `max_tokens`, `tokenizer`, and `tokenCount` hold no secret. `pass` also
+ * ends a name such as `bypass`, which costs a shown fact only. `pwd` is not a word: `PWD` is the working directory.
  */
 const SECRET_NAME_WORDS: readonly string[] = [
     "password",
     "passwd",
+    "pass",
     "secret",
     "secretkey",
     "token",
@@ -118,6 +126,7 @@ const SECRET_NAME_WORDS: readonly string[] = [
     "credential",
     "credentials",
     "authorization",
+    "cookie",
 ];
 
 function isSecretName(name: string): boolean {
@@ -127,15 +136,39 @@ function isSecretName(name: string): boolean {
 
 const SECRET_FIELD_MARKER = "[REDACTED: Secret Field]";
 const SECRET_ASSIGNMENT_MARKER = "[REDACTED: Secret Assignment]";
+const PASSWORD_MARKER = "[REDACTED: Password]";
+const SECRET_FLAG_MARKER = "[REDACTED: Secret Flag]";
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- an argv element that is a long option, `--name`, with no value in it. The name is bounded, thus the test of an element is bounded.
+const ARGV_FLAG = /^--([A-Za-z0-9][A-Za-z0-9_.-]{0,80})$/;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the credential of an argv element after `-u` or `--user`: the user, a colon, and the password to the end of the element. The user holds no colon, so the match has one reading.
+const ARGV_CREDENTIAL = /^([^:]*):[\s\S]*$/;
+
+/**
+ * A copy of an array of strings in which the element after a `--name` element with a secret name is the redaction
+ * marker, and the element after `-u` or `--user` loses its password. A command line that is an array of words has no
+ * text in which the flag rules can see the flag and its value together.
+ */
+function redactArgvValues(array: readonly unknown[]): unknown[] {
+    return array.map((element, index) => {
+        const before = array[index - 1];
+        if (typeof element !== "string" || typeof before !== "string") return redactSecretFields(element);
+        if (before === "-u" || before === "--user") return element.replace(ARGV_CREDENTIAL, `$1:${PASSWORD_MARKER}`);
+        const flag = ARGV_FLAG.exec(before);
+        if (flag?.[1] !== undefined && isSecretName(flag[1]) && !element.startsWith("--")) return SECRET_FLAG_MARKER;
+        return element;
+    });
+}
 
 /**
  * A copy of a JSON value in which the value of each object field with a secret name is the redaction marker. The
- * walk goes to each depth, thus the `GITHUB_TOKEN` field of an `env` object is found. The rule belongs to the values
- * of a tool call only. `redactSecrets` stays free of any name-based rule, because a user message holds prose and
- * sequences that such a rule would mark.
+ * walk goes to each depth, thus the `GITHUB_TOKEN` field of an `env` object is found. An array applies the rule of
+ * {@link redactArgvValues} to its strings. The rule belongs to the values of a tool call only. `redactSecrets` stays
+ * free of any name-based rule, because a user message holds prose and sequences that such a rule would mark.
  */
 export function redactSecretFields(value: unknown): unknown {
-    if (isUnknownArray(value)) return value.map(redactSecretFields);
+    if (isUnknownArray(value)) return redactArgvValues(value);
     const record = parseUnknownRecord(value);
     if (record === undefined) return value;
     const out: Record<string, unknown> = {};
@@ -145,14 +178,14 @@ export function redactSecretFields(value: unknown): unknown {
     return out;
 }
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the shell and environment form NAME=value, with a quoted value that ends at its closing quote (an escaped quote inside a double-quoted value does not end it) or a value up to the next separator. A quote that does not close holds the rest of the text, because a cut text can end inside a secret. A value does not start with `=`, thus a comparison `token == x` stays whole.
-const ASSIGNMENT = /([A-Za-z0-9_.-]+)=(?!=)("(?:[^"\\]|\\.)*(?:"|\\?$)|'[^']*(?:'|$)|[^\s"'\\&;,]+)/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the shell and environment form NAME=value, with a quoted value that ends at its closing quote (an escaped quote inside a double-quoted value does not end it) or a value up to the next separator. A quote that does not close holds the rest of the text, because a cut text can end inside a secret. A name has at most 80 characters, thus a long run of name characters costs a bounded scan at each start. A value does not start with `=`, thus a comparison `token == x` stays whole, and a value that an earlier rule already replaced stays as it is.
+const ASSIGNMENT = /([A-Za-z0-9_.-]{1,80})=(?!=|\[REDACTED: [A-Za-z ]{1,30}\])("(?:[^"\\]|\\.)*(?:"|\\?$)|'[^']*(?:'|$)|[^\s"'\\&;,]+)/g;
 
-// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a quoted JSON field with a string value, `"name": "value"`. The value ends at its closing quote, and an escaped quote inside it does not end it. A quote that does not close holds the rest of the text.
-const QUOTED_FIELD = /"([^"\\\s]{1,80})"(\s*:\s*)"((?:[^"\\]|\\.)*)(?:"|\\?$)/g;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a quoted field `"name": value`. The value is a string that ends at its closing quote (an escaped quote inside it does not end it, and a quote that does not close holds the rest of the text), or a number or a bare word that ends at a separator. A bare value does not start a nested object or array.
+const QUOTED_FIELD = /"([^"\\\s]{1,80})"(\s*:\s*)(?:"((?:[^"\\]|\\.)*)(?:"|\\?$)|([^\s",}\]{[][^\s",}\]]*))/g;
 
 /**
- * Replace the value of each `NAME=value` assignment and of each quoted `"name": "value"` field whose name ends with a
+ * Replace the value of each `NAME=value` assignment and of each quoted `"name": value` field whose name ends with a
  * secret word. A caller runs it on a plain text or on one string of a JSON value, never on serialized JSON, because a
  * JSON escape hides the quotes that the rules read. It runs on the text of a tool call value only. See
  * {@link redactSecretFields}.
@@ -160,5 +193,111 @@ const QUOTED_FIELD = /"([^"\\\s]{1,80})"(\s*:\s*)"((?:[^"\\]|\\.)*)(?:"|\\?$)/g;
 export function redactSecretAssignments(text: string): string {
     return text
         .replace(ASSIGNMENT, (whole, name: string) => (isSecretName(name) ? `${name}=${SECRET_ASSIGNMENT_MARKER}` : whole))
-        .replace(QUOTED_FIELD, (whole, name: string, colon: string) => (isSecretName(name) ? `"${name}"${colon}"${SECRET_FIELD_MARKER}"` : whole));
+        .replace(QUOTED_FIELD, (whole, name: string, colon: string, quoted: string | undefined) => {
+            if (!isSecretName(name)) return whole;
+            return quoted === undefined ? `"${name}"${colon}${SECRET_FIELD_MARKER}` : `"${name}"${colon}"${SECRET_FIELD_MARKER}"`;
+        });
+}
+
+const PRIVATE_KEY_MARKER = "[REDACTED: Private Key]";
+const URL_PASSWORD_MARKER = "[REDACTED: URL Password]";
+const SECRET_PAIR_MARKER = "[REDACTED: Secret Pair]";
+const COOKIE_MARKER = "[REDACTED: Cookie]";
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the begin line and the end line of a PEM private-key block. The label is bounded and holds no newline, thus each line is read once.
+const PRIVATE_KEY_LINE = /-----(BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY-----/g;
+
+/**
+ * Replace each private-key block, from its begin line to its end line. A begin line with no end line hides the rest of
+ * the text. An end line with no begin line before it hides the text from the start of the text, or from the end of the
+ * block before it, because a window or a cut can start inside a block.
+ */
+function redactPrivateKeyBlocks(text: string): string {
+    let out = "";
+    let copied = 0;
+    let blockStart = -1;
+    for (const line of text.matchAll(PRIVATE_KEY_LINE)) {
+        if (line[1] === "BEGIN") {
+            if (blockStart < 0) blockStart = line.index;
+            continue;
+        }
+        out += text.slice(copied, blockStart >= 0 ? blockStart : copied) + PRIVATE_KEY_MARKER;
+        copied = line.index + line[0].length;
+        blockStart = -1;
+    }
+    if (blockStart >= 0) return out + text.slice(copied, blockStart) + PRIVATE_KEY_MARKER;
+    return out + text.slice(copied);
+}
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a URL with a user and a password, `scheme://user:password@host`. The user holds no colon, so the match has one reading, and the password ends at the first `@`, `/`, or space.
+const URL_PASSWORD = /\b([a-z][a-z0-9+.-]{0,30}:\/\/[^\s:@/?#"'`]{0,200}):[^\s@/"'`]{1,500}@/gi;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the `-u user:password` and `--user user:password` options of curl and similar tools, with an unquoted, a double-quoted, or a single-quoted credential. The user holds no colon, so the match has one reading.
+const USER_OPTION = /(^|\s)(-u|--user)(\s+|=)(?:"([^":\s]*):[^"]*"?|'([^':\s]*):[^']*'?|([^\s:"']*):\S*)/g;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a `Cookie` or `Set-Cookie` header, whose value runs to the end of its line.
+const COOKIE_HEADER = /(^|\s)((?:Set-)?Cookie)([ \t]*:[ \t]*)[^\r\n]+/gi;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a command flag `--name value` or `--name=value`. The value is a quoted string (a quote that does not close holds the rest of the text) or the next word. A word that starts a flag is no value.
+const COMMAND_FLAG = /(^|\s)--([A-Za-z0-9][A-Za-z0-9_.-]{0,80})(=|\s+)(?!--)("(?:[^"\\]|\\.)*(?:"|\\?$)|'[^']*(?:'|$)|\S+)/g;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the start of a `name: value` pair of a header or of YAML: the name after a line start, a space, a comma, an opening bracket, or an opening quote, then its colon. The name has at most 80 characters, thus the scan at each start is bounded.
+const PAIR_START = /(^|[\s,{("'])([A-Za-z][A-Za-z0-9_.-]{0,80})[ \t]*:[ \t]*/gm;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the value of a `name: value` pair, read at the end of its start: a quoted string, or the text up to the end of the line or the next quote.
+const PAIR_VALUE = /"(?:[^"\\\r\n]|\\.)*"?|'[^'\r\n]*'?|[^\r\n"']+/y;
+
+/**
+ * Replace the value of each `name: value` pair whose name ends with a secret word. The scan goes on after the colon of
+ * a name that holds no secret, thus a secret pair later on the same line is found. Each step moves forward, thus the
+ * cost is linear.
+ */
+function redactNameValuePairs(text: string): string {
+    // The patterns carry `lastIndex`, and this function runs to its end with no await, thus no call reads it between two steps of another.
+    const start = PAIR_START;
+    const value = PAIR_VALUE;
+    start.lastIndex = 0;
+    let out = "";
+    let copied = 0;
+    for (let pair = start.exec(text); pair !== null; pair = start.exec(text)) {
+        const name = pair[2] ?? "";
+        const end = pair.index + pair[0].length;
+        if (!isSecretName(name)) {
+            // The blanks after the colon stay available as the lead of the next name.
+            start.lastIndex = end - (pair[0].length - pair[0].trimEnd().length);
+            continue;
+        }
+        value.lastIndex = end;
+        const shown = value.exec(text);
+        if (shown === null) continue;
+        out += `${text.slice(copied, end)}${SECRET_PAIR_MARKER}`;
+        copied = end + shown[0].length;
+        start.lastIndex = copied;
+    }
+    return out + text.slice(copied);
+}
+
+/**
+ * Replace the secret that each of these forms holds: a private-key block, the password of a URL, the password of a
+ * `-u user:password` option, the value of a `Cookie` header, the value of a `--name value` flag, the value of a
+ * `name: value` pair, and each form of {@link redactSecretAssignments}. A name must end with a secret word.
+ * It covers these forms only: a text can hold a secret in a different form. It runs on the text of a tool call value
+ * only, on a plain text or on one string of a JSON value.
+ */
+export function redactSecretForms(text: string): string {
+    const withoutKeys = redactPrivateKeyBlocks(text);
+    const withoutUrlPasswords = withoutKeys.replace(URL_PASSWORD, `$1:${URL_PASSWORD_MARKER}@`);
+    const withoutUserOptions = withoutUrlPasswords.replace(
+        USER_OPTION,
+        (_whole, lead: string, option: string, joint: string, double: string | undefined, single: string | undefined, bare: string | undefined) => {
+            const quote = double !== undefined ? '"' : single !== undefined ? "'" : "";
+            const user = double ?? single ?? bare ?? "";
+            return `${lead}${option}${joint}${quote}${user}:${PASSWORD_MARKER}${quote}`;
+        },
+    );
+    const withoutCookies = withoutUserOptions.replace(COOKIE_HEADER, `$1$2$3${COOKIE_MARKER}`);
+    const withoutFlags = withoutCookies.replace(COMMAND_FLAG, (whole, lead: string, name: string, joint: string) =>
+        isSecretName(name) ? `${lead}--${name}${joint}${SECRET_FLAG_MARKER}` : whole,
+    );
+    return redactSecretAssignments(redactNameValuePairs(withoutFlags));
 }

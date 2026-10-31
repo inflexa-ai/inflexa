@@ -19,6 +19,7 @@ describe("defineTool", () => {
                 query: z.string().describe("The search query"),
                 limit: z.number().default(10),
             }),
+            view: "none",
             describeCall: (input) => input.query,
             execute: (input) => Promise.resolve(ok({ found: input.query })),
         });
@@ -45,6 +46,7 @@ describe("defineTool", () => {
                 id: "union-tool",
                 description: "A tool with a union input.",
                 inputSchema: unionSchema,
+                view: "none",
                 describeCall: "none",
                 execute: () => Promise.resolve(ok({})),
             }),
@@ -58,6 +60,7 @@ describe("defineTool", () => {
                 description: "Gives a count.",
                 inputSchema: z.object({}),
                 outputSchema: z.object({ count: z.number(), names: z.array(z.string()) }),
+                view: "none",
                 describeCall: "none",
                 execute: () => Promise.resolve(ok({ count: 1, names: ["a"], extra: true })),
             });
@@ -85,6 +88,7 @@ describe("defineTool", () => {
                 id: "untyped",
                 description: "Gives a value.",
                 inputSchema: z.object({}),
+                view: "none",
                 describeCall: "none",
                 execute: () => Promise.resolve(ok(1)),
             });
@@ -99,6 +103,7 @@ describe("defineTool", () => {
                 id: "described",
                 description: "Reads a file.",
                 inputSchema: z.object({ path: z.string() }),
+                view: "none",
                 describeCall: (input) => input.path,
                 execute: () => Promise.resolve(ok({})),
             });
@@ -111,6 +116,7 @@ describe("defineTool", () => {
                 id: "undescribed",
                 description: "Declines the hook.",
                 inputSchema: z.object({ path: z.string() }),
+                view: "none",
                 describeCall: "none",
                 execute: () => Promise.resolve(ok({})),
             });
@@ -124,6 +130,7 @@ describe("defineTool", () => {
                 id: "declined",
                 description: "Declines the hook.",
                 inputSchema: z.object({ path: z.string() }),
+                view: "none",
                 describeCall: "none",
                 execute: () => Promise.resolve(ok({})),
             });
@@ -139,6 +146,7 @@ describe("defineTool", () => {
                 id: "same-tool",
                 description: "Reads a file.",
                 inputSchema: schema,
+                view: "none",
                 describeCall: (input) => input.path,
                 execute: () => Promise.resolve(ok({})),
             });
@@ -146,6 +154,7 @@ describe("defineTool", () => {
                 id: "same-tool",
                 description: "Reads a file.",
                 inputSchema: schema,
+                view: "none",
                 describeCall: "none",
                 execute: () => Promise.resolve(ok({})),
             });
@@ -171,6 +180,7 @@ describe("defineTool", () => {
                 id: "typed-hook",
                 description: "Declares only `path`.",
                 inputSchema: z.object({ path: z.string() }),
+                view: "none",
                 // @ts-expect-error -- `query` is absent from this tool's inputSchema.
                 describeCall: (input: { path: string; query: string }) => input.query,
                 execute: () => Promise.resolve(ok({})),
@@ -201,6 +211,7 @@ describe("defineTool", () => {
                 id: "described-result",
                 description: "Renders a page.",
                 inputSchema: z.object({ path: z.string() }),
+                view: "none",
                 describeCall: (input) => input.path,
                 describeResult: (input, result) => `${input.path} -> ${result.page}`,
                 execute: () => Promise.resolve(ok({ page: "index.html" })),
@@ -214,6 +225,7 @@ describe("defineTool", () => {
                 id: "call-only",
                 description: "Describes its call alone.",
                 inputSchema: z.object({ path: z.string() }),
+                view: "none",
                 describeCall: (input) => input.path,
                 execute: () => Promise.resolve(ok({})),
             });
@@ -229,6 +241,7 @@ describe("defineTool", () => {
                 id: "result-only",
                 description: "Takes no field, and names its outcome.",
                 inputSchema: z.object({}),
+                view: "none",
                 describeCall: "none",
                 describeResult: (_input, result) => result.outcome,
                 execute: () => Promise.resolve(ok({ outcome: "rendered" })),
@@ -244,6 +257,7 @@ describe("defineTool", () => {
                 id: "same-tool",
                 description: "Renders a page.",
                 inputSchema: schema,
+                view: "none",
                 describeCall: "none",
                 describeResult: (_input, result) => result.page,
                 execute: () => Promise.resolve(ok({ page: "index.html" })),
@@ -252,6 +266,7 @@ describe("defineTool", () => {
                 id: "same-tool",
                 description: "Renders a page.",
                 inputSchema: schema,
+                view: "none",
                 describeCall: "none",
                 execute: () => Promise.resolve(ok({ page: "index.html" })),
             });
@@ -270,6 +285,7 @@ describe("defineTool", () => {
                 id: "typed-result-hook",
                 description: "Produces only `page`.",
                 inputSchema: z.object({ path: z.string() }),
+                view: "none",
                 describeCall: "none",
                 // @ts-expect-error -- `versionId` is absent from this tool's output.
                 describeResult: (_input, result) => String(result.versionId),
@@ -287,6 +303,7 @@ describe("defineTool", () => {
                 id: "recording-tool",
                 description: "Records one id.",
                 inputSchema: z.object({ id: z.string() }),
+                view: "none",
                 describeCall: (input) => input.id,
                 execute: (input) => Promise.resolve(ok(withToolCallRecord({ recorded: true }, { id: input.id }))),
                 foldCallRecord: (record) => {
@@ -305,6 +322,7 @@ describe("defineTool", () => {
                 id: "plain-tool",
                 description: "Records nothing.",
                 inputSchema: z.object({}),
+                view: "none",
                 describeCall: "none",
                 execute: () => Promise.resolve(ok({ done: true })),
             });
@@ -319,6 +337,45 @@ describe("defineTool", () => {
             expect(readToolCallRecord(value)).toEqual({ id: "a1" });
             expect(readToolCallRecord({ recorded: true })).toBeUndefined();
             expect(readToolCallRecord("text")).toBeUndefined();
+        });
+    });
+
+    describe("view", () => {
+        it("packages a view and drops the none sentinel", () => {
+            const view = { input: (input: { path: string }) => input.path, error: true } as const;
+            const shown = defineTool({
+                id: "shown",
+                description: "Shows its input.",
+                inputSchema: z.object({ path: z.string() }),
+                describeCall: "none",
+                view,
+                execute: () => Promise.resolve(ok({ done: true })),
+            });
+            const hidden = defineTool({
+                id: "hidden",
+                description: "Shows nothing.",
+                inputSchema: z.object({}),
+                describeCall: "none",
+                view: "none",
+                execute: () => Promise.resolve(ok({ done: true })),
+            });
+
+            expect(shown.view).toBe(view);
+            expect("view" in hidden).toBe(false);
+        });
+
+        it("refuses a definition with no view decision at the typecheck", () => {
+            const make = () =>
+                // @ts-expect-error -- the view decision is required, as the describeCall decision is.
+                defineTool({
+                    id: "undecided",
+                    description: "Declares no view.",
+                    inputSchema: z.object({}),
+                    describeCall: "none",
+                    execute: () => Promise.resolve(ok({ done: true })),
+                });
+
+            expect(typeof make).toBe("function");
         });
     });
 });

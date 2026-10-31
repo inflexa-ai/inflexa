@@ -95,6 +95,7 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps): Tool<z.infer
             "`match: unavailable` means the service did not answer, and `match: snapshot_mismatch` means the service moved to another release than the one your recommend answer came from; in both cases submit the draft as it is. " +
             `The host accepts ${CHECK_CALL_LIMIT} checks per plan; after that the tool refuses and you submit with the findings you have.`,
         inputSchema: KnowledgeCheckInputSchema,
+        view: "none",
         describeCall: ({ steps }) => `${steps.length} drafted step(s)`,
         describeResult: (_input, result: KnowledgeCheckOutput) => ("ok" in result ? describeFindings(result) : result.match),
         execute: async (input): Promise<Result<KnowledgeCheckOutput, ToolError>> => {

@@ -7,7 +7,16 @@
 import { describe, expect, it } from "bun:test";
 import type { z } from "zod";
 
-import { ChatEventSchema, MessageStartEventSchema, ToolFinishedEventSchema, ToolOutcomeSchema, ToolStartedEventSchema } from "../chat-events.js";
+import type { ToolCallValue } from "../../chat-events.js";
+
+import {
+    ChatEventSchema,
+    MessageStartEventSchema,
+    ToolCallValueSchema,
+    ToolFinishedEventSchema,
+    ToolOutcomeSchema,
+    ToolStartedEventSchema,
+} from "../chat-events.js";
 
 type ToolStarted = z.infer<typeof ToolStartedEventSchema>;
 type ToolFinished = z.infer<typeof ToolFinishedEventSchema>;
@@ -75,7 +84,7 @@ describe("ToolFinishedEventSchema", () => {
     it("carries the three values of a call, and omits the keys when they are absent", () => {
         // `z.object` strips an undeclared key, thus the round-trip pins each declaration.
         const event: ToolFinished = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", outcome: "ok", source };
-        const value = { text: "{}", cut: true };
+        const value = { kind: "json", text: "{}", cut: true } as const;
 
         expect(ToolFinishedEventSchema.parse({ ...event, input: value, result: value, error: value })).toMatchObject({
             input: value,
@@ -87,7 +96,7 @@ describe("ToolFinishedEventSchema", () => {
     });
 
     it("rejects a value with no cut flag", () => {
-        const event = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", outcome: "ok", result: { text: "{}" }, source };
+        const event = { type: "tool-finished", toolUseId: "tu-1", name: "write_file", outcome: "ok", result: { kind: "json", text: "{}" }, source };
 
         expect(ToolFinishedEventSchema.safeParse(event).success).toBe(false);
     });
@@ -153,5 +162,73 @@ describe("MessageStartEventSchema", () => {
         expect(ChatEventSchema.safeParse({ ...messageStart, messageId: 42 }).success).toBe(false);
         expect(ChatEventSchema.safeParse({ ...messageStart, role: "system" }).success).toBe(false);
         expect(ChatEventSchema.safeParse({ ...messageStart, source: { agentId: "conversation-agent" } }).success).toBe(false);
+    });
+});
+
+describe("ToolCallValueSchema", () => {
+    const text = { kind: "text", text: "a", cut: false } as const;
+
+    it("accepts each kind", () => {
+        expect(ToolCallValueSchema.parse(text)).toEqual(text);
+        const json = { kind: "json", text: '{"a":1}', cut: true } as const;
+        expect(ToolCallValueSchema.parse(json)).toEqual(json);
+        const code = { kind: "code", language: "javascript", text: "1", cut: false } as const;
+        expect(ToolCallValueSchema.parse(code)).toEqual(code);
+        const fields: ToolCallValue = {
+            kind: "fields",
+            fields: [
+                { name: "output", ...text },
+                { name: "script", ...code },
+            ],
+        };
+        expect(ToolCallValueSchema.parse(fields)).toEqual(fields);
+    });
+
+    it("refuses a value with no kind, the old shape, and an unknown kind", () => {
+        expect(ToolCallValueSchema.safeParse({ text: "a", cut: false }).success).toBe(false);
+        expect(ToolCallValueSchema.safeParse({ kind: "html", text: "a", cut: false }).success).toBe(false);
+    });
+
+    it("refuses a code leaf with a bad language", () => {
+        for (const language of ["", "JavaScript", "x".repeat(21), "java script"]) {
+            expect(ToolCallValueSchema.safeParse({ kind: "code", language, text: "1", cut: false }).success).toBe(false);
+        }
+        for (const language of ["c++", "c#", "r", "objective-c", "x.y"]) {
+            expect(ToolCallValueSchema.safeParse({ kind: "code", language, text: "1", cut: false }).success).toBe(true);
+        }
+    });
+
+    it("accepts 4 fields and refuses 5 fields and no field", () => {
+        const field = (name: string) => ({ name, ...text });
+        expect(ToolCallValueSchema.safeParse({ kind: "fields", fields: ["a", "b", "c", "d"].map(field) }).success).toBe(true);
+        expect(ToolCallValueSchema.safeParse({ kind: "fields", fields: ["a", "b", "c", "d", "e"].map(field) }).success).toBe(false);
+        expect(ToolCallValueSchema.safeParse({ kind: "fields", fields: [] }).success).toBe(false);
+    });
+
+    it("refuses a bad field name", () => {
+        for (const name of ["", "has space", "a.b", "x".repeat(41)]) {
+            expect(ToolCallValueSchema.safeParse({ kind: "fields", fields: [{ name, ...text }] }).success).toBe(false);
+        }
+        expect(ToolCallValueSchema.safeParse({ kind: "fields", fields: [{ name: "a_b-9", ...text }] }).success).toBe(true);
+    });
+
+    it("refuses a nested fields value and a field with no name", () => {
+        const inner = { name: "inner", kind: "fields", fields: [{ name: "a", ...text }] };
+        expect(ToolCallValueSchema.safeParse({ kind: "fields", fields: [inner] }).success).toBe(false);
+        expect(ToolCallValueSchema.safeParse({ kind: "fields", fields: [text] }).success).toBe(false);
+    });
+
+    it("is the value of the input, the result, and the error of the tool events", () => {
+        const started: ToolStarted = {
+            type: "tool-started",
+            toolUseId: "tu-1",
+            name: "run_script",
+            input: { kind: "code", language: "javascript", text: "1", cut: false },
+            source,
+        };
+        expect(ToolStartedEventSchema.parse(started)).toEqual(started);
+        const finished: ToolFinished = { type: "tool-finished", toolUseId: "tu-1", name: "run_script", outcome: "error", error: text, source };
+        expect(ToolFinishedEventSchema.parse(finished)).toEqual(finished);
+        expect(ToolFinishedEventSchema.safeParse({ ...finished, error: { text: "a", cut: false } }).success).toBe(false);
     });
 });

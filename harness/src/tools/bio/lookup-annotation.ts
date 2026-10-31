@@ -200,6 +200,7 @@ export const lookupAnnotationTool = defineTool({
         "An empty terms / annotations / pathways array is valid no-data — report it and continue, do not retry the same input. An empty pathways array " +
         "for a pathwayId means neither database holds that identifier.",
     inputSchema,
+    view: "none",
     describeCall: "none",
     execute: async ({
         vocabulary,

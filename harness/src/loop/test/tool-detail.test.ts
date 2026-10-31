@@ -41,6 +41,7 @@ function toolWithHook(describeCall: (input: { path: string }) => string | undefi
         id: "described",
         description: "A tool that describes its own calls.",
         inputSchema: z.object({ path: z.string() }),
+        view: "none",
         describeCall,
         execute: () => Promise.resolve(ok({})),
     });
@@ -57,6 +58,7 @@ function toolWithResultHook(describeResult: (input: { path: string }, result: Re
         id: "described-result",
         description: "A tool that describes its own results.",
         inputSchema: z.object({ path: z.string() }),
+        view: "none",
         describeCall: ({ path }) => path,
         describeResult,
         execute: () => Promise.resolve(ok<ReadOutcome, ToolError>({ bytes: 0 })),
@@ -102,6 +104,19 @@ describe("normalizeDetail", () => {
 
         expect(detail).toContain("[REDACTED: Anthropic API Key]");
         expect(detail).not.toContain("sk-ant-api03");
+    });
+
+    it("redacts a command flag, an assignment, and a form that ends at the end of a line", () => {
+        const detail = normalizeDetail("db --password hunter2 API_KEY=abc123");
+
+        expect(detail).not.toContain("hunter2");
+        expect(detail).not.toContain("abc123");
+        expect(detail).toContain("db --password");
+        // The text forms run before the collapse: a pair ends at its line, and the next line stays.
+        const cookie = normalizeDetail("Cookie: session=c456\nHost: example.com");
+        expect(cookie).not.toContain("c456");
+        expect(cookie?.split("[REDACTED: ")).toHaveLength(2);
+        expect(cookie?.endsWith(" Host: example.com")).toBe(true);
     });
 
     // The mark is what tells a reader that the line is short of what the hook returned. It costs
@@ -171,6 +186,7 @@ describe("computeDetail", () => {
             id: "undescribed",
             description: "Declares no hook.",
             inputSchema: z.object({ path: z.string() }),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok({})),
         });
@@ -219,6 +235,7 @@ describe("computeDetail", () => {
             id: "async_refined",
             description: "A tool whose schema carries an async refinement.",
             inputSchema: z.object({ path: z.string() }).refine(({ path }) => Promise.resolve(path.length > 0), "unreachable"),
+            view: "none",
             describeCall: ({ path }) => path,
             execute: () => Promise.resolve(ok({})),
         });
@@ -235,6 +252,7 @@ describe("computeDetail", () => {
             inputSchema: z.object({ path: z.string() }).superRefine(() => {
                 throw new Error("refinement is broken");
             }),
+            view: "none",
             describeCall: ({ path }) => path,
             execute: () => Promise.resolve(ok({})),
         });

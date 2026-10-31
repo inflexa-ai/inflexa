@@ -52,6 +52,7 @@ export const searchArxivTool = defineTool({
             ),
         limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
     }),
+    view: "none",
     describeCall: "none",
     execute: async ({ query, categories, limit }, context): Promise<Result<SearchArxivOutput, ToolError>> => {
         const result = await source.search({ query, categories, limit }, context.signal);

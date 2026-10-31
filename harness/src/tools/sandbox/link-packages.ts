@@ -93,6 +93,7 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps): Tool<z.infer<typ
             "After a `collision` of one name that BOTH tracks hold, call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`. " +
             "A collision is terminal only after that second call also refuses, or when it names two versions of one distribution — then report it and continue without the package.",
         inputSchema: LinkPackagesInputSchema,
+        view: "none",
         describeCall: ({ packages }) => packages.join(", "),
         execute: async (input): Promise<Result<LinkPackagesResult, ToolError>> => {
             // Every entry parses before any link lands. A partial link over a

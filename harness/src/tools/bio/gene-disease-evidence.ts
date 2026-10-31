@@ -224,6 +224,7 @@ export function createGeneDiseaseEvidenceTool(deps: {
             "could not be reached (a missing DISGENET_API_KEY lands here — state that the key is missing, and proceed with the others); 'not_applicable' means that " +
             "corpus has no lookup for this queryType. Only 'no_data' is evidence of absence, and none is worth retrying unchanged.",
         inputSchema,
+        view: "none",
         describeCall: "none",
         execute: async (input) => {
             const applicable = applicableSources(input.queryType);

@@ -109,6 +109,7 @@ export function createSearchGithubReposTool(deps: { githubToken?: string }): Too
             "lands here). Report either one and continue, do not retry unchanged.",
         outputSchema: SearchGithubReposOutputSchema,
         inputSchema: SearchGithubReposInputSchema,
+        view: "none",
         describeCall: "none",
         execute: async ({ query, language, limit }): Promise<Result<SearchGithubReposOutput, ToolError>> => {
             const q = language ? `${query} language:${language}` : query;

@@ -246,6 +246,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z
             "A change the slots do not cover: use `edit_file` on a line marked `# [adaptable: ...]` in the rendered script, and keep the edit small; the record lists each such edit. " +
             "`match: unavailable` means the service did not answer, and `match: snapshot_mismatch` means the service moved to another release than the plan pinned; in both cases write the script yourself as you would without this tool, and state it in your summary.",
         inputSchema: KnowledgeTemplateInputSchema,
+        view: "none",
         describeCall: ({ template }) => template,
         describeResult: (_input, result: KnowledgeTemplateResult) =>
             "status" in result ? (result.status === "ok" ? `${result.script_path} (${result.environment_match})` : result.status) : result.match,

@@ -1,23 +1,37 @@
 import { describe, expect, it } from "bun:test";
 
 import { hasLoneHighSurrogate, hasLoneLowSurrogate } from "../../lib/test/text-shapes.js";
-import { errorToolValue, jsonToolValue, TOOL_VALUE_CAP, textToolValue, withoutToolValues } from "../tool-value.js";
-import type { ToolCallValue } from "../../contracts/chat-events.js";
+import { viewCode, viewFields, viewJson, viewText } from "../../tools/tool-view.js";
+import { codeToolValue, errorToolValue, jsonToolValue, makeToolCallValue, TOOL_VALUE_CAP, textToolValue, withoutToolValues } from "../tool-value.js";
+import type { ToolCallLeaf } from "../../contracts/chat-events.js";
 import type { EmitEvent } from "../types.js";
 
 const source = { agentId: "a", callPath: ["a"] };
 
+/** The value of an output, with the reason of a refusal dropped. */
+function shown(output: unknown) {
+    return makeToolCallValue(output).unwrapOr(undefined);
+}
+
+/** The reason that an output cannot show, or `undefined` when it shows or is silent. */
+function reasonOf(output: unknown): string | undefined {
+    const made = makeToolCallValue(output);
+    return made.isErr() ? made.error : undefined;
+}
+
 describe("jsonToolValue", () => {
     it("shows a short value whole and uncut", () => {
-        expect(jsonToolValue({ path: "data/a.csv" })).toEqual({ text: '{"path":"data/a.csv"}', cut: false });
+        expect(jsonToolValue({ path: "data/a.csv" })).toEqual({ kind: "json", text: '{"path":"data/a.csv"}', cut: false });
     });
 
-    it("shows a string as the string itself", () => {
-        expect(jsonToolValue("line one\nline two")).toEqual({ text: "line one\nline two", cut: false });
+    it("shows a string as a JSON string", () => {
+        expect(jsonToolValue("line one\nline two")).toEqual({ kind: "json", text: '"line one\\nline two"', cut: false });
     });
 
-    it("shows an absent value as null", () => {
-        expect(jsonToolValue(undefined)).toEqual({ text: "null", cut: false });
+    it("shows null as null and gives no leaf for a value with no JSON text", () => {
+        expect(jsonToolValue(null)).toEqual({ kind: "json", text: "null", cut: false });
+        expect(jsonToolValue(undefined)).toBeUndefined();
+        expect(jsonToolValue(() => 1)).toBeUndefined();
     });
 
     it("gives no value for a value that does not serialize", () => {
@@ -53,8 +67,22 @@ describe("jsonToolValue", () => {
     });
 
     it("shows a string that holds JSON with its raw layout and removes its secret", () => {
-        const value = jsonToolValue('{\n  "password": "hunter2",\n  "user": "ana"\n}');
-        expect(value?.text).toBe('{\n  "password": "[REDACTED: Secret Field]",\n  "user": "ana"\n}');
+        const value = shown('{\n  "password": "hunter2",\n  "user": "ana"\n}');
+        expect(value?.kind === "text" ? value.text : undefined).toBe('{\n  "password": "[REDACTED: Secret Field]",\n  "user": "ana"\n}');
+    });
+
+    it("removes the secret values of an argv array", () => {
+        const value = jsonToolValue({ argv: ["db", "--password", "hunter2", "-u", "ana:hunter3", "--token=t1"] });
+        expect(value?.text).not.toContain("hunter2");
+        expect(value?.text).not.toContain("hunter3");
+        expect(value?.text).not.toContain("t1");
+        expect(value?.text).toContain('"db"');
+        expect(value?.text).toContain("ana");
+    });
+
+    it("removes a quoted cookie header and a cookie field", () => {
+        const value = jsonToolValue({ cmd: 'curl -H "Cookie: session=c1"', headers: { Cookie: "session=c2", "Set-Cookie": "id=c3" } });
+        for (const secret of ["c1", "c2", "c3"]) expect(value?.text).not.toContain(secret);
     });
 
     it("keeps a sequence and a token count", () => {
@@ -66,7 +94,7 @@ describe("jsonToolValue", () => {
 describe("textToolValue", () => {
     it("does not cut a text at the cap", () => {
         const text = "x".repeat(TOOL_VALUE_CAP);
-        expect(textToolValue(text)).toEqual({ text, cut: false });
+        expect(textToolValue(text)).toEqual({ kind: "text", text, cut: false });
     });
 
     it("cuts a long text to its start and its end with the marker between them", () => {
@@ -132,8 +160,8 @@ describe("textToolValue", () => {
 describe("the value of a long text or a long JSON value", () => {
     const secret = "ghp_0123456789abcdefghij0123456789abcdef";
 
-    function plainCut(raw: string): ToolCallValue {
-        return { text: `${raw.slice(0, 3072)}\n[... ${raw.length - 8192} characters not shown ...]\n${raw.slice(-5120)}`, cut: true };
+    function plainCut(raw: string): ToolCallLeaf {
+        return { kind: "json", text: `${raw.slice(0, 3072)}\n[... ${raw.length - 8192} characters not shown ...]\n${raw.slice(-5120)}`, cut: true };
     }
 
     it("removes a secret that the start cut divides", () => {
@@ -152,14 +180,51 @@ describe("the value of a long text or a long JSON value", () => {
         expect(open.text.includes("sss")).toBe(false);
     });
 
+    it("removes a private-key block that starts in the first window and ends in the last window", () => {
+        const body = Array.from({ length: 30 }, (_, i) => `KEYLINE${i}abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUV`).join("\n");
+        const text = `-----BEGIN PRIVATE KEY-----\n${body}\n${"a ".repeat(20_000)}\n${body}\n-----END PRIVATE KEY-----\ntail`;
+        const value = textToolValue(text);
+        expect(value.cut).toBe(true);
+        expect(value.text).not.toContain("KEYLINE");
+        expect(value.text).toContain("[REDACTED: Private Key]");
+    });
+
+    it("removes the tail of a key block that the last window starts inside", () => {
+        const text = `${"a ".repeat(20_000)}\nKEYLINE1abcdefghijklmnopqrstuvwxyz\nKEYLINE2abcdefghijklmnopqrstuvwxyz\n-----END RSA PRIVATE KEY-----\ndone`;
+        const value = textToolValue(text);
+        expect(value.text).not.toContain("KEYLINE");
+        expect(value.text.endsWith("done")).toBe(true);
+    });
+
+    it("removes an argv secret at each end of a long array", () => {
+        const middle = Array.from({ length: 4000 }, (_, i) => `arg${i}`);
+        const value = jsonToolValue({ argv: ["db", "--password", "hunter1", ...middle, "--token", "hunter2", "-u", "ana:hunter3"] });
+        expect(value?.cut).toBe(true);
+        expect(value?.text).not.toContain("hunter");
+        expect(value?.text).toContain('"arg3999"');
+    });
+
+    it("removes an argv secret that the start of the shown end divides", () => {
+        const trailing = Array.from({ length: 500 }, () => "abcdefg");
+        const value = jsonToolValue({ argv: ["db", ...Array.from({ length: 4000 }, (_, i) => `arg${i}`), "--password", "h".repeat(8000), ...trailing] });
+        expect(value?.cut).toBe(true);
+        expect(value?.text).not.toContain("hhhh");
+        expect(value?.text).toContain('"abcdefg"]}');
+    });
+
     it("counts the original text of a long text in its marker", () => {
         const text = `${"x".repeat(20_000)} ${secret} ${"y".repeat(20_000)}`;
         expect(textToolValue(text).text).toContain(`[... ${text.length - 8192} characters not shown ...]`);
     });
 
-    it("shows a long string value as a long text", () => {
+    it("shows a long string output as a long text leaf", () => {
         const text = `${"s".repeat(3072)}${"m".repeat(40_000)}${"e".repeat(5120)}`;
-        expect(jsonToolValue(text)).toEqual(textToolValue(text));
+        expect(shown(text)).toEqual(textToolValue(text));
+    });
+
+    it("shows a long string as a JSON string with its quotes", () => {
+        const text = `${"s".repeat(3072)}${"m".repeat(40_000)}${"e".repeat(5120)}`;
+        expect(jsonToolValue(text)).toEqual(plainCut(JSON.stringify(text)));
     });
 
     it("shows the start and the end of the JSON text of a long value", () => {
@@ -186,33 +251,157 @@ describe("the value of a long text or a long JSON value", () => {
 });
 
 describe("errorToolValue", () => {
-    it("shows an error text that parses as a JSON object in its compact JSON form", () => {
+    it("shows the error message of the JSON error text of the adapter as a text leaf", () => {
+        const text = JSON.stringify({ error: "file not found: data/b.csv", retryable: false });
+        expect(errorToolValue(text)).toEqual({ kind: "text", text: "file not found: data/b.csv", cut: false });
+    });
+
+    it("removes a secret form inside the error message", () => {
         const text = JSON.stringify({ error: 'failed: export API_KEY="abc\\" def" && run', retryable: false });
-        expect(errorToolValue(text)?.text).toBe('{"error":"failed: export API_KEY=[REDACTED: Secret Assignment] && run","retryable":false}');
+        expect(errorToolValue(text).text).toBe("failed: export API_KEY=[REDACTED: Secret Assignment] && run");
     });
 
-    it("removes a quoted field inside the error of a JSON error text", () => {
-        const text = JSON.stringify({ error: 'bad body {"password":"ab\\"cd"}', retryable: true });
-        const value = errorToolValue(text);
-        expect(value?.text).not.toContain("cd");
-        expect(value?.text).toContain("[REDACTED: Secret Field]");
+    it("shows each other error text whole", () => {
+        expect(errorToolValue("file not found: data/b.csv")).toEqual({ kind: "text", text: "file not found: data/b.csv", cut: false });
+        expect(errorToolValue("[1,2]").text).toBe("[1,2]");
+        const noMessage = JSON.stringify({ retryable: true });
+        expect(errorToolValue(noMessage).text).toBe(noMessage);
+        const notText = JSON.stringify({ error: { code: 1 } });
+        expect(errorToolValue(notText).text).toBe(notText);
     });
 
-    it("treats each other error text as a plain text", () => {
-        expect(errorToolValue("file not found: data/b.csv")).toEqual({ text: "file not found: data/b.csv", cut: false });
-        expect(errorToolValue("[1,2]")).toEqual({ text: "[1,2]", cut: false });
-        expect(errorToolValue('export API_KEY="abc\\" def" run')?.text).toBe("export API_KEY=[REDACTED: Secret Assignment] run");
+    it("cuts a long error message", () => {
+        const leaf = errorToolValue(JSON.stringify({ error: "x".repeat(20_000), retryable: false }));
+        expect(leaf.cut).toBe(true);
+        expect(leaf.text).toContain("[... 11808 characters not shown ...]");
+    });
+});
+
+describe("codeToolValue", () => {
+    it("gives a code leaf with its language, cleaned and cut as a text", () => {
+        expect(codeToolValue("javascript", "const a = 1;")).toEqual({ kind: "code", language: "javascript", text: "const a = 1;", cut: false });
+        const long = codeToolValue("javascript", `const k = "${"x".repeat(20_000)}";`);
+        expect(long.cut).toBe(true);
+        expect(codeToolValue("r", "API_KEY=abc123 run").text).toBe("API_KEY=[REDACTED: Secret Assignment] run");
+    });
+});
+
+describe("makeToolCallValue", () => {
+    it("gives no value for an absent output", () => {
+        expect(shown(undefined)).toBeUndefined();
+    });
+
+    it("gives a text leaf for a string and a json leaf for each other plain value", () => {
+        expect(shown("a")).toEqual({ kind: "text", text: "a", cut: false });
+        expect(shown({ rows: 3 })).toEqual({ kind: "json", text: '{"rows":3}', cut: false });
+        expect(shown([1, 2])).toEqual({ kind: "json", text: "[1,2]", cut: false });
+        expect(shown(7)).toEqual({ kind: "json", text: "7", cut: false });
+        expect(shown(null)).toEqual({ kind: "json", text: "null", cut: false });
+    });
+
+    it("gives each kind of a helper", () => {
+        expect(shown(viewText("a"))).toEqual({ kind: "text", text: "a", cut: false });
+        expect(shown(viewJson("a"))).toEqual({ kind: "json", text: '"a"', cut: false });
+        expect(shown(viewJson({ a: [1] }))).toEqual({ kind: "json", text: '{"a":[1]}', cut: false });
+        expect(shown(viewCode("javascript", "return 1;"))).toEqual({ kind: "code", language: "javascript", text: "return 1;", cut: false });
+    });
+
+    it("keeps a tool result with a field named kind as a json leaf", () => {
+        expect(shown({ kind: "code", language: "r", text: "x" })).toEqual({
+            kind: "json",
+            text: '{"kind":"code","language":"r","text":"x"}',
+            cut: false,
+        });
+        expect(shown({ kind: "fields", fields: [] })?.kind).toBe("json");
+    });
+
+    it("gives the named leaves of a fields value in order", () => {
+        const value = shown(viewFields({ output: viewText("hello"), value: viewJson({ n: 1 }), script: viewCode("javascript", "1") }));
+        expect(value).toEqual({
+            kind: "fields",
+            fields: [
+                { name: "output", kind: "text", text: "hello", cut: false },
+                { name: "value", kind: "json", text: '{"n":1}', cut: false },
+                { name: "script", kind: "code", language: "javascript", text: "1", cut: false },
+            ],
+        });
+    });
+
+    it("cuts each field alone", () => {
+        const long = "y".repeat(20_000);
+        const value = shown(viewFields({ a: viewText(long), b: viewText(long), c: viewText("short") }));
+        if (value?.kind !== "fields") throw new Error("expected a fields value");
+        expect(value.fields.map((field) => field.cut)).toEqual([true, true, false]);
+        for (const field of value.fields.slice(0, 2)) {
+            expect(field.text).toBe(`${"y".repeat(3072)}\n[... 11808 characters not shown ...]\n${"y".repeat(5120)}`);
+        }
+    });
+
+    it("cleans each leaf of a fields value", () => {
+        const value = shown(viewFields({ cmd: viewText("run --password hunter2"), body: viewJson({ token: "abc" }) }));
+        expect(JSON.stringify(value)).not.toContain("hunter2");
+        expect(JSON.stringify(value)).not.toContain("abc");
+    });
+
+    it("leaves out a field whose leaf has no value and gives no value when no field is left", () => {
+        const cycle: Record<string, unknown> = {};
+        cycle.self = cycle;
+        const value = shown(viewFields({ a: viewText("x"), b: undefined, d: viewJson(undefined), e: viewJson(() => 1) }));
+        expect(value).toEqual({ kind: "fields", fields: [{ name: "a", kind: "text", text: "x", cut: false }] });
+        expect(shown(viewFields({}))).toBeUndefined();
+        expect(reasonOf(viewFields({}))).toBeUndefined();
+        expect(reasonOf(viewFields({ c: viewJson(cycle) }))).toBe("the field c: the value does not serialize to JSON");
+    });
+
+    it("gives no value for a value that breaks a rule", () => {
+        const five = viewFields({ a: viewText("1"), b: viewText("2"), c: viewText("3"), d: viewText("4"), e: viewText("5") });
+        expect(shown(five)).toBeUndefined();
+        expect(shown(viewFields({ a: viewText("1"), b: viewText("2"), c: viewText("3"), d: viewText("4") }))?.kind).toBe("fields");
+        expect(shown(viewFields({ "bad name": viewText("1") }))).toBeUndefined();
+        expect(shown(viewFields({ [`n${"x".repeat(40)}`]: viewText("1") }))).toBeUndefined();
+        expect(shown(viewCode("JavaScript", "1"))).toBeUndefined();
+        expect(shown(viewCode("", "1"))).toBeUndefined();
+        expect(shown(viewCode("x".repeat(21), "1"))).toBeUndefined();
+        expect(shown(viewCode("c++", "1"))?.kind).toBe("code");
+        // @ts-expect-error -- a fields value inside a fields value is refused at the type level, and at run time too.
+        const nested = viewFields({ inner: viewFields({ a: viewText("1") }) });
+        expect(shown(nested)).toBeUndefined();
+    });
+
+    it("gives no value for a value that does not serialize", () => {
+        const cycle: Record<string, unknown> = {};
+        cycle.self = cycle;
+        expect(shown(cycle)).toBeUndefined();
+        expect(shown({ n: 1n })).toBeUndefined();
+        expect(shown(viewJson(cycle))).toBeUndefined();
+    });
+
+    it("gives the reason for each output that cannot show, and no reason for an absent output", () => {
+        const cycle: Record<string, unknown> = {};
+        cycle.self = cycle;
+        expect(reasonOf(cycle)).toBe("the value does not serialize to JSON");
+        expect(reasonOf(() => 1)).toBe("the value has no JSON text");
+        expect(reasonOf(viewFields({ a: viewText("1"), b: viewText("2"), c: viewText("3"), d: viewText("4"), e: viewText("5") }))).toBe(
+            "a fields value holds more than 4 fields",
+        );
+        expect(reasonOf(viewCode("JavaScript", "1"))).toContain("language");
+        expect(reasonOf(viewFields({ "bad name": viewText("1") }))).toContain("name");
+        // @ts-expect-error -- a fields value inside a fields value is refused at the type level, and at run time too.
+        expect(reasonOf(viewFields({ inner: viewFields({ a: viewText("1") }) }))).toBe("a fields value holds a fields value");
+        expect(reasonOf(undefined)).toBeUndefined();
+        expect(reasonOf(viewJson(undefined))).toBeUndefined();
+        expect(reasonOf("a")).toBeUndefined();
     });
 });
 
 describe("withoutToolValues", () => {
-    const value = { text: "x", cut: false };
+    const value = { kind: "text", text: "x", cut: false } as const;
 
     it("drops the input value of a started event and keeps the rest", () => {
-        const event: EmitEvent = { type: "tool-started", source, toolUseId: "c1", name: "t", input: { a: 1 }, detail: "d", inputValue: value };
+        const event: EmitEvent = { type: "tool-started", source, toolUseId: "c1", name: "t", detail: "d", input: value };
         const out = withoutToolValues(event);
-        expect(out).toEqual({ type: "tool-started", source, toolUseId: "c1", name: "t", input: { a: 1 }, detail: "d" });
-        expect(out).not.toHaveProperty("inputValue");
+        expect(out).toEqual({ type: "tool-started", source, toolUseId: "c1", name: "t", detail: "d" });
+        expect(out).not.toHaveProperty("input");
     });
 
     it("drops the three values of a finished event and keeps the rest", () => {
@@ -223,9 +412,9 @@ describe("withoutToolValues", () => {
             name: "t",
             outcome: "ok",
             durationMs: 5,
-            inputValue: value,
-            resultValue: value,
-            errorValue: value,
+            input: value,
+            result: value,
+            error: value,
         };
         expect(withoutToolValues(event)).toEqual({ type: "tool-finished", source, toolUseId: "c1", name: "t", outcome: "ok", durationMs: 5 });
     });

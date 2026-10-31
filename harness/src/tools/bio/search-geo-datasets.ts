@@ -137,6 +137,7 @@ export const searchGeoDatasetsTool = defineTool({
             .default(10)
             .describe("Max datasets to return (default 10, max 50). totalFound reports the true match count regardless."),
     }),
+    view: "none",
     describeCall: "none",
     execute: async ({ query, organism, datasetType, limit }) => {
         let searchQuery = query;

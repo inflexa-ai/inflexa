@@ -69,8 +69,8 @@ describe("conversation display recorder", () => {
 
     it("keeps observed concurrent card order rather than tool declaration order", async () => {
         const { recorder } = harness();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "a", name: "tool_a", input: {} });
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "b", name: "tool_b", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "a", name: "tool_a" });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "b", name: "tool_b" });
         await recorder.emit({
             type: "data-presentation",
             source: TOP,
@@ -143,11 +143,11 @@ describe("conversation display recorder", () => {
 
     it("records each call's outcome and detail as shown, denial distinct from failure", async () => {
         const { recorder } = harness();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "r", name: "read_file", input: {}, detail: "scripts/run.py" });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "r", name: "read_file", detail: "scripts/run.py" });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "r", name: "read_file", outcome: "ok", detail: "scripts/run.py" });
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "x", name: "execute_command", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "x", name: "execute_command" });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "x", name: "execute_command", outcome: "denied" });
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "e", name: "grep", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "e", name: "grep" });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "e", name: "grep", outcome: "error" });
 
         expect(presentAt(recorder.finish(), 1).parts).toEqual([
@@ -173,7 +173,7 @@ describe("conversation display recorder", () => {
 
     it("leaves an unfinished call incomplete on interruption", async () => {
         const { recorder } = harness();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "call-1", name: "execute_analysis", input: { mode: "plan" } });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "call-1", name: "execute_analysis" });
         await recorder.emit({
             type: "data-ask",
             source: TOP,
@@ -225,9 +225,9 @@ describe("conversation display recorder — sub-agent activity", () => {
 
     it("keeps the tool calls of a sub-agent as entries of the part of their root call", async () => {
         const recorder = timed();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan" });
         await recorder.emit({ type: "iteration", source: PLANNER, index: 0, final: false });
-        await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", input: { secret: "key" }, detail: "TP53" });
+        await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", detail: "TP53" });
         await recorder.emit({ type: "tool-finished", source: PLANNER, toolUseId: "s1", name: "search_pubmed", outcome: "ok", durationMs: 250 });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "generate_plan", outcome: "ok" });
 
@@ -259,7 +259,7 @@ describe("conversation display recorder — sub-agent activity", () => {
 
     it("keeps a sub-agent display part out", async () => {
         const recorder = timed();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan" });
         await recorder.emit({ type: "data-presentation", source: PLANNER, data: { id: "hidden", content: { kind: "markdown", body: "child" } } });
 
         expect(presentAt(recorder.finish(), 1).parts).toEqual([
@@ -269,9 +269,9 @@ describe("conversation display recorder — sub-agent activity", () => {
 
     it("leaves no record for a frame with no invocation id", async () => {
         const recorder = timed();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan" });
         const compaction = { agentId: "conversation-compaction", callPath: ["conversation", "conversation-compaction"] };
-        await recorder.emit({ type: "tool-started", source: compaction, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-started", source: compaction, toolUseId: "c1", name: "read_file" });
         await recorder.emit({ type: "tool-finished", source: compaction, toolUseId: "c1", name: "read_file", outcome: "ok" });
 
         expect(presentAt(recorder.finish(), 1).parts.map((part) => part.type)).toEqual(["data-tool-call"]);
@@ -279,8 +279,8 @@ describe("conversation display recorder — sub-agent activity", () => {
 
     it("closes an unfinished entry as incomplete", async () => {
         const recorder = timed();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan", input: {} });
-        await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "generate_plan" });
+        await recorder.emit({ type: "tool-started", source: PLANNER, toolUseId: "s1", name: "search_pubmed" });
 
         const stored = presentAt(recorder.takeRound([{ role: "assistant", content: "" }]), 0).parts.find((part) => part.type === "data-subagent-activity");
         expect(stored).toMatchObject({
@@ -301,7 +301,7 @@ describe("conversation display recorder — rounds", () => {
     it("gives the parts of each round under one assistant id", async () => {
         const { recorder, announced } = harness();
         await recorder.emit({ type: "text-delta", text: "first" });
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file" });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "c1", name: "read_file", outcome: "ok" });
         const first = recorder.takeRound([]);
         await recorder.emit({ type: "text-delta", text: "second" });
@@ -325,7 +325,7 @@ describe("conversation display recorder — rounds", () => {
 
     it("takes the text of the assistant message when the round streamed no text", async () => {
         const { recorder } = harness();
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file" });
 
         const round = recorder.takeRound([
             {
@@ -371,7 +371,7 @@ describe("conversation display recorder — compaction rounds", () => {
         const { recorder } = harness();
 
         expect(recorder.takeRound(exchange)).toEqual([]);
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c2", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c2", name: "read_file" });
         expect(presentAt(recorder.takeRound(exchange), 0).parts.map((part) => part.type)).toEqual(["data-tool-call"]);
     });
 
@@ -444,7 +444,7 @@ describe("conversation display recorder — message ids", () => {
         const { recorder, forwarded, announced } = harness();
         const first: TurnEvent = { type: "text-delta", text: "I read the file." };
         await recorder.emit(first);
-        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file" });
         await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "c1", name: "read_file", outcome: "ok" });
         const opening = recorder.takeOpening();
         const round = recorder.takeRound([]);
@@ -489,7 +489,7 @@ describe("conversation display recorder — message ids", () => {
 
         expect(forwarded).toEqual([]);
 
-        const first: TurnEvent = { type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} };
+        const first: TurnEvent = { type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file" };
         await recorder.emit(first);
         rounds.push(recorder.takeRound([]));
 
@@ -500,7 +500,7 @@ describe("conversation display recorder — message ids", () => {
 
     it("forwards each event of a sub-agent unchanged, and gives each message-start the source of the root agent", async () => {
         const { recorder, forwarded, announced } = harness();
-        const started: TurnEvent = { type: "tool-started", source: SUB, toolUseId: "s1", name: "search_pubmed", input: { query: "TP53" } };
+        const started: TurnEvent = { type: "tool-started", source: SUB, toolUseId: "s1", name: "search_pubmed" };
         const card: TurnEvent = { type: "data-presentation", source: SUB, data: { id: "hidden", content: { kind: "markdown", body: "child" } } };
         await recorder.emit(started);
         await recorder.emit(card);

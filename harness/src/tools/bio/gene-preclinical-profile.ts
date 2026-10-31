@@ -214,6 +214,7 @@ export const genePreclinicalProfileTool = defineTool({
         "with no phenotype terms means the gene has not been IMPC-phenotyped, which is common; an empty hpoTerms list means Monarch curates no human " +
         "phenotype for the gene, and a null geneCurie means the symbol anchored on no HGNC id.",
     inputSchema,
+    view: "none",
     describeCall: "none",
     execute: async ({ geneSymbol, include, species, minRank, tissueLimit, phenotypeLimit }) => {
         const halves = include ?? ["expression", "knockout"];

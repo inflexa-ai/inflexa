@@ -109,6 +109,7 @@ export function createSearchPatentsTool(deps: { apiKey: string }): Tool<z.infer<
             "Requires AMASS_API_KEY — a missing key fails terminally: do NOT retry, tell the user the key needs configuring and proceed without " +
             "Amass patent data. Every call spends the user's Amass credits.",
         inputSchema,
+        view: "none",
         describeCall: "none",
         execute: async (input): Promise<Result<PatentsOutput, ToolError>> => {
             const headers = getAmassHeaders(deps.apiKey);

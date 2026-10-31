@@ -71,7 +71,7 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
                 toolUseId: event.toolUseId,
                 name: event.name,
                 detail: event.detail,
-                input: event.inputValue,
+                input: event.input,
                 source: toSource(event.source),
             };
 
@@ -83,9 +83,9 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
                 outcome: event.outcome,
                 detail: event.detail,
                 durationMs: event.durationMs,
-                input: event.inputValue,
-                result: event.resultValue,
-                error: event.errorValue,
+                input: event.input,
+                result: event.result,
+                error: event.error,
                 source: toSource(event.source),
             };
 

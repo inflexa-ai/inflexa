@@ -592,6 +592,11 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             "`limit`: cap the packages listed; the response always carries the true `total` and a `hasMore` flag, so truncation is never silent. " +
             "Each entry renders as `name==version` where the source pins a version, and a `names` check also reports the store directory and the content hash where the source records them.",
         inputSchema: ListAvailablePackagesInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         // `queryPackages` returns on `names` before it reads another field, thus
         // the presence check comes first. An empty array is not a presence check.
         // `names` are exact identifiers a caller checks for, thus they name the
