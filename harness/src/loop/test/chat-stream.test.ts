@@ -36,6 +36,7 @@ const lookup = defineTool({
     description: "Look a value up.",
     inputSchema: z.object({ query: z.string(), env: z.record(z.string(), z.string()) }),
     describeCall: (input) => `lookup ${input.query.length}`,
+    view: { input: (input) => input, result: (_input, result) => result, error: true },
     execute: ({ query }) =>
         Promise.resolve(query === "missing" ? err({ error: "no record for missing", retryable: false }) : ok({ found: "TP53", password: SECRET_OUTPUT })),
 });
@@ -179,19 +180,19 @@ describe("the durable stream of a chat turn", () => {
         expect(textOf(frames)).toBe("The answer is 42.");
         expect(frames.filter((frame) => frame.type === "tool-started")).toHaveLength(2);
         expect(frames.filter((frame) => frame.type === "tool-finished")).toHaveLength(2);
-        const input = { text: '{"query":"TP53","env":{"GITHUB_TOKEN":"[REDACTED: Secret Field]"}}', cut: false };
+        const input = { kind: "json", text: '{"query":"TP53","env":{"GITHUB_TOKEN":"[REDACTED: Secret Field]"}}', cut: false };
         expect(frames.find((frame) => frame.type === "tool-started" && frame.toolUseId === "c1")).toMatchObject({ input });
         expect(frames.find((frame) => frame.type === "tool-finished" && frame.toolUseId === "c1")).toMatchObject({
             outcome: "ok",
             detail: "lookup 4",
             input,
-            result: { text: '{"found":"TP53","password":"[REDACTED: Secret Field]"}', cut: false },
+            result: { kind: "json", text: '{"found":"TP53","password":"[REDACTED: Secret Field]"}', cut: false },
         });
         const failed = frames.find((frame) => frame.type === "tool-finished" && frame.toolUseId === "c2");
         expect(failed).toMatchObject({
             outcome: "error",
-            input: { text: '{"query":"missing","env":{}}', cut: false },
-            error: { text: JSON.stringify({ error: "no record for missing", retryable: false }), cut: false },
+            input: { kind: "json", text: '{"query":"missing","env":{}}', cut: false },
+            error: { kind: "text", text: "no record for missing", cut: false },
         });
         expect(JSON.stringify(failed)).not.toContain('"result"');
         expect(frames.at(-1)?.type).toBe("finish");

@@ -1,20 +1,33 @@
 /**
  * The shown values of a tool call: its input, its result, and its error.
  *
- * The emit site makes each value one time, and a host only shows it. The steps run in this order, because each step
+ * The emit site makes each value one time, and a host only shows it. A tool declares what it shows through its view
+ * (`tools/tool-view.ts`), and {@link makeToolCallValue} turns the output of a view member into a value with a kind.
+ * Each leaf of a value gets the steps below on its own. The steps run in this order, because each step
  * protects the next one: the control characters go first, thus a control byte inside a secret cannot stop a pattern.
  * The secrets go before the cut, thus a cut cannot divide a secret and let one half pass. The shown text can differ
  * from the text that the model reads.
  */
 
-import type { ToolCallValue } from "../contracts/chat-events.js";
+import { err, ok } from "neverthrow";
+import type { Result } from "neverthrow";
+import { z } from "zod";
+
+import type { ToolCallLeaf, ToolCallValue } from "../contracts/chat-events.js";
+import { TOOL_CALL_FIELDS_MAX, ToolCallValueSchema } from "../contracts/schemas/chat-events.js";
 import { isUnknownArray } from "../lib/unknown-array.js";
 import { parseJsonAs } from "../lib/parse-json.js";
-import { parseUnknownRecord, UnknownRecordSchema } from "../lib/unknown-containers.js";
-import { normalizeUnicode, redactSecretAssignments, redactSecretFields, redactSecrets } from "../input-sanitization.js";
+import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
+import { parseUnknownRecord } from "../lib/unknown-containers.js";
+import { normalizeUnicode, redactSecretFields, redactSecretForms, redactSecrets } from "../input-sanitization.js";
+import { ViewCode, ViewFields, ViewJson, ViewText } from "../tools/tool-view.js";
+import type { ViewLeaf } from "../tools/tool-view.js";
 import type { EmitEvent } from "./types.js";
 import { pairSafeIndex } from "./tool-output.js";
 import type { ChatStreamEvent } from "../providers/types.js";
+
+/** A cleaned text and whether the cap cut it. */
+type Shown = { text: string; cut: boolean };
 
 /** A text longer than this is cut. The unit is the UTF-16 code unit. */
 export const TOOL_VALUE_CAP = 8 * 1024;
@@ -41,7 +54,7 @@ const TAIL_WINDOW = TOOL_VALUE_TAIL_CHARS + TOOL_VALUE_CLEAN_MARGIN;
 const WHOLE_CLEAN_MAX = HEAD_WINDOW + TAIL_WINDOW;
 
 function cleanText(text: string): string {
-    return redactSecrets(redactSecretAssignments(normalizeUnicode(text)));
+    return redactSecrets(redactSecretForms(normalizeUnicode(text)));
 }
 
 function cleanStrings(value: unknown): unknown {
@@ -55,19 +68,19 @@ function cleanStrings(value: unknown): unknown {
 }
 
 /** The shown start of `head` and the shown end of `tail`, with a marker that counts the code units of `length` not shown. */
-function cutParts(head: string, tail: string, length: number): ToolCallValue {
+function cutParts(head: string, tail: string, length: number): Shown {
     const shownHead = head.slice(0, pairSafeIndex(head, TOOL_VALUE_HEAD_CHARS, -1));
     const shownTail = tail.slice(pairSafeIndex(tail, Math.max(0, tail.length - TOOL_VALUE_TAIL_CHARS), 1));
     const marker = `[... ${Math.max(0, length - shownHead.length - shownTail.length)} characters not shown ...]`;
     return { text: `${shownHead}\n${marker}\n${shownTail}`, cut: true };
 }
 
-function cutText(clean: string): ToolCallValue {
+function cutText(clean: string): Shown {
     return clean.length <= TOOL_VALUE_CAP ? { text: clean, cut: false } : cutParts(clean, clean, clean.length);
 }
 
 /** The shown text of a plain text. A long text gets the rules on its two windows, and its marker counts the original text. */
-function shownText(text: string): ToolCallValue {
+function shownText(text: string): Shown {
     if (text.length <= WHOLE_CLEAN_MAX) return cutText(cleanText(text));
     const head = cleanText(text.slice(0, pairSafeIndex(text, HEAD_WINDOW, -1)));
     const tail = cleanText(text.slice(pairSafeIndex(text, text.length - TAIL_WINDOW, 1)));
@@ -131,45 +144,104 @@ function endOf(value: unknown, budget: { left: number }, end: "head" | "tail"): 
     return value;
 }
 
-/** The value of a plain text: control characters out, each secret out, then the cut. */
-export function textToolValue(text: string): ToolCallValue {
-    return shownText(text);
+/**
+ * The shown JSON text of a value: `ok(undefined)` when the value has no JSON text, and an error with the reason when
+ * the value does not serialize, for example a cycle.
+ */
+function shownJson(value: unknown): Result<Shown | undefined, string> {
+    try {
+        const raw = jsonText(value);
+        if (raw === undefined) return ok(undefined);
+        if (raw.length <= WHOLE_CLEAN_MAX) return ok(cutText(serializeClean(value)));
+        const head = serializeClean(endOf(value, { left: HEAD_WINDOW }, "head"));
+        const tail = serializeClean(endOf(value, { left: TAIL_WINDOW }, "tail"));
+        return ok(cutParts(head, tail, raw.length));
+    } catch {
+        return err("the value does not serialize to JSON");
+    }
+}
+
+function jsonLeaf(value: unknown): Result<ToolCallLeaf | undefined, string> {
+    return shownJson(value).map((shown) => (shown === undefined ? undefined : { kind: "json", ...shown }));
+}
+
+/** The leaf of a plain text: control characters out, each secret out, then the cut. */
+export function textToolValue(text: string): ToolCallLeaf {
+    return { kind: "text", ...shownText(text) };
+}
+
+/** The leaf of source code. The rules and the cut are those of {@link textToolValue}. `language` is checked with the whole value. */
+export function codeToolValue(language: string, text: string): ToolCallLeaf {
+    return { kind: "code", language, ...shownText(text) };
 }
 
 /**
- * The value of a JSON value. A string shows as the string itself, and each other value shows as its JSON text.
+ * The leaf of a JSON value. A string shows as a JSON string, and each other value shows as its JSON text.
  * The field-name rule runs first, then the text rules on each string, then the serialization, then the cut: a text
  * rule never meets a JSON escape, which would hide the end of a quoted secret.
  * A long JSON text gets the rules on a copy of each end of the value only, and its marker counts the JSON text of the
  * original value. Only the serialization of the whole value grows with its size, and the model path pays it already.
- * A value that does not serialize, for example a cycle, gives no value: a value is a diagnostic and never fails a call.
+ * A value with no JSON text, and a value that does not serialize, for example a cycle, give no leaf: a value is a
+ * diagnostic and never fails a call.
  */
-export function jsonToolValue(value: unknown): ToolCallValue | undefined {
-    try {
-        if (typeof value === "string") return shownText(value);
-        const raw = jsonText(value ?? null);
-        if (raw === undefined) return undefined;
-        if (raw.length <= WHOLE_CLEAN_MAX) return cutText(serializeClean(value));
-        const head = serializeClean(endOf(value, { left: HEAD_WINDOW }, "head"));
-        const tail = serializeClean(endOf(value, { left: TAIL_WINDOW }, "tail"));
-        return cutParts(head, tail, raw.length);
-    } catch {
-        return undefined;
-    }
+export function jsonToolValue(value: unknown): ToolCallLeaf | undefined {
+    return jsonLeaf(value).unwrapOr(undefined);
 }
 
+const AdapterErrorSchema = z.object({ error: z.string() });
+
 /**
- * The value of an error text. The adapter writes the error of a tool as a JSON object, and that text is a JSON value.
- * Each other error text is a plain text.
+ * The leaf of an error text. The adapter writes the error of a tool as the JSON text `{ "error": message, ... }`, and
+ * the leaf shows the message. Each other error text, for example a refusal of the call policy, shows whole.
  */
-export function errorToolValue(text: string): ToolCallValue | undefined {
-    let record: Record<string, unknown>;
+export function errorToolValue(text: string): ToolCallLeaf {
     try {
-        record = parseJsonAs(text, UnknownRecordSchema);
+        return textToolValue(parseJsonAs(text, AdapterErrorSchema).error);
     } catch {
         return textToolValue(text);
     }
-    return jsonToolValue(record);
+}
+
+function leafValue(leaf: ViewLeaf): Result<ToolCallLeaf | undefined, string> {
+    if (leaf instanceof ViewText) return ok(textToolValue(leaf.text));
+    if (leaf instanceof ViewCode) return ok(codeToolValue(leaf.language, leaf.text));
+    return jsonLeaf(leaf.value);
+}
+
+function fieldsValue(view: ViewFields): Result<ToolCallValue | undefined, string> {
+    if (view.fields.length > TOOL_CALL_FIELDS_MAX) return err(`a fields value holds more than ${TOOL_CALL_FIELDS_MAX} fields`);
+    const fields: Array<{ name: string } & ToolCallLeaf> = [];
+    for (const { name, leaf } of view.fields) {
+        // A leaf that is not a leaf class is a nested `fields` value, which the kinds refuse.
+        if (!(leaf instanceof ViewText || leaf instanceof ViewCode || leaf instanceof ViewJson)) return err("a fields value holds a fields value");
+        const value = leafValue(leaf);
+        if (value.isErr()) return err(`the field ${name.slice(0, 40)}: ${value.error}`);
+        if (value.value !== undefined) fields.push({ name, ...value.value });
+    }
+    return ok(fields.length === 0 ? undefined : { kind: "fields", fields });
+}
+
+function leafOfOutput(output: unknown): Result<ToolCallLeaf | undefined, string> {
+    if (typeof output === "string") return ok(textToolValue(output));
+    if (output instanceof ViewText || output instanceof ViewCode || output instanceof ViewJson) return leafValue(output);
+    return jsonLeaf(output).andThen((leaf) => (leaf === undefined ? err("the value has no JSON text") : ok(leaf)));
+}
+
+/**
+ * The value of the output of a view member: a helper object gives its kind, a string gives a `text` leaf, and each other
+ * value gives a `json` leaf. Each leaf gets the cleaning and the cap of its kind. The result holds no value for an output
+ * that is absent (silent), and for a `fields` value with no field. It holds the reason for an output that cannot show: a
+ * value with no JSON text, a value that does not serialize, and a value that breaks a rule of the kinds (more fields than
+ * the limit, a nested `fields` value, a bad field name, a bad language). The caller logs the reason. It never throws.
+ */
+export function makeToolCallValue(output: unknown): Result<ToolCallValue | undefined, string> {
+    if (output === undefined) return ok(undefined);
+    const made = output instanceof ViewFields ? fieldsValue(output) : leafOfOutput(output);
+    return made.andThen((value) => {
+        if (value === undefined) return ok(undefined);
+        const checked = ToolCallValueSchema.safeParse(value);
+        return checked.success ? ok(checked.data) : err(describeZodIssueShapes(checked.error, ToolCallValueSchema).join("; "));
+    });
 }
 
 /**
@@ -179,11 +251,11 @@ export function errorToolValue(text: string): ToolCallValue | undefined {
 export function withoutToolValues(event: EmitEvent | ChatStreamEvent): EmitEvent | ChatStreamEvent {
     switch (event.type) {
         case "tool-started": {
-            const { inputValue: _input, ...rest } = event;
+            const { input: _input, ...rest } = event;
             return rest;
         }
         case "tool-finished": {
-            const { inputValue: _input, resultValue: _result, errorValue: _error, ...rest } = event;
+            const { input: _input, result: _result, error: _error, ...rest } = event;
             return rest;
         }
         default:

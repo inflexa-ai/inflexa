@@ -114,6 +114,11 @@ export function createWorkspaceSearchTool(
             "its members. Most input files carry no entry of their own — find them through their " +
             "group and the listing tools.",
         inputSchema: WorkspaceSearchInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         describeCall: ({ query, type }) => (type === undefined ? query : `${query} (${type})`),
         execute: async ({ query, type, limit }, ctx) => {
             const [vector] = unwrapOrThrow(await embedding.embed([query], ctx.session));

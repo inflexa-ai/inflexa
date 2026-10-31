@@ -29,6 +29,7 @@ const searchGene = defineTool({
     id: "search_gene",
     description: "Resolve gene identifiers against Ensembl. Batch up to 200 identifiers.",
     inputSchema: z.object({ identifiers: z.array(z.string()).min(1) }),
+    view: "none",
     describeCall: "none",
     execute: ({ identifiers }) => Promise.resolve(ok({ genes: identifiers.map((symbol, i) => ({ symbol, id: `ENSG${i}` })), notFound: [] })),
 });
@@ -37,6 +38,7 @@ const pubmed = defineTool({
     id: "pubmed",
     description: "Search PubMed. Returns PMIDs and titles.",
     inputSchema: z.object({ query: z.string() }),
+    view: "none",
     describeCall: "none",
     execute: ({ query }) =>
         query === "fail"
@@ -76,6 +78,7 @@ describe("run_script", () => {
             id: "lookup",
             description: "Look up an id.",
             inputSchema: z.object({ id: z.string() }),
+            view: "none",
             describeCall: "none",
             foldCallRecord: (record) => {
                 folded.push(record);
@@ -98,6 +101,7 @@ describe("run_script", () => {
             id: "read_context",
             description: "Read the context of the call.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok({ context: store.getStore() ?? "lost" })),
         });
@@ -113,6 +117,7 @@ describe("run_script", () => {
             description: "Count the genes of a set.",
             inputSchema: z.object({ set: z.string() }),
             outputSchema: z.object({ count: z.number().describe("The number of genes.") }),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok({ count: 3 })),
         });
@@ -141,6 +146,7 @@ describe("run_script", () => {
             id: "add_item",
             description: "Add one item. A malformed item comes back as a refusal.",
             inputSchema: z.object({ item: z.object({ kind: z.literal("note"), text: z.string() }) }),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok({ applied: true })),
         });
@@ -166,6 +172,7 @@ describe("run_script", () => {
             id: "slow_lookup",
             description: "A lookup that takes longer than the interval of the live copies.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: async () => {
                 await sleep(800);
@@ -201,6 +208,7 @@ describe("run_script", () => {
             id: "echo_id",
             description: "Give the invocation id.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: (_input, ctx) => Promise.resolve(ok({ id: ctx.invocationId })),
         });
@@ -240,6 +248,7 @@ describe("run_script", () => {
             id: "render_figure",
             description: "Render a figure.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok(withToolResultImage({ caption: "volcano" }, { base64: "iVBORw0KGgo=", mediaType: "image/png" }))),
         });
@@ -327,7 +336,7 @@ describe("run_script with a scratch directory", () => {
         expect(nested.map((event) => event.type)).toContain("tool-started");
         expect(nested.map((event) => event.type)).toContain("tool-finished");
         for (const event of nested) {
-            for (const key of ["inputValue", "resultValue", "errorValue"]) expect(key in event).toBe(false);
+            for (const key of ["input", "result", "error"]) expect(key in event).toBe(false);
             const frame = parseUnknownRecord(toChatFrame(event, { agentId: RUN_SCRIPT_TOOL_ID, callPath: ["conversation-agent", RUN_SCRIPT_TOOL_ID] }));
             expect(frame).toBeDefined();
             for (const key of ["input", "result", "error"]) expect(frame?.[key]).toBeUndefined();
@@ -435,6 +444,7 @@ describe("withRunScript", () => {
             id: "write_note",
             description: "Write a note.",
             inputSchema: z.object({ text: z.string() }),
+            view: "none",
             describeCall: "none",
             approval: () => ({ title: "Write", command: "write" }),
             execute: () => Promise.resolve(ok({ written: true })),
@@ -465,5 +475,89 @@ describe("run_script in the loop", () => {
             toolName: RUN_SCRIPT_TOOL_ID,
             output: { outcome: "ok", value: { ok: true, value: 3, calls: [{ tool: "pubmed", ok: true }] } },
         });
+    });
+});
+
+describe("run_script — the values of a call", () => {
+    async function callOf(code: unknown) {
+        const model = scriptedModel([callTools(toolCall("c1", RUN_SCRIPT_TOOL_ID, code)), reply([text("done")])]);
+        const agent: AgentDefinition = { id: "a", systemPrompt: "s", model: "m", tools: [], scriptTools: [pubmed], maxIterations: 3 };
+        const events: Parameters<EmitFn>[0][] = [];
+        await runLoop(agent, [], makeSession(), {
+            provider: model.provider,
+            signal: new AbortController().signal,
+            emit: (event) => {
+                events.push(event);
+            },
+            turnInput: [{ role: "user", content: "go" }],
+        });
+        const started = events.find((event) => event.type === "tool-started" && event.name === RUN_SCRIPT_TOOL_ID);
+        const finished = events.find((event) => event.type === "tool-finished" && event.name === RUN_SCRIPT_TOOL_ID);
+        if (started?.type !== "tool-started" || finished?.type !== "tool-finished") throw new Error("the loop emitted no event pair for run_script");
+        return { started, finished };
+    }
+
+    test("shows the code of the script as javascript code", async () => {
+        const { started } = await callOf({ code: "return 1 + 1" });
+
+        expect(started.input).toEqual({ kind: "code", language: "javascript", text: "return 1 + 1", cut: false });
+    });
+
+    test("shows the output, then the value of a script that succeeded", async () => {
+        const { finished } = await callOf({ code: 'text("hello"); return { n: 2 };' });
+
+        expect(finished.outcome).toBe("ok");
+        expect(finished.result).toEqual({
+            kind: "fields",
+            fields: [
+                { name: "output", kind: "text", text: "hello", cut: false },
+                { name: "value", kind: "json", text: '{"n":2}', cut: false },
+            ],
+        });
+    });
+
+    test("leaves out the output of a script that printed nothing, and the value of a script that returned nothing", async () => {
+        const returned = await callOf({ code: "return 5" });
+        const printed = await callOf({ code: 'text("only")' });
+
+        expect(returned.finished.result).toEqual({ kind: "fields", fields: [{ name: "value", kind: "json", text: "5", cut: false }] });
+        expect(printed.finished.result).toEqual({ kind: "fields", fields: [{ name: "output", kind: "text", text: "only", cut: false }] });
+    });
+
+    test("gives no result for a script that printed nothing and returned nothing", async () => {
+        const { finished } = await callOf({ code: "const x = 1;" });
+
+        expect(finished.outcome).toBe("ok");
+        expect(finished.result).toBeUndefined();
+    });
+
+    test("shows the failure first, then the output, of a failed script that is an ok outcome", async () => {
+        const { finished } = await callOf({ code: 'text("start"); throw new Error("boom");' });
+
+        expect(finished.outcome).toBe("ok");
+        expect(finished.result).toMatchObject({
+            kind: "fields",
+            fields: [
+                { name: "error", kind: "text" },
+                { name: "output", kind: "text", text: "start" },
+            ],
+        });
+        const failure = finished.result?.kind === "fields" ? finished.result.fields[0] : undefined;
+        expect(failure?.kind === "text" ? failure.text : "").toContain("boom");
+    });
+
+    test("names no nested call in the result", async () => {
+        const { finished } = await callOf({ code: 'await tools.pubmed({ query: "FOXP3" }); return 1;' });
+
+        expect(finished.result).toEqual({ kind: "fields", fields: [{ name: "value", kind: "json", text: "1", cut: false }] });
+        expect(JSON.stringify(finished.result)).not.toContain("pubmed");
+    });
+
+    test("shows the error text of a call that ended in error", async () => {
+        const { finished } = await callOf({ notCode: true });
+
+        expect(finished.outcome).toBe("error");
+        expect(finished.error?.kind).toBe("text");
+        expect(finished.result).toBeUndefined();
     });
 });

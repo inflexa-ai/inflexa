@@ -250,6 +250,11 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
             "`invalid_pattern` / `invalid_arguments` data variants — never throws on expected outcomes. " +
             "A data variant other than `ok` writes nothing.",
         inputSchema: EditFileInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         // The path only. The replaced text is file content, not a description.
         describeCall: ({ path }) => path,
         execute: async (

@@ -60,15 +60,15 @@ A tool definition MUST accept an optional `describeResult` hook beside `describe
 
 ### Requirement: The emit site normalizes every detail
 
-Normalization SHALL happen once, at the emit site, and SHALL NOT be delegated to tool authors. The loop SHALL collapse the detail to a single line, remove control characters, apply the harness secret redaction, and cap the result at 120 code points.
+Normalization MUST happen once, at the emit site, and it MUST NOT be delegated to tool authors. The loop MUST remove control characters, remove the text forms of "The emit site removes the listed secret forms from a value" in `tool-call-values`, collapse the detail to a single line, apply the harness secret redaction, and cap the result at 120 code points. The text forms run before the collapse, thus a form that ends at the end of a line ends there.
 
-The unit SHALL be the code point, not the UTF-16 unit and not the display column. A cut at a fixed UTF-16 index can split a surrogate pair and emit a lone surrogate. A column count would claim knowledge of the font metrics of the renderer. The harness does not have that knowledge. A host measures columns, because only a host knows the width of its own line.
+The unit MUST be the code point, not the UTF-16 unit and not the display column. A cut at a fixed UTF-16 index can split a surrogate pair and emit a lone surrogate. A column count would claim knowledge of the font metrics of the renderer. The harness does not have that knowledge. A host measures columns, because only a host knows the width of its own line.
 
-When the cap actually shortens a detail, the emitted string SHALL carry a truncation mark, and the marked result SHALL still fall within the 120-code-point bound. A detail that fits SHALL be emitted unmarked. A reader SHALL therefore be able to tell a shortened detail from a complete one, which matters because a hook returning free-form prose reaches the cap on ordinary input while a hook returning a path or an identifier never does.
+When the cap actually shortens a detail, the emitted string MUST carry a truncation mark, and the marked result MUST still fall within the 120-code-point bound. A detail that fits MUST be emitted unmarked. A reader MUST therefore be able to tell a shortened detail from a complete one, which matters because a hook returning free-form prose reaches the cap on ordinary input while a hook returning a path or an identifier never does.
 
 A tool author is therefore free to return whatever reads best. A leak or a runaway string is one auditable line's responsibility, not thirty authors'.
 
-The bound and the emit-site transform SHALL be reachable from the package barrel (`DETAIL_MAX_LENGTH`, `normalizeDetail`). An embedder contributes its own tool through the host-tools seam, thus its hook pre-empts the same cap the loop enforces. It SHALL read the one number, and not a copy that drifts when the harness retunes the cap.
+The bound and the emit-site transform MUST be reachable from the package barrel (`DETAIL_MAX_LENGTH`, `normalizeDetail`). An embedder contributes its own tool through the host-tools seam, thus its hook pre-empts the same cap the loop enforces. It MUST read the one number, and not a copy that drifts when the harness retunes the cap.
 
 #### Scenario: A multi-line detail becomes one line
 
@@ -99,6 +99,12 @@ The bound and the emit-site transform SHALL be reachable from the package barrel
 - **GIVEN** a `describeCall` whose returned string contains a value the harness secret redaction matches
 - **WHEN** the loop normalizes it
 - **THEN** the emitted detail carries the redacted form, and no tool code performed the redaction
+
+#### Scenario: A command flag in a detail is redacted
+
+- **GIVEN** a `describeCall` that returns `db --password hunter2 API_KEY=abc123`
+- **WHEN** the loop normalizes it
+- **THEN** the emitted detail holds no `hunter2` and no `abc123`
 
 ### Requirement: A hook describes the call the tool will actually make
 
@@ -230,49 +236,21 @@ The contract is harness-owned so it can widen when a renderer needs structure. A
 - **WHEN** a host renders the tool call
 - **THEN** it displays the string as received and derives no fields from it
 
-### Requirement: A shared resolver derives the detail from a tool name and an input
+### Requirement: The live activity phrase uses the detail of the event
 
-The harness SHALL provide a resolver constructed over a supplied `readonly Tool[]`, mapping a tool name plus an input to a detail, so every surface that must describe a call from its name and input resolves through one implementation and cannot drift from the live path.
+The live-activity phrase of a sandbox or data-profile tool call MUST come from the `detail` of the loop event of the call. The loop computes that detail with the hook of the tool, at the emit site. A surface MUST NOT keep its own tool-name table, and it MUST NOT read the input of a call. The loop event carries no raw input.
 
-The tool list SHALL be supplied by the caller rather than held inside the harness. An embedder contributes tools through the host-tools seam, and a name map internal to the harness could never see them. Supplying one agent's list also makes a duplicate tool id unrepresentable, because a tool list rejects a duplicate id at registry construction.
+Every tool that a name table described before keeps a description, because the hook of each tool describes its own call.
 
-The resolver SHALL NOT be a transcript read path, and SHALL NOT be part of the embedder-facing surface. A detail is display data: it is recorded when it is produced and replayed from that record (see the conversation-display-storage capability). Deriving it again at read time would make a transcript depend on the tool's current schema and hook, so a schema change would rewrite what a past turn appears to have done. The resolver's callers are the live activity surfaces and the one-time startup migration of turns stored before display was recorded.
+The phrase MUST lead with the tool name, and it MUST append the detail after it when the event has one. This surface renders the phrase on its own, with no tool name beside it. A chat chip prints the name itself and can carry a bare detail. A detail alone would report a `write_file` and an `edit_file` of one path identically, because both describe a call by its path.
 
-#### Scenario: A live activity surface resolves a described call
-
-- **GIVEN** a call to a tool that declares a hook
-- **WHEN** an activity surface describes it through a resolver over that agent's tools
-- **THEN** it reports the same detail the live event carried
-
-#### Scenario: An embedder-contributed tool resolves
-
-- **GIVEN** a call to a tool supplied through the host-tools seam
-- **WHEN** the resolver is built over the composed agent tool list
-- **THEN** the call's detail resolves rather than being dropped
-
-#### Scenario: An unknown tool name resolves to no detail
-
-- **GIVEN** a call naming a tool absent from the supplied list
-- **WHEN** the resolver runs
-- **THEN** it yields no detail and the call is described by its name alone
-
-### Requirement: One resolver serves every call-description surface
-
-The live-activity phrase a workflow reports for a sandbox or data-profile tool call SHALL resolve through the same hook. A surface SHALL NOT keep its own tool-name table or read tool input fields through an untyped record.
-
-A caller SHALL supply the tool list of the agent whose calls it describes. A tool with no hook SHALL fall back to the tool name alone.
-
-Every tool that the replaced surface described SHALL keep a description. The removed name table read a `path` field from any input generically, so it served tools it never named; a hook roster drawn only from its named entries would make those tools less informative than before the change.
-
-The phrase SHALL lead with the tool name, and SHALL append the detail after it when one resolves. This surface renders the phrase on its own, with no tool name beside it — unlike a chat chip, which prints the name itself and can carry a bare detail. A detail alone would therefore report a `write_file` and an `edit_file` of one path identically, because both describe a call by its path.
-
-No verb SHALL be added to the phrase. It is carried on a part that already states the step phase, so a leading verb would only restate it.
+The phrase MUST NOT hold a verb that the surface adds. It is carried on a part that already states the step phase, so a leading verb would only restate it.
 
 #### Scenario: A sandbox activity line uses the tool's own hook
 
 - **GIVEN** a sandbox agent tool that declares a `describeCall`
 - **WHEN** the workflow reports live activity for a call to it
-- **THEN** the reported phrase is the tool's name followed by the hook's description, not a phrase from a name-keyed table
+- **THEN** the reported phrase is the tool's name followed by the detail of the event
 
 #### Scenario: A write and an edit of one path stay distinguishable
 
@@ -280,11 +258,11 @@ No verb SHALL be added to the phrase. It is carried on a part that already state
 - **WHEN** the workflow reports live activity for a call to each against the same path
 - **THEN** the two reported phrases differ
 
-#### Scenario: A tool the removed table served generically keeps its description
+#### Scenario: A refused call keeps its description
 
-- **GIVEN** a workspace tool the removed name table never named, but whose input carries a path it described
-- **WHEN** the workflow reports live activity for a call to it
-- **THEN** the reported phrase still names what the call acts on, not the tool name alone
+- **GIVEN** a call of a tool with a hook, which the call policy refuses
+- **WHEN** the workflow reports live activity for the call
+- **THEN** the reported phrase holds the tool name and the detail of the call
 
 #### Scenario: A hookless tool still reports a sensible label
 

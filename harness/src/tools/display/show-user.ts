@@ -84,6 +84,7 @@ export const showUserTool = defineTool({
         "One card per call, rendered in call order; an identical repeat call resolves to the same card, so compose the " +
         "finished content before calling rather than re-rendering a draft.",
     inputSchema: ShowUserInputSchema,
+    view: "none",
     describeCall: ({ kind, title }) => (title === undefined ? kind : `${kind}: ${title}`),
     execute: async (input, ctx): Promise<Result<ShowUserOutput, ToolError>> => {
         // `dataPath` is a reference the host resolves at render time; validate its

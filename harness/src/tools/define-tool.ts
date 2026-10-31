@@ -27,6 +27,7 @@ import type { AgentSession } from "../auth/types.js";
 import type { AgentRunUsage } from "../loop/metrics.js";
 import type { EmitFn } from "../loop/types.js";
 import type { AskRequest } from "./approval/contract.js";
+import type { ToolCallView } from "./tool-view.js";
 
 export type { EmitFn } from "../loop/types.js";
 
@@ -198,6 +199,8 @@ export type Tool<Input = unknown, Output = unknown> = {
     describeCall?(input: Input): string | undefined;
     /** See {@link ToolDefinition.describeResult}. Absent when the tool declares none. */
     describeResult?(input: Input, result: Output): string | undefined;
+    /** See {@link ToolDefinition.view}. Absent when the tool shows no value. */
+    view?: ToolCallView<Input, Output>;
     /**
      * See {@link ToolDefinition.foldCallRecord}. The record arrives untyped: the
      * loop passes back only what the `execute` of the same tool attached.
@@ -285,6 +288,21 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output, O
      */
     readonly describeResult?: (input: z.infer<Schema>, result: Output) => string | undefined;
     /**
+     * What a call of this tool shows to a host: its input, its result, and its error as values with a kind. A tool
+     * shows only what it declares, thus the default of a tool is to show nothing.
+     *
+     * The decision is REQUIRED. Give a `ToolCallView`, or give the literal `"none"`. `"none"` declares that no call of
+     * the tool shows a value. `defineTool` consumes the sentinel at construction, and the sentinel never reaches a
+     * packaged tool.
+     *
+     * A member is synchronous and pure, like a `describeCall` hook, and it never reaches the model. A member gives a
+     * string for a `text` value, any other plain value for a `json` value, or the result of `viewText`, `viewJson`,
+     * `viewCode`, or `viewFields` for a value of a kind that the author chooses. The emit site then removes the control
+     * characters and the listed secret forms, and it cuts a long text. The view is the control for a secret in a form
+     * that no rule matches: a tool that holds such data declares a view that leaves it out.
+     */
+    view: ToolCallView<z.infer<Schema>, Output> | "none";
+    /**
      * Fold the call record of one settled call into process-local state. The
      * record is the one that `execute` attached with `withToolCallRecord`.
      *
@@ -360,6 +378,7 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output ex
     // declares no result hook carries no key, thus "has a hook" is one
     // property check on either side.
     if (def.describeResult !== undefined) packaged.describeResult = def.describeResult;
+    if (def.view !== "none") packaged.view = def.view;
     if (def.ownStep === true) packaged = { ...packaged, ownStep: true };
     if (def.startsWorkflow === true) return { ...packaged, startsWorkflow: true };
     return packaged;

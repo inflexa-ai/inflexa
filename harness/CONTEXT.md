@@ -493,8 +493,9 @@ Other facts:
   body.** A raw per-exec event never reaches the observer as it is. One translator
   in the `emit` chokepoint of `sandbox-step.ts` maps it to the typed part that the
   UI renders. The `tool-started` of the agent loop becomes `data-step-activity`
-  with phase `executing`. The `describeCall` hook of the called tool phrases it,
-  through `createDetailResolver(agent.tools)`. The tool name is the fallback.
+  with phase `executing`. The surface reads the `detail` of the loop event. The
+  phrase is the tool name, then the detail. If the event has no detail, the tool
+  name is the phrase.
 
   The `file-tree` delta of the executor becomes `data-step-file-tree`. The body
   folds the per-exec `added`, `modified`, and `removed` deltas into a per-step path
@@ -636,11 +637,9 @@ Other facts:
   guards the call, and it drops the detail on any failure. The normalization
   happens one time at the emit site, never in tool code: one line, control
   characters stripped, secrets redacted, and a cap of 120 characters. A host
-  renders the string and parses nothing out of it. `createDetailResolver(tools)`
-  maps a tool name and an input to a detail, for the surfaces that hold a name
-  rather than a `Tool`: the reload conversion, and the sandbox and data-profile
-  activity lines. The caller supplies the tool list, because a tool that comes
-  through the host-tools seam is invisible to any map that the harness holds.
+  renders the string and parses nothing out of it. The activity surfaces read
+  the `detail` of the loop event. The loop event carries no raw input, thus no
+  surface computes a detail from a tool name and an input.
   Nothing is persisted, thus the storage stays the pure model transcript.
 - **`tool-finished` reports `outcome: "ok" | "error" | "denied"`**, not an error
   boolean ([harness-agent-loop](openspec/specs/harness-agent-loop/spec.md)). The

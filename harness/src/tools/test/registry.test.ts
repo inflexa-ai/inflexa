@@ -10,6 +10,7 @@ const alpha = defineTool({
     id: "alpha",
     description: "The alpha tool.",
     inputSchema: z.object({ x: z.string() }),
+    view: "none",
     describeCall: "none",
     execute: (input) => Promise.resolve(ok({ echoed: input.x })),
 });
@@ -18,6 +19,7 @@ const beta = defineTool({
     id: "beta",
     description: "The beta tool.",
     inputSchema: z.object({ y: z.number() }),
+    view: "none",
     describeCall: "none",
     execute: (input) => Promise.resolve(ok({ doubled: input.y * 2 })),
 });

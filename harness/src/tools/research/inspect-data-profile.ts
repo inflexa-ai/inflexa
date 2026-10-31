@@ -290,6 +290,11 @@ export function createInspectDataProfileTool(pool: Querier): Tool<z.infer<typeof
             "against when the input set last changed before you conclude anything: if the data moved since, say the profile " +
             "needs re-running rather than diagnosing the data itself.",
         inputSchema: InspectDataProfileInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         // `execute` defaults both fields internally, and the hook applies the same
         // defaults. Without them the ordinary call, which names no field at all,
         // gives no detail. `page` acts only on the `files` scope, as in `execute`.

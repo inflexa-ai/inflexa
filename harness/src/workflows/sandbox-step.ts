@@ -58,7 +58,6 @@ import {
     stepPartId,
     toolActivityKey,
 } from "../sandbox/sandbox-step-translate.js";
-import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { forSubAgent, type RunSession, type SpawnSession } from "../auth/types.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
@@ -484,11 +483,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         logger.warn("the step agent declares no read_tool_output, thus its loops keep no text of a cut tool result");
     }
 
-    // Built over THIS agent's tools, not a shared table: a sandbox agent's roster
-    // differs per agent type, and each tool describes its own calls.
-    // The declared tools and `run_script` describe the calls of the agent, and its script tools describe the nested calls.
     const declared = withRunScript(agent).tools;
-    const resolveDetail = createDetailResolver([...declared, ...(agent.scriptTools ?? [])], logger);
 
     // Forward every loop event onto the child's own DBOS `"events"` stream
     // (the route fans-in parent + every active child stream — Pattern A).
@@ -605,7 +600,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         // envelope, and surface each tool call as live step activity.
         await safeEmit({ type: "data-loop-event" as const, data: { stepId: input.stepId, event: withoutToolValues(event) } });
         if (event.type === "tool-started") {
-            await emitActivity("executing", activityForTool(event.name, event.input, resolveDetail), event.toolUseId);
+            await emitActivity("executing", activityForTool(event.name, event.detail), event.toolUseId);
         }
     };
 

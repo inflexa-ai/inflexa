@@ -77,6 +77,7 @@ const pubmed = defineTool({
     id: "pubmed",
     description: "Search PubMed.",
     inputSchema: z.object({ query: z.string() }),
+    view: "none",
     describeCall: "none",
     execute: () => {
         lookupRuns += 1;

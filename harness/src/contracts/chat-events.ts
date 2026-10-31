@@ -75,14 +75,23 @@ export type ToolCallOutcome = ToolOutcome | "incomplete";
 export type ToolCallDetail = string;
 
 /**
- * The shown text of one value of a tool call: its input, its result, or its error. The harness removes the control
- * characters and each secret from the text, and it cuts a text over its cap. `cut` is true when the cap cut the text.
- * A host shows `text` and reads no structure from it, because a cut text is not valid JSON.
+ * One shown text of a tool call value. The harness removes the control characters and each listed secret form from
+ * the text, and it cuts a text over its cap. `cut` is true when the cap cut the text.
+ *
+ * - `text`: plain text.
+ * - `json`: the JSON text of a value. A host can parse it only when `cut` is false, because a cut text is not valid JSON.
+ * - `code`: source code in `language`.
  */
-export type ToolCallValue = {
-    text: string;
-    cut: boolean;
-};
+export type ToolCallLeaf =
+    | { kind: "text"; text: string; cut: boolean }
+    | { kind: "json"; text: string; cut: boolean }
+    | { kind: "code"; language: string; text: string; cut: boolean };
+
+/**
+ * The shown value of a tool call: its input, its result, or its error. A host selects a renderer from `kind`.
+ * `fields` holds an ordered list of at most 4 named leaves, and a leaf never holds a `fields` value.
+ */
+export type ToolCallValue = ToolCallLeaf | { kind: "fields"; fields: Array<{ name: string } & ToolCallLeaf> };
 
 /**
  * A sub-agent loop started a request to its model. Only a sub-agent gives this frame, thus a consumer that

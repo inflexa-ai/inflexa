@@ -288,6 +288,7 @@ function buildSubmitTool(ctx: InnerToolContext): Tool<{ synthesis: SynthesisDraf
             "path and call again, or switch to report_blocker if the synthesis " +
             "cannot be made valid. The last accepted submission is the synthesis.",
         inputSchema: z.object({ synthesis: SynthesisDraftSchema }),
+        view: "none",
         describeCall: "none",
         execute: (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
             const issues = semanticCheck(input.synthesis, ctx);

@@ -35,6 +35,7 @@ export const alphafoldPredictionTool = defineTool({
     inputSchema: z.object({
         uniprotAccession: z.string().min(1).describe("A UniProt accession, for example 'P38398' (BRCA1) or 'P69905' (hemoglobin subunit alpha)."),
     }),
+    view: "none",
     describeCall: ({ uniprotAccession }) => uniprotAccession,
     execute: async ({ uniprotAccession }): Promise<Result<AlphaFoldPredictionOutput, ToolError>> => {
         // The client trims before it builds the URL, thus a miss echoes the same

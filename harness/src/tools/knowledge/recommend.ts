@@ -132,6 +132,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
             "That is the environment answer; do not call the listing tools for a package or a collection the answer already reports. " +
             "Call it once per situation; a second call with the same situation gives the same answer.",
         inputSchema: SituationFieldsSchema,
+        view: "none",
         describeCall: ({ question, n_per_group_min, n_per_group_max, batch }) => `${question}: ${n_per_group_min}-${n_per_group_max} per group, batch ${batch}`,
         describeResult: (_input, result: KnowledgeRecommendOutput) =>
             result.match === "applicable" ? `${result.plan_skeleton.length} steps, ${result.claims.length} claims` : result.match,

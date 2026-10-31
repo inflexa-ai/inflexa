@@ -31,6 +31,11 @@ export function createFileStatTool(fs: WorkspaceFilesystem, workingDir?: string)
             "in bytes. It reads the workspace directly and runs no sandbox command. Use before reading to size a file. Missing and out-of-scope " +
             "paths return a data variant, not an error.",
         inputSchema: FileStatInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         describeCall: "none",
         execute: async ({ path }, ctx): Promise<Result<FileStatOutput, ToolError>> => {
             const result = unwrapOrThrow(await fs.stat({ session: ctx.session, path, workingDir }));

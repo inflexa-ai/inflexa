@@ -76,6 +76,7 @@ export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
             "accepted=true means every file now has metadata — STOP. Otherwise drop " +
             "the unknownPaths and describe the remaining files.",
         inputSchema: SubmitFileMetadataInputSchema,
+        view: "none",
         describeCall: "none",
         execute: (input): Promise<Result<WithToolCallRecord<SubmitFileMetadataOutcome, DescribedPaths>, ToolError>> => {
             const knownPaths = cell.knownPaths;

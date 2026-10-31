@@ -55,6 +55,7 @@ const readToolStub: Tool = defineTool({
     id: READ_TOOL_OUTPUT_TOOL_ID,
     description: "Read a kept text.",
     inputSchema: z.object({ ref: z.string() }),
+    view: "none",
     describeCall: "none",
     execute: () => Promise.resolve(ok({ status: "not_found" })),
 });
@@ -72,6 +73,7 @@ function sizedTool(): Tool {
         id: "big",
         description: "Give a text of a length.",
         inputSchema: z.object({ length: z.number().int() }),
+        view: "none",
         describeCall: "none",
         execute: ({ length }) => Promise.resolve(ok(fill(length - 2))),
     });
@@ -159,6 +161,7 @@ describe("runLoop — long tool results", () => {
             id: "thrower",
             description: "Fail with a long message.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => {
                 return Promise.reject(new Error("E".repeat(50_000)));
@@ -187,6 +190,7 @@ describe("runLoop — long tool results", () => {
             id: "eyes",
             description: "Give a picture beside a long text.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok(withToolResultImage({ text: fill(40_000) }, { base64: "PNGBYTES", mediaType: "image/png" }))),
         });
@@ -353,6 +357,7 @@ describe("runLoop — long tool results", () => {
             id: "big",
             description: "Give a text with a surrogate pair at each cut point.",
             inputSchema: z.object({ length: z.number().int() }),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok(value)),
         });

@@ -45,7 +45,7 @@ describe("toChatFrame", () => {
     });
 
     test("gives the frame of a top-level tool-started", () => {
-        const ev: EmitEvent = { type: "tool-started", source: topLevel, toolUseId: "tu_1", name: "search_gene", input: {} };
+        const ev: EmitEvent = { type: "tool-started", source: topLevel, toolUseId: "tu_1", name: "search_gene" };
         expect(toChatFrame(ev, fallback)).toEqual({
             type: "tool-started",
             toolUseId: "tu_1",
@@ -92,18 +92,16 @@ describe("toChatFrame", () => {
             source: topLevel,
             toolUseId: "tu_1",
             name: "search_gene",
-            input: { secret: "raw" },
-            inputValue: { text: '{"gene":"TP53"}', cut: false },
+            input: { kind: "json", text: '{"gene":"TP53"}', cut: false },
         };
         const frame = toChatFrame(ev, fallback);
         expect(frame).toEqual({
             type: "tool-started",
             toolUseId: "tu_1",
             name: "search_gene",
-            input: { text: '{"gene":"TP53"}', cut: false },
+            input: { kind: "json", text: '{"gene":"TP53"}', cut: false },
             source: topLevel,
         });
-        expect(JSON.stringify(frame)).not.toContain("raw");
     });
 
     test("keeps the input and the error of a tool-finished, and gives no result", () => {
@@ -113,8 +111,8 @@ describe("toChatFrame", () => {
             toolUseId: "tu_1",
             name: "search_gene",
             outcome: "error",
-            inputValue: { text: '{"gene":"TP53"}', cut: false },
-            errorValue: { text: "not found", cut: true },
+            input: { kind: "json", text: '{"gene":"TP53"}', cut: false },
+            error: { kind: "text", text: "not found", cut: true },
         };
         const frame = toChatFrame(ev, fallback);
         expect(frame).toEqual({
@@ -122,8 +120,8 @@ describe("toChatFrame", () => {
             toolUseId: "tu_1",
             name: "search_gene",
             outcome: "error",
-            input: { text: '{"gene":"TP53"}', cut: false },
-            error: { text: "not found", cut: true },
+            input: { kind: "json", text: '{"gene":"TP53"}', cut: false },
+            error: { kind: "text", text: "not found", cut: true },
             source: topLevel,
         });
         expect(ChatEventSchema.safeParse(frame).success).toBe(true);
@@ -136,13 +134,13 @@ describe("toChatFrame", () => {
             toolUseId: "tu_1",
             name: "search_gene",
             outcome: "ok",
-            resultValue: { text: '{"rows":3}', cut: false },
+            result: { kind: "json", text: '{"rows":3}', cut: false },
         };
-        expect(toChatFrame(ev, fallback)).toMatchObject({ result: { text: '{"rows":3}', cut: false } });
+        expect(toChatFrame(ev, fallback)).toMatchObject({ result: { kind: "json", text: '{"rows":3}', cut: false } });
     });
 
     test("keeps the tool events of a sub-agent with their source", () => {
-        const started: EmitEvent = { type: "tool-started", source: nested, toolUseId: "tu_2", name: "search_pubmed", input: {} };
+        const started: EmitEvent = { type: "tool-started", source: nested, toolUseId: "tu_2", name: "search_pubmed" };
         const finished: EmitEvent = { type: "tool-finished", source: nested, toolUseId: "tu_2", name: "search_pubmed", outcome: "ok" };
         expect(toChatFrame(started, fallback)).toEqual({ type: "tool-started", toolUseId: "tu_2", name: "search_pubmed", source: nested });
         expect(toChatFrame(finished, fallback)).toEqual({ type: "tool-finished", toolUseId: "tu_2", name: "search_pubmed", outcome: "ok", source: nested });
@@ -150,14 +148,14 @@ describe("toChatFrame", () => {
 
     test("keeps the invocation id of a source", () => {
         const source = { ...nested, invocationId: "tu_1" };
-        const started: EmitEvent = { type: "tool-started", source, toolUseId: "tu_2", name: "search_pubmed", input: {} };
+        const started: EmitEvent = { type: "tool-started", source, toolUseId: "tu_2", name: "search_pubmed" };
         const frame = toChatFrame(started, fallback);
         expect(frame).toEqual({ type: "tool-started", toolUseId: "tu_2", name: "search_pubmed", source });
         expect(frame?.source?.invocationId).toBe("tu_1");
     });
 
     test("gives a source with no invocation id no invocationId key", () => {
-        const started: EmitEvent = { type: "tool-started", source: nested, toolUseId: "tu_2", name: "search_pubmed", input: {} };
+        const started: EmitEvent = { type: "tool-started", source: nested, toolUseId: "tu_2", name: "search_pubmed" };
         const frame = toChatFrame(started, fallback);
         expect(frame?.source).toBeDefined();
         expect(Object.hasOwn(frame?.source ?? {}, "invocationId")).toBe(false);
@@ -201,7 +199,7 @@ describe("toChatFrame", () => {
     // A consumer that parses the wire rejects a wrapped `{ type, data: {...} }` payload.
     test("gives no frame with a `data` envelope", () => {
         const samples: Array<EmitEvent | ChatStreamEvent | ChatDataPart> = [
-            { type: "tool-started", source: topLevel, toolUseId: "tu_1", name: "x", input: {} },
+            { type: "tool-started", source: topLevel, toolUseId: "tu_1", name: "x" },
             { type: "tool-finished", source: topLevel, toolUseId: "tu_1", name: "x", outcome: "ok" },
             { type: "text-delta", text: "hi" },
             { type: "data-run-started", data: { runId: "r1", planSummary: "p", stepCount: 1 } },
@@ -301,8 +299,8 @@ describe("applyChatFrame", () => {
     });
 
     test("sets the input and the result of a finished call on its part", () => {
-        const input = { text: '{"gene":"TP53"}', cut: false };
-        const result = { text: '{"rows":3}', cut: false };
+        const input = { kind: "json", text: '{"gene":"TP53"}', cut: false } as const;
+        const result = { kind: "json", text: '{"rows":3}', cut: false } as const;
         const { messages } = applyMany(
             [],
             [
@@ -314,14 +312,14 @@ describe("applyChatFrame", () => {
     });
 
     test("a call in flight shows its input", () => {
-        const input = { text: "{}", cut: false };
+        const input = { kind: "json", text: "{}", cut: false } as const;
         const { messages } = applyMany([], [{ type: "tool-started", toolUseId: "tu_1", name: "x", input, source: SOURCE }]);
         expect(presentAt(messages, 0).parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "x", input }]);
     });
 
     test("a finish with no start keeps its input and its error", () => {
-        const input = { text: "{}", cut: false };
-        const error = { text: "nope", cut: false };
+        const input = { kind: "json", text: "{}", cut: false } as const;
+        const error = { kind: "text", text: "nope", cut: false } as const;
         const { messages } = applyMany([], [{ type: "tool-finished", toolUseId: "tu_1", name: "x", outcome: "error", input, error, source: SOURCE }]);
         expect(presentAt(messages, 0).parts).toEqual([{ type: "tool-call", toolCallId: "tu_1", toolName: "x", outcome: "error", input, error }]);
     });

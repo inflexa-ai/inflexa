@@ -333,6 +333,7 @@ describe("createAiSdkProvider", () => {
             id: "echo",
             description: "Echo the text.",
             inputSchema: z.object({ text: z.string() }),
+            view: "none",
             describeCall: "none",
             execute: (input) => Promise.resolve(ok({ echoed: input.text })),
         });
@@ -676,7 +677,9 @@ describe("createConfiguredAiSdkProvider", () => {
 });
 
 /** The fields of a chat completions request body that the picture test reads. */
-const ChatCompletionsBodySchema = z.looseObject({ messages: z.array(z.looseObject({ role: z.string(), content: z.union([z.string(), z.null(), z.array(z.looseObject({ type: z.string() }))]).optional() })) });
+const ChatCompletionsBodySchema = z.looseObject({
+    messages: z.array(z.looseObject({ role: z.string(), content: z.union([z.string(), z.null(), z.array(z.looseObject({ type: z.string() }))]).optional() })),
+});
 type ChatCompletionsBody = z.infer<typeof ChatCompletionsBodySchema>;
 
 /** A chat completions event stream with one text delta. */

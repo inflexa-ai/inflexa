@@ -51,6 +51,7 @@ const echo = defineTool({
     id: "echo",
     description: "Echo the text.",
     inputSchema: z.object({ text: z.string() }),
+    view: "none",
     describeCall: "none",
     execute: (input) => {
         toolRuns += 1;

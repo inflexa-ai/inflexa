@@ -196,6 +196,11 @@ export function createUpdateWorkingMemoryTool(
             "user's last message, run contents (tables, gene lists, file paths), or anything you can retrieve " +
             "again with inspect_run, read_file, or search.",
         inputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         // Four writes in one turn are four identical chips without this. The
         // entry id rides along on revise/retire because it is the only thing
         // separating two retirements from the same section.

@@ -82,6 +82,7 @@ export const searchGeneTool = defineTool({
             .describe("Gene identifiers to look up, mixed freely (e.g. ['BRCA1', 'ENSG00000141510', 'P38398', 'HGNC:1100', 'CHEMBL5619'])"),
         species: z.string().default("homo_sapiens").describe("Species name (e.g. 'homo_sapiens', 'mus_musculus')"),
     }),
+    view: "none",
     // The identifiers are the call. A large batch is summarized here rather than
     // left to the emit-site cap: that cap cuts at a character, so a 200-symbol
     // join arrives ending in `TP5` — a fragment that reads as a real symbol and

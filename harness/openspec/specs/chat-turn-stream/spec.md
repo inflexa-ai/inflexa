@@ -12,7 +12,9 @@ A chat turn MUST write each fact that a host shows to the durable stream of its 
 #### Scenario: A client gets no tool payload
 
 - **WHEN** a tool call of a turn returns its output
-- **THEN** the frames that the reader gives hold the name, the detail, the outcome, and the duration of the call, and not its input or its output
+- **THEN** the frames that the reader gives hold the name, the detail, the outcome, and the duration of the call
+- **AND** they hold no raw input and no raw output of the call
+- **AND** they hold a shown value of the call only when the view of the tool declares it
 
 #### Scenario: A host reads the whole turn
 

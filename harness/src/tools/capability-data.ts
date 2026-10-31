@@ -78,6 +78,11 @@ export function createInspectCapabilityDataTool(deps: InspectCapabilityDataDeps 
             "It takes no arguments and the whole set is small, so one call is the complete answer. " +
             "An unreadable store answers UNKNOWN rather than absent, so a store that cannot be read never reads as a store that holds nothing.",
         inputSchema: CapabilityDataInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         describeCall: () => "declared capability data",
         execute: async (): Promise<Result<CapabilityDataResult, ToolError>> => {
             const declared = declaredDataRequirements();

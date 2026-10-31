@@ -132,8 +132,8 @@ describe("a stored tool call", () => {
 });
 
 describe("the values of a stored tool call", () => {
-    const input = { text: '{"path":"data/counts.csv"}', cut: false };
-    const result = { text: "head\n[... 9000 characters not shown ...]\ntail", cut: true };
+    const input = { kind: "json", text: '{"path":"data/counts.csv"}', cut: false } as const;
+    const result = { kind: "text", text: "head\n[... 9000 characters not shown ...]\ntail", cut: true } as const;
 
     it("keeps the three values through the stored shape and gives them back", async () => {
         const part: ToolCallPart = {
@@ -143,7 +143,7 @@ describe("the values of a stored tool call", () => {
             outcome: "ok",
             input,
             result,
-            error: { text: "e", cut: false },
+            error: { kind: "text", text: "e", cut: false },
         };
         const message: ConversationUIMessage = { id: "a1", role: "assistant", parts: [conversationDisplayPart(part)] };
 

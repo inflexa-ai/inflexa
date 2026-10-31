@@ -45,8 +45,13 @@ export function createWriteFileTool(deps: WriteFileDeps): Tool<z.infer<typeof Wr
             "`out_of_scope`, and a symbolic link on the path returns `symlink_denied`. A path under the staged " +
             "inputs returns `read_only` with the reason.",
         inputSchema: WriteFileInputSchema,
-        // The path only. `content` is a whole file and must never ride a display
-        // channel, which the emit-site length cap enforces regardless.
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
+        // The path only: the detail is a one-line label, and `content` is a whole file. The view shows the
+        // content, and the cap of the emit site bounds it.
         describeCall: ({ path }) => path,
         execute: async ({ path, content }, ctx): Promise<Result<WriteFileToolResult, ToolError>> => {
             const write = await deps.mutator.writeFile({

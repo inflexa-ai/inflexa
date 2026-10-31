@@ -73,6 +73,7 @@ const echo = defineTool({
     id: "echo",
     description: "Echo the text.",
     inputSchema: z.object({ text: z.string() }),
+    view: "none",
     describeCall: (input) => `echo ${input.text}`,
     execute: (input) => {
         toolRuns += 1;
@@ -85,6 +86,7 @@ const crashAfter = defineTool({
     id: "crash_after",
     description: "Runs, then the host stops.",
     inputSchema: z.object({}),
+    view: "none",
     describeCall: "none",
     execute: () => {
         toolRuns += 1;
@@ -98,6 +100,7 @@ const guarded = defineTool({
     id: "guarded",
     description: "Runs after an approval.",
     inputSchema: z.object({}),
+    view: "none",
     describeCall: "none",
     approval: () => ({ title: "Run the script", command: "Rscript go.R" }),
     execute: () => {
@@ -111,6 +114,7 @@ const childPark = defineTool({
     id: "child_park",
     description: "Runs in the sub-agent.",
     inputSchema: z.object({}),
+    view: "none",
     describeCall: "none",
     execute: async () => {
         childToolRuns += 1;
@@ -140,6 +144,7 @@ const research = defineTool({
     id: "research",
     description: "Research a brief in a sub-agent.",
     inputSchema: z.object({ brief: z.string() }),
+    view: "none",
     describeCall: "none",
     startsWorkflow: true,
     execute: async (input, ctx) => {
@@ -172,6 +177,7 @@ const pausingResearch = defineTool({
     id: "pausing_research",
     description: "Research a brief in a sub-agent that can pause.",
     inputSchema: z.object({ brief: z.string() }),
+    view: "none",
     describeCall: "none",
     startsWorkflow: true,
     execute: async (input, ctx) => {

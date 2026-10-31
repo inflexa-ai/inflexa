@@ -742,6 +742,7 @@ describe("sandbox-step kept tool outputs", () => {
             id: "big",
             description: "Give a long text.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok("x".repeat(40_000))),
         });
@@ -812,14 +813,16 @@ describe("sandbox-step blocker", () => {
     it("forwards the tool events of the loop to the run stream with none of the three shown values", async () => {
         const { provider } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: REASON }))]);
 
-        await runSandboxStepBody(usageStepInput(), blockerDeps(provider));
+        // A view that shows the input and the result: without the strip, the forwarded events would carry them.
+        const showing: Tool = { ...createReportBlockerTool(), view: { input: (input) => input, result: (_input, result) => result, error: true } };
+        await runSandboxStepBody(usageStepInput(), blockerDeps(provider, showing));
 
         const events = dbosState.emittedParts
             .filter((part) => part.type === "data-loop-event")
             .flatMap((part) => parseUnknownRecord(parseUnknownRecord(part.data)?.event) ?? []);
         expect(events).toContainEqual(expect.objectContaining({ type: "tool-finished", toolUseId: "b1", outcome: "ok" }));
         for (const event of events) {
-            for (const key of ["inputValue", "resultValue", "errorValue"]) expect(event).not.toHaveProperty(key);
+            for (const key of ["input", "result", "error"]) expect(event).not.toHaveProperty(key);
         }
     });
 
@@ -1265,6 +1268,7 @@ describe("sandbox-step capped-out empty manifest", () => {
                                 id: "echo",
                                 description: "Echo the label back.",
                                 inputSchema: z.object({ label: z.string() }),
+                                view: "none",
                                 describeCall: "none",
                                 execute: ({ label }) => Promise.resolve(ok({ label })),
                             }),

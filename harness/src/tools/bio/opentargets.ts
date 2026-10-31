@@ -113,6 +113,7 @@ export const openTargetsTool = defineTool({
         "NO-DATA IS FINAL — do not retry the same id. Empty associations mean no evidence, or an id the platform does not hold. An empty candidates " +
         "list means the name matched no disease: rephrase it, do not invent an id.",
     inputSchema,
+    view: "none",
     describeCall: "none",
     execute: async (input): Promise<Result<OpenTargetsOutput, ToolError>> => {
         const limit = input.limit ?? DEFAULT_LIMIT;
