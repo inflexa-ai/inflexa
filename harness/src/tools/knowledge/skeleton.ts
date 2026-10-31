@@ -19,6 +19,13 @@
  * one enrichment step on its own track, and one report step. A group with
  * no step in the procedure is absent from the skeleton.
  *
+ * A step whose own template reads the output of another template gets its
+ * own group, because a fold keeps the template of the central step alone and
+ * it would drop the others. Thus the four steps of the dose-response chain
+ * (the benchmark dose of each gene, the benchmark dose of each gene set, the
+ * point of departure, and the exposure margin) are four groups of one track,
+ * in that order, and each of the other four new steps is a group of its own.
+ *
  * The central step of a group names the method of the skeleton step, and it
  * gives the alternatives, the template, and the environment: an alternative
  * of a folded step (a normalization in the differential expression group)
@@ -88,6 +95,21 @@ const GROUPS: readonly {
         steps: ["filter_low_counts", "normalize", "model_design", "differential_expression", "shrink_lfc", "multiple_testing"],
         name: "Differential expression",
     },
+    // The dose-response chain: each step reads the table that the step before
+    // it writes, thus the four are one track in the order of the chain. The
+    // track is its own, because the chain is a branch off the test and not a
+    // part of the core walk, and it ends in a regulatory quantity.
+    { id: "T4S1", track: "T4", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["dose_response_fit"], name: "Benchmark dose of each gene" },
+    {
+        id: "T4S2",
+        track: "T4",
+        step_type: "analysis",
+        agent: "bulk-transcriptomics-agent",
+        steps: ["benchmark_dose_sets"],
+        name: "Benchmark dose of each gene set",
+    },
+    { id: "T4S3", track: "T4", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["point_of_departure"], name: "Point of departure" },
+    { id: "T4S4", track: "T4", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["exposure_margin"], name: "Exposure margin" },
     { id: "T2S1", track: "T2", step_type: "enrichment", agent: "enrichment-agent", steps: ["enrichment"], name: "Gene set enrichment" },
     {
         id: "T2S2",
@@ -97,12 +119,45 @@ const GROUPS: readonly {
         steps: ["tf_activity", "pathway_activity"],
         name: "Regulator and pathway activity",
     },
+    // The connectivity reads the contrast of the study against a reference
+    // resource, which is the shape and the agent of this track. The resource
+    // is a compendium of contrasts and not a gene set collection, thus the
+    // step is a group of its own beside the enrichment and the activity.
+    {
+        id: "T2S3",
+        track: "T2",
+        step_type: "analysis",
+        agent: "enrichment-agent",
+        steps: ["compendium_connectivity"],
+        name: "Compendium connectivity",
+    },
     { id: "T1S4", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["variance_partition"], name: "Variance partition" },
     { id: "T3S1", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["signature_scoring"], name: "Signature scoring" },
     { id: "T3S2", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["deconvolution"], name: "Cell type deconvolution" },
     { id: "T3S3", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["coexpression"], name: "Co-expression modules" },
     { id: "T3S4", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["clustering"], name: "Sample clustering" },
     { id: "T3S5", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["survival"], name: "Outcome association" },
+    // Three computations over the value matrix and the sample table, each
+    // independent of the others and of the chain, thus each is a group of
+    // this track: a class per gene over the time points, a score per sample
+    // against a reference module set, and a call per sample.
+    {
+        id: "T3S6",
+        track: "T3",
+        step_type: "analysis",
+        agent: "bulk-transcriptomics-agent",
+        steps: ["trajectory_classification"],
+        name: "Trajectory classification",
+    },
+    {
+        id: "T3S7",
+        track: "T3",
+        step_type: "analysis",
+        agent: "bulk-transcriptomics-agent",
+        steps: ["reference_module_score"],
+        name: "Reference module score",
+    },
+    { id: "T3S8", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["classifier_call"], name: "Classifier call" },
     { id: "T1S5", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["transcript_level"], name: "Transcript-level analysis" },
     { id: "T1S6", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["annotation"], name: "Identifier annotation" },
     { id: "T1S3", track: "T1", step_type: "report", agent: "bulk-transcriptomics-agent", steps: ["report"], name: "Report" },
@@ -112,23 +167,54 @@ const GROUPS: readonly {
  * The dependencies of each group. The QC depends on the cohort assembly when
  * one is present, a group depends on the QC, on the differential expression
  * when its input is a results table, and the report depends on every group
- * that is present.
+ * that is present. A step of the dose-response chain depends on the step
+ * whose table it reads: the fit reads the genes that passed the test, the
+ * gene sets read the gene table of the fit, the point of departure reads the
+ * set table and the gene table, and the margin reads the point of departure.
  */
 const DEPENDS: Readonly<Record<string, readonly string[]>> = {
     T0S1: [],
     T1S1: ["T0S1"],
     T1S2: ["T1S1"],
+    T4S1: ["T1S2"],
+    T4S2: ["T4S1"],
+    T4S3: ["T4S2", "T4S1"],
+    T4S4: ["T4S3"],
     T2S1: ["T1S2"],
     T2S2: ["T1S2", "T1S1"],
+    T2S3: ["T1S2"],
     T1S4: ["T1S1"],
     T3S1: ["T1S1"],
     T3S2: ["T1S1"],
     T3S3: ["T1S1"],
     T3S4: ["T1S1"],
     T3S5: ["T3S1", "T1S1"],
+    T3S6: ["T1S1"],
+    T3S7: ["T1S1"],
+    T3S8: ["T1S1"],
     T1S5: ["T1S1"],
     T1S6: ["T1S1"],
-    T1S3: ["T1S2", "T2S1", "T2S2", "T1S4", "T3S1", "T3S2", "T3S3", "T3S4", "T3S5", "T1S5", "T1S6"],
+    T1S3: [
+        "T1S2",
+        "T4S1",
+        "T4S2",
+        "T4S3",
+        "T4S4",
+        "T2S1",
+        "T2S2",
+        "T2S3",
+        "T1S4",
+        "T3S1",
+        "T3S2",
+        "T3S3",
+        "T3S4",
+        "T3S5",
+        "T3S6",
+        "T3S7",
+        "T3S8",
+        "T1S5",
+        "T1S6",
+    ],
 };
 
 /** A parameter value as a setting: a scalar stays, a list becomes a list of strings, anything else its text. */

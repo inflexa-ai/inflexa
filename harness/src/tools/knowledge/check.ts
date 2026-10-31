@@ -37,6 +37,14 @@ const DraftedStepSchema = z.object({
             "differential_expression",
             "shrink_lfc",
             "multiple_testing",
+            "dose_response_fit",
+            "benchmark_dose_sets",
+            "point_of_departure",
+            "exposure_margin",
+            "trajectory_classification",
+            "reference_module_score",
+            "classifier_call",
+            "compendium_connectivity",
             "enrichment",
             "variance_partition",
             "tf_activity",
@@ -87,7 +95,7 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps): Tool<z.infer
     return defineTool({
         id: "knowledge_check",
         description:
-            "Check the method steps you drafted for a bulk RNA-seq analysis against the rules of the Inflexa knowledge service, once, after the draft and before `submit_plan`. " +
+            "Check the method steps you drafted for an expression analysis against the rules of the Inflexa knowledge service, once, after the draft and before `submit_plan`. " +
             "Send the same situation you sent to `knowledge_recommend` and the drafted steps: the step type, the method as the step names it, its package, and its key parameters. " +
             "The answer lists `violations` (a forbidden method, or an inferential test on a design that a flag limits) and `warnings` (a method outside the set the rules name, a parameter that differs from a sourced default, or a required parameter that the step does not state), each with the rule id and the permitted alternatives. " +
             "Revise a violated step once, then submit. A warning is advice: keep the step when the data gives a reason, and state the reason in the step. `ok: true` means no finding on the assessed steps. " +

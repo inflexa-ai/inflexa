@@ -29,7 +29,7 @@ import type { SituationFieldsSchema } from "./situation.js";
 // ── The situation ───────────────────────────────────────────────────
 
 /** The role of the blocking factor. A role and never a column name, because the situation leaves the machine. */
-export type BlockingRole = "individual" | "cell_line" | "litter" | "site" | "pair" | "other";
+export type BlockingRole = "individual" | "cell_line" | "litter" | "site" | "pair" | "plate" | "other";
 /** The role of a covariate of the design. A role and never a column name. */
 export type CovariateRole = "sex" | "age" | "clinical" | "technical" | "other";
 /** The role of the numeric variable of interest when the question is a trend, not a comparison of groups. */
