@@ -99,3 +99,12 @@ describe("list_launch_dir — describeCall", () => {
         expect(JSON.stringify(tool)).not.toContain("none");
     });
 });
+
+describe("list_launch_dir — view", () => {
+    test("the tool declares none, thus it packages no view", () => {
+        const tool = createLaunchDirTool();
+
+        expect(tool.view).toBeUndefined();
+        expect("view" in tool).toBe(false);
+    });
+});

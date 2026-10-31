@@ -154,6 +154,26 @@ The `paths` field is optional in the schema and required only for `add` and `rem
 - **WHEN** the tool call is rendered
 - **THEN** the detail names the action rather than producing an empty string
 
+### Requirement: manage_inputs shows its input, its result, and its error
+
+`manage_inputs` MUST declare a view of the kinds of the harness `tool-call-values` capability. The view MUST show these values:
+
+- the whole input of the call, as a JSON value
+- the whole ok value of the call, as a JSON value, for the result
+- the error text of a call with the outcome `error`
+
+#### Scenario: An add call shows its input and its result
+
+- **GIVEN** the `manage_inputs` tool
+- **WHEN** its view reads an `add` call with one path, and the ok value of that call
+- **THEN** the shown input is the input of the call, and the shown result is the ok value
+
+#### Scenario: The view declares the error
+
+- **GIVEN** the `manage_inputs` tool
+- **WHEN** the tool is constructed
+- **THEN** its packaged view declares `error`
+
 ### Requirement: Added or removed inputs re-profile through the input-change watch of the local server
 
 Adding or removing an input SHALL NOT itself trigger data profiling. The local server SHALL watch the input events of each writer in its process — an input route, or the agent's input tool inside a turn. After a short debounce for each analysis, it SHALL queue one re-profile drive behind the profile work of that analysis. The drive needs the runtime: a change whose debounce ends before the runtime is ready drives no re-profile. Emptying the input set SHALL clear the now-stale profile through the same drive. A client SHALL NOT re-profile after its own input change.
