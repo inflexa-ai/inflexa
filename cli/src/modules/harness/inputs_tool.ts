@@ -117,6 +117,11 @@ export function createManageInputsTool(opts: ManageInputsToolOpts = DEFAULT_MANA
                 .optional()
                 .describe("Files to add or remove (relative to the launch folder, or absolute). Required for add/remove; ignored for list."),
         }),
+        view: {
+            input: (input) => input,
+            result: (_input, result: ManageInputsResult) => result,
+            error: true,
+        },
         // `paths` is optional in the schema and necessary only for add and remove,
         // thus the hook tolerates its absence rather than an assumption of it.
         //

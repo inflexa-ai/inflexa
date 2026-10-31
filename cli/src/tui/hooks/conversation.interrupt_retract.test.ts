@@ -230,7 +230,7 @@ describe("canRetract gates the retract window", () => {
     test("flips false the instant a tool part starts", async () => {
         const { sendP, emit, release } = startBusyTurn({ status: "done", opened: true });
         expect(canRetract()).toBe(true);
-        await emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "read_file", input: {} });
+        await emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "read_file" });
         expect(canRetract()).toBe(false);
         release();
         await sendP;

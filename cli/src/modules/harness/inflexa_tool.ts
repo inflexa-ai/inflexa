@@ -22,7 +22,7 @@
 
 import { join } from "node:path";
 
-import { defineTool, type AskRequest, type ToolError } from "@inflexa-ai/harness";
+import { defineTool, viewFields, viewJson, viewText, type AskRequest, type ToolError, type ViewFields } from "@inflexa-ai/harness";
 import type { Command } from "commander";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -177,6 +177,34 @@ export type RunInflexaResult =
     | { readonly status: "ran"; readonly exitCode: number; readonly stdout: string; readonly stderr: string }
     | { readonly status: "timed_out"; readonly stdout: string; readonly stderr: string }
     | { readonly status: "cancelled" };
+
+/** The shown result of a call: the status first, then what the status carries. An empty stream is absent. */
+function resultView(result: RunInflexaResult): ViewFields {
+    switch (result.status) {
+        case "invalid":
+        case "blocked":
+            return viewFields({ status: viewText(result.status), message: viewText(result.message) });
+        case "ran":
+            return viewFields({
+                status: viewText(result.status),
+                exitCode: viewJson(result.exitCode),
+                stdout: result.stdout === "" ? undefined : viewText(result.stdout),
+                stderr: result.stderr === "" ? undefined : viewText(result.stderr),
+            });
+        case "timed_out":
+            return viewFields({
+                status: viewText(result.status),
+                stdout: result.stdout === "" ? undefined : viewText(result.stdout),
+                stderr: result.stderr === "" ? undefined : viewText(result.stderr),
+            });
+        case "cancelled":
+            return viewFields({ status: viewText(result.status) });
+        default: {
+            const exhaustive: never = result;
+            return exhaustive;
+        }
+    }
+}
 
 /**
  * Captured result of one `inflexa` subprocess. `endedBy` names what ended it: a
@@ -493,6 +521,11 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
                         '(e.g. ["--help"] or ["<subcommand>", "--help"]). An empty list runs bare `inflexa`.',
                 ),
         }),
+        view: {
+            input: (input) => input,
+            result: (_input, result: RunInflexaResult) => resultView(result),
+            error: true,
+        },
         // The chip names the argv that WILL run, and not the argv the model sent.
         // `toEffectiveArgv` is the whole of the classifier's normalization, and
         // every runnable verdict carries its result unchanged. The hook is
