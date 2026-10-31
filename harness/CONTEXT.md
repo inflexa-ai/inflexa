@@ -606,7 +606,7 @@ Other facts:
 - **`EmbeddingProvider`** — a separate narrow interface for the embeddings, and
   `providers/types.ts` declares the two provider interfaces. It
   takes a `Session`.
-- **`defineTool({id, description, inputSchema: ZodSchema, execute(input, ctx) => result, describeCall?})`**
+- **`defineTool({id, description, inputSchema: ZodSchema, execute(input, ctx) => result, describeCall, view})`**
   — `ctx` is `ToolContext = {session, signal, emit, ask, invocationId, turnUsage}`,
   which is request-scoped values with no deps. `tools/define-tool.ts` has it. The
   `z.toJSONSchema()` of Zod 4 emits the tool input schema that the AI SDK accepts:
@@ -624,13 +624,21 @@ Other facts:
   failure throws or gives `err(ToolError)`, and the loop maps it to a
   model-visible error tool result. A Zod input-validation failure gives an error
   tool result at the boundary, without a call to `execute`.
+
+  `view` is a required decision, as `describeCall` is. Give a `ToolCallView`
+  or `"none"`. A `ToolCallView` has the optional members `input`, `result`, and
+  `error`. These members give the values that a host shows for a call.
+  `"none"` declares that no call of the tool shows a value. `defineTool` drops
+  the sentinel, thus a tool that declares `"none"` has no `view` key. Refer to
+  the `tool-call-values` capability.
 - **`describeCall(input) => string` is the call-time counterpart of
   `description`** (the `tool-call-detail` capability). `description`
   self-describes the tool at attach time. `describeCall` self-describes one
   invocation, thus a surface renders four `update_working_memory` calls as four
-  distinct lines. It is optional, synchronous, pure, and typed against
-  `z.infer<Schema>`. It is colocated with the schema, because that is the one
-  place where the compiler checks the two against each other. The loop computes
+  distinct lines. The decision is required: give a function or `"none"`. The
+  function is synchronous, pure, and typed against `z.infer<Schema>`. The
+  function is colocated with the schema, because that is the one place where
+  the compiler checks the two against each other. The loop computes
   the detail best-effort at dispatch: it does `safeParse` on the raw model input
   first, and it calls the hook only on success. A `tool-started` event is emitted
   BEFORE dispatch-time validation, thus the value there is unvalidated. It
