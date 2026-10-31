@@ -22,19 +22,33 @@ export const SituationFieldsSchema = z.object({
             "clustering",
             "survival",
             "signature_scoring",
+            "dose_response",
         ])
         .describe(
             "What the plan needs a procedure for. `full_plan` returns QC, filtering, the model, the test, shrinkage, multiple testing, enrichment, and the report in one answer. " +
                 "Use `differential_expression` when the research question does not ask for pathways or gene sets; an enrichment step the user did not ask for is unasked scope. " +
                 "Use `enrichment` when a results table is the input and no new test is fitted, and `qc` when the question stops at the sample structure. " +
                 "Use `tf_activity` for regulator or pathway activity, `deconvolution` for cell type proportions, `coexpression` for modules, `clustering` for sample subgroups, `survival` for an outcome association, " +
-                "and `signature_scoring` for a per-sample score, or with `classifier: true` for a classifier of the samples.",
+                "and `signature_scoring` for a per-sample score, or with `classifier: true` for a classifier of the samples. " +
+                "Use `dose_response` when the question asks at which exposure the expression leaves the control: the walk fits a curve per gene over the dose, takes the benchmark dose of each gene set, " +
+                "reads the transcriptomic point of departure from the lowest set median, and divides it by an efficacious exposure for the exposure margin. " +
+                "A `dose_response` situation carries `n_dose_levels`, `tissue`, and `exposure_axis`, because the fit, the point of departure, and the margin each stop without one of them, " +
+                "and it carries `control_placement`, `grid_complete`, `recovery_group`, and `n_compounds` when the design holds them.",
         ),
-    modality: z.literal("bulk_rna_seq").describe("The assay. Phase 0 serves bulk RNA-seq only."),
-    data_state: z
-        .enum(["fastq", "counts", "tpm_or_fpkm", "log_normalized"])
+    modality: z
+        .enum(["bulk_rna_seq", "microarray", "tempo_seq"])
         .describe(
-            "The state of the expression data in the inputs: raw reads, a raw integer count matrix, TPM/FPKM/RPKM abundances, or log-scale normalized values (log-CPM, microarray).",
+            "The platform that measured the expression: `bulk_rna_seq` for a sequencing run over the whole transcriptome; `microarray` for the probe intensities of a hybridization array, the platform of the legacy toxicogenomics compendia; " +
+                "`tempo_seq` for the targeted read counts of a TempO-Seq probe panel, where the panel and not the transcriptome is the gene universe. " +
+                "An array reads no sequence, thus it has no read count and no library size: a `microarray` takes `data_state` `log_normalized`, `de_results`, or `effect_sizes_only`, and `fastq`, `counts`, or `tpm_or_fpkm` stops the plan as a contradiction. " +
+                "A probe panel is a sequencing assay and it keeps the read count, thus `tempo_seq` takes `counts`; a panel gives no transcript length, thus never `tpm_or_fpkm`.",
+        ),
+    data_state: z
+        .enum(["fastq", "counts", "tpm_or_fpkm", "log_normalized", "de_results", "effect_sizes_only"])
+        .describe(
+            "The state of the expression data in the inputs: raw reads, a raw integer count matrix, TPM/FPKM/RPKM abundances, or log-scale normalized values (log-CPM, microarray). " +
+                "`de_results` is a table of contrasts with an effect size and a p-value per gene, and `effect_sizes_only` the same table with no p-value. " +
+                "A table of contrasts holds no value of a sample and no variance inside a dose group: without the p-values no step counts calls at a false discovery rate, and either table stops a benchmark dose fit.",
         ),
     count_source: z
         .enum(["salmon", "kallisto", "star_featurecounts", "rsem", "unknown"])
@@ -53,7 +67,11 @@ export const SituationFieldsSchema = z.object({
                 "`integer_counts`: integer counts from an aligner and a counter (STAR, featureCounts) or from a 3' protocol, with no length data. " +
                 "`unknown`: a count table from a quantifier with no statement of the correction. Omit when `data_state` is not `counts`.",
         ),
-    organism: z.enum(["human", "mouse", "other"]).describe("The organism of the samples."),
+    organism: z
+        .enum(["human", "mouse", "rat", "dog", "monkey", "other"])
+        .describe(
+            "The organism of the samples. `rat`, `dog`, and `monkey` are the species of a regulatory toxicology study; use `other` only for a species this list does not name.",
+        ),
     n_groups: z
         .number()
         .int()
@@ -93,11 +111,11 @@ export const SituationFieldsSchema = z.object({
         ),
     paired: z.boolean().describe("True when each subject contributes a sample to more than one condition (paired or repeated measures)."),
     blocking_factor: z
-        .enum(["individual", "cell_line", "litter", "site", "pair", "other"])
+        .enum(["individual", "cell_line", "litter", "site", "pair", "plate", "other"])
         .nullable()
         .optional()
         .describe(
-            "The role of the blocking factor that is not the condition, never its column name: `individual` when the same subject, donor, or animal gives more than one sample; `cell_line`; `litter`; `site` for a center or a lab of a multi-site study; `pair` for matched pairs of different individuals; `other`. Omit when there is none. The column name stays in the step.",
+            "The role of the blocking factor that is not the condition, never its column name: `individual` when the same subject, donor, or animal gives more than one sample; `cell_line`; `litter`; `site` for a center or a lab of a multi-site study; `pair` for matched pairs of different individuals; `plate` when the samples sit on culture or assay plates and one plate holds a set of them; `other`. Omit when there is none. The column name stays in the step.",
         ),
     block_structure: z
         .enum(["crossed", "nested"])
@@ -167,12 +185,16 @@ export const SituationFieldsSchema = z.object({
                 "survival",
                 "transcript_level",
                 "annotation",
+                "reference_module_score",
+                "classifier_call",
             ]),
         )
         .optional()
         .describe(
             "Analyses the research question asks for beside the question kind, for example a regulator activity beside a differential expression. Each joins the procedure at its place. " +
-                "Add `annotation` when the rows of the count table are not gene symbols (Ensembl or Entrez identifiers) and a later step needs symbols: the identifier map is then a vetted step with its own template, and no other step rebuilds it. Omit when none.",
+                "Add `annotation` when the rows of the count table are not gene symbols (Ensembl or Entrez identifiers) and a later step needs symbols: the identifier map is then a vetted step with its own template, and no other step rebuilds it. " +
+                "Add `reference_module_score` for a score of each sample against a reference co-expression module set, and `classifier_call` for the call of a validated classifier on each sample. " +
+                "Each of the two contrasts two levels of the group column, thus either one needs two or more groups, a time course, or a numeric predictor. Omit when none.",
         ),
     preferred_language: z
         .enum(["R", "python"])
@@ -191,6 +213,74 @@ export const SituationFieldsSchema = z.object({
         .optional()
         .describe(
             "The quality concerns of the profile as typed flags: a sample with a library size far below the median; a sample that does not cluster with its group; a doubt about the identity of a sample; high duplication; degraded RNA (a low RNA integrity number, a 3' coverage bias, or formalin-fixed material).",
+        ),
+    tissue: z
+        .enum(["liver", "kidney", "heart", "muscle", "brain", "adipose", "blood", "other"])
+        .optional()
+        .describe(
+            "The tissue the samples come from: `liver`, `kidney`, `heart`, `muscle` for skeletal muscle, `brain` whole or one region, `adipose`, `blood` whole or a fraction, " +
+                "or `other` for a tissue this list does not name, for example a cell line. " +
+                "A transcriptomic point of departure belongs to the tissue of its samples, and the point of departure of one tissue says nothing about another, thus one call covers one tissue and the exposure margin stops without this field. " +
+                "Read it from the sample description of the profile or from the user request. Omit it when the question is not `dose_response`, or when the samples are not from one tissue.",
+        ),
+    exposure_axis: z
+        .enum(["administered_dose", "in_vitro_concentration", "systemic_exposure"])
+        .optional()
+        .describe(
+            "The axis on which the exposure values of the study lie: `administered_dose` for the dose the study gives to the animal or to the culture, for example in mg/kg; " +
+                "`in_vitro_concentration` for the concentration of the compound in the medium of a cell culture; `systemic_exposure` for a measured level in the plasma, for example a Cmax or an AUC. " +
+                "The exposure margin divides the point of departure by an efficacious exposure, and that quotient means something only when both values lie on one axis and in one unit. " +
+                "Thus the margin stops without this field, and `in_vitro_concentration` stops it too, because a concentration in a medium is no dose of an intact organism and the extrapolation from in vitro to in vivo comes first. " +
+                "Read it from the dose column of the profile or from the user request. Omit it when the question is not `dose_response`.",
+        ),
+    n_dose_levels: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+            "The number of dose levels of the design, the control level included. The dose levels are groups of the design, thus this count is at most `n_groups`, " +
+                "unless `continuous_predictor` is `dose` and the dose itself, not a group, is the factor of interest. " +
+                "Three levels is the floor of the walk: the model families of the average hold three or more parameters, thus below three levels no gene and no gene set has a benchmark dose and the point of departure stops. " +
+                "Read it from the dose column of the profile. Omit it when the question is not `dose_response`.",
+        ),
+    n_compounds: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+            "The number of compounds the study exposes the samples to. One call covers one compound: no design term names a compound as a factor, and the point of departure and the exposure margin each give one value for one compound. " +
+                "Thus 2 or more says that the plan runs the walk one time for each compound, each run over the samples of that compound and the control samples of that compound, and it pools no two compounds in one fit. " +
+                "Read it from the sample table of the profile. Omit it when the question is not `dose_response`.",
+        ),
+    control_placement: z
+        .enum(["single_baseline", "per_time", "per_block", "per_time_and_block"])
+        .optional()
+        .describe(
+            "Where the control samples sit in the design, which decides the samples that form the contrast of each treated sample: `single_baseline` when one control group serves every treated group; " +
+                "`per_time` when each time point holds its own control group; `per_block` when each block, for example a plate, holds its own control group; `per_time_and_block` for both. " +
+                "With a control at each time the design takes the dose and the time as fixed factors and the control of the same time as the reference level, so that a time effect all dose levels share leaves the dose contrast. " +
+                "`per_time` and `per_time_and_block` need `n_timepoints` or `continuous_predictor: time`, and `per_block` and `per_time_and_block` need `blocking_factor`. " +
+                "Read it from the sample table of the profile. Omit it when the question is not `dose_response`.",
+        ),
+    grid_complete: z
+        .boolean()
+        .optional()
+        .describe(
+            "Whether every cell of the grid of the dose levels, the times, and the blocks holds at least one sample. Set false when a cell holds none: a model that assumes every cell, " +
+                "for example a cell-means model with one coefficient per combination or a full interaction of the factors, then carries a coefficient with no data and the design matrix loses rank. " +
+                "The plan then fits the terms the design can estimate and states the estimable contrasts only. " +
+                "Read it from the sample table of the profile. Omit it when every cell holds a sample.",
+        ),
+    recovery_group: z
+        .boolean()
+        .optional()
+        .describe(
+            "Set true when the study holds a group that it observes after the exposure ends, for example animals that rest after the last dose. " +
+                "Such a group carries no dose at the time of its sample, thus it lies at no point of the dose-response curve and the fit leaves it out; " +
+                "a recovery sample placed at the dose of its exposure makes the response of that dose lower than the exposure gives. " +
+                "Read it from the time column or the group labels of the sample table. Omit it when the study samples every group during the exposure.",
         ),
 });
 
