@@ -789,12 +789,17 @@ describe("run_inflexa — describeCall", () => {
 describe("run_inflexa — view", () => {
     const tool = makeTool(recordingSubprocess().fn);
 
-    function shown(result: Parameters<NonNullable<NonNullable<typeof tool.view>["result"]>>[1]): Array<[string, string]> {
+    /** The fields of the shown result, each as its name, its kind, and its value, in the order that the view gives. */
+    function shown(result: Parameters<NonNullable<NonNullable<typeof tool.view>["result"]>>[1]): Array<[string, string, unknown]> {
         const value: unknown = tool.view?.result?.({ argv: [] }, result);
         if (value === undefined || value === null || typeof value !== "object" || !("fields" in value) || !Array.isArray(value.fields)) {
             throw new Error("the view gave no fields");
         }
-        return value.fields.map((field: { name: string; leaf: { kind: string } }) => [field.name, field.leaf.kind]);
+        return value.fields.map((field: { name: string; leaf: { kind: string; text?: string; value?: unknown } }) => [
+            field.name,
+            field.leaf.kind,
+            field.leaf.kind === "text" ? field.leaf.text : field.leaf.value,
+        ]);
     }
 
     test("shows the argv as the input and declares the error", () => {
@@ -802,30 +807,57 @@ describe("run_inflexa — view", () => {
         expect(tool.view?.error).toBe(true);
     });
 
+    test("shows the argv that the model sent, and not the words that the classifier runs", () => {
+        // The classifier tokenizes this single element before the spawn, and the chip names the tokens.
+        // The input shows the element as sent, thus the two surfaces differ.
+        expect(tool.view?.input?.({ argv: ["refs list"] })).toEqual({ argv: ["refs list"] });
+        expect(tool.describeCall?.({ argv: ["refs list"] })).toBe("refs list");
+        expect(tool.view?.input?.({ argv: ["refs list"] })).not.toEqual({ argv: ["refs", "list"] });
+    });
+
     test("a ran call shows the status, the exit code, and each stream that holds text", () => {
-        expect(shown({ status: "ran", exitCode: 0, stdout: "out", stderr: "" })).toEqual([
-            ["status", "text"],
-            ["exitCode", "json"],
-            ["stdout", "text"],
+        expect(shown({ status: "ran", exitCode: 3, stdout: "the stdout text", stderr: "" })).toEqual([
+            ["status", "text", "ran"],
+            ["exitCode", "json", 3],
+            ["stdout", "text", "the stdout text"],
+        ]);
+        expect(shown({ status: "ran", exitCode: 0, stdout: "", stderr: "the stderr text" })).toEqual([
+            ["status", "text", "ran"],
+            ["exitCode", "json", 0],
+            ["stderr", "text", "the stderr text"],
+        ]);
+    });
+
+    test("a ran call shows the stdout before the stderr, each with its own text", () => {
+        expect(shown({ status: "ran", exitCode: 1, stdout: "the stdout text", stderr: "the stderr text" })).toEqual([
+            ["status", "text", "ran"],
+            ["exitCode", "json", 1],
+            ["stdout", "text", "the stdout text"],
+            ["stderr", "text", "the stderr text"],
         ]);
     });
 
     test("a timed out call shows the status and each stream that holds text", () => {
-        expect(shown({ status: "timed_out", stdout: "", stderr: "late" })).toEqual([
-            ["status", "text"],
-            ["stderr", "text"],
+        expect(shown({ status: "timed_out", stdout: "", stderr: "the stderr text" })).toEqual([
+            ["status", "text", "timed_out"],
+            ["stderr", "text", "the stderr text"],
+        ]);
+        expect(shown({ status: "timed_out", stdout: "the stdout text", stderr: "the stderr text" })).toEqual([
+            ["status", "text", "timed_out"],
+            ["stdout", "text", "the stdout text"],
+            ["stderr", "text", "the stderr text"],
         ]);
     });
 
     test("an invalid or blocked call shows the status and the message, and a cancelled call shows the status alone", () => {
-        expect(shown({ status: "invalid", message: "bad" })).toEqual([
-            ["status", "text"],
-            ["message", "text"],
+        expect(shown({ status: "invalid", message: "the invalid message" })).toEqual([
+            ["status", "text", "invalid"],
+            ["message", "text", "the invalid message"],
         ]);
-        expect(shown({ status: "blocked", message: "no" })).toEqual([
-            ["status", "text"],
-            ["message", "text"],
+        expect(shown({ status: "blocked", message: "the blocked message" })).toEqual([
+            ["status", "text", "blocked"],
+            ["message", "text", "the blocked message"],
         ]);
-        expect(shown({ status: "cancelled" })).toEqual([["status", "text"]]);
+        expect(shown({ status: "cancelled" })).toEqual([["status", "text", "cancelled"]]);
     });
 });
