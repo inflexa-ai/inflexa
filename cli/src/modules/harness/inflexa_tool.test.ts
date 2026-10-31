@@ -808,11 +808,10 @@ describe("run_inflexa — view", () => {
     });
 
     test("shows the argv that the model sent, and not the words that the classifier runs", () => {
-        // The classifier tokenizes this single element before the spawn, and the chip names the tokens.
-        // The input shows the element as sent, thus the two surfaces differ.
+        // The classifier tokenizes this single element before the spawn. The input keeps the one element as sent,
+        // while the chip prints the same words, thus only the shape of the array tells them apart.
         expect(tool.view?.input?.({ argv: ["refs list"] })).toEqual({ argv: ["refs list"] });
         expect(tool.describeCall?.({ argv: ["refs list"] })).toBe("refs list");
-        expect(tool.view?.input?.({ argv: ["refs list"] })).not.toEqual({ argv: ["refs", "list"] });
     });
 
     test("a ran call shows the status, the exit code, and each stream that holds text", () => {
