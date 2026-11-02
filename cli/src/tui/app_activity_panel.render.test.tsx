@@ -10,6 +10,7 @@ import type { CancelRunResult, DataProfileState, RunDetail, RunSummary } from ".
 import { DEFAULT_CLIENT_OPTS } from "../client/api.ts";
 import { asStr256 } from "../lib/types.ts";
 import { fakeClient } from "../test_support/fake_client.ts";
+import { until } from "../test_support/until.ts";
 import { App } from "./app.tsx";
 import { dialogClear, dialogIsOpen } from "./components/dialog/dialog_host.tsx";
 import { __setAgentModelsForTest, __setBootStateForTest } from "./hooks/boot.ts";
@@ -293,11 +294,6 @@ function stubCancelServer(): { cancels: () => { method: string; path: string }[]
             fetch.mockRestore();
         },
     };
-}
-
-/** Wait until `done` holds, so a flow that crosses the client and the stores has ended before the test reads its state. */
-async function until(done: () => boolean): Promise<void> {
-    for (let i = 0; i < 100 && !done(); i++) await new Promise((r) => setTimeout(r, 10));
 }
 
 describe("App binds the abort of the focused run", () => {
