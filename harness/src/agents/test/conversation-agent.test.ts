@@ -184,6 +184,21 @@ describe("createConversationAgent", () => {
         expect(conversationPrompt).toContain("start_report_session");
     });
 
+    test("the prompt and the tool description send the analogy report to the reply, and promise no card", () => {
+        const agent = buildAgent();
+        const description = [...agent.tools, ...(agent.scriptTools ?? [])].find((tool) => tool.id === "generate_analogy_report")?.description ?? "";
+        const prompt = collapseWhitespace(agent.systemPrompt);
+
+        expect(prompt).toContain("give it in your reply");
+        expect(prompt).toContain("`analogyTitle`");
+        expect(prompt).toContain("solutions and the sources of those solutions");
+        expect(prompt).toContain("end with one question about which one to pursue");
+        expect(collapseWhitespace(description)).toContain("give the report in your reply");
+        expect(prompt).not.toContain("renders as a card");
+        expect(description.toLowerCase()).not.toContain("card");
+        expect(description).not.toContain("UI renders");
+    });
+
     test("the display tools name the structure card, and an artifact structure stays on show_file", () => {
         const descriptionOf = (id: string): string => buildAgent().tools.find((tool) => tool.id === id)?.description ?? "";
         expect(descriptionOf("show_user")).toContain("kind=structure");

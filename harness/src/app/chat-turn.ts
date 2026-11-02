@@ -91,8 +91,10 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
 }
 
 /**
- * Open the thread of a turn: check that the analysis owns it, make it when it is absent, and seed its title. A
- * thread that a different analysis owns is `not_found`.
+ * Open the thread of a turn: make it when it is absent, and seed its title. A thread that a different analysis
+ * owns is `not_found`, and so is an archived thread: a turn never writes into hidden state and never restores it.
+ * A failed make of the thread throws, because without its row the open cannot tell an absent thread from one that
+ * it must refuse.
  */
 export async function openThread(
     deps: PrepareChatTurnDeps,
@@ -105,54 +107,51 @@ export async function openThread(
     // no test of its own.
     const observe = bindSessionEmit(deps.provenance, logger);
 
-    // Ownership check before any read/write of the thread — a `threadId`
-    // owned by a different analysis is indistinguishable from a missing one.
+    // `getThread` hides an archived row, thus a live row is the only one that this
+    // read can prove owned. An absent result covers a missing thread and an
+    // archived one, and the idempotent create below tells them apart.
     const store = createThreadStore(pool);
     const existing = unwrapOrThrow(await store.getThread(threadId));
     if (existing && existing.analysisId !== analysisId) {
         return { kind: "not_found" };
     }
 
-    // The type a caller resolves the turn's agent from, and the type that the
-    // message assembly reads for its context records. An existing row carries
-    // its own. An absent one defaults to `conversation` — the store's own
-    // default — so a best-effort create that fails non-fatally still leaves a
-    // usable type; a successful create overrides it from the returned row.
-    let threadType: ThreadType = existing ? existing.threadType : "conversation";
+    if (!existing) {
+        // `createThread` is idempotent (ON CONFLICT reads the row back with no
+        // filter), so the returned row is authoritative: the inserted row, or the
+        // row that already existed, archived or owned by a different analysis. A
+        // conflict writes nothing, thus the refusal comes before each write of the
+        // turn.
+        const created = unwrapOrThrow(
+            await store.createThread({
+                threadId,
+                analysisId,
+                title: deriveThreadTitle(userInput),
+            }),
+        );
+        if (created.analysisId !== analysisId || created.deletedAt !== null) {
+            return { kind: "not_found" };
+        }
+        // The row that comes back is not proof that this call wrote it: a create
+        // that races another writer reads that writer's row back. This site writes
+        // a live conversation thread and nothing else, thus a row of another kind
+        // is one that already existed. A root session has no parent, thus the event
+        // carries none.
+        if (created.threadType === "conversation") {
+            observe({ type: "create-session", analysisId, threadId, sessionKind: created.threadType });
+        }
+        return { kind: "ok", threadType: created.threadType };
+    }
 
     // Seed the thread title from the first user message. Best-effort.
-    try {
-        if (!existing) {
-            // `createThread` is idempotent (ON CONFLICT reads the row back), so
-            // the returned row is authoritative for the type: a create that
-            // races another writer reflects the stored type, not an assumed one.
-            const created = unwrapOrThrow(
-                await store.createThread({
-                    threadId,
-                    analysisId,
-                    title: deriveThreadTitle(userInput),
-                }),
-            );
-            threadType = created.threadType;
-            // The row that comes back is not proof that this call wrote it. The read
-            // above hides an archived thread, and the idempotent insert then reads
-            // that same row back. Thus a turn on an archived thread reaches here with
-            // a row that a different site created, and an emit would record a start
-            // that never happened.
-            //
-            // This site writes a live conversation thread and nothing else. An
-            // archived row, or a row of another kind, is therefore one that already
-            // existed. A root session has no parent, thus the event carries none.
-            if (created.deletedAt === null && created.threadType === "conversation") {
-                observe({ type: "create-session", analysisId, threadId, sessionKind: created.threadType });
-            }
-        } else if (!existing.title || existing.title.length === 0) {
+    if (!existing.title || existing.title.length === 0) {
+        try {
             unwrapOrThrow(await store.setAutoTitle(threadId, deriveThreadTitle(userInput)));
+        } catch (err) {
+            logger.warn("title-seed failed (non-fatal)", logger.errorFields(err));
         }
-    } catch (err) {
-        logger.warn("title-seed failed (non-fatal)", logger.errorFields(err));
     }
-    return { kind: "ok", threadType };
+    return { kind: "ok", threadType: existing.threadType };
 }
 
 /** The analysis context and the run activity of a turn. A failed read gives the fallback of its kind. */

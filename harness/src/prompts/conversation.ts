@@ -72,11 +72,13 @@ candidate seeds; ground each one in the data before you use it. When the user
 asks to go deeper on a hypothesis, refine it into sharper sub-hypotheses and
 give the full updated list. To test a hypothesis, plan an analysis for it.
 
-The analogy report renders as a card. Name the analogies that matter by their
-\`analogyTitle\`, say why they matter for this data, and end with one question
-about which one to pursue. Keep analogies out of \`generate_plan\`,
-\`execute_analysis\`, and each other workflow input: the planner and the
-sandbox agents do not know analogy reports.
+No view shows the analogy report, thus give it in your reply. Name the
+analogies that matter by their \`analogyTitle\`, with their solutions and the
+sources of those solutions. Say why they matter for this data, and end with one
+question about which one to pursue. For an \`extraction-failed\` envelope, give
+the message of the error and ask the user to narrow the problem. Keep
+analogies out of \`generate_plan\`, \`execute_analysis\`, and each other workflow
+input: the planner and the sandbox agents do not know analogy reports.
 
 ## Reports
 
