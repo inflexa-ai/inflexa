@@ -1,301 +1,197 @@
 # Validation
 
-MDV has no project validator, and the browser only logs schema problems: a project with a wrong
-category code or a missing column still opens and shows wrong data. Run this validator on every
-project before delivery. Zero errors is the bar. Then look at the warnings: they are the
-difference between loadable and useful.
+MDV checks nothing before it converts an upload: a dtype it cannot map aborts the conversion, a
+duplicate name multiplies rows, and a bare cluster id shows as a number. Run this validator on
+every asset before delivery. It reads the `.h5ad` as stored, so it checks what MDV's reader will
+see, not what the step's pandas shows in memory. Zero errors is the bar. Then read the warnings:
+they are the difference between loadable and useful.
 
-## Layers
+## What it checks
 
-| Layer | Checks |
+| Kind | Checks |
 |---|---|
-| L0 files | the three JSON files exist and are strict JSON (no NaN / Infinity) |
-| L1 metadata | unique datasource names; positive `size`; per column: unique `field` without `|` or `/`, a known `datatype`, `values` within the category limit, one `#rrggbb` colour per value, finite `minMax`, `stringLength` where needed |
-| L2 HDF5 | a dataset per column with the right dtype and length; category codes inside `values`; link `name_column` exists; sparse subgroups have consistent `p`/`i`/`x` |
-| L3 views | `all_views` and `initial_view` are consistent; every `param` / `color_by` resolves (fields, virtual gene ids, RowsAsColsQuery links); background images exist; region fields exist; `permission` is `edit`; every datasource has a chart |
-| L4 round trip | `MDVProject.get_datasource_as_dataframe` decodes every datasource with the right row count |
-| L5 serve | the app page, the frontend bundle, and the JSON files serve; every column returns exactly `size × bytes` through `/get_data` |
-| U usefulness (warnings) | display names set, a `text` grouping column, fixed colours, a README |
-
-L5 runs the real `mdvtools.serverlite` WSGI app in process (no port, no browser). It uses
-`werkzeug.test.Client` because `app.test_client()` fails with Flask 2.2 on Werkzeug 3.
+| errors | the file is an AnnData; every HDF5 encoding is one that MDV's reader knows (no nullable arrays); X is sparse, float, and log-scale; obs and var names are unique; gene names have no `|` or `(`; every obs/var column is a plain number type that MDV maps or categorical text; no column uses the reserved labels `mdv_cell_id` (obs) or `name` (var); layers are sparse; anndata can read the file |
+| warnings | column labels that are raw ids; categories that are bare numbers; more than 256 categories (text16); plain text not stored as categorical; booleans shown as True/False; integers above 2^24; all-missing columns; obsm entries that are not 2-D, have more than 3 columns, or are PCA; layers (each doubles the expression data); varm, obsp, varp, raw; a file above 5 GB; no README next to the asset |
 
 ## Run it
 
 ```
-python validate_mdv_project.py <project>                 # all layers
-python validate_mdv_project.py <project> --no-serve      # skip L5
-python validate_mdv_project.py <project> --no-roundtrip  # skip L4 (large projects: it decodes every column)
+python validate_mdv_asset.py <asset>.mdv.h5ad > <asset>.mdv.validation.json
 ```
 
-It prints a JSON report and exits 1 on any error. Save the report next to the project. On an
-error, fix the step that made the problem (usually the curation or the views) and write the
-project again from the curated AnnData; do not patch the JSON files.
+It prints a JSON report with a summary (cells, genes, non-zeros, the column labels, size) and
+exits 1 on any error. On an error, fix the step that made the problem (usually the curation in
+`build_asset`) and write the asset again; do not patch the file.
 
 ## The script
 
 ```python
-# file: validate_mdv_project.py
-"""Validate an MDV project directory without a browser.
+# file: validate_mdv_asset.py
+"""Validate an MDV-ready AnnData asset on disk, without mdvtools.
 
-Layers: L0 files, L1 metadata, L2 HDF5 consistency, L3 views/state/regions, L4 decode round trip,
-L5 headless serve through mdvtools.serverlite. Usefulness checks give warnings, not errors.
-Prints a JSON report; exit status 1 if any error.
+MDV loads an .h5ad by reading it (anndata) and converting it with convert_scanpy_to_mdv defaults.
+This checks the file as that reader sees it: the HDF5 encodings, the dtypes MDV maps, the names it
+reserves or cannot use, and what it would show as noise. Prints a JSON report; exit 1 on any error.
 """
-import json, math, os, re, sys
+import json, os, re, sys
 
 import h5py
 import numpy as np
 
-DATATYPES = {"text", "text16", "multitext", "integer", "double", "int32", "unique"}
-CATEGORY_LIMIT = {"text": 256, "text16": 65536, "multitext": 65535}
-H5_DTYPE = {"text": np.uint8, "text16": np.uint16, "multitext": np.uint16, "integer": np.float32, "double": np.float32, "int32": np.int32}
-BYTES = {"text": 1, "text16": 2, "double": 4, "integer": 4, "int32": 4}
-HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
-VIRTUAL = re.compile(r"^([^|]+)\|([^|]*)\|(\d+)$")
+KNOWN_ENCODINGS = {"anndata", "dataframe", "categorical", "string-array", "array", "csr_matrix", "csc_matrix",
+                   "dict", "numeric-scalar", "string"}
+NUMERIC_OK = {"int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "float32", "float64"}
+RAW_ID = re.compile(r"^[A-Za-z0-9]+(_[A-Za-z0-9]+)+$")     # snake_case ids such as total_counts
+BARE_ID = re.compile(r"^-?\d+(\.0)?$")
 
 
-def strict_json(path):
-    def bad(c):
-        raise ValueError(f"non-finite constant {c}")
-    with open(path) as f:
-        return json.load(f, parse_constant=bad)
+def enc(node):
+    v = node.attrs.get("encoding-type", "")
+    return v.decode() if isinstance(v, bytes) else str(v)
 
 
-def main(project, serve=True, roundtrip=True):
-    errors, warnings = [], []
+def strings(node):
+    ds = node["values"] if isinstance(node, h5py.Group) else node      # nullable-string-array keeps its values in a group
+    return [x.decode() if isinstance(x, bytes) else str(x) for x in ds[()]]
+
+
+def main(path):
+    errors, warnings, summary = [], [], {}
     err, warn = errors.append, warnings.append
+    if not os.path.isfile(path):
+        return report([f"no file {path}"], [], {})
+    summary["size_gb"] = round(os.path.getsize(path) / 1e9, 3)
+    if summary["size_gb"] > 5:
+        warn(f"the file is {summary['size_gb']} GB: MDV asks for an import as a project above 5 GB")
+    with h5py.File(path, "r") as f:
+        if enc(f) != "anndata":
+            return report(["the file is not an AnnData h5ad"], [], summary)
 
-    # L0 files
-    for name in ("datasources.json", "views.json", "state.json"):
-        if not os.path.isfile(os.path.join(project, name)):
-            err(f"L0 missing {name}")
-    if errors:
-        return report(errors, warnings)
+        def visit(name, node):
+            e = enc(node)
+            if e == "nullable-string-array":
+                err(f"{name}: nullable string array (pandas 3 strings); MDV's reader makes it the 'string' dtype and the "
+                    "conversion aborts with KeyError 'string'. Write names as plain str and text columns as categorical")
+            elif e and e not in KNOWN_ENCODINGS:
+                err(f"{name}: encoding {e!r} is not one that MDV's reader is known to read (use categorical text, plain numbers)")
+        f.visititems(visit)
+
+        # X
+        if "X" not in f:
+            err("X is missing")
+        else:
+            e = enc(f["X"])
+            if e not in ("csr_matrix", "csc_matrix"):
+                err(f"X is {e or 'dense'}: give a sparse log-normalised matrix")
+            else:
+                data = f["X"]["data"]
+                summary["nnz"] = int(data.shape[0])
+                sample = data[: min(data.shape[0], 2_000_000)]
+                if sample.size and (sample.min() < 0 or sample.max() > 50):
+                    err("X does not look log-normalised (negative or very large values)")
+                if data.dtype.kind != "f":
+                    err(f"X values are {data.dtype}: give normalised float values")
+
+        # obs / var
+        for frame, reserved in (("obs", "mdv_cell_id"), ("var", "name")):
+            if frame not in f:
+                err(f"{frame} is missing"); continue
+            g = f[frame]
+            idx_key = g.attrs.get("_index", "_index")
+            idx_key = idx_key.decode() if isinstance(idx_key, bytes) else idx_key
+            index = strings(g[idx_key])
+            summary["cells" if frame == "obs" else "genes"] = len(index)
+            if len(set(index)) != len(index):
+                err(f"{frame} names are not unique: MDV multiplies the duplicated rows")
+            if frame == "var":
+                bad = [x for x in index if "|" in x or "(" in x]
+                if bad:
+                    err(f"gene names with '|' or '(' break MDV gene columns: {bad[:5]}")
+            order = [c.decode() if isinstance(c, bytes) else str(c) for c in g.attrs.get("column-order", [])]
+            summary[f"{frame}_columns"] = order
+            raw_like = [c for c in order if RAW_ID.match(c)]
+            if order and len(raw_like) > len(order) / 2:
+                warn(f"{frame}: most column labels are raw ids ({raw_like[:4]}…); MDV shows the label as the column name")
+            if reserved in order:
+                err(f"{frame} column {reserved!r} is reserved: MDV writes its own")
+            for c in order:
+                node = g[c]
+                e = enc(node)
+                if e == "categorical":
+                    cats = node["categories"]
+                    if enc(cats) != "string-array":
+                        err(f"{frame}.{c}: categories are {enc(cats) or cats.dtype}; use text categories")
+                        continue
+                    values = strings(cats)
+                    if len(values) > 256:
+                        warn(f"{frame}.{c}: {len(values)} categories become text16/unique in MDV; most category charts refuse it")
+                    if values and all(BARE_ID.match(v) for v in values):
+                        warn(f"{frame}.{c}: categories are bare numbers ({values[:3]}…); give readable labels")
+                elif e == "string-array":
+                    warn(f"{frame}.{c}: plain text column; write text as categorical")
+                elif e == "array":
+                    kind = node.dtype.name
+                    if kind == "bool":
+                        warn(f"{frame}.{c}: boolean shows as True/False; map it to words")
+                    elif kind not in NUMERIC_OK:
+                        err(f"{frame}.{c}: dtype {kind} aborts MDV's conversion")
+                    elif node.dtype.kind in "iu" and node.shape[0] and int(np.max(node[()])) > 2 ** 24:
+                        warn(f"{frame}.{c}: integers above 2^24 lose precision in MDV (float32)")
+                    elif node.dtype.kind == "f" and node.shape[0] and np.isnan(node[()]).all():
+                        warn(f"{frame}.{c}: every value is missing")
+                else:
+                    err(f"{frame}.{c}: encoding {e!r} is not a plain number or categorical text")
+
+        # obsm, varm, layers, the rest
+        for key in (f["obsm"].keys() if "obsm" in f else []):
+            node = f["obsm"][key]
+            if enc(node) != "array" or len(node.shape) != 2:
+                warn(f"obsm[{key!r}] is not a 2-D array: MDV skips it")
+                continue
+            if node.shape[1] > 3:
+                warn(f"obsm[{key!r}] has {node.shape[1]} columns: MDV keeps 3 as {key}_1..3")
+            if key.lower() in ("x_pca", "pca"):
+                warn(f"obsm[{key!r}]: PCA columns are noise in MDV; leave them out")
+        summary["obsm"] = list(f["obsm"].keys()) if "obsm" in f else []
+        for key in (f["layers"].keys() if "layers" in f else []):
+            if enc(f["layers"][key]) not in ("csr_matrix", "csc_matrix"):
+                err(f"layers[{key!r}] is dense: MDV stores it in full")
+            else:
+                warn(f"layers[{key!r}] becomes one more expression set in MDV (as large as X); keep it only if needed")
+        summary["layers"] = list(f["layers"].keys()) if "layers" in f else []
+        for slot in ("varm", "obsp", "varp"):
+            if slot in f and len(f[slot].keys()):
+                warn(f"{slot} is not empty: MDV adds varm as gene columns and ignores obsp/varp; leave them out")
+        if "raw" in f:
+            warn("raw is present: MDV ignores it; it only adds size")
+
+    # Readable with anndata at all (the sandbox version)
     try:
-        dss = strict_json(os.path.join(project, "datasources.json"))
-        views = strict_json(os.path.join(project, "views.json"))
-        state = strict_json(os.path.join(project, "state.json"))
-    except ValueError as e:
-        err(f"L0 JSON is not strict: {e}")
-        return report(errors, warnings)
-    if not isinstance(dss, list) or not isinstance(views, dict) or not isinstance(state, dict):
-        err("L0 datasources.json must be a list, views.json and state.json objects")
-        return report(errors, warnings)
-
-    # L1 metadata
-    by_name = {}
-    for d in dss:
-        n = d.get("name")
-        if not isinstance(n, str) or not re.fullmatch(r"[A-Za-z0-9_]+", n or ""):
-            warn(f"L1 datasource name {n!r} is not [A-Za-z0-9_]+")
-        if n in by_name:
-            err(f"L1 duplicate datasource {n}")
-        by_name[n] = d
-        if not isinstance(d.get("size"), int) or d["size"] <= 0:
-            err(f"L1 {n}: size must be a positive int")
-        fields, names = set(), set()
-        for c in d.get("columns", []):
-            f, dt = c.get("field"), c.get("datatype")
-            if not isinstance(f, str) or not f:
-                err(f"L1 {n}: column without a field"); continue
-            if f in fields:
-                err(f"L1 {n}.{f}: duplicate field")
-            fields.add(f)
-            if "|" in f or "/" in f:
-                err(f"L1 {n}.{f}: '|' or '/' in a field")
-            if dt not in DATATYPES:
-                err(f"L1 {n}.{f}: datatype {dt!r}")
-            nm = c.get("name", f)
-            if nm.lower() in names:
-                warn(f"L1 {n}.{f}: display name {nm!r} repeats")
-            names.add(nm.lower())
-            if dt in CATEGORY_LIMIT:
-                vals = c.get("values")
-                if not isinstance(vals, list):
-                    err(f"L1 {n}.{f}: {dt} without values")
-                elif len(vals) > CATEGORY_LIMIT[dt]:
-                    err(f"L1 {n}.{f}: {len(vals)} values > {CATEGORY_LIMIT[dt]}")
-                if "colors" in c and (len(c["colors"]) != len(vals or []) or not all(HEX.match(x or "") for x in c["colors"])):
-                    err(f"L1 {n}.{f}: colors must be one #rrggbb per value")
-            if dt in ("integer", "double", "int32"):
-                mm = c.get("minMax")
-                if not (isinstance(mm, list) and len(mm) == 2 and all(isinstance(x, (int, float)) and math.isfinite(x) for x in mm)):
-                    err(f"L1 {n}.{f}: minMax missing or not finite")
-            if dt in ("unique", "multitext") and not c.get("stringLength"):
-                err(f"L1 {n}.{f}: stringLength missing")
-        d["_fields"] = fields
-
-    # L2 h5
-    h5path = os.path.join(project, "datafile.h5")
-    if not os.path.isfile(h5path):
-        err("L2 datafile.h5 missing")
-        return report(errors, warnings)
-    with h5py.File(h5path, "r") as h5:
-        for d in dss:
-            n, size = d["name"], d.get("size", 0)
-            if n not in h5:
-                err(f"L2 group {n} missing"); continue
-            g = h5[n]
-            for c in d.get("columns", []):
-                f, dt = c.get("field"), c.get("datatype")
-                if f not in g:
-                    err(f"L2 {n}/{f} missing"); continue
-                ds = g[f]
-                length = size * (c.get("stringLength") or 1) if dt == "multitext" else size
-                if ds.shape[0] != length:
-                    err(f"L2 {n}/{f}: length {ds.shape[0]} != {length}")
-                if dt in H5_DTYPE and ds.dtype != H5_DTYPE[dt]:
-                    err(f"L2 {n}/{f}: dtype {ds.dtype} != {np.dtype(H5_DTYPE[dt])}")
-                if dt in ("text", "text16"):
-                    codes = ds[:]
-                    if len(codes) and int(codes.max()) >= len(c.get("values", [])):
-                        err(f"L2 {n}/{f}: category code beyond values")
-            for target, link in (d.get("links") or {}).items():
-                rac = link.get("rows_as_columns")
-                if not rac:
-                    continue
-                t = by_name.get(target)
-                if t is None:
-                    err(f"L2 {n}: link to unknown datasource {target}"); continue
-                if rac.get("name_column") not in t["_fields"]:
-                    err(f"L2 {n}->{target}: name_column {rac.get('name_column')!r} is not a field of {target}")
-                for stub, sgi in (rac.get("subgroups") or {}).items():
-                    sg = g.get(sgi.get("name", stub))
-                    if sg is None:
-                        err(f"L2 {n}: subgroup {stub} missing"); continue
-                    if sgi.get("type") == "sparse":
-                        p = sg["p"]
-                        if p.shape[0] != t["size"] + 1:
-                            err(f"L2 {n}/{stub}: len(p) {p.shape[0]} != {t['size'] + 1}")
-                        if int(p[-1]) != sg["x"].shape[0] or sg["x"].shape[0] != sg["i"].shape[0]:
-                            err(f"L2 {n}/{stub}: p[-1], len(x), len(i) disagree")
-                        if sg["i"].shape[0] and int(sg["i"][:].max()) >= size:
-                            err(f"L2 {n}/{stub}: row index beyond size")
-                    elif sg["x"].shape[0] != size * t["size"]:
-                        err(f"L2 {n}/{stub}: dense length mismatch")
-
-    # L3 views, state, regions
-    all_views = state.get("all_views", [])
-    for v in all_views:
-        if v not in views:
-            err(f"L3 state.all_views has {v!r}, which views.json lacks")
-    if state.get("initial_view") not in all_views:
-        err("L3 state.initial_view is not in all_views")
-    if state.get("permission") != "edit":
-        warn("L3 state.permission is not 'edit': the project opens view-only")
-    seen = set()
-
-    def check_ref(ds, ref, where):
-        if isinstance(ref, dict):
-            if ref.get("type") == "RowsAsColsQuery":
-                if ref.get("linkedDsName") not in (ds.get("links") or {}):
-                    err(f"L3 {where}: RowsAsColsQuery to {ref.get('linkedDsName')!r}, which {ds['name']} does not link")
-            return
-        if not isinstance(ref, str):
-            return
-        m = VIRTUAL.match(ref)
-        if m:
-            stub, idx = m.group(1), int(m.group(3))
-            for target, link in (ds.get("links") or {}).items():
-                rac = link.get("rows_as_columns") or {}
-                if stub in (rac.get("subgroups") or {}):
-                    if idx >= by_name[target]["size"]:
-                        err(f"L3 {where}: {ref} index beyond {target}")
-                    return
-            err(f"L3 {where}: {ref} has an unknown subgroup")
-        elif ref not in ds["_fields"]:
-            err(f"L3 {where}: {ref!r} is not a column of {ds['name']}")
-
-    for vn, view in views.items():
-        for dsn, charts in (view.get("initialCharts") or {}).items():
-            ds = by_name.get(dsn)
-            if ds is None:
-                err(f"L3 view {vn!r}: unknown datasource {dsn}"); continue
-            if charts:
-                seen.add(dsn)
-            for ch in charts:
-                where = f"view {vn!r} / {ch.get('title', ch.get('type'))}"
-                for p in ch.get("param") or []:
-                    check_ref(ds, p, where)
-                if ch.get("color_by") is not None:
-                    check_ref(ds, ch["color_by"], where)
-                bi = ch.get("background_image")
-                if bi and bi.get("file"):
-                    base = (ds.get("regions") or {}).get("base_url", "")
-                    if not os.path.isfile(os.path.join(project, base, bi["file"])):
-                        err(f"L3 {where}: background image {bi['file']} not found")
-    for d in dss:
-        if d["name"] not in seen:
-            warn(f"L3 datasource {d['name']} has no chart in any view")
-        r = d.get("regions")
-        if r:
-            for f in [r.get("region_field"), r.get("default_color")] + list(r.get("position_fields") or []):
-                if f not in d["_fields"]:
-                    err(f"L3 {d['name']}.regions names {f!r}, which is not a column")
-
-    # usefulness
-    for d in dss:
-        cols = d.get("columns", [])
-        if sum(c.get("name", c["field"]) == c["field"] and "_" in c["field"] for c in cols) > len(cols) / 2:
-            warn(f"U {d['name']}: most columns show their raw field id; set display names")
-    cells = next((d for d in dss if (d.get("links") or {})), None)
-    if cells:
-        if not any(c["datatype"] == "text" for c in cells["columns"]):
-            warn(f"U {cells['name']}: no 'text' grouping column (cell type, cluster); most category charts need one")
-        if not any(c.get("colors") for c in cells["columns"]):
-            warn(f"U {cells['name']}: no column has fixed colours")
-    if not os.path.isfile(os.path.join(project, "README.md")):
-        warn("U README.md missing: MDV has no column description field, so the README is the glossary")
-
-    # L4 round trip and L5 serve
-    if roundtrip or serve:
-        from mdvtools.mdvproject import MDVProject
-        p = MDVProject(project)
-        if roundtrip:
-            for d in dss:
-                try:
-                    df = p.get_datasource_as_dataframe(d["name"])
-                    if len(df) != d["size"]:
-                        err(f"L4 {d['name']}: decoded {len(df)} rows != size {d['size']}")
-                except Exception as e:
-                    err(f"L4 {d['name']}: decode failed: {type(e).__name__}: {e}")
-        if serve:
-            from mdvtools.serverlite import create_app
-            from werkzeug.test import Client  # not app.test_client(): Flask 2.2 + Werkzeug 3 breaks it
-            client = Client(create_app(p))
-            r = client.get("/")
-            if r.status_code != 200:
-                err(f"L5 GET / -> {r.status_code}")
-            if r.headers.get("Cross-Origin-Embedder-Policy") != "require-corp":
-                warn("L5 COEP header missing on /")
-            for f in ("datasources", "views", "state"):
-                if client.get(f"/{f}.json").status_code != 200:
-                    err(f"L5 GET /{f}.json failed")
-            for d in dss:
-                for c in d["columns"]:
-                    dt = c["datatype"]
-                    exp = d["size"] * BYTES[dt] if dt in BYTES else d["size"] * c["stringLength"] * (2 if dt == "multitext" else 1)
-                    r = client.post("/get_data", json={"columns": [c], "data_source": d["name"]})
-                    if r.status_code != 200 or len(r.get_data()) != exp:  # serverlite returns raw column bytes
-                        err(f"L5 /get_data {d['name']}.{c['field']}: status {r.status_code}, {len(r.get_data())} bytes, expected {exp}")
-    return report(errors, warnings)
+        import anndata as ad
+        a = ad.read_h5ad(path, backed="r")
+        _ = a.obs.head(), a.var.head()
+        a.file.close()
+    except Exception as e:
+        err(f"anndata cannot read the file: {type(e).__name__}: {e}")
+    if not os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(path)), "README.md")):
+        warn("README.md missing next to the asset: MDV has no column description field, so the README is the glossary")
+    return report(errors, warnings, summary)
 
 
-def report(errors, warnings):
-    out = {"ok": not errors, "errors": errors, "warnings": warnings}
-    print(json.dumps(out, indent=2, ensure_ascii=False))
+def report(errors, warnings, summary):
+    print(json.dumps({"ok": not errors, "errors": errors, "warnings": warnings, "summary": summary}, indent=2, ensure_ascii=False))
     return 0 if not errors else 1
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    sys.exit(main(args[0], serve="--no-serve" not in sys.argv, roundtrip="--no-roundtrip" not in sys.argv))
+    sys.exit(main(sys.argv[1]))
 ```
 
-## A visual check
+## What it cannot check
 
-If a browser is available, open the project with `mdvtools serve <folder>` (or
-`python -m mdvtools.serverlite <folder> --no-browser --port 5050`) and look at every view.
-Check that the tissue is upright and that the cells sit on the tissue image, that colours match
-between views, and that the dot plot shows the expected markers per cell type.
+The validator does not run MDV. Two checks need the user's MDV:
+
+- the upload converts (the validator checks every condition known to abort it, with mdvtools
+  1.3.0, anndata 0.12.2, and pandas 2.3.2 on the MDV side);
+- the tissue is upright in a scatter plot of the slide coordinates, and the cells look right on
+  the UMAP. Say in the README which charts to make first.

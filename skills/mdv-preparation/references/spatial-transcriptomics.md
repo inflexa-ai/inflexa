@@ -1,23 +1,23 @@
 # Spatial Transcriptomics → MDV
 
 Build one cell-level (or spot-level) AnnData with slide coordinates in micrometres, process it
-like single-cell data, then write it through the AnnData route with a region image so the
-cells sit on the tissue.
+like single-cell data, then write it through the asset route. In MDV the user plots the two
+slide-coordinate columns against each other to see the tissue.
 
-## What the project needs from a spatial dataset
+## What the asset needs from a spatial dataset
 
 | Item | Where it goes |
 |---|---|
-| cell × gene counts → log-normalised sparse X | "Gene Scores" |
-| slide coordinates (µm), y flipped upwards | `obs["x_um"]`, `obs["y_um"]` (position fields of the region) |
-| one region per slide/sample | `obs["region"]` (`text`) + `set_region_data` |
-| a downsampled tissue image of each region (≤ 8,192 px) | `add_region_images` |
+| cell × gene counts → log-normalised sparse X | "Gene Scores" in MDV |
+| slide coordinates (µm), y flipped upwards | two `obs` columns: `Slide x (µm)`, `Slide y (µm, up)` |
+| the slide or sample of each cell (several slides) | a categorical `obs` column, ≤ 256 values |
 | per-cell QC: counts, genes, negative-control probes, area | `obs` |
-| per-FOV or per-sample QC | a `fovs` / `samples` context datasource |
-| morphology stain intensities, if the platform gives them | `obs`, grouped as "Morphology markers" |
+| morphology stain intensities, if the platform gives them | `obs` (`<stain> mean intensity`) |
+| per-FOV or per-sample QC | `fovs.tsv` / `samples.tsv` |
 
-Flip y once, for every coordinate in the project, with the same image height:
-`y_up = image_height_um − y_image_um`. Cells and FOV centres then match the image.
+Flip y once, for every coordinate (cells and FOV centres), with the same height:
+`y_up = slide_height_um − y_image_um`. Several slides in one asset: offset each slide in x so
+they do not overlap, and say so in the README.
 
 ## Platform decision tree
 
@@ -33,8 +33,8 @@ Platform?
 ├── Xenium → spatialdata_io.xenium(path): table "table" (cells), obsm["spatial"] in µm,
 │            image "morphology_focus"; use cell_id as the cell id
 ├── Visium / Visium HD → spots/bins are rows; coordinates in full-resolution pixels
-│            (scalefactors give µm via the 55 µm spot diameter); hires image as the region image;
-│            one project per bin size for HD
+│            (scalefactors give µm via the 55 µm spot diameter);
+│            one asset per bin size for HD
 └── MERSCOPE / MERFISH → cell_by_gene.csv + cell_metadata.csv (center_x, center_y in µm);
              "Blank-*" barcodes are negative controls, not genes
 ```
@@ -78,7 +78,7 @@ the best hypothesis does not clearly win. Then stitch a thumbnail and look at it
 
 ```python
 # file: cosmx_raw.py
-"""Raw CosMx SMI run -> cell x gene AnnData, FOV orientation check, stitched slide image."""
+"""Raw CosMx SMI run -> cell x gene AnnData, FOV orientation check, stitched thumbnail to look at."""
 import glob
 import json
 import os
@@ -176,7 +176,10 @@ def check_orientation(run_root, n_pairs=30, seed=0, min_margin=0.03):
 
 
 def stitch(run_root, out_stem, sign_x, sign_y, tile_px=256):
-    """Mosaic of the CellComposite JPEGs on the slide; writes <out_stem>.jpg and .json (extent in µm)."""
+    """Mosaic of the CellComposite JPEGs on the slide; writes <out_stem>.jpg and .json (extent in µm).
+
+    Look at it to confirm the orientation: one continuous tissue, no seam that cuts a structure.
+    The extent gives the slide height for the y flip. Use tile_px=64 for a quick look."""
     cfg, _ = read_config(run_root)
     px_um = float(cfg["ImPixel_nm"]) / 1000.0
     fov_px = int(cfg.get("Image Cols", 4256))
@@ -303,36 +306,29 @@ Same as single-cell (single-cell pack), with these differences:
 - Do not regress out FOV: FOV effects are real QC signal; show them in the QC view.
 - Label clusters with tissue markers (`anndata-route.md`, `annotate_clusters`).
 
-## Writing the project
+## Writing the asset
 
-Follow `anndata-route.md`, plus:
+Follow `asset-route.md`, plus:
 
 ```python
-H = extent["height_um"]                                   # one height for every y in the project
-obs["x_um"] = adata.obsm["spatial"][:, 0]
-obs["y_um"] = H - adata.obsm["spatial"][:, 1]             # MDV draws y upwards
-obs["region"] = pd.Categorical(["slide"] * adata.n_obs)  # one region per slide / sample
-# ... convert_scanpy_to_mdv with obsm={"X_umap": ...} only (no "spatial": x_um / y_um replace it)
-mdv.set_region_data("cells", {"slide": {"width": extent["width_um"], "height": H}}, region_field="region",
-                    default_color="cell_type", position_fields=["x_um", "y_um"], scale_unit="µm", scale=1.0)
-mdv.add_region_images("cells", {"slide": {"name": "Morphology composite", "path": f"{OUT}/slide_composite.jpg"}})
-image = mdv.get_datasource_metadata("cells")["regions"]["all_regions"]["slide"]["images"]["Morphology composite"]
-spatial = {"x": "x_um", "y": "y_um", "region": "slide", "image": image,
-           "roi": {"min_x": 0, "min_y": 0, "max_x": extent["width_um"], "max_y": H},
-           "background_filter": {"column": "region", "category": "slide"}}
-views = standard_views(..., spatial=spatial, context={"datasource": "fovs", ...})   # view-recipes.md
+H = extent["height_um"]                                   # one height for every y in the asset
+adata.obs["x_um"] = adata.obsm["spatial"][:, 0]
+adata.obs["y_um"] = H - adata.obsm["spatial"][:, 1]       # MDV scatter plots draw y upwards
+asset = build_asset(adata, {"cell_type": "Cell type (putative)", "cluster": "Cluster",
+                            "x_um": "Slide x (µm)", "y_um": "Slide y (µm, up)", ...},
+                    obsm_keys={"X_umap": "UMAP"})         # not "spatial": the two obs columns replace it
 ```
 
-The FOV table becomes the `fovs` datasource: FOV centre (`x_um`, `y_um` flipped the same way),
-cells, cells after QC, median transcripts per cell, fraction of transcripts in cells, negative
-probes. Show it in the QC view as a map coloured by the fraction of transcripts in cells.
+The FOV table becomes `fovs.tsv`: FOV, FOV centre (`Slide x (µm)`, `Slide y (µm, up)`, flipped
+the same way), cells, cells after QC, median transcripts per cell, fraction of transcripts in
+cells, negative-probe transcripts. In MDV, a scatter of the FOV centres coloured by the fraction
+of transcripts in cells shows where segmentation failed.
 
-## The SpatialData route (only when asked)
+In the README, name the first chart: a scatter plot of `Slide x (µm)` against `Slide y (µm, up)`
+coloured by `Cell type (putative)`. It is the tissue map.
 
-`mdvtools convert-spatial <output> <store>` (output folder first) needs, per table: an N×2
-`obsm["spatial"]`, `uns["spatialdata_attrs"]` with region / region_key / instance_key, and an
-image in the coordinate system of the annotated element; a store without such an image does not
-convert. It never converts points (transcripts), it joins MDV rows to the zarr table **by
-position** (never filter or reorder rows after you write the store), and its spatial chart type
-differs between mdvtools versions. Pass `--no-output_geojson` for large data. Build the same views
-and README afterwards.
+## What an asset cannot carry
+
+A tissue image under the cells, and the SpatialData viewer of MDV, need an MDV project that
+mdvtools builds. They are outside this route. Keep the stitched thumbnail as a deliverable
+figure only if the user asks for it.
