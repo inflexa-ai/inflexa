@@ -478,6 +478,7 @@ export type {
     AskPart,
     ChildSessionStartedPart,
     ReportRenderedPart,
+    AnalogyReportPart,
 } from "./contracts/chat-parts.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./contracts/part-registry.js";
 export type { ChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";

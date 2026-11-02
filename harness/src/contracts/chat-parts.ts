@@ -4,7 +4,8 @@
  *
  * Categories:
  *   Presentation:    data-presentation (agent-synthesized content),
- *                    data-plan (plan by id), data-file-reference (files by path)
+ *                    data-plan (plan by id), data-file-reference (files by path),
+ *                    data-analogy-report (the result of generate_analogy_report)
  *   Approval:        data-ask (a tool's pending user-approval prompt),
  *                    data-plan-approval (the record of an approved plan)
  *   Compaction:      data-compaction (a compaction of the conversation thread)
@@ -17,6 +18,7 @@
  *   Per-step final:  step-output, step-summary, step-usage
  */
 
+import type { AnalogicalReasonerOutput } from "./analogy-report.js";
 import type { ToolCallOutcome } from "./chat-events.js";
 import type { TokenUsageRollup } from "./usage.js";
 
@@ -55,6 +57,16 @@ export type PresentationPart = {
     id: string;
     title?: string;
     content: PresentationContent;
+};
+
+// ── Analogy report ──────────────────────────────────────────────────
+
+/** The result of one `generate_analogy_report` call, as the tool gave it to the model: a report or an `extraction-failed` envelope. */
+export type AnalogyReportPart = {
+    type: "data-analogy-report";
+    /** The id of the tool call. */
+    id: string;
+    report: AnalogicalReasonerOutput;
 };
 
 // ── Plan reference (DB-backed) ──────────────────────────────────────
@@ -615,6 +627,7 @@ export type PausePart = {
 /** The parts whose contracts this version of the package declares — the arms the part registry knows. */
 export type KnownChatPart =
     | PresentationPart
+    | AnalogyReportPart
     | PlanPart
     | RunCardPart
     | PlanApprovalPart

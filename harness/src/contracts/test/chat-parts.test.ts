@@ -70,6 +70,49 @@ describe("PresentationContentSchema — structure", () => {
     });
 });
 
+describe("AnalogyReportPartSchema", () => {
+    const report = {
+        schemaVersion: "1" as const,
+        problemSummary: "Noisy induction of a reporter.",
+        problemObjects: [{ name: "promoter", role: "input" }],
+        problemRelations: ["the promoter drives the reporter"],
+        keyTerms: ["induction"],
+        analogies: [
+            {
+                targetDomain: "logistics",
+                analogyTitle: "Inventory buffering",
+                objectMappings: [],
+                sharedRelations: "",
+                coverage: "not_loaded" as const,
+                solutions: [],
+            },
+        ],
+    };
+
+    test("accepts a part with a report and a part with an extraction-failed envelope through the union schema", () => {
+        const withReport = { type: "data-analogy-report" as const, id: "call-1", report };
+        const failed = {
+            type: "data-analogy-report" as const,
+            id: "call-2",
+            report: { schemaVersion: "1" as const, error: { kind: "extraction-failed" as const, message: "The problem is empty." } },
+        };
+
+        expect(ChatPartSchema.parse(withReport)).toEqual(withReport);
+        expect(ChatPartSchema.parse(failed)).toEqual(failed);
+    });
+
+    test("refuses a report with an unknown coverage", () => {
+        const analogy = { ...presentAt(report.analogies, 0), coverage: "partial" };
+        const part = { type: "data-analogy-report", id: "call-1", report: { ...report, analogies: [analogy] } };
+
+        expect(ChatPartSchema.safeParse(part).success).toBe(false);
+    });
+
+    test("is a durable part of the conversation in the registry", () => {
+        expect(PART_REGISTRY["data-analogy-report"]).toEqual({ emitter: "conversation", consumer: "conversation", transient: false, reconciling: false });
+    });
+});
+
 describe("CompactionPartSchema", () => {
     test("accepts a running part and a done part through the union schema", () => {
         const running = { type: "data-compaction" as const, id: "c-1", status: "running" as const, tokensBefore: 162_000 };

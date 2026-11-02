@@ -333,9 +333,9 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
             "drives a multi-step research sub-agent (up to 40 model turns) over live " +
             "literature search, so it is slow; a fact that one lookup answers does " +
             "not need it.\n" +
-            "RETURNS an AnalogyReport envelope. No surface shows the envelope, thus " +
-            "give the report in your reply: each analogy that matters, with its " +
-            "solutions and their sources. An " +
+            "RETURNS an AnalogyReport envelope. The analogy block shows the full " +
+            "report to the user, thus your reply names the analogies that matter by " +
+            "their `analogyTitle` and does not copy the report. An " +
             "analogy the search could not fill carries a `coverage` tag " +
             "(`queried_no_data` | `search_failed` | `not_loaded`) with an empty " +
             "`solutions` array — a partial result, not an error. A top-level `error` " +
@@ -348,7 +348,13 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
         view: "none",
         describeCall: "none",
         startsWorkflow: true,
-        execute: async (input, ctx) => ok(await research(input, ctx)),
+        execute: async (input, ctx) => {
+            const report = await research(input, ctx);
+            // The execute runs in the body of the turn, where a stream write is checkpointed, thus a replay gives no second
+            // part. The root session keeps the part in the stored display, which drops each frame of a sub-agent.
+            await ctx.emit({ type: "data-analogy-report", source: ctx.session.provenance, data: { id: ctx.invocationId, report } });
+            return ok(report);
+        },
     });
 }
 

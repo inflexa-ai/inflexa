@@ -184,19 +184,20 @@ describe("createConversationAgent", () => {
         expect(conversationPrompt).toContain("start_report_session");
     });
 
-    test("the prompt and the tool description send the analogy report to the reply, and promise no card", () => {
+    test("the prompt and the tool description point to the analogy block, and ask for a summary in the reply", () => {
         const agent = buildAgent();
-        const description = [...agent.tools, ...(agent.scriptTools ?? [])].find((tool) => tool.id === "generate_analogy_report")?.description ?? "";
+        const description = collapseWhitespace(
+            [...agent.tools, ...(agent.scriptTools ?? [])].find((tool) => tool.id === "generate_analogy_report")?.description ?? "",
+        );
         const prompt = collapseWhitespace(agent.systemPrompt);
 
-        expect(prompt).toContain("give it in your reply");
+        expect(prompt).toContain("The analogy block shows the full report to the user, thus do not copy the report into your reply");
         expect(prompt).toContain("`analogyTitle`");
-        expect(prompt).toContain("solutions and the sources of those solutions");
         expect(prompt).toContain("end with one question about which one to pursue");
-        expect(collapseWhitespace(description)).toContain("give the report in your reply");
-        expect(prompt).not.toContain("renders as a card");
-        expect(description.toLowerCase()).not.toContain("card");
-        expect(description).not.toContain("UI renders");
+        expect(description).toContain("The analogy block shows the full report to the user");
+        expect(description).toContain("does not copy the report");
+        expect(prompt).not.toContain("give it in your reply");
+        expect(description).not.toContain("give the report in your reply");
     });
 
     test("the display tools name the structure card, and an artifact structure stays on show_file", () => {
