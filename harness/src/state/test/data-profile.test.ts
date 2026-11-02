@@ -8,6 +8,7 @@ import {
     completeEmptyDataProfile,
     failDataProfile,
     loadDataProfileStatus,
+    queryRunningProfiles,
     recordDataProfileWorkflowId,
     tryRerunDataProfile,
     tryRetryDataProfile,
@@ -895,5 +896,46 @@ describe("completing an analysis with no input files", () => {
         await setSeed(pool, "a-empty-then-files", ["file-aaa"]);
         expect((await tryRerunDataProfile(pool, "a-empty-then-files"))._unsafeUnwrap()).toBe(true);
         expect(await rawStatus(pool, "a-empty-then-files")).toBe("running");
+    });
+});
+
+describe("the profiles that run", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_running_profiles");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("gives the running profile of each analysis with its workflow id, and the profile of one analysis alone", async () => {
+        await seedAnalysis(pool, "a-run-1", "pending");
+        await seedAnalysis(pool, "a-run-2", "pending");
+        await seedAnalysis(pool, "a-done", "completed");
+        await seedAnalysis(pool, "a-claimed", "pending");
+        for (const analysisId of ["a-run-1", "a-run-2", "a-claimed"]) (await tryStartDataProfile(pool, analysisId))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-run-1", "wf-1"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-run-2", "wf-2"))._unsafeUnwrap();
+
+        const all = (await queryRunningProfiles(pool))._unsafeUnwrap();
+        const one = (await queryRunningProfiles(pool, "a-run-2"))._unsafeUnwrap();
+
+        // A claimed profile with no workflow id yet, and a completed profile, are not running work.
+        expect(all.filter((profile) => profile.analysisId.startsWith("a-"))).toEqual([
+            { analysisId: "a-run-1", workflowId: "wf-1" },
+            { analysisId: "a-run-2", workflowId: "wf-2" },
+        ]);
+        expect(one).toEqual([{ analysisId: "a-run-2", workflowId: "wf-2" }]);
+    });
+
+    it("gives nothing when no profile runs", async () => {
+        await seedAnalysis(pool, "a-idle", "completed");
+
+        expect((await queryRunningProfiles(pool, "a-idle"))._unsafeUnwrap()).toEqual([]);
     });
 });

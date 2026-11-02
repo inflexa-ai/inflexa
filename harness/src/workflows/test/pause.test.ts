@@ -43,7 +43,14 @@ describe("the cause of a pause", () => {
 
 describe("the pause outside a workflow", () => {
     it("does not wait, thus the loop throws the failure", async () => {
-        const pause = workPause({ pool: unusedPool, workId: "w-1", workKind: "run", analysisId: "a-1", emit: () => Promise.resolve() });
+        const pause = workPause({
+            pool: unusedPool,
+            workId: "w-1",
+            workKind: "run",
+            waiter: { kind: "run" },
+            analysisId: "a-1",
+            emit: () => Promise.resolve(),
+        });
         expect(await pause.forCause({ kind: "host", reason: "payment_required" }, 0)).toBeUndefined();
 
         const model = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }, reply([text("unused")])]);

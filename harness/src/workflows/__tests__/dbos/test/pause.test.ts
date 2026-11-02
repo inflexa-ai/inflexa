@@ -21,7 +21,7 @@ import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.
 import { createWork } from "../../../../app/work.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
 import type { RunSession } from "../../../../auth/types.js";
-import type { PausePart } from "../../../../contracts/chat-parts.js";
+import type { PauseWaiter, PausePart } from "../../../../contracts/chat-parts.js";
 import type { RunAuthorizer } from "../../../../execution/run-authorizer.js";
 import { CONTINUE_REQUEST, runLoop } from "../../../../loop/run-loop.js";
 import { makeSession } from "../../../../providers/__fixtures__/session.js";
@@ -44,6 +44,8 @@ if (DBOS.isInitialized()) {
 
 const ANALYSIS_ID = "a-pause";
 
+const WAITER: PauseWaiter = { kind: "step", stepId: "s1" };
+
 const failure = (statusCode: number): { readonly fail: Error } => ({ fail: Object.assign(new Error(`HTTP ${statusCode}`), { statusCode }) });
 
 let toolRuns = 0;
@@ -65,6 +67,8 @@ type Case = {
     readonly parts: PausePart[];
     readonly retryDelaysMs: readonly number[];
     readonly live: boolean;
+    /** Stops the loop and the wait of the case. */
+    readonly stop: AbortController;
     /** The run credential of the work, when the case pauses a run with one. */
     readonly run?: { readonly session: RunSession; readonly authorizer: RunAuthorizer };
 };
@@ -80,6 +84,7 @@ const pausingLoop = DBOS.registerWorkflow(
             pool,
             workId,
             workKind: "run",
+            waiter: WAITER,
             analysisId: ANALYSIS_ID,
             emit: (part) => {
                 current.parts.push(part);
@@ -95,7 +100,7 @@ const pausingLoop = DBOS.registerWorkflow(
             {
                 provider: current.script.provider,
                 emit: () => undefined,
-                signal: new AbortController().signal,
+                signal: current.stop.signal,
                 pause: pause.afterFailure,
                 onText: current.live ? () => undefined : undefined,
             },
@@ -129,7 +134,14 @@ function start(
 ): { workId: string; current: Case } {
     const workId = rig.nextWorkflowId("pause-");
     const run = options.authorizer === undefined ? undefined : { session: runSessionOf(workId), authorizer: options.authorizer };
-    const current: Case = { script: scriptedModel(script), parts: [], retryDelaysMs: options.retryDelaysMs ?? [], live: options.live === true, run };
+    const current: Case = {
+        script: scriptedModel(script),
+        parts: [],
+        retryDelaysMs: options.retryDelaysMs ?? [],
+        live: options.live === true,
+        stop: new AbortController(),
+        run,
+    };
     cases.set(workId, current);
     return { workId, current };
 }
@@ -152,15 +164,24 @@ describe("the pause of a loop inside a workflow", () => {
         const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
 
         const row = await waitForPause(workId, "paused");
-        expect(row).toMatchObject({ workflowId: workId, workKind: "run", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0 });
+        expect(row).toMatchObject({
+            workflowId: workId,
+            workKind: "run",
+            waiter: WAITER,
+            state: "paused",
+            cause: { kind: "host", reason: "payment_required" },
+            attempt: 0,
+        });
         // The pause records its row before it suspends the credential and emits its part.
         await waitFor(() => current.parts.at(-1)?.state === "paused");
         expect(current.parts.at(-1)).toMatchObject({
             type: "data-pause",
             id: workId,
             workId,
+            waiter: WAITER,
             state: "paused",
             cause: { kind: "host", reason: "payment_required" },
+            pausedAt: row.pausedAt,
         });
 
         const resumed = await createWork({ pool, ...WORK_DEPS }).resume(session, workId);
@@ -172,7 +193,19 @@ describe("the pause of a loop inside a workflow", () => {
         expect(calls).toHaveLength(3);
         expect(calls[2]?.prompt).toEqual(calls[1]?.prompt);
         expect((await queryPausesOfWork(pool, ANALYSIS_ID, workId))._unsafeUnwrap()).toEqual([]);
-        expect(current.parts.at(-1)).toEqual({ type: "data-pause", id: workId, workId, workKind: "run", state: "running" });
+        const ended = current.parts.at(-1);
+        expect(ended).toMatchObject({
+            type: "data-pause",
+            id: workId,
+            workId,
+            workKind: "run",
+            waiter: WAITER,
+            state: "running",
+            cause: { kind: "host", reason: "payment_required" },
+            pausedAt: row.pausedAt,
+            end: "resume",
+        });
+        expect(Date.parse(ended?.endedAt ?? "")).toBeGreaterThanOrEqual(Date.parse(row.pausedAt));
     });
 
     it("counts the body as paused in this process while it waits, and not after the resume", async () => {
@@ -214,6 +247,38 @@ describe("the pause of a loop inside a workflow", () => {
         expect(current.script.calls).toHaveLength(3);
     });
 
+    it("ends a wait in retrying on its timer with the end retry, after the time of the next retry", async () => {
+        const { workId, current } = start([failure(503), reply([text("on the timer")])], { retryDelaysMs: [500] });
+        const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+
+        expect(await handle.getResult()).toEqual({ reason: "stop", text: "on the timer" });
+
+        const retrying = current.parts.find((part) => part.state === "retrying");
+        const ended = current.parts.at(-1);
+        expect(ended).toMatchObject({ state: "running", waiter: WAITER, cause: { kind: "outage" }, pausedAt: retrying?.pausedAt, end: "retry" });
+        expect(Date.parse(ended?.endedAt ?? "")).toBeGreaterThanOrEqual(Date.parse(retrying?.retryAt ?? ""));
+    });
+
+    it("ends a wait that the abort signal stops with the end abort, and keeps the cause and the start", async () => {
+        const { workId, current } = start([failure(402), reply([text("unused")])]);
+        const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+        const row = await waitForPause(workId, "paused");
+        await waitFor(() => current.parts.at(-1)?.state === "paused");
+
+        current.stop.abort();
+        await handle.getResult().catch(() => undefined);
+
+        expect(current.parts.at(-1)).toMatchObject({
+            state: "running",
+            waiter: WAITER,
+            cause: { kind: "host", reason: "payment_required" },
+            pausedAt: row.pausedAt,
+            end: "abort",
+        });
+        expect(typeof current.parts.at(-1)?.endedAt).toBe("string");
+        expect((await queryPausesOfWork(pool, ANALYSIS_ID, workId))._unsafeUnwrap()).toEqual([]);
+    });
+
     it("moves a wait in retrying to paused on a hold, and the timer no longer retries", async () => {
         const { workId, current } = start([failure(503), reply([text("held, then resumed")])], { retryDelaysMs: [60_000] });
         const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
@@ -225,12 +290,15 @@ describe("the pause of a loop inside a workflow", () => {
         expect(row).toMatchObject({ state: "paused", cause: { kind: "outage" }, attempt: 0 });
         expect(row.retryAt).toBeUndefined();
         expect(current.parts.map((part) => part.state)).toEqual(["retrying", "paused"]);
+        expect(current.parts[1]).toMatchObject({ waiter: WAITER, pausedAt: current.parts[0]?.pausedAt });
+        expect(row.waiter).toEqual(WAITER);
         expect(current.script.calls).toHaveLength(1);
         expect(await createWork({ pool, ...WORK_DEPS }).hold(session, workId)).toEqual({ kind: "held", workflows: 0 });
 
         await createWork({ pool, ...WORK_DEPS }).resume(session, workId);
         expect(await handle.getResult()).toEqual({ reason: "stop", text: "held, then resumed" });
         expect(current.script.calls).toHaveLength(2);
+        expect(current.parts.at(-1)).toMatchObject({ state: "running", pausedAt: current.parts[0]?.pausedAt, end: "resume" });
     });
 
     it("keeps the deadline of a retry across a crash", async () => {

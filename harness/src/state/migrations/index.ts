@@ -27,6 +27,7 @@ import { recordTheRunSessionOfAPause } from "./20261029120100_record_the_run_ses
 import { leaseTheSandboxes } from "./20261030120000_lease_the_sandboxes.js";
 import { dropTheReportDerivations } from "./20261030120100_drop_the_report_derivations.js";
 import { keepTheReportDerivations } from "./20261030120200_keep_the_report_derivations.js";
+import { recordTheWaiterOfAPause } from "./20261102120000_record_the_waiter_of_a_pause.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -49,5 +50,6 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261030120000_lease_the_sandboxes": leaseTheSandboxes,
         "20261030120100_drop_the_report_derivations": dropTheReportDerivations,
         "20261030120200_keep_the_report_derivations": keepTheReportDerivations,
+        "20261102120000_record_the_waiter_of_a_pause": recordTheWaiterOfAPause,
     };
 }

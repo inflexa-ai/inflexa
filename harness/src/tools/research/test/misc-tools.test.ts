@@ -212,6 +212,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
             workflow_id: "run-1-T1S1",
             work_id: "run-1",
             work_kind: "run",
+            waiter: null,
             analysis_id: "analysis-001",
             thread_id: null,
             state: "paused",

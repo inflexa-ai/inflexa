@@ -439,6 +439,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         pool: deps.pool,
         workId: input.runId,
         workKind: "run",
+        waiter: { kind: "step", stepId: input.stepId },
         analysisId: input.analysisId,
         emit: safeEmit,
         retryDelaysMs: deps.pauseRetryDelaysMs,

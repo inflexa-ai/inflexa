@@ -14,11 +14,13 @@ import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { forSubAgent, type AuthContext } from "../../auth/types.js";
 import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import type { ChatFrame } from "../../contracts/chat-events.js";
+import type { ChatMessage } from "../../contracts/message.js";
 import type { Connectable } from "../../lib/db-result.js";
 import { finalText, runLoop } from "../../loop/run-loop.js";
 import { registerSubAgent } from "../../loop/sub-agent.js";
 import { turnCredentials } from "../../loop/turn-credentials.js";
 import type { Querier } from "../../state/db.js";
+import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
 import type { ResolveRequestHeaders } from "../../providers/request-headers.js";
 import type { ChatProvider } from "../../providers/types.js";
@@ -26,6 +28,7 @@ import type { ThreadAgentResolver } from "../../runtime/assemble.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptEntry, type ScriptStep } from "../../testing.js";
 import { createAskGateway } from "../../tools/approval/gateway.js";
 import { defineTool } from "../../tools/define-tool.js";
+import { queryPausesOfWork } from "../../state/paused-work.js";
 import { workPause } from "../../workflows/pause.js";
 import { registerChatTurns } from "../chat-turn-workflow.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
@@ -44,6 +47,9 @@ if (DBOS.isInitialized()) {
 }
 
 const ANALYSIS = "analysis-wf";
+
+/** An asymmetric matcher for a timestamp string; typed `unknown` because the matcher API returns `any`. */
+const ANY_STRING: unknown = expect.any(String);
 const SECRET = "pass-secret-123";
 
 let rig: DbosTestRig;
@@ -170,7 +176,7 @@ const pausingResearcher = registerSubAgent<{ readonly brief: string }, string>(
         );
         return finalText(messages);
     },
-    (work, emit) => workPause({ pool: rig.pool, ...work, emit }).afterFailure,
+    (work, waiter, emit) => workPause({ pool: rig.pool, ...work, waiter, emit }).afterFailure,
 );
 
 const pausingResearch = defineTool({
@@ -361,6 +367,8 @@ describe("a chat turn as a workflow", () => {
 
         const paused = await pausedWorkOf(turnId);
         expect(paused).toMatchObject({ kind: "turn", threadId, waiting: [{ workflowId: turnId, state: "paused", cause: { kind: "credential" } }] });
+        const rows = (await queryPausesOfWork(rig.pool, ANALYSIS, turnId))._unsafeUnwrap();
+        expect(rows.map((row) => ({ workflowId: row.workflowId, waiter: row.waiter }))).toEqual([{ workflowId: turnId, waiter: { kind: "turn" } }]);
         expect(scripted.calls).toHaveLength(1);
         expect((await turnRecords(threadId)).map((record) => record.status)).toEqual(["open"]);
 
@@ -374,8 +382,8 @@ describe("a chat turn as a workflow", () => {
         const frames = await readAll(turnId);
         expect(textOf(frames)).toContain("after the resume");
         expect(frames.filter((frame) => frame.type === "data-pause").map((frame) => ("data" in frame ? frame.data : frame))).toEqual([
-            expect.objectContaining({ state: "paused", cause: { kind: "credential" } }),
-            expect.objectContaining({ state: "running" }),
+            expect.objectContaining({ state: "paused", cause: { kind: "credential" }, waiter: { kind: "turn" } }),
+            expect.objectContaining({ state: "running", waiter: { kind: "turn" }, end: "resume" }),
         ]);
         expect(await work.list(ANALYSIS)).toEqual([]);
         credentialAfterRestart = makeLocalAuth();
@@ -423,6 +431,35 @@ describe("a chat turn as a workflow", () => {
         expect(await stopping.list(ANALYSIS)).toEqual([]);
     }, 30_000);
 
+    it("stores the pause part of a turn that paused and resumed, with the end of the wait", async () => {
+        const scripted = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }, reply([text("after the resume")])]);
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        await pausedWorkOf(turnId);
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        await DBOS.retrieveWorkflow(turnId).getResult();
+
+        const assistant = (await transcriptOf(threadId)).filter((message) => message.role === "assistant");
+        expect(assistant).toHaveLength(1);
+        const pauses = assistant[0]?.parts.filter((part) => part.type === "data-pause");
+        expect(pauses).toEqual([
+            {
+                type: "data-pause",
+                id: turnId,
+                workId: turnId,
+                workKind: "turn",
+                waiter: { kind: "turn" },
+                state: "running",
+                cause: { kind: "host", reason: "payment_required" },
+                pausedAt: ANY_STRING,
+                endedAt: ANY_STRING,
+                end: "resume",
+            },
+        ]);
+    }, 30_000);
+
     it("closes a paused turn as aborted on a stop, and frees its thread", async () => {
         const scripted = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }]);
         provider = scripted.provider;
@@ -435,6 +472,23 @@ describe("a chat turn as a workflow", () => {
 
         expect(await turnRecords(threadId)).toEqual([{ status: "aborted", reason: null }]);
         expect(await work.list(ANALYSIS)).toEqual([]);
+        const stopped = (await transcriptOf(threadId)).filter((message) => message.role === "assistant");
+        expect(stopped).toMatchObject([
+            {
+                interrupted: true,
+                parts: [
+                    {
+                        type: "data-pause",
+                        id: turnId,
+                        state: "running",
+                        cause: { kind: "host", reason: "payment_required" },
+                        pausedAt: ANY_STRING,
+                        endedAt: ANY_STRING,
+                        end: "abort",
+                    },
+                ],
+            },
+        ]);
         const next = await turns.open(sessionWithSecret(), { analysisId: ANALYSIS, threadId, userInput: "again" });
         expect(next.kind).toBe("started");
         if (next.kind === "started") {
@@ -534,12 +588,20 @@ describe("the sub-agents of a chat turn workflow", () => {
             threadId,
             waiting: [{ workflowId: childId, state: "paused", cause: { kind: "host", reason: "payment_required" } }],
         });
+        const rows = (await queryPausesOfWork(rig.pool, ANALYSIS, turnId))._unsafeUnwrap();
+        expect(rows.map((row) => ({ workflowId: row.workflowId, waiter: row.waiter }))).toEqual([
+            { workflowId: childId, waiter: { kind: "sub-agent", agentId: PAUSING_RESEARCHER } },
+        ]);
         expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
 
         const frames = await readAll(turnId);
         expect(textOf(frames)).toBe("Done.");
         expect(child.calls).toHaveLength(2);
         const pauses = frames.filter((frame) => frame.type === "data-pause");
+        expect(pauses.map((frame) => ("data" in frame ? frame.data : frame))).toEqual([
+            expect.objectContaining({ state: "paused", waiter: { kind: "sub-agent", agentId: PAUSING_RESEARCHER } }),
+            expect.objectContaining({ state: "running", waiter: { kind: "sub-agent", agentId: PAUSING_RESEARCHER }, end: "resume" }),
+        ]);
         expect(pauses.map((frame) => frame.source?.callPath.join("/"))).toEqual([
             `conversation-agent/${PAUSING_RESEARCHER}`,
             `conversation-agent/${PAUSING_RESEARCHER}`,
@@ -658,6 +720,12 @@ const work = createWork({
     },
     ...WORK_DEPS,
 });
+
+/** The transcript of a thread as a host reads it after a reload. */
+async function transcriptOf(threadId: string): Promise<ChatMessage[]> {
+    const stored = (await createThreadHistory(rig.pool).loadAll(threadId))._unsafeUnwrap();
+    return storedMessagesToChat(stored.flat());
+}
 
 /** The paused work of a turn, when the turn waits in a pause. */
 async function pausedWorkOf(turnId: string, timeoutMs = 15_000): Promise<Work> {

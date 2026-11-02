@@ -15,7 +15,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import { z } from "zod";
 
 import type { RunSession } from "../auth/types.js";
-import type { PauseCause, WorkKind, PausePart } from "../contracts/chat-parts.js";
+import type { PauseCause, PauseEnd, PauseWaiter, WorkKind, PausePart } from "../contracts/chat-parts.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
@@ -66,15 +66,14 @@ export function pauseCauseOf(failure: unknown): PauseCause | undefined {
     }
 }
 
-/** How a wait ended: the deadline of `retrying`, the message of a resume, or a stop of the work. */
-export type PauseEnd = "retry" | "resume" | "abort";
-
 /** The work that a pause belongs to, and where the part of the pause goes. */
 export type PauseScope = {
     readonly pool: Querier;
     /** The turn id, the run id, or the id of the profile workflow. A sub-agent names its turn, and a step its run. */
     readonly workId: string;
     readonly workKind: WorkKind;
+    /** What waits in this workflow. */
+    readonly waiter: PauseWaiter;
     readonly analysisId: string;
     readonly threadId?: string;
     /** Writes the part of the pause to the stream of the work. */
@@ -138,10 +137,11 @@ export function workPause(scope: PauseScope): WorkPause {
         const delayMs = cause.kind === "outage" ? delays[attempt] : undefined;
         const state = delayMs === undefined ? "paused" : "retrying";
         const pauseId = await DBOS.randomUUID();
-        const pausedAt = await DBOS.now();
-        const retryAt = delayMs === undefined ? undefined : new Date(pausedAt + delayMs).toISOString();
+        const pausedAtMs = await DBOS.now();
+        const pausedAt = new Date(pausedAtMs).toISOString();
+        const retryAt = delayMs === undefined ? undefined : new Date(pausedAtMs + delayMs).toISOString();
         const topic = pauseTopic(pauseId);
-        const work = { workId: scope.workId, workKind: scope.workKind };
+        const work = { workId: scope.workId, workKind: scope.workKind, waiter: scope.waiter };
         await DBOS.runStep(
             async () =>
                 unwrapOrThrow(
@@ -155,7 +155,7 @@ export function workPause(scope: PauseScope): WorkPause {
                         attempt,
                         retryAt,
                         topic,
-                        pausedAt: new Date(pausedAt).toISOString(),
+                        pausedAt,
                         runSession: scope.run?.session,
                     }),
                 ),
@@ -171,7 +171,7 @@ export function workPause(scope: PauseScope): WorkPause {
             );
         };
         if (state === "paused") await suspendCredential("pause.suspend");
-        await scope.emit({ type: "data-pause", id: workflowId, ...work, state, cause, attempt, retryAt });
+        await scope.emit({ type: "data-pause", id: workflowId, ...work, state, cause, pausedAt, attempt, retryAt });
         log.warn("work paused", { workflowId, ...work, state, cause: cause.kind, attempt });
 
         let end: PauseEnd;
@@ -192,14 +192,14 @@ export function workPause(scope: PauseScope): WorkPause {
                                 cause,
                                 attempt,
                                 topic,
-                                pausedAt: new Date(pausedAt).toISOString(),
+                                pausedAt,
                                 runSession: scope.run?.session,
                             }),
                         ),
                     { name: "pause.hold" },
                 );
                 await suspendCredential("pause.hold.suspend");
-                await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "paused", cause, attempt });
+                await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "paused", cause, pausedAt, attempt });
                 log.info("work held", { workflowId, ...work, attempt });
                 const held = await waitForMessage(topic, undefined, signal);
                 end = held === "hold" ? "resume" : held;
@@ -210,8 +210,16 @@ export function workPause(scope: PauseScope): WorkPause {
             untrack();
         }
 
-        await DBOS.runStep(async () => unwrapOrThrow(await clearPause(scope.pool, workflowId)), { name: "pause.clear" });
-        await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "running" });
+        // The time is read inside the step, thus a recovery replays the recorded time and the end keeps one time.
+        // The replayed step output is `undefined` when the recorded step has no time.
+        const endedAt: string | undefined = await DBOS.runStep(
+            async () => {
+                unwrapOrThrow(await clearPause(scope.pool, workflowId));
+                return new Date().toISOString();
+            },
+            { name: "pause.clear" },
+        );
+        await scope.emit({ type: "data-pause", id: workflowId, ...work, state: "running", cause, pausedAt, endedAt, end });
         log.info("pause ended", { workflowId, ...work, end });
         return end;
     };

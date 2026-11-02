@@ -26,6 +26,8 @@ export type ConversationDisplayRecorder = {
     takeOpening(): ConversationUIMessage[];
     /** The assistant message of one round, when the recorder got parts after the last take, and the divider of a marker of the round. */
     takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[];
+    /** The `data-pause` parts of the open round, in one assistant message with the id of the round, or none. The round stays open. */
+    openRoundPauses(): ConversationUIMessage[];
     /** The whole turn in one projection. `runChatTurn` stores each round with `takeOpening` and `takeRound` instead. */
     finish(options?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[];
 };
@@ -52,7 +54,7 @@ function jsonCopy<T>(value: T): T {
 
 const DURABLE_CONVERSATION_PART_TYPES: ReadonlySet<string> = new Set(
     Object.entries(PART_REGISTRY)
-        .filter(([, descriptor]) => descriptor.emitter === "conversation" && descriptor.consumer === "conversation" && !descriptor.transient)
+        .filter(([, descriptor]) => descriptor.consumer === "conversation" && !descriptor.transient)
         .map(([type]) => type),
 );
 
@@ -220,6 +222,11 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         return taken;
     }
 
+    function openRoundPauses(): ConversationUIMessage[] {
+        const parts = displayParts(roundParts().filter((part) => part.type === "data-pause"));
+        return parts.length === 0 ? [] : [{ id: assistantMessageId, role: "assistant", parts: jsonCopy(parts) }];
+    }
+
     function finish(finishOptions?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[] {
         if (!finished) {
             finished = true;
@@ -240,5 +247,5 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         return messages;
     }
 
-    return { emit, observe, assistantMessageId: () => assistantMessageId, userMessageId: () => userMessageId, takeOpening, takeRound, finish };
+    return { emit, observe, assistantMessageId: () => assistantMessageId, userMessageId: () => userMessageId, takeOpening, takeRound, openRoundPauses, finish };
 }

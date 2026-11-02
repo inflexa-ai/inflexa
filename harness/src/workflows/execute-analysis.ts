@@ -102,7 +102,7 @@ import {
 import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import { flattenDataPart } from "../contracts/chat-frame.js";
-import type { RunCompletedPart, SynthesisPhase } from "../contracts/chat-parts.js";
+import type { PauseWaiter, RunCompletedPart, SynthesisPhase } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
 import {
@@ -947,17 +947,19 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // the run authorization is already minted and rides in `input.runSession`.
     const runId = input.runSession.runFrame.runId;
     const workflowId = runId;
-    const pause = workPause({
-        pool: deps.pool,
-        workId: runId,
-        workKind: "run",
-        analysisId: input.analysisId,
-        emit: emitStreamPart,
-        retryDelaysMs: deps.pauseRetryDelaysMs,
-        run: { session: input.runSession, authorizer: deps.runAuthorizer },
-        logger,
-    });
-    const init = await validateAndInit(input, runId, deps, pause);
+    const pauseAs = (waiter: PauseWaiter): WorkPause =>
+        workPause({
+            pool: deps.pool,
+            workId: runId,
+            workKind: "run",
+            waiter,
+            analysisId: input.analysisId,
+            emit: emitStreamPart,
+            retryDelaysMs: deps.pauseRetryDelaysMs,
+            run: { session: input.runSession, authorizer: deps.runAuthorizer },
+            logger,
+        });
+    const init = await validateAndInit(input, runId, deps, pauseAs({ kind: "run" }));
     if (init.kind === "joined-existing") {
         return {
             runId: init.runId,
@@ -1099,7 +1101,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 completedSteps: [...final.completed],
                 session: input.runSession,
                 deps,
-                pause,
+                pause: pauseAs({ kind: "synthesis" }),
             });
             synthesisFindings = synthOut.findings;
             synthesisOutcome = { status: synthOut.synthesisStatus, reason: synthOut.synthesisReason };

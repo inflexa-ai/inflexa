@@ -378,10 +378,11 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const toolOutputStore = createToolOutputStore(conversation.pool);
     const pauseRetryDelaysMs = deps.pauseRetryDelaysMs;
     // Each child of a sub-agent pauses with the work of its caller, thus a resume of the turn or of the run ends its wait.
-    const subAgentPauses: SubAgentPauses = ({ runSession, ...work }, emit) =>
+    const subAgentPauses: SubAgentPauses = ({ runSession, ...work }, waiter, emit) =>
         workPause({
             pool: conversation.pool,
             ...work,
+            waiter,
             emit,
             retryDelaysMs: pauseRetryDelaysMs,
             run: runSession === undefined ? undefined : { session: runSession, authorizer: conversation.runAuthorizer },

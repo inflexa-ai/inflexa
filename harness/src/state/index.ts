@@ -87,6 +87,7 @@ export {
     completeEmptyDataProfile,
     loadDataProfileStatus,
     loadSeedInputFileIds,
+    queryRunningProfiles,
     recordDataProfileWorkflowId,
 } from "./data-profile.js";
 export type {

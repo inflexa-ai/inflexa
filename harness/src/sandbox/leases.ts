@@ -21,7 +21,7 @@ import { z } from "zod";
 
 import type { SpawnSession } from "../auth/types.js";
 import { clampResources, type ResourcePolicy, type ResourceSpec } from "../config/resource-limits.js";
-import type { PausePart, WorkKind } from "../contracts/chat-parts.js";
+import type { PausePart, PauseWaiter, WorkKind } from "../contracts/chat-parts.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Connectable } from "../lib/db-result.js";
@@ -31,7 +31,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
 import type { Querier } from "../state/db.js";
-import { queryPausesOfWork } from "../state/paused-work.js";
+import { queryPausesOfWork, type PauseRecord } from "../state/paused-work.js";
 import {
     activeLease,
     clearIdleMachine,
@@ -252,6 +252,22 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
 
     // ── The lease workflow ────────────────────────────────────────────
 
+    const waiterOfLease = (input: LeaseWorkflowInput): PauseWaiter => {
+        const kind = input.work.kind;
+        switch (kind) {
+            case "profile":
+                return { kind: "profile" };
+            case "run":
+                return { kind: "step", stepId: input.session.runFrame.stepId };
+            case "turn":
+                throw new Error("A chat turn holds no sandbox lease.");
+            default: {
+                const exhaustive: never = kind;
+                throw new Error(`Unknown work kind: ${String(exhaustive)}`);
+            }
+        }
+    };
+
     const runLease = async (input: LeaseWorkflowInput): Promise<void> => {
         const log = logger.with({ leaseWorkflowId: input.leaseWorkflowId, ownerWorkflowId: input.ownerWorkflowId });
         const id = input.leaseWorkflowId;
@@ -259,6 +275,7 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
             pool,
             workId: input.work.id,
             workKind: input.work.kind,
+            waiter: waiterOfLease(input),
             analysisId: input.analysisId,
             // A host reads the streams of the work, not of the lease workflow. The wait of the consumer mirrors the pause.
             emit: () => Promise.resolve(),
@@ -479,45 +496,68 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
      */
     const waitForEvent = async <T>(lease: LeaseRecord, key: string, mirror: LeaseBinding["emit"]): Promise<T | "ended"> => {
         const dbos = await engine();
-        let mirrored: string | undefined;
+        let mirrored: PauseRecord | undefined;
         for (;;) {
             const value = await dbos.getEvent<T>(lease.leaseWorkflowId, key, { timeoutSeconds: WAIT_SLICE_SECONDS, pollingIntervalMs: EVENT_POLL_MS });
             if (value !== null) {
-                if (mirrored !== undefined && mirror !== undefined) {
-                    await mirror({ type: "data-pause", id: lease.leaseWorkflowId, workId: lease.workId, workKind: lease.workKind, state: "running" });
-                }
+                if (mirrored !== undefined && mirror !== undefined) await mirrorEnd(lease, mirror, mirrored);
                 return value;
             }
             if (await callerCanceled()) throw new DBOSErrors.DBOSWorkflowCancelledError(DBOS.workflowID ?? lease.leaseWorkflowId);
             const status = await dbos.getWorkflow(lease.leaseWorkflowId);
             if (status !== undefined && TERMINAL_STATUSES.has(status.status)) {
                 const last = await dbos.getEvent<T>(lease.leaseWorkflowId, key, { timeoutSeconds: 0 });
-                return last ?? "ended";
+                if (last === null) return "ended";
+                if (mirrored !== undefined && mirror !== undefined) await mirrorEnd(lease, mirror, mirrored);
+                return last;
             }
             if (mirror !== undefined) mirrored = await mirrorPause(lease, mirror, mirrored);
         }
     };
 
-    const mirrorPause = async (lease: LeaseRecord, mirror: NonNullable<LeaseBinding["emit"]>, mirrored: string | undefined): Promise<string | undefined> => {
+    /**
+     * A lease workflow pauses only at its label gate with the cause `host`, thus its wait is in `paused`, and nothing
+     * but a resume ends it.
+     */
+    const mirrorEnd = (lease: LeaseRecord, mirror: NonNullable<LeaseBinding["emit"]>, last: PauseRecord): Promise<void> =>
+        mirror({
+            type: "data-pause",
+            id: lease.leaseWorkflowId,
+            workId: lease.workId,
+            workKind: lease.workKind,
+            waiter: last.waiter,
+            state: "running",
+            cause: last.cause,
+            pausedAt: last.pausedAt,
+            endedAt: new Date().toISOString(),
+            end: "resume",
+        });
+
+    const mirrorPause = async (
+        lease: LeaseRecord,
+        mirror: NonNullable<LeaseBinding["emit"]>,
+        mirrored: PauseRecord | undefined,
+    ): Promise<PauseRecord | undefined> => {
         const pauses = unwrapOrThrow(await queryPausesOfWork(pool, lease.analysisId, lease.workId));
         const pause = pauses.find((row) => row.workflowId === lease.leaseWorkflowId);
-        const state = pause === undefined ? undefined : `${pause.state}:${pause.attempt}`;
-        if (state === mirrored) return mirrored;
         if (pause === undefined) {
-            await mirror({ type: "data-pause", id: lease.leaseWorkflowId, workId: lease.workId, workKind: lease.workKind, state: "running" });
+            if (mirrored !== undefined) await mirrorEnd(lease, mirror, mirrored);
             return undefined;
         }
+        if (mirrored?.state === pause.state && mirrored.attempt === pause.attempt && mirrored.pausedAt === pause.pausedAt) return mirrored;
         await mirror({
             type: "data-pause",
             id: lease.leaseWorkflowId,
             workId: lease.workId,
             workKind: lease.workKind,
+            waiter: pause.waiter,
             state: pause.state,
             cause: pause.cause,
+            pausedAt: pause.pausedAt,
             attempt: pause.attempt,
             retryAt: pause.retryAt,
         });
-        return state;
+        return pause;
     };
 
     const enqueue = async (binding: LeaseBinding, lease: LeaseRecord, size: ResourceSpec): Promise<void> => {

@@ -625,6 +625,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             pool: deps.pool,
             workId: workflowId,
             workKind: "profile",
+            waiter: { kind: "profile" },
             analysisId,
             emit: (part) => DBOS.writeStream("events", part),
             retryDelaysMs: deps.pauseRetryDelaysMs,

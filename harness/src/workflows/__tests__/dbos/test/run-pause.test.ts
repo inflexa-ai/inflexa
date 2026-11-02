@@ -348,6 +348,7 @@ describe("the pause of a run", () => {
         const row = await waitForPause(current, runId);
         expect(row).toMatchObject({ workId: runId, workKind: "run", analysisId: current.analysisId, cause: { kind: "host", reason: "payment_required" } });
         expect(row.workflowId).not.toBe(runId);
+        expect(row.waiter).toEqual({ kind: "step", stepId: "S1" });
         // The sibling goes on during the pause of S1.
         const steps = await waitFor("the end of the sibling", async () => {
             const rows = (await queryStepsByRun(rig.pool, runId))._unsafeUnwrap();
@@ -373,6 +374,40 @@ describe("the pause of a run", () => {
         expect(await analysisStatus(current.analysisId)).toBe("active");
     }, 60_000);
 
+    it("two steps of one run that wait in paused each name their step", async () => {
+        const { runId, planId, current } = await prepareRun("run-pause-two-steps", {
+            scripts: { S1: [failedRequest(402, "Payment Required"), ...completesStep()], S2: [failedRequest(402, "Payment Required"), ...completesStep()] },
+        });
+        const handle = await DBOS.startWorkflow(parent, { workflowID: runId })({ analysisId: current.analysisId, planId });
+
+        const rows = await waitFor("the pauses of both steps", async () => {
+            const found = (await queryPausesOfWork(rig.pool, current.analysisId, runId))._unsafeUnwrap();
+            return found.length === 2 ? found : undefined;
+        });
+        expect(rows.map((row) => row.waiter).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))).toEqual([
+            { kind: "step", stepId: "S1" },
+            { kind: "step", stepId: "S2" },
+        ]);
+
+        expect(await createWork({ pool: rig.pool, ...WORK_DEPS }).resume(sessionOf(current.analysisId), runId)).toEqual({ kind: "resumed", workflows: 2 });
+        const result = await handle.getResult();
+        expect(result.status).toBe("completed");
+        expect((await queryPausesOfWork(rig.pool, current.analysisId, runId))._unsafeUnwrap()).toEqual([]);
+
+        for (const stepId of ["S1", "S2"]) {
+            const child = (await queryStepsByRun(rig.pool, runId))._unsafeUnwrap().find((step) => step.stepId === stepId)?.childWorkflowId;
+            if (child === null || child === undefined) throw new Error(`the step ${stepId} has no child workflow`);
+            const parts: { type?: unknown; state?: unknown; waiter?: unknown }[] = [];
+            for await (const part of DBOS.readStream<{ type?: unknown; state?: unknown; waiter?: unknown }>(child, "events")) parts.push(part);
+            const pauseParts = parts.filter((part) => part.type === "data-pause");
+            expect(pauseParts.map((part) => part.state)).toEqual(["paused", "running"]);
+            expect(pauseParts.map((part) => part.waiter)).toEqual([
+                { kind: "step", stepId },
+                { kind: "step", stepId },
+            ]);
+        }
+    }, 60_000);
+
     it("a refused charge with the suspend flag pauses the run before any step, and the steps run after the resume", async () => {
         let opens = 0;
         const ends: string[] = [];
@@ -392,7 +427,7 @@ describe("the pause of a run", () => {
         const handle = await DBOS.startWorkflow(parent, { workflowID: runId })({ analysisId: current.analysisId, planId });
 
         const row = await waitForPause(current, runId);
-        expect(row).toMatchObject({ workflowId: runId, workId: runId, workKind: "run", cause: { kind: "host", reason: "no_funds" } });
+        expect(row).toMatchObject({ workflowId: runId, workId: runId, workKind: "run", waiter: { kind: "run" }, cause: { kind: "host", reason: "no_funds" } });
         expect(opens).toBe(1);
         expect(current.childStarts).toEqual([]);
         expect((await queryStepsByRun(rig.pool, runId))._unsafeUnwrap()).toEqual([]);
@@ -433,7 +468,7 @@ describe("the pause of a run", () => {
         const handle = await DBOS.startWorkflow(parent, { workflowID: runId })({ analysisId: current.analysisId, planId });
 
         const row = await waitForPause(current, runId);
-        expect(row).toMatchObject({ workId: runId, workKind: "run", cause: { kind: "host", reason: "r" } });
+        expect(row).toMatchObject({ workId: runId, workKind: "run", waiter: { kind: "step", stepId: "S1" }, cause: { kind: "host", reason: "r" } });
         expect(order).toEqual(["register", "sync"]);
 
         await resume(current, runId);

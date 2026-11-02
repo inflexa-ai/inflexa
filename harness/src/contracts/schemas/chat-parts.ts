@@ -440,15 +440,28 @@ export const PauseCauseSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("host"), reason: z.string() }),
 ]);
 
+export const PauseWaiterSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("turn") }),
+    z.object({ kind: z.literal("sub-agent"), agentId: z.string() }),
+    z.object({ kind: z.literal("step"), stepId: z.string() }),
+    z.object({ kind: z.literal("synthesis") }),
+    z.object({ kind: z.literal("run") }),
+    z.object({ kind: z.literal("profile") }),
+]);
+
 export const PausePartSchema = z.object({
     type: z.literal("data-pause"),
     id: z.string(),
     workId: z.string(),
     workKind: z.enum(["turn", "run", "profile"]),
+    waiter: PauseWaiterSchema.optional(),
     state: z.enum(["retrying", "paused", "running"]),
-    cause: PauseCauseSchema.optional(),
+    cause: PauseCauseSchema,
+    pausedAt: z.string(),
     attempt: z.number().int().nonnegative().optional(),
     retryAt: z.string().optional(),
+    endedAt: z.string().optional(),
+    end: z.enum(["retry", "resume", "abort"]).optional(),
 });
 
 // ── Model refusal ───────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import type { PauseEnd, PauseWaiter } from "../chat-parts.js";
 import { PART_REGISTRY } from "../part-registry.js";
 import {
     CompactionPartSchema,
@@ -151,6 +152,85 @@ describe("CompactionPartSchema", () => {
         expect(CompactionPartSchema.parse({ ...running, trigger: "turn-start" })).toEqual({ ...running, trigger: "turn-start" });
         expect(CompactionPartSchema.parse({ ...running, trigger: "mid-turn" })).toEqual({ ...running, trigger: "mid-turn" });
         expect(CompactionPartSchema.safeParse({ ...running, trigger: "idle" }).success).toBe(false);
+    });
+});
+
+describe("PausePartSchema", () => {
+    const waiting = {
+        type: "data-pause" as const,
+        id: "wf-1",
+        workId: "run-1",
+        workKind: "run" as const,
+        state: "paused" as const,
+        cause: { kind: "host" as const, reason: "payment_required" },
+        pausedAt: "2026-11-02T10:00:00.000Z",
+        attempt: 0,
+    };
+
+    test("accepts a part in each state", () => {
+        const retrying = { ...waiting, state: "retrying" as const, cause: { kind: "outage" as const }, attempt: 1, retryAt: "2026-11-02T10:05:00.000Z" };
+        const running = {
+            type: "data-pause" as const,
+            id: "wf-1",
+            workId: "run-1",
+            workKind: "run" as const,
+            state: "running" as const,
+            cause: { kind: "credential" as const },
+            pausedAt: waiting.pausedAt,
+            endedAt: "2026-11-02T10:30:00.000Z",
+            end: "resume" as const,
+        };
+
+        expect(ChatPartSchema.parse(waiting)).toEqual(waiting);
+        expect(ChatPartSchema.parse(retrying)).toEqual(retrying);
+        expect(ChatPartSchema.parse(running)).toEqual(running);
+    });
+
+    test("accepts each kind of waiter and keeps it", () => {
+        const waiters: PauseWaiter[] = [
+            { kind: "turn" },
+            { kind: "sub-agent", agentId: "planner" },
+            { kind: "step", stepId: "s1" },
+            { kind: "synthesis" },
+            { kind: "run" },
+            { kind: "profile" },
+        ];
+
+        for (const waiter of waiters) {
+            const part = { ...waiting, waiter };
+            expect(ChatPartSchema.parse(part)).toEqual(part);
+        }
+    });
+
+    test("accepts each end of a wait, and refuses an unknown end", () => {
+        const ended = { ...waiting, state: "running" as const, endedAt: "2026-11-02T10:30:00.000Z" };
+
+        const ends: PauseEnd[] = ["retry", "resume", "abort"];
+        for (const end of ends) expect(ChatPartSchema.parse({ ...ended, end })).toEqual({ ...ended, end });
+        expect(ChatPartSchema.safeParse({ ...ended, end: "timeout" }).success).toBe(false);
+    });
+
+    test("accepts a part with no waiter, from a wait that started before the waiter was recorded", () => {
+        expect("waiter" in ChatPartSchema.parse(waiting)).toBe(false);
+    });
+
+    test("accepts an end part with no endedAt and no end", () => {
+        const replayed = { ...waiting, state: "running" as const };
+
+        expect(ChatPartSchema.parse(replayed)).toEqual(replayed);
+    });
+
+    test("refuses a part with no pausedAt, and a part with no cause", () => {
+        const { pausedAt: _pausedAt, ...noStart } = waiting;
+        const { cause: _cause, ...noCause } = waiting;
+
+        expect(ChatPartSchema.safeParse(noStart).success).toBe(false);
+        expect(ChatPartSchema.safeParse(noCause).success).toBe(false);
+    });
+
+    test("refuses an unknown waiter kind, and a sub-agent waiter with no agent id", () => {
+        expect(ChatPartSchema.safeParse({ ...waiting, waiter: { kind: "lease" } }).success).toBe(false);
+        expect(ChatPartSchema.safeParse({ ...waiting, waiter: { kind: "sub-agent" } }).success).toBe(false);
     });
 });
 

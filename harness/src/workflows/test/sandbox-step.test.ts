@@ -969,6 +969,8 @@ function statementPool(): { pool: Querier; statements: Array<{ text: string; val
 
 const CHILD_ID = `${USAGE_RUN_ID}-${USAGE_STEP_ID}`;
 
+const STEP_WAITER = { kind: "step", stepId: USAGE_STEP_ID };
+
 /** The rows of a pause that the step wrote, and the deletes of a row of the step. */
 function pauseStatements(statements: ReadonlyArray<{ text: string; values: readonly unknown[] }>): {
     readonly recorded: ReadonlyArray<{ text: string; values: readonly unknown[] }>;
@@ -987,8 +989,9 @@ function pauseStatements(statements: ReadonlyArray<{ text: string; values: reado
 function expectOnePauseResumed(statements: ReadonlyArray<{ text: string; values: readonly unknown[] }>, reason: string): void {
     const { recorded, cleared } = pauseStatements(statements);
     expect(recorded).toHaveLength(1);
-    const [workflowId, workId, workKind, analysisId, , state, cause, attempt, , topic] = presentAt(recorded, 0).values;
+    const [workflowId, workId, workKind, waiter, analysisId, , state, cause, attempt, , topic] = presentAt(recorded, 0).values;
     expect([workflowId, workId, workKind, analysisId, state, attempt]).toEqual([CHILD_ID, USAGE_RUN_ID, "run", ANALYSIS_ID, "paused", 0]);
+    expect(waiter).toBe(JSON.stringify({ kind: "step", stepId: USAGE_STEP_ID }));
     expect(cause).toBe(JSON.stringify({ kind: "host", reason }));
     expect(dbosState.recvTopics).toHaveLength(1);
     expect(topic).toBe(dbosState.recvTopics[0]);
@@ -996,8 +999,8 @@ function expectOnePauseResumed(statements: ReadonlyArray<{ text: string; values:
 
     const parts = dbosState.emittedParts.filter((part) => part.type === "data-pause");
     expect(parts).toMatchObject([
-        { id: CHILD_ID, workId: USAGE_RUN_ID, workKind: "run", state: "paused", cause: { kind: "host", reason } },
-        { id: CHILD_ID, workId: USAGE_RUN_ID, workKind: "run", state: "running" },
+        { id: CHILD_ID, workId: USAGE_RUN_ID, workKind: "run", waiter: STEP_WAITER, state: "paused", cause: { kind: "host", reason } },
+        { id: CHILD_ID, workId: USAGE_RUN_ID, workKind: "run", waiter: STEP_WAITER, state: "running", cause: { kind: "host", reason }, end: "resume" },
     ]);
     for (const part of parts) expect(ChatPartSchema.safeParse(part).success).toBe(true);
     // The step waits in place: it writes no terminal row for the pause, and it does not cancel itself.

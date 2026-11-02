@@ -215,18 +215,19 @@ function runTextCondition(placeholder: string): string {
  * in step: a new non-terminal status added to one and not the other makes a live run invisible to
  * exactly one of its readers.
  *
- * With `q`, only the runs that the text filter selects are members.
+ * With `q`, only the runs that the text filter selects are members. With no `analysisId`, the runs of each
+ * analysis are members, and each row names its analysis.
  */
-export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string, { q }: RunTextFilter = {}): ResultAsync<CortexRunRow[], DbError> {
+export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string | undefined, { q }: RunTextFilter = {}): ResultAsync<CortexRunRow[], DbError> {
     return tryQuery("runs.queryActiveRunsByAnalysis", async () => {
-        const values: unknown[] = [analysisId];
+        const values: unknown[] = [analysisId ?? null];
         const text = q === undefined ? "" : `AND ${runTextCondition(`$${values.push(q)}`)}`;
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
-            WHERE analysis_id = $1
+            WHERE ($1::text IS NULL OR analysis_id = $1)
               AND status = 'running'
               ${text}
             ORDER BY started_at DESC`,
