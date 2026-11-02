@@ -176,9 +176,10 @@ export type ChatTurnStream = {
 };
 
 /**
- * `POST {A}/chat`: run one turn, and give its stream. A refusal before the turn opens is an error: 404
- * `not_found` for a thread of a different analysis, 500 for a turn that could not start. The stream ends after
- * its one `finish` or `error` frame. The turn does not stop when the stream is dropped: send the abort for that.
+ * `POST {A}/chat`: run one turn, and give its stream. The first turn on an absent thread id makes the thread, and
+ * no other route makes one. A refusal before the turn opens is an error: 404 `not_found` for a thread of a
+ * different analysis or for an archived thread, 500 for a turn that could not start. The stream ends after its one
+ * `finish` or `error` frame. The turn does not stop when the stream is dropped: send the abort for that.
  */
 export function createChatTurn(analysisId: string, body: ChatRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<ChatTurnStream, ClientError> {
     return openStream<ChatFrame>("POST", `${analysisPath(analysisId)}/chat`, { body }, opts).andThen((stream) => {
