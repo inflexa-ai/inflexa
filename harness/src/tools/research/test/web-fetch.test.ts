@@ -153,7 +153,6 @@ async function fetchUrl(url: string, deps: WebFetchToolDeps = {}, ctx: ToolConte
     return (await tool.execute(input, ctx))._unsafeUnwrap();
 }
 
-
 type LocalServer = {
     readonly server: Server;
     readonly port: number;

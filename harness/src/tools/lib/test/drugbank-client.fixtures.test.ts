@@ -6,8 +6,6 @@
  * because the refresh script has no request to replay.
  */
 
-
-
 import { describe, expect, it } from "bun:test";
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { requestedUrls, restoreFetchAfterEach, stubBodyFetch } from "../__fixtures__/client-stubs.js";
@@ -15,7 +13,6 @@ import { requestedUrls, restoreFetchAfterEach, stubBodyFetch } from "../__fixtur
 restoreFetchAfterEach();
 import { BondResponseSchema, DrugResponseSchema, searchDrugbank } from "../drugbank-client.js";
 import { presentAt, presentFirst } from "../../../lib/present.js";
-
 
 runFixtureSuite("drugbank golden fixtures", [
     fixtureCase({

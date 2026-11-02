@@ -208,7 +208,8 @@ export function recordDataProfileWorkflowId(pool: Querier, analysisId: string, w
  * It also carries the `data_profile_completed_at` that the write stamped.
  */
 export type DataProfileTerminalWrite =
-    { readonly stamped: false } | { readonly stamped: true; readonly startedAt: string | null; readonly completedAt: string };
+    | { readonly stamped: false }
+    | { readonly stamped: true; readonly startedAt: string | null; readonly completedAt: string };
 
 type TerminalWriteRow = {
     data_profile_started_at: string | null;

@@ -72,7 +72,8 @@ export type PresetCategory = {
  * logarithmic, thus a row whose x is not positive belongs to no category.
  */
 export type PresetRule =
-    { readonly kind: "volcano"; readonly cut: number; readonly effect: number } | { readonly kind: "ma"; readonly column: string; readonly cut: number };
+    | { readonly kind: "volcano"; readonly cut: number; readonly effect: number }
+    | { readonly kind: "ma"; readonly column: string; readonly cut: number };
 
 /**
  * The per-row classification of one preset.

@@ -108,7 +108,9 @@ export type OpenChatTurnRequest = {
 };
 
 export type ChatTurnStart =
-    { readonly kind: "started"; readonly turnId: string; readonly agent: AgentDefinition } | ChatTurnRefusal | { readonly kind: "turn_in_progress" };
+    | { readonly kind: "started"; readonly turnId: string; readonly agent: AgentDefinition }
+    | ChatTurnRefusal
+    | { readonly kind: "turn_in_progress" };
 
 /** The chat turns of a runtime, as a host uses them. */
 export type ChatTurns = {

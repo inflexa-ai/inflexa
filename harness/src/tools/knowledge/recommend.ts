@@ -70,7 +70,10 @@ export type KnowledgeRecommendAnswer = {
 };
 
 export type KnowledgeRecommendOutput =
-    WithToolCallRecord<KnowledgeRecommendAnswer, KnowledgeRecommendAnswer> | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
+    | WithToolCallRecord<KnowledgeRecommendAnswer, KnowledgeRecommendAnswer>
+    | KnowledgeUnavailable
+    | KnowledgeRejected
+    | KnowledgeSnapshotMismatch;
 
 function stringList(value: unknown): readonly string[] | undefined {
     return Array.isArray(value) ? value.flatMap((item) => (typeof item === "string" ? [item] : [])) : undefined;

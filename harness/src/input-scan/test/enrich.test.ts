@@ -229,26 +229,25 @@ describe("enrichShapes", () => {
         expect(readouts.get("data/c.loom")?.unavailable).toBe("container decoder reported nothing for this member");
     });
 
-
-/** The headers of a decoder run whose stdout stopped at the sandbox byte cap: the two-column target list of the cut tests. */
-async function readTruncatedHeaders(stdout: string): Promise<Awaited<ReturnType<typeof readHeaders>>> {
-    return readHeaders({
-        ...enrichArgs({
-            shapes: [],
-            fs: readSeam({}).fs,
-            lease: leaseOverClient(failingSandbox({ stdout, stdoutTruncated: true }), {
-                sandboxId: "s1",
-                host: "127.0.0.1",
-                port: 8080,
-                backend: "docker",
+    /** The headers of a decoder run whose stdout stopped at the sandbox byte cap: the two-column target list of the cut tests. */
+    async function readTruncatedHeaders(stdout: string): Promise<Awaited<ReturnType<typeof readHeaders>>> {
+        return readHeaders({
+            ...enrichArgs({
+                shapes: [],
+                fs: readSeam({}).fs,
+                lease: leaseOverClient(failingSandbox({ stdout, stdoutTruncated: true }), {
+                    sandboxId: "s1",
+                    host: "127.0.0.1",
+                    port: 8080,
+                    backend: "docker",
+                }),
             }),
-        }),
-        targets: [
-            { path: "data/a.parquet", format: "parquet" },
-            { path: "data/b.h5ad", format: "h5ad" },
-        ],
-    });
-}
+            targets: [
+                { path: "data/a.parquet", format: "parquet" },
+                { path: "data/b.h5ad", format: "h5ad" },
+            ],
+        });
+    }
 
     it("names the cut output when the sandbox capped the decoder stdout", async () => {
         const stdout = [JSON.stringify({ path: "/a1/data/a.parquet", fields: { columnCount: 3 } }), '{"path": "/a1/data/b.h5ad", "fie'].join("\n");

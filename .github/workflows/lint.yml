@@ -1,8 +1,8 @@
 name: Lint
 
 # Lints/typechecks the independent subsystems. cli/ has ESLint + a tsc
-# typecheck; harness/ and prov-kernel/ have oxlint + the type check command;
-# harness/ adds ruff over its Python package asset.
+# typecheck; harness/ and prov-kernel/ have oxlint + oxfmt + the type check
+# command; harness/ adds ruff over its Python package asset.
 #
 # Every subsystem that ships a lint config and a `lint` script gets a job step
 # for it. Without one, `bun run lint` fails on a developer machine while CI
@@ -105,6 +105,9 @@ jobs:
       - name: oxlint
         run: bun run lint
 
+      - name: oxfmt
+        run: bun run format:check
+
       - name: Typecheck
         run: bun run typecheck
 
@@ -157,6 +160,9 @@ jobs:
 
       - name: oxlint
         run: bun run lint
+
+      - name: oxfmt
+        run: bun run format:check
 
       # The typecheck program (`tsconfig.json`) includes the test files; the
       # build (`tsconfig.build.json`) excludes them.

@@ -126,7 +126,10 @@ export function findProviderError(err: unknown): ProviderError | undefined {
  * - `other`: each other failure.
  */
 export type ModelFailure =
-    { readonly kind: "outage" } | { readonly kind: "billing"; readonly reason: string } | { readonly kind: "credential" } | { readonly kind: "other" };
+    | { readonly kind: "outage" }
+    | { readonly kind: "billing"; readonly reason: string }
+    | { readonly kind: "credential" }
+    | { readonly kind: "other" };
 
 export function modelFailureOf(err: unknown): ModelFailure {
     const error = findProviderError(err);

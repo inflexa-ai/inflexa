@@ -62,7 +62,12 @@ export type NoticeFailure = {
 };
 
 export type GateName =
-    "RunAuthorizer.authorize" | "RunAuthorizer.renew" | "RunCharge.open" | "ArtifactRegistry.register" | "resolveRequestHeaders" | "resolveSandboxLabels";
+    | "RunAuthorizer.authorize"
+    | "RunAuthorizer.renew"
+    | "RunCharge.open"
+    | "ArtifactRegistry.register"
+    | "resolveRequestHeaders"
+    | "resolveSandboxLabels";
 
 export type NoticeName =
     | "RunAuthorizer.revoke"

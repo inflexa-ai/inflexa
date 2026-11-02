@@ -21,7 +21,6 @@ import { createReportSessionStateStore, type DerivationRecord, type ReportSessio
 import { presentAt } from "../../lib/present.js";
 import { citedSnapshot, validDraftDocument } from "./__fixtures__/report-docs.js";
 
-
 describe("createReportSessionStateStore", () => {
     let pool: Pool;
     let drop: () => Promise<void>;

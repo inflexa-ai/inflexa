@@ -23,7 +23,12 @@ import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
 import { presentAt } from "../../lib/present.js";
 
 /** The reconcile of one DE run under the suite root: the fixture ids, and the caller's manifest and collector. */
-function reconcileDeRun(root: string, manifest: ArtifactManifestEntry[], collector: ProvenanceCollector, logger?: Parameters<typeof reconcileManifestWithDisk>[0]["logger"]) {
+function reconcileDeRun(
+    root: string,
+    manifest: ArtifactManifestEntry[],
+    collector: ProvenanceCollector,
+    logger?: Parameters<typeof reconcileManifestWithDisk>[0]["logger"],
+) {
     return reconcileManifestWithDisk({
         workspaceRoot: root,
         resourceId: RID,
@@ -35,7 +40,6 @@ function reconcileDeRun(root: string, manifest: ArtifactManifestEntry[], collect
         logger,
     });
 }
-
 
 const RID = "a1";
 

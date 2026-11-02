@@ -48,7 +48,6 @@ const GWAS_ASSOCIATION = {
 const tool = createGeneDiseaseEvidenceTool({ disgenetApiKey: "test-key", ncbiApiKey: "test-ncbi" });
 const toolNoDisgenetKey = createGeneDiseaseEvidenceTool({ disgenetApiKey: "" });
 
-
 describe("geneDiseaseEvidence — GWAS Catalog corpus", () => {
     it("maps a direct rsID lookup", async () => {
         stubFetch(() => json({ _embedded: { associations: [GWAS_ASSOCIATION] }, page: { totalElements: 1 } }));

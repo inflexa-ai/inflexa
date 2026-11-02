@@ -40,8 +40,9 @@
     },
     "scripts": {
         "build": "tsc -p tsconfig.build.json",
-        "format": "prettier --write src/",
-        "format:file": "prettier --write",
+        "format": "oxfmt src/",
+        "format:check": "oxfmt --check src/",
+        "format:file": "oxfmt",
         "lint": "bun --bun oxlint",
         "prepare": "tsc -p tsconfig.build.json",
         "prepublishOnly": "bun run build && bun run smoke",
@@ -64,9 +65,9 @@
         "@types/luxon": "^3.7.6",
         "@types/node": "^24.13.3",
         "@typescript/native": "npm:typescript@7.0.2",
+        "oxfmt": "0.71.0",
         "oxlint": "1.85.0",
         "oxlint-tsgolint": "7.0.2003",
-        "prettier": "^3.9.5",
         "typescript": "^6.0.3"
     },
     "publishConfig": {

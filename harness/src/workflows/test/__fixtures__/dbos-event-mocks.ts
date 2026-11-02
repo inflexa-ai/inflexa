@@ -22,10 +22,7 @@ export async function dbosWriteStreamRecorder(emittedParts: unknown[]): Promise<
 }
 
 /** `DBOS.recv` records the topic of the wait, calls the resume hook, and answers with the resume message. */
-export async function dbosRecvRecorder(
-    state: { recvTopics: string[]; onRecv?: () => void },
-    resumeMessage: unknown,
-): Promise<void> {
+export async function dbosRecvRecorder(state: { recvTopics: string[]; onRecv?: () => void }, resumeMessage: unknown): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
     Reflect.set(
         dbos.DBOS,

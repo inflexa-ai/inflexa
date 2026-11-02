@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 
-
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { PharmgkbResponseSchema, searchPharmgkb } from "../pharmgkb-client.js";
 import { presentAt } from "../../../lib/present.js";

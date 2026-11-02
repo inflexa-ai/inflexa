@@ -11,7 +11,9 @@ import { getEnrichment, getInteractionNetwork, getInteractionPartners, type Stri
 const DEFAULT_LIMIT = 20;
 
 type InteractionsOutput =
-    { enrichment: StringEnrichment[]; totalTerms: number } | { interactions: StringInteraction[] } | { interactions: StringInteraction[]; totalEdges: number };
+    | { enrichment: StringEnrichment[]; totalTerms: number }
+    | { interactions: StringInteraction[] }
+    | { interactions: StringInteraction[]; totalEdges: number };
 
 export const searchInteractionsTool = defineTool({
     id: "search_interactions",

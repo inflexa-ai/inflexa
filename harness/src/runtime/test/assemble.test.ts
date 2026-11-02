@@ -34,13 +34,7 @@ import type { ReportVersionStore } from "../../state/report-versions.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } from "../../tools/report-authoring/authoring-tools.js";
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../../workflows/execute-analysis.js";
-import {
-    assembleCoreRuntime,
-    createThreadAgentResolver,
-    resolveCompositionEyes,
-    type CoreRuntime,
-    type CoreRuntimeDeps,
-} from "../assemble.js";
+import { assembleCoreRuntime, createThreadAgentResolver, resolveCompositionEyes, type CoreRuntime, type CoreRuntimeDeps } from "../assemble.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ThreadStore, ThreadType } from "../../memory/thread-store.js";
 

@@ -65,7 +65,8 @@ export type FinishGap = SchemaGap | DuplicateIdGap | UnresolvedReferenceGap;
  * ride along in either case, because a warning is advisory and it never decides the outcome.
  */
 export type FinishResult =
-    { valid: true; document: ReportDocument; warnings: ReportWarning[] } | { valid: false; gaps: FinishGap[]; warnings: ReportWarning[] };
+    | { valid: true; document: ReportDocument; warnings: ReportWarning[] }
+    | { valid: false; gaps: FinishGap[]; warnings: ReportWarning[] };
 
 /**
  * One derivation of the session, as the finish reads it. The finish needs the output path alone, because

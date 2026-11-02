@@ -1,5 +1,3 @@
-
-
 import { describe, expect, it } from "bun:test";
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { requestedUrls, restoreFetchAfterEach, stubBodyFetch } from "../__fixtures__/client-stubs.js";
@@ -7,7 +5,6 @@ import { requestedUrls, restoreFetchAfterEach, stubBodyFetch } from "../__fixtur
 restoreFetchAfterEach();
 import { CtSearchResponseSchema, CtStudySchema, getTrialDetails, mapClinicalTrialStudy, searchTrials } from "../clinical-trials-client.js";
 import { presentAt } from "../../../lib/present.js";
-
 
 runFixtureSuite("clinicaltrials golden fixtures", [
     fixtureCase({

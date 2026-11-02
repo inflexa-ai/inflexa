@@ -32,7 +32,7 @@ import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, CHART_PAGE_TEXT_PX, CHART
 import type { RenderProblem } from "../types.js";
 import {
     AREA_LEGEND_ICON,
-    ChartBox,
+    type ChartBox,
     categoricalPalette,
     chartProblem,
     demandedColumn,

@@ -28,7 +28,6 @@ function json(body: unknown, status = 200): Response {
 const tool = createDrugGeneInteractionsTool({ drugbankApiKey: "test-key" });
 const toolNoDrugbankKey = createDrugGeneInteractionsTool({ drugbankApiKey: "" });
 
-
 // The wire shape of DGIdb. GraphQL answers a nullable field with an explicit
 // null, thus every second row carries `directionality: null`, as the live
 // payloads do.

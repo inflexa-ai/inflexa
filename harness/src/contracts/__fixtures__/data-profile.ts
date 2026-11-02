@@ -45,9 +45,6 @@ export function subjectSlotObservation(): DataProfileObservation {
 }
 
 /** The subject dimension of the resolved profile, over the given observations. */
-export function subjectDimension(
-    observations: DataProfileObservation[],
-    reconciliations?: DataProfileDimension["reconciliations"],
-): DataProfileDimension {
+export function subjectDimension(observations: DataProfileObservation[], reconciliations?: DataProfileDimension["reconciliations"]): DataProfileDimension {
     return { label: "subject", category: "subject", scope: "biological", observations, reconciliations };
 }

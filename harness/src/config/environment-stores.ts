@@ -83,7 +83,8 @@ export type EnvironmentStorePaths = {
  * pool must stay distinguishable from a pool that holds nothing.
  */
 export type PoolInventoryRead =
-    { readonly kind: "sections"; readonly sections: readonly PoolInventorySection[] } | { readonly kind: "unavailable"; readonly reason: string };
+    | { readonly kind: "sections"; readonly sections: readonly PoolInventorySection[] }
+    | { readonly kind: "unavailable"; readonly reason: string };
 
 /** One package entry of an inventory section, with the store identity where the source records it. */
 export type PoolInventoryPackage = {

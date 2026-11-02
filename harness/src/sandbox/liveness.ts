@@ -26,7 +26,9 @@ export const PROBE_AFTER_UNAVAILABLE_POLLS = 4;
 export type PollLivenessOutcome = "ok" | "unavailable";
 
 export type ProbeVerdict =
-    { readonly kind: "dead"; readonly oomKilled: boolean } | { readonly kind: "alive" } | { readonly kind: "inconclusive"; readonly detail: string };
+    | { readonly kind: "dead"; readonly oomKilled: boolean }
+    | { readonly kind: "alive" }
+    | { readonly kind: "inconclusive"; readonly detail: string };
 
 /**
  * The consecutive-unavailable counter: `unavailable` increments, `ok` resets,

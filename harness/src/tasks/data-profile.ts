@@ -941,7 +941,8 @@ export type DataProfileTriggerResult = "started" | "restarted" | "already_runnin
  * - `start_failed`: DBOS did not start the workflow. `cause` is the throw of DBOS.
  */
 export type DataProfileStartError =
-    { readonly type: "refused"; readonly reason: string; readonly suspend: boolean } | { readonly type: "start_failed"; readonly cause: unknown };
+    | { readonly type: "refused"; readonly reason: string; readonly suspend: boolean }
+    | { readonly type: "start_failed"; readonly cause: unknown };
 
 /** A one-line, user-facing description of a `DataProfileStartError`. */
 export function describeDataProfileStartError(e: DataProfileStartError): string {

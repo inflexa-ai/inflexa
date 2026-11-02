@@ -195,7 +195,9 @@ export type CitationSourcePlanItem = z.infer<typeof CitationSourcePlanItemSchema
  * is exactly what a reader of `sourceOutcomes` needs.
  */
 export type RegistrationAgencyEvidence =
-    { readonly status: "determined"; readonly agency: string } | { readonly status: "absent" } | { readonly status: "undetermined"; readonly detail: string };
+    | { readonly status: "determined"; readonly agency: string }
+    | { readonly status: "absent" }
+    | { readonly status: "undetermined"; readonly detail: string };
 
 export type CitationSourceRequest = {
     readonly input: CitationInput;
