@@ -14,6 +14,7 @@ One `SKILL.md` per directory, grouped by domain:
 - **Immunology / microbiome** — `immune-profiling`, `microbiome`
 - **Integration / stats** — `multi-omics-integration`, `network-regulatory`, `statistical-modeling`, `enrichment`
 - **Chem / drug / translational** — `cheminformatics`, `drug-repurposing`, `translational-safety`, `pkpd-clinical-response`
+- **Viewer assets** — `mdv-preparation` (projects for MDV, the Multi-Dimensional Viewer)
 
 `shared/` holds cross-cutting packs declared by (almost) every agent — currently `shared/omics-general`.
 
