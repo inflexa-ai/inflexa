@@ -26,6 +26,7 @@ import { createDrugRepurposingAgent, meta as drugRepurposingMeta } from "./drug-
 import { createEnrichmentAgent, meta as enrichmentMeta } from "./enrichment-agent.js";
 import { createGenomicVariantAgent, meta as genomicVariantMeta } from "./genomic-variant-agent.js";
 import { createImmuneProfilingAgent, meta as immuneProfilingMeta } from "./immune-profiling-agent.js";
+import { createMdvPreparationAgent, meta as mdvPreparationMeta } from "./mdv-preparation-agent.js";
 import { createMetabolomicsAgent, meta as metabolomicsMeta } from "./metabolomics-agent.js";
 import { createMicrobiomeAgent, meta as microbiomeMeta } from "./microbiome-agent.js";
 import { createMultiOmicsIntegrationAgent, meta as multiOmicsIntegrationMeta } from "./multi-omics-integration-agent.js";
@@ -70,6 +71,7 @@ export const SANDBOX_AGENT_META: Readonly<Record<string, AgentMeta>> = {
     [pkpdClinicalResponseMeta.id]: pkpdClinicalResponseMeta,
     [immuneProfilingMeta.id]: immuneProfilingMeta,
     [drugRepurposingMeta.id]: drugRepurposingMeta,
+    [mdvPreparationMeta.id]: mdvPreparationMeta,
     [scientificExecutorMeta.id]: scientificExecutorMeta,
 };
 
@@ -99,6 +101,7 @@ export function createSandboxAgents(deps: SandboxAgentDeps): Record<string, Agen
         [pkpdClinicalResponseMeta.id]: createPkpdClinicalResponseAgent(deps),
         [immuneProfilingMeta.id]: createImmuneProfilingAgent(deps),
         [drugRepurposingMeta.id]: createDrugRepurposingAgent(deps),
+        [mdvPreparationMeta.id]: createMdvPreparationAgent(deps),
         [scientificExecutorMeta.id]: createScientificExecutorAgent(deps),
     };
 }
