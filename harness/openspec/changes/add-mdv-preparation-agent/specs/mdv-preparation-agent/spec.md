@@ -17,13 +17,13 @@ The system MUST define the agent in `agents/sandbox/mdv-preparation-agent.ts`. I
 
 ### Requirement: The capabilities name the MDV task
 
-The `capabilities` of the agent MUST name the preparation, the conversion, the curation, the views, and the validation of an MDV project. The `suitableFor` list MUST name the single-cell, scATAC-seq, multiome, spatial transcriptomics, and spatial proteomics data types, and the containers AnnData, MuData, and SpatialData.
+The `capabilities` of the agent MUST name the preparation, the curation, and the validation of an MDV asset. The `suitableFor` list MUST name the single-cell, scATAC-seq, multiome, spatial transcriptomics, and spatial proteomics data types, and the containers AnnData, MuData, and SpatialData.
 
-#### Scenario: A request for an MDV project routes to the agent
+#### Scenario: A request for MDV routes to the agent
 
 - **GIVEN** a request to prepare a CosMx dataset for MDV
 - **WHEN** the planner or the ad hoc router reads the catalog
-- **THEN** the phrase `MDV project preparation` of `mdv-preparation-agent` matches the request
+- **THEN** the phrase `MDV asset preparation` of `mdv-preparation-agent` matches the request
 
 ### Requirement: The agent declares the MDV pack and the modality packs
 
@@ -43,14 +43,12 @@ The `capabilities` of the agent MUST name the preparation, the conversion, the c
 - **WHEN** the meta of the agent is inspected
 - **THEN** `meta.tools` equals `BASE_SANDBOX_TOOLS`
 
-### Requirement: The agent stops cleanly when mdvtools is absent
+### Requirement: The agent delivers an asset, not a project
 
-If the sandbox does not hold `mdvtools`, the agent MUST deliver the curated AnnData, report that the conversion needs `mdvtools`, and stop. It MUST NOT write the files of an MDV project by hand.
+The agent MUST deliver an MDV-ready AnnData, the context tables, a README, and the report of the validator. It MUST NOT need `mdvtools`, and it MUST NOT write the files of an MDV project.
 
-#### Scenario: The package store does not hold mdvtools
+#### Scenario: A step delivers the asset
 
-- **GIVEN** a step whose sandbox has no `mdvtools`
-- **WHEN** the agent reaches the conversion
-- **THEN** the step output holds the curated `.h5ad`
-- **AND** the summary names the absent package
+- **WHEN** a step of the agent completes
+- **THEN** the step output holds a `.mdv.h5ad` file, a `README.md`, and a validator report with zero errors
 - **AND** the step output holds no `datasources.json`

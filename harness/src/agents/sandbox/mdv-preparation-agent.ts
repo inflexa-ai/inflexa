@@ -1,6 +1,6 @@
 /**
  * MDV Preparation Agent — turns single-cell, scATAC-seq, spatial transcriptomics, and spatial
- * proteomics data into curated, validated projects for MDV (Multi-Dimensional Viewer).
+ * proteomics data into curated, validated assets that MDV (Multi-Dimensional Viewer) loads.
  */
 
 import type { AgentDefinition } from "../../loop/types.js";
@@ -11,12 +11,11 @@ import type { AgentMeta } from "./types.js";
 export const meta: AgentMeta = {
     id: "mdv-preparation-agent",
     capabilities: [
-        "MDV project preparation",
-        "single-cell data to MDV conversion",
-        "spatial data to MDV conversion",
+        "MDV asset preparation",
+        "single-cell data preparation for MDV",
+        "spatial data preparation for MDV",
         "metadata curation for visualization",
-        "MDV view building",
-        "MDV project validation",
+        "MDV asset validation",
     ],
     suitableFor: [
         "scrna-seq",

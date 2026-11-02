@@ -8,18 +8,18 @@ The system MUST give the pack at `skills/mdv-preparation/`, with a `SKILL.md` ma
 
 - **WHEN** `skills/mdv-preparation/` is listed
 - **THEN** `SKILL.md` exists
-- **AND** `references/` holds the project contract, the AnnData route, the view recipes, the validation, and one reference for each modality group
+- **AND** `references/` holds the asset contract, the asset route, the validation, and one reference for each modality group
 
-### Requirement: The pack defines an MDV-ready project
+### Requirement: The pack defines an MDV-ready asset
 
-The pack MUST define a project as MDV-ready when the validator of the pack reports zero errors, and when the column names, the categories, and the views are readable without help. The pack MUST tell the agent to set `permission: "edit"` and an initial view that opens on the data.
+The pack MUST define an asset as MDV-ready when the validator of the pack reports zero errors, and when the column labels and the categories are readable without help. The pack MUST tell the agent that the label of a column is the name that MDV shows, and that the README is the glossary.
 
-#### Scenario: The converter output is not ready
+#### Scenario: A raw key is not a ready label
 
-- **GIVEN** a project that `convert_scanpy_to_mdv` wrote with its defaults
+- **GIVEN** an AnnData whose columns are raw keys such as `total_counts`
 - **WHEN** the agent follows the pack
-- **THEN** the agent replaces the empty default view with the view set of the modality
-- **AND** the state holds `permission: "edit"`, the initial view, and the name of the project
+- **THEN** the asset labels the column with words and units, such as `Transcripts per cell`
+- **AND** the README explains the column
 
 ### Requirement: The code of the pack is extractable
 
@@ -31,15 +31,15 @@ Each helper module of the pack MUST be one fenced Python block whose first line 
 - **THEN** each module compiles
 - **AND** no module name occurs in two blocks
 
-### Requirement: The validator checks the project in layers
+### Requirement: The validator reads the asset as stored
 
-The pack MUST give a validator that checks the files, the metadata, the HDF5 layout, the views and the state, a decode of each datasource, and a request for each column through the WSGI app of `mdvtools`. It MUST exit with status 1 when it finds an error.
+The pack MUST give a validator that reads the HDF5 encodings of the asset. It MUST give an error for each condition that stops or corrupts the conversion of MDV: an unknown encoding, a nullable string array, a type that the conversion does not map, a duplicate name, a reserved label, a dense matrix, and a gene name with `|` or `(`. It MUST exit with status 1 when it finds an error.
 
-#### Scenario: A corrupt project fails
+#### Scenario: A pandas 3 file fails
 
-- **GIVEN** a project with a view that names a column that does not exist
+- **GIVEN** an AnnData that pandas 3 wrote with its default string type
 - **WHEN** the validator runs
-- **THEN** its report holds an L3 error that names the view and the column
+- **THEN** its report holds an error for the nullable string array of the names
 - **AND** it exits with status 1
 
 ### Requirement: A raw CosMx run gets a measured orientation
