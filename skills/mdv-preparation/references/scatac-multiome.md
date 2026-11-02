@@ -2,77 +2,58 @@
 
 ## The problem with peaks
 
-A peak set has 100,000–500,000 features. As the linked feature datasource of the cells this
-breaks down in MDV:
+A peak set has 100,000–500,000 features. As the features of an MDV asset this breaks down:
 
-- above 65,536 rows the feature name column becomes `unique` and the link UI warns about
-  unexpected behaviour;
+- above 65,536 rows MDV makes the feature name column `unique` and warns about the link;
 - people look up genes, not genomic intervals.
 
-So the cells link to **genes**, through a gene-activity matrix. Peaks, if the user needs them,
-go in their own datasource, not as the gene link.
+So the features of the asset are **genes**, through a gene-activity matrix. Peaks, if the user
+needs them, go in a separate TSV.
 
-## Build the AnnData
+## scATAC-seq alone
 
 Use the chromatin-regulation pack for the analysis (SnapATAC2 when installed, Signac through R
-otherwise). For MDV you need:
+otherwise). The asset holds:
 
-| Item | Source |
-|---|---|
-| cells, QC (`n_fragment`, `tsse`, `frip`, doublet score) | the ATAC object |
-| `X_umap`, clusters, labels | the ATAC object (spectral embedding / LSI) |
-| X = gene activity, log-normalised, sparse | SnapATAC2 `make_gene_matrix` or Signac `GeneActivity`, then normalise + log1p |
-| var = gene symbols (unique, no `|` / `(`) | the gene annotation of the genome build |
+| Item | Source | In the asset |
+|---|---|---|
+| cells, QC (fragments, TSS enrichment, FRiP, doublet score) | the ATAC object | `obs`, readable labels |
+| UMAP, clusters, labels | the ATAC object (spectral embedding / LSI) | `obsm["UMAP"]`, `obs` |
+| gene activity, normalised + log1p, sparse | SnapATAC2 `make_gene_matrix` or Signac `GeneActivity` | X |
+| gene symbols (unique, no `|` / `(`) | the gene annotation of the genome build | `var_names` |
 
-Name the subgroup for what it is: "Gene activity", not "Gene Scores". Rename the link and the
-subgroup label after the conversion:
-
-```python
-md = mdv.get_datasource_metadata("cells")
-md["links"]["genes"]["rows_as_columns"]["subgroups"]["gs"]["label"] = "Gene activity"
-md["links"]["genes"]["rows_as_columns"]["name"] = "Gene activity"
-mdv.set_datasource_metadata(md)
-```
-
-Motif deviations (chromVAR) are a second feature set: a `motifs` datasource with its own link
-(`add_rows_as_columns_link` + `add_rows_as_columns_subgroup`), rows in the same order as the
-deviation matrix columns.
-
-## Peaks (optional)
-
-A `peaks` datasource from a DataFrame: `chr` (text), `start` and `end` as `int32` (positions
-exceed the exact range of float32), peak width, the nearest gene, and per-cluster accessibility
-summaries. Do not link it to the cells by rows-as-columns.
+MDV labels X "Gene Scores". Say in the README that the Gene Scores of this asset are gene-activity
+scores, not expression.
 
 ## Multiome (RNA + ATAC in the same cells)
 
-Two routes. Use the first.
+One asset, one gene table, two expression sets:
 
-1. **AnnData route plus a link** (default): convert the RNA AnnData with `add_layer_data=False`,
-   then add the gene activity as a second feature datasource and link it:
+```python
+shared = rna.var_names.intersection(activity.var_names)          # genes in both
+rna_s = rna[:, shared]
+act = activity[rna.obs_names, shared]                             # rows in the order of the RNA cells
+rna_s.layers["act"] = act.X                                       # sparse, normalised + log1p
+asset = build_asset(rna_s, OBS_LABELS, obsm_keys={"X_umap": "UMAP"}, layers={"act": "Gene activity"})
+```
 
-   ```python
-   mdv.add_datasource("activity_genes", sanitise_frame(act_var.reset_index(names="name")), add_to_view=None)
-   mdv.add_rows_as_columns_link("cells", "activity_genes", "name", "Gene activity")
-   mdv.add_rows_as_columns_subgroup("cells", "activity_genes", "ga", to_csc(act_X), label="Gene activity")
-   ```
+MDV shows X as "Gene Scores" (RNA) and the layer as "Gene activity". Check before you write:
+the cells of both modalities are the same (`act.obs_names` equals `rna.obs_names`), and both
+matrices are sparse and log-normalised. Report in the README how many genes each modality loses
+to the intersection.
 
-   `act_X` rows MUST be in the order of the `cells` datasource (the RNA `obs_names`), and its
-   columns in the order of `activity_genes`. Check `act_obs_names == rna_obs_names` first.
-2. **MuData route**: `convert_mudata_to_mdv(folder, mdata)` writes `cells` from the global `obs`
-   and one datasource plus link per modality (`rna`, `atac`, …). It has no `add_layer_data`
-   switch, and with anndata ≥ 0.13 it writes each matrix twice: `<mod>_expr` and `<mod>_None`
-   (the X that anndata lists under `layers[None]`). Before you convert: make the ATAC modality a
-   gene-activity modality (not peaks), keep modality keys short, and make every modality's
-   `obs_names` a subset of the global ones. After you convert, remove the `<mod>_None` subgroups
-   from the link metadata; the duplicate data stays in the file, so prefer route 1.
+Motif deviations (chromVAR) and peaks do not fit the gene table. Write them as TSV files: one row
+per motif or peak, with per-cluster summaries.
 
-Then curate and build views as in the AnnData route. Add a view that compares RNA expression
-and gene activity of the selected gene on the UMAP side by side.
+## Peaks (optional TSV)
+
+`peaks.tsv`: chromosome, start, end, width, the nearest gene, and per-cluster accessibility. MDV
+reads positions as numbers stored as float32, which rounds values above 16,777,216; keep the
+positions as text in a `Location` column (`chr1:1234567-1235067`) as well.
 
 ## Anti-patterns
 
-- Peaks as the linked feature set of the cells.
-- Genomic positions as `integer` or `double` (float32 rounds them).
-- A raw (not normalised) gene-activity matrix as X.
-- Calling gene activity "expression" in names, labels, or the README.
+- Peaks as the features of the asset.
+- A raw (not normalised) gene-activity matrix.
+- Calling gene activity "expression" in labels or the README.
+- Multiome layers whose rows or genes are not in the order of X.

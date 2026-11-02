@@ -27,7 +27,8 @@ grant is smaller, use the patterns below; they keep the peak near one copy.
 | `sc.pp.highly_variable_genes(flavor="seurat_v3")` | a boolean-indexed copy + a float64 copy of X | rank HVGs on a subsample of ≤ 50,000 cells, copy the flags back |
 | `sc.pp.pca(mask_var=...)` | X[:, hvg] copy; freed memory is not returned to the OS | park X on disk while the graph, UMAP and Leiden run |
 | `sc.tl.rank_genes_groups` on all cells | per-group copies | ≤ 1,000 cells per group (`annotate_clusters`) |
-| `convert_scanpy_to_mdv` | X → CSC copy | free everything else first; keep only `X_umap` in `obsm` |
+| `build_asset` + `write_h5ad` | none when X is CSR float32 (`astype(copy=False)`) | build the asset from a fresh AnnData that holds only what it needs |
+| MDV's upload (on the MDV server) | the whole file + a CSC copy of X | keep the asset below 5 GB; say the size in the README |
 | `sc.pp.normalize_total`, `sc.pp.log1p` | none on sparse X (in place) | — |
 
 ## Helpers
@@ -131,4 +132,4 @@ On two cores, 183,000 cells: PCA about 1.5 min, UMAP about 4 min, Leiden under 3
 
 The browser holds every loaded column as a typed array of N values, and each gene a user looks
 at as one more. A few hundred thousand cells are fine. Above about 2 million cells, keep the
-first view light (no all-gene charts), and consider one project per sample.
+charts light (no all-gene charts) and consider one asset per sample.
