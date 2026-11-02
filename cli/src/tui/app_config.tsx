@@ -138,7 +138,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
     // toggles, is reachable by walking down from a fixed, predictable origin. The server resolves the
     // Postgres defaults, so the form shows every field even when config.json has no `postgres` key; the
     // server persists only the explicit non-default choices.
-    /* eslint-disable solid/reactivity -- seed-once: the screen mounts once over the settings that its opener read, and the form owns the draft after that */
+    /* oxlint-disable solid/reactivity -- seed-once: the screen mounts once over the settings that its opener read, and the form owns the draft after that */
     const defaults = props.settings.embeddingDefaults;
     const clientOpts = props.clientOpts ?? DEFAULT_CLIENT_OPTS;
     const initial: SettingsDraft = {
@@ -148,7 +148,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
         postgres: props.settings.postgres,
         embedding: props.settings.embedding,
     };
-    /* eslint-enable solid/reactivity */
+    /* oxlint-enable solid/reactivity */
     const [saved, setSaved] = createSignal(initial);
     const [draft, setDraft] = createSignal(initial);
     const [section, setSection] = createSignal(0);
@@ -327,7 +327,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
         modelFetchController?.abort();
     });
 
-    /* eslint-disable solid/reactivity -- every callback in this block runs from a user-driven dialog
+    /* oxlint-disable solid/reactivity -- every callback in this block runs from a user-driven dialog
        submission, which the rule cannot see (it recognizes JSX handlers, not our promptField /
        promptDimensions / Result.match boundaries). Each draft read inside them is a deliberate
        point-in-time read of the value at the instant the user acted — seeding a prompt with the current
@@ -553,7 +553,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
         ));
     }
 
-    /* eslint-enable solid/reactivity */
+    /* oxlint-enable solid/reactivity */
 
     // Applies a value already cleared by validatePgField: `port` is a valid, non-reserved integer; every
     // other field is a non-empty trimmed string.
@@ -636,7 +636,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
     // Standalone (`inflexa config`): this screen owns the renderer, so install the root keymap handler
     // here. Embedded as a dialog: the host `App` already installed it — a second root would
     // double-dispatch every key — so we only register our bindings layer below.
-    // eslint-disable-next-line solid/reactivity -- seed-once: props.onClose is fixed at mount (embedded vs standalone never changes), so this one-time read correctly decides which mode installs the root
+    // oxlint-disable-next-line solid/reactivity -- seed-once: props.onClose is fixed at mount (embedded vs standalone never changes), so this one-time read correctly decides which mode installs the root
     if (!props.onClose) useKeymapRoot();
 
     // Dialog-entry gated: live while this screen is the top entry (embedded) or while no dialog
@@ -761,7 +761,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
 
                 <For each={PG_FIELDS}>
                     {(field, i) => {
-                        // eslint-disable-next-line solid/reactivity -- PG_FIELDS is static; the index is stable for the row's lifetime, so seeding-once is safe.
+                        // oxlint-disable-next-line solid/reactivity -- PG_FIELDS is static; the index is stable for the row's lifetime, so seeding-once is safe.
                         const fieldSection = PG_FIELD_SECTIONS_START + i();
                         const focused = () => section() === fieldSection;
                         const value = () => (field === "password" ? secretState(pgDraft().password, pgDraft().passwordSet) : String(pgDraft()[field]));

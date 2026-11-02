@@ -19,7 +19,7 @@ export type FixedListProps<T> = ListProps<T> & {
  * no input, no esc; see `list_core.tsx`.
  */
 export function FixedList<T>(props: FixedListProps<T>): JSX.Element {
-    // eslint-disable-next-line solid/reactivity -- seed-once: the read-once mount semantic IS FixedList's contract (documented on `items`)
+    // oxlint-disable-next-line solid/reactivity -- seed-once: the read-once mount semantic IS FixedList's contract (documented on `items`)
     const items = props.items;
     // Wrap-around cursor nav is safe here: a fixed row set has stable ends (see `wrapNavigation`).
     return <ListCore {...props} items={items} strategy="for" wrapNavigation />;

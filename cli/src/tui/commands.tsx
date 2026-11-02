@@ -534,7 +534,7 @@ export function ModelPickerDialog(props: {
 
     // The effort the left and right keys hold across cursor moves. Each row shows it through `effortFor`,
     // thus it stays one value while the rows have different ladders.
-    // eslint-disable-next-line solid/reactivity -- seed-once: the picker mounts once for each open with a fixed current effort, and the keys own the value after that
+    // oxlint-disable-next-line solid/reactivity -- seed-once: the picker mounts once for each open with a fixed current effort, and the keys own the value after that
     const [effort, setEffort] = createSignal<AgentEffort>(props.currentEffort);
     const [cursorId, setCursorId] = createSignal<string | undefined>(undefined);
     const listed = (id: string | undefined): ListedModel | undefined => (id === undefined ? undefined : props.models?.find((m) => m.id === id));
@@ -830,7 +830,7 @@ export async function openSwitchAnalysis(ctx: Workspace, opts: AnalysisDialogOpt
 
 function SwitchAnalysisDialog(props: { analyses: AnalysisSummary[]; opts: AnalysisDialogOpts }): JSX.Element {
     const ws = useWorkspace();
-    // eslint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
+    // oxlint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
     const items = props.analyses.map((a) => {
         const totals = a.usage;
         // The CACHED anchor path, as the list gives it: a read-only display must not trigger the
@@ -1418,7 +1418,7 @@ export async function openReportPage(ctx: Workspace, opts: SessionOpts = DEFAULT
 
 function AnalysesListDialog(props: { analyses: AnalysisSummary[] }): JSX.Element {
     const ws = useWorkspace();
-    // eslint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
+    // oxlint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
     const lines = props.analyses.map((a) => `${a.name}  —  ${a.slug}`);
     return <ResultsDialog title="Analyses" lines={lines} emptyText="No analyses yet" onClose={() => ws.closeDialog()} />;
 }
@@ -1724,7 +1724,7 @@ async function fetchAllProjects(): Promise<ProjectSummary[] | null> {
 
 function ProjectListDialog(props: { projects: ProjectSummary[] }): JSX.Element {
     const ws = useWorkspace();
-    // eslint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
+    // oxlint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
     const lines = props.projects.map((p) => {
         const tags = p.tags.length ? ` [${p.tags.join(", ")}]` : "";
         return `${p.name}${tags}  (${p.analysisCount} analyses)`;
@@ -1737,7 +1737,7 @@ function SetProjectDialog(props: { projects: ProjectSummary[] }): JSX.Element {
     const a = ws.analysis;
     const items = [
         { value: null as string | null, title: "(none)", description: "Clear project grouping" },
-        // eslint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
+        // oxlint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
         ...props.projects.map((p) => ({ value: p.id as string | null, title: p.name, description: p.description ?? undefined })),
     ];
     return (
@@ -1786,7 +1786,7 @@ function AddInputDialog(props: { inputs: InputView[] }): JSX.Element {
     // Existing inputs in the picker's value space (canonical absolute paths). An input whose anchor
     // can't be located has no absolute path and stays OUT of the seed — it can't render as a row, and
     // the server's replacement deliberately never removes what no client could show.
-    // eslint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
+    // oxlint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
     const seed = new Set(props.inputs.flatMap((input) => (input.absolutePath === null ? [] : [input.absolutePath])));
     return (
         <FilePicker
@@ -1856,7 +1856,7 @@ export async function openRemoveInputs(ctx: Workspace, client: ClientOpts = DEFA
 function RemoveInputsDialog(props: { inputs: InputView[]; client: ClientOpts }): JSX.Element {
     const ws = useWorkspace();
     const a = ws.analysis;
-    // eslint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
+    // oxlint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
     const items = props.inputs.map((input) => {
         const shown = input.absolutePath ?? input.path;
         return {

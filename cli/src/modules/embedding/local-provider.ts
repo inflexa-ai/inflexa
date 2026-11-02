@@ -572,13 +572,13 @@ function spawnLlamaServer(serverBin: string, modelPath: string, port: number, ke
     try {
         const proc = Bun.spawn({
             cmd: [serverBin, "-m", modelPath, "--embeddings", "--host", "127.0.0.1", "--port", String(port)],
-            /* eslint-disable no-restricted-properties -- the child inherits the parent's PATH/dyld env so
+            /* oxlint-disable no-restricted-properties -- the child inherits the parent's PATH/dyld env so
                llama-server can resolve its colocated shared libraries; LLAMA_API_KEY is layered onto the
                child's own env object only, never onto this process's env, so the secret stays off both the
                host's `ps` listing and the ambient environment. env.ts governs config READS; this is a
                child-process env WRITE, not a read of our own config. */
             env: { ...process.env, LLAMA_API_KEY: key },
-            /* eslint-enable no-restricted-properties */
+            /* oxlint-enable no-restricted-properties */
             stdout: "ignore",
             stderr: "pipe",
         });
@@ -960,7 +960,7 @@ async function defaultLaunch(modelPath: string): Promise<Result<SidecarHandle, P
  * NO_PROXY assignments to fetch's proxy resolution — plain read-append-assign works.
  */
 function ensureLoopbackProxyBypass(): void {
-    /* eslint-disable no-restricted-properties -- env.ts owns config READS; this is the sidecar's
+    /* oxlint-disable no-restricted-properties -- env.ts owns config READS; this is the sidecar's
        deliberate loopback-bypass MUTATION of the ambient proxy env (rationale in the JSDoc above). */
     const union = new Set<string>();
     for (const name of ["NO_PROXY", "no_proxy"] as const) {
@@ -973,7 +973,7 @@ function ensureLoopbackProxyBypass(): void {
     const merged = [...union].join(",");
     process.env.NO_PROXY = merged;
     process.env.no_proxy = merged;
-    /* eslint-enable no-restricted-properties */
+    /* oxlint-enable no-restricted-properties */
 }
 
 /**

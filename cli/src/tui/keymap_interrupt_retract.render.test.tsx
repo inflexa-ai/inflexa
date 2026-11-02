@@ -151,7 +151,13 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
         let fallthroughCalls = 0;
         const controls: RetractControls = {
             // canRetract would allow it, but a typed buffer is the OTHER half of the gate — it must veto.
-            conversation: { canRetract: () => true, retract: () => ((retractCalls += 1), Promise.resolve()) },
+            conversation: {
+                canRetract: () => true,
+                retract: () => {
+                    retractCalls += 1;
+                    return Promise.resolve();
+                },
+            },
             onFallthrough: () => (fallthroughCalls += 1),
             onRef: (r) => (ta = r),
         };
@@ -178,7 +184,13 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
         let retractCalls = 0;
         let fallthroughCalls = 0;
         const controls: RetractControls = {
-            conversation: { canRetract: () => false, retract: () => ((retractCalls += 1), Promise.resolve()) },
+            conversation: {
+                canRetract: () => false,
+                retract: () => {
+                    retractCalls += 1;
+                    return Promise.resolve();
+                },
+            },
             onFallthrough: () => (fallthroughCalls += 1),
             onRef: () => {},
         };
@@ -271,7 +283,13 @@ describe("pane-focused up-arrow retract layer (rendered, real keyboard bus)", ()
         let pane!: ScrollBoxRenderable;
         let retractCalls = 0;
         const controls: PaneRetractControls = {
-            conversation: { canRetract: () => true, retract: () => ((retractCalls += 1), Promise.resolve()) },
+            conversation: {
+                canRetract: () => true,
+                retract: () => {
+                    retractCalls += 1;
+                    return Promise.resolve();
+                },
+            },
             onPaneRef: (r) => (pane = r),
             onComposerRef: () => {},
         };
@@ -308,7 +326,13 @@ describe("pane-focused up-arrow retract layer (rendered, real keyboard bus)", ()
         let retractCalls = 0;
         const controls: PaneRetractControls = {
             // The gate is closed (output arrived / turn ended), so the pane retract layer disables.
-            conversation: { canRetract: () => false, retract: () => ((retractCalls += 1), Promise.resolve()) },
+            conversation: {
+                canRetract: () => false,
+                retract: () => {
+                    retractCalls += 1;
+                    return Promise.resolve();
+                },
+            },
             onPaneRef: (r) => (pane = r),
             onComposerRef: () => {},
         };

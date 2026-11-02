@@ -1,4 +1,4 @@
-/* eslint-disable solid/reactivity -- the dialog mounts once over one FIXED failed row (the opener
+/* oxlint-disable solid/reactivity -- the dialog mounts once over one FIXED failed row (the opener
  * reads it fresh and passes it whole), so every `props.flight` read inside an action callback is a
  * deliberate one-time read — there is no later prop change to track. */
 import { For } from "solid-js";

@@ -237,7 +237,7 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
     // in place when the mount-time effects below run: the first `onCursorChange` then reports the
     // seeded row rather than row 0, and scrollChildIntoView brings it on screen. The query/items
     // reset effect is `defer: true`, so it stays silent at mount and does not clobber this.
-    // eslint-disable-next-line solid/reactivity -- seed-once by contract: `initialValue` is documented as a mount-time-only seed, so an untracked read is the intent
+    // oxlint-disable-next-line solid/reactivity -- seed-once by contract: `initialValue` is documented as a mount-time-only seed, so an untracked read is the intent
     const seeded = props.initialValue === undefined ? -1 : flat().findIndex((it) => it.value === props.initialValue);
     const [cursor, setCursor] = createSignal(seeded < 0 ? 0 : seeded);
 
@@ -479,7 +479,7 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                 >
                     {/* strategy is fixed per wrapper (never changes after mount), so a plain ternary
                         — not a <Show> — picks the loop component once. */}
-                    {/* eslint-disable solid/reactivity -- false positives on the loop callbacks: For's `item` is a per-node constant (thunked deliberately so renderRow gets one accessor shape), and Index's `item` IS the accessor renderRow tracks */}
+                    {/* oxlint-disable solid/reactivity -- false positives on the loop callbacks: For's `item` is a per-node constant (thunked deliberately so renderRow gets one accessor shape), and Index's `item` IS the accessor renderRow tracks */}
                     {props.strategy === "for" ? (
                         <For each={flat()}>
                             {(item) =>
@@ -492,7 +492,7 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                     ) : (
                         <Index each={flat()}>{(item, i) => renderRow(item, () => `${lid}-slot-${i}`)}</Index>
                     )}
-                    {/* eslint-enable solid/reactivity */}
+                    {/* oxlint-enable solid/reactivity */}
                 </Show>
             </ScrollPane>
             {/* Full-width painted box, not a bare <text>: a fixed row directly below a flexGrow

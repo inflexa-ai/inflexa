@@ -81,7 +81,7 @@ export type ChatBarProps = {
 export function ChatBar(props: ChatBarProps) {
     // Seed from autoFocus so a blurred mount renders NORMAL from the first frame — the renderable
     // emits no blur event at mount to correct a wrong seed (mirrors TextArea's own seed).
-    // eslint-disable-next-line solid/reactivity -- seed-once: autoFocus is a mount-time contract, then focus events drive the signal
+    // oxlint-disable-next-line solid/reactivity -- seed-once: autoFocus is a mount-time contract, then focus events drive the signal
     const [focused, setFocused] = createSignal(props.autoFocus ?? true);
 
     return (

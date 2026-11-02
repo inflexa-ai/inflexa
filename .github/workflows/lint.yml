@@ -1,7 +1,7 @@
 name: Lint
 
-# Lints/typechecks the independent subsystems. cli/ has ESLint + a tsc
-# typecheck; harness/ and prov-kernel/ have oxlint + oxfmt + the type check
+# Lints/typechecks the independent subsystems. cli/ has oxlint + the type check
+# command; harness/ and prov-kernel/ have oxlint + oxfmt + the type check
 # command; harness/ adds ruff over its Python package asset.
 #
 # Every subsystem that ships a lint config and a `lint` script gets a job step
@@ -39,6 +39,14 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      # The type check command runs under its Node shebang (its TypeScript 7
+      # dependency reads Node child_process internals that Bun's spawn lacks),
+      # so the runner needs Node 22.18 or later — the same pin the release
+      # workflows use. The path resolves against the repo root like setup-bun's.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
       # cli pins @inflexa-ai/harness to an exact published version and installs
       # it from npm (not file:../harness), so a plain install resolves it — no
       # in-repo harness build.
@@ -61,13 +69,13 @@ jobs:
           bun run harness:local
           bun run kernel:local
 
-      - name: ESLint
+      - name: oxlint
         run: bun run lint
 
       - name: Typecheck
         run: bun run typecheck
 
-      # Same category as ESLint: a source-validity gate. Generation fails on a
+      # Same category as oxlint: a source-validity gate. Generation fails on a
       # visible command/argument/option registered without a description, or a
       # registry that stops being importable standalone — catching it here keeps
       # the release workflow's docs packaging a pure re-run of what CI verified.

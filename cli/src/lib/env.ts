@@ -31,7 +31,7 @@ export function isUnsandboxedTestRun(nodeEnv: string | undefined, sandboxMarker:
 // `bun test` process?", which only NODE_ENV can answer (the build channel is unset in both a source
 // run and a test run) — and the literal dot access is what lets the build's --define eliminate the
 // branch in a shipped binary.
-// eslint-disable-next-line no-restricted-syntax -- the one sanctioned NODE_ENV read; see above
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the one sanctioned NODE_ENV read; see above
 if (isUnsandboxedTestRun(process.env.NODE_ENV, process.env.INFLEXA_TEST_SANDBOX)) {
     throw new Error(
         "refusing to resolve inflexa paths: test sandbox not active — NODE_ENV=test but INFLEXA_TEST_SANDBOX is unset, so env.* would point at your real data. Run `bun test` from cli/ so bunfig's preload redirects XDG_* and stamps the marker.",

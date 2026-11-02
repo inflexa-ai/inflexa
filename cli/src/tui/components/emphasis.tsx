@@ -42,11 +42,11 @@ export function Underline(props: { children: JSX.Element }): JSX.Element {
  * and ignores top-level fg/bg/attributes on spans). `createTextAttributes` reads the BOOLEAN keys
  * `{ dim, inverse, italic, … }`.
  *
- * eslint-disable solid/style-prop -- `style` here is opentui's TextNode style object (fg/bg +
+ * oxlint-disable solid/style-prop -- `style` here is opentui's TextNode style object (fg/bg +
  * attribute booleans), NOT a CSS style map; it is the only sanctioned channel for span styling, so
  * the CSS-oriented `solid/style-prop` rule is a false positive throughout this file.
  */
-/* eslint-disable solid/style-prop */
+/* oxlint-disable solid/style-prop */
 
 /** Dim — meta. The terminal DIM attribute renders unreliably; prefer `<Fg role="fgMuted">`. */
 export function Dim(props: { children: JSX.Element }): JSX.Element {

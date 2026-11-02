@@ -1705,7 +1705,9 @@ describe("setup() — batch orchestration", () => {
 
         expect(process.exitCode).toBe(0);
         expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1", utility: "m-1" });
-        expect((models()?.connection as Record<string, unknown>).auth).toEqual({ kind: "command", command: "printf tok%s _123", scheme: "x-api-key" });
+        const connection = models()?.connection;
+        expect(connection).toBeDefined();
+        expect((connection as Record<string, unknown>).auth).toEqual({ kind: "command", command: "printf tok%s _123", scheme: "x-api-key" });
     });
 
     test("a second identical batch run converges to a byte-identical config", async () => {
@@ -2056,7 +2058,9 @@ describe("setup() — batch orchestration", () => {
             // The only select left is the wire-protocol question, which nothing answered.
             expect(selects).toEqual(["Wire protocol"]);
             // The answered endpoint survived — not the adoptable https://api.anthropic.com/v1.
-            expect((models()?.connection as Record<string, unknown>).baseURL).toBe("https://gw.corp/v1");
+            const connection = models()?.connection;
+            expect(connection).toBeDefined();
+            expect((connection as Record<string, unknown>).baseURL).toBe("https://gw.corp/v1");
         });
     });
 

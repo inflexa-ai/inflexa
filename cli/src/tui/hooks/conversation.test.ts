@@ -107,7 +107,6 @@ function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () 
         for (;;) {
             const item = waiting.shift();
             if (item !== undefined) {
-                // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
                 yield ok(item.frame);
                 item.applied();
                 continue;
@@ -778,9 +777,7 @@ describe("send() reads the end of a turn from its stream when the summary is gon
     test("a stream that breaks with no terminal frame and no summary raises the broken-stream banner", async () => {
         const broken: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("reset") };
         async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield ok({ type: "text-delta", text: "partial", source: ROUTE_SOURCE });
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield err(broken);
         }
         const server: SendOpts = { ...fakeServer(done()), startTurn: () => okAsync({ turnId: "turn-x", frames: frames() }), fetchTurn: () => errAsync(broken) };
@@ -795,17 +792,12 @@ describe("send() reads the end of a turn from its stream when the summary is gon
     test("a stream that breaks reads the turn again from its start, and each frame applies one time", async () => {
         const broken: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("reset") };
         async function* first(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield ok({ type: "text-delta", text: "Hello ", source: ROUTE_SOURCE });
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield err(broken);
         }
         async function* again(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield ok({ type: "text-delta", text: "Hello ", source: ROUTE_SOURCE });
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield ok({ type: "text-delta", text: "world.", source: ROUTE_SOURCE });
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield ok({ type: "finish", source: ROUTE_SOURCE, finishReason: "stop" });
         }
         const rereads: string[] = [];
@@ -2335,9 +2327,7 @@ describe("the open thread that a different client changes", () => {
         await loadMessages(AID, SID, thread.opts);
         const broken: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("reset") };
         async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield ok({ type: "tool-started", toolUseId: "t1", name: "read_file", source: ROOT });
-            // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield err(broken);
         }
         await send(

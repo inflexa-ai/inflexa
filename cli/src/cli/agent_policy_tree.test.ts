@@ -1,8 +1,8 @@
-import { ESLint } from "eslint";
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import type { PolicyRow } from "../test_support/agent_policy_report.ts";
+import { lintScratch, linesOf, OXLINT_SPAWN_TIMEOUT_MS, RESTRICTED_SYNTAX } from "../test_support/oxlint.ts";
 
 const REPORT_ENTRY = join(import.meta.dir, "../test_support/agent_policy_report.ts");
 
@@ -279,46 +279,39 @@ describe("agent policy — snapshot audit surface", () => {
 });
 
 // The lint ban is the static half of the same audit surface: it stops a raw `command.action(fn)` from ever
-// registering an action with no policy in the first place. Exercising it here through ESLint's own Node API
-// against the REAL flat config (not a hand-rolled selector) pins the spec scenario "A raw `.action()` in the
+// registering an action with no policy in the first place. Exercising it here through the oxlint binary
+// against the REAL oxlint.config.ts (not a hand-rolled selector) pins the spec scenario "A raw `.action()` in the
 // registry is a lint error".
 //
-// Typed parsing is EXPLICITLY disabled for these lint runs: the rule under test is AST-only, and building
-// the type-aware TS program inside the test process proved nondeterministically fragile under full-suite
-// load (a fatal parse yields zero rule messages, which reads as "ban did not fire"). Disabling
-// `project`/`projectService` — and the four type-service rules that would crash without them — removes that
-// entire subsystem from the test while still exercising the real config's rule presence and file scoping.
-// If config loading itself ever breaks, lintText throws and the test fails loudly rather than vacuously.
+// The snippets are scratch files under `src/cli/`, because the override applies by the path of a file (see
+// src/test_support/oxlint.ts). The exemption case lints the real `src/cli/agent_policy.ts`, which holds the
+// sanctioned `command.action(handler)` call. The spawn throws on a config error, so a broken config fails the test
+// loudly and never reads as "the ban did not fire".
 describe("agent policy — the registry-scoped raw `.action(` lint ban", () => {
-    const cliRoot = join(import.meta.dir, "../..");
-    const banFires = (messages: readonly { readonly ruleId: string | null }[]): boolean => messages.some((m) => m.ruleId === "no-restricted-syntax");
-    const untypedEslint = (): ESLint =>
-        new ESLint({
-            cwd: cliRoot,
-            overrideConfig: {
-                languageOptions: { parserOptions: { projectService: false, project: false } },
-                rules: {
-                    "@typescript-eslint/no-floating-promises": "off",
-                    "@typescript-eslint/no-misused-promises": "off",
-                    "@typescript-eslint/switch-exhaustiveness-check": "off",
-                    "neverthrow/must-use-result": "off",
-                },
-            },
-        });
+    const snippets = [
+        { scope: "src/cli", ext: "ts", text: "cmd.action(() => {});\n" },
+        { scope: "src/cli", ext: "ts", text: 'cmd["action"](() => {});\n' },
+    ] as const;
+    const policyFile = "src/cli/agent_policy.ts";
+    let lintOnce: ReturnType<typeof lintScratch> | undefined;
+    const lint = (): ReturnType<typeof lintScratch> => (lintOnce ??= lintScratch(snippets, [policyFile]));
 
-    test("a raw `.action(fn)` (plain and computed-member) in a registry file is a no-restricted-syntax error", async () => {
-        const eslint = untypedEslint();
-        // filePath places the snippet inside the registry scope; the linted TEXT is the violating snippet
-        // (it need not match the file on disk). Both the plain member call and the computed-member bypass trip it.
-        const [plain] = await eslint.lintText("cmd.action(() => {});\n", { filePath: join(cliRoot, "src/cli/index.ts") });
-        const [computed] = await eslint.lintText('cmd["action"](() => {});\n', { filePath: join(cliRoot, "src/cli/index.ts") });
-        expect(banFires(plain?.messages ?? [])).toBe(true);
-        expect(banFires(computed?.messages ?? [])).toBe(true);
-    });
+    test(
+        "a raw `.action(fn)` (plain and computed-member) in a registry file is a no-restricted-syntax error",
+        async () => {
+            const [plain, computed] = (await lint()).snippets;
+            expect(linesOf(plain ?? [], RESTRICTED_SYNTAX)).toEqual([1]);
+            expect(linesOf(computed ?? [], RESTRICTED_SYNTAX)).toEqual([1]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
 
-    test("the same call in agent_policy.ts (the sanctioned registerAction site) is exempt", async () => {
-        const eslint = untypedEslint();
-        const [result] = await eslint.lintText("cmd.action(() => {});\n", { filePath: join(cliRoot, "src/cli/agent_policy.ts") });
-        expect(banFires(result?.messages ?? [])).toBe(false);
-    });
+    test(
+        "the same call in agent_policy.ts (the sanctioned registerAction site) is exempt",
+        async () => {
+            const [real] = (await lint()).real;
+            expect(linesOf(real ?? [], RESTRICTED_SYNTAX)).toEqual([]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
 });

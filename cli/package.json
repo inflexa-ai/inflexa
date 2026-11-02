@@ -31,10 +31,10 @@
         "harness:remote": "rm -rf node_modules/@inflexa-ai/harness && bun install",
         "kernel:local": "cd ../prov-kernel && bun run build && cd ../cli && rm -rf node_modules/@inflexa-ai/prov-kernel && ln -s ../../../prov-kernel node_modules/@inflexa-ai/prov-kernel && rm -rf ../prov-kernel/node_modules/@inflexa-ai/tsprov && ln -s \"$(pwd)/node_modules/@inflexa-ai/tsprov\" ../prov-kernel/node_modules/@inflexa-ai/tsprov",
         "kernel:remote": "rm -rf node_modules/@inflexa-ai/prov-kernel ../prov-kernel/node_modules/@inflexa-ai/tsprov && bun install && bun install --cwd ../prov-kernel",
-        "lint": "eslint .",
+        "lint": "bun --bun oxlint",
         "start": "bun run src/index.ts",
         "test": "bun test",
-        "typecheck": "tsc --noEmit",
+        "typecheck": "inflexa-typecheck",
         "wipe": "bun scripts/wipe.ts"
     },
     "dependencies": {
@@ -70,20 +70,17 @@
         "uuid": "^11.1.1"
     },
     "devDependencies": {
-        "@eslint/js": "^10.0.1",
+        "@inflexa-ai/oxlint-plugin": "0.8.0",
+        "@inflexa-ai/oxlint-plugin-solid": "0.8.0",
+        "@inflexa-ai/typecheck": "0.8.0",
         "@types/bun": "latest",
         "@types/luxon": "^3.7.6",
         "@types/node": "^26.1.1",
-        "eslint": "^10.7.0",
-        "eslint-plugin-neverthrow": "^1.1.4",
-        "eslint-plugin-solid": "^0.14.5",
-        "globals": "^17.6.0",
+        "@typescript/native": "npm:typescript@7.0.2",
+        "oxlint": "1.85.0",
+        "oxlint-tsgolint": "7.0.2003",
         "prettier": "^3.9.5",
         "prettier-plugin-tailwindcss": "^0.8.0",
-        "typescript": "^6.0.3",
-        "typescript-eslint": "^8.64.0"
-    },
-    "patchedDependencies": {
-        "eslint-plugin-neverthrow@1.1.4": "patches/eslint-plugin-neverthrow@1.1.4.patch"
+        "typescript": "^6.0.3"
     }
 }

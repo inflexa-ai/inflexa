@@ -171,7 +171,7 @@ function hydrateFromAncestors(command: Command): void {
  *
  * Because `kind` and `policy` are required parameters, an action command declared without either
  * is a TypeScript compile error: this is the outermost of the enforcement layers that
- * make an unclassified command unrepresentable (a registry-scoped ESLint rule bans raw
+ * make an unclassified command unrepresentable (a registry-scoped lint rule bans raw
  * `.action(`, a tree-walk test asserts every action leaf carries a policy and a kind, and the tool
  * fails closed on a missing policy). Validation of the policy itself lives in tests, never
  * here — a policy typo must not brick the user's CLI at startup, so this stays pure

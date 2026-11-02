@@ -204,7 +204,7 @@ export async function* readSseFrames<T>(body: ReadableStream<Uint8Array>, baseUr
                 cause,
             }));
             if (chunk.isErr()) {
-                // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the caller, which the rule cannot follow
+                // typecheck-disable-next-line must-use-result -- a yielded Result is consumed by the `for await` of the caller, which the rule cannot follow
                 yield err(chunk.error);
                 return;
             }
@@ -214,7 +214,7 @@ export async function* readSseFrames<T>(body: ReadableStream<Uint8Array>, baseUr
                 const line = buffer.slice(0, newline).replace(/\r$/, "");
                 buffer = buffer.slice(newline + 1);
                 if (line === "") {
-                    // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the caller, which the rule cannot follow
+                    // typecheck-disable-next-line must-use-result -- a yielded Result is consumed by the `for await` of the caller, which the rule cannot follow
                     if (data.length > 0) yield parseFrame<T>(data.join("\n"));
                     data = [];
                 } else if (line.startsWith("data:")) {

@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import type { Argument, Command, Option } from "commander";
 import pkg from "../package.json";
 
-// eslint-disable-next-line no-restricted-syntax -- the sanctioned "is this a `bun test` process?" question (same as env.ts's guard): the build channel is unset in both a source run and a test run, so only NODE_ENV can answer it.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanctioned "is this a `bun test` process?" question (same as env.ts's guard): the build channel is unset in both a source run and a test run, so only NODE_ENV can answer it.
 if (process.env.NODE_ENV === "test") {
     console.error("gen_docs.ts must not run inside `bun test` (env.ts refuses test processes without the sandbox). Run `bun scripts/gen_docs.ts` directly.");
     process.exit(1);

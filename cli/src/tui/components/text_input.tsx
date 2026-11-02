@@ -50,7 +50,7 @@ export type TextInputProps = {
 export function TextInput(props: TextInputProps): JSX.Element {
     // Seeded from autoFocus so a widget mounted blurred renders blurred chrome from the first
     // frame — the renderable emits no `blurred` event at mount to correct a wrong seed.
-    // eslint-disable-next-line solid/reactivity -- seed-once: autoFocus is a mount-time contract
+    // oxlint-disable-next-line solid/reactivity -- seed-once: autoFocus is a mount-time contract
     const [focused, setFocused] = createSignal(props.autoFocus ?? true);
     let ref: InputRenderable | null = null;
 
@@ -76,12 +76,12 @@ export function TextInput(props: TextInputProps): JSX.Element {
                 // wider (yoga's measureFunc reports the full text width when no scroll margin
                 // absorbs it).
                 r.editorView.setScrollMargin(0.02);
-                // eslint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at focus time
+                // oxlint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at focus time
                 r.on("focused", () => {
                     setFocused(true);
                     props.onFocusChange?.(true);
                 });
-                // eslint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at blur time
+                // oxlint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at blur time
                 r.on("blurred", () => {
                     setFocused(false);
                     props.onFocusChange?.(false);

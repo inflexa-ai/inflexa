@@ -643,18 +643,18 @@ describe("spawnInflexa — the idle bound leaves nothing armed behind it", () =>
         const realClear = globalThis.clearTimeout;
         // Counting timers is the only way to observe this: a leaked timer changes nothing about the
         // returned result, which is exactly why it survived review of the result-shape assertions.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a probe must accept whatever overload the caller used; the ids flow straight back to the real timer functions.
+        // oxlint-disable-next-line typescript/no-explicit-any -- a probe must accept whatever overload the caller used; the ids flow straight back to the real timer functions.
         globalThis.setTimeout = ((fn: any, ms?: any, ...rest: any[]) => {
             const id = realSet(fn, ms, ...rest);
             armed.add(id);
             return id;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- as above.
+            // oxlint-disable-next-line typescript/no-explicit-any -- as above.
         }) as any;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- as above.
+        // oxlint-disable-next-line typescript/no-explicit-any -- as above.
         globalThis.clearTimeout = ((id: any) => {
             armed.delete(id);
             return realClear(id);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- as above.
+            // oxlint-disable-next-line typescript/no-explicit-any -- as above.
         }) as any;
 
         try {
