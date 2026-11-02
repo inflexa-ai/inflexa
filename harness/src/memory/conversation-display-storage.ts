@@ -23,6 +23,7 @@ import { z } from "zod";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
 
 import type {
+    AnalogyReportPart,
     AskPart,
     ChildSessionStartedPart,
     CompactionPart,
@@ -36,6 +37,7 @@ import type {
     SubAgentActivityPart,
 } from "../contracts/chat-parts.js";
 import {
+    AnalogyReportPartSchema,
     AskPartSchema,
     ChildSessionStartedPartSchema,
     CompactionPartSchema,
@@ -67,6 +69,7 @@ type Payload<T extends { type: string }> = Omit<T, "type">;
 export type ConversationUIData = {
     "tool-call": Omit<Payload<ToolCallPart>, "outcome"> & { outcome: ToolCallOutcome };
     presentation: Payload<PresentationPart>;
+    "analogy-report": Payload<AnalogyReportPart>;
     plan: Payload<PlanPart>;
     "run-card": Payload<RunCardPart>;
     "plan-approval": Payload<PlanApprovalPart>;
@@ -135,6 +138,7 @@ const ToolCallDisplaySchema = z.object({
 const dataSchemas = {
     "tool-call": ToolCallDisplaySchema,
     presentation: PresentationPartSchema.omit({ type: true }),
+    "analogy-report": AnalogyReportPartSchema.omit({ type: true }),
     plan: PlanPartSchema.omit({ type: true }),
     "run-card": RunCardPartSchema.omit({ type: true }),
     "plan-approval": PlanApprovalPartSchema.omit({ type: true }),
@@ -253,6 +257,7 @@ export type StoredSourcePart = Extract<
         type:
             | ToolCallPart["type"]
             | PresentationPart["type"]
+            | AnalogyReportPart["type"]
             | PlanPart["type"]
             | RunCardPart["type"]
             | PlanApprovalPart["type"]
@@ -268,6 +273,7 @@ export type StoredSourcePart = Extract<
 const STORED_SOURCE_TYPES = [
     "tool-call",
     "data-presentation",
+    "data-analogy-report",
     "data-plan",
     "data-run-card",
     "data-plan-approval",
@@ -320,6 +326,10 @@ export function conversationDisplayPart(part: StoredSourcePart): DataUIPart<Conv
         case "data-presentation": {
             const { type: _type, ...data } = part;
             return { type: "data-presentation", id, data };
+        }
+        case "data-analogy-report": {
+            const { type: _type, ...data } = part;
+            return { type: "data-analogy-report", id, data };
         }
         case "data-plan": {
             const { type: _type, ...data } = part;
@@ -388,6 +398,9 @@ export function conversationUIToChatMessages(messages: readonly ConversationUIMe
                 switch (part.type) {
                     case "data-presentation":
                         parts.push({ type: "data-presentation", ...part.data });
+                        break;
+                    case "data-analogy-report":
+                        parts.push({ type: "data-analogy-report", ...part.data });
                         break;
                     case "data-plan":
                         parts.push({ type: "data-plan", ...part.data });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
-import type { PlanApprovalPart, SubAgentActivityPart } from "../../contracts/chat-parts.js";
+import type { AnalogyReportPart, PlanApprovalPart, SubAgentActivityPart } from "../../contracts/chat-parts.js";
 import type { ToolCallPart } from "../../contracts/message.js";
 import {
     conversationDisplayPart,
@@ -255,6 +255,58 @@ describe("a stored plan-approval part", () => {
 
     it("round-trips field for field", async () => {
         const stored: ConversationUIMessage = { id: "s1", role: "system", parts: [conversationDisplayPart(part)] };
+
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
+        const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))), "t/0/display");
+
+        expect(parsed.messages).toEqual([stored]);
+        expect(presentAt(conversationUIToChatMessages(parsed.messages), 0).parts).toEqual([part]);
+    });
+});
+
+describe("a stored analogy-report part", () => {
+    const part: AnalogyReportPart = {
+        type: "data-analogy-report",
+        id: "call-analogy-1",
+        report: {
+            schemaVersion: "1",
+            problemSummary: "Noisy induction of a reporter.",
+            problemObjects: [{ name: "promoter", role: "input" }],
+            problemRelations: ["the promoter drives the reporter"],
+            keyTerms: ["induction"],
+            analogies: [
+                {
+                    targetDomain: "control_theory",
+                    analogyTitle: "Gene circuit as a feedback loop",
+                    objectMappings: [{ source: "promoter", target: "controller", rationale: "Both set the input." }],
+                    sharedRelations: "Feedback on an output.",
+                    coverage: "available",
+                    solutions: [
+                        {
+                            title: "Model predictive control",
+                            sourceDomain: "control_theory",
+                            description: "Plans inputs over a horizon.",
+                            keyConcepts: ["horizon"],
+                            relevance: "Transfers to dosing.",
+                            sources: [{ url: "https://arxiv.org/abs/2103.04120", title: "MPC survey" }],
+                            githubRepos: [{ url: "https://github.com/do-mpc/do-mpc" }],
+                        },
+                    ],
+                },
+                {
+                    targetDomain: "ecology",
+                    analogyTitle: "Predator-prey dynamics",
+                    objectMappings: [],
+                    sharedRelations: "",
+                    coverage: "search_failed",
+                    solutions: [],
+                },
+            ],
+        },
+    };
+
+    it("round-trips field for field", async () => {
+        const stored: ConversationUIMessage = { id: "a1", role: "assistant", parts: [conversationDisplayPart(part)] };
 
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
         const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))), "t/0/display");

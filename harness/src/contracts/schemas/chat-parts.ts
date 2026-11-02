@@ -4,6 +4,7 @@
 
 import { z } from "zod";
 
+import { AnalogicalReasonerOutputSchema } from "../analogy-report.js";
 import { ToolCallOutcomeSchema } from "./chat-events.js";
 import { TokenUsageRollupSchema } from "./usage.js";
 
@@ -84,6 +85,14 @@ export const PresentationPartSchema = z.object({
     id: z.string(),
     title: z.string().optional(),
     content: PresentationContentSchema,
+});
+
+// ── Analogy report ──────────────────────────────────────────────────
+
+export const AnalogyReportPartSchema = z.object({
+    type: z.literal("data-analogy-report"),
+    id: z.string(),
+    report: AnalogicalReasonerOutputSchema,
 });
 
 // ── Plan reference ──────────────────────────────────────────────────
@@ -477,6 +486,7 @@ export const SubAgentActivityPartSchema = z.object({
 
 export const ChatPartSchema = z.discriminatedUnion("type", [
     PresentationPartSchema,
+    AnalogyReportPartSchema,
     PlanPartSchema,
     RunCardPartSchema,
     PlanApprovalPartSchema,

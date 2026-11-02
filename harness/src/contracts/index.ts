@@ -7,6 +7,7 @@ export type {
     PlanStep,
     PresentationContent,
     PresentationPart,
+    AnalogyReportPart,
     PlanPart,
     RunCardPart,
     PlanApprovalPart,

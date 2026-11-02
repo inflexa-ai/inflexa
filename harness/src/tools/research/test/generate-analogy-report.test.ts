@@ -11,7 +11,7 @@ import { callTools, reply, scriptedModel, text, toolCall } from "../../../testin
 import type { ToolContext } from "../../define-tool.js";
 import { buildResearchPrompt, createGenerateAnalogyReportTool } from "../generate-analogy-report.js";
 import { presentAt } from "../../../lib/present.js";
-import { AnalogyReportSchema } from "../../../contracts/analogy-report.js";
+import { AnalogicalReasonerOutputSchema, AnalogyReportSchema } from "../../../contracts/analogy-report.js";
 import { analogicalReasonerPrompt } from "../../../prompts/analogical-reasoner.js";
 
 const EXTRACTION = {
@@ -54,6 +54,20 @@ const IterationEventSchema = z.object({
 });
 
 const ExtractionFailedSchema = z.object({ schemaVersion: z.literal("1"), error: z.object({ kind: z.literal("extraction-failed"), message: z.string() }) });
+
+const AnalogyReportEmitSchema = z.object({
+    type: z.literal("data-analogy-report"),
+    source: z.object({ agentId: z.string(), callPath: z.array(z.string()) }),
+    data: z.object({ id: z.string(), report: AnalogicalReasonerOutputSchema }),
+});
+
+/** The `data-analogy-report` events among the emitted events. */
+function analogyPartsOf(emitted: readonly unknown[]): z.infer<typeof AnalogyReportEmitSchema>[] {
+    return emitted.flatMap((event) => {
+        const parsed = AnalogyReportEmitSchema.safeParse(event);
+        return parsed.success ? [parsed.data] : [];
+    });
+}
 
 const ErrorTextSchema = z.object({ type: z.literal("error-text"), value: z.string() });
 
@@ -244,6 +258,33 @@ describe("generateAnalogyReport sub-agent tool", () => {
         const result = ExtractionFailedSchema.parse((await tool.execute({ problem: "Bacteria survive an antibiotic." }, ctxFor()))._unsafeUnwrap());
 
         expect(result.error.message).toContain("content filter");
+    });
+
+    it("emits the report as one part of the root agent under the id of the tool call", async () => {
+        const { provider } = scriptedModel([recordAll("t1")]);
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
+        const emitted: unknown[] = [];
+
+        const result = (await tool.execute({ problem: "Diagnose oscillation in a pathway." }, ctxFor(emitted)))._unsafeUnwrap();
+
+        const parts = analogyPartsOf(emitted);
+        expect(parts).toHaveLength(1);
+        expect(presentAt(parts, 0).source).toMatchObject({ agentId: "conversation-agent", callPath: ["conversation-agent"] });
+        expect(presentAt(parts, 0).data.id).toBe("tool-call-test");
+        expect(result).toEqual(presentAt(parts, 0).data.report);
+        expect(result).toEqual(VALID_ENVELOPE);
+    });
+
+    it("emits the extraction-failed envelope as the part when the loop throws", async () => {
+        const { provider } = scriptedModel([{ fail: new Error("the endpoint is down") }]);
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS }, inProcessSubAgent);
+        const emitted: unknown[] = [];
+
+        const result = ExtractionFailedSchema.parse((await tool.execute({ problem: "Diagnose oscillation." }, ctxFor(emitted)))._unsafeUnwrap());
+
+        const parts = analogyPartsOf(emitted);
+        expect(parts).toHaveLength(1);
+        expect(presentAt(parts, 0).data).toEqual({ id: "tool-call-test", report: result });
     });
 
     it("gives the extraction-failed envelope when the loop throws", async () => {
