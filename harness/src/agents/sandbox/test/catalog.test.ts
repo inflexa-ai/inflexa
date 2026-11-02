@@ -17,8 +17,8 @@ describe("createSandboxAgents", () => {
         expect(Object.keys(agents).sort()).toEqual(Object.keys(SANDBOX_AGENT_META).sort());
     });
 
-    it("covers the full ported roster (21 agents)", () => {
-        expect(Object.keys(agents)).toHaveLength(21);
+    it("covers the full ported roster (22 agents)", () => {
+        expect(Object.keys(agents)).toHaveLength(22);
     });
 
     it("every agent lists the knowledge template through the base list, because the template follows the step, not the specialist", () => {
