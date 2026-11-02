@@ -62,6 +62,7 @@ export function AnalogyReportBlock(props: AnalogyReportBlockProps) {
                 // Two analogies can share a target domain, thus the header counts the distinct domains.
                 const domains = (): number => new Set(report().analogies.map((analogy) => analogy.domain)).size;
                 const count = (): string => `${domains()} ${domains() === 1 ? "domain" : "domains"}`;
+                const filledCount = (): string => `${filled()} ${filled() === 1 ? "analogy" : "analogies"} with solutions`;
                 return (
                     <box flexDirection="column" paddingBottom={space.sm}>
                         <text selectable={false} onMouseDown={() => setOpen(!open())}>
@@ -69,7 +70,7 @@ export function AnalogyReportBlock(props: AnalogyReportBlockProps) {
                             <Fg role="fg">
                                 <Bold>Analogies</Bold>
                             </Fg>
-                            <Fg role="fgMuted">{` ${GLYPHS.middot} ${count()} ${GLYPHS.middot} ${filled()} with solutions`}</Fg>
+                            <Fg role="fgMuted">{` ${GLYPHS.middot} ${count()} ${GLYPHS.middot} ${filledCount()}`}</Fg>
                         </text>
                         <text fg={theme().fg} paddingLeft={space.md}>
                             <Fg role="fgMuted">for: </Fg>

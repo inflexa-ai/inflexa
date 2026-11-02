@@ -46,7 +46,7 @@ describe("AnalogyReportBlock", () => {
         try {
             await setup.renderOnce();
             const frame = frameOf(setup);
-            expect(frame).toContain(`${GLYPHS.triangleRight} Analogies ${GLYPHS.middot} 2 domains ${GLYPHS.middot} 2 with solutions`);
+            expect(frame).toContain(`${GLYPHS.triangleRight} Analogies ${GLYPHS.middot} 2 domains ${GLYPHS.middot} 2 analogies with solutions`);
             expect(frame).toContain("for: Robust expression control under noisy induction");
             expect(frame).toContain(`1 control_theory ${GLYPHS.middot} Gene circuit as a feedback loop`);
             expect(frame).toContain("Model predictive control");
@@ -85,7 +85,7 @@ describe("AnalogyReportBlock", () => {
         const setup = await testRender(() => <AnalogyReportBlock view={mockAnalogyReports.partial} />, SIZE);
         try {
             await setup.renderOnce();
-            expect(frameOf(setup)).toContain(`4 domains ${GLYPHS.middot} 1 with solutions`);
+            expect(frameOf(setup)).toContain(`4 domains ${GLYPHS.middot} 1 analogy with solutions`);
             expect(sameColor(fgOf(setup, "search failed"), colors.error)).toBe(true);
             expect(sameColor(fgOf(setup, "no data"), colors.fgMuted)).toBe(true);
             expect(sameColor(fgOf(setup, "not loaded"), colors.fgMuted)).toBe(true);
@@ -97,7 +97,13 @@ describe("AnalogyReportBlock", () => {
     test("counts each target domain one time", async () => {
         const view = { ...mockAnalogyReports.partial, analogies: mockAnalogyReports.partial.analogies.map((analogy) => ({ ...analogy, domain: "logistics" })) };
         const frame = await renderFrame(() => <AnalogyReportBlock view={view} />, SIZE);
-        expect(frame).toContain(`Analogies ${GLYPHS.middot} 1 domain ${GLYPHS.middot} 1 with solutions`);
+        expect(frame).toContain(`Analogies ${GLYPHS.middot} 1 domain ${GLYPHS.middot} 1 analogy with solutions`);
+    });
+
+    test("counts the analogies with solutions, not the domains, when two of them share a domain", async () => {
+        const view = { ...mockAnalogyReports.full, analogies: mockAnalogyReports.full.analogies.map((analogy) => ({ ...analogy, domain: "logistics" })) };
+        const frame = await renderFrame(() => <AnalogyReportBlock view={view} />, SIZE);
+        expect(frame).toContain(`Analogies ${GLYPHS.middot} 1 domain ${GLYPHS.middot} 2 analogies with solutions`);
     });
 
     test("a failed report is an error block with the message as its detail, and a click leaves the frame as it was", async () => {
