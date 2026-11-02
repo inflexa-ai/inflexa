@@ -22,13 +22,33 @@ import { createUsageRecorder } from "./usage_recorder.ts";
 // attribution a real chat turn produces rather than a fixture's guess.
 
 /**
- * The Postgres of the harness turn, holding no row. Each read finds nothing, and the writes of the turn
- * land nowhere, which the turn reports as a store fault and survives. Thus the model calls are the only
- * thing of the turn that reaches a store, and that store is the ledger under test.
+ * The Postgres of the harness turn, holding no row. The insert of the thread gives back the row it was
+ * given, because the turn refuses to run with no thread row. Each other read finds nothing, and the other
+ * writes land nowhere, which the turn reports as a store fault and survives. Thus the model calls are the
+ * only thing of the turn that reaches a store, and that store is the ledger under test.
  */
+async function emptyQuery(sql: string, params: readonly unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> {
+    if (!sql.trimStart().startsWith("INSERT INTO cortex_analysis_threads")) return { rows: [], rowCount: 0 };
+    const now = new Date();
+    const [threadId, analysisId, title, threadType] = params;
+    const row = {
+        thread_id: threadId,
+        analysis_id: analysisId,
+        title,
+        thread_type: threadType,
+        parent_thread_id: null,
+        parent_seq: null,
+        created_at: now,
+        updated_at: now,
+        deleted_at: null,
+    };
+    return { rows: [row], rowCount: 1 };
+}
+
+// The thread store and the turn read only `query` and `connect`, thus a pool with these two members stands in for `pg.Pool`.
 const emptyPool = {
-    query: async () => ({ rows: [], rowCount: 0 }),
-    connect: async () => ({ query: async () => ({ rows: [], rowCount: 0 }), release: () => {} }),
+    query: emptyQuery,
+    connect: async () => ({ query: emptyQuery, release: () => {} }),
 } as unknown as Pool;
 
 let conn: Database;
