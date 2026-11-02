@@ -15,6 +15,7 @@ import {
     type SearchResult,
     type WalkSpawner,
 } from "./search_index.ts";
+import { until } from "../../test_support/until.ts";
 import { inProcessSpawner, type FakeChild } from "../../test_support/walk_spawner.ts";
 import { readFolderEntries, walkToRecords, type ReadEntries } from "./walk_child.ts";
 
@@ -594,7 +595,7 @@ describe("the cache", () => {
         expect(performance.now() - started).toBeGreaterThanOrEqual(15);
         expect(spawner.children.map((child) => child.scope)).toEqual([first]);
         recorder.release();
-        await Bun.sleep(30);
+        await until(() => spawner.children.length === 2);
         expect(spawner.children.map((child) => child.scope)).toEqual([first, second]);
         const later = await searchOk(cache, second, "b");
         expect(later.truncated).toBe(false);
