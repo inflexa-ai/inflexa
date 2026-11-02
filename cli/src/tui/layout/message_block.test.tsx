@@ -192,6 +192,70 @@ describe("MessageBlock unknown parts", () => {
     });
 });
 
+describe("MessageBlock analogy report", () => {
+    test("an analogy report part renders the collapsed block, not the mention of an unknown part", async () => {
+        const parts: Part[] = [
+            {
+                type: "data-analogy-report",
+                id: "call-analogy-1",
+                report: {
+                    schemaVersion: "1",
+                    problemSummary: "Noisy induction of a reporter",
+                    problemObjects: [],
+                    problemRelations: [],
+                    keyTerms: [],
+                    analogies: [
+                        {
+                            targetDomain: "control_theory",
+                            analogyTitle: "Gene circuit as a feedback loop",
+                            objectMappings: [{ source: "promoter", target: "controller", rationale: "Both set the input." }],
+                            sharedRelations: "",
+                            coverage: "available",
+                            solutions: [
+                                {
+                                    title: "Model predictive control",
+                                    sourceDomain: "control_theory",
+                                    description: "",
+                                    keyConcepts: [],
+                                    relevance: "Plans the dose.",
+                                    sources: [{ url: "https://arxiv.org/abs/2103.04120", title: "MPC" }],
+                                    githubRepos: [{ url: "https://github.com/do-mpc/do-mpc" }],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            },
+        ];
+        const frame = await frameWith(
+            () => <MessageBlock index={1} role="assistant" parts={parts} streamPartId={() => null} streamText={() => ""} />,
+            "Model predictive control",
+            { width: 80, height: 12 },
+        );
+        expect(frame).toContain(`Analogies ${GLYPHS.middot} 1 domain ${GLYPHS.middot} 1 with solutions`);
+        expect(frame).toContain("for: Noisy induction of a reporter");
+        expect(frame).toContain(`control_theory ${GLYPHS.middot} Gene circuit as a feedback loop`);
+        expect(frame).not.toContain("part:data-analogy-report");
+    });
+
+    test("an extraction-failed envelope renders the error block with its message", async () => {
+        const parts: Part[] = [
+            {
+                type: "data-analogy-report",
+                id: "call-analogy-2",
+                report: { schemaVersion: "1", error: { kind: "extraction-failed", message: "The problem is empty." } },
+            },
+        ];
+        const frame = await frameWith(
+            () => <MessageBlock index={1} role="assistant" parts={parts} streamPartId={() => null} streamText={() => ""} />,
+            "The problem is empty.",
+            { width: 80, height: 10 },
+        );
+        expect(frame).toContain("Analogy report failed");
+        expect(frame).toContain("The problem is empty.");
+    });
+});
+
 describe("MessageBlock nested calls", () => {
     test("the activity part draws under its root call, and not as a part of its own", async () => {
         const parts: Part[] = [

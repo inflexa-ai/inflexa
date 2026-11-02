@@ -19,12 +19,14 @@ import { RunBlock } from "./components/run_block.tsx";
 import { RunCardBlock } from "./components/run_card_block.tsx";
 import { ActivityPanel } from "./layout/activity_panel.tsx";
 import { ThinkingBlock } from "./components/thinking_block.tsx";
+import { AnalogyReportBlock } from "./components/analogy_report_block.tsx";
 import { ToolBlock } from "./components/tool_block.tsx";
 import { Welcome } from "./components/welcome.tsx";
 import {
     galleryProfile,
     galleryRun,
     mockAskPrompts,
+    mockAnalogyReports,
     mockPausedWaits,
     mockFileEdit,
     mockLongRun,
@@ -283,6 +285,12 @@ const BLOCKS: BlockCase[] = [
         name: "ThinkingBlock",
         node: () => <ThinkingBlock text={mockThinking.text} durationMs={mockThinking.durationMs} expanded />,
         until: "unique",
+    },
+    {
+        // The expanded partial report paints every span the block has: the coverage tags, the mappings, and the sources.
+        name: "AnalogyReportBlock",
+        node: () => <AnalogyReportBlock view={mockAnalogyReports.partial} expanded />,
+        until: "search failed",
     },
     {
         name: "ToolBlock",

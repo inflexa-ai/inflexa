@@ -57,6 +57,8 @@ export const GLYPHS = {
     diamond: "◆",
     /** U+25B8 — small right triangle: the `tool` gutter marker (and a collapsed/disclosed affordance). */
     triangleRight: "▸",
+    /** U+25BE — small down triangle: the expanded state of a disclosure whose collapsed state is {@link GLYPHS.triangleRight}. */
+    triangleDown: "▾",
     /** U+270E — pencil: the `fileEdit` gutter marker. */
     pencil: "✎",
     /** U+203A — single right angle quote: the highlighted-row cursor in pickers. */
