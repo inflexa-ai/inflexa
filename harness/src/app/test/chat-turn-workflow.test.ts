@@ -607,7 +607,7 @@ describe("the sub-agents of a chat turn workflow", () => {
         expect((await DBOS.getWorkflowStatus(`${turnId}-r1`))?.status).toBe("SUCCESS");
         expect((await DBOS.getWorkflowStatus(`${turnId}-r2`))?.status).toBe("SUCCESS");
         expect(frames.filter((frame) => frame.type === "tool-finished")).toMatchObject([{ outcome: "ok" }, { outcome: "ok" }]);
-        expect(frames.at(-1)).toMatchObject({ type: "finish", turnUsage: { inputTokens: 210, outputTokens: 45 } });
+        expect(frames.at(-1)).toMatchObject({ type: "finish", finishReason: "stop", turnUsage: { inputTokens: 210, outputTokens: 45 } });
         // The read merges the stream of each child, and each frame of a child carries the call path of the sub-agent.
         const childFrames = frames.filter((frame) => frame.source?.callPath.at(-1) === RESEARCHER);
         expect(childFrames.filter((frame) => frame.type === "iteration")).toHaveLength(2);

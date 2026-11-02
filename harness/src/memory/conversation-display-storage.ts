@@ -27,6 +27,8 @@ import type {
     ChildSessionStartedPart,
     CompactionPart,
     FileReferencePart,
+    ModelRefusal,
+    ModelRefusalPart,
     PlanApprovalPart,
     PlanPart,
     PresentationPart,
@@ -40,6 +42,7 @@ import {
     ChildSessionStartedPartSchema,
     CompactionPartSchema,
     FileReferencePartSchema,
+    ModelRefusalPayloadSchema,
     PlanApprovalPartSchema,
     PlanPartSchema,
     PresentationPartSchema,
@@ -75,6 +78,7 @@ export type ConversationUIData = {
     "child-session-started": Payload<ChildSessionStartedPart>;
     "report-rendered": Payload<ReportRenderedPart>;
     compaction: Payload<CompactionPart>;
+    "model-refusal": ModelRefusal;
     "subagent-activity": Omit<Payload<SubAgentActivityPart>, "entries"> & {
         entries: (Omit<SubAgentActivityEntry, "outcome"> & { outcome: ToolCallOutcome })[];
     };
@@ -143,6 +147,7 @@ const dataSchemas = {
     "child-session-started": ChildSessionStartedPartSchema.omit({ type: true }),
     "report-rendered": ReportRenderedPartSchema.omit({ type: true }),
     compaction: CompactionPartSchema.omit({ type: true }),
+    "model-refusal": ModelRefusalPayloadSchema,
     "subagent-activity": SubAgentActivityPartSchema.omit({ type: true }).extend({
         entries: z.array(SubAgentActivityEntrySchema.extend({ outcome: ToolCallOutcomeSchema })),
     }),
@@ -261,6 +266,7 @@ export type StoredSourcePart = Extract<
             | ChildSessionStartedPart["type"]
             | ReportRenderedPart["type"]
             | CompactionPart["type"]
+            | ModelRefusalPart["type"]
             | SubAgentActivityPart["type"];
     }
 >;
@@ -276,6 +282,7 @@ const STORED_SOURCE_TYPES = [
     "data-child-session-started",
     "data-report-rendered",
     "data-compaction",
+    "data-model-refusal",
     "data-subagent-activity",
 ] as const;
 type _AssertStoredSourceTypesComplete = Exclude<StoredSourcePart["type"], (typeof STORED_SOURCE_TYPES)[number]> extends never ? true : never;
@@ -353,6 +360,10 @@ export function conversationDisplayPart(part: StoredSourcePart): DataUIPart<Conv
             const { type: _type, ...data } = part;
             return { type: "data-compaction", id, data };
         }
+        case "data-model-refusal": {
+            const { type: _type, ...data } = part;
+            return { type: "data-model-refusal", id, data };
+        }
         case "data-subagent-activity": {
             const { type: _type, ...payload } = part;
             return { type: "data-subagent-activity", id, data: { ...payload, entries: part.entries.map(closedEntry) } };
@@ -412,6 +423,9 @@ export function conversationUIToChatMessages(messages: readonly ConversationUIMe
                         break;
                     case "data-compaction":
                         parts.push({ type: "data-compaction", ...part.data });
+                        break;
+                    case "data-model-refusal":
+                        parts.push({ type: "data-model-refusal", ...part.data });
                         break;
                     case "data-subagent-activity":
                         parts.push({ type: "data-subagent-activity", ...part.data });

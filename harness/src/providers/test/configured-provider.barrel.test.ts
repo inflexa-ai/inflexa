@@ -547,3 +547,98 @@ describe("output-token ceiling", () => {
         ).toBe(8_192);
     });
 });
+
+describe("the refusal fallback of the anthropic arm", () => {
+    const BASE = { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-5-5" } as const;
+
+    /** A reply that the requested model declined before any output, and that the fallback model gave. */
+    function servedByFallbackSse(text: string, _model: string): Response {
+        const usage = { input_tokens: 12, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+        const fallback = {
+            type: "fallback",
+            from: { model: "claude-opus-5-5" },
+            to: { model: "claude-opus-5" },
+            trigger: { type: "refusal", category: "bio" },
+        };
+        const iterations = [
+            { type: "message", model: "claude-opus-5-5", input_tokens: 12, output_tokens: 0 },
+            { type: "fallback_message", model: "claude-opus-5", input_tokens: 12, output_tokens: 3 },
+        ];
+        return sse([
+            `event: message_start\ndata: ${JSON.stringify({
+                type: "message_start",
+                message: {
+                    id: "msg_fb",
+                    type: "message",
+                    role: "assistant",
+                    model: "claude-opus-5",
+                    content: [],
+                    stop_reason: null,
+                    stop_sequence: null,
+                    usage,
+                },
+            })}`,
+            `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: fallback })}`,
+            `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}`,
+            `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } })}`,
+            `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text } })}`,
+            `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 1 })}`,
+            `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 3, iterations } })}`,
+            `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`,
+        ]);
+    }
+
+    /** A reply that each model of the chain declined. */
+    function declinedSse(_text: string, model: string): Response {
+        const usage = { input_tokens: 12, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+        return sse([
+            `event: message_start\ndata: ${JSON.stringify({
+                type: "message_start",
+                message: { id: "msg_no", type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage },
+            })}`,
+            `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "refusal", stop_sequence: null }, usage: { output_tokens: 0 } })}`,
+            `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`,
+        ]);
+    }
+
+    it("asks for the default fallback, with its beta header, when the config opts in", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({ config: { ...BASE, fetch: cap.fetch, fallbacks: "default" } });
+
+        expect((await drive(provider)).failure).toBeUndefined();
+
+        expect(cap.requests[0]?.body["fallbacks"]).toBe("default");
+        expect(cap.requests[0]?.headers["anthropic-beta"]).toContain("server-side-fallback-2026-07-01");
+    });
+
+    it("asks for no fallback when the config does not opt in", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({ config: { ...BASE, fetch: cap.fetch } });
+
+        expect((await drive(provider)).failure).toBeUndefined();
+
+        expect(cap.requests[0]?.body).not.toHaveProperty("fallbacks");
+        expect(cap.requests[0]?.headers["anthropic-beta"] ?? "").not.toContain("server-side-fallback");
+    });
+
+    it("reads the reply of a fallback model, and its fallback block fails nothing", async () => {
+        const cap = capturingFetch(servedByFallbackSse);
+        const provider = createConfiguredAiSdkProvider({ config: { ...BASE, fetch: cap.fetch, fallbacks: "default" } });
+
+        const outcome = await drive(provider);
+
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.text).toBe("Hello, world");
+        expect(outcome.finishReason).toBe("stop");
+    });
+
+    it("ends with the content filter when each model of the chain declined", async () => {
+        const cap = capturingFetch(declinedSse);
+        const provider = createConfiguredAiSdkProvider({ config: { ...BASE, fetch: cap.fetch, fallbacks: "default" } });
+
+        const outcome = await drive(provider);
+
+        expect(outcome.failure).toBeUndefined();
+        expect(outcome.finishReason).toBe("content-filter");
+    });
+});

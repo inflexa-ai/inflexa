@@ -21,7 +21,7 @@ import { createAiSdkProvider } from "../../providers/ai-sdk.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
 import { defineTool } from "../../tools/define-tool.js";
-import { CHAT_STREAM_KEY, createTurnStreamWriter, readChatTurn } from "../chat-stream.js";
+import { CHAT_STREAM_KEY, createTurnStreamWriter, framesOfChunk, readChatTurn } from "../chat-stream.js";
 
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
@@ -62,7 +62,7 @@ const streamWorkflow = DBOS.registerWorkflow(
             signal: new AbortController().signal,
             chatStream: CHAT_STREAM_KEY,
         });
-        await writer.write({ type: "finish", source: ROOT });
+        await writer.write({ type: "finish", source: ROOT, finishReason: result.finish.reason });
         await writer.settle();
         await closeDurableStream(CHAT_STREAM_KEY, result.finish.reason);
         return result.finish.reason;
@@ -79,7 +79,7 @@ const concurrentWritesWorkflow = DBOS.registerWorkflow(
         const writes = STARTED_IDS.map((toolUseId) => writer.write({ type: "tool-started", source: ROOT, toolUseId, name: "lookup" }));
         const stepped = DBOS.runStep(() => Promise.resolve("done"), { name: "after-writes" });
         await Promise.all([...writes, stepped]);
-        await writer.write({ type: "finish", source: ROOT });
+        await writer.write({ type: "finish", source: ROOT, finishReason: "stop" });
         await writer.settle();
         await closeDurableStream(CHAT_STREAM_KEY, "stop");
     },
@@ -142,7 +142,7 @@ const haltingWorkflow = DBOS.registerWorkflow(
                 chatStream: CHAT_STREAM_KEY,
             },
         );
-        await writer.write({ type: "finish", source: ROOT });
+        await writer.write({ type: "finish", source: ROOT, finishReason: result.finish.reason });
         await writer.settle();
         await closeDurableStream(CHAT_STREAM_KEY, result.finish.reason);
         return result.finish.reason;
@@ -231,5 +231,11 @@ describe("the durable stream of a chat turn", () => {
 
         expect(attempts).toBe(2);
         expect(textOf(await readAll(turnId))).toBe("The whole answer.");
+    });
+});
+
+describe("the frames of one chunk of the stream", () => {
+    it("ends a workflow that the library aborted with a finish frame of the reason aborted", () => {
+        expect(framesOfChunk({ type: "abort" }, ROOT)).toEqual([{ type: "finish", source: ROOT, finishReason: "aborted" }]);
     });
 });

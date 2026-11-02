@@ -332,6 +332,11 @@ export function MessageBlock(props: MessageBlockProps) {
                     case "data-model-retry":
                         // The header shows a retry of a model request, and the part never lands in a message.
                         return null;
+                    // The banner of a filtered turn shows a stop.
+                    case "data-model-refusal":
+                        return part.outcome === "fallback" ? (
+                            <MarkdownBody content={`_Answered by ${part.model}, because the requested model declined._`} paddingLeft={bodyPadLeft()} />
+                        ) : null;
                     default: {
                         // Exhaustive: a new part kind without a case fails the build here. The registry guard
                         // above already routed every type this build does not know to its own rendering, thus

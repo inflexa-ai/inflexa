@@ -90,6 +90,27 @@ describe("recorded conversation display replay", () => {
         ]);
     });
 
+    it("replays each refusal of the model through the stored envelope and its parse, also a turn with no other part", async () => {
+        const recorder = createConversationDisplayRecorder({
+            userText: "ask it",
+            agentId: SOURCE.agentId,
+            sink: () => {},
+        });
+        await recorder.emit({ type: "data-model-refusal", source: SOURCE, data: { id: "msg_1", outcome: "fallback", model: "claude-opus-5" } });
+        await recorder.emit({ type: "data-model-refusal", source: SOURCE, data: { id: "msg_2", outcome: "stopped" } });
+
+        const stored = await parseStoredDisplayEnvelope(envelopeDisplayMessages(recorder.finish()), "test");
+        const model = { role: "user" as const, content: "ask it" };
+        const replay = storedMessagesToChat([
+            { seq: 0, envelope: envelopeMessage(model), message: model, displayEnvelope: envelopeDisplayMessages(stored.messages) },
+        ]);
+
+        expect(presentAt(replay, 1).parts).toEqual([
+            { type: "data-model-refusal", id: "msg_1", outcome: "fallback", model: "claude-opus-5" },
+            { type: "data-model-refusal", id: "msg_2", outcome: "stopped" },
+        ]);
+    });
+
     it("replays a call's outcome and its detail exactly as shown", async () => {
         const recorder = createConversationDisplayRecorder({
             userText: "run it",

@@ -224,7 +224,7 @@ describe("createSubAgentActivityTracker", () => {
         const others: ChatFrame[] = [
             { type: "text-delta", text: "hello", source: planner("t1") },
             { type: "iteration", source: planner("t1") },
-            { type: "finish", source: planner("t1") },
+            { type: "finish", source: planner("t1"), finishReason: "stop" },
             { type: "error", message: "x", source: planner("t1") },
             { type: "data-presentation", id: "p", content: { kind: "markdown", body: "x" }, source: planner("t1") },
         ];

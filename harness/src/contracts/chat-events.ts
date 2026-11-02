@@ -159,6 +159,11 @@ export type ToolFinishedEvent = {
 export type FinishEvent = {
     type: "finish";
     source: EventSource;
+    /**
+     * Why the turn stopped: the finish reason of the last reply, for example `stop` or `content-filter`, or `aborted`,
+     * `max_iterations`, or `denied`. A word outside these stays as the provider sent it.
+     */
+    finishReason: string;
     /** What this loop's own LLM calls used. */
     usage?: TokenUsageRollup;
     /**

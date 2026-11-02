@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import type { ChatFrame } from "../contracts/chat-events.js";
 import { toChatFrame } from "../contracts/chat-frame.js";
-import { chatTurnEndOf, type ChatTurnEnd, type ChatTurns } from "./chat-turn-workflow.js";
+import { chatTurnEndOf, endFrameOf, type ChatTurnEnd, type ChatTurns } from "./chat-turn-workflow.js";
 
 import type { LoopOptions } from "../loop/run-loop.js";
 import type { EmitFn } from "../loop/types.js";
@@ -163,13 +163,8 @@ export function inProcessChatTurns(deps: RunChatTurnDeps): ChatTurns {
                     promptCache: request.promptCache,
                 })
                 .then((ran): ChatTurnEnd => {
-                    const turnEnd = chatTurnEndOf(ran);
-                    log.push(
-                        turnEnd.status === "failed"
-                            ? { type: "error", message: turnEnd.reason ?? "The turn failed.", reason: turnEnd.code, source: rootSource }
-                            : { type: "finish", source: rootSource, turnUsage: turnEnd.turnUsage },
-                    );
-                    return turnEnd;
+                    log.push(endFrameOf(ran, rootSource));
+                    return chatTurnEndOf(ran);
                 })
                 .catch(() => null)
                 .finally(() => log.close());

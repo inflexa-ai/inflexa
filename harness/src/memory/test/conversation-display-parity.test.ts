@@ -84,7 +84,7 @@ function live(forwarded: readonly TurnEvent[], turnUsage?: TokenUsageRollup): Ch
         const activity = tracker.track(frame, now());
         if (activity !== null) messages = applyChatFrame(messages, activity, assistantId).messages;
     }
-    return applyChatFrame(messages, { type: "finish", source: ROOT, turnUsage }, assistantId).messages;
+    return applyChatFrame(messages, { type: "finish", source: ROOT, finishReason: "stop", turnUsage }, assistantId).messages;
 }
 
 /**
