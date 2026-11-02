@@ -873,6 +873,7 @@ describe("the turn registry routes", () => {
                 workKind: "turn",
                 state: "paused",
                 cause: { kind: "credential" },
+                pausedAt: "2026-10-27T10:00:00.000Z",
                 attempt: 0,
                 source,
             },

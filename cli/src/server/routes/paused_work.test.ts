@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
+import { err, ok } from "neverthrow";
 import type { ChatTurnSession, Work, WorkSurface } from "@inflexa-ai/harness";
 
 import type { HeldWork, PausedWorkList, ResumedWork } from "../../api/paused_work.ts";
 import type { ServerBootState } from "../../api/server.ts";
+import type { DbError } from "../../db/errors.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { idleBoot } from "../../test_support/server.ts";
 import type { ServerBoot } from "../boot.ts";
-import { DEFAULT_PAUSED_WORK_ROUTE_OPTS, pausedWorkRoutes, type PausedWorkRouteOpts } from "./paused_work.ts";
+import { DEFAULT_PAUSED_WORK_ROUTE_OPTS, pausedWorkCollectionRoutes, pausedWorkRoutes, type PausedWorkRouteOpts } from "./paused_work.ts";
 
 // The routes alone, mounted under the path of the app, with no bearer check: `app.test.ts` covers that. No cli test
 // reaches Postgres, thus the paused work of the runtime is a fake over items in memory. Each `as` cast of a body
@@ -37,17 +39,19 @@ const PAUSED_RUN: Work = {
 };
 
 /** A fake of the paused work of the runtime, with each resume that it got. */
-function fakePausedWork(items: Work[]): WorkSurface & { resumed: { session: ChatTurnSession; workId: string }[]; held: string[]; listed: string[] } {
+function fakePausedWork(
+    items: Work[],
+): WorkSurface & { resumed: { session: ChatTurnSession; workId: string }[]; held: string[]; listed: (string | undefined)[] } {
     const resumed: { session: ChatTurnSession; workId: string }[] = [];
     const held: string[] = [];
-    const listed: string[] = [];
+    const listed: (string | undefined)[] = [];
     return {
         resumed,
         held,
         listed,
         list: async (analysisId) => {
             listed.push(analysisId);
-            return items.filter((work) => work.analysisId === analysisId);
+            return analysisId === undefined ? items : items.filter((work) => work.analysisId === analysisId);
         },
         stop: async () => ({ kind: "not_found" }),
         resume: async (session, workId) => {
@@ -87,6 +91,21 @@ function appWith(boot: ServerBoot, over: Partial<PausedWorkRouteOpts> = {}): { r
     return { request: async (path, init) => app.request(`/api/v1/analyses/${A}/paused-work${path}`, init) };
 }
 
+/** The routes of the paused work of each analysis, under their mount path of the app. */
+function collectionWith(boot: ServerBoot, over: Partial<PausedWorkRouteOpts> = {}): { request: (path?: string) => Promise<Response> } {
+    const app = new Hono();
+    app.route(
+        "/api/v1/paused-work",
+        pausedWorkCollectionRoutes(boot, { ...DEFAULT_PAUSED_WORK_ROUTE_OPTS, connection: () => ({ provider: "anthropic", mode: "cliproxy" }), ...over }),
+    );
+    return { request: async (path = "") => app.request(`/api/v1/paused-work${path}`) };
+}
+
+/** The analyses of a fake SQLite read: each id of the list that is in `rows` has a name. */
+function namesOf(rows: readonly string[]): NonNullable<PausedWorkRouteOpts["analysisNames"]> {
+    return (ids) => ok(new Map(ids.filter((id) => rows.includes(id)).map((id) => [id, `name of ${id}`])));
+}
+
 describe("GET {A}/paused-work", () => {
     test("gives the paused work of the analysis and not the work that runs, and the remedy of a failed turn on an item with the cause `credential`", async () => {
         const running: Work = { workId: "run-running", kind: "run", analysisId: A, waiting: [] };
@@ -115,6 +134,45 @@ describe("GET {A}/paused-work", () => {
         expect(body.pausedWork[0]?.remedy).toContain("INFLEXA_MODEL_API_KEY");
     });
 
+    test("a run with two waiting steps gives the waiter and the start of each wait", async () => {
+        const run: Work = {
+            workId: "run-1",
+            kind: "run",
+            analysisId: A,
+            waiting: [
+                {
+                    workflowId: "run-1-s1",
+                    waiter: { kind: "step", stepId: "s1" },
+                    state: "paused",
+                    cause: { kind: "outage" },
+                    attempt: 0,
+                    pausedAt: "2026-10-27T10:00:00.000Z",
+                },
+                {
+                    workflowId: "run-1-s2",
+                    waiter: { kind: "step", stepId: "s2" },
+                    state: "paused",
+                    cause: { kind: "outage" },
+                    attempt: 0,
+                    pausedAt: "2026-10-27T10:02:00.000Z",
+                },
+            ],
+        };
+        const response = await appWith(readyBoot(fakePausedWork([run]))).request("");
+        const body = (await response.json()) as PausedWorkList;
+        expect(body.pausedWork[0]?.waiting.map((wait) => [wait.waiter, wait.pausedAt])).toEqual([
+            [{ kind: "step", stepId: "s1" }, "2026-10-27T10:00:00.000Z"],
+            [{ kind: "step", stepId: "s2" }, "2026-10-27T10:02:00.000Z"],
+        ]);
+    });
+
+    test("a waiting workflow from before the harness recorded the waiter has no `waiter` field, and its item stays in the list", async () => {
+        const response = await appWith(readyBoot(fakePausedWork([CREDENTIAL_TURN]))).request("");
+        const body = (await response.json()) as PausedWorkList;
+        expect(body.total).toBe(1);
+        expect(body.pausedWork[0]?.waiting[0]).not.toHaveProperty("waiter");
+    });
+
     test("a failed list gives 500 `internal_error`", async () => {
         const failing: WorkSurface = {
             list: () => Promise.reject(new Error("relation cortex_paused_work does not exist")),
@@ -125,6 +183,117 @@ describe("GET {A}/paused-work", () => {
         const response = await appWith(readyBoot(failing)).request("");
         expect(response.status).toBe(500);
         expect(await response.json()).toMatchObject({ error: "internal_error" });
+    });
+});
+
+describe("GET /api/v1/paused-work", () => {
+    const STEP_RUN: Work = {
+        workId: "run-2",
+        kind: "run",
+        analysisId: "analysis-2",
+        waiting: [
+            {
+                workflowId: "run-2-s1",
+                waiter: { kind: "step", stepId: "s1" },
+                state: "paused",
+                cause: { kind: "outage" },
+                attempt: 0,
+                pausedAt: PAUSED_AT,
+            },
+        ],
+    };
+
+    test("gives the paused work of two analyses from one list with no id, each item with its analysis id", async () => {
+        const running: Work = { workId: "run-running", kind: "run", analysisId: A, waiting: [] };
+        const paused = fakePausedWork([CREDENTIAL_TURN, running, STEP_RUN]);
+        const response = await collectionWith(readyBoot(paused), { analysisNames: namesOf([A, "analysis-2"]) }).request();
+
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as PausedWorkList;
+        expect(paused.listed).toEqual([undefined]);
+        expect(body.total).toBe(2);
+        expect(body.pausedWork.map((work) => [work.workId, work.analysisId])).toEqual([
+            ["turn-1", A],
+            ["run-2", "analysis-2"],
+        ]);
+        expect(body.pausedWork[1]?.waiting[0]?.waiter).toEqual({ kind: "step", stepId: "s1" });
+    });
+
+    test("a server with no paused work gives an empty page, also when a run runs, and reads no SQLite row", async () => {
+        const running: Work = { workId: "run-running", kind: "run", analysisId: A, waiting: [] };
+        const names: string[][] = [];
+        const response = await collectionWith(readyBoot(fakePausedWork([running])), {
+            analysisNames: (ids) => {
+                names.push([...ids]);
+                return ok(new Map());
+            },
+        }).request();
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ pausedWork: [], total: 0, page: 0, perPage: 100, hasMore: false });
+        expect(names).toEqual([[]]);
+    });
+
+    test("leaves out the work of an analysis with no row before the page, thus `perPage=1` still gives the next work", async () => {
+        const orphan: Work = { ...PAUSED_RUN, workId: "run-orphan", analysisId: "analysis-gone" };
+        const paused = fakePausedWork([orphan, CREDENTIAL_TURN, STEP_RUN]);
+        const routes = collectionWith(readyBoot(paused), { analysisNames: namesOf([A, "analysis-2"]) });
+
+        const first = (await (await routes.request("?perPage=1")).json()) as PausedWorkList;
+        expect(first.pausedWork.map((work) => work.workId)).toEqual(["turn-1"]);
+        expect(first.total).toBe(2);
+        expect(first.hasMore).toBe(true);
+
+        const second = (await (await routes.request("?perPage=1&page=1")).json()) as PausedWorkList;
+        expect(second.pausedWork.map((work) => work.workId)).toEqual(["run-2"]);
+        expect(second.hasMore).toBe(false);
+    });
+
+    test("adds the remedy to an item with the cause `credential` and to no other", async () => {
+        const response = await collectionWith(readyBoot(fakePausedWork([CREDENTIAL_TURN, STEP_RUN])), { analysisNames: namesOf([A, "analysis-2"]) }).request();
+        const body = (await response.json()) as PausedWorkList;
+        expect(body.pausedWork[0]?.remedy).toContain("run `inflexa up` in a terminal to sign in again");
+        expect(body.pausedWork[1]?.remedy).toBeUndefined();
+    });
+
+    test("reads the connection one time, and not when no item needs the remedy", async () => {
+        let reads = 0;
+        const connection: PausedWorkRouteOpts["connection"] = () => {
+            reads += 1;
+            return { provider: "anthropic", mode: "cliproxy" };
+        };
+        const two: Work = { ...CREDENTIAL_TURN, workId: "turn-2" };
+        await collectionWith(readyBoot(fakePausedWork([CREDENTIAL_TURN, two])), { connection, analysisNames: namesOf([A]) }).request();
+        expect(reads).toBe(1);
+
+        reads = 0;
+        await collectionWith(readyBoot(fakePausedWork([STEP_RUN])), { connection, analysisNames: namesOf(["analysis-2"]) }).request();
+        expect(reads).toBe(0);
+    });
+
+    test("a failed list gives 500 `internal_error`", async () => {
+        const failing: WorkSurface = {
+            list: () => Promise.reject(new Error("relation cortex_paused_work does not exist")),
+            stop: async () => ({ kind: "not_found" }),
+            resume: async () => ({ kind: "not_found" }),
+            hold: async () => ({ kind: "not_found" }),
+        };
+        const response = await collectionWith(readyBoot(failing), { analysisNames: namesOf([]) }).request();
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
+    });
+
+    test("a failed read of the analysis names gives 500 `internal_error`", async () => {
+        const failure: DbError = { type: "query_failed", op: "listAnalysisNames", cause: new Error("disk I/O error") };
+        const response = await collectionWith(readyBoot(fakePausedWork([CREDENTIAL_TURN])), { analysisNames: () => err(failure) }).request();
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ error: "internal_error" });
+    });
+
+    test("with no runtime it gives 503 `unavailable`", async () => {
+        const response = await collectionWith(idleBoot()).request();
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ error: "unavailable" });
     });
 });
 
