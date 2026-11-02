@@ -1,0 +1,317 @@
+import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+
+import type { PolicyRow } from "../../test_support/agent_policy_report.ts";
+import { lintScratch, linesOf, OXLINT_SPAWN_TIMEOUT_MS, RESTRICTED_SYNTAX } from "../../test_support/oxlint.ts";
+
+const REPORT_ENTRY = join(import.meta.dir, "../../test_support/agent_policy_report.ts");
+
+/**
+ * Walk the command tree under a forced build channel and return its action-policy rows.
+ *
+ * The dev-channel gate (`devCommandsEnabled`) reads a channel frozen at env-import time — undefined in a
+ * `bun test` process, which means dev-ON always — so the dev-OFF tree is unreachable in-process. Baking
+ * the channel BEFORE the import means a subprocess, exactly as scripts/gen_docs.ts forces a production
+ * channel for the release-surface docs. Both channels go through a subprocess so neither depends on the
+ * ambient test-process channel. Forward the sandbox env (XDG dirs + marker) like runCli so env.ts's
+ * data-loss guard passes; override only the two channel signals.
+ */
+function runReport(channel: "development" | "production"): PolicyRow[] {
+    // Widened to a plain string map so `delete` is legal and the whole sandbox env forwards intact.
+    const childEnv: Record<string, string | undefined> = { ...Bun.env, INFLEXA_BUILD_CHANNEL: channel };
+    delete childEnv.INFLEXA_DEV;
+    const proc = Bun.spawnSync(["bun", "run", REPORT_ENTRY], { env: childEnv });
+    if (proc.exitCode !== 0) throw new Error(`agent_policy_report failed (channel=${channel}, exit ${proc.exitCode}):\n${proc.stderr.toString()}`);
+    // The `as PolicyRow[]` is sound because both ends of this JSON are owned by the same module pair: the
+    // subprocess is `agent_policy_report.ts` printing `JSON.stringify(reportAgentPolicies())`, whose return
+    // type IS `PolicyRow[]`. The shape is fixed end-to-end by this code — not external input — so no runtime
+    // validation is warranted; a drift here would be a same-repo type change caught by tsc, not a wire skew.
+    return JSON.parse(proc.stdout.toString()) as PolicyRow[];
+}
+
+/**
+ * Compact each row to its audit value: `auto(flag,flag)` for auto, otherwise the bare kind, and `+transfer`
+ * on either when the command runs with no deadline of the tool's own.
+ */
+function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const row of rows) {
+        const kind = row.kind === "auto" ? `auto(${(row.safeFlags ?? []).join(",")})` : String(row.kind);
+        out[row.grantKey] = row.transfer ? `${kind}+transfer` : kind;
+    }
+    return out;
+}
+
+// The release surface (dev channel OFF). This literal table is the human audit surface: any policy-kind
+// or safeFlags change surfaces here as a one-file diff that a reviewer must consciously accept. Sorted by
+// grantKey.
+const EXPECTED_DEV_OFF: Record<string, string> = {
+    inflexa: "blocked",
+    "inflexa analysis set-project": "approval",
+    "inflexa auth login": "blocked",
+    "inflexa auth logout": "approval",
+    "inflexa auth whoami": "auto()",
+    "inflexa config": "blocked",
+    "inflexa down": "blocked",
+    "inflexa geo download": "approval+transfer",
+    "inflexa gui": "blocked",
+    "inflexa inputs add": "blocked",
+    "inflexa inputs ls": "auto(analysis)",
+    "inflexa inputs remove": "blocked",
+    "inflexa ls": "auto(project)",
+    "inflexa new": "blocked",
+    "inflexa open": "approval",
+    "inflexa project ls": "auto()",
+    "inflexa project new": "approval",
+    "inflexa prov export": "approval",
+    "inflexa prov lineage": "auto(forward,depth,format)",
+    "inflexa prov verify": "auto()",
+    "inflexa prov verify-file": "auto()",
+    "inflexa prune": "approval",
+    "inflexa refs download": "approval+transfer",
+    "inflexa refs list": "auto(urls,json)",
+    "inflexa refs path": "auto()",
+    "inflexa refs verify": "auto(json)",
+    "inflexa relocate": "approval",
+    "inflexa repair": "approval",
+    "inflexa resume": "blocked",
+    "inflexa sandbox pull": "approval",
+    "inflexa sandbox remove": "blocked",
+    "inflexa sandbox status": "auto()",
+    "inflexa sbom": "blocked",
+    "inflexa serve": "blocked",
+    "inflexa server logs": "approval",
+    "inflexa server status": "auto(json)",
+    "inflexa server stop": "blocked",
+    "inflexa server walk": "blocked",
+    "inflexa setup": "blocked",
+    "inflexa status": "approval",
+    "inflexa store add": "approval",
+    "inflexa store cancel": "approval",
+    "inflexa store download": "approval",
+    "inflexa store link": "auto(analysis,lang)",
+    "inflexa store ls": "auto()",
+    "inflexa store reclaim": "approval",
+    "inflexa up": "blocked",
+    "inflexa upgrade": "blocked",
+    "inflexa usage": "auto(analysis)",
+    "inflexa usage runs": "auto(analysis)",
+    "inflexa usage sessions": "auto(analysis)",
+    "inflexa usage steps": "auto(analysis,run)",
+};
+
+// The full surface (dev channel ON) — the release table plus the dev-only entry points. `chat` is a
+// blocked TUI launcher; `profile`/`run` stay approval.
+const EXPECTED_DEV_ON: Record<string, string> = {
+    inflexa: "blocked",
+    "inflexa analysis set-project": "approval",
+    "inflexa auth login": "blocked",
+    "inflexa auth logout": "approval",
+    "inflexa auth whoami": "auto()",
+    "inflexa chat": "blocked",
+    "inflexa config": "blocked",
+    "inflexa down": "blocked",
+    "inflexa geo download": "approval+transfer",
+    "inflexa gui": "blocked",
+    "inflexa inputs add": "blocked",
+    "inflexa inputs ls": "auto(analysis)",
+    "inflexa inputs remove": "blocked",
+    "inflexa ls": "auto(project)",
+    "inflexa new": "blocked",
+    "inflexa open": "approval",
+    "inflexa profile": "approval",
+    "inflexa project ls": "auto()",
+    "inflexa project new": "approval",
+    "inflexa prov export": "approval",
+    "inflexa prov lineage": "auto(forward,depth,format)",
+    "inflexa prov verify": "auto()",
+    "inflexa prov verify-file": "auto()",
+    "inflexa prune": "approval",
+    "inflexa refs download": "approval+transfer",
+    "inflexa refs list": "auto(urls,json)",
+    "inflexa refs path": "auto()",
+    "inflexa refs verify": "auto(json)",
+    "inflexa relocate": "approval",
+    "inflexa repair": "approval",
+    "inflexa resume": "blocked",
+    "inflexa run": "approval",
+    "inflexa sandbox pull": "approval",
+    "inflexa sandbox remove": "blocked",
+    "inflexa sandbox status": "auto()",
+    "inflexa sbom": "blocked",
+    "inflexa serve": "blocked",
+    "inflexa server logs": "approval",
+    "inflexa server status": "auto(json)",
+    "inflexa server stop": "blocked",
+    "inflexa server walk": "blocked",
+    "inflexa setup": "blocked",
+    "inflexa status": "approval",
+    "inflexa store add": "approval",
+    "inflexa store cancel": "approval",
+    "inflexa store download": "approval",
+    "inflexa store link": "auto(analysis,lang)",
+    "inflexa store ls": "auto()",
+    "inflexa store reclaim": "approval",
+    "inflexa up": "blocked",
+    "inflexa upgrade": "blocked",
+    "inflexa usage": "auto(analysis)",
+    "inflexa usage runs": "auto(analysis)",
+    "inflexa usage sessions": "auto(analysis)",
+    "inflexa usage steps": "auto(analysis,run)",
+};
+
+/**
+ * Compact each row to its command kind: the bare kind, or `instance machine(flag,flag)` when options make
+ * the command a `machine` command for one run. `unclassified` marks a row with no kind.
+ */
+function kindTable(rows: readonly PolicyRow[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const row of rows) {
+        const kind = row.commandKind ?? "unclassified";
+        out[row.grantKey] = row.machineFlags === null ? kind : `${kind} machine(${row.machineFlags.join(",")})`;
+    }
+    return out;
+}
+
+// The command kind of each command of the full surface (dev channel ON): what it needs from the local
+// server. `instance` is a client of the server, `machine` prepares or controls the machine or the server,
+// `standalone` needs no instance. The release surface is the same table without the dev-only entries.
+const EXPECTED_KINDS: Record<string, string> = {
+    inflexa: "instance",
+    "inflexa analysis set-project": "instance",
+    "inflexa auth login": "machine",
+    "inflexa auth logout": "machine",
+    "inflexa auth whoami": "standalone",
+    "inflexa chat": "instance",
+    "inflexa config": "instance",
+    "inflexa down": "machine",
+    "inflexa geo download": "instance",
+    "inflexa gui": "instance",
+    "inflexa inputs add": "instance",
+    "inflexa inputs ls": "instance",
+    "inflexa inputs remove": "instance",
+    "inflexa ls": "instance",
+    "inflexa new": "instance",
+    "inflexa open": "instance",
+    "inflexa profile": "instance",
+    "inflexa project ls": "instance",
+    "inflexa project new": "instance",
+    "inflexa prov export": "instance",
+    "inflexa prov lineage": "instance",
+    "inflexa prov verify": "instance",
+    "inflexa prov verify-file": "standalone",
+    "inflexa prune": "instance",
+    "inflexa refs download": "machine",
+    "inflexa refs list": "standalone",
+    "inflexa refs path": "standalone",
+    "inflexa refs verify": "standalone",
+    "inflexa relocate": "instance",
+    "inflexa repair": "instance",
+    "inflexa resume": "instance",
+    "inflexa run": "instance machine(plan)",
+    "inflexa sandbox pull": "machine",
+    "inflexa sandbox remove": "machine",
+    "inflexa sandbox status": "machine",
+    "inflexa sbom": "machine",
+    "inflexa serve": "machine",
+    "inflexa server logs": "machine",
+    "inflexa server status": "machine",
+    "inflexa server stop": "machine",
+    "inflexa server walk": "standalone",
+    "inflexa setup": "machine",
+    "inflexa status": "instance",
+    "inflexa store add": "machine",
+    "inflexa store cancel": "machine",
+    "inflexa store download": "machine",
+    "inflexa store link": "instance",
+    "inflexa store ls": "machine",
+    "inflexa store reclaim": "machine",
+    "inflexa up": "machine",
+    "inflexa upgrade": "machine",
+    "inflexa usage": "instance",
+    "inflexa usage runs": "instance",
+    "inflexa usage sessions": "instance",
+    "inflexa usage steps": "instance",
+};
+
+describe("agent policy — tree-walk exhaustiveness (both channels)", () => {
+    test.each([["development"], ["production"]] as const)("every action-carrying command in the %s channel carries a policy", (channel) => {
+        const rows = runReport(channel);
+        const unclassified = rows.filter((r) => !r.hasPolicy || r.commandKind === null).map((r) => r.grantKey);
+        expect(unclassified).toEqual([]);
+        // Guard against a walk that found nothing (a broken subprocess), which would pass the filter vacuously.
+        expect(rows.length).toBeGreaterThan(0);
+    });
+
+    test.each([["development"], ["production"]] as const)("every safeFlags entry names a declared option in the %s channel", (channel) => {
+        const rows = runReport(channel);
+        for (const row of rows) {
+            if (row.kind !== "auto") continue;
+            for (const flag of row.safeFlags ?? []) {
+                // A stale safeFlag (option renamed/removed) must be a loud failure — until fixed it is
+                // fail-safe (the invocation escalates to approval), but it should never sit undetected.
+                expect(row.declaredOptions).toContain(flag);
+            }
+        }
+    });
+});
+
+describe("agent policy — snapshot audit surface", () => {
+    test("the dev-OFF (release) policy table matches the pinned snapshot", () => {
+        expect(policyTable(runReport("production"))).toEqual(EXPECTED_DEV_OFF);
+    });
+
+    test("the dev-ON policy table matches the pinned snapshot (adds the dev-only entries)", () => {
+        expect(policyTable(runReport("development"))).toEqual(EXPECTED_DEV_ON);
+    });
+
+    test("the command kind table matches the pinned snapshot in each channel", () => {
+        expect(kindTable(runReport("development"))).toEqual(EXPECTED_KINDS);
+        const release = kindTable(runReport("production"));
+        expect(release).toEqual(Object.fromEntries(Object.keys(release).map((key) => [key, EXPECTED_KINDS[key] ?? "absent from EXPECTED_KINDS"])));
+    });
+
+    test("each machine flag names a declared option", () => {
+        for (const row of runReport("development")) {
+            for (const flag of row.machineFlags ?? []) expect(row.declaredOptions).toContain(flag);
+        }
+    });
+});
+
+// The lint ban is the static half of the same audit surface: it stops a raw `command.action(fn)` from ever
+// registering an action with no policy in the first place. Exercising it here through the oxlint binary
+// against the REAL oxlint.config.ts (not a hand-rolled selector) pins the spec scenario "A raw `.action()` in the
+// registry is a lint error".
+//
+// The snippets are scratch files under `src/cli/`, because the override applies by the path of a file (see
+// src/test_support/oxlint.ts). The exemption case lints the real `src/cli/agent_policy.ts`, which holds the
+// sanctioned `command.action(handler)` call. The spawn throws on a config error, so a broken config fails the test
+// loudly and never reads as "the ban did not fire".
+describe("agent policy — the registry-scoped raw `.action(` lint ban", () => {
+    const snippets = [
+        { scope: "src/cli", ext: "ts", text: "cmd.action(() => {});\n" },
+        { scope: "src/cli", ext: "ts", text: 'cmd["action"](() => {});\n' },
+    ] as const;
+    const policyFile = "src/cli/agent_policy.ts";
+    let lintOnce: ReturnType<typeof lintScratch> | undefined;
+    const lint = (): ReturnType<typeof lintScratch> => (lintOnce ??= lintScratch(snippets, [policyFile]));
+
+    test(
+        "a raw `.action(fn)` (plain and computed-member) in a registry file is a no-restricted-syntax error",
+        async () => {
+            const [plain, computed] = (await lint()).snippets;
+            expect(linesOf(plain ?? [], RESTRICTED_SYNTAX)).toEqual([1]);
+            expect(linesOf(computed ?? [], RESTRICTED_SYNTAX)).toEqual([1]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
+
+    test(
+        "the same call in agent_policy.ts (the sanctioned registerAction site) is exempt",
+        async () => {
+            const [real] = (await lint()).real;
+            expect(linesOf(real ?? [], RESTRICTED_SYNTAX)).toEqual([]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
+});
