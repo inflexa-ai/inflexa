@@ -1,0 +1,234 @@
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { env } from "../../lib/env.ts";
+import { runCli, runCliAsync } from "../../test_support/cli.ts";
+import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
+import { asStr256 } from "../../lib/types.ts";
+import { freshDb } from "../../test_support/db.ts";
+import { assertTestSandbox } from "../../test_support/sandbox.ts";
+import { startTestServer } from "../../test_support/server.ts";
+
+// e2e of the commander registry surface — help text and the error/exit-code contract. No DB needed:
+// --help exits before any action, and unknown option/command errors during parse.
+describe("inflexa help & usage (e2e)", () => {
+    test("--help exits 0 and lists the registered commands", () => {
+        const result = runCli(["--help"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Usage: inflexa");
+        expect(result.stdout).toContain("project");
+        expect(result.stdout).toContain("refs");
+        expect(result.stdout).toContain("reference data mounted read-only in sandboxes at /mnt/refs");
+        // Assert the DESCRIPTION, not the bare name: "status" is a substring of `sandbox status` and of
+        // several option blurbs, so a containment check on the word alone passes even when the command
+        // is gone. Its own line is what proves it is registered.
+        expect(result.stdout).toContain("Print what `inflexa` resolves to right now");
+        // The retired `sessions` command must not come back by accident — the whole point of the
+        // single-homed thread store is that there is no second session surface.
+        expect(result.stdout).not.toContain("sessions");
+    });
+
+    test("refs path prints the exact public path without creating it", async () => {
+        const result = runCli(["refs", "path"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toContain("/inflexa/refs");
+        expect(await Bun.file(result.stdout.trim()).exists()).toBe(false);
+    });
+
+    test("unknown reference ids fail before filesystem or network work", () => {
+        const result = runCli(["refs", "download", "unknown", "--yes"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("Unknown reference dataset");
+    });
+
+    test("refs list explains custom content, trust-on-first-use integrity, and catalog contributions", () => {
+        const result = runCli(["refs", "list"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Add arbitrary references under");
+        expect(result.stdout).toContain("Open a PR");
+        // Nothing is mirrored, re-hosted, or checksum-pinned: integrity is trust-on-first-use, checked
+        // against the copy you downloaded rather than a catalog digest.
+        expect(result.stdout).toContain("nothing is mirrored, re-hosted, or checksum-pinned here");
+        expect(result.stdout).toContain("Integrity is trust-on-first-use: `inflexa refs verify` checks each installed file against the copy you downloaded.");
+        expect(result.stdout).toContain("Re-run with `--urls` to print the exact upstream URL of every file.");
+    });
+
+    test("refs download offers --force to repair damage and refresh mutable upstreams", () => {
+        const result = runCli(["refs", "download", "--help"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("--yes");
+        expect(result.stdout).toContain("--force");
+        expect(result.stdout).toContain("Re-fetch even when already installed");
+    });
+
+    test("refs list identifies user-owned content without adopting it", () => {
+        assertTestSandbox(env.refsDir);
+        const custom = join(env.refsDir, "user", "custom.fa");
+        mkdirSync(join(env.refsDir, "user"), { recursive: true });
+        writeFileSync(custom, "custom");
+        try {
+            const result = runCli(["refs", "list"]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).toContain("user/custom.fa");
+            expect(result.stdout).toContain("left untouched");
+        } finally {
+            assertTestSandbox(env.refsDir);
+            rmSync(env.refsDir, { recursive: true, force: true });
+        }
+    });
+
+    test("refs verify with no active catalog receipts reports an empty verification set", () => {
+        const result = runCli(["refs", "verify"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("No installed catalog reference datasets to verify.");
+    });
+
+    test("an unknown option exits non-zero", () => {
+        const result = runCli(["--bogus-flag"]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("unknown option");
+    });
+
+    test("an unknown subcommand exits non-zero", () => {
+        const result = runCli(["project", "bogus"]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("unknown command");
+    });
+
+    // The root `.version()` owns `--version`; `sandbox pull` takes a positional
+    // variant (not a `--version`-shaped flag), so there is no clash. Both directions
+    // are asserted: bare `--version` prints the version, and `sandbox pull <variant>`
+    // reaches the pull command's own handler.
+    test("bare --version prints the CLI version and exits 0", () => {
+        const result = runCli(["--version"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    });
+
+    test("`sandbox pull` routes to its own handler, not the root --version", () => {
+        // `sandbox pull` takes no argument (one runtime image exists, thus no
+        // variant choice). Commander rejects the extra argument BEFORE any docker
+        // call, so this proves the subcommand routed there (not the root
+        // --version) without touching the container runtime or the network.
+        const result = runCli(["sandbox", "pull", "definitely-not-a-variant"]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("too many arguments");
+        // The root `--version` handler did NOT fire (it would print just the version).
+        expect(result.stdout.trim()).not.toMatch(/^\d+\.\d+\.\d+$/);
+    });
+
+    // Regression for the reverted `enablePositionalOptions()`: it made a root-style flag
+    // placed AFTER a subcommand (`inflexa project ls --project x`) hard-fail "unknown option",
+    // breaking existing invocations. Without it, the shape parses again and runs the command.
+    // `project ls` declares no options of its own, so `--project` here can only be the ROOT flag.
+    test("`project ls --project x`-shape (root flag after a subcommand) parses again", async () => {
+        freshDb();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["project", "ls", "--project", "x"], { env: server.childEnv });
+            expect(result.exitCode).toBe(0);
+            expect(result.stderr).not.toContain("unknown option");
+        } finally {
+            await server.stop();
+        }
+    });
+
+    // The other half of that trade-off: because the root also declares `--analysis`, commander binds
+    // the value THERE and a subcommand's own identically-named option stays empty. `registerAction`'s
+    // `preAction` hook copies the ancestor's value onto the subcommand, so the flag still reaches the
+    // handler. An unresolvable ref is the
+    // cheap proof — the message names the ref, which is only reachable if the flag arrived at all.
+    test("`--analysis` after a subcommand reaches the handler despite the root declaring it too", async () => {
+        freshDb();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["geo", "download", "GSE12345", "--analysis", "no-such-analysis-ref"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain("no-such-analysis-ref");
+            // The bare-context message would mean the flag never arrived.
+            expect(result.stderr).not.toContain("No analysis here");
+        } finally {
+            await server.stop();
+        }
+    });
+
+    // A fast `fail()` bail-out exits before the event loop turns, so the log file's fd must be
+    // ready from construction (lib/log.ts opens it synchronously) or pino's exit-hook flushSync
+    // throws "sonic boom is not ready yet" and sprays a stack trace after the command's real
+    // message. Pin the quiet exit: the failure message must be the only stderr output.
+    test("a fast fail() exit prints only its message — no log-stream crash on exit", async () => {
+        freshDb();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["prov", "lineage", "nonexistent-analysis", "whatever"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain('No analysis found matching "nonexistent-analysis"');
+            expect(result.stderr).not.toContain("sonic boom");
+            expect(result.stderr).not.toContain("flushSync");
+        } finally {
+            await server.stop();
+        }
+    });
+
+    // An unknown --format must fail listing every accepted value. The lineage route validates its query
+    // before it reads the provenance, thus the analysis exists and holds no provenance, and the ref is a
+    // placeholder.
+    test("an unknown lineage --format fails listing the accepted values", async () => {
+        freshDb();
+        insertAnchor({ id: "anc-1", createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent", markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({
+            id: "ana-1",
+            createdAt: 1,
+            updatedAt: 1,
+            name: asStr256("anything"),
+            slug: "anything",
+            anchorId: "anc-1",
+            projectId: null,
+        })._unsafeUnwrap();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["prov", "lineage", "anything", "anything", "--format", "svg"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain('Unknown format "svg". Use "tree", "json", "dot", or "mermaid".');
+        } finally {
+            await server.stop();
+        }
+    });
+
+    // The route names its own query parameter, thus the command must name its own flag.
+    test("a bad lineage --depth fails naming the flag", async () => {
+        freshDb();
+        insertAnchor({ id: "anc-1", createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent", markerWritten: false, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({
+            id: "ana-1",
+            createdAt: 1,
+            updatedAt: 1,
+            name: asStr256("anything"),
+            slug: "anything",
+            anchorId: "anc-1",
+            projectId: null,
+        })._unsafeUnwrap();
+        const server = startTestServer();
+        try {
+            const result = await runCliAsync(["prov", "lineage", "anything", "anything", "--depth", "0"], { env: server.childEnv });
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain('--depth must be a positive integer, got "0".');
+        } finally {
+            await server.stop();
+        }
+    });
+});
+
+// The test preload names a discovery file and turns the start of a server off, thus a server check that runs
+// first stops the command with "No Inflexa server runs". In a real shell that check starts a background server.
+describe("a terminal UI launch with no TTY (e2e)", () => {
+    test("each launcher refuses before its server check, thus a refused launch starts no server", () => {
+        for (const args of [[], ["new", "headless"], ["resume", "headless"], ["config"]]) {
+            const result = runCli(args);
+            expect(result.exitCode).toBe(1);
+            expect(result.stderr).toContain("which needs a TTY");
+            expect(result.stderr).not.toContain("No Inflexa server runs");
+        }
+    });
+});
