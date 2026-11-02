@@ -19,7 +19,7 @@ import { conversationRoutes } from "./routes/conversation.ts";
 import { fsRoutes } from "./routes/fs.ts";
 import { guiRoutes } from "./routes/gui.ts";
 import { machineRoutes } from "./routes/machine.ts";
-import { pausedWorkRoutes } from "./routes/paused_work.ts";
+import { pausedWorkCollectionRoutes, pausedWorkRoutes } from "./routes/paused_work.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { provenanceRoutes } from "./routes/provenance.ts";
 import { reportPageRoutes, reportSessionAccessRoutes } from "./routes/report_pages.ts";
@@ -65,6 +65,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/anchors", anchorRoutes(deps.boot));
     app.route("/api/v1/analyses", analysisCollectionRoutes(deps.boot));
     app.route("/api/v1/attention", attentionRoutes(deps.boot));
+    app.route("/api/v1/paused-work", pausedWorkCollectionRoutes(deps.boot));
     // The guard of each `{A}` route: 404 for an unknown analysis, then its instance lock. Each route under
     // `/api/v1/analyses/:analysisId` mounts AFTER this line, or it answers before the guard runs.
     app.use("/api/v1/analyses/:analysisId/*", analysisGuard());

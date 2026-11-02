@@ -849,6 +849,9 @@ describe("send() shows a retry of a model request until a later frame of the tur
     });
 });
 
+/** The start of every wait in the pause frames below. */
+const PAUSED_AT = "2026-10-27T10:00:00.000Z";
+
 describe("send() docks the pause prompt from the data-pause frames of the turn", () => {
     /** The pause of the turn as the prompt reads it: the turn, the state and cause of the shown wait, and the others. */
     function docked(): { turnId: string; state: string; cause: string; others: number } | null {
@@ -862,10 +865,31 @@ describe("send() docks the pause prompt from the data-pause frames of the turn",
             await emit({
                 type: "data-pause",
                 source: ROOT,
-                data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0 },
+                data: {
+                    id: "turn-1",
+                    workId: "turn-1",
+                    workKind: "turn",
+                    state: "paused",
+                    cause: { kind: "host", reason: "payment_required" },
+                    pausedAt: PAUSED_AT,
+                    attempt: 0,
+                },
             });
             seen.push(docked());
-            await emit({ type: "data-pause", source: ROOT, data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "running" } });
+            await emit({
+                type: "data-pause",
+                source: ROOT,
+                data: {
+                    id: "turn-1",
+                    workId: "turn-1",
+                    workKind: "turn",
+                    state: "running",
+                    cause: { kind: "host", reason: "payment_required" },
+                    pausedAt: PAUSED_AT,
+                    endedAt: "2026-10-27T10:01:00.000Z",
+                    end: "resume",
+                },
+            });
             seen.push(docked());
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -886,6 +910,7 @@ describe("send() docks the pause prompt from the data-pause frames of the turn",
                     workKind: "turn",
                     state: "retrying",
                     cause: { kind: "outage" },
+                    pausedAt: PAUSED_AT,
                     attempt: 1,
                     retryAt: "2026-10-27T10:00:00.000Z",
                 },
@@ -903,7 +928,7 @@ describe("send() docks the pause prompt from the data-pause frames of the turn",
             await emit({
                 type: "data-pause",
                 source: ROOT,
-                data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "paused", cause: { kind: "credential" }, attempt: 0 },
+                data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "paused", cause: { kind: "credential" }, pausedAt: PAUSED_AT, attempt: 0 },
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
@@ -916,7 +941,7 @@ describe("send() docks the pause prompt from the data-pause frames of the turn",
             await emit({
                 type: "data-pause",
                 source: ROOT,
-                data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "paused", cause: { kind: "credential" }, attempt: 0 },
+                data: { id: "turn-1", workId: "turn-1", workKind: "turn", state: "paused", cause: { kind: "credential" }, pausedAt: PAUSED_AT, attempt: 0 },
             });
             const pause = dockedPause();
             if (pause !== null) stopPausedTurn(pause);
@@ -935,6 +960,7 @@ describe("watchPausedTurn reads a paused turn that this client does not stream",
         workKind: "turn",
         state: "paused",
         cause: { kind: "host", reason: "account_frozen" },
+        pausedAt: PAUSED_AT,
         attempt: 0,
         source: ROOT,
     };

@@ -36,6 +36,7 @@ function part(over: Partial<PausePart> = {}): PausePart {
         workKind: "turn",
         state: "paused",
         cause: { kind: "host", reason: "payment_required" },
+        pausedAt: "2026-10-27T10:00:00.000Z",
         attempt: 0,
         ...over,
     };
