@@ -1,3 +1,4 @@
+import { outcome, outcomeOf } from "./__fixtures__/per-source.js";
 import { afterEach, describe, expect, it } from "bun:test";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -47,15 +48,6 @@ const GWAS_ASSOCIATION = {
 const tool = createGeneDiseaseEvidenceTool({ disgenetApiKey: "test-key", ncbiApiKey: "test-ncbi" });
 const toolNoDisgenetKey = createGeneDiseaseEvidenceTool({ disgenetApiKey: "" });
 
-function outcome(perSource: { source: string; status: string; detail?: string }[], source: string) {
-    return perSource.find((s) => s.source === source);
-}
-
-function outcomeOf(perSource: { source: string; status: string; detail?: string }[], source: string) {
-    const reported = outcome(perSource, source);
-    if (reported === undefined) throw new Error(`the ${source} outcome is absent`);
-    return reported;
-}
 
 describe("geneDiseaseEvidence — GWAS Catalog corpus", () => {
     it("maps a direct rsID lookup", async () => {

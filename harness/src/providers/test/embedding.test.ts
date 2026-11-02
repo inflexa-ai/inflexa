@@ -46,17 +46,22 @@ function fakeEmbeddingFetch(data: FakeEmbedding[]): {
 }
 
 describe("createEmbeddingProvider.embed", () => {
+
+/** The provider over one fake embedding wire: the billing URL, the test token, and the host headers. */
+function providerOver(fake: ReturnType<typeof fakeEmbeddingFetch>): ReturnType<typeof createEmbeddingProvider> {
+    return createEmbeddingProvider({
+        baseURL: "http://billing.test/openai",
+        token: "test-token",
+        resolveRequestHeaders: () => okAsync(hostHeaders),
+        fetch: fake.fetch,
+    });
+}
     it("maps a fake embedding response to number[][]", async () => {
         const fake = fakeEmbeddingFetch([
             { object: "embedding", index: 0, embedding: [0.1, 0.2, 0.3] },
             { object: "embedding", index: 1, embedding: [0.4, 0.5, 0.6] },
         ]);
-        const provider = createEmbeddingProvider({
-            baseURL: "http://billing.test/openai",
-            token: "test-token",
-            resolveRequestHeaders: () => okAsync(hostHeaders),
-            fetch: fake.fetch,
-        });
+        const provider = providerOver(fake);
 
         const result = (await provider.embed(["alpha", "beta"], makeSession()))._unsafeUnwrap();
 
@@ -71,12 +76,7 @@ describe("createEmbeddingProvider.embed", () => {
             { object: "embedding", index: 1, embedding: [0.4, 0.5, 0.6] },
             { object: "embedding", index: 0, embedding: [0.1, 0.2, 0.3] },
         ]);
-        const provider = createEmbeddingProvider({
-            baseURL: "http://billing.test/openai",
-            token: "test-token",
-            resolveRequestHeaders: () => okAsync(hostHeaders),
-            fetch: fake.fetch,
-        });
+        const provider = providerOver(fake);
 
         const result = (await provider.embed(["alpha", "beta"], makeSession()))._unsafeUnwrap();
 
@@ -88,12 +88,7 @@ describe("createEmbeddingProvider.embed", () => {
 
     it("short-circuits on empty input without a wire call", async () => {
         const fake = fakeEmbeddingFetch([]);
-        const provider = createEmbeddingProvider({
-            baseURL: "http://billing.test/openai",
-            token: "test-token",
-            resolveRequestHeaders: () => okAsync(hostHeaders),
-            fetch: fake.fetch,
-        });
+        const provider = providerOver(fake);
 
         expect((await provider.embed([], makeSession()))._unsafeUnwrap()).toEqual([]);
         expect(() => fake.lastHeaders()).toThrow("fetch was never called");

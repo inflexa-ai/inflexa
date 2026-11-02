@@ -1,3 +1,4 @@
+import { outcome, outcomeOf } from "./__fixtures__/per-source.js";
 import { afterEach, describe, expect, it } from "bun:test";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -27,15 +28,6 @@ function json(body: unknown, status = 200): Response {
 const tool = createDrugGeneInteractionsTool({ drugbankApiKey: "test-key" });
 const toolNoDrugbankKey = createDrugGeneInteractionsTool({ drugbankApiKey: "" });
 
-function outcome(perSource: { source: string; status: string; detail?: string }[], source: string) {
-    return perSource.find((s) => s.source === source);
-}
-
-function outcomeOf(perSource: { source: string; status: string; detail?: string }[], source: string) {
-    const reported = outcome(perSource, source);
-    if (reported === undefined) throw new Error(`the ${source} outcome is absent`);
-    return reported;
-}
 
 // The wire shape of DGIdb. GraphQL answers a nullable field with an explicit
 // null, thus every second row carries `directionality: null`, as the live

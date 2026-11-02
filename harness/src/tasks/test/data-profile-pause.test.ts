@@ -24,11 +24,11 @@ import { createWork } from "../../app/work.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
 import type { ChatProvider } from "../../providers/types.js";
+import { runAuthorizerOf, workspaceOf } from "./__fixtures__/profile-deps.js";
 import { fakeLeases, leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
 import { loadDataProfileStatus, tryStartDataProfile } from "../../state/data-profile.js";
 import { queryPausesOfWork, type PauseRecord } from "../../state/paused-work.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
-import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { DATA_PROFILE_STOPPED, runDataProfileBody, stopDataProfile, type DataProfileDeps, type DataProfileWorkflowInput } from "../data-profile.js";
 
 /** The deps of a work surface in this file: a local run authorizer, and the stops that a test does not reach. */
@@ -120,21 +120,9 @@ function depsFor(provider: ChatProvider, revoked: string[]): DataProfileDeps {
         provider,
         pool,
         leases: fakeLeases(leaseOverClient(makeFakeSandboxClient(), MACHINE)),
-        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
-        resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
+        ...workspaceOf(root),
         model: "test-model",
-        runAuthorizer: {
-            authorize: () => {
-                throw new Error("the body never authorizes");
-            },
-            revoke: (_runSession, reason) => {
-                revoked.push(reason);
-                return okAsync(undefined);
-            },
-            revokeByMandateId: () => okAsync(undefined),
-            suspend: () => okAsync(undefined),
-            renew: () => okAsync(undefined),
-        },
+        runAuthorizer: runAuthorizerOf(revoked),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [1, 0, 0])) },
         skillsDir: root,

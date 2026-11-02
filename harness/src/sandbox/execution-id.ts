@@ -9,6 +9,8 @@
 
 import { customAlphabet } from "nanoid";
 
+import { slugify } from "../lib/slug.js";
+
 /** Length of the nanoid suffix (8 characters). */
 export const EXECUTION_ID_NANOID_LENGTH = 8;
 
@@ -32,19 +34,7 @@ const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789");
  * - Truncated to 40 characters
  */
 export function sanitizeAgentName(name: string): string {
-    let out = "";
-    let inRun = false;
-    for (const char of name.toLowerCase()) {
-        const keeps = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
-        if (!keeps) {
-            inRun = true;
-            continue;
-        }
-        if (inRun && out.length > 0) out += "-";
-        inRun = false;
-        out += char;
-    }
-    return out.slice(0, AGENT_NAME_MAX_LENGTH);
+    return slugify(name, { maxLength: AGENT_NAME_MAX_LENGTH });
 }
 
 /**

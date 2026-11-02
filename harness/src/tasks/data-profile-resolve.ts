@@ -19,6 +19,7 @@
 
 import { assessCompleteness } from "../input-scan/companions.js";
 import { presentAt, presentFirst, presentGet } from "../lib/present.js";
+import { slugify } from "../lib/slug.js";
 import type { SetMenu } from "../input-scan/menu.js";
 import { buildSetMenu } from "../input-scan/menu.js";
 import type { DetectedSet, DetectedSets, MemberFile, SetSlot } from "../input-scan/set-types.js";
@@ -96,24 +97,10 @@ type RecipeEntry = {
     readonly drafts: DraftGroup[];
 };
 
+/** The recipe group slug: capped at 60 characters, and "group" when the label holds no slug character. */
 function slug(value: string): string {
-    let out = "";
-    let inRun = false;
-    for (const char of value.toLowerCase()) {
-        if (out.length >= SLUG_MAX_LENGTH) break;
-        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
-        if (!isSlugChar) {
-            inRun = true;
-            continue;
-        }
-        if (inRun && out.length > 0) out += "-";
-        inRun = false;
-        out += char;
-    }
-    return out.slice(0, SLUG_MAX_LENGTH) || "group";
+    return slugify(value, { maxLength: 60, fallback: "group" });
 }
-
-const SLUG_MAX_LENGTH = 60;
 
 function fileCountOf(members: readonly MemberFile[]): number {
     return members.reduce((total, member) => total + 1 + member.companions.length, 0);

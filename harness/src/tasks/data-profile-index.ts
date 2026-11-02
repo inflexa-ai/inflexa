@@ -23,6 +23,7 @@
 
 import type { ProfileDimensionView, ProfileGroupView } from "../app/data-profile-view.js";
 import { presentFirst } from "../lib/present.js";
+import { slugify } from "../lib/slug.js";
 import { dimensionCardinalities, profileDimensions, profileFileRecords, profileGroups } from "../app/data-profile-view.js";
 import type {
     DataProfileDimension,
@@ -66,24 +67,10 @@ export type BuildProfileIndexArgs = {
     readonly scan?: InputScan;
 };
 
+/** The profile entry slug: capped at 60 characters, and "unnamed" when the name holds no slug character. */
 function slug(value: string): string {
-    let out = "";
-    let inRun = false;
-    for (const char of value.toLowerCase()) {
-        if (out.length >= SLUG_MAX_LENGTH) break;
-        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
-        if (!isSlugChar) {
-            inRun = true;
-            continue;
-        }
-        if (inRun && out.length > 0) out += "-";
-        inRun = false;
-        out += char;
-    }
-    return out.slice(0, SLUG_MAX_LENGTH) || "unnamed";
+    return slugify(value, { maxLength: 60, fallback: "unnamed" });
 }
-
-const SLUG_MAX_LENGTH = 60;
 
 function slotSummary(slot: DataProfileGroupSlot): Record<string, unknown> {
     return { id: slot.id, location: slot.location, tokenClass: slot.tokenClass, distinctValues: slot.distinctValues };

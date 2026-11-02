@@ -1,12 +1,63 @@
 import { describe, expect, it } from "bun:test";
 
 import type { Block, ChartComposition, ReportDocument } from "../../contracts/report-blocks.js";
-import { parseReference, serializeReference, type Reference } from "../../contracts/report-reference.js";
+import { parseReference, serializeReference, type DerivationInputReference, type Reference } from "../../contracts/report-reference.js";
 import { valuesMatch } from "../assert-rules.js";
 import { createFixtureResolver } from "../fixture-resolver.js";
 import type { ReferenceResolver, ReportSnapshot } from "../reference-resolver.js";
 import { resolveDocumentReferences, validateReport, type ReportValidation } from "../validate.js";
 import { snapshotRows } from "../reference-resolver.js";
+
+/** The one-cell metric document of the grammar rejections, with the extra field that the grammar refuses. */
+function metricDocumentWith(extra: Record<string, unknown>) {
+    return {
+        title: "R",
+        sections: [
+            {
+                kind: "section",
+                id: "s",
+                title: "S",
+                blocks: [
+                    {
+                        kind: "metric",
+                        id: "m",
+                        label: "L",
+                        value: {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TABLE_A_PATH,
+                            hash: TABLE_A_HASH,
+                            locator: { column: "log2FoldChange", row: 0 },
+                        },
+                        ...extra,
+                    },
+                ],
+            },
+        ],
+    };
+}
+
+
+/** The two artifact-value inputs of the row-op tests: TP53 against EGFR on the pinned table. */
+function twoRowInputs(): [DerivationInputReference, DerivationInputReference] {
+    return [
+        {
+            kind: "artifact-value",
+            run: "run-1",
+            path: TABLE_A_PATH,
+            hash: TABLE_A_HASH,
+            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
+        },
+        {
+            kind: "artifact-value",
+            run: "run-1",
+            path: TABLE_A_PATH,
+            hash: TABLE_A_HASH,
+            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "EGFR" } },
+        },
+    ];
+}
+
 
 const TABLE_A_PATH = "runs/run-1/step-a/output/de.csv";
 const TABLE_B_PATH = "runs/run-1/step-b/output/counts.csv";
@@ -343,31 +394,7 @@ describe("validateReport — resolution failures", () => {
 
 describe("validateReport — grammar rejections", () => {
     it("rejects a metric that carries a child-block array", async () => {
-        const document = {
-            title: "R",
-            sections: [
-                {
-                    kind: "section",
-                    id: "s",
-                    title: "S",
-                    blocks: [
-                        {
-                            kind: "metric",
-                            id: "m",
-                            label: "L",
-                            value: {
-                                kind: "artifact-value",
-                                run: "run-1",
-                                path: TABLE_A_PATH,
-                                hash: TABLE_A_HASH,
-                                locator: { column: "log2FoldChange", row: 0 },
-                            },
-                            blocks: [{ kind: "text", id: "child", content: { prose: "child" } }],
-                        },
-                    ],
-                },
-            ],
-        };
+const document = metricDocumentWith({ blocks: [{ kind: "text", id: "child", content: { prose: "child" } }] });
         const invalid = expectInvalid(await validateReport(document, snapshot, resolver));
         expect(invalid.schemaIssues?.length ?? 0).toBeGreaterThan(0);
     });
@@ -456,31 +483,7 @@ describe("validateReport — block-level schema rejections", () => {
     });
 
     it("rejects a metric that carries a second binding", async () => {
-        const document = {
-            title: "R",
-            sections: [
-                {
-                    kind: "section",
-                    id: "s",
-                    title: "S",
-                    blocks: [
-                        {
-                            kind: "metric",
-                            id: "m",
-                            label: "L",
-                            value: {
-                                kind: "artifact-value",
-                                run: "run-1",
-                                path: TABLE_A_PATH,
-                                hash: TABLE_A_HASH,
-                                locator: { column: "log2FoldChange", row: 0 },
-                            },
-                            bindings: [{ kind: "artifact-value", run: "run-1", path: TABLE_B_PATH, hash: TABLE_B_HASH, locator: { column: "value", row: 0 } }],
-                        },
-                    ],
-                },
-            ],
-        };
+const document = metricDocumentWith({ bindings: [{ kind: "artifact-value", run: "run-1", path: TABLE_B_PATH, hash: TABLE_B_HASH, locator: { column: "value", row: 0 } }] });
         const invalid = expectInvalid(await validateReport(document, snapshot, resolver));
         expect(invalid.schemaIssues?.length ?? 0).toBeGreaterThan(0);
     });
@@ -616,22 +619,7 @@ describe("validateReport — derivations", () => {
                 value: {
                     kind: "derivation",
                     op: "ratio",
-                    inputs: [
-                        {
-                            kind: "artifact-value",
-                            run: "run-1",
-                            path: TABLE_A_PATH,
-                            hash: TABLE_A_HASH,
-                            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
-                        },
-                        {
-                            kind: "artifact-value",
-                            run: "run-1",
-                            path: TABLE_A_PATH,
-                            hash: TABLE_A_HASH,
-                            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "EGFR" } },
-                        },
-                    ],
+                    inputs: twoRowInputs(),
                     assert: { value: 2, tolerance: 0.0001 },
                 },
             }),
@@ -685,22 +673,7 @@ describe("validateReport — derivations", () => {
                 value: {
                     kind: "derivation",
                     op: "pctChange",
-                    inputs: [
-                        {
-                            kind: "artifact-value",
-                            run: "run-1",
-                            path: TABLE_A_PATH,
-                            hash: TABLE_A_HASH,
-                            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "TP53" } },
-                        },
-                        {
-                            kind: "artifact-value",
-                            run: "run-1",
-                            path: TABLE_A_PATH,
-                            hash: TABLE_A_HASH,
-                            locator: { column: "log2FoldChange", rowFilter: { column: "gene", op: "eq", value: "EGFR" } },
-                        },
-                    ],
+                    inputs: twoRowInputs(),
                     assert: { value: 1, tolerance: 0.0001 },
                 },
             }),

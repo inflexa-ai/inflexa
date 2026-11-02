@@ -18,7 +18,7 @@ import type { Scope } from "../../auth/types.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
-import { constructionSandbox, constructionWorkflows, refuse, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
+import { conversationDeps, constructionSandbox, constructionWorkflows, refuse, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
 import { fakeLookBrowser } from "../../lib/__fixtures__/chrome.js";
 import { setBrowserConnector, type ChromeConfig } from "../../lib/chrome.js";
 import type { AcquireEyes, EyesScope } from "../../lib/eyes.js";
@@ -38,7 +38,6 @@ import {
     assembleCoreRuntime,
     createThreadAgentResolver,
     resolveCompositionEyes,
-    type ConversationAssemblyDeps,
     type CoreRuntime,
     type CoreRuntimeDeps,
 } from "../assemble.js";
@@ -528,23 +527,8 @@ describe("one resolved answer", () => {
 describe("the tool output store of the composition", () => {
     /** Each dep that the assembly reads at construction. No agent and no workflow runs in this case. */
     function coreDeps(): CoreRuntimeDeps {
-        const conversation: ConversationAssemblyDeps = {
-            provider: unusedChatProvider(),
-            utilityProvider: unusedChatProvider(),
-            pool: new Pool(),
-            embedding: refuseEmbedding(),
-            workspaceFs: makeFakeWorkspaceFs(),
-            model: "test/model",
-            utilityModel: "test/utility-model",
-            resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
-            runAuthorizer: createLocalRunAuthorizer(),
-            runLauncher: refuseRunLauncher(),
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            skillsDir: "/skills",
-            chrome: {},
-        };
         return {
-            conversation,
+            conversation: conversationDeps(),
             workflows: constructionWorkflows(),
             sandbox: constructionSandbox(),
         };
@@ -575,21 +559,7 @@ describe("the tool output store of the composition", () => {
 describe("the chat turns of the composition", () => {
     function chatDeps(): CoreRuntimeDeps {
         return {
-            conversation: {
-                provider: unusedChatProvider(),
-                utilityProvider: unusedChatProvider(),
-                pool: new Pool(),
-                embedding: refuseEmbedding(),
-                workspaceFs: makeFakeWorkspaceFs(),
-                model: "test/model",
-                utilityModel: "test/utility-model",
-                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
-                runAuthorizer: createLocalRunAuthorizer(),
-                runLauncher: refuseRunLauncher(),
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                skillsDir: "/skills",
-                chrome: {},
-            },
+            conversation: conversationDeps(),
             workflows: constructionWorkflows(),
             sandbox: constructionSandbox(),
         };

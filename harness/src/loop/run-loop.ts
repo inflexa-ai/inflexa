@@ -854,6 +854,33 @@ async function runSeries(
         return { detail: detail === undefined ? {} : { detail }, input: shownRoot ? viewInputValue(tool, toolCall.input, log) : undefined };
     };
 
+    /** The two events of a rejected tool call: the start names the call, and the finish states the outcome and the error text. */
+    const emitRejectedToolEvents = async (
+        toolCall: { readonly toolCallId: string; readonly toolName: string },
+        shown: { detail: { detail?: ToolCallDetail }; input: ToolCallValue | undefined },
+        outcome: "error" | "denied",
+        error: ToolCallValue | undefined,
+    ): Promise<void> => {
+        await opts.emit({
+            type: "tool-started",
+            source,
+            toolUseId: toolCall.toolCallId,
+            name: toolCall.toolName,
+            ...shown.detail,
+            input: shown.input,
+        });
+        await opts.emit({
+            type: "tool-finished",
+            source,
+            toolUseId: toolCall.toolCallId,
+            name: toolCall.toolName,
+            outcome,
+            ...shown.detail,
+            input: shown.input,
+            error,
+        });
+    };
+
     const seriesSteps: LoopStep[] = [];
     let open = openStep();
     let failure: unknown;
@@ -889,24 +916,7 @@ async function runSeries(
             if (refusal !== undefined) {
                 // A refused call does not run, thus its two events come from here.
                 const shown = callShownOf(toolCall);
-                await opts.emit({
-                    type: "tool-started",
-                    source,
-                    toolUseId: toolCall.toolCallId,
-                    name: toolCall.toolName,
-                    ...shown.detail,
-                    input: shown.input,
-                });
-                await opts.emit({
-                    type: "tool-finished",
-                    source,
-                    toolUseId: toolCall.toolCallId,
-                    name: toolCall.toolName,
-                    outcome: "error",
-                    ...shown.detail,
-                    input: shown.input,
-                    error: shownRoot ? textToolValue(refusal) : undefined,
-                });
+                await emitRejectedToolEvents(toolCall, shown, "error", shownRoot ? textToolValue(refusal) : undefined);
                 return { type: "denied", reason: refusal };
             }
             let denial: string | undefined;
@@ -920,23 +930,7 @@ async function runSeries(
             if (denial === undefined) return undefined;
             deniedByTheUser.set(toolCall.toolCallId, denial);
             const shown = callShownOf(toolCall);
-            await opts.emit({
-                type: "tool-started",
-                source,
-                toolUseId: toolCall.toolCallId,
-                name: toolCall.toolName,
-                ...shown.detail,
-                input: shown.input,
-            });
-            await opts.emit({
-                type: "tool-finished",
-                source,
-                toolUseId: toolCall.toolCallId,
-                name: toolCall.toolName,
-                outcome: "denied",
-                ...shown.detail,
-                input: shown.input,
-            });
+            await emitRejectedToolEvents(toolCall, shown, "denied", undefined);
             return { type: "denied", reason: denial };
         },
         stopWhen: () => stops(),

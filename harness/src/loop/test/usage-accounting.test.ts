@@ -7,11 +7,10 @@
  */
 
 import { inProcessSubAgent } from "../sub-agent.js";
+import { unnamedModel } from "./unnamed-model.js";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
@@ -20,7 +19,6 @@ import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder
 import { presentFirst } from "../../lib/present.js";
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { createAiSdkProvider } from "../../providers/ai-sdk.js";
 import type { ChatProvider, ChatUsage } from "../../providers/types.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
 import { createGenerateAnalogyReportTool } from "../../tools/research/generate-analogy-report.js";
@@ -89,24 +87,6 @@ function neverTerminates(requests: number, replyUsage: ChatUsage): ScriptedModel
 }
 
 /** A model whose stream names no model and no response: it sends no response metadata. */
-function unnamedModel(inputTokens: number): ChatProvider {
-    const parts: LanguageModelV4StreamPart[] = [
-        { type: "stream-start", warnings: [] },
-        { type: "text-start", id: "p0" },
-        { type: "text-delta", id: "p0", delta: "done" },
-        { type: "text-end", id: "p0" },
-        {
-            type: "finish",
-            finishReason: { unified: "stop", raw: "stop" },
-            usage: {
-                inputTokens: { total: inputTokens, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
-                outputTokens: { total: undefined, text: undefined, reasoning: undefined },
-            },
-        },
-    ];
-    const model = new MockLanguageModelV4({ doStream: () => Promise.resolve({ stream: convertArrayToReadableStream(parts) }) });
-    return createAiSdkProvider({ model, maxRetries: 0 });
-}
 
 // ── One record per completed call ───────────────────────────────────
 

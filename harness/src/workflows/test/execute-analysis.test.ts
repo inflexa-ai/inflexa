@@ -28,6 +28,7 @@
  * resume, 10.12 synthesis) need a real DBOS context and live outside this file.
  */
 
+import { dbosRecvRecorder, dbosWriteStreamRecorder } from "./__fixtures__/dbos-event-mocks.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
@@ -317,16 +318,7 @@ async function mockDbos(): Promise<void> {
         }),
     );
 
-    // `DBOS.writeStream("events", part)` — record every emitted part.
-    Reflect.set(
-        dbos.DBOS,
-        "writeStream",
-        mock((_name: string, part: unknown) => {
-            const written = parseUnknownRecord(part);
-            if (written) dbosState.emittedParts.push(written);
-            return Promise.resolve(undefined);
-        }),
-    );
+    await dbosWriteStreamRecorder(dbosState.emittedParts);
 
     // `DBOS.cancelWorkflow` — record + resolve.
     Reflect.set(
@@ -350,17 +342,7 @@ async function mockDbos(): Promise<void> {
         }),
     );
 
-    // `DBOS.recv` — the body waits only in a pause. The fake records the topic
-    // and gives the resume message at once, as a host that resumes the run does.
-    Reflect.set(
-        dbos.DBOS,
-        "recv",
-        mock((topic: string) => {
-            dbosState.recvTopics.push(topic);
-            dbosState.onRecv?.();
-            return Promise.resolve(RESUME_MESSAGE);
-        }),
-    );
+    await dbosRecvRecorder(dbosState, RESUME_MESSAGE);
 
     // `DBOS.now()` — a checkpointed clock in the real engine; here a deterministic
     // monotonic fake so every emitted provenance `atMs`/`durationMs` is
@@ -510,6 +492,12 @@ type FakeDepsRecord = {
     readonly mandateRevokeCalls: Array<{ reason: string }>;
     readonly threadWrites: Array<{ kind: string }>;
 };
+
+
+/** One complete child per name: the smallest happy-path child result set of a step DAG. */
+function completeResults(...names: string[]): Map<string, SandboxStepResult | Error> {
+    return new Map(names.map((name) => [name, { status: "complete", durationMs: 1, finishReason: "stop", error: null }]));
+}
 
 function makeDeps(opts: {
     childResults: Map<string, SandboxStepResult | Error>;
@@ -796,7 +784,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
@@ -879,17 +867,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([
-                [
-                    "A",
-                    {
-                        status: "complete",
-                        durationMs: 1,
-                        finishReason: "stop",
-                        error: null,
-                    },
-                ],
-            ]),
+            childResults: completeResults("A"),
         });
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
@@ -920,7 +898,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
@@ -992,7 +970,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
@@ -1043,17 +1021,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([
-                [
-                    "A",
-                    {
-                        status: "complete",
-                        durationMs: 1,
-                        finishReason: "stop",
-                        error: null,
-                    },
-                ],
-            ]),
+            childResults: completeResults("A"),
         });
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
@@ -1102,7 +1070,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         // The count of dispatched steps at each open of the charge.
         const dispatchedAtOpen: number[] = [];
@@ -1189,7 +1157,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         scriptSynthesis({ kind: "produced" });
 
@@ -1206,7 +1174,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         scriptSynthesis({ kind: "blocker", reason: BLOCKER_REASON });
 
@@ -1223,7 +1191,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         dbosState.throwOnStep.set("synthesis.read-summaries", "synth boom");
 
@@ -1241,7 +1209,7 @@ describe("executeAnalysis body", () => {
         // Ad hoc execution explicitly disables synthesis in its durable input.
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
@@ -1308,7 +1276,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
@@ -1324,7 +1292,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         scriptSynthesis({ kind: "produced" });
 
@@ -1362,7 +1330,7 @@ describe("executeAnalysis body", () => {
             const pool = makeFakePool();
             const { deps } = makeDeps({
                 pool,
-                childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+                childResults: completeResults("A"),
             });
             scriptSynthesis(reason === null ? { kind: "no-summaries" } : { kind: "blocker", reason });
 
@@ -1381,7 +1349,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         dbosState.throwOnStep.set("synthesis.read-summaries", "synth boom");
 
@@ -1401,7 +1369,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         dbosState.throwErrorOnStep.set("synthesis.read-summaries", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
 
@@ -1436,7 +1404,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         const calls = scriptSynthesis({ kind: "produced" }, [PAYMENT_REQUIRED]);
         let atWait: { runWrites: number; synthesisRowWrites: number } | undefined;
@@ -1471,7 +1439,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         scriptSynthesis({ kind: "produced" }, [{ fail: Object.assign(new Error("HTTP 400"), { statusCode: 400 }) }]);
         await runInWorkflow();
@@ -1532,17 +1500,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([
-                [
-                    "A",
-                    {
-                        status: "complete",
-                        durationMs: 1,
-                        finishReason: "stop",
-                        error: null,
-                    },
-                ],
-            ]),
+            childResults: completeResults("A"),
         });
 
         await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
@@ -1557,7 +1515,7 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         expect(deps.provenance).toBeUndefined();
@@ -1571,7 +1529,7 @@ describe("executeAnalysis body", () => {
         const { deps } = makeDeps({
             pool,
             emitRunEvent: (e) => events.push(e),
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
@@ -1762,7 +1720,7 @@ describe("executeAnalysis body", () => {
             emitRunEvent: () => {
                 throw new Error("observer boom");
             },
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
@@ -1772,7 +1730,7 @@ describe("executeAnalysis body", () => {
 
 describe("executeAnalysis run end ownership", () => {
     const completeA = (): Map<string, SandboxStepResult | Error> =>
-        new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]);
+        completeResults("A");
     const terminalAtMs = FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS;
 
     /** Collects each run end into the timeline of the pool, so a test can place it between two queries. */
@@ -2142,7 +2100,7 @@ describe("executeAnalysis child seed", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
 
         const bad: ExecuteAnalysisInput = { ...input([{ id: "A" }]), planStepById: {} };
@@ -2226,7 +2184,7 @@ describe("executeAnalysis child input projection", () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         dbosState.resultOnStep.set("compose-step-seed:A", "LEGACY SEED");
 
@@ -2278,21 +2236,21 @@ describe("executeAnalysis run observation", () => {
 
         const withProv = makeDeps({
             pool: makeFakePool(),
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
             emitRunEvent: (e) => provOnly.push(e),
         });
         const provResult = await runExecuteAnalysisBody(input([{ id: "A" }]), withProv.deps);
 
         const withObs = makeDeps({
             pool: makeFakePool(),
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
             observeRun: (o) => obsOnly.push(o),
         });
         const obsResult = await runExecuteAnalysisBody(input([{ id: "A" }]), withObs.deps);
 
         const neither = makeDeps({
             pool: makeFakePool(),
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
         });
         const bareResult = await runExecuteAnalysisBody(input([{ id: "A" }]), neither.deps);
 
@@ -2337,7 +2295,7 @@ describe("executeAnalysis run observation", () => {
         let calls = 0;
         const { deps } = makeDeps({
             pool: makeFakePool(),
-            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+            childResults: completeResults("A"),
             observeRun: () => {
                 calls += 1;
                 throw new Error("host observer is broken");

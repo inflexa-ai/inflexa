@@ -13,11 +13,12 @@ import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { deriveChartOption, deriveChartRender, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { exportOption } from "../../chart-renderers.js";
 import { CHART_TOOLBOX_SOURCE, pageChartOption } from "../../chart-toolbox.js";
-import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../../design.js";
+import { CHART_INLINE_OPTION_BOUND } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
 import { BELOW_RESOLUTION_SYMBOL, POINT_NAMES } from "../dense.js";
 import { FIGURE_MODULES } from "../index.js";
-import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, textWidthPx, type LeaderName, type NameFrame } from "../label-room.js";
+import { leaderNameBox, overlaps, PAGE_PLOT_FRAME, textWidthPx, type LeaderName } from "../label-room.js";
+import { sizeRenders } from "./__fixtures__/size-renders.js";
 import { guideLabelBox, MANHATTAN_COLORS, MANHATTAN_FIGURE, MANHATTAN_LABEL_COUNT, MANHATTAN_NAME_GAP_SHARE, MANHATTAN_SUGGESTIVE_P } from "../manhattan.js";
 import {
     chartSourceOf,
@@ -368,21 +369,7 @@ describe("the Manhattan text at each size", () => {
     const x = optionAt(option, "xAxis");
     const plot = { x: { min: optionNumber(x.min), max: optionNumber(x.max) }, y: { min: 0, max: asTop(option) } };
 
-    /** The export sizes under test, in the order of the table. */
-    const EXPORT_KINDS = ["single", "double", "slide"] as const satisfies readonly (keyof typeof CHART_EXPORT_SIZES)[];
-
-    /** The page option, and the export option of each export size, with the frame where its text places. */
-    const renders: Array<readonly [string, EchartOption, NameFrame]> = [
-        ["page", option, PAGE_PLOT_FRAME],
-        ...EXPORT_KINDS.map(
-            (kind) =>
-                [
-                    kind,
-                    exportOption(option, CHART_EXPORT_SIZES[kind].textPx, CHART_EXPORT_SIZES[kind].widthPx, CHART_EXPORT_SIZES[kind].heightPx),
-                    EXPORT_PLOT_FRAMES[kind],
-                ] as const,
-        ),
-    ];
+    const renders = sizeRenders(option, exportOption);
 
     function dataOf(render: EchartOption, name: string): EchartOption[] {
         return optionsOf(seriesOf(render).find((entry) => entry.name === name)?.data ?? []);

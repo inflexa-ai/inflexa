@@ -6,33 +6,16 @@
  * because the refresh script has no request to replay.
  */
 
-import { requestUrlText } from "../../../lib/test/request-url.js";
-import { afterEach, describe, expect, it } from "bun:test";
 
-/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
-function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
-    return Object.assign(run, { preconnect: fetch.preconnect });
-}
 
+import { describe, expect, it } from "bun:test";
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
+import { requestedUrls, restoreFetchAfterEach, stubBodyFetch } from "../__fixtures__/client-stubs.js";
+
+restoreFetchAfterEach();
 import { BondResponseSchema, DrugResponseSchema, searchDrugbank } from "../drugbank-client.js";
 import { presentAt, presentFirst } from "../../../lib/present.js";
 
-const realFetch = globalThis.fetch;
-let requested: string[] = [];
-
-afterEach(() => {
-    globalThis.fetch = realFetch;
-    requested = [];
-});
-
-/** Answer every request with the given payload, and record each URL. */
-function stubFetch(body: unknown): void {
-    globalThis.fetch = fetchDouble((input) => {
-        requested.push(requestUrlText(input));
-        return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
-    });
-}
 
 runFixtureSuite("drugbank golden fixtures", [
     fixtureCase({
@@ -65,29 +48,29 @@ runFixtureSuite("drugbank golden fixtures", [
 
 describe("the DrugBank client over the golden fixtures", () => {
     it("rejects an error envelope instead of giving one blank drug row", async () => {
-        stubFetch(readFixture("drugbank", "discovery-record.synthetic.drift.json"));
+        stubBodyFetch(readFixture("drugbank", "discovery-record.synthetic.drift.json"));
 
         await expect(searchDrugbank("test-key", "acetaminophen", "drug")).rejects.toThrow("did not match the expected schema");
     });
 
     it("pages a name search with per_page, because there is no limit parameter", async () => {
-        stubFetch([readFixture("drugbank", "discovery-record.synthetic.json")]);
+        stubBodyFetch([readFixture("drugbank", "discovery-record.synthetic.json")]);
 
         const drugs = await searchDrugbank("test-key", "acetaminophen", "drug", 200);
 
-        expect(requested[0]).toContain("/discovery/v1/drugs?q=acetaminophen");
+        expect(requestedUrls[0]).toContain("/discovery/v1/drugs?q=acetaminophen");
         // `per_page` tops out at 50, and no `limit` parameter exists.
-        expect(requested[0]).toContain("per_page=50");
-        expect(requested[0]).not.toContain("limit=");
+        expect(requestedUrls[0]).toContain("per_page=50");
+        expect(requestedUrls[0]).not.toContain("limit=");
         expect(presentAt(drugs, 0).drugbankId).toBe("DB00316");
     });
 
     it("reads the drugs of a gene off the target bonds, one row per drug", async () => {
-        stubFetch(readFixture("drugbank", "bonds-targets.synthetic.json"));
+        stubBodyFetch(readFixture("drugbank", "bonds-targets.synthetic.json"));
 
         const drugs = await searchDrugbank("test-key", "F", "target", 10);
 
-        expect(requested[0]).toContain("/discovery/v1/bonds/targets?q=polypeptides.gene_name%3AF");
+        expect(requestedUrls[0]).toContain("/discovery/v1/bonds/targets?q=polypeptides.gene_name%3AF");
         expect(drugs.map((d) => d.drugbankId)).toEqual(["DB16258", "DB00110"]);
         expect(presentAt(drugs, 0).name).toBe("Nirsevimab");
     });

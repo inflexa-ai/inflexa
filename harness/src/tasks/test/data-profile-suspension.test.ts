@@ -22,11 +22,11 @@ import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
+import { runAuthorizerOf, workspaceOf } from "./__fixtures__/profile-deps.js";
 import { fakeLeases, leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
 import type { BoundLease } from "../../sandbox/leases.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
-import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { runDataProfileBody, type DataProfileDeps } from "../data-profile.js";
 import { estimateDataProfileResources } from "../../sandbox/estimate-data-profile-resources.js";
 import { presentAt } from "../../lib/present.js";
@@ -91,21 +91,9 @@ function deps(pool: Querier, lease: BoundLease, revoked: string[]): DataProfileD
         provider: unusedChatProvider(),
         pool,
         leases: fakeLeases(lease),
-        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
-        resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)),
+        ...workspaceOf(root),
         model: "test-model",
-        runAuthorizer: {
-            authorize: () => {
-                throw new Error("the body never authorizes");
-            },
-            revoke: (_runSession, reason) => {
-                revoked.push(reason);
-                return okAsync(undefined);
-            },
-            revokeByMandateId: () => okAsync(undefined),
-            suspend: () => okAsync(undefined),
-            renew: () => okAsync(undefined),
-        },
+        runAuthorizer: runAuthorizerOf(revoked),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
         skillsDir: root,

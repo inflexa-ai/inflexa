@@ -39,17 +39,7 @@ export function makeFakeSandboxClient(): SandboxClient {
                 timedOut: false,
             });
         },
-        isAlive() {
-            return Promise.resolve({ alive: true, oomKilled: false });
-        },
-        isAliveById() {
-            return Promise.resolve({ alive: true, oomKilled: false });
-        },
-        async teardown() {},
-        async teardownById() {},
-        listManagedSandboxes() {
-            return Promise.resolve([]);
-        },
+        ...healthySandboxTail(),
     };
 }
 
@@ -98,6 +88,23 @@ export function makeFakeSandboxAgentDeps(over: MakeDepsOverrides = {}): SandboxA
             workspaceRoot: "/tmp/sessions/analysis-001",
             analysisId: over.analysisId ?? "analysis-001",
             allowedWritePrefix: over.allowedWritePrefix ?? "/tmp/sessions/analysis-001/runs/run-001/step-001",
+        },
+    };
+}
+
+/** The tail of a healthy sandbox client: alive from either id, and nothing to clean up. */
+export function healthySandboxTail(): Pick<SandboxClient, "isAlive" | "isAliveById" | "teardown" | "teardownById" | "listManagedSandboxes"> {
+    return {
+        isAlive() {
+            return Promise.resolve({ alive: true, oomKilled: false });
+        },
+        isAliveById() {
+            return Promise.resolve({ alive: true, oomKilled: false });
+        },
+        async teardown() {},
+        async teardownById() {},
+        listManagedSandboxes() {
+            return Promise.resolve([]);
         },
     };
 }

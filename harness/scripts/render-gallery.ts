@@ -15,14 +15,13 @@
  * The script is a development tool. It sits outside `src/`, thus the build never emits it into `dist/`.
  */
 
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ASSETS_DIR, DEPS_DIR, PAGE_ASSETS } from "../src/report-render/assets.js";
 import { GALLERY_DATA_HINT, GALLERY_DOCUMENT, hasGalleryData, loadGallery } from "../src/report-render/gallery/gallery.js";
 import { renderReportPage } from "../src/report-render/render.js";
-import { resolvePageAssetFromInstallation } from "../src/report-render/asset-lookup.js";
+import { stageReportPage } from "./stage-report-page.js";
 
 if (!hasGalleryData()) {
     console.error(GALLERY_DATA_HINT);
@@ -38,18 +37,8 @@ if (rendered.isErr()) {
 }
 
 const pageDir = join(tmpdir(), "inflexa-report-gallery");
-const assetsDir = join(pageDir, ASSETS_DIR);
 // The name of a data asset holds a hash of its content. A second run after an edit writes new names, thus the
 // directory starts empty and no asset of an earlier run stays beside the page.
 await rm(pageDir, { recursive: true, force: true });
-await mkdir(join(assetsDir, DEPS_DIR), { recursive: true });
-for (const asset of PAGE_ASSETS) {
-    await copyFile(resolvePageAssetFromInstallation(asset.specifier), join(assetsDir, asset.file));
-}
-for (const asset of rendered.value.dataAssets) {
-    await writeFile(join(assetsDir, asset.name), asset.bytes, "utf8");
-}
-
-const pagePath = join(pageDir, "index.html");
-await writeFile(pagePath, rendered.value.html, "utf8");
+const pagePath = await stageReportPage(pageDir, rendered.value);
 console.log(pagePath);

@@ -19,25 +19,8 @@ import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { upsertAnalysis } from "../analyses.js";
 import { createReportSessionStateStore, type DerivationRecord, type ReportSessionStateStore } from "../report-session-state.js";
 import { presentAt } from "../../lib/present.js";
+import { citedSnapshot, validDraftDocument } from "./__fixtures__/report-docs.js";
 
-const validDraft: DraftDocument = {
-    title: "A report",
-    sections: [
-        {
-            kind: "section",
-            id: "s1",
-            title: "Findings",
-            blocks: [{ kind: "text", id: "t1", content: { prose: "A finding." } }],
-        },
-    ],
-};
-
-const snapshot: ReportSnapshot = {
-    artifacts: {
-        "runs/r1/output/de.csv": { hash: "abc123", fileType: "output" },
-    },
-    citations: ["pmid:12345"],
-};
 
 describe("createReportSessionStateStore", () => {
     let pool: Pool;
@@ -66,22 +49,22 @@ describe("createReportSessionStateStore", () => {
         const threadId = "thread-durable";
 
         const writer = createReportSessionStateStore({ pool });
-        const created = (await writer.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        const created = (await writer.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
         // The pin writes the snapshot first, thus the document is absent at creation.
-        expect(created.snapshot).toEqual(snapshot);
+        expect(created.snapshot).toEqual(citedSnapshot);
         expect(created.document).toBeNull();
         expect(created.analysisId).toBe(analysisId);
         expect(created.createdAt).toBeInstanceOf(Date);
 
         // A fresh row holds a null document, thus the prior document of the persist is null.
-        expect((await writer.persistDocument({ threadId, document: validDraft, expected: null }))._unsafeUnwrap()).toBe("persisted");
+        expect((await writer.persistDocument({ threadId, document: validDraftDocument, expected: null }))._unsafeUnwrap()).toBe("persisted");
 
         // A second store instance reads the same durable row.
         const reader = createReportSessionStateStore({ pool });
         const state = (await reader.readState(threadId))._unsafeUnwrap();
         expect(state).not.toBeNull();
-        expect(state?.document).toEqual(validDraft);
-        expect(state?.snapshot).toEqual(snapshot);
+        expect(state?.document).toEqual(validDraftDocument);
+        expect(state?.snapshot).toEqual(citedSnapshot);
     });
 
     it("keeps the citation records of a pin, and reads a pin with no record map as it stands", async () => {
@@ -91,7 +74,7 @@ describe("createReportSessionStateStore", () => {
         const legacy = "thread-citation-legacy";
 
         const pinned: ReportSnapshot = {
-            ...snapshot,
+            ...citedSnapshot,
             citationRecords: { "pmid:12345": { citation: "Smith 2020", description: "The primary paper." } },
         };
         (await store.writeSnapshot({ threadId: withRecords, analysisId, snapshot: pinned }))._unsafeUnwrap();
@@ -100,10 +83,10 @@ describe("createReportSessionStateStore", () => {
 
         // A stored pin that predates the map carries the key list alone. It loads with no map, thus each
         // reader falls back to the bare key.
-        (await store.writeSnapshot({ threadId: legacy, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId: legacy, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
         await pool.query({
             text: `UPDATE cortex_report_session_state SET snapshot = $2::jsonb WHERE thread_id = $1`,
-            values: [legacy, JSON.stringify({ artifacts: snapshot.artifacts, citations: ["pmid:12345"] })],
+            values: [legacy, JSON.stringify({ artifacts: citedSnapshot.artifacts, citations: ["pmid:12345"] })],
         });
 
         const legacyState = (await store.readState(legacy))._unsafeUnwrap();
@@ -125,13 +108,13 @@ describe("createReportSessionStateStore", () => {
         const created = (await store.writeSnapshot({ threadId, analysisId, snapshot: first }))._unsafeUnwrap();
         expect(created.snapshot).toEqual(first);
 
-        (await store.persistDocument({ threadId, document: validDraft, expected: null }))._unsafeUnwrap();
+        (await store.persistDocument({ threadId, document: validDraftDocument, expected: null }))._unsafeUnwrap();
 
         // The second write is insert-if-absent. The row already exists, thus the
         // winner keeps its snapshot and its document, and the store reads that row back.
         const again = (await store.writeSnapshot({ threadId, analysisId, snapshot: second }))._unsafeUnwrap();
         expect(again.snapshot).toEqual(first);
-        expect(again.document).toEqual(validDraft);
+        expect(again.document).toEqual(validDraftDocument);
 
         // The thread still holds exactly one row.
         const { rows } = await pool.query<{ n: number }>({
@@ -145,7 +128,7 @@ describe("createReportSessionStateStore", () => {
         const analysisId = "analysis-cas";
         await seedAnalysis(analysisId);
         const threadId = "thread-cas";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         // Two turns read the fresh row, thus both hold the null prior document.
         const secondLanding: DraftDocument = {
@@ -153,7 +136,7 @@ describe("createReportSessionStateStore", () => {
             sections: [{ kind: "section", id: "s2", title: "Summary", blocks: [{ kind: "text", id: "t2", content: { prose: "Another finding." } }] }],
         };
 
-        const first = (await store.persistDocument({ threadId, document: validDraft, expected: null }))._unsafeUnwrap();
+        const first = (await store.persistDocument({ threadId, document: validDraftDocument, expected: null }))._unsafeUnwrap();
         expect(first).toBe("persisted");
 
         // The second turn still holds the null prior document, but the row now holds the
@@ -163,17 +146,17 @@ describe("createReportSessionStateStore", () => {
 
         // The row holds the first landing, and the second turn did not overwrite it.
         const state = (await store.readState(threadId))._unsafeUnwrap();
-        expect(state?.document).toEqual(validDraft);
+        expect(state?.document).toEqual(validDraftDocument);
     });
 
     it("lands a second persist that carries the prior document as its token", async () => {
         const analysisId = "analysis-cas-chain";
         await seedAnalysis(analysisId);
         const threadId = "thread-cas-chain";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         // The first persist lands against the null prior document.
-        expect((await store.persistDocument({ threadId, document: validDraft, expected: null }))._unsafeUnwrap()).toBe("persisted");
+        expect((await store.persistDocument({ threadId, document: validDraftDocument, expected: null }))._unsafeUnwrap()).toBe("persisted");
 
         // The next turn reads the stored document, thus its token is the first landing. The prior document
         // still holds, thus the compare-and-swap against the parsed token lands.
@@ -189,7 +172,7 @@ describe("createReportSessionStateStore", () => {
     });
 
     it("gives an absence for a persist against a thread with no row", async () => {
-        const outcome = (await store.persistDocument({ threadId: "thread-persist-absent", document: validDraft, expected: null }))._unsafeUnwrap();
+        const outcome = (await store.persistDocument({ threadId: "thread-persist-absent", document: validDraftDocument, expected: null }))._unsafeUnwrap();
         expect(outcome).toBe("absent");
     });
 
@@ -204,7 +187,7 @@ describe("createReportSessionStateStore", () => {
         const docThread = "thread-corrupt-doc";
         const snapThread = "thread-corrupt-snapshot";
 
-        (await store.writeSnapshot({ threadId: docThread, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId: docThread, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
         await pool.query({ text: `UPDATE cortex_report_session_state SET document = '{"bad":true}'::jsonb WHERE thread_id = $1`, values: [docThread] });
 
         const docFailure = (await store.readState(docThread))._unsafeUnwrapErr();
@@ -215,7 +198,7 @@ describe("createReportSessionStateStore", () => {
             expect(docFailure.issues.length).toBeGreaterThan(0);
         }
 
-        (await store.writeSnapshot({ threadId: snapThread, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId: snapThread, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
         await pool.query({
             text: `UPDATE cortex_report_session_state SET snapshot = '{"artifacts":"nope"}'::jsonb WHERE thread_id = $1`,
             values: [snapThread],
@@ -233,7 +216,7 @@ describe("createReportSessionStateStore", () => {
         await seedAnalysis(analysisId);
         const threadId = "thread-purge-cascade";
 
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
         (
             await store.appendDerivation(threadId, {
                 outputPath: `report-sessions/${threadId}/derived/a.csv`,
@@ -256,7 +239,7 @@ describe("createReportSessionStateStore", () => {
         const analysisId = "analysis-stamps";
         await seedAnalysis(analysisId);
         const threadId = "thread-stamps";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         // A fresh row carries neither marker.
         const fresh = (await store.readState(threadId))._unsafeUnwrap();
@@ -280,7 +263,7 @@ describe("createReportSessionStateStore", () => {
         const analysisId = "analysis-seen-no-rendered";
         await seedAnalysis(analysisId);
         const threadId = "thread-seen-no-rendered";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         // A fresh row holds no rendered hash, thus the seen stamp finds none to copy.
         expect((await store.stampSeen(threadId))._unsafeUnwrap()).toBe("no-rendered");
@@ -309,7 +292,7 @@ describe("createReportSessionStateStore", () => {
         const analysisId = "analysis-derivations";
         await seedAnalysis(analysisId);
         const threadId = "thread-derivations";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         // A fresh row holds no list at all, thus the read gives an empty list.
         const empty = (await store.readState(threadId))._unsafeUnwrap();
@@ -335,7 +318,7 @@ describe("createReportSessionStateStore", () => {
         const analysisId = "analysis-derivation-name";
         await seedAnalysis(analysisId);
         const threadId = "thread-derivation-name";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         const landed = derivation("yield.csv");
         expect((await store.appendDerivation(threadId, landed))._unsafeUnwrap()).toBe("appended");
@@ -373,7 +356,7 @@ describe("createReportSessionStateStore", () => {
         const analysisId = "analysis-derivation-race";
         await seedAnalysis(analysisId);
         const threadId = "thread-derivation-race";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         // Two sessions, each on its own connection and inside its own transaction. The first append holds
         // the row lock while the second one runs, thus the second one must re-read the list of the first
@@ -419,21 +402,21 @@ describe("createReportSessionStateStore", () => {
         const analysisId = "analysis-derivation-legacy";
         await seedAnalysis(analysisId);
         const threadId = "thread-derivation-legacy";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         // A row written before the column existed carries SQL NULL. The read gives an empty list, and it
         // gives no error, because a session that derived nothing holds none.
         await pool.query({ text: "UPDATE cortex_report_session_state SET derivations = NULL WHERE thread_id = $1", values: [threadId] });
         const read = (await store.readState(threadId))._unsafeUnwrap();
         expect(read?.derivations).toEqual([]);
-        expect(read?.snapshot).toEqual(snapshot);
+        expect(read?.snapshot).toEqual(citedSnapshot);
     });
 
     it("reads a corrupted derivation list as a typed error", async () => {
         const analysisId = "analysis-derivation-corrupt";
         await seedAnalysis(analysisId);
         const threadId = "thread-derivation-corrupt";
-        (await store.writeSnapshot({ threadId, analysisId, snapshot }))._unsafeUnwrap();
+        (await store.writeSnapshot({ threadId, analysisId, snapshot: citedSnapshot }))._unsafeUnwrap();
 
         await pool.query({
             text: `UPDATE cortex_report_session_state SET derivations = '[{"outputPath":1}]'::jsonb WHERE thread_id = $1`,

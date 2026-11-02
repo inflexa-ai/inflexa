@@ -20,6 +20,7 @@ const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T.*Z$/;
  * parent.
  */
 
+import { dbosRecvRecorder, dbosWriteStreamRecorder } from "./__fixtures__/dbos-event-mocks.js";
 import { textOf } from "../../lib/unknown-text.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock, test } from "bun:test";
 import { PAUSE_CLEAR_WRITE, PAUSE_RECORD_WRITE, STEP_EXECUTIONS_UPDATE } from "./sql-writes.js";
@@ -156,18 +157,7 @@ async function mockDbos(): Promise<void> {
         mock(async (fn: () => Promise<unknown>) => fn()),
     );
 
-    // A pause test runs the body as the body of a workflow (`runInWorkflow`). The
-    // fake `DBOS.recv` records the topic of the wait and gives the resume message
-    // at once, as a host that resumes the run does.
-    Reflect.set(
-        dbos.DBOS,
-        "recv",
-        mock((topic: string) => {
-            dbosState.recvTopics.push(topic);
-            dbosState.onRecv?.();
-            return Promise.resolve(RESUME_MESSAGE);
-        }),
-    );
+    await dbosRecvRecorder(dbosState, RESUME_MESSAGE);
     Reflect.set(
         dbos.DBOS,
         "randomUUID",
@@ -201,15 +191,7 @@ async function mockDbos(): Promise<void> {
         }),
     );
 
-    Reflect.set(
-        dbos.DBOS,
-        "writeStream",
-        mock((_name: string, part: unknown) => {
-            const written = parseUnknownRecord(part);
-            if (written) dbosState.emittedParts.push(written);
-            return Promise.resolve(undefined);
-        }),
-    );
+    await dbosWriteStreamRecorder(dbosState.emittedParts);
 
     Reflect.set(
         dbos.DBOS,

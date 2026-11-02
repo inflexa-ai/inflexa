@@ -22,6 +22,21 @@ import { computeSha256File } from "../../lib/fs-helpers.js";
 import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
 import { presentAt } from "../../lib/present.js";
 
+/** The reconcile of one DE run under the suite root: the fixture ids, and the caller's manifest and collector. */
+function reconcileDeRun(root: string, manifest: ArtifactManifestEntry[], collector: ProvenanceCollector, logger?: Parameters<typeof reconcileManifestWithDisk>[0]["logger"]) {
+    return reconcileManifestWithDisk({
+        workspaceRoot: root,
+        resourceId: RID,
+        runId: "run-001",
+        stepId: "de",
+        agentId: "agent-x",
+        manifest,
+        collector,
+        logger,
+    });
+}
+
+
 const RID = "a1";
 
 /** Lay out a session tree with a prior step's output (the upstream input) and
@@ -109,15 +124,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
         try {
             const expected = await computeSha256File(join(root, upstreamRel));
 
-            await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-            });
+            await reconcileDeRun(root, manifest, collector);
 
             const upstream = collector.getTrackedInputs().find((r) => r.source === "upstream");
             expect(upstream?.hash).toBe(expected);
@@ -154,15 +161,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             });
             const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
 
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-            });
+            const result = await reconcileDeRun(root, manifest, collector);
 
             expect(result.manifest).toHaveLength(1);
             // The directory ref is gone from both the tracked inputs and any record.
@@ -283,16 +282,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
                 { stepId: "de", runId: "run-001", path: "output/leak.csv", size: 0, type: "output", hash: "" },
             ];
 
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-                logger,
-            });
+            const result = await reconcileDeRun(root, manifest, collector, logger);
 
             // The escaping entry is skipped — no hash of the outside bytes is
             // recorded anywhere — while the real output still reconciles.
@@ -352,15 +342,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
     test("drops an input that is not present at reconcile instead of failing the step", async () => {
         const { sessionPath, root, upstreamRel, collector, manifest } = await setup({ writeUpstream: false });
         try {
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-            });
+            const result = await reconcileDeRun(root, manifest, collector);
 
             // The step's own output still reconciles, and the unhashable ref
             // leaves both the tracked inputs and every record that cited it —
@@ -381,16 +363,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
         const { sessionPath, root, upstreamRel, collector, manifest } = await setup({ writeUpstream: false });
         const logger = createCapturingLogger();
         try {
-            await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-                logger,
-            });
+            await reconcileDeRun(root, manifest, collector, logger);
 
             const warns = logger.records.filter((r) => r.level === "warn");
             expect(warns).toHaveLength(1);
@@ -451,16 +424,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             });
             const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
 
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-                logger,
-            });
+            const result = await reconcileDeRun(root, manifest, collector, logger);
 
             expect(result.manifest).toHaveLength(1);
             // The probe is gone; the real read of the script it was probing for
@@ -477,15 +441,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
     test("stays silent when no logger is wired, without failing the reconcile", async () => {
         const { sessionPath, root, collector, manifest } = await setup({ writeUpstream: true });
         try {
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-            });
+            const result = await reconcileDeRun(root, manifest, collector);
             expect(result.manifest).toHaveLength(1);
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
@@ -525,15 +481,7 @@ describe("reconcileManifestWithDisk — undeclared sibling reads", () => {
 
             const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: outRel, size: 0, type: "output", hash: "" }];
 
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-            });
+            const result = await reconcileDeRun(root, manifest, collector);
 
             expect(collector.getTrackedInputs()).toEqual([]);
             expect(result.manifest).toHaveLength(1);
@@ -567,16 +515,7 @@ describe("reconcileManifestWithDisk — undeclared sibling reads", () => {
 
             const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: outRel, size: 0, type: "output", hash: "" }];
 
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-                logger,
-            });
+            const result = await reconcileDeRun(root, manifest, collector, logger);
 
             expect(result.manifest).toHaveLength(1);
             expect(collector.getTrackedInputs()).toEqual([]);
@@ -605,15 +544,7 @@ describe("reconcileManifestWithDisk — metric labels", () => {
         const { sessionPath, root, collector, manifest } = await setup({ writeUpstream: false });
         try {
             manifest.push({ stepId: "de", runId: "run-001", path: "output/phantom.csv", size: 0, type: "output", hash: "" });
-            await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
-            });
+            await reconcileDeRun(root, manifest, collector);
 
             await provider.forceFlush();
             const exported = exporter

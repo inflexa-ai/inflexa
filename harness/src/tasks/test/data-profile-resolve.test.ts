@@ -88,6 +88,28 @@ function submission(operations: ReadonlyArray<unknown>, over: Partial<ProfileSub
     };
 }
 
+
+/** The values split over the origin slot: one somatic and one germline group, with the reason of the test. */
+function valuesSplitSubmission(reason: string) {
+    return submission(
+        claimEverything([
+            {
+                op: "split",
+                setId: calls.id,
+                by: {
+                    kind: "values",
+                    slotId: originSlot.id,
+                    groups: [
+                        { values: ["somatic"], group: annotation("somatic calls") },
+                        { values: ["germline"], group: annotation("germline calls") },
+                    ],
+                },
+                reason,
+            },
+        ]),
+    );
+}
+
 /** Claim every kept file, so a test can vary one operation without tripping the sweep. */
 function claimEverything(extra: MenuOperation[] = []): MenuOperation[] {
     return [
@@ -111,23 +133,7 @@ describe("membership is computed per operation", () => {
 
     it("split by value mapping resolves one group per mapped value, membership computed from the mapping", () => {
         const resolution = resolveProfileSubmission(
-            submission(
-                claimEverything([
-                    {
-                        op: "split",
-                        setId: calls.id,
-                        by: {
-                            kind: "values",
-                            slotId: originSlot.id,
-                            groups: [
-                                { values: ["somatic"], group: annotation("somatic calls") },
-                                { values: ["germline"], group: annotation("germline calls") },
-                            ],
-                        },
-                        reason: "A downstream step consumes one origin or the other, never both.",
-                    },
-                ]),
-            ),
+            valuesSplitSubmission("A downstream step consumes one origin or the other, never both."),
             detected,
             menu,
         );
@@ -701,23 +707,7 @@ describe("the recipe", () => {
 
     it("records the value mapping a split resolved against", () => {
         const resolution = resolveProfileSubmission(
-            submission(
-                claimEverything([
-                    {
-                        op: "split",
-                        setId: calls.id,
-                        by: {
-                            kind: "values",
-                            slotId: originSlot.id,
-                            groups: [
-                                { values: ["somatic"], group: annotation("somatic calls") },
-                                { values: ["germline"], group: annotation("germline calls") },
-                            ],
-                        },
-                        reason: "Different substrates.",
-                    },
-                ]),
-            ),
+            valuesSplitSubmission("Different substrates."),
             detected,
             menu,
         );

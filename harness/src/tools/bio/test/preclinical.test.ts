@@ -59,6 +59,20 @@ const IMPC_ROUTES: Array<[string, () => Response]> = [
     ["/statistical-result/select", () => json({ response: { docs: [] } })],
 ];
 
+/** The preclinical wire: ensembl gives one id, bgee gives no calls, the IMPC routes answer the rest, and the rest 404s. */
+function stubPreclinicalWire(record: (url: string) => void): void {
+    globalThis.fetch = fetchDouble((url) => {
+        const u = requestUrlText(url);
+        record(u);
+        if (u.includes("ensembl")) return Promise.resolve(json({ id: "ENSG00000012048" }));
+        if (u.includes("bgee")) return Promise.resolve(json({ data: { calls: [] } }));
+        for (const [needle, make] of IMPC_ROUTES) {
+            if (u.includes(needle)) return Promise.resolve(make());
+        }
+        return Promise.resolve(new Response("unrouted", { status: 404 }));
+    });
+}
+
 describe("genePreclinicalProfile — knockout half", () => {
     it("returns a populated profile for a gene with a mouse knockout", async () => {
         stubFetch(IMPC_ROUTES);
@@ -189,16 +203,7 @@ describe("genePreclinicalProfile — human phenotype half", () => {
 
     it("stays out of the default include set", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble((url) => {
-            const u = requestUrlText(url);
-            seen.push(u);
-            if (u.includes("ensembl")) return Promise.resolve(json({ id: "ENSG00000012048" }));
-            if (u.includes("bgee")) return Promise.resolve(json({ data: { calls: [] } }));
-            for (const [needle, make] of IMPC_ROUTES) {
-                if (u.includes(needle)) return Promise.resolve(make());
-            }
-            return Promise.resolve(new Response("unrouted", { status: 404 }));
-        });
+        stubPreclinicalWire((u) => seen.push(u));
 
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1" }, ctx))._unsafeUnwrap();
@@ -211,16 +216,7 @@ describe("genePreclinicalProfile — human phenotype half", () => {
 describe("genePreclinicalProfile — both halves", () => {
     it("fetches expression and knockout together by default", async () => {
         const seen: string[] = [];
-        globalThis.fetch = fetchDouble((url) => {
-            const u = requestUrlText(url);
-            seen.push(u);
-            if (u.includes("ensembl")) return Promise.resolve(json({ id: "ENSG00000012048" }));
-            if (u.includes("bgee")) return Promise.resolve(json({ data: { calls: [] } }));
-            for (const [needle, make] of IMPC_ROUTES) {
-                if (u.includes(needle)) return Promise.resolve(make());
-            }
-            return Promise.resolve(new Response("unrouted", { status: 404 }));
-        });
+        stubPreclinicalWire((u) => seen.push(u));
 
         const { ctx } = makeToolContext();
         const result = (await genePreclinicalProfileTool.execute({ geneSymbol: "BRCA1" }, ctx))._unsafeUnwrap();

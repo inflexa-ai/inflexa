@@ -13,6 +13,7 @@
  */
 
 import { readPdfText } from "../pdf-text.js";
+import { slugify } from "../slug.js";
 
 import { normalizeWhitespace } from "./normalize-whitespace.js";
 
@@ -188,20 +189,4 @@ export async function fetchAndExtractIchDoc(stub: IchStub): Promise<IchDoc> {
             year: stub.metadata?.year,
         },
     };
-}
-
-function slugify(s: string): string {
-    let out = "";
-    let inRun = false;
-    for (const char of s.toLowerCase()) {
-        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
-        if (!isSlugChar) {
-            inRun = true;
-            continue;
-        }
-        if (inRun && out.length > 0) out += "-";
-        inRun = false;
-        out += char;
-    }
-    return out;
 }

@@ -24,6 +24,7 @@ import { stepWritePrefix } from "../../../workspace/paths.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecResult, SandboxRef } from "../../../sandbox/types.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
+import { healthySandboxTail } from "../../../agents/sandbox/__fixtures__/deps.js";
 
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
@@ -55,17 +56,7 @@ function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } 
                 timedOut: false,
             });
         },
-        isAlive() {
-            return Promise.resolve({ alive: true, oomKilled: false });
-        },
-        isAliveById() {
-            return Promise.resolve({ alive: true, oomKilled: false });
-        },
-        async teardown() {},
-        async teardownById() {},
-        listManagedSandboxes() {
-            return Promise.resolve([]);
-        },
+        ...healthySandboxTail(),
     };
 }
 

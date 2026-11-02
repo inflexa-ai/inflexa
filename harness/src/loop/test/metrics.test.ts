@@ -1,15 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { createAiSdkProvider } from "../../providers/ai-sdk.js";
 import type { ChatProvider } from "../../providers/types.js";
 import { defineTool } from "../../tools/define-tool.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedPart, type ScriptedReply, type ScriptStep } from "../../testing.js";
 import { metricReader, type MetricReader } from "./metric-reader.js";
+import { unnamedModel } from "./unnamed-model.js";
 import { continueLoop, runLoop, type LoopOptions } from "../run-loop.js";
 import type { AgentDefinition } from "../types.js";
 
@@ -116,24 +114,6 @@ describe("runLoop metrics", () => {
 });
 
 /** A model whose stream names no model: it sends no response metadata. */
-function unnamedModel(inputTokens: number): ChatProvider {
-    const parts: LanguageModelV4StreamPart[] = [
-        { type: "stream-start", warnings: [] },
-        { type: "text-start", id: "p0" },
-        { type: "text-delta", id: "p0", delta: "done" },
-        { type: "text-end", id: "p0" },
-        {
-            type: "finish",
-            finishReason: { unified: "stop", raw: "stop" },
-            usage: {
-                inputTokens: { total: inputTokens, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
-                outputTokens: { total: undefined, text: undefined, reasoning: undefined },
-            },
-        },
-    ];
-    const model = new MockLanguageModelV4({ provider: "unnamed", doStream: () => Promise.resolve({ stream: convertArrayToReadableStream(parts) }) });
-    return createAiSdkProvider({ model, maxRetries: 0 });
-}
 
 describe("runLoop token counters for each call", () => {
     /** Shares one provenance across agents, so a provenance label would merge their tokens. */

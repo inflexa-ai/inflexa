@@ -59,6 +59,19 @@ function toolResultParts(message: ModelMessage): ToolResultPart[] {
 }
 
 const ANALYSIS_A = "analysis-a";
+
+/** The turn params of the conversation suites: one analysis-scoped thread, no emit, and an unlatched signal. */
+function turnParams(threadId: string, overrides: Partial<InProcessTurnParams> = {}): InProcessTurnParams {
+    return {
+        analysisId: ANALYSIS_A,
+        threadId,
+        userInput: "compare the two groups",
+        session: makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId } }),
+        emit: () => {},
+        signal: new AbortController().signal,
+        ...overrides,
+    };
+}
 const ANALYSIS_B = "analysis-b";
 
 let pool: Pool;
@@ -509,15 +522,7 @@ describe("the run of a chat turn", () => {
     }
 
     function params(overrides: Partial<InProcessTurnParams> = {}): InProcessTurnParams {
-        return {
-            analysisId: ANALYSIS_A,
-            threadId: THREAD,
-            userInput: "compare the two groups",
-            session: makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } }),
-            emit: () => {},
-            signal: new AbortController().signal,
-            ...overrides,
-        };
+        return turnParams(THREAD, overrides);
     }
 
     const echoCall = (id: string, usage?: ChatUsage): ScriptedReply => reply([toolCall(id, "echo", { label: id })], "tool-calls", usage);
@@ -1308,15 +1313,7 @@ describe("the compaction of a chat turn", () => {
     }
 
     function params(overrides: Partial<InProcessTurnParams> = {}): InProcessTurnParams {
-        return {
-            analysisId: ANALYSIS_A,
-            threadId: THREAD,
-            userInput: "compare the two groups",
-            session: makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } }),
-            emit: () => {},
-            signal: new AbortController().signal,
-            ...overrides,
-        };
+        return turnParams(THREAD, overrides);
     }
 
     async function storedRows(threadId = THREAD): Promise<StoredMessage[]> {

@@ -18,6 +18,7 @@ import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/top
 import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js";
 import { isLabelValue } from "../sandbox/labels.js";
 import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
+import { slugify } from "../lib/slug.js";
 import type { AnalysisPlan } from "./workflow-state.js";
 
 const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
@@ -70,19 +71,7 @@ function describeParseError(stepId: string, entry: string, error: ParseQueryErro
 
 /** Derive a filesystem-safe output prefix from a step ID. */
 export function deriveOutputPrefix(stepId: string): string {
-    let out = "";
-    let inRun = false;
-    for (const char of stepId.toLowerCase()) {
-        const isSlugChar = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
-        if (!isSlugChar) {
-            inRun = true;
-            continue;
-        }
-        if (inRun && out.length > 0) out += "-";
-        inRun = false;
-        out += char;
-    }
-    return out;
+    return slugify(stepId);
 }
 
 /**
