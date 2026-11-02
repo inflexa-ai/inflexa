@@ -35,7 +35,7 @@ import {
 import { forSubAgent, type AgentSession } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
-import type { CompactionPart } from "../contracts/chat-parts.js";
+import type { CompactionPart, ModelRefusal } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -978,6 +978,8 @@ async function runSeries(
             seriesSteps.push(loopStep);
             target.steps.push(loopStep);
             if (loopStep.calls.length > 0) log.debug("iteration", { iteration: seriesSteps.length - 1, tools: loopStep.calls.map((call) => call.toolName) });
+            const refusal = refusalOf(step, loopStep);
+            if (refusal !== undefined) await opts.emit({ type: "data-model-refusal", source, data: refusal });
             await opts.emit({ type: "iteration", source, index: seriesSteps.length - 1, final: !continuesAfter(loopStep) || stops() });
         },
     });
@@ -1072,6 +1074,18 @@ function loopStepOf(step: StepResult<ToolSet>, deniedByTheUser: ReadonlyMap<stri
             };
         });
     return { finishReason: step.finishReason, rawFinishReason: step.rawFinishReason, calls };
+}
+
+/**
+ * The refusal of one step, when the provider declined its request. A reply that ends with the content filter
+ * stopped, also after a fallback hop, because a chain whose last model declined reports that hop too. A hop that
+ * names no model gives the served model of the response, as the usage record does.
+ */
+function refusalOf(step: StepResult<ToolSet>, loopStep: LoopStep): ModelRefusal | undefined {
+    if (loopStep.finishReason === "content-filter") return { id: step.response.id, outcome: "stopped" };
+    const servedBy = fallbackModelOf(step.providerMetadata);
+    if (servedBy === undefined) return undefined;
+    return { id: step.response.id, outcome: "fallback", model: servedBy === "" ? step.response.modelId : servedBy };
 }
 
 /**

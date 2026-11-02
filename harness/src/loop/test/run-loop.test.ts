@@ -13,7 +13,7 @@ import { modelFailureOf } from "../../providers/errors.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { defineTool, withToolCallRecord, withToolResultImages, type Tool, type ToolError } from "../../tools/define-tool.js";
 import { viewCode, viewFields, viewJson, viewText, type ToolCallView } from "../../tools/tool-view.js";
-import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptedReply, type ScriptStep } from "../../testing.js";
 import { continueLoop, runLoop, runWithSalvage, type AgentRound, type LoopOptions, type LoopStep } from "../run-loop.js";
 import type { AgentDefinition, EmitEvent, EmitFn, LoopMessage } from "../types.js";
 
@@ -185,6 +185,62 @@ describe("runLoop — a retry of the provider", () => {
         expect(data.id.length).toBeGreaterThan(0);
         expect(Date.parse(data.retryAt)).toBeGreaterThanOrEqual(before);
     }, 15_000);
+});
+
+describe("runLoop — a request that the model declined", () => {
+    const HOP = {
+        anthropic: {
+            iterations: [
+                { type: "message", model: "claude-opus-5-5" },
+                { type: "fallback_message", model: "claude-opus-5" },
+            ],
+        },
+    };
+
+    /** Each model-refusal part that the run emitted, in order. */
+    async function refusalsOf(entry: ScriptedReply): Promise<{ readonly parts: Parameters<EmitFn>[0][]; readonly reason: string }> {
+        const { provider } = scriptedModel([entry]);
+        const parts: Parameters<EmitFn>[0][] = [];
+        const emit: EmitFn = (event) => {
+            if (event.type === "data-model-refusal") parts.push(event);
+        };
+        const result = await runLoop(agentWith([]), [user("go")], makeSession(), options(provider, emit));
+        return { parts, reason: result.finish.reason };
+    }
+
+    it("names the model that answered after a fallback hop", async () => {
+        const { parts, reason } = await refusalsOf({ ...reply([text("done")]), providerMetadata: HOP, responseId: "msg_1", modelId: "claude-opus-5-5" });
+
+        expect(reason).toBe("stop");
+        expect(parts).toMatchObject([{ type: "data-model-refusal", data: { id: "msg_1", outcome: "fallback", model: "claude-opus-5" } }]);
+    });
+
+    it("names the served model of the response when the hop names no model", async () => {
+        const unnamedHop = { anthropic: { iterations: [{ type: "message", model: "claude-opus-5-5" }, { type: "fallback_message" }] } };
+
+        const { parts } = await refusalsOf({ ...reply([text("done")]), providerMetadata: unnamedHop, responseId: "msg_2", modelId: "claude-opus-5" });
+
+        expect(parts).toMatchObject([{ data: { id: "msg_2", outcome: "fallback", model: "claude-opus-5" } }]);
+    });
+
+    it("reports a stop when the content filter ends the request", async () => {
+        const { parts, reason } = await refusalsOf({ ...reply([], "content-filter"), responseId: "msg_3" });
+
+        expect(reason).toBe("content-filter");
+        expect(parts).toMatchObject([{ type: "data-model-refusal", data: { id: "msg_3", outcome: "stopped" } }]);
+    });
+
+    it("reports a stop when each model of the fallback chain declined", async () => {
+        const { parts } = await refusalsOf({ ...reply([], "content-filter"), providerMetadata: HOP, responseId: "msg_4" });
+
+        expect(parts).toMatchObject([{ data: { id: "msg_4", outcome: "stopped" } }]);
+    });
+
+    it("emits no refusal for a request that the model answered", async () => {
+        const { parts } = await refusalsOf(reply([text("done")]));
+
+        expect(parts).toEqual([]);
+    });
 });
 
 describe("runLoop — the follow-up request", () => {

@@ -186,7 +186,7 @@ export function framesOfChunk(chunk: UIMessageChunk, rootSource: EventSource): C
         case "error":
             return [{ type: "error", message: chunk.errorText, source: rootSource }];
         case "abort":
-            return [{ type: "finish", source: rootSource }];
+            return [{ type: "finish", source: rootSource, finishReason: "aborted" }];
         default: {
             const frame = harnessFrameOf(chunk);
             return frame === undefined ? [] : [frame];

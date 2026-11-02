@@ -45,7 +45,15 @@ export type TurnUsage = Readonly<NonNullable<AgentFinish["turnUsage"]>>;
  * failure keeps the stored rounds. The four kinds that ran carry `opened`, and a store fault as `storeFailed`.
  */
 export type TurnOutcome =
-    | { readonly kind: "ok"; readonly opened: boolean; readonly fallbackText: string; readonly turnUsage?: TurnUsage; readonly storeFailed?: boolean }
+    | {
+          readonly kind: "ok";
+          readonly opened: boolean;
+          readonly fallbackText: string;
+          /** The stop reason of the turn. */
+          readonly finishReason: string;
+          readonly turnUsage?: TurnUsage;
+          readonly storeFailed?: boolean;
+      }
     | {
           readonly kind: "filtered";
           readonly opened: boolean;
@@ -201,7 +209,9 @@ function outcomeOfEnd(end: ChatTurnEnd | null): TurnOutcome {
     const fallbackText = end.fallbackText ?? "";
     switch (end.status) {
         case "done": {
-            if (end.finishReason !== "content-filter") return { kind: "ok", opened, fallbackText, ...spend };
+            // The harness gives a stop reason to each turn that ran to its end, thus only a broken outcome has none.
+            if (end.finishReason === undefined) return { kind: "failed", opened, reason: "The turn ended with no stop reason.", ...spend };
+            if (end.finishReason !== "content-filter") return { kind: "ok", opened, fallbackText, finishReason: end.finishReason, ...spend };
             // The one place the endpoint's own word survives — the banner shows only the generic line.
             getLogger("harness").warn({ rawFinishReason: end.rawFinishReason }, "chat turn stopped by the model content filter");
             return { kind: "filtered", opened, fallbackText, ...(end.rawFinishReason === undefined ? {} : { rawFinishReason: end.rawFinishReason }), ...spend };

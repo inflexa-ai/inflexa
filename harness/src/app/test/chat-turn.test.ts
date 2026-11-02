@@ -544,6 +544,54 @@ describe("the run of a chat turn", () => {
         expect(await chatTurns.outcome(started.turnId)).toMatchObject({ status: "done", opened: true, fallbackText: "the groups differ" });
     });
 
+    /** The frames of one turn of the test kit over `model`, from its open to its end. */
+    async function kitFrames(model: ScriptedModel): Promise<ChatFrame[]> {
+        const chatTurns = inProcessChatTurns(depsFor(resolverFor(agentWith([echoTool()])), model));
+        const started = await chatTurns.open(params().session, { analysisId: ANALYSIS_A, threadId: THREAD, userInput: "compare the two groups" });
+        if (started.kind !== "started") throw new Error(`expected a started turn, got ${started.kind}`);
+        const frames: ChatFrame[] = [];
+        for await (const frame of chatTurns.read(started.turnId)) frames.push(frame);
+        return frames;
+    }
+
+    it("ends the stream with the stop reason of the turn", async () => {
+        const answered = await kitFrames(scriptedModel([reply([text("the groups differ")])]));
+        const declined = await kitFrames(scriptedModel([reply([], "content-filter")]));
+
+        expect(answered.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" });
+        expect(declined.at(-1)).toMatchObject({ type: "finish", finishReason: "content-filter" });
+    });
+
+    it("stores the refusal of a turn that the content filter stopped, thus a reload shows it", async () => {
+        const model = scriptedModel([{ ...reply([], "content-filter"), responseId: "msg_declined" }]);
+
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+
+        const replay = storedMessagesToChat(await storedRows());
+        expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(presentAt(replay, 1).parts).toEqual([{ type: "data-model-refusal", id: "msg_declined", outcome: "stopped" }]);
+    });
+
+    it("stores the model that answered after a fallback hop, beside the reply", async () => {
+        const hop = {
+            anthropic: {
+                iterations: [
+                    { type: "message", model: "claude-opus-5-5" },
+                    { type: "fallback_message", model: "claude-opus-5" },
+                ],
+            },
+        };
+        const model = scriptedModel([{ ...reply([text("the groups differ")]), providerMetadata: hop, responseId: "msg_served" }]);
+
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+
+        const replay = storedMessagesToChat(await storedRows());
+        expect(presentAt(replay, 1).parts).toEqual([
+            { type: "text", text: "the groups differ" },
+            { type: "data-model-refusal", id: "msg_served", outcome: "fallback", model: "claude-opus-5" },
+        ]);
+    });
+
     it("reads a stored turn back as one user message and one assistant message", async () => {
         const model = scriptedModel([echoCall("tu-1"), reply([text("the groups differ")])]);
         await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());

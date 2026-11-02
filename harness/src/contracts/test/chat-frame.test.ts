@@ -396,7 +396,7 @@ describe("applyChatFrame", () => {
                 { type: "tool-started", toolUseId: "tu_2", name: "search_pubmed", source: sub },
                 { type: "tool-finished", toolUseId: "tu_2", name: "search_pubmed", outcome: "ok", source: sub },
                 { type: "data-presentation", id: "hidden", content: { kind: "markdown", body: "child" }, source: sub },
-                { type: "finish", source: sub },
+                { type: "finish", source: sub, finishReason: "stop" },
             ],
         );
         expect(terminal).toBeNull();
@@ -448,7 +448,7 @@ describe("applyChatFrame", () => {
             [],
             [
                 { type: "text-delta", text: "ok", source: SOURCE },
-                { type: "finish", source: SOURCE },
+                { type: "finish", source: SOURCE, finishReason: "stop" },
             ],
         );
         expect(terminal).toBe("finish");
@@ -464,6 +464,7 @@ describe("applyChatFrame", () => {
                 {
                     type: "finish",
                     source: SOURCE,
+                    finishReason: "stop",
                     turnUsage: { inputTokens: 12, outputTokens: 3 },
                 },
             ],

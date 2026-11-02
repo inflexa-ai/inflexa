@@ -113,7 +113,7 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
                 await channel.send(
                     end.status === "failed"
                         ? { type: "error", message: end.failure?.message ?? "The turn failed.", source: ROUTE_SOURCE }
-                        : { type: "finish", source: ROUTE_SOURCE },
+                        : { type: "finish", source: ROUTE_SOURCE, finishReason: "stop" },
                 );
                 channel.close();
             })();

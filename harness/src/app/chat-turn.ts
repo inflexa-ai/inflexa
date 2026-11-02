@@ -372,7 +372,7 @@ export async function runOpenTurn(
     await flush({
         status: outcome.status,
         reason: outcome.status === "failed" ? outcome.reason : undefined,
-        note: outcome.status === "failed" ? conversationRecordTurn(failureNote(outcome.reason)) : outcome.status === "aborted" ? interruptionNote() : undefined,
+        note: closingNoteOf(outcome, recorder),
         turnUsage,
         turnDurationMs: durationMs,
     });
@@ -447,6 +447,34 @@ function failureReasonOf(err: unknown): string {
         case "other":
             return findProviderError(err) === undefined ? "The turn stopped on an internal error." : "The model request failed.";
     }
+}
+
+/** The note that closes a turn: a failed, an aborted, or a declined turn has one, and a turn that the model answered has none. */
+function closingNoteOf(outcome: ChatTurnOutcome, recorder: ConversationDisplayRecorder): ConversationTurn | undefined {
+    switch (outcome.status) {
+        case "failed":
+            return conversationRecordTurn(failureNote(outcome.reason));
+        case "aborted":
+            return interruptionNote();
+        case "done":
+            return outcome.finish.reason === "content-filter" ? declineNote(recorder) : undefined;
+        default: {
+            const exhaustive: never = outcome;
+            throw new Error(`unhandled turn outcome: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
+/**
+ * The note of a turn that the content filter stopped. A declined request often gives no message, and a round
+ * with no message gives no row. The note is the row that holds the display of such a round, thus a reload
+ * shows the refusal. It also tells the next turn that this request has no reply.
+ */
+function declineNote(recorder: ConversationDisplayRecorder): ConversationTurn {
+    return {
+        modelMessages: [syntheticUserMessage("[The model provider declined the request above, thus it has no reply.]")],
+        displayMessages: recorder.takeRound([]),
+    };
 }
 
 /**

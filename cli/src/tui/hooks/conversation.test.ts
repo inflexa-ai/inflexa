@@ -136,7 +136,7 @@ function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () 
 /** The frame that ends the stream of a turn: `error` for a failed turn, else `finish`, as the route sends them. */
 function terminalFrame(end: End): ChatFrame {
     if (end.status === "failed") return { type: "error", message: end.failure?.message ?? "The turn failed.", source: ROUTE_SOURCE };
-    return { type: "finish", source: ROUTE_SOURCE, ...(end.turnUsage === undefined ? {} : { turnUsage: end.turnUsage }) };
+    return { type: "finish", source: ROUTE_SOURCE, finishReason: "stop", ...(end.turnUsage === undefined ? {} : { turnUsage: end.turnUsage }) };
 }
 
 /** A fake of the local server, with what the hook sent it. */
@@ -806,7 +806,7 @@ describe("send() reads the end of a turn from its stream when the summary is gon
             // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
             yield ok({ type: "text-delta", text: "world.", source: ROUTE_SOURCE });
             // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
-            yield ok({ type: "finish", source: ROUTE_SOURCE });
+            yield ok({ type: "finish", source: ROUTE_SOURCE, finishReason: "stop" });
         }
         const rereads: string[] = [];
         const server: SendOpts = {

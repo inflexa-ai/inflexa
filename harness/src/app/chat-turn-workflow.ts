@@ -22,7 +22,7 @@ import { z } from "zod";
 
 import type { AuthContext } from "../auth/types.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
-import type { ChatFrame, EventSource } from "../contracts/chat-events.js";
+import type { ChatErrorEvent, ChatFrame, EventSource, FinishEvent } from "../contracts/chat-events.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentDefinition } from "../loop/types.js";
@@ -410,17 +410,31 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
     );
 
     const { outcome } = ran;
-    await writer.write(
-        outcome.status === "failed"
-            ? { type: "error", message: outcome.reason, reason: outcome.code, source: rootSource }
-            : { type: "finish", source: rootSource, turnUsage: ran.turnUsage },
-    );
+    await writer.write(endFrameOf(ran, rootSource));
     await writer.settle();
     await closeDurableStream(CHAT_STREAM_KEY, outcome.status === "done" ? "stop" : outcome.status === "aborted" ? "aborted" : "error");
     // A sub-agent that a stop canceled in its pause leaves its row, thus the end of the turn clears each row of the turn.
     await DBOS.runStep(async () => unwrapOrThrow(await clearPausesOfWork(deps.pool, input.turnId)), { name: "chat-turn.clear-pauses" });
     await DBOS.runStep(async () => unwrapOrThrow(await releaseThreadOfTurn(deps.pool, input.threadId, input.turnId)), { name: "chat-turn.release" });
     return chatTurnEndOf(ran);
+}
+
+/** The last frame of a turn that ran: `error` for a failed turn, else `finish` with the stop reason of the turn. */
+export function endFrameOf(ran: ChatTurnRan, rootSource: EventSource): ChatErrorEvent | FinishEvent {
+    const { outcome } = ran;
+    switch (outcome.status) {
+        case "failed":
+            return { type: "error", message: outcome.reason, reason: outcome.code, source: rootSource };
+        case "done":
+            return { type: "finish", source: rootSource, finishReason: outcome.finish.reason, turnUsage: ran.turnUsage };
+        // An abort that cut the run before its end leaves no finish of the loop.
+        case "aborted":
+            return { type: "finish", source: rootSource, finishReason: "aborted", turnUsage: ran.turnUsage };
+        default: {
+            const exhaustive: never = outcome;
+            throw new Error(`unhandled turn outcome: ${JSON.stringify(exhaustive)}`);
+        }
+    }
 }
 
 /** How a turn that ran ended, as a host reads it. */

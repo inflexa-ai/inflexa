@@ -46,6 +46,8 @@ export type {
     WorkKind,
     PausePart,
     ModelRetryPart,
+    ModelRefusal,
+    ModelRefusalPart,
     ChatPart,
     KnownChatPart,
 } from "./chat-parts.js";

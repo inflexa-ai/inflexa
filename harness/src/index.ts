@@ -473,6 +473,8 @@ export type {
     WorkKind,
     PausePart,
     ModelRetryPart,
+    ModelRefusal,
+    ModelRefusalPart,
     AskPart,
     ChildSessionStartedPart,
     ReportRenderedPart,

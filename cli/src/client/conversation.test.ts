@@ -30,7 +30,7 @@ function sse(frames: unknown[], headers: Record<string, string>): Response {
 
 describe("createChatTurn", () => {
     test("gives the turn id of the response header and the frames of the stream", async () => {
-        const finish: ChatFrame = { type: "finish", source: { agentId: "chat", callPath: ["chat"] } };
+        const finish: ChatFrame = { type: "finish", source: { agentId: "chat", callPath: ["chat"] }, finishReason: "stop" };
         const { opts, urls } = withFetch(() => sse([finish], { [TURN_ID_HEADER]: "turn-1" }));
         const stream = (await createChatTurn("a 1", { threadId: "t1", message: "hi" }, opts))._unsafeUnwrap();
         expect(stream.turnId).toBe("turn-1");

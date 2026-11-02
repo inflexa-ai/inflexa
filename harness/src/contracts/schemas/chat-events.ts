@@ -87,6 +87,7 @@ export const ToolFinishedEventSchema = z.object({
 export const FinishEventSchema = z.object({
     type: z.literal("finish"),
     source: EventSourceSchema,
+    finishReason: z.string(),
     usage: TokenUsageRollupSchema.optional(),
     turnUsage: TokenUsageRollupSchema.optional(),
 });
