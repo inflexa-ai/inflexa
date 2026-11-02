@@ -1097,11 +1097,12 @@ describe("executeAnalysis body", () => {
 
         const { recorded, cleared } = pauseWrites(pool);
         expect(recorded).toHaveLength(1);
-        const [workflowId, workId, workKind, analysisId, threadId, state, cause, attempt, retryAt, topic] = presentAt(recorded, 0).values ?? [];
-        expect([workflowId, workId, workKind, analysisId, threadId, state, attempt, retryAt]).toEqual([
+        const [workflowId, workId, workKind, waiter, analysisId, threadId, state, cause, attempt, retryAt, topic] = presentAt(recorded, 0).values ?? [];
+        expect([workflowId, workId, workKind, waiter, analysisId, threadId, state, attempt, retryAt]).toEqual([
             "run-test",
             "run-test",
             "run",
+            JSON.stringify({ kind: "run" }),
             "a1",
             null,
             "paused",
@@ -1117,8 +1118,24 @@ describe("executeAnalysis body", () => {
 
         const pauses = record.emittedParts.filter((p) => p.type === "data-pause");
         expect(pauses).toMatchObject([
-            { id: "run-test", workId: "run-test", workKind: "run", state: "paused", cause: { kind: "host", reason: "no_funds" }, attempt: 0 },
-            { id: "run-test", workId: "run-test", workKind: "run", state: "running" },
+            {
+                id: "run-test",
+                workId: "run-test",
+                workKind: "run",
+                waiter: { kind: "run" },
+                state: "paused",
+                cause: { kind: "host", reason: "no_funds" },
+                attempt: 0,
+            },
+            {
+                id: "run-test",
+                workId: "run-test",
+                workKind: "run",
+                waiter: { kind: "run" },
+                state: "running",
+                cause: { kind: "host", reason: "no_funds" },
+                end: "resume",
+            },
         ]);
         for (const part of pauses) expect(ChatPartSchema.safeParse(part).success).toBe(true);
 
@@ -1423,8 +1440,8 @@ describe("executeAnalysis body", () => {
 
         const { recorded } = pauseWrites(pool);
         expect(recorded).toHaveLength(1);
-        const [workflowId, workId, workKind, , , state, cause] = presentAt(recorded, 0).values ?? [];
-        expect([workflowId, workId, workKind, state]).toEqual(["run-test", "run-test", "run", "paused"]);
+        const [workflowId, workId, workKind, waiter, , , state, cause] = presentAt(recorded, 0).values ?? [];
+        expect([workflowId, workId, workKind, waiter, state]).toEqual(["run-test", "run-test", "run", JSON.stringify({ kind: "synthesis" }), "paused"]);
         expect(cause).toBe(JSON.stringify({ kind: "host", reason: "payment_required" }));
         expect(dbosState.recvTopics).toHaveLength(1);
 

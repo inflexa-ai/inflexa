@@ -30,6 +30,7 @@ import type {
     FileReferencePart,
     ModelRefusal,
     ModelRefusalPart,
+    PausePart,
     PlanApprovalPart,
     PlanPart,
     PresentationPart,
@@ -45,6 +46,7 @@ import {
     CompactionPartSchema,
     FileReferencePartSchema,
     ModelRefusalPayloadSchema,
+    PausePartSchema,
     PlanApprovalPartSchema,
     PlanPartSchema,
     PresentationPartSchema,
@@ -82,6 +84,7 @@ export type ConversationUIData = {
     "report-rendered": Payload<ReportRenderedPart>;
     compaction: Payload<CompactionPart>;
     "model-refusal": ModelRefusal;
+    pause: Payload<PausePart>;
     "subagent-activity": Omit<Payload<SubAgentActivityPart>, "entries"> & {
         entries: (Omit<SubAgentActivityEntry, "outcome"> & { outcome: ToolCallOutcome })[];
     };
@@ -152,6 +155,7 @@ const dataSchemas = {
     "report-rendered": ReportRenderedPartSchema.omit({ type: true }),
     compaction: CompactionPartSchema.omit({ type: true }),
     "model-refusal": ModelRefusalPayloadSchema,
+    pause: PausePartSchema.omit({ type: true }),
     "subagent-activity": SubAgentActivityPartSchema.omit({ type: true }).extend({
         entries: z.array(SubAgentActivityEntrySchema.extend({ outcome: ToolCallOutcomeSchema })),
     }),
@@ -272,6 +276,7 @@ export type StoredSourcePart = Extract<
             | ReportRenderedPart["type"]
             | CompactionPart["type"]
             | ModelRefusalPart["type"]
+            | PausePart["type"]
             | SubAgentActivityPart["type"];
     }
 >;
@@ -289,6 +294,7 @@ const STORED_SOURCE_TYPES = [
     "data-report-rendered",
     "data-compaction",
     "data-model-refusal",
+    "data-pause",
     "data-subagent-activity",
 ] as const;
 type _AssertStoredSourceTypesComplete = Exclude<StoredSourcePart["type"], (typeof STORED_SOURCE_TYPES)[number]> extends never ? true : never;
@@ -374,6 +380,10 @@ export function conversationDisplayPart(part: StoredSourcePart): DataUIPart<Conv
             const { type: _type, ...data } = part;
             return { type: "data-model-refusal", id, data };
         }
+        case "data-pause": {
+            const { type: _type, ...data } = part;
+            return { type: "data-pause", id, data };
+        }
         case "data-subagent-activity": {
             const { type: _type, ...payload } = part;
             return { type: "data-subagent-activity", id, data: { ...payload, entries: part.entries.map(closedEntry) } };
@@ -439,6 +449,9 @@ export function conversationUIToChatMessages(messages: readonly ConversationUIMe
                         break;
                     case "data-model-refusal":
                         parts.push({ type: "data-model-refusal", ...part.data });
+                        break;
+                    case "data-pause":
+                        parts.push({ type: "data-pause", ...part.data });
                         break;
                     case "data-subagent-activity":
                         parts.push({ type: "data-subagent-activity", ...part.data });

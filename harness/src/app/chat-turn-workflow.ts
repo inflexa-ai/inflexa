@@ -385,6 +385,7 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
             pool: deps.pool,
             workId: input.turnId,
             workKind: "turn",
+            waiter: { kind: "turn" },
             analysisId: input.analysisId,
             threadId: input.threadId,
             emit: async (part) => {

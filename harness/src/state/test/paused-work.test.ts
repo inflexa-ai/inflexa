@@ -6,9 +6,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
+import type { PauseWaiter } from "../../contracts/chat-parts.js";
 import { forgetMigrations, withSchema } from "../../__tests__/setup/postgres.js";
 import { initCortexState } from "../init.js";
-import { clearPause, clearPauses, clearPausesOfWork, queryPausesOfAnalysis, queryPausesOfWork, recordPause, type PauseRecord } from "../paused-work.js";
+import { clearPause, clearPauses, clearPausesOfWork, queryPauses, queryPausesOfWork, recordPause, type PauseRecord } from "../paused-work.js";
 
 let pool: Pool;
 let drop: () => Promise<void>;
@@ -64,6 +65,44 @@ describe("the rows of the paused work", () => {
         expect((await queryPausesOfWork(pool, "a1", "run-1"))._unsafeUnwrap()).toEqual([host]);
     });
 
+    it("reads back each kind of waiter", async () => {
+        const waiters: PauseWaiter[] = [
+            { kind: "turn" },
+            { kind: "sub-agent", agentId: "planner" },
+            { kind: "step", stepId: "s1" },
+            { kind: "synthesis" },
+            { kind: "run" },
+            { kind: "profile" },
+        ];
+        const records = waiters.map((waiter, index) => pause({ workflowId: `wf-${index}`, workId: `work-${index}`, waiter }));
+        await record(...records);
+
+        const rows = (await queryPauses(pool, "a1"))._unsafeUnwrap();
+
+        expect(rows.map((row) => row.waiter)).toEqual(waiters);
+    });
+
+    it("replaces the waiter of a workflow that pauses again", async () => {
+        await record(pause({ workflowId: "wf-1", waiter: { kind: "run" } }));
+        const again = pause({ workflowId: "wf-1", waiter: { kind: "synthesis" } });
+
+        await record(again);
+
+        expect((await queryPausesOfWork(pool, "a1", "run-1"))._unsafeUnwrap()).toEqual([again]);
+    });
+
+    it("reads a row with a NULL waiter as a row with no waiter", async () => {
+        await pool.query(
+            `INSERT INTO cortex_paused_work (workflow_id, work_id, work_kind, analysis_id, state, cause, attempt, topic, paused_at)
+             VALUES ('wf-old', 'run-1', 'run', 'a1', 'paused', '{"kind":"outage"}', 0, 'pause:wf-old', NOW())`,
+        );
+
+        const [row] = (await queryPausesOfWork(pool, "a1", "run-1"))._unsafeUnwrap();
+
+        expect(row?.workflowId).toBe("wf-old");
+        expect(row?.waiter).toBeUndefined();
+    });
+
     it("reads back the run session of the pause of a run, with the opaque auth of the host", async () => {
         const runSession = {
             identity: { user: "u-1" },
@@ -101,9 +140,27 @@ describe("the rows of the paused work", () => {
             pause({ workflowId: "wf-elsewhere", analysisId: "a2", pausedAt: "2026-10-28T09:00:00.000Z" }),
         );
 
-        const rows = (await queryPausesOfAnalysis(pool, "a1"))._unsafeUnwrap();
+        const rows = (await queryPauses(pool, "a1"))._unsafeUnwrap();
 
         expect(rows.map((row) => row.workflowId)).toEqual(["wf-a", "wf-b", "wf-late"]);
+    });
+
+    it("lists the rows of each analysis, the oldest pause first, when no analysis is named", async () => {
+        await record(
+            pause({ workflowId: "wf-a2", analysisId: "a2", workId: "run-2", pausedAt: "2026-10-28T09:00:00.000Z" }),
+            pause({ workflowId: "wf-a1", pausedAt: "2026-10-28T10:00:00.000Z" }),
+        );
+
+        const rows = (await queryPauses(pool))._unsafeUnwrap();
+
+        expect(rows.map((row) => [row.workflowId, row.analysisId])).toEqual([
+            ["wf-a2", "a2"],
+            ["wf-a1", "a1"],
+        ]);
+    });
+
+    it("lists nothing when no analysis has a paused work", async () => {
+        expect((await queryPauses(pool))._unsafeUnwrap()).toEqual([]);
     });
 
     it("reads the rows of a work only in its own analysis", async () => {
@@ -153,6 +210,17 @@ describe("the migration of the paused work", () => {
         expect(rows.map((row) => row.indexname)).toEqual(["cortex_paused_work_pkey", "idx_cortex_paused_work_analysis", "idx_cortex_paused_work_work"]);
         await record(pause({ workflowId: "wf-1" }));
         expect(await workflowsOf("run-1")).toEqual(["wf-1"]);
+    });
+
+    it("adds the waiter column to a table that has none, and deletes no row", async () => {
+        await record(pause({ workflowId: "wf-1" }));
+        await pool.query("ALTER TABLE cortex_paused_work DROP COLUMN waiter");
+
+        await forgetMigrations(pool);
+        await initCortexState(pool);
+
+        const { rows } = await pool.query<{ workflow_id: string; waiter: unknown }>("SELECT workflow_id, waiter FROM cortex_paused_work");
+        expect(rows).toEqual([{ workflow_id: "wf-1", waiter: null }]);
     });
 
     it("keeps the rows of a table that exists", async () => {

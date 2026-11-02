@@ -475,6 +475,25 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
 }
 
 /**
+ * The data profile that runs in an analysis, or in each analysis when `analysisId` is absent: the row is `running`
+ * and it names its workflow. A caller checks that the workflow is active.
+ */
+export function queryRunningProfiles(pool: Querier, analysisId?: string): ResultAsync<{ readonly analysisId: string; readonly workflowId: string }[], DbError> {
+    return tryQuery("dataProfile.queryRunningProfiles", async () => {
+        const result = await pool.query<{ analysis_id: string; data_profile_workflow_id: string }>({
+            text: `SELECT analysis_id, data_profile_workflow_id
+            FROM cortex_analysis_state
+            WHERE ($1::text IS NULL OR analysis_id = $1)
+              AND data_profile_status = 'running'
+              AND data_profile_workflow_id IS NOT NULL
+            ORDER BY analysis_id`,
+            values: [analysisId ?? null],
+        });
+        return result.rows.map((row) => ({ analysisId: row.analysis_id, workflowId: row.data_profile_workflow_id }));
+    });
+}
+
+/**
  * Read an analysis's raw `seed_input_file_ids`, without the NULL-status collapse
  * {@link loadDataProfileStatus} applies (which hides the seed of any cleared row).
  * Returns the seeded set, or `null` for BOTH "no such analysis row" AND "the row

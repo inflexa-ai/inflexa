@@ -202,7 +202,7 @@ describe("the data profile inside a workflow — a suspend error of the profiler
         const handle = await DBOS.startWorkflow(profileWorkflow, { workflowID: workflowId })(analysisId);
 
         const row = await waitForPause(analysisId, workflowId);
-        expect(row).toMatchObject({ workKind: "profile", cause: { kind: "host", reason: "payment_required" } });
+        expect(row).toMatchObject({ workKind: "profile", waiter: { kind: "profile" }, cause: { kind: "host", reason: "payment_required" } });
         expect((await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap()?.status).toBe("running");
         expect(revoked).toEqual([]);
 

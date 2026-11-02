@@ -8,7 +8,8 @@ import type { QueryConfig } from "pg";
 import { z } from "zod";
 
 import type { RunSession } from "../auth/types.js";
-import type { PauseCause, WorkKind } from "../contracts/chat-parts.js";
+import type { PauseCause, PauseWaiter, WorkKind } from "../contracts/chat-parts.js";
+import { PauseWaiterSchema } from "../contracts/schemas/chat-parts.js";
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 
@@ -17,6 +18,8 @@ export type PauseRecord = {
     readonly workflowId: string;
     readonly workId: string;
     readonly workKind: WorkKind;
+    /** What waits. Absent for a row that a wait wrote before the waiter was recorded. */
+    readonly waiter?: PauseWaiter;
     readonly analysisId: string;
     readonly threadId?: string;
     readonly state: "retrying" | "paused";
@@ -43,6 +46,7 @@ const PauseRowSchema = z.object({
     workflow_id: z.string(),
     work_id: z.string(),
     work_kind: z.enum(["turn", "run", "profile"]),
+    waiter: PauseWaiterSchema.nullable(),
     analysis_id: z.string(),
     thread_id: z.string().nullable(),
     state: z.enum(["retrying", "paused"]),
@@ -72,7 +76,7 @@ export type PauseRowQuerier = {
     query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
 };
 
-const COLUMNS = "workflow_id, work_id, work_kind, analysis_id, thread_id, state, cause, attempt, retry_at, topic, paused_at, run_session";
+const COLUMNS = "workflow_id, work_id, work_kind, waiter, analysis_id, thread_id, state, cause, attempt, retry_at, topic, paused_at, run_session";
 
 function recordOf(row: unknown): PauseRecord {
     const parsed = PauseRowSchema.parse(row);
@@ -80,6 +84,7 @@ function recordOf(row: unknown): PauseRecord {
         workflowId: parsed.workflow_id,
         workId: parsed.work_id,
         workKind: parsed.work_kind,
+        waiter: parsed.waiter ?? undefined,
         analysisId: parsed.analysis_id,
         threadId: parsed.thread_id ?? undefined,
         state: parsed.state,
@@ -97,9 +102,9 @@ export function recordPause(pool: Querier, record: PauseRecord): ResultAsync<voi
     return tryMutation("pausedWork.record", () =>
         pool.query(
             `INSERT INTO cortex_paused_work (${COLUMNS})
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (workflow_id) DO UPDATE SET
-               work_id = EXCLUDED.work_id, work_kind = EXCLUDED.work_kind, analysis_id = EXCLUDED.analysis_id,
+               work_id = EXCLUDED.work_id, work_kind = EXCLUDED.work_kind, waiter = EXCLUDED.waiter, analysis_id = EXCLUDED.analysis_id,
                thread_id = EXCLUDED.thread_id, state = EXCLUDED.state, cause = EXCLUDED.cause, attempt = EXCLUDED.attempt,
                retry_at = EXCLUDED.retry_at, topic = EXCLUDED.topic, paused_at = EXCLUDED.paused_at,
                run_session = EXCLUDED.run_session`,
@@ -107,6 +112,7 @@ export function recordPause(pool: Querier, record: PauseRecord): ResultAsync<voi
                 record.workflowId,
                 record.workId,
                 record.workKind,
+                record.waiter === undefined ? null : JSON.stringify(record.waiter),
                 record.analysisId,
                 record.threadId ?? null,
                 record.state,
@@ -138,10 +144,13 @@ export function clearPausesOfWork(pool: Querier, workId: string): ResultAsync<vo
     return tryMutation("pausedWork.clearWork", () => pool.query("DELETE FROM cortex_paused_work WHERE work_id = $1", [workId])).map(() => undefined);
 }
 
-/** The rows of the paused work of an analysis, the oldest pause first. */
-export function queryPausesOfAnalysis(pool: PauseRowQuerier, analysisId: string): ResultAsync<PauseRecord[], DbError> {
-    return tryQuery("pausedWork.ofAnalysis", async () => {
-        const { rows } = await pool.query(`SELECT ${COLUMNS} FROM cortex_paused_work WHERE analysis_id = $1 ORDER BY paused_at, workflow_id`, [analysisId]);
+/** The rows of the paused work of an analysis, or of each analysis when `analysisId` is absent. The oldest pause is first. */
+export function queryPauses(pool: PauseRowQuerier, analysisId?: string): ResultAsync<PauseRecord[], DbError> {
+    return tryQuery("pausedWork.list", async () => {
+        const { rows } = await pool.query(
+            `SELECT ${COLUMNS} FROM cortex_paused_work WHERE ($1::text IS NULL OR analysis_id = $1) ORDER BY paused_at, workflow_id`,
+            [analysisId ?? null],
+        );
         return rows.map(recordOf);
     });
 }

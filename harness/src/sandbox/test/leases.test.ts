@@ -215,6 +215,7 @@ describe("a lease", () => {
             again: { kind: "granted", size: SMALL },
             exec: { exitCode: 0, stdout: "ok" },
         });
+        expect(run.parts).toEqual([]);
         expect(backend.spawned).toHaveLength(1);
         // The id hides the workflow id and the step, thus a command cannot count up to a later exec id.
         expect(backend.execIds).toHaveLength(1);
@@ -327,7 +328,12 @@ describe("the label gate", () => {
 
         const pause = await until(() => pauseOf(analysisId), "the pause of the lease workflow");
         expect(pause.workflowId.startsWith("sandboxlease:")).toBe(true);
-        expect(pause).toMatchObject({ workId: RUN_ID, workKind: "run", cause: { kind: "host", reason: "account_frozen" } });
+        expect(pause).toMatchObject({
+            workId: RUN_ID,
+            workKind: "run",
+            waiter: { kind: "step", stepId: "s1" },
+            cause: { kind: "host", reason: "account_frozen" },
+        });
         expect(backend.spawned).toHaveLength(0);
         await until(() => Promise.resolve(run.parts.some((part) => part.state === "paused") ? true : undefined), "the mirrored pause part");
 
@@ -345,6 +351,11 @@ describe("the label gate", () => {
         expect(backend.spawned).toHaveLength(1);
         expect(run.parts.map((part) => part.state)).toEqual(["paused", "running"]);
         expect(run.parts.every((part) => part.id === pause.workflowId && part.workId === RUN_ID)).toBe(true);
+        expect(run.parts.every((part) => part.waiter?.kind === "step" && part.waiter.stepId === "s1")).toBe(true);
+        const [paused, ended] = run.parts;
+        expect(paused).toMatchObject({ state: "paused", cause: { kind: "host", reason: "account_frozen" }, pausedAt: pause.pausedAt, attempt: 0 });
+        expect(ended).toMatchObject({ state: "running", cause: { kind: "host", reason: "account_frozen" }, pausedAt: pause.pausedAt, end: "resume" });
+        expect(Date.parse(ended?.endedAt ?? "")).toBeGreaterThanOrEqual(Date.parse(pause.pausedAt));
     }, 60_000);
 
     it("ends the lease at a refusal with no suspend flag, and acquire gives the reason", async () => {
@@ -354,6 +365,7 @@ describe("the label gate", () => {
         expect(await run.result).toEqual({ kind: "refused", reason: "no_quota" });
         expect(backend.spawned).toHaveLength(0);
         expect(await leaseOf(run.caseId)).toBeUndefined();
+        expect(run.parts).toEqual([]);
     }, 60_000);
 });
 

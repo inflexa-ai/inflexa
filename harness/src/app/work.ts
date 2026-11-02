@@ -9,7 +9,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import type { PauseCause, WorkKind } from "../contracts/chat-parts.js";
+import type { PauseCause, PauseWaiter, WorkKind } from "../contracts/chat-parts.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunCanceler } from "../execution/run-canceler.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -17,10 +17,10 @@ import { passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { turnCredentials } from "../loop/turn-credentials.js";
-import { queryTurnsOfAnalysis } from "../state/active-turns.js";
-import { loadDataProfileStatus } from "../state/data-profile.js";
+import { queryTurns } from "../state/active-turns.js";
+import { queryRunningProfiles } from "../state/data-profile.js";
 import type { Querier } from "../state/db.js";
-import { clearPauses, queryPausesOfAnalysis, queryPausesOfWork, type PauseRecord } from "../state/paused-work.js";
+import { clearPauses, queryPauses, queryPausesOfWork, type PauseRecord } from "../state/paused-work.js";
 import { queryActiveRunsByAnalysis } from "../state/runs.js";
 import { HOLD_MESSAGE, RESUME_MESSAGE } from "../workflows/pause.js";
 import type { ChatTurnSession } from "./chat-turn.js";
@@ -28,6 +28,8 @@ import type { ChatTurnSession } from "./chat-turn.js";
 /** One waiting workflow of a paused work. */
 export type PausedWorkflow = {
     readonly workflowId: string;
+    /** What waits. Absent for a wait that started before the harness recorded the waiter. */
+    readonly waiter?: PauseWaiter;
     readonly state: "retrying" | "paused";
     readonly cause: PauseCause;
     /** The count of timer retries before this wait. */
@@ -43,6 +45,7 @@ export type Work = {
     /** The turn id, the run id, or the id of the profile workflow. */
     readonly workId: string;
     readonly kind: WorkKind;
+    /** The analysis of the work, as its own row names it. */
     readonly analysisId: string;
     readonly threadId?: string;
     /** Each waiting workflow of the work. Empty for a work that runs. */
@@ -63,10 +66,11 @@ export type WorkHold = { readonly kind: "held"; readonly workflows: number } | {
 /** The durable work of a runtime, as a host uses it. */
 export type WorkSurface = {
     /**
-     * The active work of an analysis: each turn that holds a thread, each `running` run, and the profile that runs.
+     * The active work of an analysis, or of each analysis when `analysisId` is absent: each turn that holds a thread,
+     * each `running` run, and each profile that runs. The count of reads does not depend on the count of analyses.
      * A pause row whose workflow ended is not in it, and the list deletes that row.
      */
-    list(analysisId: string): Promise<Work[]>;
+    list(analysisId?: string): Promise<Work[]>;
     /**
      * Stop the work, in each state: a turn stops, a run cancels with its children, and a profile fails. Work of a
      * different analysis than the session gives `not_found`.
@@ -106,6 +110,7 @@ const WORK_STOP_PROVENANCE = { agentId: "work-stop", callPath: ["work-stop"] };
 function workflowOf(record: PauseRecord): PausedWorkflow {
     return {
         workflowId: record.workflowId,
+        waiter: record.waiter,
         state: record.state,
         cause: record.cause,
         attempt: record.attempt,
@@ -123,18 +128,17 @@ async function activeWorkflows(workflowIds: readonly string[]): Promise<Readonly
 export function createWork(deps: WorkDeps): WorkSurface {
     const logger = (deps.logger ?? createNoopLogger()).named("harness.work");
 
-    async function list(analysisId: string): Promise<Work[]> {
-        const [records, turns, runs, profile] = await Promise.all([
-            (async () => unwrapOrThrow(await queryPausesOfAnalysis(deps.pool, analysisId)))(),
-            (async () => unwrapOrThrow(await queryTurnsOfAnalysis(deps.pool, analysisId)))(),
+    async function list(analysisId?: string): Promise<Work[]> {
+        const [records, turns, runs, profiles] = await Promise.all([
+            (async () => unwrapOrThrow(await queryPauses(deps.pool, analysisId)))(),
+            (async () => unwrapOrThrow(await queryTurns(deps.pool, analysisId)))(),
             (async () => unwrapOrThrow(await queryActiveRunsByAnalysis(deps.pool, analysisId)))(),
-            (async () => unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId)))(),
+            (async () => unwrapOrThrow(await queryRunningProfiles(deps.pool, analysisId)))(),
         ]);
-        const profileWorkflowId = profile?.status === "running" ? (profile.workflowId ?? undefined) : undefined;
         const active = await activeWorkflows([
             ...records.map((record) => record.workflowId),
             ...turns.map((turn) => turn.turnId),
-            ...(profileWorkflowId === undefined ? [] : [profileWorkflowId]),
+            ...profiles.map((profile) => profile.workflowId),
         ]);
 
         const ended = records.filter((record) => !active.has(record.workflowId)).map((record) => record.workflowId);
@@ -149,16 +153,16 @@ export function createWork(deps: WorkDeps): WorkSurface {
         }
 
         const work = new Map<string, Work>();
-        const add = (workId: string, kind: WorkKind, threadId: string | undefined): void => {
+        const add = (workId: string, kind: WorkKind, itemAnalysisId: string, threadId: string | undefined): void => {
             if (work.has(workId)) return;
-            work.set(workId, { workId, kind, analysisId, threadId, waiting: waitingOf.get(workId) ?? [] });
+            work.set(workId, { workId, kind, analysisId: itemAnalysisId, threadId, waiting: waitingOf.get(workId) ?? [] });
         };
         // A claim can outlive its turn, thus a turn is active while its workflow is. A `running` run is active while
         // its row is, because the run canceler also converges a row whose workflow ended.
-        for (const turn of turns) if (active.has(turn.turnId)) add(turn.turnId, "turn", turn.threadId);
-        for (const run of runs) add(run.runId, "run", run.threadId ?? undefined);
-        if (profileWorkflowId !== undefined && active.has(profileWorkflowId)) add(profileWorkflowId, "profile", undefined);
-        for (const record of records) if (active.has(record.workflowId)) add(record.workId, record.workKind, record.threadId);
+        for (const turn of turns) if (active.has(turn.turnId)) add(turn.turnId, "turn", turn.analysisId, turn.threadId);
+        for (const run of runs) add(run.runId, "run", run.analysisId, run.threadId ?? undefined);
+        for (const profile of profiles) if (active.has(profile.workflowId)) add(profile.workflowId, "profile", profile.analysisId, undefined);
+        for (const record of records) if (active.has(record.workflowId)) add(record.workId, record.workKind, record.analysisId, record.threadId);
         return [...work.values()];
     }
 

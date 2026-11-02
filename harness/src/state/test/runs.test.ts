@@ -231,6 +231,21 @@ describe("runs: active-run query", () => {
         expect((await queryActiveRunsByAnalysis(pool, "a-empty"))._unsafeUnwrap()).toEqual([]);
         expect((await queryActiveRunsByAnalysis(pool, "a-other"))._unsafeUnwrap().map((r) => r.runId)).toEqual(["run-other"]);
     });
+
+    it("gives the live runs of each analysis, with their analysis ids, when no analysis is named", async () => {
+        const all = (await queryActiveRunsByAnalysis(pool, undefined))._unsafeUnwrap();
+
+        expect(all.map((r) => [r.runId, r.analysisId]).sort()).toEqual([
+            ["run-long", "a-active"],
+            ["run-other", "a-other"],
+        ]);
+    });
+
+    it("keeps the text filter when no analysis is named", async () => {
+        const found = (await queryActiveRunsByAnalysis(pool, undefined, { q: "run-oth" }))._unsafeUnwrap();
+
+        expect(found.map((r) => r.runId)).toEqual(["run-other"]);
+    });
 });
 
 describe("runs: markRunCanceledIfActive", () => {

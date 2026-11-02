@@ -161,6 +161,7 @@ describe("initCortexState and an open transaction on cortex_analysis_threads", (
             "20261030120000_lease_the_sandboxes",
             "20261030120100_drop_the_report_derivations",
             "20261030120200_keep_the_report_derivations",
+            "20261102120000_record_the_waiter_of_a_pause",
         ]);
     }, 20_000);
 });

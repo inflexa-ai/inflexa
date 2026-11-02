@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
-import type { AnalogyReportPart, PlanApprovalPart, SubAgentActivityPart } from "../../contracts/chat-parts.js";
+import type { AnalogyReportPart, PausePart, PlanApprovalPart, SubAgentActivityPart } from "../../contracts/chat-parts.js";
 import type { ToolCallPart } from "../../contracts/message.js";
 import {
     conversationDisplayPart,
@@ -313,5 +313,50 @@ describe("a stored analogy-report part", () => {
 
         expect(parsed.messages).toEqual([stored]);
         expect(presentAt(conversationUIToChatMessages(parsed.messages), 0).parts).toEqual([part]);
+    });
+});
+
+describe("a stored pause part", () => {
+    const part: PausePart = {
+        type: "data-pause",
+        id: "wf-turn-1",
+        workId: "turn-1",
+        workKind: "turn",
+        waiter: { kind: "sub-agent", agentId: "planner" },
+        state: "running",
+        cause: { kind: "host", reason: "Host paused the work." },
+        pausedAt: "2026-11-02T10:00:00.000Z",
+        endedAt: "2026-11-02T10:05:00.000Z",
+        end: "resume",
+    };
+
+    it("round-trips field for field", async () => {
+        const stored: ConversationUIMessage = { id: "a1", role: "assistant", parts: [conversationDisplayPart(part)] };
+
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
+        const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))), "t/0/display");
+
+        expect(parsed.messages).toEqual([stored]);
+        expect(presentAt(conversationUIToChatMessages(parsed.messages), 0).parts).toEqual([part]);
+    });
+
+    it("round-trips a wait that has no waiter and no end", async () => {
+        const waiting: PausePart = {
+            type: "data-pause",
+            id: "wf-turn-2",
+            workId: "turn-2",
+            workKind: "turn",
+            state: "retrying",
+            cause: { kind: "host", reason: "Host paused the work." },
+            pausedAt: "2026-11-02T10:00:00.000Z",
+            attempt: 1,
+            retryAt: "2026-11-02T10:01:00.000Z",
+        };
+        const stored: ConversationUIMessage = { id: "a2", role: "assistant", parts: [conversationDisplayPart(waiting)] };
+
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
+        const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([stored]))), "t/0/display");
+
+        expect(presentAt(conversationUIToChatMessages(parsed.messages), 0).parts).toEqual([waiting]);
     });
 });

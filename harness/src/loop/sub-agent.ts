@@ -23,7 +23,7 @@ import { closeDurableStream } from "@dbos-inc/vercel-ai";
 
 import type { AgentSession, AuthContext, Identity, Provenance, RunFrame, RunSession, Scope } from "../auth/types.js";
 import type { ChatFrame, ChatPartFrame } from "../contracts/chat-events.js";
-import type { WorkKind, PausePart } from "../contracts/chat-parts.js";
+import type { PauseWaiter, WorkKind, PausePart } from "../contracts/chat-parts.js";
 import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
 import type { ToolContext } from "../tools/define-tool.js";
@@ -85,7 +85,7 @@ export type SubAgentWork = {
 };
 
 /** Gives the pause of the loops of a child, which writes its part through `emit`. The assembly gives it. */
-export type SubAgentPauses = (work: SubAgentWork, emit: (part: PausePart) => Promise<void>) => LoopOptions["pause"];
+export type SubAgentPauses = (work: SubAgentWork, waiter: PauseWaiter, emit: (part: PausePart) => Promise<void>) => LoopOptions["pause"];
 
 /** The work of a child, from its input. A data profile runs under one constant frame and starts no child, thus it gives none. */
 function workOf(input: SubAgentInput<unknown>): SubAgentWork | undefined {
@@ -145,7 +145,7 @@ export function registerSubAgent<P, R>(name: string, body: SubAgentBody<P, R>, p
             const pause =
                 pauses === undefined || work === undefined
                     ? undefined
-                    : pauses(work, async (part) => {
+                    : pauses(work, { kind: "sub-agent", agentId: name }, async (part) => {
                           await writer.emit({ type: "data-pause", source, data: part });
                       });
             // A recovered child replays its model calls, and the usage middleware adds each one again. Thus the total

@@ -470,6 +470,8 @@ export type {
     RunFailedPart,
     CompactionPart,
     PauseCause,
+    PauseWaiter,
+    PauseEnd,
     WorkKind,
     PausePart,
     ModelRetryPart,

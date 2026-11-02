@@ -602,6 +602,21 @@ export type ModelRefusalPart = { type: "data-model-refusal" } & ModelRefusal;
 export type WorkKind = "turn" | "run" | "profile";
 
 /**
+ * What waits in a pause. A sub-agent names its agent id, and a sandbox step names its step id. `synthesis` and `run`
+ * are the two stages of a run workflow that wait: the synthesis, and the charge gate before any step starts.
+ */
+export type PauseWaiter =
+    | { readonly kind: "turn" }
+    | { readonly kind: "sub-agent"; readonly agentId: string }
+    | { readonly kind: "step"; readonly stepId: string }
+    | { readonly kind: "synthesis" }
+    | { readonly kind: "run" }
+    | { readonly kind: "profile" };
+
+/** How a wait ended: the deadline of `retrying`, the message of a resume, or a stop of the work. */
+export type PauseEnd = "retry" | "resume" | "abort";
+
+/**
  * The state of one waiting workflow of paused work. Re-emitted under the same `id` when the wait ends, with the
  * state `running`, so reconciling readers keep the latest state of each workflow.
  */
@@ -612,14 +627,25 @@ export type PausePart = {
     /** The id of the work: the turn, the run, or the profile workflow. A resume names it. */
     workId: string;
     workKind: WorkKind;
-    /** `retrying`: the system sends the request again at `retryAt`. `paused`: only a resume ends the wait. */
+    /** What waits. Absent only for a wait that started before the harness recorded the waiter. */
+    waiter?: PauseWaiter;
+    /** `retrying`: the system sends the request again at `retryAt`. `paused`: only a resume ends the wait. `running`: the wait ended. */
     state: "retrying" | "paused" | "running";
-    /** Absent for the state `running`. */
-    cause?: PauseCause;
+    /** Why the work waited. The part that ends the wait keeps it. */
+    cause: PauseCause;
+    /** ISO 8601. The start of the wait. The part that ends the wait and a hold keep it. */
+    pausedAt: string;
     /** The count of timer retries before this wait. Absent for the state `running`. */
     attempt?: number;
     /** ISO 8601. Present for the state `retrying` only. */
     retryAt?: string;
+    /**
+     * ISO 8601. The time the wait ended. Present for the state `running` only. Absent when the replayed `pause.clear`
+     * step recorded no time.
+     */
+    endedAt?: string;
+    /** How the wait ended. Present for the state `running` only. */
+    end?: PauseEnd;
 };
 
 // ── Union ───────────────────────────────────────────────────────────

@@ -454,7 +454,7 @@ function closingNoteOf(outcome: ChatTurnOutcome, recorder: ConversationDisplayRe
         case "failed":
             return conversationRecordTurn(failureNote(outcome.reason));
         case "aborted":
-            return interruptionNote();
+            return interruptionNote(recorder);
         case "done":
             return outcome.finish.reason === "content-filter" ? declineNote(recorder) : undefined;
         default: {
@@ -478,13 +478,13 @@ function declineNote(recorder: ConversationDisplayRecorder): ConversationTurn {
 
 /**
  * The note of an aborted turn. Without it, the next turn reads the request of the aborted turn as open, and
- * its reply also answers that request. The transcript shows the interruption from the turn record, thus the
- * note has no display.
+ * its reply also answers that request. The transcript shows the interruption from the turn record. The display
+ * of the note holds only the pause parts of the open round, thus a reload shows how the wait ended.
  */
-function interruptionNote(): ConversationTurn {
+function interruptionNote(recorder: ConversationDisplayRecorder): ConversationTurn {
     return {
         modelMessages: [syntheticUserMessage("[The user interrupted the request above. Do not continue it unless the user asks you to.]")],
-        displayMessages: [],
+        displayMessages: recorder.openRoundPauses(),
     };
 }
 

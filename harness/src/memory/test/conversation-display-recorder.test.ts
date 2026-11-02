@@ -208,6 +208,62 @@ describe("conversation display recorder", () => {
     });
 });
 
+describe("conversation display recorder — pause parts", () => {
+    const base = {
+        id: "wf-1",
+        workId: "turn-1",
+        workKind: "turn" as const,
+        waiter: { kind: "turn" as const },
+        cause: { kind: "host" as const, reason: "Host paused the work." },
+        pausedAt: "2026-11-02T10:00:00.000Z",
+    };
+    const waiting = { ...base, state: "paused" as const, attempt: 0 };
+    const ended = { ...base, state: "running" as const, endedAt: "2026-11-02T10:05:00.000Z", end: "resume" as const };
+
+    it("keeps the last pause part of the root agent in the position of its first part", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "before" });
+        await recorder.emit({ type: "data-pause", source: TOP, data: waiting });
+        await recorder.emit({ type: "data-presentation", source: TOP, data: { id: "p1", content: { kind: "markdown", body: "card" } } });
+        await recorder.emit({ type: "data-pause", source: TOP, data: ended });
+
+        expect(presentAt(recorder.finish(), 1).parts).toEqual([
+            { type: "text", text: "before", state: "done" },
+            { type: "data-pause", id: "wf-1", data: ended },
+            { type: "data-presentation", id: "p1", data: { id: "p1", content: { kind: "markdown", body: "card" } } },
+        ]);
+    });
+
+    it("keeps no pause part of a sub-agent", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "data-pause", source: SUB, data: { ...waiting, id: "wf-child", waiter: { kind: "sub-agent", agentId: "child" } } });
+
+        expect(recorder.openRoundPauses()).toEqual([]);
+        expect(recorder.finish()).toEqual([{ id: recorder.userMessageId(), role: "user", parts: [{ type: "text", text: "question", state: "done" }] }]);
+    });
+
+    it("gives only the pause parts of the open round, and leaves the round open", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "partial" });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file" });
+        await recorder.emit({ type: "data-pause", source: TOP, data: waiting });
+
+        const expected: ConversationUIMessage[] = [
+            { id: recorder.assistantMessageId(), role: "assistant", parts: [{ type: "data-pause", id: "wf-1", data: waiting }] },
+        ];
+        expect(recorder.openRoundPauses()).toEqual(expected);
+        expect(recorder.openRoundPauses()).toEqual(expected);
+        expect(presentAt(recorder.takeRound([]), 0).parts).toHaveLength(3);
+    });
+
+    it("gives no message for an open round with no pause part", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "partial" });
+
+        expect(recorder.openRoundPauses()).toEqual([]);
+    });
+});
+
 describe("conversation display recorder — sub-agent activity", () => {
     const PLANNER = { agentId: "planner", callPath: ["conversation", "planner"], invocationId: "t1" };
     const T0 = Date.parse("2026-10-12T10:00:00.000Z");

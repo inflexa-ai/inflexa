@@ -44,6 +44,8 @@ export type {
     ReportRenderedPart,
     CompactionPart,
     PauseCause,
+    PauseWaiter,
+    PauseEnd,
     WorkKind,
     PausePart,
     ModelRetryPart,
