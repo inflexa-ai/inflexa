@@ -7,6 +7,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { presentAt, presentFirst } from "../../lib/present.js";
+import { unclassifiedResidueGroup, resolvedProfilePartition, subjectDimension, subjectSlotObservation } from "../../contracts/__fixtures__/data-profile.js";
 import type { DataProfileResult } from "../../contracts/data-profile.js";
 import { profileCaveats, profileDatasetFileCount, profileDimensions, profileFileRecords, profileGroups } from "../data-profile-view.js";
 
@@ -49,43 +50,18 @@ const RESOLVED: DataProfileResult = {
             memberAnnotations: [{ path: "data/inputs/vcf/S001.vcf.gz", note: "Only member carrying a contig header." }],
             slots: [{ id: "set-1.slot-1", location: "name", index: 0, tokenClass: "digits-fixed", distinctValues: 40, sampleValues: ["001"] }],
         },
-        {
-            id: "unclassified",
-            name: "unclassified",
-            memberRepresents: "one file no operation claimed",
-            description: "Swept residue.",
-            role: "data",
-            category: "other",
-            categoryLabel: "unclassified",
-            count: 2,
-            fileCount: 2,
-            totalBytes: 20,
-            displayPattern: "data/inputs",
-            formats: [{ format: "txt", count: 2 }],
-            unclassified: true,
-        },
+        unclassifiedResidueGroup(),
     ],
     dimensions: [
-        {
-            label: "subject",
-            category: "subject",
-            scope: "biological",
-            observations: [
-                { kind: "slot", groupIds: ["per-subject-calls"], slotId: "set-1.slot-1", tokenClass: "digits-fixed", cardinality: 40, sampleValues: ["001"] },
+        subjectDimension(
+            [
+                subjectSlotObservation(),
                 { kind: "document", path: "data/inputs/README.md", citation: "Forty-two subjects were enrolled.", statesCardinality: 42 },
             ],
-            reconciliations: [{ note: "The document counts enrolled subjects; the files count profiled ones.", delta: 2 }],
-        },
+            [{ note: "The document counts enrolled subjects; the files count profiled ones.", delta: 2 }],
+        ),
     ],
-    partition: {
-        scannedFiles: 83,
-        keptFiles: 82,
-        keptMembers: 42,
-        groups: 2,
-        unclassifiedMembers: 2,
-        unclassifiedFiles: 2,
-        quarantine: { count: 1, totalBytes: 5, reasons: [{ reason: "os-junk", count: 1 }], sample: ["data/inputs/.DS_Store"] },
-    },
+    partition: resolvedProfilePartition(),
 };
 
 describe("reading a snapshot of either era", () => {

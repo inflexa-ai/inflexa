@@ -108,6 +108,12 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # The copy detector is a source-validity gate like the typecheck above: it
+      # fails the job when a change adds a copy at or above the floor committed
+      # in .jscpd.json.
+      - name: Copy detection
+        run: bun run dupes
+
       # The input-scan container decoder is Python shipped as a package asset, so
       # its linter is a source-validity gate like the typecheck above. Pinned into
       # a venv put on PATH, so `lint:python` resolves the same `ruff` here as on a

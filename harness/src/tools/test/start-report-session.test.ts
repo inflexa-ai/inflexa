@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
-import type { ResultAsync } from "neverthrow";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import type { Scope } from "../../auth/types.js";
 import type { Querier } from "../../state/db.js";
 import { createReportSessionSpawn } from "../../app/spawn-report-session.js";
-import type { DbError, Connectable } from "../../lib/db-result.js";
+import { reportSessionSeeds } from "../../app/__fixtures__/report-session-seeds.js";
+import type { Connectable } from "../../lib/db-result.js";
 import type { AcquireEyes } from "../../lib/eyes.js";
-import { conversationRecordTurn, createThreadHistory } from "../../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../../memory/thread-store.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { Tool, ToolContext } from "../define-tool.js";
@@ -36,11 +35,16 @@ let pool: Pool;
 let drop: () => Promise<void>;
 let store: ThreadStore;
 let tool: Tool<StartReportSessionInput, StartReportSessionResult>;
+let appendTurn: ReturnType<typeof reportSessionSeeds>["appendTurn"];
+let appendRecord: ReturnType<typeof reportSessionSeeds>["appendRecord"];
+let seeds: ReturnType<typeof reportSessionSeeds>;
 
 beforeEach(async () => {
     ({ pool, drop } = await withSchema("start-report-session"));
     store = createThreadStore(pool);
     tool = createStartReportSessionTool({ pool, chrome: WITH_BROWSER });
+    seeds = reportSessionSeeds(pool, store);
+    ({ appendTurn, appendRecord } = seeds);
 });
 
 afterEach(async () => {
@@ -49,26 +53,9 @@ afterEach(async () => {
 
 // --- seeding ----------------------------------------------------------------
 
-/** Persist one two-message turn on a thread, giving it a transcript to anchor into. */
-function appendTurn(threadId: string): ResultAsync<void, DbError> {
-    return createThreadHistory(pool).appendTurn(threadId, {
-        modelMessages: [
-            { role: "user", content: [{ type: "text", text: "hi" }] },
-            { role: "assistant", content: [{ type: "text", text: "hello" }] },
-        ],
-        displayMessages: [],
-    });
-}
-
-/** Append one record of out-of-band work — a synthetic message that opens no turn. */
-function appendRecord(threadId: string, text: string): ResultAsync<void, DbError> {
-    return createThreadHistory(pool).appendTurn(threadId, conversationRecordTurn(text));
-}
-
 /** A live conversation parent with a first turn — the shape a legal start needs. */
 async function seedConversation(threadId: string, title: string | null): Promise<void> {
-    (await store.createThread({ threadId, analysisId: ANALYSIS, title }))._unsafeUnwrap();
-    (await appendTurn(threadId))._unsafeUnwrap();
+    await seeds.seedConversation(threadId, ANALYSIS, title);
 }
 
 /** A tool context whose scope names one conversation thread of the analysis. */

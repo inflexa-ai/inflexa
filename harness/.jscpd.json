@@ -1,0 +1,20 @@
+{
+    "//": "The copy floor is 100 tokens and 20 lines. Measured counts over the code formats of src and scripts with jscpd 5.4.2: 880 clones at 50 tokens (the default), 321 at 70, 78 at 100 tokens with no line floor, 23 at 100 tokens and 20 lines, 7 at 150 tokens and 20 lines. Each of the 23 reports at this floor names a real repeated block (3 in production code, 20 in tests); below 100 tokens the reports are parameter tables, type declarations, and short builders whose repetition carries no abstraction, and without the line floor the set holds token-dense blocks that are structural rather than copied.\n\nIgnored trees: node_modules and dist hold dependency and build output, not harness code. The gallery data directories data/, data.new/, and data.old/ hold generated gallery data; the hand-written gallery code beside them stays in the scan.\n\nThe data formats stay outside the scan: src tracks 242 JSON files, and fixtures repeat data by design. A data gate would force destructured test payloads and give no gain.",
+    "minTokens": 100,
+    "minLines": 20,
+    "formats": [
+        "typescript",
+        "tsx",
+        "javascript",
+        "python",
+        "r",
+        "bash"
+    ],
+    "ignore": [
+        "**/node_modules/**",
+        "**/dist/**",
+        "src/report-render/gallery/data/**",
+        "src/report-render/gallery/data.new/**",
+        "src/report-render/gallery/data.old/**"
+    ]
+}
