@@ -29,6 +29,7 @@ import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock } from "../components/openable_card_block.tsx";
 import { ReportRenderedBlock } from "../components/report_rendered_block.tsx";
 import { ReportSessionBlock } from "../components/report_session_block.tsx";
+import { AnalogyReportBlock } from "../components/analogy_report_block.tsx";
 import { CompactionBlock } from "../components/compaction_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
@@ -86,6 +87,7 @@ import {
     mockUsageSnapshotNoFigures,
     mockUsageSnapshotEmpty,
     mockReportSession,
+    mockAnalogyReports,
 } from "./design_gallery_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
@@ -1234,6 +1236,13 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         state={{ text: `${GLYPHS.circleHalf} ${modelRetryText({ attempt: 1, maxRetries: 10, status: 503 })}${GLYPHS.ellipsis}`, tone: "warn" }}
                         hints={["ctrl+k"]}
                     />
+                </State>
+                <State n="30" label="analogy report — collapsed / expanded, partial coverage, failed">
+                    {/* A click on the header line toggles the block in place, in the gallery as in the transcript. */}
+                    <AnalogyReportBlock view={mockAnalogyReports.full} />
+                    <AnalogyReportBlock view={mockAnalogyReports.full} expanded />
+                    <AnalogyReportBlock view={mockAnalogyReports.partial} />
+                    <AnalogyReportBlock view={mockAnalogyReports.failed} />
                 </State>
             </ScrollPane>
         </DialogPanel>

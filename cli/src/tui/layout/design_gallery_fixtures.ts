@@ -13,6 +13,7 @@ import type { PlanPart, RunCardPart, TextPart } from "@inflexa-ai/harness/contra
 import type { PausedWaitView } from "../../lib/pause_words.ts";
 import { formatTokenFigure } from "../../lib/usage_format.ts";
 import type { LiveAskPart, ThinkingPart, FileEditPart, PlanCardStepView } from "../../types/session.ts";
+import type { AnalogyReportView, AnalogyView } from "../components/analogy_report_block.tsx";
 import type { NestedCallView, ToolBlockProps } from "../components/tool_block.tsx";
 import type { ActiveProfileProgress, ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import type { SessionUsageSnapshot } from "../components/dialog/usage_dialog.tsx";
@@ -684,3 +685,56 @@ export const mockScriptLookups: readonly NestedCallView[] = [
     { tool: "get_pubmed_articles", label: "35012345", status: "ok", durationMs: 402 },
     { tool: "get_pubmed_articles", label: "36123456", status: "running" },
 ];
+
+const mockFeedbackAnalogy: AnalogyView = {
+    domain: "control_theory",
+    title: "Gene circuit as a feedback loop",
+    coverage: "available",
+    mappings: [
+        { source: "promoter", target: "controller" },
+        { source: "repressor", target: "actuator" },
+    ],
+    solutions: [
+        {
+            title: "Model predictive control",
+            relevance: "Plans the inducer dose over a horizon, thus it damps the noise of the induction.",
+            sources: ["https://arxiv.org/abs/2103.04120", "https://github.com/do-mpc/do-mpc"],
+        },
+        {
+            title: "Integral feedback for perfect adaptation",
+            relevance: "Removes the steady-state error of the expression level.",
+            sources: ["https://doi.org/10.1038/s41586-019-1321-1"],
+        },
+    ],
+};
+
+/** MOCK: the analogy report block views — a full report, a report that the search filled in part, and a failed report. */
+export const mockAnalogyReports = {
+    full: {
+        kind: "report",
+        problem: "Robust expression control under noisy induction",
+        analogies: [
+            mockFeedbackAnalogy,
+            {
+                domain: "logistics",
+                title: "Inventory buffering",
+                coverage: "available",
+                mappings: [{ source: "mRNA pool", target: "stock" }],
+                solutions: [
+                    { title: "Safety-stock policy", relevance: "Sizes the buffer of the transcript pool.", sources: ["https://arxiv.org/abs/1906.01234"] },
+                ],
+            },
+        ],
+    },
+    partial: {
+        kind: "report",
+        problem: "Robust expression control under noisy induction",
+        analogies: [
+            mockFeedbackAnalogy,
+            { domain: "ecology", title: "Predator-prey dynamics", coverage: "search_failed", mappings: [], solutions: [] },
+            { domain: "economics", title: "Price stabilization", coverage: "queried_no_data", mappings: [], solutions: [] },
+            { domain: "logistics", title: "Inventory buffering", coverage: "not_loaded", mappings: [], solutions: [] },
+        ],
+    },
+    failed: { kind: "failed", message: "The problem is empty or incoherent, thus the reasoner could not extract its objects." },
+} satisfies Record<string, AnalogyReportView>;

@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import { unwrap } from "solid-js/store";
-import type { ChatMessage, SubAgentActivityEntry, TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
+import type { AnalogyReportPart, ChatMessage, SubAgentActivityEntry, TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
 import type { ToolCallOutcome } from "@inflexa-ai/harness/contracts/chat-events.js";
 
 import { syntaxStyle, theme } from "../theme.ts";
@@ -17,6 +17,7 @@ import { OpenableCardBlock, type OpenableRowView } from "../components/openable_
 import { ReportSessionBlock } from "../components/report_session_block.tsx";
 import { CompactionBlock } from "../components/compaction_block.tsx";
 import { ReportRenderedBlock } from "../components/report_rendered_block.tsx";
+import { AnalogyReportBlock, type AnalogyReportView } from "../components/analogy_report_block.tsx";
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { reportChildren } from "../hooks/report_children.ts";
@@ -145,6 +146,27 @@ function nestedCallOf(entry: SubAgentActivityEntry): NestedCallView {
         ...(entry.label === undefined ? {} : { label: entry.label }),
         status: toolStatus(entry.outcome),
         ...(durationMs === undefined || Number.isNaN(durationMs) ? {} : { durationMs }),
+    };
+}
+
+/** Map an analogy report part to the view of its block. The sources of a solution are its papers, then its repositories. */
+function analogyReportViewOf(part: AnalogyReportPart): AnalogyReportView {
+    const report = part.report;
+    if ("error" in report) return { kind: "failed", message: report.error.message };
+    return {
+        kind: "report",
+        problem: report.problemSummary,
+        analogies: report.analogies.map((analogy) => ({
+            domain: analogy.targetDomain,
+            title: analogy.analogyTitle,
+            coverage: analogy.coverage,
+            mappings: analogy.objectMappings.map((mapping) => ({ source: mapping.source, target: mapping.target })),
+            solutions: analogy.solutions.map((solution) => ({
+                title: solution.title,
+                relevance: solution.relevance,
+                sources: [...solution.sources.map((source) => source.url), ...solution.githubRepos.map((repo) => repo.url)],
+            })),
+        })),
     };
 }
 
@@ -284,6 +306,8 @@ export function MessageBlock(props: MessageBlockProps) {
                             <OpenableCard title={view.title} entries={[view.entry]} />
                         );
                     }
+                    case "data-analogy-report":
+                        return <AnalogyReportBlock view={analogyReportViewOf(part)} />;
                     case "data-file-reference": {
                         const view = readFileReference(part);
                         return <OpenableCard title={view.title} entries={view.entries} folderPath={view.folderPath} />;
