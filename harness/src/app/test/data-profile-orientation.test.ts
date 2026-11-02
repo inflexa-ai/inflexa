@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { unclassifiedResidueGroup, resolvedProfilePartition, subjectDimension, subjectSlotObservation } from "../../contracts/__fixtures__/data-profile.js";
 import { presentFind } from "../../lib/present.js";
 import type { DataProfileResult } from "../../state/data-profile.js";
 import { buildDataProfileOrientation, DATA_PROFILE_ORIENTATION_MAX_CHARS } from "../data-profile-orientation.js";
@@ -237,48 +238,10 @@ describe("a snapshot resolved into groups", () => {
                 formats: [{ format: "VCF", count: 40 }],
                 memberAnnotations: [{ path: "data/inputs/vcf/S001.vcf.gz", note: "Only member with a contig header." }],
             },
-            {
-                id: "unclassified",
-                name: "unclassified",
-                memberRepresents: "one file no operation claimed",
-                description: "Swept residue.",
-                role: "data",
-                category: "other",
-                categoryLabel: "unclassified",
-                count: 2,
-                fileCount: 2,
-                totalBytes: 20,
-                displayPattern: "data/inputs",
-                formats: [{ format: "txt", count: 2 }],
-                unclassified: true,
-            },
+            unclassifiedResidueGroup(),
         ],
-        dimensions: [
-            {
-                label: "subject",
-                category: "subject",
-                scope: "biological",
-                observations: [
-                    {
-                        kind: "slot",
-                        groupIds: ["per-subject-calls"],
-                        slotId: "set-1.slot-1",
-                        tokenClass: "digits-fixed",
-                        cardinality: 40,
-                        sampleValues: ["001"],
-                    },
-                ],
-            },
-        ],
-        partition: {
-            scannedFiles: 83,
-            keptFiles: 82,
-            keptMembers: 42,
-            groups: 2,
-            unclassifiedMembers: 2,
-            unclassifiedFiles: 2,
-            quarantine: { count: 1, totalBytes: 5, reasons: [{ reason: "os-junk", count: 1 }], sample: ["data/inputs/.DS_Store"] },
-        },
+        dimensions: [subjectDimension([subjectSlotObservation()])],
+        partition: resolvedProfilePartition(),
     };
 
     it("renders the census, the resolved groups, and the dimensions", () => {

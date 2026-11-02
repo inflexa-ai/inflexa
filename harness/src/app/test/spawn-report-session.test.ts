@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
-import type { DbError } from "../../lib/db-result.js";
 import { presentFirst } from "../../lib/present.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
-import { conversationRecordTurn, createThreadHistory } from "../../memory/thread-history.js";
+import { createThreadHistory } from "../../memory/thread-history.js";
 import { createThreadStore, type ThreadStore } from "../../memory/thread-store.js";
 import { createWorkingMemory, type WorkingMemoryStore } from "../../memory/working-memory.js";
 import { upsertAnalysis } from "../../state/analyses.js";
 import { upsertArtifact, type RegisterArtifactInput } from "../../state/artifacts.js";
 import type { SessionProvenanceEvent } from "../../provenance/seam.js";
+import { reportSessionSeeds } from "../__fixtures__/report-session-seeds.js";
 import { createReportSessionRuntime } from "../report-session-runtime.js";
 import { compositionHasEyes, createReportSessionSpawn, REPORT_CHILD_PAGE_SIZE, type ReportBrief, type ReportSessionSpawn } from "../spawn-report-session.js";
 
@@ -22,6 +21,9 @@ let drop: () => Promise<void>;
 let store: ThreadStore;
 let memory: WorkingMemoryStore;
 let spawn: ReportSessionSpawn;
+let appendTurn: ReturnType<typeof reportSessionSeeds>["appendTurn"];
+let appendRecord: ReturnType<typeof reportSessionSeeds>["appendRecord"];
+let seedConversation: ReturnType<typeof reportSessionSeeds>["seedConversation"];
 
 /** A chrome config that names a browser, thus the eyes gate passes and the spawn reaches its own rules. */
 const WITH_BROWSER = { browserUrl: "http://localhost:9222" };
@@ -40,6 +42,7 @@ beforeEach(async () => {
     store = createThreadStore(pool);
     memory = createWorkingMemory(pool);
     spawn = createReportSessionSpawn({ pool, chrome: WITH_BROWSER });
+    ({ appendTurn, appendRecord, seedConversation } = reportSessionSeeds(pool, store));
 });
 
 afterEach(async () => {
@@ -47,28 +50,6 @@ afterEach(async () => {
 });
 
 // --- seeding ----------------------------------------------------------------
-
-/** Persist one two-message turn on a thread, giving it a transcript to anchor into. */
-function appendTurn(threadId: string): ResultAsync<void, DbError> {
-    return createThreadHistory(pool).appendTurn(threadId, {
-        modelMessages: [
-            { role: "user", content: [{ type: "text", text: "hi" }] },
-            { role: "assistant", content: [{ type: "text", text: "hello" }] },
-        ],
-        displayMessages: [],
-    });
-}
-
-/** Append one record of out-of-band work — a synthetic message that opens no turn. */
-function appendRecord(threadId: string, text: string): ResultAsync<void, DbError> {
-    return createThreadHistory(pool).appendTurn(threadId, conversationRecordTurn(text));
-}
-
-/** A live conversation parent with a first turn — the shape a legal spawn needs. */
-async function seedConversation(threadId: string, analysisId: string, title: string | null): Promise<void> {
-    (await store.createThread({ threadId, analysisId, title }))._unsafeUnwrap();
-    (await appendTurn(threadId))._unsafeUnwrap();
-}
 
 /** The parent's latest seq, read the same way the spawn reads its anchor. */
 async function latestSeqOf(threadId: string): Promise<number | null> {

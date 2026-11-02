@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { metrics } from "@opentelemetry/api";
-import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { ok } from "neverthrow";
 import { z } from "zod";
@@ -11,7 +9,7 @@ import { createAiSdkProvider } from "../../providers/ai-sdk.js";
 import type { ChatProvider } from "../../providers/types.js";
 import { defineTool } from "../../tools/define-tool.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedPart, type ScriptedReply, type ScriptStep } from "../../testing.js";
-import { __resetMetricsForTest } from "../metrics.js";
+import { metricReader, type MetricReader } from "./metric-reader.js";
 import { continueLoop, runLoop, type LoopOptions } from "../run-loop.js";
 import type { AgentDefinition } from "../types.js";
 
@@ -23,37 +21,15 @@ const CACHE_READ_METRIC = "cortex.harness.agent.cache_read_tokens";
 const CACHE_WRITE_METRIC = "cortex.harness.agent.cache_write_tokens";
 const REASONING_TOKENS_METRIC = "cortex.harness.agent.reasoning_tokens";
 
-let exporter: InMemoryMetricExporter;
-let reader: PeriodicExportingMetricReader;
-let provider: MeterProvider;
+let capture: MetricReader;
 
 beforeEach(() => {
-    exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
-    reader = new PeriodicExportingMetricReader({
-        exporter,
-        // Long interval — every export in this suite is a manual forceFlush.
-        exportIntervalMillis: 3_600_000,
-    });
-    provider = new MeterProvider({ readers: [reader] });
-    metrics.setGlobalMeterProvider(provider);
-    // Drop memoized instruments so they rebind to this fresh provider.
-    __resetMetricsForTest();
+    capture = metricReader();
 });
 
 afterEach(async () => {
-    await provider.shutdown();
-    metrics.disable();
-    __resetMetricsForTest();
+    await capture.stop();
 });
-
-/** Flush the reader and return the flat list of exported metrics. */
-async function collectMetrics(): Promise<MetricData[]> {
-    await provider.forceFlush();
-    return exporter
-        .getMetrics()
-        .flatMap((rm) => rm.scopeMetrics)
-        .flatMap((sm) => sm.metrics);
-}
 
 const echoTool = defineTool({
     id: "echo",
@@ -90,7 +66,7 @@ describe("runLoop metrics", () => {
 
         await runLoop(agentDef(8), GO, makeSession(), runOpts(chat.provider));
 
-        const collected = await collectMetrics();
+        const collected = await capture.collect();
         const iterations = collected.find((m) => m.descriptor.name === ITERATIONS_METRIC);
         expect(iterations).toBeDefined();
         if (iterations === undefined) throw new Error("the iterations metric is absent");
@@ -119,7 +95,7 @@ describe("runLoop metrics", () => {
 
         await runLoop(agentDef(2), GO, makeSession(), runOpts(chat.provider));
 
-        const collected = await collectMetrics();
+        const collected = await capture.collect();
         const capHits = collected.find((m) => m.descriptor.name === CAP_HITS_METRIC);
         expect(capHits).toBeDefined();
         if (capHits === undefined) throw new Error("the cap-hit metric is absent");
@@ -164,7 +140,7 @@ describe("runLoop token counters for each call", () => {
     const agentSession = () => makeSession({ agentId: "tui-chat", callPath: ["tui-chat"] });
 
     async function series(name: string): Promise<{ attributes: Record<string, unknown>; value: number }[]> {
-        const metric = (await collectMetrics()).find((m) => m.descriptor.name === name);
+        const metric = (await capture.collect()).find((m) => m.descriptor.name === name);
         return (metric?.dataPoints ?? []).flatMap((dp) => {
             const pointValue: unknown = dp.value;
             return typeof pointValue === "number" ? [{ attributes: { ...dp.attributes }, value: pointValue }] : [];
@@ -245,7 +221,7 @@ describe("runLoop token counters for each call", () => {
         );
 
         expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: { ...LABELS, agent_id: "step-summary-writer" }, value: 100 }]);
-        const iterations = (await collectMetrics()).find((m) => m.descriptor.name === ITERATIONS_METRIC);
+        const iterations = (await capture.collect()).find((m) => m.descriptor.name === ITERATIONS_METRIC);
         expect(iterations).toBeDefined();
         if (iterations === undefined) throw new Error("the iterations metric is absent");
         expect(iterations.dataPoints.map((dp) => dp.attributes["agent_id"])).toEqual(["step-summary-writer"]);

@@ -10,8 +10,6 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import type { LanguageModelV4CallOptions, LanguageModelV4Prompt } from "@ai-sdk/provider";
 import { generateText } from "ai";
-import { metrics } from "@opentelemetry/api";
-import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
@@ -25,7 +23,7 @@ import { DEFAULT_REASONING } from "../../providers/reasoning.js";
 import type { ChatUsage, ModelMessage, PromptCachePolicy, ProviderOptions } from "../../providers/types.js";
 import { defineTool } from "../../tools/define-tool.js";
 import { reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptedPart, type ScriptedReply } from "../../testing.js";
-import { __resetMetricsForTest } from "../metrics.js";
+import { metricReader, type MetricReader } from "./metric-reader.js";
 import { runLoop, type LoopOptions } from "../run-loop.js";
 import type { AgentDefinition } from "../types.js";
 
@@ -373,33 +371,18 @@ function served(content: readonly ScriptedPart[], finishReason: ScriptedReply["f
 }
 
 describe("runLoop cache-token metrics", () => {
-    let exporter: InMemoryMetricExporter;
-    let provider: MeterProvider;
+    let capture: MetricReader;
 
     beforeEach(() => {
-        exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
-        const reader = new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 });
-        provider = new MeterProvider({ readers: [reader] });
-        metrics.setGlobalMeterProvider(provider);
-        __resetMetricsForTest();
+        capture = metricReader();
     });
 
     afterEach(async () => {
-        await provider.shutdown();
-        metrics.disable();
-        __resetMetricsForTest();
+        await capture.stop();
     });
 
-    async function collectMetrics(): Promise<MetricData[]> {
-        await provider.forceFlush();
-        return exporter
-            .getMetrics()
-            .flatMap((rm) => rm.scopeMetrics)
-            .flatMap((sm) => sm.metrics);
-    }
-
     async function counterTotal(name: string, labels: Record<string, string> = {}): Promise<number | undefined> {
-        const metric = (await collectMetrics()).find((m) => m.descriptor.name === name);
+        const metric = (await capture.collect()).find((m) => m.descriptor.name === name);
         if (metric === undefined) return undefined;
         return metric.dataPoints
             .filter((dp) => Object.entries(labels).every(([key, value]) => dp.attributes[key] === value))

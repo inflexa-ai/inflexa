@@ -754,6 +754,33 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         created_at: "2026-01-01T00:00:00Z",
     };
 
+    /** Drives a plan-mode execute through a tool whose injected farm links every query, and returns the queries of each farm call. */
+    async function linkedFarmQueries(plan: typeof planWithPackages): Promise<Array<{ queries: Array<{ spelling: string; track?: string }> }>> {
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher } = fakeLauncher();
+        const farmCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            extendAnalysisFarm: (_analysisId, queries) => {
+                farmCalls.push({ queries: [...queries] });
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
+            },
+            executeAnalysisWorkflow: () => {
+                return Promise.reject(new Error("unused"));
+            },
+        });
+
+        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+
+        return farmCalls;
+    }
+
     it("links the union of the step packages before the launch, and the launch proceeds", async () => {
         setEnv();
         const { pool } = fakePool({
@@ -861,33 +888,13 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 { ...makeStep("step-b", ["step-a"]), packages: ["seurat"] },
             ],
         };
-        const { pool } = fakePool({
-            "SELECT plan FROM cortex_plans": [{ plan: spelledPlan }],
-        });
-        const { authorizer } = recordingAuthorizer();
-        const { launcher } = fakeLauncher();
-        const seamCalls: Array<{ queries: Array<{ spelling: string }> }> = [];
-        const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
-            pool,
-            runLauncher: launcher,
-            runAuthorizer: authorizer,
-            extendAnalysisFarm: (_analysisId, queries) => {
-                seamCalls.push({ queries: [...queries] });
-                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
-            },
-            executeAnalysisWorkflow: () => {
-                return Promise.reject(new Error("unused"));
-            },
-        });
-
-        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+        const farmCalls = await linkedFarmQueries(spelledPlan);
 
         // Two spellings are two identities, thus the union keeps both and the
         // pool answers each one. An outcome echoes the requested spelling, and
         // a fold would send a remedy after a package that no repository holds.
-        expect(seamCalls).toHaveLength(1);
-        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "Seurat" }, { spelling: "seurat" }]);
+        expect(farmCalls).toHaveLength(1);
+        expect(presentAt(farmCalls, 0).queries).toEqual([{ spelling: "Seurat" }, { spelling: "seurat" }]);
     });
 
     it("a prefixed entry reaches the seam with its track", async () => {
@@ -899,32 +906,12 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 { ...makeStep("step-b", ["step-a"]), packages: ["r:igraph", "scanpy"] },
             ],
         };
-        const { pool } = fakePool({
-            "SELECT plan FROM cortex_plans": [{ plan: prefixedPlan }],
-        });
-        const { authorizer } = recordingAuthorizer();
-        const { launcher } = fakeLauncher();
-        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
-        const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
-            pool,
-            runLauncher: launcher,
-            runAuthorizer: authorizer,
-            extendAnalysisFarm: (_analysisId, queries) => {
-                seamCalls.push({ queries: [...queries] });
-                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
-            },
-            executeAnalysisWorkflow: () => {
-                return Promise.reject(new Error("unused"));
-            },
-        });
-
-        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
+        const farmCalls = await linkedFarmQueries(prefixedPlan);
 
         // Two prefixes of one spelling make TWO queries: the plan names two
         // packages. The union dedupes equal queries, in first-occurrence order.
-        expect(seamCalls).toHaveLength(1);
-        expect(presentAt(seamCalls, 0).queries).toEqual([
+        expect(farmCalls).toHaveLength(1);
+        expect(presentAt(farmCalls, 0).queries).toEqual([
             { spelling: "igraph", track: "python" },
             { spelling: "decoupleR", track: "r" },
             { spelling: "igraph", track: "r" },
@@ -943,30 +930,10 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 { ...makeStep("step-b", ["step-a"]), packages: ["decoupleR"] },
             ],
         };
-        const { pool } = fakePool({
-            "SELECT plan FROM cortex_plans": [{ plan: twoIdentityPlan }],
-        });
-        const { authorizer } = recordingAuthorizer();
-        const { launcher } = fakeLauncher();
-        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
-        const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
-            pool,
-            runLauncher: launcher,
-            runAuthorizer: authorizer,
-            extendAnalysisFarm: (_analysisId, queries) => {
-                seamCalls.push({ queries: [...queries] });
-                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
-            },
-            executeAnalysisWorkflow: () => {
-                return Promise.reject(new Error("unused"));
-            },
-        });
+        const farmCalls = await linkedFarmQueries(twoIdentityPlan);
 
-        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
-
-        expect(seamCalls).toHaveLength(1);
-        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "decoupler" }, { spelling: "decoupleR" }]);
+        expect(farmCalls).toHaveLength(1);
+        expect(presentAt(farmCalls, 0).queries).toEqual([{ spelling: "decoupler" }, { spelling: "decoupleR" }]);
     });
 
     it("equal queries make one request", async () => {
@@ -978,30 +945,10 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
                 { ...makeStep("step-b", ["step-a"]), packages: ["scanpy"] },
             ],
         };
-        const { pool } = fakePool({
-            "SELECT plan FROM cortex_plans": [{ plan: repeatedPlan }],
-        });
-        const { authorizer } = recordingAuthorizer();
-        const { launcher } = fakeLauncher();
-        const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
-        const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
-            pool,
-            runLauncher: launcher,
-            runAuthorizer: authorizer,
-            extendAnalysisFarm: (_analysisId, queries) => {
-                seamCalls.push({ queries: [...queries] });
-                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
-            },
-            executeAnalysisWorkflow: () => {
-                return Promise.reject(new Error("unused"));
-            },
-        });
+        const farmCalls = await linkedFarmQueries(repeatedPlan);
 
-        (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
-
-        expect(seamCalls).toHaveLength(1);
-        expect(presentAt(seamCalls, 0).queries).toEqual([{ spelling: "scanpy" }]);
+        expect(farmCalls).toHaveLength(1);
+        expect(presentAt(farmCalls, 0).queries).toEqual([{ spelling: "scanpy" }]);
     });
 
     it("a bare entry beside a qualified entry keeps its own refusal", async () => {

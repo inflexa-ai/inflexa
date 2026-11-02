@@ -15,10 +15,10 @@ import { join } from "node:path";
 import type { V1Job, V1Pod } from "@kubernetes/client-node";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
-import { createK8sSandboxOps, waitForPodReady, type BatchJobApi, type CorePodApi } from "../k8s-client.js";
+import { createK8sSandboxOps, waitForPodReady, type BatchJobApi, type CorePodApi, type K8sClientConfig } from "../k8s-client.js";
 import { keyedSandboxIdentity } from "../identity.js";
 import type { FarmSource } from "../types.js";
-import { splitSpawn } from "../__fixtures__/spawn.js";
+import { splitSpawn, type TestSpawn } from "../__fixtures__/spawn.js";
 import { presentAt, presentFind } from "../../lib/present.js";
 
 /** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
@@ -83,41 +83,54 @@ function stubApis(podSequence: V1Pod[], opts: { create409Times?: number; existin
     };
 }
 
+const DEFAULT_SPAWN: TestSpawn = {
+    runId: "run-1",
+    stepId: "step-a",
+    analysisId: "an-1",
+    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
+    recordTail: RECORD_TAIL,
+    resources: { cpu: 2, memoryGb: 4 },
+};
+
+/** Makes the stubbed APIs and the ops, creates the sandbox from the given spawn, and hands back everything a test asserts on. The result stays wrapped, so an error-result test reads it directly. */
+async function spawnSandbox(
+    pods: V1Pod[],
+    overrides: {
+        stubApis?: { create409Times?: number; existingOwner?: string };
+        ops?: Partial<K8sClientConfig>;
+        spawn?: Partial<TestSpawn>;
+    } = {},
+) {
+    const stub = stubApis(pods, overrides.stubApis);
+    const ops = createK8sSandboxOps({
+        image: "sandbox-base:latest",
+        namespace: "sandbox",
+        farmSource: FIXED_FARM,
+        sessionPvcRoot: SESSION_PVC_ROOT,
+        resolveWorkspaceRoot,
+        sessionPvc: "cortex-sessions",
+        batchApi: stub.batchApi,
+        coreApi: stub.coreApi,
+        ...overrides.ops,
+    });
+    const spawn = { ...DEFAULT_SPAWN, ...overrides.spawn };
+    const result = await ops.createSandbox(...splitSpawn(spawn), keyedSandboxIdentity(spawn.runId, "lease#1"), {});
+    return { stub, ops, result };
+}
+
 describe("k8s createSandbox", () => {
     test("creates a Job with no egress target", async () => {
-        const stub = stubApis([
-            {
-                status: { phase: "Running", podIP: "10.0.0.1" },
-                metadata: { name: "sbx-x-abc" },
-            },
-        ]);
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            libStorePvc: "cortex-libs",
-            refStorePvc: "cortex-refs",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
+        const { stub, result } = await spawnSandbox(
+            [
+                {
+                    status: { phase: "Running", podIP: "10.0.0.1" },
+                    metadata: { name: "sbx-x-abc" },
+                },
+            ],
+            { ops: { libStorePvc: "cortex-libs", refStorePvc: "cortex-refs" } },
+        );
 
-        const ref = (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        const ref = result._unsafeUnwrap();
 
         expect(ref.backend).toBe("k8s");
         expect(ref.host).toBe("10.0.0.1");
@@ -178,35 +191,16 @@ describe("k8s createSandbox", () => {
     });
 
     test("session subPaths follow the resolved workspace root, not the analysis id", async () => {
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-nested" } }]);
-
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            // An embedder whose roots are NOT `{pvcRoot}/{analysisId}`. The pod must mount the
-            // directory the harness pre-creates under this root, not a same-named sibling of it.
-            resolveWorkspaceRoot: (id) => Promise.resolve(`${SESSION_PVC_ROOT}/tenants/acme/${id}`),
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
+        const { stub, result } = await spawnSandbox([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-nested" } }], {
+            ops: {
+                // An embedder whose roots are NOT `{pvcRoot}/{analysisId}`. The pod must mount the
+                // directory the harness pre-creates under this root, not a same-named sibling of it.
+                resolveWorkspaceRoot: (id) => Promise.resolve(`${SESSION_PVC_ROOT}/tenants/acme/${id}`),
+            },
+            spawn: { resources: { cpu: 1, memoryGb: 1 } },
         });
 
-        (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 1, memoryGb: 1 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        result._unsafeUnwrap();
 
         const container = presentAt(stub.createdJobs, 0).spec?.template.spec?.containers[0];
         if (container === undefined) throw new Error("container is absent");
@@ -223,34 +217,17 @@ describe("k8s createSandbox", () => {
     });
 
     test("mounts a declared write tail in place of the step directory", async () => {
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.7" }, metadata: { name: "sbx-tail" } }]);
-
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot: (id) => Promise.resolve(`${SESSION_PVC_ROOT}/${id}`),
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
+        const { stub, result } = await spawnSandbox([{ status: { phase: "Running", podIP: "10.0.0.7" }, metadata: { name: "sbx-tail" } }], {
+            spawn: {
+                runId: "tail-run",
+                stepId: "tail",
+                ownerWorkflowId: "sandboxlease:an-1:tail:1",
+                writableTail: "report-sessions/thread-1/derived",
+                resources: { cpu: 1, memoryGb: 1 },
+            },
         });
 
-        (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "tail-run",
-                    stepId: "tail",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:tail:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 1, memoryGb: 1 },
-                    writableTail: "report-sessions/thread-1/derived",
-                }),
-                keyedSandboxIdentity("tail-run", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        result._unsafeUnwrap();
 
         const container = presentAt(stub.createdJobs, 0).spec?.template.spec?.containers[0];
         if (container === undefined) throw new Error("container is absent");
@@ -271,72 +248,36 @@ describe("k8s createSandbox", () => {
     });
 
     test("a workspace root outside sessionPvcRoot is a loud failure, not a silently wrong mount", async () => {
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-escape" } }]);
-
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot: () => Promise.resolve("/elsewhere/an-1"),
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
-
         // The throw escapes as a rejection rather than an `err` — `createSandbox` runs inside a
         // DBOS workflow body, where only a throw records the step as durably failed.
-        const attempt = async () =>
-            ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 1, memoryGb: 1 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            );
+        const attempt = () =>
+            spawnSandbox([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-escape" } }], {
+                ops: { resolveWorkspaceRoot: () => Promise.resolve("/elsewhere/an-1") },
+                spawn: { resources: { cpu: 1, memoryGb: 1 } },
+            });
         await expect(attempt()).rejects.toThrow("does not live under sessionPvcRoot");
     });
 
     test("readOnly omits the rw step volumeMount and pins workingDir to the RO tree", async () => {
-        const stub = stubApis([
+        const { stub, result } = await spawnSandbox(
+            [
+                {
+                    status: { phase: "Running", podIP: "10.0.0.2" },
+                    metadata: { name: "sbx-eph" },
+                },
+            ],
             {
-                status: { phase: "Running", podIP: "10.0.0.2" },
-                metadata: { name: "sbx-eph" },
-            },
-        ]);
-
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            libStorePvc: "cortex-libs",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
-
-        (
-            await ops.createSandbox(
-                ...splitSpawn({
+                ops: { libStorePvc: "cortex-libs" },
+                spawn: {
                     runId: "ephemeral",
                     stepId: "ephemeral",
-                    analysisId: "an-1",
                     ownerWorkflowId: "ephemeral:x",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
                     readOnly: true,
-                }),
-                keyedSandboxIdentity("ephemeral", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+                },
+            },
+        );
+
+        result._unsafeUnwrap();
 
         const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
         if (podSpec === undefined) throw new Error("podSpec is absent");
@@ -355,47 +296,29 @@ describe("k8s createSandbox", () => {
     });
 
     test("node selector, tolerations, and runtimeClass thread onto the pod spec", async () => {
-        const stub = stubApis([
-            {
-                status: { phase: "Running", podIP: "10.0.0.3" },
-                metadata: { name: "sbx-z" },
-            },
-        ]);
-
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            nodeSelector: { "platform.io/role": "agent-node" },
-            tolerations: [
+        const { stub, result } = await spawnSandbox(
+            [
                 {
-                    key: "platform.io/agent-only",
-                    operator: "Exists",
-                    effect: "NoSchedule",
+                    status: { phase: "Running", podIP: "10.0.0.3" },
+                    metadata: { name: "sbx-z" },
                 },
             ],
-            runtimeClassName: "gvisor",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
+            {
+                ops: {
+                    nodeSelector: { "platform.io/role": "agent-node" },
+                    tolerations: [
+                        {
+                            key: "platform.io/agent-only",
+                            operator: "Exists",
+                            effect: "NoSchedule",
+                        },
+                    ],
+                    runtimeClassName: "gvisor",
+                },
+            },
+        );
 
-        (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        result._unsafeUnwrap();
 
         const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
         if (podSpec === undefined) throw new Error("podSpec is absent");
@@ -411,38 +334,14 @@ describe("k8s createSandbox", () => {
     });
 
     test("scheduling fields absent when config omits them", async () => {
-        const stub = stubApis([
+        const { stub, result } = await spawnSandbox([
             {
                 status: { phase: "Running", podIP: "10.0.0.4" },
                 metadata: { name: "sbx-w" },
             },
         ]);
 
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
-
-        (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        result._unsafeUnwrap();
 
         const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
         if (podSpec === undefined) throw new Error("podSpec is absent");
@@ -452,38 +351,14 @@ describe("k8s createSandbox", () => {
     });
 
     test("lib/ref PVCs unset → no store mounts and no lib-store env", async () => {
-        const stub = stubApis([
+        const { stub, result } = await spawnSandbox([
             {
                 status: { phase: "Running", podIP: "10.0.0.2" },
                 metadata: { name: "sbx-y" },
             },
         ]);
 
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
-
-        (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        result._unsafeUnwrap();
 
         const podSpec = presentAt(stub.createdJobs, 0).spec?.template.spec;
         if (podSpec === undefined) throw new Error("podSpec is absent");
@@ -555,33 +430,13 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
     test("a required package store refuses a farm with no lock, and no Job is made", async () => {
         const root = mkdtempSync(join(tmpdir(), "k8s-libs-root-"));
         try {
-            const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-x-abc" } }]);
-            const ops = createK8sSandboxOps({
-                image: "sandbox-base:latest",
-                namespace: "sandbox",
-                farmSource: FIXED_FARM,
-                sessionPvcRoot: SESSION_PVC_ROOT,
-                resolveWorkspaceRoot,
-                sessionPvc: "cortex-sessions",
-                libStorePvc: "cortex-libs",
-                libStorePvcRoot: root,
-                packageStore: "required",
-                batchApi: stub.batchApi,
-                coreApi: stub.coreApi,
+            const { stub, result } = await spawnSandbox([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-x-abc" } }], {
+                ops: {
+                    libStorePvc: "cortex-libs",
+                    libStorePvcRoot: root,
+                    packageStore: "required",
+                },
             });
-
-            const result = await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            );
 
             expect(result.isErr()).toBe(true);
             if (result.isErr()) {
@@ -618,30 +473,7 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
 describe("k8s createSandbox failure cleanup", () => {
     test("deletes the Job when the pod fails to come up", async () => {
         // Pod phase Failed → waitForPodReady throws immediately.
-        const stub = stubApis([{ status: { phase: "Failed" }, metadata: { name: "p" } }]);
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
-
-        const result = await ops.createSandbox(
-            ...splitSpawn({
-                runId: "run-1",
-                stepId: "step-a",
-                analysisId: "an-1",
-                ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                recordTail: RECORD_TAIL,
-                resources: { cpu: 2, memoryGb: 4 },
-            }),
-            keyedSandboxIdentity("run-1", "lease#1"),
-            {},
-        );
+        const { stub, result } = await spawnSandbox([{ status: { phase: "Failed" }, metadata: { name: "p" } }]);
         expect(result.isErr()).toBe(true);
         const created = presentAt(stub.createdJobs, 0).metadata?.name;
         if (created === undefined) throw new Error("created is absent");
@@ -653,32 +485,11 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
     test("adopts a live Job on 409 instead of leaking a second machine", async () => {
         // createNamespacedJob 409s once (the machine already exists from the
         // pre-crash attempt); its pod is Running → adopt as-is.
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.7" }, metadata: { name: "p" } }], { create409Times: 1 });
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
+        const { stub, result } = await spawnSandbox([{ status: { phase: "Running", podIP: "10.0.0.7" }, metadata: { name: "p" } }], {
+            stubApis: { create409Times: 1 },
         });
 
-        const ref = (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        const ref = result._unsafeUnwrap();
 
         expect(ref.host).toBe("10.0.0.7");
         // No Job created (the sole attempt 409'd) and the live pod was not deleted.
@@ -689,38 +500,15 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
     test("on 409 with a terminal prior pod, deletes and recreates fresh", async () => {
         // Pod #1 (terminal check) Failed → dead prior attempt; pod #2 (ready wait)
         // Running → the recreated machine.
-        const stub = stubApis(
+        const { stub, result } = await spawnSandbox(
             [
                 { status: { phase: "Failed" }, metadata: { name: "p" } },
                 { status: { phase: "Running", podIP: "10.0.0.8" }, metadata: { name: "p" } },
             ],
-            { create409Times: 1 },
+            { stubApis: { create409Times: 1 } },
         );
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
 
-        const ref = (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        const ref = result._unsafeUnwrap();
 
         expect(ref.host).toBe("10.0.0.8");
         expect(stub.deletedJobs).toHaveLength(1); // dead prior Job removed
@@ -730,33 +518,9 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
     test("refuses to adopt a name collision owned by a different workflow", async () => {
         // 409, but the existing Job belongs to a *different* step — never adopt or
         // delete it.
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "p" } }], {
-            create409Times: 1,
-            existingOwner: "some-other-wf-3",
+        const { stub, result } = await spawnSandbox([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "p" } }], {
+            stubApis: { create409Times: 1, existingOwner: "some-other-wf-3" },
         });
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
-
-        const result = await ops.createSandbox(
-            ...splitSpawn({
-                runId: "run-1",
-                stepId: "step-a",
-                analysisId: "an-1",
-                ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                recordTail: RECORD_TAIL,
-                resources: { cpu: 2, memoryGb: 4 },
-            }),
-            keyedSandboxIdentity("run-1", "lease#1"),
-            {},
-        );
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
             expect(result.error.type).toBe("name_conflict");
@@ -767,32 +531,9 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
 
 describe("k8s job ownership labels", () => {
     test("stamps owner-workflow-id, run-id, and step-id labels for the reconciler", async () => {
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }]);
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
-        });
+        const { stub, result } = await spawnSandbox([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }]);
 
-        (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("run-1", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        result._unsafeUnwrap();
 
         const meta = presentAt(stub.createdJobs, 0).metadata;
         if (meta === undefined) throw new Error("meta is absent");
@@ -814,32 +555,11 @@ describe("k8s job ownership labels", () => {
         const ownerWorkflowId = "sandboxlease:01a01372-a1bd-73d6-8dd2-9dc7cb84aa2e:dataprofile:0f3c1d2e-4b5a-6c7d-8e9f-a0b1c2d3e4f5:1";
         expect(ownerWorkflowId.length).toBeGreaterThan(63);
 
-        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }]);
-        const ops = createK8sSandboxOps({
-            image: "sandbox-base:latest",
-            namespace: "sandbox",
-            farmSource: FIXED_FARM,
-            sessionPvcRoot: SESSION_PVC_ROOT,
-            resolveWorkspaceRoot,
-            sessionPvc: "cortex-sessions",
-            batchApi: stub.batchApi,
-            coreApi: stub.coreApi,
+        const { stub, ops, result } = await spawnSandbox([{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }], {
+            spawn: { runId: "data-profile", stepId: "profile", ownerWorkflowId },
         });
 
-        (
-            await ops.createSandbox(
-                ...splitSpawn({
-                    runId: "data-profile",
-                    stepId: "profile",
-                    analysisId: "an-1",
-                    ownerWorkflowId,
-                    recordTail: RECORD_TAIL,
-                    resources: { cpu: 2, memoryGb: 4 },
-                }),
-                keyedSandboxIdentity("data-profile", "lease#1"),
-                {},
-            )
-        )._unsafeUnwrap();
+        result._unsafeUnwrap();
 
         const managed = (await ops.listManagedSandboxes())._unsafeUnwrap();
         expect(presentAt(managed, 0).ownerWorkflowId).toBe(ownerWorkflowId);

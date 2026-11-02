@@ -59,6 +59,50 @@ async function setup(opts: { writeUpstream: boolean }) {
     return { sessionPath, root, upstreamRel, collector, manifest };
 }
 
+/** Stages the de-step output, feeds one exec frame over the given reads and writes, and reconciles the manifest — the default entry unless the test gives its own. */
+async function reconcileStagedFrame(opts: {
+    root: string;
+    reads: Array<{ path: string; layers: string[] }>;
+    writes?: Array<{ path: string; layers: string[] }>;
+    command?: string[];
+    exitCode?: number;
+    dependsOn?: string[];
+    manifest?: ArtifactManifestEntry[];
+    logger?: ReturnType<typeof createCapturingLogger>;
+    stage?: (root: string) => Promise<void>;
+}): Promise<{ collector: ProvenanceCollector; manifest: ArtifactManifestEntry[]; result: Awaited<ReturnType<typeof reconcileManifestWithDisk>> }> {
+    await opts.stage?.(opts.root);
+    await mkdir(join(opts.root, "runs/run-001/de/output"), { recursive: true });
+    await writeFile(join(opts.root, "runs/run-001/de/output/result.csv"), "result\n1\n");
+
+    const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001", dependsOn: opts.dependsOn });
+    feedExecFrame({
+        collector,
+        mountRoot: `/${RID}`,
+        command: opts.command ?? ["python3", "scripts/de.py"],
+        exitCode: opts.exitCode ?? 0,
+        durationMs: 100,
+        provenance: {
+            disabled: false,
+            reads: opts.reads,
+            writes: opts.writes ?? [{ path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] }],
+            deletes: [],
+        },
+    });
+    const manifest = opts.manifest ?? [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
+    const result = await reconcileManifestWithDisk({
+        workspaceRoot: opts.root,
+        resourceId: RID,
+        runId: "run-001",
+        stepId: "de",
+        agentId: "agent-x",
+        manifest,
+        collector,
+        logger: opts.logger,
+    });
+    return { collector, manifest, result };
+}
+
 describe("reconcileManifestWithDisk — input content attestation", () => {
     test("fills the upstream input hash from disk (immutable bytes the step read)", async () => {
         const { sessionPath, root, upstreamRel, collector, manifest } = await setup({ writeUpstream: true });
@@ -140,33 +184,10 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
         const root = join(sessionPath, RID);
         const logger = createCapturingLogger();
         try {
-            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
-            await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
-
-            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001" });
-            feedExecFrame({
-                collector,
-                mountRoot: `/${RID}`,
+            const { collector, result } = await reconcileStagedFrame({
+                root,
+                reads: [{ path: `/${RID}/..`, layers: ["preload"] }],
                 command: ["python3", "scripts/enrich.py"],
-                exitCode: 0,
-                durationMs: 100,
-                provenance: {
-                    disabled: false,
-                    reads: [{ path: `/${RID}/..`, layers: ["preload"] }],
-                    writes: [{ path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] }],
-                    deletes: [],
-                },
-            });
-            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
-
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
                 logger,
             });
 
@@ -208,33 +229,9 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
         const root = join(sessionPath, RID);
         const logger = createCapturingLogger();
         try {
-            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
-            await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
-
-            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001" });
-            feedExecFrame({
-                collector,
-                mountRoot: `/${RID}`,
-                command: ["python3", "scripts/enrich.py"],
-                exitCode: 0,
-                durationMs: 100,
-                provenance: {
-                    disabled: false,
-                    reads: [{ path: "/etc/passwd", layers: ["preload"] }],
-                    writes: [{ path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] }],
-                    deletes: [],
-                },
-            });
-            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
-
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
+            const { collector, result } = await reconcileStagedFrame({
+                root,
+                reads: [{ path: "/etc/passwd", layers: ["preload"] }],
                 logger,
             });
 
@@ -323,37 +320,16 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
         const logger = createCapturingLogger();
         const upstreamRel = "runs/run-001/qc/output/qc.csv";
         try {
-            const secret = join(sessionPath, "outside-secret.txt");
-            await writeFile(secret, "PRIVATE KEY\n");
-            await mkdir(join(root, "runs/run-001/qc/output"), { recursive: true });
-            await symlink(secret, join(root, upstreamRel));
-            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
-            await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
-
-            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001", dependsOn: ["qc"] });
-            feedExecFrame({
-                collector,
-                mountRoot: `/${RID}`,
-                command: ["python3", "scripts/de.py"],
-                exitCode: 0,
-                durationMs: 100,
-                provenance: {
-                    disabled: false,
-                    reads: [{ path: `/${RID}/${upstreamRel}`, layers: ["python"] }],
-                    writes: [{ path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] }],
-                    deletes: [],
+            const { collector, result } = await reconcileStagedFrame({
+                root,
+                dependsOn: ["qc"],
+                reads: [{ path: `/${RID}/${upstreamRel}`, layers: ["python"] }],
+                stage: async (stagedRoot) => {
+                    const secret = join(sessionPath, "outside-secret.txt");
+                    await writeFile(secret, "PRIVATE KEY\n");
+                    await mkdir(join(stagedRoot, "runs/run-001/qc/output"), { recursive: true });
+                    await symlink(secret, join(stagedRoot, upstreamRel));
                 },
-            });
-            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
-
-            const result = await reconcileManifestWithDisk({
-                workspaceRoot: root,
-                resourceId: RID,
-                runId: "run-001",
-                stepId: "de",
-                agentId: "agent-x",
-                manifest,
-                collector,
                 logger,
             });
 

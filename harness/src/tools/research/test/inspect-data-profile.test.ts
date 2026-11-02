@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../../../__tests__/setup/postgres.js";
+import { unclassifiedResidueGroup, resolvedProfilePartition, subjectDimension, subjectSlotObservation } from "../../../contracts/__fixtures__/data-profile.js";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { completeDataProfile, failDataProfile, tryRerunDataProfile, tryStartDataProfile, type DataProfileResult } from "../../../state/index.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
@@ -523,51 +524,19 @@ describe("scope: groups — a snapshot resolved into groups", () => {
                     memberAnnotations: [{ path: "data/inputs/vcf/S001.vcf.gz", note: "The only member carrying a contig header." }],
                     completeness: { expectedCompanions: [".tbi"], completeMembers: 39, incompleteMembers: 1, incompleteSample: [] },
                 },
-                {
-                    id: "unclassified",
-                    name: "unclassified",
-                    memberRepresents: "one file no operation claimed",
-                    description: "Swept residue.",
-                    role: "data",
-                    category: "other",
-                    categoryLabel: "unclassified",
-                    count: 2,
-                    fileCount: 2,
-                    totalBytes: 20,
-                    displayPattern: "data/inputs",
-                    formats: [{ format: "txt", count: 2 }],
-                    unclassified: true,
-                },
+                unclassifiedResidueGroup(),
             ],
             dimensions: [
-                {
-                    label: "subject",
-                    category: "subject",
-                    scope: "biological",
-                    observations: [
-                        {
-                            kind: "slot",
-                            groupIds: ["per-subject-calls"],
-                            slotId: "set-1.slot-1",
-                            tokenClass: "digits-fixed",
-                            cardinality: 40,
-                            sampleValues: ["001"],
-                        },
+                subjectDimension(
+                    [
+                        subjectSlotObservation(),
                         { kind: "document", path: "data/inputs/meta/README.md", citation: "42 subjects were enrolled.", statesCardinality: 42 },
                     ],
-                    reconciliations: [{ note: "Two enrolled subjects have no files.", delta: 2 }],
-                },
+                    [{ note: "Two enrolled subjects have no files.", delta: 2 }],
+                ),
             ],
             probes: [{ probe: "timepoint", outcome: "not-found", searched: ["data/inputs/meta/README.md"], reason: "No column or path segment names a time." }],
-            partition: {
-                scannedFiles: 83,
-                keptFiles: 82,
-                keptMembers: 42,
-                groups: 2,
-                unclassifiedMembers: 2,
-                unclassifiedFiles: 2,
-                quarantine: { count: 1, totalBytes: 5, reasons: [{ reason: "os-junk", count: 1 }], sample: ["data/inputs/.DS_Store"] },
-            },
+            partition: resolvedProfilePartition(),
             recipe: [{ op: "use", templates: ["data/inputs/vcf/<id>.vcf.gz"], groupIds: ["per-subject-calls"] }],
         });
     }

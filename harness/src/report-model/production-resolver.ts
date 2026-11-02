@@ -13,9 +13,9 @@
  * holds the streamed hash and the parsed rows against a stat signature. Two tool calls of one analysis
  * share one cache.
  *
- * The realization calls the shared assert functions in `assert-rules.ts`, and it mirrors the locator walk
- * and the reason choices of `fixture-resolver.ts`. Thus one semantics exists, and the fixture stays the
- * executable specification of the value tier. The two realizations are substitutable behind the seam.
+ * The realization calls the shared assert functions in `assert-rules.ts` and the shared reference reads in
+ * `reference-read.ts`, as the fixture realization does. Thus one semantics exists, and the fixture stays
+ * the executable specification of the value tier. The two realizations are substitutable behind the seam.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -28,21 +28,16 @@ import type {
     ArtifactFileReference,
     ArtifactTableReference,
     ArtifactValueReference,
-    CitationReference,
-    DerivationInputReference,
-    DerivationReference,
     Reference,
-    UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { parseJsonAs } from "../lib/parse-json.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
-import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
+import { checkValueAssertion } from "./assert-rules.js";
+import { fail, readArtifactTable, resolveCitation, resolveDerivation, selectRow } from "./reference-read.js";
 import {
-    applyRowBound,
-    columnsHeldByNoRow,
     fileTypeHoldsNoCell,
     snapshotEntry,
     type ReferenceResolver,
@@ -188,17 +183,6 @@ type HostRead = { kind: "rows"; rows: Row[] } | { kind: "fall-through"; detail: 
 /** The cells of a fall-through. No reader outside the host exists, thus the reference fails as `extraction-unavailable`. */
 function fallThroughCells(path: string, hostDetail: string): Cells {
     return { kind: "unavailable", detail: `the host read of the file at ${path} stopped because ${hostDetail}, and no other reader exists` };
-}
-
-/** Build an `Err` that carries the unresolved reference. The `detail` key is present only when there is a detail to carry. */
-function fail(reference: Reference, reason: UnresolvedReason, detail?: string): Result<ResolvedValue, UnresolvedReference> {
-    const failure: UnresolvedReference = detail !== undefined ? { reference, reason, detail } : { reference, reason };
-    return err(failure);
-}
-
-/** A short account of a derivation input, for a detail that names which input broke the arithmetic. */
-function describeReference(reference: DerivationInputReference): string {
-    return `artifact value at ${reference.path} column ${reference.locator.column}`;
 }
 
 /**
@@ -672,35 +656,16 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
     /** Walk the locator over the rows, and match the resolved cell against the authored belief. */
     function selectCell(reference: ArtifactValueReference, rows: Row[]): Result<ResolvedValue, UnresolvedReference> {
         const locator = reference.locator;
-        let selectedRow: Row;
-        if (locator.row !== undefined) {
-            const row = rows[locator.row];
-            if (row === undefined) {
-                return fail(reference, "locator-out-of-range", `row ${locator.row} is outside the ${rows.length} rows`);
-            }
-            selectedRow = row;
-        } else if (locator.rowFilter !== undefined) {
-            const filter = locator.rowFilter;
-            const matches = rows.filter((row) => cellMatchesFilterValue(row[filter.column], filter.value));
-            const match = matches[0];
-            if (match === undefined) {
-                return fail(reference, "locator-out-of-range", `no row where ${filter.column} equals ${String(filter.value)}`);
-            }
-            if (matches.length > 1) {
-                return fail(reference, "ambiguous-match", `${matches.length} rows where ${filter.column} equals ${String(filter.value)}`);
-            }
-            selectedRow = match;
-        } else {
-            // The locator schema forbids a locator with neither selector. The resolver cannot depend on a
-            // prior parse, thus it treats a row that no selector addresses as out of range.
-            return fail(reference, "locator-out-of-range", "the locator selects no row");
+        const selection = selectRow(rows, locator);
+        if (selection.isErr()) {
+            return fail(reference, selection.error.reason, selection.error.detail);
         }
 
         // A real table holds an empty cell, and a parse gives it back as an absent key. An absent key is
         // not a value that a scalar reference can bind. An empty string is a value, thus it stays valid.
         // A cell that parsed as `null` never lands in a row: `coerceCell` drops it, so `null` is not
         // an absence the resolver can meet here.
-        const cell: string | number | undefined = selectedRow[locator.column];
+        const cell: string | number | undefined = selection.value[locator.column];
         if (cell === undefined) {
             return fail(reference, "locator-out-of-range", `column ${locator.column} holds no value in the selected row`);
         }
@@ -718,43 +683,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
         if (gated.isErr()) {
             return err(gated.error);
         }
-        // The bound ranks the rows as the artifact holds them, thus a bound over a column that the subset
-        // below leaves out still ranks them. An unknown bound column addresses nothing, exactly as an
-        // unknown subset column does.
-        const bound = reference.rowBound;
-        const allRows = gated.value;
-        if (bound !== undefined && columnsHeldByNoRow(allRows, [bound.column]).length > 0) {
-            return fail(reference, "locator-out-of-range", `the row bound names column ${bound.column}, which the table at ${reference.path} does not hold`);
-        }
-        const rows = bound === undefined ? allRows : applyRowBound(allRows, bound);
-        // The page states the shown count against the count of the artifact. This read is the one place that
-        // holds both, thus a bounded table carries the pre-bound total out with its rows.
-        const total = bound === undefined ? {} : { total: allRows.length };
-        const columns = reference.columns;
-        if (columns === undefined) {
-            return ok({ type: "table", rows, ...total });
-        }
-
-        // A name that no row holds addresses nothing. Without this check a projection onto an invented
-        // column gives an empty cell for each row and still resolves, which grounding exists to reject.
-        const absent = columnsHeldByNoRow(rows, columns);
-        if (absent.length > 0) {
-            return fail(reference, "locator-out-of-range", `the table at ${reference.path} holds no column ${absent.join(", ")}`);
-        }
-
-        // Project each row onto the requested columns. A table tolerates a ragged row, thus a column that
-        // a given row lacks is left out of that row and is not a failure.
-        const projectedRows = rows.map((row) => {
-            const projected: Row = {};
-            for (const column of columns) {
-                const cell = row[column];
-                if (cell !== undefined) {
-                    projected[column] = cell;
-                }
-            }
-            return projected;
-        });
-        return ok({ type: "table", rows: projectedRows, columns, ...total });
+        return readArtifactTable(reference, gated.value);
     }
 
     async function resolveArtifactFile(reference: ArtifactFileReference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>> {
@@ -771,61 +700,6 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
         return ok({ type: "file", path: reference.path, hash: identity.onDiskHash });
     }
 
-    async function resolveDerivation(reference: DerivationReference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>> {
-        const numbers: number[] = [];
-        for (const input of reference.inputs) {
-            const inputResult = await resolveArtifactValue(input, snapshot);
-            if (inputResult.isErr()) {
-                // Keep the inner reason so a reviewer sees the real cause, for example a missing artifact
-                // under the derivation. The derivation itself did not fail on its own terms.
-                return fail(reference, inputResult.error.reason, inputResult.error.detail);
-            }
-            const resolved = inputResult.value;
-            const numeric = resolved.type === "scalar" ? asFiniteNumber(resolved.value) : undefined;
-            if (numeric === undefined) {
-                // The arithmetic needs a finite number. A cell that holds text does not address a usable
-                // scalar, thus the closest reason is that the coordinate is out of range.
-                return fail(reference, "locator-out-of-range", `input ${describeReference(input)} did not resolve to a finite number`);
-            }
-            numbers.push(numeric);
-        }
-
-        const a = numbers[0];
-        const b = numbers[1];
-        if (a === undefined || b === undefined) {
-            return fail(reference, "locator-out-of-range", `operation ${reference.op} needs two inputs, and the derivation holds ${numbers.length}`);
-        }
-        let result: number;
-        switch (reference.op) {
-            case "ratio":
-                result = a / b;
-                break;
-            case "delta":
-                result = a - b;
-                break;
-            case "pctChange":
-                // A fraction, not a percent. A change of one half gives 0.5, thus an author asserts 0.5 and
-                // a `unit` of `%` only tells a renderer how to show it.
-                result = (a - b) / b;
-                break;
-        }
-        if (!Number.isFinite(result)) {
-            return fail(reference, "locator-out-of-range", `operation ${reference.op} does not yield a finite value, because the divisor is zero`);
-        }
-        const valueFailure = checkValueAssertion(reference, reference.assert?.value, reference.assert?.tolerance, result);
-        return valueFailure !== undefined ? err(valueFailure) : ok({ type: "scalar", value: result });
-    }
-
-    function resolveCitation(reference: CitationReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
-        const key = `${reference.idKind}:${reference.id}`;
-        if (snapshot.citations === undefined || !snapshot.citations.includes(key)) {
-            return fail(reference, "artifact-missing", `the citation ${key} is not in the pinned evidence`);
-        }
-        const value: ResolvedValue = { type: "citation", id: key };
-        const citationFailure = checkCitationAssertion(reference, reference.assert?.value, key);
-        return citationFailure !== undefined ? err(citationFailure) : ok(value);
-    }
-
     async function resolve(reference: Reference, snapshot: ReportSnapshot): Promise<Result<ResolvedValue, UnresolvedReference>> {
         switch (reference.kind) {
             case "artifact-value":
@@ -835,7 +709,7 @@ export function createProductionResolver(deps: ProductionResolverDeps): Referenc
             case "artifact-file":
                 return resolveArtifactFile(reference, snapshot);
             case "derivation":
-                return resolveDerivation(reference, snapshot);
+                return resolveDerivation(reference, snapshot, resolveArtifactValue);
             case "citation":
                 return resolveCitation(reference, snapshot);
         }

@@ -50,7 +50,7 @@ const CellSchema = z.union([z.string(), z.number()]).nullish();
  * A plain assignment at the key `__proto__` reaches the prototype setter, thus the row loses a column
  * that the payload carries. The definition makes an own data property for each key.
  */
-function defineOwn(target: Record<string, string | number>, key: string, value: string | number): void {
+export function defineOwn(target: Record<string, string | number>, key: string, value: string | number): void {
     Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
 }
 

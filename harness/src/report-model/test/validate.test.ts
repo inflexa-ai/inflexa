@@ -125,6 +125,36 @@ function reportWith(block: Block): ReportDocument {
     return { title: "Report", sections: [{ kind: "section", id: "sec", title: "Section", blocks: [block] }] };
 }
 
+/** Bind a metric to the delta of the two float cells, under the given assert. */
+function deltaMetric(id: string, assert: { value: number; tolerance?: number }): Block {
+    return {
+        kind: "metric",
+        id,
+        label: "Delta",
+        value: {
+            kind: "derivation",
+            op: "delta",
+            inputs: [
+                {
+                    kind: "artifact-value",
+                    run: "run-1",
+                    path: FLOAT_PATH,
+                    hash: FLOAT_HASH,
+                    locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "a" } },
+                },
+                {
+                    kind: "artifact-value",
+                    run: "run-1",
+                    path: FLOAT_PATH,
+                    hash: FLOAT_HASH,
+                    locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "b" } },
+                },
+            ],
+            assert,
+        },
+    };
+}
+
 /** A fully grounded document with one of each block kind and a section nested in a section. */
 function groundedReport(): ReportDocument {
     return {
@@ -542,6 +572,41 @@ describe("validateReport — the whole-file pin", () => {
 });
 
 describe("validateReport — derivations", () => {
+    /** Validates a metric whose derivation divides the S1 cell of table B by its zero S2 cell, and demands the locator-out-of-range failure. */
+    async function expectZeroDivisorOutOfRange(op: "ratio" | "pctChange", metric: { id: string; label: string }): Promise<void> {
+        const result = await validateReport(
+            reportWith({
+                kind: "metric",
+                id: metric.id,
+                label: metric.label,
+                value: {
+                    kind: "derivation",
+                    op,
+                    inputs: [
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TABLE_B_PATH,
+                            hash: TABLE_B_HASH,
+                            locator: { column: "value", rowFilter: { column: "sample", op: "eq", value: "S1" } },
+                        },
+                        {
+                            kind: "artifact-value",
+                            run: "run-1",
+                            path: TABLE_B_PATH,
+                            hash: TABLE_B_HASH,
+                            locator: { column: "value", rowFilter: { column: "sample", op: "eq", value: "S2" } },
+                        },
+                    ],
+                },
+            }),
+            snapshot,
+            resolver,
+        );
+        const invalid = expectInvalid(result);
+        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
+    }
+
     it("validates a ratio over two grounded cells", async () => {
         const result = await validateReport(
             reportWith({
@@ -607,37 +672,7 @@ describe("validateReport — derivations", () => {
     });
 
     it("reports locator-out-of-range for a division by zero", async () => {
-        const result = await validateReport(
-            reportWith({
-                kind: "metric",
-                id: "metric-divzero",
-                label: "DivZero",
-                value: {
-                    kind: "derivation",
-                    op: "ratio",
-                    inputs: [
-                        {
-                            kind: "artifact-value",
-                            run: "run-1",
-                            path: TABLE_B_PATH,
-                            hash: TABLE_B_HASH,
-                            locator: { column: "value", rowFilter: { column: "sample", op: "eq", value: "S1" } },
-                        },
-                        {
-                            kind: "artifact-value",
-                            run: "run-1",
-                            path: TABLE_B_PATH,
-                            hash: TABLE_B_HASH,
-                            locator: { column: "value", rowFilter: { column: "sample", op: "eq", value: "S2" } },
-                        },
-                    ],
-                },
-            }),
-            snapshot,
-            resolver,
-        );
-        const invalid = expectInvalid(result);
-        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
+        await expectZeroDivisorOutOfRange("ratio", { id: "metric-divzero", label: "DivZero" });
     });
 
     it("validates a pctChange over two grounded cells", async () => {
@@ -677,37 +712,7 @@ describe("validateReport — derivations", () => {
 
     it("reports locator-out-of-range for a pctChange whose divisor is zero", async () => {
         // S1 is 10 and S2 is 0, thus (10 - 0) / 0 is not finite.
-        const result = await validateReport(
-            reportWith({
-                kind: "metric",
-                id: "metric-pctchange-divzero",
-                label: "PctChangeDivZero",
-                value: {
-                    kind: "derivation",
-                    op: "pctChange",
-                    inputs: [
-                        {
-                            kind: "artifact-value",
-                            run: "run-1",
-                            path: TABLE_B_PATH,
-                            hash: TABLE_B_HASH,
-                            locator: { column: "value", rowFilter: { column: "sample", op: "eq", value: "S1" } },
-                        },
-                        {
-                            kind: "artifact-value",
-                            run: "run-1",
-                            path: TABLE_B_PATH,
-                            hash: TABLE_B_HASH,
-                            locator: { column: "value", rowFilter: { column: "sample", op: "eq", value: "S2" } },
-                        },
-                    ],
-                },
-            }),
-            snapshot,
-            resolver,
-        );
-        const invalid = expectInvalid(result);
-        expect(firstFailure(invalid).failure.reason).toBe("locator-out-of-range");
+        await expectZeroDivisorOutOfRange("pctChange", { id: "metric-pctchange-divzero", label: "PctChangeDivZero" });
     });
 });
 
@@ -1145,44 +1150,14 @@ describe("validateReport — the pin carries the belief about the bytes", () => 
 });
 
 describe("validateReport — a value match with no tolerance", () => {
-    /** Bind a metric to the delta of the two float cells, under the given asserted value. */
-    function deltaMetric(id: string, expected: number): Block {
-        return {
-            kind: "metric",
-            id,
-            label: "Delta",
-            value: {
-                kind: "derivation",
-                op: "delta",
-                inputs: [
-                    {
-                        kind: "artifact-value",
-                        run: "run-1",
-                        path: FLOAT_PATH,
-                        hash: FLOAT_HASH,
-                        locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "a" } },
-                    },
-                    {
-                        kind: "artifact-value",
-                        run: "run-1",
-                        path: FLOAT_PATH,
-                        hash: FLOAT_HASH,
-                        locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "b" } },
-                    },
-                ],
-                assert: { value: expected },
-            },
-        };
-    }
-
     it("absorbs the float noise of a computed value", async () => {
-        expectValid(await validateReport(reportWith(deltaMetric("metric-delta-ok", 0.2)), snapshot, resolver));
+        expectValid(await validateReport(reportWith(deltaMetric("metric-delta-ok", { value: 0.2 })), snapshot, resolver));
     });
 
     it("rejects a rounded authored figure, because only a tolerance permits one", async () => {
         // The delta is 0.19999999999999998. A rounded 0.19 sits far above the float noise that the
         // epsilon absorbs, thus the author must state a tolerance to accept it.
-        const rounded = expectInvalid(await validateReport(reportWith(deltaMetric("metric-delta-rounded", 0.19)), snapshot, resolver));
+        const rounded = expectInvalid(await validateReport(reportWith(deltaMetric("metric-delta-rounded", { value: 0.19 })), snapshot, resolver));
         expect(firstFailure(rounded).failure.reason).toBe("assertion-failed");
     });
 
@@ -1646,36 +1621,6 @@ describe("validateReport — prepare before the loop", () => {
 });
 
 describe("assert-rules — one semantics for each realization", () => {
-    /** Bind a metric to the delta of the two float cells, under the given assert. */
-    function deltaMetric(id: string, assert: { value: number; tolerance?: number }): Block {
-        return {
-            kind: "metric",
-            id,
-            label: "Delta",
-            value: {
-                kind: "derivation",
-                op: "delta",
-                inputs: [
-                    {
-                        kind: "artifact-value",
-                        run: "run-1",
-                        path: FLOAT_PATH,
-                        hash: FLOAT_HASH,
-                        locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "a" } },
-                    },
-                    {
-                        kind: "artifact-value",
-                        run: "run-1",
-                        path: FLOAT_PATH,
-                        hash: FLOAT_HASH,
-                        locator: { column: "value", rowFilter: { column: "name", op: "eq", value: "b" } },
-                    },
-                ],
-                assert,
-            },
-        };
-    }
-
     it("agrees with the fixture on a tolerance case", async () => {
         // The delta of the float cells a and b is 0.19999999999999998. A rounded 0.19 sits above the float
         // noise, thus a tolerance decides the match.
