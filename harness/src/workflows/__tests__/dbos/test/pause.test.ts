@@ -51,6 +51,7 @@ const echo = defineTool({
     id: "echo",
     description: "Echo the text.",
     inputSchema: z.object({ text: z.string() }),
+    view: "none",
     describeCall: "none",
     execute: (input) => {
         toolRuns += 1;
@@ -152,6 +153,8 @@ describe("the pause of a loop inside a workflow", () => {
 
         const row = await waitForPause(workId, "paused");
         expect(row).toMatchObject({ workflowId: workId, workKind: "run", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0 });
+        // The pause records its row before it suspends the credential and emits its part.
+        await waitFor(() => current.parts.at(-1)?.state === "paused");
         expect(current.parts.at(-1)).toMatchObject({
             type: "data-pause",
             id: workId,
@@ -181,6 +184,8 @@ describe("the pause of a loop inside a workflow", () => {
             const { workId } = start([failure(402), reply([text("done")])]);
             const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
             await waitForPause(workId, "paused");
+            // The body counts the wait only after it records the row and emits the part.
+            await waitFor(async () => (await pausedRuns()) - before === 1);
             const during = await pausedRuns();
 
             await createWork({ pool, ...WORK_DEPS }).resume(session, workId);
@@ -419,9 +424,9 @@ describe("the run credential of paused work", () => {
     });
 });
 
-async function waitFor(check: () => boolean, timeoutMs = 15_000): Promise<void> {
+async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 15_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
-    while (!check()) {
+    while (!(await check())) {
         if (Date.now() > deadline) throw new Error("the condition did not hold in time");
         await sleep(25);
     }

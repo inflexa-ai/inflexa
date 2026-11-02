@@ -783,7 +783,7 @@ describe("the inputs of an analysis", () => {
         const app = appWith(idleBoot());
 
         const added = (await (await app.request(`/api/v1/analyses/${a.id}/inputs`, json("POST", { paths: [join(dir, "a.csv")] }))).json()) as InputsChange;
-        expect(added.added).toEqual([{ path: "a.csv", isDir: false, anchorId: a.anchorId, absolutePath: join(dir, "a.csv") }]);
+        expect(added.added).toEqual([{ path: "a.csv", isDir: false, anchorId: a.anchorId, absolutePath: join(dir, "a.csv"), size: 1, kind: "table" }]);
 
         const list = (await (await app.request(`/api/v1/analyses/${a.id}/inputs`)).json()) as InputList;
         expect(list).toMatchObject({ total: 1, inputs: [{ path: "a.csv", absolutePath: join(dir, "a.csv") }] });
@@ -791,6 +791,55 @@ describe("the inputs of an analysis", () => {
         const missing = await app.request(`/api/v1/analyses/${a.id}/inputs`, json("POST", { paths: [join(dir, "gone.csv")] }));
         expect(missing.status).toBe(400);
         expect(((await missing.json()) as ApiError).details).toEqual({ missing: [join(dir, "gone.csv")] });
+    });
+
+    test("GET gives the size and the kind of a file, a file with no mapped extension, a folder, and a missing path", async () => {
+        const dir = tmp();
+        const a = await seedAnalysis(dir);
+        writeFileSync(join(dir, "counts.csv"), "x".repeat(1204));
+        writeFileSync(join(dir, "notes.zzz"), "x".repeat(12));
+        mkdirSync(join(dir, "runs.csv"));
+        const stored = [
+            { path: "counts.csv", isDir: false },
+            { path: "notes.zzz", isDir: false },
+            // A folder whose name has a mapped extension: the stat decides, not the name.
+            { path: "runs.csv", isDir: true },
+            { path: "gone.csv", isDir: false },
+            // With no stat, the stored isDir decides: a missing folder has no kind, although its name maps to one.
+            { path: "gone-folder.csv", isDir: true },
+        ];
+        for (const input of stored) insertAnalysisInput({ ...input, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
+
+        const list = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`)).json()) as InputList;
+        const byPath = new Map(list.inputs.map((i) => [i.path, i]));
+        expect(byPath.get("counts.csv")).toMatchObject({ size: 1204, kind: "table" });
+        expect(byPath.get("notes.zzz")).toMatchObject({ size: 12, kind: null });
+        expect(byPath.get("runs.csv")).toMatchObject({ size: null, kind: null });
+        expect(byPath.get("gone.csv")).toMatchObject({ size: null, kind: "table" });
+        expect(byPath.get("gone-folder.csv")).toMatchObject({ size: null, kind: null });
+    });
+
+    test("POST gives the size and the kind of the added input", async () => {
+        const dir = tmp();
+        const a = await seedAnalysis(dir);
+        writeFileSync(join(dir, "counts.csv"), "x".repeat(1204));
+
+        const res = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`, json("POST", { paths: [join(dir, "counts.csv")] }));
+        const change = (await res.json()) as InputsChange;
+        expect(change.added).toMatchObject([{ path: "counts.csv", size: 1204, kind: "table" }]);
+    });
+
+    test("GET gives no size and no kind for the input of a folder that cannot be located", async () => {
+        const dir = tmp();
+        const a = await seedAnalysis(dir);
+        insertAnchor({ id: "lost", createdAt: 1, updatedAt: 1, cachedPath: "/gone/forever", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysisInput({ path: "far.csv", isDir: false, analysisId: a.id, anchorId: "lost" })._unsafeUnwrap();
+        insertAnalysisInput({ path: "wide", isDir: true, analysisId: a.id, anchorId: "lost" })._unsafeUnwrap();
+
+        const list = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`)).json()) as InputList;
+        const byPath = new Map(list.inputs.map((i) => [i.path, i]));
+        expect(byPath.get("far.csv")).toMatchObject({ absolutePath: null, size: null, kind: "table" });
+        expect(byPath.get("wide")).toMatchObject({ absolutePath: null, size: null, kind: null });
     });
 
     test("GET records no sighting of an anchor folder", async () => {

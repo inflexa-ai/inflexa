@@ -17,6 +17,7 @@ export function createResolveCitationTool(resolver: CitationResolver): Tool {
             "not_found, unverifiable, or inconclusive. Source failure never becomes not_found — an unreachable authority reports unavailable, and " +
             "not_found means the authorities that answered hold no such record.",
         inputSchema: CitationInputSchema,
+        view: "none",
         describeCall: ({ citation }) => `verify ${citation}`,
         execute: async (input, ctx) => ok(await resolver.resolveOne(input, { signal: ctx.signal })),
     });

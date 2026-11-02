@@ -179,6 +179,7 @@ describe("generateStepSummary", () => {
             id: "write_file",
             description: "Write a file.",
             inputSchema: z.object({ path: z.string(), content: z.string() }),
+            view: "none",
             describeCall: "none",
             execute: async ({ content }) => {
                 await writeFile(target, content);

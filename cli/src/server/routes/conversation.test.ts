@@ -192,7 +192,7 @@ function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes> {
         threadAnalysisId: (_pool, id) => okAsync(id === T ? A : null),
         activeTurnId: () => okAsync(null),
         liveTurns: () => okAsync([]),
-        runTurn: () => Promise.resolve({ kind: "ok", opened: true, fallbackText: "" }),
+        runTurn: () => Promise.resolve({ kind: "ok", opened: true, finishReason: "stop", fallbackText: "" }),
         connection: () => ({ provider: "anthropic", mode: "direct" }),
         readCredentialVerdict: () => Promise.resolve(err({ type: "no_key" })),
         flushPendingAdds: () => undefined,
@@ -607,7 +607,7 @@ describe("POST {A}/chat", () => {
         const routes = routesWith({
             runTurn: () => {
                 turns++;
-                return Promise.resolve({ kind: "ok", opened: true, fallbackText: "" });
+                return Promise.resolve({ kind: "ok", opened: true, finishReason: "stop", fallbackText: "" });
             },
         });
         refuseNewTurns();
@@ -626,7 +626,7 @@ describe("POST {A}/chat", () => {
                 args.onOpened?.(crypto.randomUUID());
                 args.emit({ type: "text-delta", text: "Hello", source: { agentId: "chat", callPath: ["chat"] } });
                 args.emit({ type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] } });
-                return { kind: "ok", opened: true, fallbackText: "Hello", turnUsage: { inputTokens: 10, outputTokens: 2 } };
+                return { kind: "ok", opened: true, finishReason: "stop", fallbackText: "Hello", turnUsage: { inputTokens: 10, outputTokens: 2 } };
             },
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
@@ -639,7 +639,7 @@ describe("POST {A}/chat", () => {
         expect(await framesOf(response)).toEqual([
             { type: "text-delta", text: "Hello", source: { agentId: "chat", callPath: ["chat"] } },
             { type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] } },
-            { type: "finish", source: { agentId: "chat", callPath: ["chat"] }, turnUsage: { inputTokens: 10, outputTokens: 2 } },
+            { type: "finish", source: { agentId: "chat", callPath: ["chat"] }, finishReason: "stop", turnUsage: { inputTokens: 10, outputTokens: 2 } },
         ]);
         const summary = (await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary;
         expect(summary).toMatchObject({ turnId, threadId: T, analysisId: A, status: "done", opened: true, fallbackText: "Hello" });
@@ -656,7 +656,7 @@ describe("POST {A}/chat", () => {
             runTurn: (args) => {
                 seen = args;
                 args.onOpened?.(crypto.randomUUID());
-                return Promise.resolve({ kind: "ok", opened: true, fallbackText: "" });
+                return Promise.resolve({ kind: "ok", opened: true, finishReason: "stop", fallbackText: "" });
             },
         });
         await framesOf(await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hello" })));
@@ -673,7 +673,7 @@ describe("POST {A}/chat", () => {
             runTurn: async (args) => {
                 args.onOpened?.(crypto.randomUUID());
                 args.emit({ type: "tool-started", source: { agentId: "planner", callPath: ["chat", "planner"] }, toolUseId: "u1", name: "bash" });
-                return { kind: "ok", opened: true, fallbackText: "" };
+                return { kind: "ok", opened: true, finishReason: "stop", fallbackText: "" };
             },
         });
         const frames = await framesOf(await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" })));
@@ -826,7 +826,7 @@ describe("the turn registry routes", () => {
                 await proceed.wait;
                 aborted = args.signal.aborted;
                 args.emit({ type: "text-delta", text: "second", source: { agentId: "chat", callPath: ["chat"] } });
-                return { kind: "ok", opened: true, fallbackText: "first second" };
+                return { kind: "ok", opened: true, finishReason: "stop", fallbackText: "first second" };
             },
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
@@ -848,7 +848,7 @@ describe("the turn registry routes", () => {
         const source = { agentId: "chat", callPath: ["chat"] };
         const stored: ChatFrame[] = [
             { type: "text-delta", text: "Hello", source },
-            { type: "finish", source },
+            { type: "finish", source, finishReason: "stop" },
         ];
         const routes = routesWith({ boot: readyBoot(fakeGateway([]), stored) });
         startTurn({ turnId: "turn-1", threadId: T, analysisId: A }, new Date(), new AbortController());
@@ -1034,7 +1034,7 @@ describe("the activity time of the analysis", () => {
             runTurn: async (args) => {
                 args.onOpened?.(crypto.randomUUID());
                 await release.wait;
-                return { kind: "ok", opened: true, fallbackText: "" };
+                return { kind: "ok", opened: true, finishReason: "stop", fallbackText: "" };
             },
         });
 

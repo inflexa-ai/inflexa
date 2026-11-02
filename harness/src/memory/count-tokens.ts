@@ -23,6 +23,33 @@ function enc(): Tiktoken {
 }
 
 /**
+ * A run of this many characters with no whitespace is counted in chunks. The BPE merge of `js-tiktoken` is
+ * quadratic in the length of one pre-token, and a run of one repeated character of 20,000 characters takes
+ * about 13 s whole. A base64 blob or a sequence with no line break is such a run in a tool result.
+ */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a run of 256 or more characters with no whitespace; no builtin finds a run by its length.
+const LONG_RUN = /\S{256,}/g;
+
+/** The chunk of a long run. A chunk of 64 characters costs well under a millisecond in the worst case. */
+const RUN_CHUNK = 64;
+
+/**
+ * The token count of one text. A text with no long run is one encoding, thus its count is exact. Each long run
+ * is counted in chunks, which can add a token at each chunk edge: the count is an approximation already.
+ */
+function encodedLength(text: string): number {
+    let total = 0;
+    let from = 0;
+    for (const run of text.matchAll(LONG_RUN)) {
+        if (run.index > from) total += enc().encode(text.slice(from, run.index)).length;
+        for (let at = 0; at < run[0].length; at += RUN_CHUNK) total += enc().encode(run[0].slice(at, at + RUN_CHUNK)).length;
+        from = run.index + run[0].length;
+    }
+    if (from < text.length) total += enc().encode(text.slice(from)).length;
+    return total;
+}
+
+/**
  * The token-bearing text of one tool-result output.
  *
  * A `content` output holds the text parts and the attachments side by side. Only
@@ -84,12 +111,12 @@ function tokenizableText(block: unknown): string {
  */
 export function countTokens(content: ModelMessage["content"]): number {
     if (typeof content === "string") {
-        return content.length === 0 ? 0 : enc().encode(content).length;
+        return content.length === 0 ? 0 : encodedLength(content);
     }
     let total = 0;
     for (const block of content) {
         const text = tokenizableText(block);
-        if (text.length > 0) total += enc().encode(text).length;
+        if (text.length > 0) total += encodedLength(text);
     }
     return total;
 }

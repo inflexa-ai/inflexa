@@ -109,6 +109,10 @@ export function createReadFileTool(
             "back as a `binary` data variant rather than decoded garbage. Missing " +
             "paths and paths outside the analysis tree return a data variant — not an error.",
         inputSchema: ReadFileInputSchema,
+        view: {
+            input: (input) => input,
+            error: true,
+        },
         describeCall: ({ path, headLines, tailLines }) => {
             if (headLines !== undefined) return `${path} (first ${headLines} lines)`;
             if (tailLines !== undefined) return `${path} (last ${tailLines} lines)`;

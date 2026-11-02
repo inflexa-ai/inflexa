@@ -192,6 +192,11 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
             "For a user-directed check, waitForTerminalSeconds can wait once for 1-30 seconds; if the cutoff returns in_progress, stop polling for that turn and tell the user that the run still runs. " +
             "Default response is lightweight — pass includeDiagnostics:true to add error/duration/retry telemetry.",
         inputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result) => result,
+            error: true,
+        },
         // The two calls do different work: one inspects a named run, the other
         // pages the list. Naming the run id is what separates repeated polls of
         // the same run from polls of different ones.

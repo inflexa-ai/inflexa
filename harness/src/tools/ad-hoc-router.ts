@@ -183,6 +183,7 @@ function routeTool(): Tool {
         id: SUBMIT_ROUTE_TOOL_ID,
         description: "Submit the single specialist and the packages of the step. This is the only valid response.",
         inputSchema: routeSchema,
+        view: "none",
         describeCall: "none",
         execute: () => Promise.resolve(ok({ recorded: true as const })),
     });

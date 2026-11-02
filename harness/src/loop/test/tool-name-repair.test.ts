@@ -33,6 +33,7 @@ describe("the loop repairs an alias", () => {
             id: "search_gene",
             description: "Resolve gene identifiers.",
             inputSchema: z.object({ identifiers: z.array(z.string()) }),
+            view: "none",
             describeCall: "none",
             execute: ({ identifiers }) => Promise.resolve(ok({ genes: identifiers })),
         });

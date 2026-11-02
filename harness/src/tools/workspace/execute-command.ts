@@ -137,6 +137,7 @@ export function createExecuteCommandTool(
             "so use them to confirm that a command ran. A result that you compute with 'python -c' or an inline " +
             "one-liner and read from stdout is lost. Write a script and persist its outputs to output/.",
         inputSchema: ExecuteCommandInputSchema,
+        view: "none",
         // The script is what a reader recognises, and it survives a long
         // invocation whose flags would otherwise push it past the length cap.
         // When nothing in the argv looks like a script, the joined argv is the
@@ -145,8 +146,10 @@ export function createExecuteCommandTool(
         // `env` never rides along. It is the channel this tool documents for
         // secrets, so it is the one field guaranteed to hold them. An argv can
         // hold one too (`--password …` is a real habit), and the emit-site
-        // redaction only matches the structured, prefixed formats — so the join
-        // is a deliberate trade, not a claim of safety.
+        // redaction removes only the secret forms that it lists, so the join
+        // is a deliberate trade, not a claim of safety. The view is `"none"` for
+        // the same reason: the argv, the env, and the output of a command show
+        // no value.
         //
         // Know what the trade costs. This tool is sandbox-gated, so the only
         // surface that reads its detail is a workflow's live-activity line — and

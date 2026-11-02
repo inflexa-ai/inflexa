@@ -35,7 +35,7 @@ import {
 import { forSubAgent, type AgentSession } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
-import type { CompactionPart } from "../contracts/chat-parts.js";
+import type { CompactionPart, ModelRefusal } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -71,9 +71,13 @@ import {
     modelViewOf,
     recordedInputOf,
     ToolCallOutputSchema,
+    viewInputValue,
     type ToolCallOutput,
 } from "./tool-adapter.js";
+import { computeDetail, type ToolCallDetail } from "./tool-detail.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "./tool-output.js";
+import { textToolValue } from "./tool-value.js";
+import type { ToolCallValue } from "../contracts/chat-events.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage } from "./types.js";
 
 export type AgentFinish = {
@@ -837,6 +841,19 @@ async function runSeries(
         return decision.kind === "approved" ? undefined : deniedReason(decision.feedback);
     };
 
+    // A refused call and a denied call do not run, thus the loop gives their events the detail and the view input of the tool.
+    // Only a root loop shows values, as the tool adapter does.
+    const shownRoot = source.callPath.length <= 1;
+    const callShownOf = (toolCall: {
+        readonly toolName: string;
+        readonly input: unknown;
+    }): { detail: { detail?: ToolCallDetail }; input: ToolCallValue | undefined } => {
+        const tool = toolsById.get(toolCall.toolName);
+        if (tool === undefined) return { detail: {}, input: undefined };
+        const detail = computeDetail(tool, toolCall.input, log);
+        return { detail: detail === undefined ? {} : { detail }, input: shownRoot ? viewInputValue(tool, toolCall.input, log) : undefined };
+    };
+
     const seriesSteps: LoopStep[] = [];
     let open = openStep();
     let failure: unknown;
@@ -871,8 +888,25 @@ async function runSeries(
             const refusal = calls.refusalOf({ toolName: toolCall.toolName, input: toolCall.input }, spec.mask);
             if (refusal !== undefined) {
                 // A refused call does not run, thus its two events come from here.
-                await opts.emit({ type: "tool-started", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, input: toolCall.input });
-                await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "error" });
+                const shown = callShownOf(toolCall);
+                await opts.emit({
+                    type: "tool-started",
+                    source,
+                    toolUseId: toolCall.toolCallId,
+                    name: toolCall.toolName,
+                    ...shown.detail,
+                    input: shown.input,
+                });
+                await opts.emit({
+                    type: "tool-finished",
+                    source,
+                    toolUseId: toolCall.toolCallId,
+                    name: toolCall.toolName,
+                    outcome: "error",
+                    ...shown.detail,
+                    input: shown.input,
+                    error: shownRoot ? textToolValue(refusal) : undefined,
+                });
                 return { type: "denied", reason: refusal };
             }
             let denial: string | undefined;
@@ -885,8 +919,24 @@ async function runSeries(
             }
             if (denial === undefined) return undefined;
             deniedByTheUser.set(toolCall.toolCallId, denial);
-            await opts.emit({ type: "tool-started", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, input: toolCall.input });
-            await opts.emit({ type: "tool-finished", source, toolUseId: toolCall.toolCallId, name: toolCall.toolName, outcome: "denied" });
+            const shown = callShownOf(toolCall);
+            await opts.emit({
+                type: "tool-started",
+                source,
+                toolUseId: toolCall.toolCallId,
+                name: toolCall.toolName,
+                ...shown.detail,
+                input: shown.input,
+            });
+            await opts.emit({
+                type: "tool-finished",
+                source,
+                toolUseId: toolCall.toolCallId,
+                name: toolCall.toolName,
+                outcome: "denied",
+                ...shown.detail,
+                input: shown.input,
+            });
             return { type: "denied", reason: denial };
         },
         stopWhen: () => stops(),
@@ -928,6 +978,8 @@ async function runSeries(
             seriesSteps.push(loopStep);
             target.steps.push(loopStep);
             if (loopStep.calls.length > 0) log.debug("iteration", { iteration: seriesSteps.length - 1, tools: loopStep.calls.map((call) => call.toolName) });
+            const refusal = refusalOf(step, loopStep);
+            if (refusal !== undefined) await opts.emit({ type: "data-model-refusal", source, data: refusal });
             await opts.emit({ type: "iteration", source, index: seriesSteps.length - 1, final: !continuesAfter(loopStep) || stops() });
         },
     });
@@ -1022,6 +1074,18 @@ function loopStepOf(step: StepResult<ToolSet>, deniedByTheUser: ReadonlyMap<stri
             };
         });
     return { finishReason: step.finishReason, rawFinishReason: step.rawFinishReason, calls };
+}
+
+/**
+ * The refusal of one step, when the provider declined its request. A reply that ends with the content filter
+ * stopped, also after a fallback hop, because a chain whose last model declined reports that hop too. A hop that
+ * names no model gives the served model of the response, as the usage record does.
+ */
+function refusalOf(step: StepResult<ToolSet>, loopStep: LoopStep): ModelRefusal | undefined {
+    if (loopStep.finishReason === "content-filter") return { id: step.response.id, outcome: "stopped" };
+    const servedBy = fallbackModelOf(step.providerMetadata);
+    if (servedBy === undefined) return undefined;
+    return { id: step.response.id, outcome: "fallback", model: servedBy === "" ? step.response.modelId : servedBy };
 }
 
 /**

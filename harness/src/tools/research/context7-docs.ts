@@ -67,6 +67,7 @@ export const resolveLibraryIdTool = defineTool({
         libraryName: z.string().describe("Package or library name to search for (e.g., 'scanpy', 'pysam', 'lifelines')."),
         query: z.string().describe("What you need help with — used to rank results by relevance (e.g., 'how to run differential expression')."),
     }),
+    view: "none",
     describeCall: "none",
     execute: async ({ libraryName, query }): Promise<Result<ResolveLibraryIdOutput, ToolError>> => {
         const result = await apiFetchValidated(
@@ -103,6 +104,7 @@ export const queryDocsTool = defineTool({
         libraryId: z.string().describe("Context7 library ID exactly as `resolve_library_id` gave it — an owner and a library, for example '/scverse/scanpy'."),
         query: z.string().describe("Specific question about the library (e.g., 'rank_genes_groups function parameters and usage')."),
     }),
+    view: "none",
     describeCall: "none",
     execute: async ({ libraryId, query }): Promise<Result<QueryDocsOutput, ToolError>> => {
         // The library id is the path of the route, not a query parameter. Each

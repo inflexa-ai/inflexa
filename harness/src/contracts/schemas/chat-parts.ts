@@ -442,6 +442,19 @@ export const PausePartSchema = z.object({
     retryAt: z.string().optional(),
 });
 
+// ── Model refusal ───────────────────────────────────────────────────
+
+const ModelRefusalFallbackShape = { id: z.string(), outcome: z.literal("fallback"), model: z.string() };
+const ModelRefusalStoppedShape = { id: z.string(), outcome: z.literal("stopped") };
+
+/** Mirrors `ModelRefusalPart` without its `type`: the stored payload of the part. */
+export const ModelRefusalPayloadSchema = z.discriminatedUnion("outcome", [z.object(ModelRefusalFallbackShape), z.object(ModelRefusalStoppedShape)]);
+
+export const ModelRefusalPartSchema = z.discriminatedUnion("outcome", [
+    z.object({ type: z.literal("data-model-refusal"), ...ModelRefusalFallbackShape }),
+    z.object({ type: z.literal("data-model-refusal"), ...ModelRefusalStoppedShape }),
+]);
+
 // ── Model retry ─────────────────────────────────────────────────────
 
 export const ModelRetryPartSchema = z.object({
@@ -501,4 +514,5 @@ export const ChatPartSchema = z.discriminatedUnion("type", [
     CompactionPartSchema,
     PausePartSchema,
     ModelRetryPartSchema,
+    ModelRefusalPartSchema,
 ]);

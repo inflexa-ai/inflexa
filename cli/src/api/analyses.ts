@@ -1,6 +1,7 @@
 import type { DataProfileLifecycleStatus } from "@inflexa-ai/harness/contracts/index.js";
 
 import type { ListEnvelope } from "./common.ts";
+import type { FileKind } from "./fs.ts";
 import type { ProjectView } from "./projects.ts";
 import type { RunStatus } from "./runs.ts";
 import type { UsageTotals } from "./usage.ts";
@@ -229,6 +230,10 @@ export type InputView = {
     anchorId: string | null;
     /** The canonical absolute path. `null` when the anchor folder of the input cannot be located. */
     absolutePath: string | null;
+    /** The byte size of the file. `null` for a folder, for an input with no absolute path, and for a path that cannot be read. */
+    size: number | null;
+    /** The kind of the name of the stored path, from the one extension map. `null` for a folder and for an extension that the map does not name. */
+    kind: FileKind | null;
 };
 
 /** The body of `GET {A}/inputs`. */

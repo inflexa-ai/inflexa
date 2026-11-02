@@ -230,6 +230,7 @@ describe("createConversationAgent", () => {
             id: "host_echo",
             description: "A host-contributed tool.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok({ done: true })),
         });
@@ -285,6 +286,7 @@ describe("createConversationAgent", () => {
             id: "host_needs_approval",
             description: "A host tool that needs the approval of the user.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             approval: () => ({ title: "Host action", command: "do the thing" }),
             execute: () => Promise.resolve(ok({ approved: true })),

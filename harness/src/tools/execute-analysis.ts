@@ -767,6 +767,10 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z
             "A plan that already has an active run returns that run, so a second run of one plan does not start. " +
             "The launch fails with an error, and no run starts, when the plan is not found or fails validation, when a package of the plan cannot link, or when the run is not authorized.",
         inputSchema,
+        view: {
+            input: (input) => input,
+            error: true,
+        },
         // The mode is what a user most needs to see here — an approved plan
         // running is a different event from an ad hoc request being routed.
         describeCall: (input) => (input.mode === "plan" ? `plan ${input.planId ?? ""}` : `ad hoc: ${input.request ?? ""}`),

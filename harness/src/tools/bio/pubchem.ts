@@ -107,6 +107,7 @@ export const pubchemTool = defineTool({
         "then chembl action='mechanism' / 'bioactivity' there for curated activity data. " +
         "An empty results / crossRefs / assays array is valid no-data (no match; the CID is in no external registry; the compound was never screened) — do not retry.",
     inputSchema,
+    view: "none",
     describeCall: "none",
     execute: async (input) => {
         switch (input.action) {

@@ -53,6 +53,7 @@ export const searchInteractionsTool = defineTool({
                     "Rows are ordered best-first (score descending for interactions, FDR ascending for enrichment), so the default keeps the strongest.",
             ),
     }),
+    view: "none",
     describeCall: "none",
     execute: async ({ identifiers, species, action, minScore, limit }): Promise<Result<InteractionsOutput, ToolError>> => {
         if (action === "enrichment") {

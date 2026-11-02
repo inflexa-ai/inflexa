@@ -62,6 +62,7 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool<z.infe
         id: REPORT_BLOCKER_TOOL_ID,
         description: `Terminal. ${deps.blockedWhen} Pass a clear reason. Stop immediately after calling — take no further actions.`,
         inputSchema: ReportBlockerInputSchema,
+        view: "none",
         describeCall: "none",
         execute: (input) =>
             Promise.resolve(

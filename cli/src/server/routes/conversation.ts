@@ -648,8 +648,9 @@ function spendOf(outcome: Extract<TurnOutcome, { opened: boolean }>): Pick<TurnE
     };
 }
 
-function finishFrame(outcome: Extract<TurnOutcome, { opened: boolean }>): ChatFrame {
-    return { type: "finish", source: ROOT_SOURCE, ...(outcome.turnUsage === undefined ? {} : { turnUsage: { ...outcome.turnUsage } }) };
+function finishFrame(outcome: Extract<TurnOutcome, { kind: "ok" | "filtered" | "aborted" }>): ChatFrame {
+    const finishReason = outcome.kind === "ok" ? outcome.finishReason : outcome.kind === "filtered" ? "content-filter" : "aborted";
+    return { type: "finish", source: ROOT_SOURCE, finishReason, ...(outcome.turnUsage === undefined ? {} : { turnUsage: { ...outcome.turnUsage } }) };
 }
 
 /**

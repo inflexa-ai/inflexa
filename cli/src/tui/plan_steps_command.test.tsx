@@ -79,7 +79,7 @@ describe("plan.explore-steps", () => {
             ],
         } satisfies ChatFrame;
         const opts: SendOpts = {
-            startTurn: () => okAsync({ turnId: "turn-1", frames: framesOf([plan, { type: "finish", source }]) }),
+            startTurn: () => okAsync({ turnId: "turn-1", frames: framesOf([plan, { type: "finish", source, finishReason: "stop" }]) }),
             abortTurn: unexpected("abortTurn"),
             rereadTurn: unexpected("rereadTurn"),
             fetchTurn: () =>

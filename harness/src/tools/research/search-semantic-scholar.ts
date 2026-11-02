@@ -60,6 +60,7 @@ export function createSearchSemanticScholarTool(options: { readonly apiKey?: str
                 ),
             limit: z.number().int().min(1).max(20).default(10).describe("Maximum number of results to return (1–20, default 10)."),
         }),
+        view: "none",
         describeCall: "none",
         execute: async ({ query, limit }, context): Promise<Result<SearchSemanticScholarOutput, ToolError>> => {
             const result = await source.search(query, limit, context.signal);

@@ -78,6 +78,7 @@ const echoTool: Tool = defineTool({
     id: "echo",
     description: "Echo the label back.",
     inputSchema: z.object({ label: z.string() }),
+    view: "none",
     describeCall: "none",
     execute: ({ label }) => Promise.resolve(ok({ label })),
 });
@@ -262,6 +263,7 @@ describe("runLoop usage records — delivered as calls complete", () => {
             id: "slow",
             description: "Runs until the user aborts.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             execute: () => {
                 controller.abort();
@@ -379,6 +381,7 @@ function delegateTool(childProvider: ChatProvider, recorder: UsageRecorder, capt
         id: "delegate",
         description: "Run a child agent.",
         inputSchema: z.object({}),
+        view: "none",
         describeCall: "none",
         execute: async (_input, ctx) => {
             const result = await runLoop(child, [{ role: "user", content: "child go" }], forSubAgent(ctx.session, "child-agent"), {

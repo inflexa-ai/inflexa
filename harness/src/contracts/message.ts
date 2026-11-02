@@ -7,7 +7,7 @@
  * narrows the union member without any `as` cast.
  */
 
-import type { ToolCallDetail, ToolCallOutcome } from "./chat-events.js";
+import type { ToolCallDetail, ToolCallOutcome, ToolCallValue } from "./chat-events.js";
 import type { ChatPart } from "./chat-parts.js";
 import type { TokenUsageRollup } from "./usage.js";
 
@@ -43,6 +43,12 @@ export type ToolCallPart = {
     detail?: ToolCallDetail;
     /** The time in milliseconds around the dispatch of the call, from `tool-finished`. Absent when no measurement was taken. */
     durationMs?: number;
+    /** See {@link ToolCallValue}. Absent when the tool declares no input view, and in a row stored without one. */
+    input?: ToolCallValue;
+    /** The shown result of a call with the outcome `ok`. Absent when the tool declares no result view, for each other outcome, and in a row stored without one. */
+    result?: ToolCallValue;
+    /** The shown error of a call with the outcome `error`. Absent when the tool declares no error view, for each other outcome, and in a row stored without one. */
+    error?: ToolCallValue;
 };
 
 /** The discriminated union of every part the chat path can carry. */

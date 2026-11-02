@@ -174,6 +174,12 @@ export type AiSdkProviderConfig =
            * Needs the `thinking-binding-controls-2026-08-01` beta header.
            */
           readonly thinkingBinding?: "drop_block" | "error" | "off";
+          /**
+           * `default`: when a safety classifier declines a request, the API sends it again to the model that it
+           * recommends for the category of the refusal, inside the same call. When the field is absent, a declined
+           * request ends with the content filter. A model with no fallback target keeps its refusal.
+           */
+          readonly fallbacks?: "default";
       }
     | {
           readonly kind: "openai";
@@ -344,22 +350,19 @@ type InputTransformation = {
  * A model can refuse a request by category — a biology prompt is one such category —
  * and the API then re-serves it on another model. It reports the hop TWICE: as a
  * `fallback` content block inside the assistant turn, and on
- * `providerMetadata.anthropic.iterations`. `@ai-sdk/anthropic` keeps only the second,
- * because the AI SDK has no part for a model hop, and it drops the block from the
- * content it returns (`anthropic-messages-language-model`, the `content_block_start`
- * case). Thus the turn the harness holds is not the turn the API produced, and every
- * signed thinking block of that turn is rejected from the next request on.
+ * `providerMetadata.anthropic.iterations`. `@ai-sdk/anthropic` keeps the block as a
+ * custom part and sends it back on the next request, but it keeps each thinking block
+ * before it too. The API accepts no thinking block from before the hop, and a turn
+ * whose thinking blocks changed earns `thinking ... blocks in the latest assistant
+ * message cannot be modified`, which is a 400 that no retry can pass.
  *
- * The API holds the whole turn against the signature of each of its thinking blocks, so
- * echoing that turn earns `thinking ... blocks in the latest assistant message cannot be
- * modified`, which is a 400 that no retry can pass. A thinking block is optional on the
- * way back, thus the loop records the reply of a hop with no thinking block, and the next
- * request continues. The cost is the reasoning of this one turn and the cache write that
- * its new prefix pays for.
+ * A thinking block is optional on the way back, thus the loop records the reply of a
+ * hop with no thinking block, and the next request continues. The cost is the
+ * reasoning of this one turn and the cache write that its new prefix pays for.
  *
- * The response metadata of the package carries `message_start.message.model`, and that
- * field keeps the REQUESTED model across a hop. The iteration names the model that
- * answered, thus it wins for the usage record.
+ * The response metadata of the package carries `message_start.message.model`, and
+ * after a hop in the middle of a reply that field keeps the REQUESTED model. The
+ * iteration names the model that answered, thus it wins for the usage record.
  */
 export function fallbackModelOf(metadata: ProviderMetadata | undefined): string | undefined {
     const entries = metadata?.["anthropic"]?.["iterations"];
@@ -994,12 +997,13 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             maxRetries: config.maxRetries,
             requestTimeoutMs,
             reasoning: config.reasoning,
-            // The package sends the key as `metadata.user_id`, and the binding as
-            // `thinking.block_binding`.
+            // The package sends the key as `metadata.user_id`, the binding as
+            // `thinking.block_binding`, and the default fallback with its beta header.
             providerOptionsFor: ({ session, reasoning }) => ({
                 anthropic: {
                     metadata: { userId: sessionKeyDigestOf(session) },
                     thinking: binding === undefined ? undefined : thinkingWithBinding(reasoning, binding),
+                    fallbacks: config.fallbacks,
                 } satisfies AnthropicLanguageModelOptions,
             }),
         });

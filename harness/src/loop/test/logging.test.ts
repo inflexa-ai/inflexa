@@ -36,6 +36,7 @@ function echoTool(): Tool {
         id: "echo",
         description: "Echo the label back.",
         inputSchema: z.object({ label: z.string() }),
+        view: "none",
         describeCall: "none",
         execute: ({ label }) => Promise.resolve(ok({ label })),
     });
@@ -46,6 +47,7 @@ function submitTool(): Tool {
         id: "submit",
         description: "Record the final answer.",
         inputSchema: z.object({ answer: z.string() }),
+        view: "none",
         describeCall: "none",
         execute: () => Promise.resolve(ok({ accepted: true })),
     });
@@ -173,6 +175,7 @@ describe("runLoop — level follows the outcome class", () => {
             id: "risky",
             description: "Needs approval.",
             inputSchema: z.object({}),
+            view: "none",
             describeCall: "none",
             approval: () => ({ title: "Risky", command: "risky" }),
             execute: () => Promise.resolve(ok({ ran: true })),

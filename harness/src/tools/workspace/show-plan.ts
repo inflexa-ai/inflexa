@@ -42,6 +42,7 @@ export function createShowPlanTool(pool: PlanRowQuerier): Tool<z.infer<typeof Sh
             "card — that renders a second, divergent copy of the same plan. " +
             "`shown: false` with `plan_not_found` means that the planId is no longer valid: generate a new plan, because a retry of the same planId fails the same way.",
         inputSchema: ShowPlanInputSchema,
+        view: "none",
         describeCall: ({ planId }) => planId,
         execute: async ({ planId, title }, ctx): Promise<Result<ShowPlanOutput, ToolError>> => {
             const resourceId = scopeResource(ctx.session.scope).resourceId;

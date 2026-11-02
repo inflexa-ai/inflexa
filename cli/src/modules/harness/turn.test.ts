@@ -119,7 +119,7 @@ describe("runChatTurn maps the outcome of the turn workflow", () => {
     test("a done turn is ok, with its final text and no store fault", async () => {
         const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", fallbackText: "the answer" }) }));
 
-        expect(outcome).toEqual({ kind: "ok", opened: true, fallbackText: "the answer" });
+        expect(outcome).toEqual({ kind: "ok", opened: true, finishReason: "stop", fallbackText: "the answer" });
     });
 
     test("a content-filter finish is filtered, with the endpoint's own word", async () => {
@@ -167,7 +167,7 @@ describe("runChatTurn maps the outcome of the turn workflow", () => {
     test("a store fault rides as storeFailed, orthogonal to the outcome", async () => {
         const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", storeFailed: true, fallbackText: "the answer" }) }));
 
-        expect(outcome).toEqual({ kind: "ok", opened: true, fallbackText: "the answer", storeFailed: true });
+        expect(outcome).toEqual({ kind: "ok", opened: true, finishReason: "stop", fallbackText: "the answer", storeFailed: true });
     });
 });
 
@@ -231,7 +231,7 @@ describe("runChatTurn streams the turn to the surface", () => {
         const frames: ChatFrame[] = [
             { type: "message-start", messageId: "0198f0a0-0000-7000-8000-000000000001", role: "assistant", source: ROOT },
             { type: "text-delta", text: "Hi", source: ROOT },
-            { type: "finish", source: ROOT },
+            { type: "finish", source: ROOT, finishReason: "stop" },
         ];
         const seen: ChatFrame[] = [];
         const opened: string[] = [];

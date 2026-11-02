@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { basename, isAbsolute } from "node:path";
 
 import {
     queryDataProfileStatusByAnalyses,
@@ -47,7 +47,7 @@ import {
 } from "../../db/primary_query.ts";
 import { releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
-import { pathsExistAsync } from "../../lib/fs.ts";
+import { pathsExistAsync, statResultAsync } from "../../lib/fs.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
 import { str256, type Str256 } from "../../lib/types.ts";
 import { addInputs, applyInputsDiff, createAnalysis, removeInput, renameAnalysisAndMoveWorkspace } from "../../modules/analysis/analysis.ts";
@@ -55,6 +55,7 @@ import { describeContext, resolveContext, type ResolvedContext } from "../../mod
 import { inputAbsolutePaths, matchInputRefs } from "../../modules/analysis/input.ts";
 import { defaultOutputSubdir, disposeWorkspace, locateExistingOutputDir, locateOrEnsureOutputDir, resolveOutputDir } from "../../modules/analysis/output.ts";
 import { recoverAnchors, resolveAnchor } from "../../modules/anchor/anchor.ts";
+import { fileKindOf } from "../../modules/fs/file_kind.ts";
 import { analysisPurgeFor } from "../../modules/harness/purge.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { removeAnalysisFarm } from "../../modules/libs/composition.ts";
@@ -654,9 +655,26 @@ async function refuseMissing(c: Context<ServerEnv>, paths: readonly string[]): P
     return missing.length === 0 ? null : apiError(c, "validation_error", `no such file: ${missing.join(", ")}`, { missing });
 }
 
+/**
+ * The wire view of each input, with one `stat` for each located input. The `stat` follows links, as the places
+ * route does. The kind comes from the stored name: the canonical path resolves each link, and a link can carry a
+ * name with no extension.
+ */
 async function inputViews(inputs: readonly AnalysisInput[]): Promise<InputView[]> {
     const absolute = await inputAbsolutePaths(inputs);
-    return inputs.map((input) => ({ path: input.path, isDir: input.isDir, anchorId: input.anchorId, absolutePath: absolute.get(input) ?? null }));
+    return mapBounded(inputs, async (input): Promise<InputView> => {
+        const absolutePath = absolute.get(input) ?? null;
+        const stats = absolutePath === null ? null : await statResultAsync(absolutePath, "stat input").unwrapOr(null);
+        const isDir = stats === null ? input.isDir : stats.isDirectory();
+        return {
+            path: input.path,
+            isDir: input.isDir,
+            anchorId: input.anchorId,
+            absolutePath,
+            size: stats === null || isDir ? null : stats.size,
+            kind: isDir ? null : fileKindOf(basename(input.path)),
+        };
+    });
 }
 
 /**

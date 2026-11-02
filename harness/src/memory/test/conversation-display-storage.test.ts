@@ -131,6 +131,55 @@ describe("a stored tool call", () => {
     });
 });
 
+describe("the values of a stored tool call", () => {
+    const input = { kind: "json", text: '{"path":"data/counts.csv"}', cut: false } as const;
+    const result = { kind: "text", text: "head\n[... 9000 characters not shown ...]\ntail", cut: true } as const;
+
+    it("keeps the three values through the stored shape and gives them back", async () => {
+        const part: ToolCallPart = {
+            type: "tool-call",
+            toolCallId: "t1",
+            toolName: "read_file",
+            outcome: "ok",
+            input,
+            result,
+            error: { kind: "text", text: "e", cut: false },
+        };
+        const message: ConversationUIMessage = { id: "a1", role: "assistant", parts: [conversationDisplayPart(part)] };
+
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the round trip of a value in hand simulates the storage write and read; a schema proves nothing there.
+        const stored = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([message]))), "t/0/display");
+        const parts = presentAt(conversationUIToChatMessages(stored.messages), 0).parts;
+
+        expect(parts).toEqual([part]);
+    });
+
+    it("reads a row stored with no value, and gives none of the three keys", async () => {
+        const call = { toolCallId: "t1", toolName: "read_file", outcome: "ok" } as const;
+        const value = {
+            ...envelopeDisplayMessages(messages),
+            messages: [{ id: "a1", role: "assistant", parts: [{ type: "data-tool-call", id: "t1", data: call }] }],
+        };
+
+        const [part] = presentAt(conversationUIToChatMessages((await parseStoredDisplayEnvelope(value, "t/0/display")).messages), 0).parts;
+
+        expect(part).toEqual({ type: "tool-call", ...call });
+        for (const key of ["input", "result", "error"]) expect(part).not.toHaveProperty(key);
+    });
+
+    it("drops a stored value that has no cut flag", async () => {
+        const call = { toolCallId: "t1", toolName: "read_file", outcome: "ok", result: { text: "x" } };
+        const value = {
+            ...envelopeDisplayMessages(messages),
+            messages: [{ id: "a1", role: "assistant", parts: [{ type: "data-tool-call", id: "t1", data: call }] }],
+        };
+
+        const parsed = await parseStoredDisplayEnvelope(value, "t/0/display");
+
+        expect(parsed.messages.flatMap((message) => message.parts)).toEqual([]);
+    });
+});
+
 describe("a stored compaction divider", () => {
     it("round-trips a system message with a data-compaction part and reads it back as the part", async () => {
         const figures = { id: "c-1", status: "done" as const, tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };

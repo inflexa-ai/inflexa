@@ -139,6 +139,7 @@ const pubmedLookup = defineTool({
     id: "pubmed",
     description: "Search PubMed.",
     inputSchema: z.object({ query: z.string() }),
+    view: "none",
     describeCall: "none",
     execute: () => Promise.resolve(ok({ totalFound: 1, results: [{ pmid: CITED_PMID, title: "FOXP3 in regulatory T cells" }] })),
 });

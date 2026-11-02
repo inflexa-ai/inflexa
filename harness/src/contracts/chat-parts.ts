@@ -9,6 +9,7 @@
  *                    data-plan-approval (the record of an approved plan)
  *   Compaction:      data-compaction (a compaction of the conversation thread)
  *   Model retry:     data-model-retry (a retry of a model request inside the retry envelope of the provider)
+ *   Model refusal:   data-model-refusal (a model request that the provider declined)
  *   Run lifecycle:   run-started, dag-state, run-completed, run-failed, run-synthesis,
  *                    synthesis-progress
  *   Per-step live:   step-activity, step-file-tree
@@ -566,6 +567,25 @@ export type ModelRetryPart = {
     status?: number;
 };
 
+/**
+ * A model request that the provider declined. `fallback`: another model answered the request, and `model` names it.
+ * `stopped`: no model answered, thus the reply of the request ended with the content filter.
+ */
+export type ModelRefusal =
+    | {
+          /** The id of the model response. */
+          id: string;
+          outcome: "fallback";
+          model: string;
+      }
+    | {
+          /** The id of the model response. */
+          id: string;
+          outcome: "stopped";
+      };
+
+export type ModelRefusalPart = { type: "data-model-refusal" } & ModelRefusal;
+
 /** The kind of a durable work, and of the work that a pause belongs to. A sub-agent belongs to its turn, and a sandbox step to its run. */
 export type WorkKind = "turn" | "run" | "profile";
 
@@ -618,7 +638,8 @@ export type KnownChatPart =
     | ReportRenderedPart
     | CompactionPart
     | PausePart
-    | ModelRetryPart;
+    | ModelRetryPart
+    | ModelRefusalPart;
 
 /**
  * A part of a known contract, or a part whose type this build does not know. An emitter newer than this

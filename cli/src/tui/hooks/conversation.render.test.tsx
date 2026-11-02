@@ -56,7 +56,7 @@ describe("streamed assistant text survives finalization (rendered)", () => {
                 yield ok({ type: "text-delta", text: "streamed reply", source: ROUTE_SOURCE });
                 await gate;
                 // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
-                yield ok({ type: "finish", source: ROUTE_SOURCE });
+                yield ok({ type: "finish", source: ROUTE_SOURCE, finishReason: "stop" });
             }
             const server: SendOpts = {
                 startTurn: () => okAsync({ turnId: "turn-1", frames: frames() }),

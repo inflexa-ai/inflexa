@@ -46,6 +46,8 @@ export type {
     WorkKind,
     PausePart,
     ModelRetryPart,
+    ModelRefusal,
+    ModelRefusalPart,
     ChatPart,
     KnownChatPart,
 } from "./chat-parts.js";
@@ -56,6 +58,8 @@ export type {
     IterationEvent,
     ToolStartedEvent,
     ToolFinishedEvent,
+    ToolCallLeaf,
+    ToolCallValue,
     FinishEvent,
     ChatErrorEvent,
     MessageStartEvent,

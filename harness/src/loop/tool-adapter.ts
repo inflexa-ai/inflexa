@@ -20,6 +20,7 @@ import { jsonSchema, tool as aiTool, type ToolSet, type UIMessageStreamWriter } 
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { z } from "zod";
 
+import type { ToolCallValue } from "../contracts/chat-events.js";
 import type { AgentSession } from "../auth/types.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import type { Logger } from "../lib/logger.js";
@@ -45,6 +46,7 @@ import type { AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import type { ToolOutcome } from "./tool-outcome.js";
 import { excerptOf, keptTextOf, TOOL_RESULT_CAP, toolOutputRef, type ToolOutputStore } from "./tool-output.js";
+import { errorToolValue, makeToolCallValue } from "./tool-value.js";
 import type { EmitFn, EventSource } from "./types.js";
 
 const ToolResultImageSchema = z.object({ base64: z.string(), mediaType: z.string() });
@@ -213,9 +215,19 @@ async function runToolCall(
     const startedAt = performance.now();
     const { toolCallId } = options;
     const detail = computeDetail(tool, input, run.log);
+    // Only a root call shows values: no reader shows the values of a sub-agent call or of a nested call of a script.
+    const showsValues = run.source.callPath.length <= 1;
     // The emit and the call start before the first await: a call that runs in the body of a workflow takes its
     // function ids in the order of the calls, thus a replay gives each call its own child.
-    const started = run.emit({ type: "tool-started", source: run.source, toolUseId: toolCallId, name: tool.id, input, ...detailField(detail) });
+    const shownInput = showsValues ? viewInputValue(tool, input, run.log) : undefined;
+    const started = run.emit({
+        type: "tool-started",
+        source: run.source,
+        toolUseId: toolCallId,
+        name: tool.id,
+        ...detailField(detail),
+        input: shownInput,
+    });
     const ctx: ToolContext = {
         invocationId: toolCallId,
         session: run.session,
@@ -224,7 +236,9 @@ async function runToolCall(
         turnUsage: run.turnUsage,
     };
     // One wait reads the two, thus a failed emit leaves no rejection of the call unread.
-    const [, settled] = await Promise.all([started, settleCall(tool, input, ctx, run)]);
+    const [, settled] = await Promise.all([started, settleCall(tool, input, ctx, run, showsValues)]);
+    // The values come from the output before the cut for the model, thus a host shows the start and the end of the whole text.
+    const shownError = showsValues && settled.output.outcome === "error" ? viewErrorValue(tool, settled.output.text) : undefined;
     const output = await cutLongOutput(settled.output, tool.id, toolCallId, run);
     await run.emit({
         type: "tool-finished",
@@ -234,6 +248,9 @@ async function runToolCall(
         outcome: output.outcome,
         ...detailField(settled.detail ?? detail),
         durationMs: Math.round(performance.now() - startedAt),
+        input: shownInput,
+        result: settled.result,
+        error: shownError,
     });
     return output;
 }
@@ -242,9 +259,11 @@ type SettledCall = {
     readonly output: ToolCallOutput;
     /** The line that the result hook of the tool made of its ok value. */
     readonly detail?: ToolCallDetail;
+    /** The value that the result member of the view made of the ok value. */
+    readonly result?: ToolCallValue;
 };
 
-async function settleCall(tool: Tool, input: unknown, ctx: ToolContext, run: ToolRunContext): Promise<SettledCall> {
+async function settleCall(tool: Tool, input: unknown, ctx: ToolContext, run: ToolRunContext, showsValues: boolean): Promise<SettledCall> {
     const parsed = tool.inputSchema.safeParse(input);
     let data: unknown;
     if (parsed.success) {
@@ -272,12 +291,66 @@ async function settleCall(tool: Tool, input: unknown, ctx: ToolContext, run: Too
         }
         // The one place a result description runs: the ok value in hand, the
         // input already validated, and the guard inside the compute.
-        return { output: okOutput(tool.id, result.value, run), detail: computeResultDetail(tool, data, result.value, run.log) };
+        return {
+            output: okOutput(tool.id, result.value, run),
+            detail: computeResultDetail(tool, data, result.value, run.log),
+            result: showsValues ? viewResultValue(tool, data, result.value, run.log) : undefined,
+        };
     } catch (err) {
         if (isFatalToolError(err)) throw err;
         logToolFailure(tool, ctx.invocationId, err, run.log);
         return { output: errorOutput(toolErrorContent(err)) };
     }
+}
+
+/**
+ * The value of the output of a view member, or `undefined`. A value that breaks a rule or does not serialize gives no
+ * value and logs one warning with the reason, as a member that throws does. A member that gives `undefined` gives no
+ * value and no warning.
+ */
+function shownValue(tool: Tool, member: "input" | "result", output: unknown, log: Logger): ToolCallValue | undefined {
+    const made = makeToolCallValue(output);
+    if (made.isErr()) {
+        log.warn(`the ${member} view of a tool gave a value that cannot show`, { tool: tool.id, reason: made.error });
+        return undefined;
+    }
+    return made.value;
+}
+
+/**
+ * The shown input of a call: the `input` member of the view of the tool, run on the input after the parse with the input
+ * schema. The parse is inside the guard, because a schema with an async refinement throws on a synchronous parse. A
+ * tool with no `input` member, an input that fails the parse, a member that throws, and a value that breaks a rule give
+ * no value, and each of the last two logs one warning. A value never fails a call.
+ */
+export function viewInputValue(tool: Tool, rawInput: unknown, log: Logger): ToolCallValue | undefined {
+    const view = tool.view;
+    if (typeof view?.input !== "function") return undefined;
+    try {
+        const parsed = recordedInputOf(tool.inputSchema, rawInput);
+        if (parsed === undefined) return undefined;
+        return shownValue(tool, "input", view.input(parsed), log);
+    } catch (err) {
+        log.warn("the input view of a tool failed", { tool: tool.id, ...log.errorFields(err) });
+        return undefined;
+    }
+}
+
+/** The shown result of a call that ended `ok`: the `result` member of the view, run on the parsed input and the ok value. The guard is that of {@link viewInputValue}. */
+function viewResultValue(tool: Tool, parsedInput: unknown, result: unknown, log: Logger): ToolCallValue | undefined {
+    const view = tool.view;
+    if (typeof view?.result !== "function") return undefined;
+    try {
+        return shownValue(tool, "result", view.result(parsedInput, result), log);
+    } catch (err) {
+        log.warn("the result view of a tool failed", { tool: tool.id, ...log.errorFields(err) });
+        return undefined;
+    }
+}
+
+/** The shown error of a call that ended `error`, when the view declares `error`. `text` is the error text that the model reads, before the cut. */
+function viewErrorValue(tool: Tool, text: string): ToolCallValue | undefined {
+    return tool.view?.error === true ? errorToolValue(text) : undefined;
 }
 
 /**

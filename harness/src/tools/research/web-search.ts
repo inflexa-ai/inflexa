@@ -136,6 +136,7 @@ export function createWebSearchTool(deps: WebSearchToolDeps): Tool<z.infer<typeo
             "ABSENCE IS NORMAL: an empty results array means no page matched, and a status of http_error, retryable_status, " +
             "schema_mismatch, or not_json names a search that did not answer. Report either one and continue, do not retry unchanged.",
         inputSchema: WebSearchInputSchema,
+        view: "none",
         describeCall: "none",
         execute: async ({ query, queries, numResults, recencyFilter, domainFilter }): Promise<Result<WebSearchOutput, ToolError>> => {
             const filter = parseDomainFilter(domainFilter);
