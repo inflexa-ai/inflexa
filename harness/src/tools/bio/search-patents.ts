@@ -85,7 +85,10 @@ const inputSchema = z
     });
 
 type PatentsOutput =
-    { patents: PatentSummary[] } | { status: "found"; patent: PatentRecord } | { status: "not_found" } | { status: "ambiguous"; candidates: string[] };
+    | { patents: PatentSummary[] }
+    | { status: "found"; patent: PatentRecord }
+    | { status: "not_found" }
+    | { status: "ambiguous"; candidates: string[] };
 
 /** A request that Amass rejected as invalid is the caller's to repair; every other failure is terminal. */
 function failure(e: AmassError): Result<never, ToolError> {

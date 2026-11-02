@@ -36,7 +36,8 @@ export type ArtifactRegistrationResult = {
 
 /** Why a registration stopped: the `register` gate refused it, or a write of the local ledger failed. */
 export type ArtifactRegistrationFailure =
-    { readonly kind: "refused"; readonly refusal: GateRefusal } | { readonly kind: "ledger_failed"; readonly error: DbError };
+    | { readonly kind: "refused"; readonly refusal: GateRefusal }
+    | { readonly kind: "ledger_failed"; readonly error: DbError };
 
 // ── Registration ─────────────────────────────────────────────────────
 

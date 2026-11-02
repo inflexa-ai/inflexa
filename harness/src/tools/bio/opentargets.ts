@@ -96,7 +96,9 @@ const inputSchema = z
     });
 
 type OpenTargetsOutput =
-    { targetInfo: TargetInfo | null; associations: Association[] } | { associations: Association[] } | { totalFound: number; candidates: DiseaseCandidate[] };
+    | { targetInfo: TargetInfo | null; associations: Association[] }
+    | { associations: Association[] }
+    | { totalFound: number; candidates: DiseaseCandidate[] };
 
 export const openTargetsTool = defineTool({
     id: "opentargets",

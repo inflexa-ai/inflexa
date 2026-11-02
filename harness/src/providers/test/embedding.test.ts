@@ -46,16 +46,15 @@ function fakeEmbeddingFetch(data: FakeEmbedding[]): {
 }
 
 describe("createEmbeddingProvider.embed", () => {
-
-/** The provider over one fake embedding wire: the billing URL, the test token, and the host headers. */
-function providerOver(fake: ReturnType<typeof fakeEmbeddingFetch>): ReturnType<typeof createEmbeddingProvider> {
-    return createEmbeddingProvider({
-        baseURL: "http://billing.test/openai",
-        token: "test-token",
-        resolveRequestHeaders: () => okAsync(hostHeaders),
-        fetch: fake.fetch,
-    });
-}
+    /** The provider over one fake embedding wire: the billing URL, the test token, and the host headers. */
+    function providerOver(fake: ReturnType<typeof fakeEmbeddingFetch>): ReturnType<typeof createEmbeddingProvider> {
+        return createEmbeddingProvider({
+            baseURL: "http://billing.test/openai",
+            token: "test-token",
+            resolveRequestHeaders: () => okAsync(hostHeaders),
+            fetch: fake.fetch,
+        });
+    }
     it("maps a fake embedding response to number[][]", async () => {
         const fake = fakeEmbeddingFetch([
             { object: "embedding", index: 0, embedding: [0.1, 0.2, 0.3] },

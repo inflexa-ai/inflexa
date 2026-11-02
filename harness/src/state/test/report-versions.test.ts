@@ -19,7 +19,6 @@ import { createReportVersionStore, type ReportVersionStore } from "../report-ver
 import { presentAt } from "../../lib/present.js";
 import { citedSnapshot, validDocument } from "./__fixtures__/report-docs.js";
 
-
 describe("createReportVersionStore", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
@@ -121,10 +120,14 @@ describe("createReportVersionStore", () => {
         await seedAnalysis(analysisId);
         const threadId = "thread-record-outcome";
 
-        const first = (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const first = (
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrap();
         expect(first.outcome).toBe("created");
 
-        const second = (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const second = (
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrap();
         expect(second.outcome).toBe("replaced");
         expect(second.versionId).toBe(first.versionId);
     });
@@ -134,7 +137,9 @@ describe("createReportVersionStore", () => {
         await seedAnalysis(analysisId);
         const threadId = "thread-replace-time";
 
-        const ref = (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const ref = (
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrap();
         const stored = (await store.getVersion(ref.versionId))._unsafeUnwrap();
         if (stored === null) throw new Error("the stored version is absent");
         const created = stored.createdAt;
@@ -211,7 +216,9 @@ describe("createReportVersionStore", () => {
             values: [threadId, analysisId],
         });
 
-        const ref = (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const ref = (
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+        )._unsafeUnwrap();
 
         await pool.query({ text: "DELETE FROM cortex_analysis_threads WHERE thread_id = $1", values: [threadId] });
 
@@ -348,7 +355,14 @@ describe("createReportVersionStore", () => {
         const otherThread = "thread-parent-other";
 
         const owned = (
-            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId: analysisOwner, threadId: ownerThread, parentThreadId: null, parentSeq: null })
+            await store.record({
+                document: validDocument,
+                snapshot: citedSnapshot,
+                analysisId: analysisOwner,
+                threadId: ownerThread,
+                parentThreadId: null,
+                parentSeq: null,
+            })
         )._unsafeUnwrap();
 
         const failure = (

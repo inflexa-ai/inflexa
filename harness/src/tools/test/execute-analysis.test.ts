@@ -161,7 +161,6 @@ function fakePool(rowsByPrefix: Record<string, Row[]>): {
     return { pool: Object.assign(new Pool(), { query, connect }), queries };
 }
 
-
 /** The tool over one fake pool, with a launcher whose workflow body the test provides. */
 function toolWithWorkflow(
     pool: Parameters<typeof createExecuteAnalysisTool>[0]["pool"],
@@ -306,8 +305,8 @@ describe("createExecuteAnalysisTool plan mode", () => {
             "SELECT plan FROM cortex_plans": [],
         });
         const tool = toolWithWorkflow(pool, () => {
-                return Promise.reject(new Error("should not be called"));
-            });
+            return Promise.reject(new Error("should not be called"));
+        });
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanNotFoundError);
     });
 
@@ -321,16 +320,16 @@ describe("createExecuteAnalysisTool plan mode", () => {
         });
         let dispatched = false;
         const tool = toolWithWorkflow(pool, () => {
-                dispatched = true;
-                return Promise.resolve({
-                    runId: "x",
-                    workflowId: "x",
-                    status: "completed",
-                    completedSteps: [],
-                    failedSteps: [],
-                    canceledSteps: [],
-                });
+            dispatched = true;
+            return Promise.resolve({
+                runId: "x",
+                workflowId: "x",
+                status: "completed",
+                completedSteps: [],
+                failedSteps: [],
+                canceledSteps: [],
             });
+        });
         await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toBeInstanceOf(PlanValidationError);
         expect(dispatched).toBe(false);
     });
@@ -371,16 +370,16 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         let dispatched = false;
         const tool = toolWithWorkflow(pool, () => {
-                dispatched = true;
-                return Promise.resolve({
-                    runId: "x",
-                    workflowId: "x",
-                    status: "completed",
-                    completedSteps: [],
-                    failedSteps: [],
-                    canceledSteps: [],
-                });
+            dispatched = true;
+            return Promise.resolve({
+                runId: "x",
+                workflowId: "x",
+                status: "completed",
+                completedSteps: [],
+                failedSteps: [],
+                canceledSteps: [],
             });
+        });
         try {
             const result = (await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext()))._unsafeUnwrap();
             expect(result).toMatchObject({ runId: "r-existing", status: "in_progress" });

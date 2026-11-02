@@ -31,7 +31,7 @@ import type { ChartBlock } from "../../contracts/report-blocks.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import { CHART_EXPORT_SIZES, CHART_INK } from "../design.js";
 import type { RenderProblem } from "../types.js";
-import { axisNameFields, ChartBox, chartProblem, demandedColumn, EXPORT_SIZES, PAGE_BOX, valueAxis } from "./common.js";
+import { axisNameFields, type ChartBox, chartProblem, demandedColumn, EXPORT_SIZES, PAGE_BOX, valueAxis } from "./common.js";
 import type { FigureContext, FigureModule } from "./index.js";
 
 /**

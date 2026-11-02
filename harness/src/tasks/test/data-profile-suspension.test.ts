@@ -177,7 +177,10 @@ describe("the data profile — the first message of the profiler", () => {
     it("names the resource budget that the lease of the profile granted", async () => {
         const { pool } = statementPool();
         const { provider, calls } = scriptedModel([reply([text("The inputs are a count table.")]), reply([text("Still no submission.")])]);
-        await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, { ...deps(pool, leaseOverClient(makeFakeSandboxClient(), MACHINE), []), provider });
+        await runDataProfileBody(
+            { analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs },
+            { ...deps(pool, leaseOverClient(makeFakeSandboxClient(), MACHINE), []), provider },
+        );
 
         const firstRequest = JSON.stringify(presentAt(calls, 0).prompt);
         const budget = estimateDataProfileResources(stagedInputs);

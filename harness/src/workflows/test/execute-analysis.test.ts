@@ -493,7 +493,6 @@ type FakeDepsRecord = {
     readonly threadWrites: Array<{ kind: string }>;
 };
 
-
 /** One complete child per name: the smallest happy-path child result set of a step DAG. */
 function completeResults(...names: string[]): Map<string, SandboxStepResult | Error> {
     return new Map(names.map((name) => [name, { status: "complete", durationMs: 1, finishReason: "stop", error: null }]));
@@ -1729,8 +1728,7 @@ describe("executeAnalysis body", () => {
 });
 
 describe("executeAnalysis run end ownership", () => {
-    const completeA = (): Map<string, SandboxStepResult | Error> =>
-        completeResults("A");
+    const completeA = (): Map<string, SandboxStepResult | Error> => completeResults("A");
     const terminalAtMs = FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS;
 
     /** Collects each run end into the timeline of the pool, so a test can place it between two queries. */

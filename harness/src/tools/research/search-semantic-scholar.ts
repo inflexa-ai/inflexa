@@ -28,7 +28,8 @@ const SearchSemanticScholarOutputSchema = z.object({
 });
 
 type SearchSemanticScholarOutput =
-    { success: false; error: string; papers: SemanticScholarSearchPaper[] } | { success: true; papers: SemanticScholarSearchPaper[] };
+    | { success: false; error: string; papers: SemanticScholarSearchPaper[] }
+    | { success: true; papers: SemanticScholarSearchPaper[] };
 
 export function createSearchSemanticScholarTool(options: { readonly apiKey?: string } = {}): Tool {
     const source = createSemanticScholarSource({

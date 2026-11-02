@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { z } from "zod";
 
-
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
 import { getFamily, getFamilyHeterodimers, IupharDatabaseLinkSchema, IupharFamilySchema, IupharTargetSchema } from "../iuphar-client.js";
 import { presentAt } from "../../../lib/present.js";

@@ -61,7 +61,6 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-
 describe("read_pdf", () => {
     test("reads the text of the asked pages, gives the page count, and records the read", async () => {
         mkdirSync(join(root, "data/inputs/f1"), { recursive: true });

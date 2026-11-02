@@ -19,13 +19,7 @@ import type {
     UnresolvedReference,
 } from "../contracts/report-reference.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
-import {
-    applyRowBound,
-    columnsHeldByNoRow,
-    defineOwn,
-    type ReportSnapshot,
-    type ResolvedValue,
-} from "./reference-resolver.js";
+import { applyRowBound, columnsHeldByNoRow, defineOwn, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
 /** Build an `Err` that carries the unresolved reference. The `detail` key is present only when there is a detail to carry. */
 export function fail(reference: Reference, reason: UnresolvedReason, detail?: string): Result<ResolvedValue, UnresolvedReference> {

@@ -32,7 +32,9 @@ const LABEL_DEFAULT_LIMIT = 3;
 
 /** One result shape per action — the key names the records it carries. */
 type FaersOutput =
-    { totalReports: number | undefined; adverseEvents: AdverseEventCount[] } | { seriousness: SeriousnessProfile | null } | { labels: DrugLabelAction[] };
+    | { totalReports: number | undefined; adverseEvents: AdverseEventCount[] }
+    | { seriousness: SeriousnessProfile | null }
+    | { labels: DrugLabelAction[] };
 
 export const searchFaersTool = defineTool({
     id: "search_faers",

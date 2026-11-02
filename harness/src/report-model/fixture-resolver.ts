@@ -6,23 +6,10 @@
 
 import { err, ok, type Result } from "neverthrow";
 
-import type {
-    ArtifactFileReference,
-    ArtifactTableReference,
-    ArtifactValueReference,
-    Reference,
-    UnresolvedReference,
-} from "../contracts/report-reference.js";
+import type { ArtifactFileReference, ArtifactTableReference, ArtifactValueReference, Reference, UnresolvedReference } from "../contracts/report-reference.js";
 import { checkValueAssertion } from "./assert-rules.js";
 import { fail, readArtifactTable, resolveCitation, resolveDerivation, selectRow } from "./reference-read.js";
-import {
-    fileTypeHoldsNoCell,
-    snapshotEntry,
-    snapshotRows,
-    type ReferenceResolver,
-    type ReportSnapshot,
-    type ResolvedValue,
-} from "./reference-resolver.js";
+import { fileTypeHoldsNoCell, snapshotEntry, snapshotRows, type ReferenceResolver, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
 function resolveArtifactValue(reference: ArtifactValueReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
     const artifact = snapshotEntry(snapshot, reference.path);

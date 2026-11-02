@@ -266,7 +266,9 @@ export type ReadBlockResult = { found: true; block: ReadableBlock } | { found: f
  * preview and the record read it themselves.
  */
 export type FinishToolResult =
-    { valid: true; warnings: ReportWarning[] } | { valid: false; gaps: FinishGap[]; warnings: ReportWarning[] } | { refused: SessionRefusal };
+    | { valid: true; warnings: ReportWarning[] }
+    | { valid: false; gaps: FinishGap[]; warnings: ReportWarning[] }
+    | { refused: SessionRefusal };
 
 /** The state of one report thread: the document under composition, and the frozen snapshot. */
 export type ReportSessionState = {
@@ -315,7 +317,10 @@ export type SessionStateLoad =
  * that an earlier run of the call landed, and it carries the stored result of that run.
  */
 export type SessionStatePersist =
-    { outcome: "persisted" } | { outcome: "conflict" } | { outcome: "replayed"; landed: unknown } | { outcome: "failed"; detail: string };
+    | { outcome: "persisted" }
+    | { outcome: "conflict" }
+    | { outcome: "replayed"; landed: unknown }
+    | { outcome: "failed"; detail: string };
 
 /**
  * The authoring call of a persist: the key of its durable step, and the result that it gives when the document lands.

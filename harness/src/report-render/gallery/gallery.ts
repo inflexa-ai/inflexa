@@ -799,7 +799,9 @@ export const GALLERY_DOCUMENT: ReportDocument = {
 
 /** One fault of the load: a table that did not read or parse, a reference that did not resolve, or a value of the wrong type. */
 export type GalleryFault =
-    { kind: "unreadable"; path: string; detail: string } | { kind: "unresolved"; failure: ResolutionFailure } | { kind: "mismatch"; mismatch: BridgeMismatch };
+    | { kind: "unreadable"; path: string; detail: string }
+    | { kind: "unresolved"; failure: ResolutionFailure }
+    | { kind: "mismatch"; mismatch: BridgeMismatch };
 
 /** The pinned evidence of the gallery and the render values that it resolves to. */
 export type GalleryLoad = {

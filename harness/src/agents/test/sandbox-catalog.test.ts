@@ -62,7 +62,9 @@ describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
         expect(drugLine).toContain("live lookups: [");
         expect(drugLine).toContain("ChEMBL");
         expect(drugLine).toContain("DGIdb, DrugBank, and PharmGKB");
-        expect(formatAgentCatalog([{ id: "a", capabilities: ["x"], suitableFor: ["y"], liveSources: [] }])).toBe("- **a**: capabilities: [x], suitable for: [y]");
+        expect(formatAgentCatalog([{ id: "a", capabilities: ["x"], suitableFor: ["y"], liveSources: [] }])).toBe(
+            "- **a**: capabilities: [x], suitable for: [y]",
+        );
     });
 });
 

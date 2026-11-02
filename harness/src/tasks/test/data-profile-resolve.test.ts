@@ -88,7 +88,6 @@ function submission(operations: ReadonlyArray<unknown>, over: Partial<ProfileSub
     };
 }
 
-
 /** The values split over the origin slot: one somatic and one germline group, with the reason of the test. */
 function valuesSplitSubmission(reason: string) {
     return submission(
@@ -132,11 +131,7 @@ describe("membership is computed per operation", () => {
     });
 
     it("split by value mapping resolves one group per mapped value, membership computed from the mapping", () => {
-        const resolution = resolveProfileSubmission(
-            valuesSplitSubmission("A downstream step consumes one origin or the other, never both."),
-            detected,
-            menu,
-        );
+        const resolution = resolveProfileSubmission(valuesSplitSubmission("A downstream step consumes one origin or the other, never both."), detected, menu);
 
         const somatic = presentFind(resolution.groups, (group) => group.name === "somatic calls");
         const germline = presentFind(resolution.groups, (group) => group.name === "germline calls");
@@ -706,11 +701,7 @@ describe("the recipe", () => {
     });
 
     it("records the value mapping a split resolved against", () => {
-        const resolution = resolveProfileSubmission(
-            valuesSplitSubmission("Different substrates."),
-            detected,
-            menu,
-        );
+        const resolution = resolveProfileSubmission(valuesSplitSubmission("Different substrates."), detected, menu);
         const split = presentFind(resolution.recipe, (step) => step.op === "split");
         expect(split.slotIndex).toBe(calls.slots.findIndex((slot) => slot.id === originSlot.id));
         expect(split.valueMapping).toEqual([

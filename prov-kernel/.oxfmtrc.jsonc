@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 160,
+  "tabWidth": 4,
+  "sortPackageJson": false,
+  // oxfmt reads .gitignore too, so dist and node_modules are absent here.
+  "ignorePatterns": [
+    // The golden test compares the serialized document with these exact bytes.
+    "src/__fixtures__/golden-document.json",
+  ],
+}

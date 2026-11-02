@@ -28,7 +28,6 @@ function steppedClock(): { readonly value: number; now: () => number; wait: (ms:
     };
 }
 
-
 const realFetch = globalThis.fetch;
 
 afterEach(() => {

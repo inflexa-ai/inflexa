@@ -204,9 +204,7 @@ const DatatypeScoreSchema = z.object({ id: z.string().optional(), score: z.numbe
 const scoresField = z.array(DatatypeScoreSchema).nullable().optional();
 
 /** The paged rows list of an association query: the API may omit or null the whole envelope. */
-const rowsEnvelope = <T extends z.ZodType>(
-    item: T,
-): z.ZodObject<{ rows: z.ZodOptional<z.ZodNullable<z.ZodArray<T>>> }> =>
+const rowsEnvelope = <T extends z.ZodType>(item: T): z.ZodObject<{ rows: z.ZodOptional<z.ZodNullable<z.ZodArray<T>>> }> =>
     z.object({ rows: z.array(item).nullable().optional() });
 
 export const TargetAssociationsDataSchema = z.object({

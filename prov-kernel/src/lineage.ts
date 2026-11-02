@@ -91,7 +91,13 @@ export type LineageAgentNode = {
 };
 
 export type LineageNode =
-    LineageAnalysisNode | LineageInputNode | LineageFileNode | LineageReportNode | LineageReportVersionNode | LineageActivityNode | LineageAgentNode;
+    | LineageAnalysisNode
+    | LineageInputNode
+    | LineageFileNode
+    | LineageReportNode
+    | LineageReportVersionNode
+    | LineageActivityNode
+    | LineageAgentNode;
 
 export type LineageEdgeKind = "used" | "generated" | "informed" | "derived" | "attributed" | "associated" | "invalidated";
 

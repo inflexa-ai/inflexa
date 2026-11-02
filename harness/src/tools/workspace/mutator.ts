@@ -291,7 +291,8 @@ export type ConfinedWriteOk = {
 
 /** A refused confined write: the status, and the reason when the status alone does not give it. */
 type ConfinedWriteRefusal =
-    { readonly status: Exclude<LandingStatus, "ok" | "read_only"> | "out_of_scope" } | { readonly status: "read_only"; readonly reason: string };
+    | { readonly status: Exclude<LandingStatus, "ok" | "read_only"> | "out_of_scope" }
+    | { readonly status: "read_only"; readonly reason: string };
 
 /**
  * The shared write gauntlet both realizations run: resolve + confine

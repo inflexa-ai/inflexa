@@ -66,7 +66,9 @@ export type ResolvedPath = { readonly kind: "ok"; readonly absolute: string; rea
  * guessing why the write failed. Both are data variants — never throws.
  */
 export type WriteResolvedPath =
-    { readonly kind: "ok"; readonly absolute: string; readonly relative: string } | { readonly kind: "out_of_scope" } | { readonly kind: "out_of_prefix" };
+    | { readonly kind: "ok"; readonly absolute: string; readonly relative: string }
+    | { readonly kind: "out_of_scope" }
+    | { readonly kind: "out_of_prefix" };
 
 /**
  * Resolve an agent-supplied path against the analysis tree under the
