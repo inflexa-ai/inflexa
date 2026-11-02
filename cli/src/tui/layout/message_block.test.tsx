@@ -232,7 +232,7 @@ describe("MessageBlock analogy report", () => {
             "Model predictive control",
             { width: 80, height: 12 },
         );
-        expect(frame).toContain(`Analogies ${GLYPHS.middot} 1 domain ${GLYPHS.middot} 1 with solutions`);
+        expect(frame).toContain(`Analogies ${GLYPHS.middot} 1 domain ${GLYPHS.middot} 1 analogy with solutions`);
         expect(frame).toContain("for: Noisy induction of a reporter");
         expect(frame).toContain(`control_theory ${GLYPHS.middot} Gene circuit as a feedback loop`);
         expect(frame).not.toContain("part:data-analogy-report");
