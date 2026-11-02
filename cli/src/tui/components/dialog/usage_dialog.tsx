@@ -234,7 +234,7 @@ export function UsageDialog(props: UsageDialogProps): JSX.Element {
 
     // Read once, in the body: this is a point-in-time view, so there is nothing to keep in sync and a
     // signal would only invite a re-read that could disagree with the headline already painted.
-    /* eslint-disable-next-line solid/reactivity -- seed-once by contract: the dialog is a point-in-time view, so `loadUsage` reads at open */
+    /* oxlint-disable-next-line solid/reactivity -- seed-once by contract: the dialog is a point-in-time view, so `loadUsage` reads at open */
     const snapshot = props.loadUsage().match(
         (s): SessionUsageSnapshot | null => s,
         (): SessionUsageSnapshot | null => null,

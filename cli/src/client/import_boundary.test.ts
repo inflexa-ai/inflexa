@@ -1,34 +1,10 @@
-import { ESLint } from "eslint";
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
 
-// The cut between a client and the local server is a `no-restricted-imports` rule in eslint.config.js. These
-// runs lint a snippet against the REAL flat config, untyped for the reason in agent_policy_tree.test.ts: the
-// rule is AST-only, and the type-aware program is fragile inside a loaded test process.
-const cliRoot = join(import.meta.dir, "../..");
+import { lintScratch, linesOf, OXLINT_SPAWN_TIMEOUT_MS, RESTRICTED_IMPORTS, RESTRICTED_SYNTAX, type Report, type Snippet } from "../test_support/oxlint.ts";
 
-function untypedEslint(): ESLint {
-    return new ESLint({
-        cwd: cliRoot,
-        overrideConfig: {
-            languageOptions: { parserOptions: { projectService: false, project: false } },
-            rules: {
-                "@typescript-eslint/no-floating-promises": "off",
-                "@typescript-eslint/no-misused-promises": "off",
-                "@typescript-eslint/switch-exhaustiveness-check": "off",
-                "neverthrow/must-use-result": "off",
-            },
-        },
-    });
-}
-
-/** The import specifiers of `specifiers` that the rule bans in a file at `filePath`. */
-async function banned(filePath: string, specifiers: readonly string[]): Promise<string[]> {
-    const text = specifiers.map((s, i) => `import * as m${i} from "${s}";\nvoid m${i};`).join("\n");
-    const [result] = await untypedEslint().lintText(text, { filePath: join(cliRoot, filePath) });
-    const lines = new Set((result?.messages ?? []).filter((m) => m.ruleId === "no-restricted-imports").map((m) => m.line));
-    return specifiers.filter((_, i) => lines.has(i * 2 + 1));
-}
+// The cut between a client and the local server is a set of `eslint-js/no-restricted-syntax` entries in
+// oxlint.config.ts. These runs lint snippets against the REAL config with the real `oxlint` binary: the bans are
+// source selectors, and the folder of a file decides which override applies to it.
 
 const SERVER_SIDE = [
     "../db/primary_query.ts",
@@ -51,27 +27,134 @@ const CLIENT_SAFE = [
     "../../modules/prov/verify_file.ts",
 ];
 
+/** One import statement for each specifier. Specifier `i` sits on line `2 * i + 1`. */
+function importsOf(specifiers: readonly string[]): string {
+    return specifiers.map((s, i) => `import * as m${i} from "${s}";\nvoid m${i};`).join("\n");
+}
+
+/** The other forms that name a module, one on each line. */
+const FORMS = [
+    { path: "../server/app.ts", text: 'export * from "../server/app.ts";' },
+    { path: "../db/primary_query.ts", text: 'export { x } from "../db/primary_query.ts";' },
+    { path: "../lib/bus.ts", text: 'export const lazyBus = () => import("../lib/bus.ts");' },
+    { path: "../modules/harness/runtime.ts", text: "export const lazyRuntime = () => import(`../modules/harness/runtime.ts`);" },
+];
+
+const CLIENT_SAFE_FORMS = [
+    { path: "../../modules/prov/verify_file.ts", text: 'export const lazyVerify = () => import("../../modules/prov/verify_file.ts");' },
+    { path: "../../modules/harness/chat_printer.ts", text: "export const lazyPrinter = () => import(`../../modules/harness/chat_printer.ts`);" },
+];
+
+const CASES = {
+    tuiServerSide: { scope: "src/tui", ext: "tsx", text: importsOf(SERVER_SIDE) },
+    clientServerSide: { scope: "src/client", ext: "ts", text: importsOf(SERVER_SIDE) },
+    tuiClientSafe: { scope: "src/tui", ext: "tsx", text: importsOf(CLIENT_SAFE) },
+    clientClientSafe: { scope: "src/client", ext: "ts", text: importsOf(CLIENT_SAFE) },
+    typeOnly: { scope: "src/tui", ext: "ts", text: 'import type { AgentName } from "../modules/harness/agent_switch.ts";\n' },
+    devChannel: { scope: "src/tui", ext: "ts", text: importsOf(["./dev/chat.ts"]) },
+    clientForms: { scope: "src/client", ext: "ts", text: FORMS.map((f) => f.text).join("\n") },
+    clientSafeForms: { scope: "src/client", ext: "ts", text: CLIENT_SAFE_FORMS.map((f) => f.text).join("\n") },
+    serverFolder: { scope: "src/server", ext: "ts", text: importsOf(SERVER_SIDE) },
+} satisfies Record<string, Snippet>;
+
+type CaseName = keyof typeof CASES;
+
+let lintOnce: Promise<Record<CaseName, Report[]>> | undefined;
+
+/** The reports of each case. One oxlint spawn serves the whole suite. */
+function reports(): Promise<Record<CaseName, Report[]>> {
+    lintOnce ??= (async () => {
+        // `Object.keys` types its result as `string[]`; the keys of `CASES` are exactly `CaseName`.
+        const names = Object.keys(CASES) as CaseName[];
+        const run = await lintScratch(names.map((name) => CASES[name]));
+        // `Object.fromEntries` types its result as a string-keyed record; it holds one entry for each of `names`.
+        return Object.fromEntries(names.map((name, i) => [name, run.snippets[i] ?? []])) as Record<CaseName, Report[]>;
+    })();
+    return lintOnce;
+}
+
+/** The specifiers of `specifiers` that `rule` reports in the case `name`. */
+async function banned(name: CaseName, specifiers: readonly string[], rule: string): Promise<string[]> {
+    const lines = new Set(linesOf((await reports())[name], rule));
+    return specifiers.filter((_, i) => lines.has(i * 2 + 1));
+}
+
+/** The paths of `forms` that `rule` reports in the case `name`. Form `i` sits on line `i + 1`. */
+async function bannedForms(name: CaseName, forms: readonly { path: string }[], rule: string): Promise<string[]> {
+    const lines = new Set(linesOf((await reports())[name], rule));
+    return forms.filter((_, i) => lines.has(i + 1)).map((f) => f.path);
+}
+
 describe("the client import boundary", () => {
-    test.each([["src/tui/probe.tsx"], ["src/client/probe.ts"]])("%s cannot import the server side", async (filePath) => {
-        expect(await banned(filePath, SERVER_SIDE)).toEqual(SERVER_SIDE);
-    });
+    test(
+        "a TUI file cannot import the server side",
+        async () => {
+            expect(await banned("tuiServerSide", SERVER_SIDE, RESTRICTED_SYNTAX)).toEqual(SERVER_SIDE);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
 
-    test.each([["src/tui/probe.tsx"], ["src/client/probe.ts"]])("%s can import the wire types and the pure helpers", async (filePath) => {
-        expect(await banned(filePath, CLIENT_SAFE)).toEqual([]);
-    });
+    test(
+        "a client file cannot import the server side",
+        async () => {
+            expect(await banned("clientServerSide", SERVER_SIDE, RESTRICTED_SYNTAX)).toEqual(SERVER_SIDE);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
 
-    test("a type-only import of a module is banned too: a client takes each wire type from src/api/", async () => {
-        const [result] = await untypedEslint().lintText('import type { AgentName } from "../modules/harness/agent_switch.ts";\n', {
-            filePath: join(cliRoot, "src/tui/probe.ts"),
-        });
-        expect(result?.messages.some((m) => m.ruleId === "no-restricted-imports")).toBe(true);
-    });
+    test(
+        "a TUI file can import the wire types and the pure helpers",
+        async () => {
+            expect(await banned("tuiClientSafe", CLIENT_SAFE, RESTRICTED_SYNTAX)).toEqual([]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
 
-    test("the client block keeps the dev-channel ban, which its own rule options replace", async () => {
-        expect(await banned("src/tui/probe.ts", ["./dev/chat.ts"])).toEqual(["./dev/chat.ts"]);
-    });
+    test(
+        "a client file can import the wire types and the pure helpers",
+        async () => {
+            expect(await banned("clientClientSafe", CLIENT_SAFE, RESTRICTED_SYNTAX)).toEqual([]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
 
-    test("the server side itself is outside the rule", async () => {
-        expect(await banned("src/server/probe.ts", SERVER_SIDE)).toEqual([]);
-    });
+    test(
+        "a client file cannot re-export the server side or import it lazily, with a string or a template literal",
+        async () => {
+            expect(await bannedForms("clientForms", FORMS, RESTRICTED_SYNTAX)).toEqual(FORMS.map((f) => f.path));
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
+
+    test(
+        "a client file can import a pure helper lazily, with a string or a template literal",
+        async () => {
+            expect(await bannedForms("clientSafeForms", CLIENT_SAFE_FORMS, RESTRICTED_SYNTAX)).toEqual([]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
+
+    test(
+        "a type-only import of a module is banned too: a client takes each wire type from src/api/",
+        async () => {
+            expect(linesOf((await reports()).typeOnly, RESTRICTED_SYNTAX)).toContain(1);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
+
+    test(
+        "a client file cannot import a dev-channel surface: the `src/**` import ban applies",
+        async () => {
+            expect(await banned("devChannel", ["./dev/chat.ts"], RESTRICTED_IMPORTS)).toEqual(["./dev/chat.ts"]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
+
+    test(
+        "the server side itself is outside the rule",
+        async () => {
+            expect(await banned("serverFolder", SERVER_SIDE, RESTRICTED_SYNTAX)).toEqual([]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
 });

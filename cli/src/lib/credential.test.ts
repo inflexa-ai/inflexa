@@ -8,7 +8,7 @@ import { createCredentialSource } from "./credential.ts";
 
 // The refreshing direct-mode credential source: env + command kinds, cache/refresh, and the two output
 // formats. The command kinds spawn a real `/bin/sh` (deterministic counter / JSON commands) so the
-// spawn+parse boundary is exercised end-to-end. This file drives process.env directly (eslint ignore) to
+// spawn+parse boundary is exercised end-to-end. This file drives process.env directly (the lint ban on `process.env` exempts this file) to
 // exercise the `env`-kind source, which reads the live environment through env.ts's seam.
 describe("createCredentialSource", () => {
     const scratch: string[] = [];

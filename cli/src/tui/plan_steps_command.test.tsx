@@ -14,7 +14,6 @@ const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
 
 /** The frames of one turn stream, as the client reads them off the server. */
 async function* framesOf(frames: readonly ChatFrame[]): AsyncGenerator<Result<ChatFrame, ClientError>> {
-    // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of `send`, which the rule cannot follow
     for (const frame of frames) yield ok(frame);
 }
 

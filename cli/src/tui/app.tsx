@@ -613,7 +613,7 @@ export function App(props: AppProps) {
     // once from props — App mounts a single time with fixed props — so the body-level reads are a
     // deliberate one-time seed, hence the scoped disable. The thread seeds `null`: it lives in
     // Postgres, so nothing can resolve one before boot reaches `ready` (watchOpenThread binds it there).
-    /* eslint-disable solid/reactivity -- seed-once: App mounts once with fixed props; the store is seeded from them and thereafter written only via openSession */
+    /* oxlint-disable solid/reactivity -- seed-once: App mounts once with fixed props; the store is seeded from them and thereafter written only via openSession */
     const workspace = createWorkspace({
         analysis: props.analysis,
         sessionId: null,
@@ -622,7 +622,7 @@ export function App(props: AppProps) {
         closeDialog: dialogClose,
         quit,
     });
-    /* eslint-enable solid/reactivity */
+    /* oxlint-enable solid/reactivity */
 
     // Auto-trigger the data profile at parity: fires once boot is `ready` and again on an
     // in-place analysis swap, fire-and-forget, mapping the outcome to a notice. An app-level reactive

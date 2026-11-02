@@ -72,10 +72,10 @@ export function ExportOptionsDialog(props: {
     };
 
     const [activeKey, setActiveKey] = createSignal(allKeys()[0] ?? "");
-    /* eslint-disable solid/reactivity -- seed-once: component mounts once with fixed props; items are read once to build the initial checked-state map */
+    /* oxlint-disable solid/reactivity -- seed-once: component mounts once with fixed props; items are read once to build the initial checked-state map */
     const initValues: Record<string, boolean> = {};
     for (const item of props.items) initValues[item.key] = item.defaultValue;
-    /* eslint-enable solid/reactivity */
+    /* oxlint-enable solid/reactivity */
     const [values, setValues] = createSignal<Record<string, boolean>>(initValues);
 
     // Renderable focus must track the visual active row: while the textarea keeps opentui focus,

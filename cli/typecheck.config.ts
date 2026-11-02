@@ -1,0 +1,22 @@
+import { typecheck } from "@inflexa-ai/typecheck";
+
+export default typecheck({
+    overrides: [
+        {
+            // A Result that flows into one of these calls IS consumed:
+            // - `fromCatalogStart` (src/server/routes/store.ts) takes the Result of a catalog
+            //   transfer start and `.match`es it into the wire view.
+            // - `readImageSbom` (src/modules/sbom/sbom.ts) takes the Result of the container
+            //   runtime and checks `isErr()` itself before it reads the runtime.
+            files: ["src/**"],
+            rules: {
+                "must-use-result": ["error", { consumers: ["fromCatalogStart", "readImageSbom"] }],
+            },
+        },
+        {
+            // The tests discard Results at many sites; #810 turns the rule on there with its fixes.
+            files: ["**/*.test.{ts,tsx}"],
+            rules: { "must-use-result": "off" },
+        },
+    ],
+});

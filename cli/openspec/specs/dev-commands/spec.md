@@ -65,8 +65,8 @@ dev commands on a shipped build for support/debugging.
 
 The build-mode signal SHALL be single-sourced from `INFLEXA_BUILD_CHANNEL`: `scripts/build.ts` SHALL
 `--define` `process.env.NODE_ENV` from that same channel value so bundled dependencies compile in the
-matching mode, and application code SHALL NOT read `process.env.NODE_ENV` as a product-mode signal (an
-ESLint rule forbids it, `env.ts` included) — the two signals cannot diverge because one is derived from
+matching mode, and application code SHALL NOT read `process.env.NODE_ENV` as a product-mode signal (a
+lint rule forbids it, `env.ts` included) — the two signals cannot diverge because one is derived from
 the other at the single build authority. Exactly one read is sanctioned, disabled inline in `env.ts`:
 the test-sandbox guard (see `test-harness`), which asks whether the process is a `bun test` run — a
 question the channel cannot answer, since a source run and a test run both leave it unset.
@@ -139,15 +139,16 @@ command action through the lazy `import()` that registration already uses. That 
 `devCommandsEnabled()`, so a release build never evaluates it. Each other file outside `dev/` MUST
 NOT import a path under it. That ban covers the static form and the dynamic form alike.
 
-A lint rule MUST enforce that direction for a static import, so the boundary fails a build rather
-than a review. The rule MUST exempt the files under `dev/`. It MUST NOT exempt the registration
-gate, because the crossings of the gate are dynamic and the rule does not read a dynamic import.
-Thus the gate keeps the guard against a static import. The rule MUST match the import string, not a
+A lint rule MUST enforce that direction for the static form and the dynamic form alike, so the
+boundary fails a build rather than a review. The rule MUST exempt the files under `dev/`. It MUST
+NOT exempt the registration gate as a file: the gate keeps the guard against a static import, the
+one form a release build would evaluate. The gate's lazy crossings are exempted one by one, each
+with an inline directive that carries its reason. The rule MUST match the import string, not a
 resolved path. A sibling reaches the directory as `./dev/<file>`, which a pattern anchored on the
 full module path never matches.
 
-A helper that both a product surface and a dev surface call MUST stay outside `dev/`, in
-the module that owns its subject. A shared helper MUST NOT move into `dev/` because a dev
+A helper that both a product surface and a dev surface call MUST stay outside `dev/`, in the
+module that owns its subject. A shared helper MUST NOT move into `dev/` because a dev
 surface calls it. A dev-only helper MUST NOT stay outside `dev/` when no product file calls
 it. When one file holds both kinds, that file MUST split on the channel line rather than
 move whole.
@@ -189,12 +190,18 @@ registration".
 - **THEN** `bun run lint` reports a `no-restricted-imports` error naming the boundary
 - **AND** the error fires for a sibling's `./dev/<file>` form and for a deep `../modules/harness/dev/<file>` form alike
 
+#### Scenario: The lint rule refuses a product file's dynamic import
+
+- **GIVEN** a file under `src/` that is not in `dev/`
+- **WHEN** it calls `import()` with a path under `src/modules/harness/dev/` and carries no inline directive for that call
+- **THEN** `bun run lint` reports a `no-restricted-imports` error naming the boundary
+
 #### Scenario: The lint rule leaves the sanctioned traffic alone
 
 - **GIVEN** a file under `src/modules/harness/dev/` that imports another file in that directory
 - **WHEN** `bun run lint` runs
 - **THEN** it reports no error for that import
-- **AND** the registration gate's three lazy imports report none either
+- **AND** each lazy `import()` of the registration gate reports none either, because each carries an inline directive with its reason
 
 #### Scenario: A mixed file splits on the channel line
 

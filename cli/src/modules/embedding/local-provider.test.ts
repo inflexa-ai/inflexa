@@ -554,7 +554,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
     test("loopback embeds succeed despite a poisoned HTTP_PROXY (launch applies a NO_PROXY bypass)", async () => {
         const key = "test-key-proxy";
         const stub = startStub(key);
-        /* eslint-disable no-restricted-properties -- the ambient proxy env IS the scenario under test;
+        /* oxlint-disable no-restricted-properties -- the ambient proxy env IS the scenario under test;
            the frozen `env` object deliberately does not expose proxy variables. */
         const saved = {
             HTTP_PROXY: process.env.HTTP_PROXY,
@@ -597,13 +597,13 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             process.env.NO_PROXY = saved.NO_PROXY ?? "";
             process.env.no_proxy = saved.no_proxy ?? "";
         }
-        /* eslint-enable no-restricted-properties */
+        /* oxlint-enable no-restricted-properties */
     });
 
     test("a single-spelling NO_PROXY bypass is unioned into both spellings at launch", async () => {
         const key = "test-key-union";
         const stub = startStub(key);
-        /* eslint-disable no-restricted-properties -- asserting the launch-time proxy-env mutation directly. */
+        /* oxlint-disable no-restricted-properties -- asserting the launch-time proxy-env mutation directly. */
         const saved = { NO_PROXY: process.env.NO_PROXY, no_proxy: process.env.no_proxy };
         // The user set the bypass in ONLY the lowercase spelling; uppercase is empty.
         process.env.NO_PROXY = "";
@@ -628,7 +628,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             process.env.NO_PROXY = saved.NO_PROXY ?? "";
             process.env.no_proxy = saved.no_proxy ?? "";
         }
-        /* eslint-enable no-restricted-properties */
+        /* oxlint-enable no-restricted-properties */
     });
 
     // The failing embed spends the retry envelope of the harness embedding client: two
@@ -639,7 +639,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
     test("with the loopback bypass suppressed, a loopback embed behind a poisoned proxy fails (bypass is load-bearing)", async () => {
         const key = "test-key-neg-proxy";
         const stub = startStub(key);
-        /* eslint-disable no-restricted-properties -- the ambient proxy env IS the scenario under test. */
+        /* oxlint-disable no-restricted-properties -- the ambient proxy env IS the scenario under test. */
         const saved = {
             HTTP_PROXY: process.env.HTTP_PROXY,
             http_proxy: process.env.http_proxy,
@@ -672,7 +672,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             process.env.NO_PROXY = saved.NO_PROXY ?? "";
             process.env.no_proxy = saved.no_proxy ?? "";
         }
-        /* eslint-enable no-restricted-properties */
+        /* oxlint-enable no-restricted-properties */
     }, 15_000);
 
     test("stopLocalSidecar terminates the running sidecar (shutdown reap)", async () => {

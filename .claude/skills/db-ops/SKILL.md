@@ -143,8 +143,8 @@ it. Don't classify by hand; just return the typed callback result.
 
 ## Consuming Results
 
-Always consume with `.match()` — the `neverthrow/must-use-result` ESLint rule enforces handling, and
-`isErr()`/`.value` is not recognized as consumption.
+Always consume with `.match()` — the `must-use-result` rule of the type check command (`bun run typecheck`)
+enforces handling. The rule also counts an `isErr()` check and a `.value` read as handled.
 
 ```ts
 findProjectByRef(ref).match(

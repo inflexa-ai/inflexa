@@ -33,8 +33,8 @@ this repository, and leave the coordination to the user.
 ```bash
 bun install          # Install dependencies
 bun run dev          # Run the CLI (launches the TUI by default)
-bun run typecheck    # tsc --noEmit
-bun run lint         # Run ESLint
+bun run typecheck    # inflexa-typecheck (typecheck.config.ts)
+bun run lint         # Run oxlint (oxlint.config.ts)
 bun run format       # Format all of src/
 bun run docs:gen     # Generate the CLI reference package (dist-docs/, untracked)
 bun run test         # bun test — the whole suite in one process, exactly what CI runs
@@ -104,8 +104,10 @@ it classifies each effect class independently.
 
 **`Result<T, E>` from `neverthrow` is the default error channel.** Each function
 that can fail gives a `Result` (sync) or a `ResultAsync` (async). The
-`must-use-result` rule of `eslint-plugin-neverthrow` is set to `error`, thus a
-`Result` that nothing consumes is a build failure.
+`must-use-result` rule of the type check command `inflexa-typecheck` is set to
+`error` for `src/`, thus a `Result` that nothing consumes is a build failure.
+`typecheck.config.ts` configures the rule. The rule is off in the test files
+until #810 fixes their sites.
 
 ### The rule
 
@@ -186,7 +188,7 @@ Document the decisions that you made.
 - Record which downsides or trade-offs you accepted, and why. Examples are the
   reason for an `any` or an `as`, the reason for a disabled lint rule, and the
   reason for a library.
-- Each `// eslint-disable`, `@ts-expect-error`, `@ts-ignore`, and type assertion
+- Each `// oxlint-disable`, `// typecheck-disable`, `@ts-expect-error`, `@ts-ignore`, and type assertion
   (`as X`, `!`) must carry a comment that explains why it is safe and necessary.
   These are the TypeScript equivalent of an escape hatch, and they must never be
   silent.
@@ -612,8 +614,9 @@ wire types of the two sides. Refer to [The local server](#the-local-server).
   to each entity shape and `lib/bus.ts` refers to the events. To home them in a
   module would invert the dependency from infra to feature.
 
-**The client import rule.** A `no-restricted-imports` rule in `eslint.config.js`
-applies it to each static import of a file in `src/tui/` or `src/client/`.
+**The client import rule.** Entries of `eslint-js/no-restricted-syntax` in
+`oxlint.config.ts` apply it to each file in `src/tui/` or `src/client/`. The
+entries cover a static import, a re-export, and a dynamic `import()`.
 `src/client/import_boundary.test.ts` pins the rule.
 
 - A client must not import `src/db/`, `src/server/`, `lib/bus.ts`, the harness
@@ -655,11 +658,11 @@ The directory states the same fact in the tree, where a reader meets it first.
 - **The dependency runs one way.** A file under `dev/` can import product code,
   because a dev surface is a consumer of the product. A product file must never
   import `dev/`. A `no-restricted-imports` rule enforces this for a static
-  import. It exempts the files under `dev/`, and nothing else. It does NOT see a
-  dynamic `import()`, so that one form stays a review item. As a result the
-  registration gate in `src/cli/index.ts` needs no exemption. Its lazy imports of
-  `dev/` pass on that gap. Thus the gate keeps the guard against a static
-  import — refer to the rule's own comment for the reason.
+  import, a re-export, and a dynamic `import()`. It exempts the files under
+  `dev/`, and nothing else. The registration gate in `src/cli/index.ts` carries
+  an inline `oxlint-disable-next-line` directive at each of its lazy imports of
+  `dev/`. Thus the gate keeps the guard against a static import — refer to the
+  rule's own comment for the reason.
 - **A shared helper stays outside.** If a product surface and a dev surface both
   call it, the helper belongs in the module that owns its subject, not in `dev/`.
   `planToDag` (`modules/harness/plan_dag.ts`) is the example: the plan card of the
@@ -817,7 +820,7 @@ single source of truth.
   intents:
   - **Seed-once** (the value is locally-owned mutable state, and the prop is only
     the initial seed): keep `createSignal(props.x)` and add a scoped
-    `eslint-disable solid/reactivity` with a `--` reason. The reason must state
+    `oxlint-disable solid/reactivity` with a `--` reason. The reason must state
     *why* a one-time read is safe, for example that the component mounts one time
     with fixed props. This is the common case in our single-mount screens: the
     `currentSessionId`, `currentWorkingDir`, and `currentAnalysis` of `app.tsx` are
@@ -829,7 +832,7 @@ single source of truth.
   - Do NOT "fix" the warning by a destructure (forbidden above), and do not store a
     thunk (`createSignal(() => props.x)` stores a function, not the value). When
     the warnings of a whole file are the same false positive, a file-level
-    `eslint-disable solid/reactivity` with a `--` reason is cleaner than per-line
+    `oxlint-disable solid/reactivity` with a `--` reason is cleaner than per-line
     disables. An example is the reads of a stable `ctx` prop, inside the opentui
     `onSelect` and `onSubmit` handlers that the rule does not recognize
     (`commands.tsx`).
@@ -961,7 +964,9 @@ Each non-ASCII glyph that the TUI prints comes from `GLYPHS` in
 inline a glyph literal in `src/tui/`.** A key is named by shape, because one glyph
 serves many roles. There is no emoji and there is no Nerd-Font glyph, because they
 break the fixed-width gutter. The exempt items are the ASCII `>` and `<` markers,
-and an em dash in prose.
+and in prose the em dash, the ellipsis, the middle dot, and the right arrow. An
+entry of `eslint-js/no-restricted-syntax` in `oxlint.config.ts` enforces the ban in
+the non-test files of `src/tui/`.
 
 ### Time rendering
 

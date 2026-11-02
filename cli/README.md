@@ -37,8 +37,8 @@ On macOS/Linux `dev:install` symlinks into `dist/`, so every `bun run build` is 
 | `bun run build` | Compile the standalone binary for this platform |
 | `bun run build:all` | Compile for every target platform |
 | `bun run dev:install` | Put the built binary on `PATH` as `inflexa` |
-| `bun run typecheck` | `tsc --noEmit` |
-| `bun run lint` | ESLint |
+| `bun run typecheck` | `inflexa-typecheck` |
+| `bun run lint` | oxlint |
 | `bun run format` | Prettier over `src/` |
 | `bun test` | Run tests |
 | `bun run wipe` | Wipe local state (database, config, workspaces) |

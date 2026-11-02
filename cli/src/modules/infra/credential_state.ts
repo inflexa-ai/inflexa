@@ -99,11 +99,11 @@ export async function readCredentialVerdict(): Promise<Result<CredentialVerdict,
     try {
         const proc = Bun.spawn({
             cmd: [rt.value.bin, "exec", "-e", "CPA_MANAGEMENT_KEY", PROXY_CONTAINER_NAME, "bash", "-c", script],
-            /* eslint-disable no-restricted-properties -- the docker client wants the parent's PATH, HOME and
+            /* oxlint-disable no-restricted-properties -- the docker client wants the parent's PATH, HOME and
                DOCKER_* to reach the engine. The key goes on the child's env object only, so it stays off the
                host's `ps` listing and out of this process's env. This is a child env write, not a config read. */
             env: { ...process.env, CPA_MANAGEMENT_KEY: key },
-            /* eslint-enable no-restricted-properties */
+            /* oxlint-enable no-restricted-properties */
             stdin: "ignore",
             stdout: "pipe",
             stderr: "ignore",

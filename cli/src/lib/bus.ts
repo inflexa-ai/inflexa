@@ -12,13 +12,13 @@ class BusEmitter extends EventEmitter<{
             ? { inflexa: [BusEvent] }[E]
             : E extends keyof EventEmitter.EventEmitterEventMap
               ? EventEmitter.EventEmitterEventMap[E]
-              : // eslint-disable-next-line @typescript-eslint/no-explicit-any -- stdlib signature we are overriding
+              : // oxlint-disable-next-line typescript/no-explicit-any -- stdlib signature we are overriding
                 any[]
     ): boolean {
         if (eventName === "inflexa" && args && args[0] && typeof args[0] === "object") {
             args[0].__infId = args[0].__infId ?? randomUUIDv7();
         }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- args is BusEvent on input but StampedEvent after __infId mutation
+        // oxlint-disable-next-line typescript/no-explicit-any -- args is BusEvent on input but StampedEvent after __infId mutation
         return super.emit(eventName, ...(args as any));
     }
 }

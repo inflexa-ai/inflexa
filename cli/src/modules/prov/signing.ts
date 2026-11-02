@@ -18,7 +18,7 @@ import { getLogger } from "../../lib/log.ts";
 
 const log = getLogger("prov:signing");
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- WebCrypto's JsonWebKey is a loose object; we serialize it as-is without inspecting fields.
+// oxlint-disable-next-line typescript/no-explicit-any -- WebCrypto's JsonWebKey is a loose object; we serialize it as-is without inspecting fields.
 type JWK = any;
 
 /** The on-disk JWK keypair shape. */

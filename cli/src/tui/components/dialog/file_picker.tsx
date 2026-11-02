@@ -279,7 +279,7 @@ function breadcrumbSegments(dir: string): string[] {
 }
 
 export function FilePicker(props: FilePickerProps): JSX.Element {
-    /* eslint-disable solid/reactivity -- seed-once: the picker mounts once with fixed props */
+    /* oxlint-disable solid/reactivity -- seed-once: the picker mounts once with fixed props */
     // The folder that the user asked for. The listing makes it canonical, and `cwd` is the folder on screen.
     const [target, setTarget] = createSignal(props.rootPath);
     const [root, setRoot] = createSignal(props.rootPath);
@@ -297,7 +297,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
         setSelected(new Set(seeds));
         setSeeded(true);
     });
-    /* eslint-enable solid/reactivity */
+    /* oxlint-enable solid/reactivity */
     const [inputFocused, setInputFocused] = createSignal(false);
     const [hideHidden, setHideHidden] = createSignal(true);
     const [review, setReview] = createSignal(false);

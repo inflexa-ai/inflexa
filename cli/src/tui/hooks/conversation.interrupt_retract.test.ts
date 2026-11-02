@@ -68,7 +68,6 @@ function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () 
         for (;;) {
             const item = waiting.shift();
             if (item !== undefined) {
-                // eslint-disable-next-line neverthrow/must-use-result -- a yielded Result is consumed by the `for await` of the hook, which the rule cannot follow
                 yield ok(item.frame);
                 item.applied();
                 continue;

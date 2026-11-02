@@ -381,6 +381,7 @@ export function buildProgram(): Command {
                     await runStatus(await devAnalysis(analysis, "No analysis here. Run `inflexa` to start one, add inputs, then `inflexa run`."));
                     return;
                 }
+                // oxlint-disable-next-line no-restricted-imports -- the registration gate is the one sanctioned crossing into dev/ (dev-commands spec), and `devCommandsEnabled()` keeps the lazy import out of a release build
                 const { runAnalysis } = await import("../modules/harness/dev/run.ts");
                 await runAnalysis({ analysis }, options.plan);
             },
@@ -402,6 +403,7 @@ export function buildProgram(): Command {
                 reason: "`inflexa chat` opens an interactive prompt loop, which cannot run as a captured subprocess. It is not available to you.",
             },
             async (analysis: string | undefined, options: { thread?: string }) => {
+                // oxlint-disable-next-line no-restricted-imports -- the registration gate is the one sanctioned crossing into dev/ (dev-commands spec), and `devCommandsEnabled()` keeps the lazy import out of a release build
                 const { runChat } = await import("../modules/harness/dev/chat.ts");
                 await runChat({ analysis }, options.thread);
             },

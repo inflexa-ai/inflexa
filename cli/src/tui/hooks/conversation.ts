@@ -1229,6 +1229,7 @@ async function driveTurn(
                 continue;
             }
             const frame = item.value;
+            // oxlint-disable-next-line no-useless-assignment -- `terminal` is read after the loop on every path that leaves it; only the path that reads the stream again discards it, on purpose
             if (frame.type === "finish" || frame.type === "error") terminal = frame;
             else turn.onFrame(frame);
         }
