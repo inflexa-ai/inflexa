@@ -4,22 +4,12 @@ import type { ArtifactValueReference } from "../../contracts/report-reference.js
 import type { DraftDocument } from "../draft.js";
 import { finishDraft } from "../draft-finish.js";
 import type { ReportSnapshot } from "../reference-resolver.js";
-
-const OUTPUT_PATH = "runs/run-1/step-a/output/de.csv";
-const OUTPUT_HASH = `sha256:${"a".repeat(64)}`;
-const ABSENT_PATH = "runs/run-2/step-a/output/later.csv";
-const ABSENT_HASH = `sha256:${"3".repeat(64)}`;
-
-const snapshot: ReportSnapshot = {
-    artifacts: {
-        [OUTPUT_PATH]: { hash: OUTPUT_HASH, fileType: "output" },
-    },
-};
+import { ABSENT_HASH, ABSENT_PATH, OUTPUT_HASH, OUTPUT_PATH, pinnedSnapshot } from "./__fixtures__/pinned-output.js";
 
 /** The content hash that each derived table of these tests carries. */
 const DERIVED_HASH = `sha256:${"b".repeat(64)}`;
 
-/** A snapshot that holds the pinned output and one derived table, as the served membership gives it. */
+/** A pinnedSnapshot that holds the pinned output and one derived table, as the served membership gives it. */
 function derivedSnapshot(derived: string): ReportSnapshot {
     return {
         artifacts: {
@@ -44,7 +34,7 @@ describe("finishDraft", () => {
             title: "Report",
             sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [] }],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
         expect(result.valid).toBe(false);
         if (!result.valid) {
             expect(result.gaps.some((gap) => gap.kind === "schema")).toBe(true);
@@ -54,7 +44,7 @@ describe("finishDraft", () => {
 
     it("reports an empty draft as a schema gap", () => {
         const draft: DraftDocument = { title: "Report", sections: [] };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
         expect(result.valid).toBe(false);
         if (!result.valid) {
             expect(result.gaps.some((gap) => gap.kind === "schema")).toBe(true);
@@ -76,7 +66,7 @@ describe("finishDraft", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
         expect(result.valid).toBe(false);
         if (!result.valid) {
             const gap = result.gaps.find((entry) => entry.kind === "duplicate-id");
@@ -87,7 +77,7 @@ describe("finishDraft", () => {
         }
     });
 
-    it("reports a reference outside the snapshot as an unresolved-reference gap with the block id", () => {
+    it("reports a reference outside the pinnedSnapshot as an unresolved-reference gap with the block id", () => {
         const draft: DraftDocument = {
             title: "Report",
             sections: [
@@ -99,7 +89,7 @@ describe("finishDraft", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
         expect(result.valid).toBe(false);
         if (!result.valid) {
             const gap = result.gaps.find((entry) => entry.kind === "unresolved-reference");
@@ -111,7 +101,7 @@ describe("finishDraft", () => {
         }
     });
 
-    it("names the slot of a chart statistic and a chart track that the snapshot does not hold", () => {
+    it("names the slot of a chart statistic and a chart track that the pinnedSnapshot does not hold", () => {
         const draft: DraftDocument = {
             title: "Report",
             sections: [
@@ -133,7 +123,7 @@ describe("finishDraft", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
         expect(result.valid).toBe(false);
         const gaps = result.valid ? [] : result.gaps.flatMap((gap) => (gap.kind === "unresolved-reference" ? [gap] : []));
         expect(gaps.map((gap) => [gap.blockId, gap.slot, gap.failure.reason])).toEqual([
@@ -142,7 +132,7 @@ describe("finishDraft", () => {
         ]);
     });
 
-    it("names the slot of a heatmap tree that the snapshot does not hold", () => {
+    it("names the slot of a heatmap tree that the pinnedSnapshot does not hold", () => {
         const draft: DraftDocument = {
             title: "Report",
             sections: [
@@ -170,7 +160,7 @@ describe("finishDraft", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
         const gaps = result.valid ? [] : result.gaps.flatMap((gap) => (gap.kind === "unresolved-reference" ? [gap] : []));
         expect(gaps.map((gap) => [gap.blockId, gap.slot, gap.failure.reason])).toEqual([["hm1", "tree:y", "artifact-missing"]]);
     });
@@ -191,7 +181,7 @@ describe("finishDraft", () => {
             ],
         };
         const original = structuredClone(draft);
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
         expect(result.valid).toBe(true);
         if (result.valid) {
             expect(result.document.title).toBe("Report");
@@ -214,7 +204,7 @@ describe("the finish warnings", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
 
         // The numeral has no metric block behind it, and nothing else in the finish catches that.
         expect(result.warnings).toEqual([{ blockId: "t1", kind: "free-numeral", detail: "3.4" }]);
@@ -233,7 +223,7 @@ describe("the finish warnings", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
 
         // The page prints `4.3e-5`, thus the sentence and the cell would read differently.
         expect(result.warnings).toContainEqual({ blockId: "t1", kind: "exponent-form", detail: "4.3e-05" });
@@ -253,7 +243,7 @@ describe("the finish warnings", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
 
         expect(result.warnings).toContainEqual({ blockId: "t1", kind: "exponent-form", detail: "1e-06" });
     });
@@ -270,7 +260,7 @@ describe("the finish warnings", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
 
         expect(result.warnings).toContainEqual({ blockId: "c1", kind: "exponent-form", detail: "2.7e+8" });
     });
@@ -287,7 +277,7 @@ describe("the finish warnings", () => {
                 },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
 
         expect(result.warnings.filter((warning) => warning.kind === "exponent-form")).toEqual([]);
     });
@@ -300,7 +290,7 @@ describe("the finish warnings", () => {
                 { kind: "section", id: "s2", title: "Empty", blocks: [] },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
 
         // The gaps decide the outcome, and the warning names the block in either case.
         expect(result.valid).toBe(false);
@@ -312,7 +302,7 @@ describe("the finish warnings", () => {
             title: "Report",
             sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "TP53 and CD8 and IL6." } }] }],
         };
-        expect(finishDraft(draft, snapshot).warnings).toEqual([]);
+        expect(finishDraft(draft, pinnedSnapshot).warnings).toEqual([]);
     });
 
     it("carries the warnings beside the gaps of a draft that does not finish", () => {
@@ -323,7 +313,7 @@ describe("the finish warnings", () => {
                 { kind: "section", id: "s2", title: "Empty", blocks: [] },
             ],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
 
         expect(result.valid).toBe(false);
         expect(result.warnings).toEqual([{ blockId: "t1", kind: "free-numeral", detail: "12" }]);
@@ -423,8 +413,8 @@ describe("the finish warnings", () => {
             title: "Report",
             sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "Body." } }] }],
         };
-        expect(finishDraft(draft, snapshot).warnings).toEqual([]);
-        expect(finishDraft(draft, snapshot, []).warnings).toEqual([]);
+        expect(finishDraft(draft, pinnedSnapshot).warnings).toEqual([]);
+        expect(finishDraft(draft, pinnedSnapshot, []).warnings).toEqual([]);
     });
 
     it("reports an empty title as a schema gap", () => {
@@ -432,7 +422,7 @@ describe("the finish warnings", () => {
             title: "",
             sections: [{ kind: "section", id: "s1", title: "Intro", blocks: [{ kind: "text", id: "t1", content: { prose: "Body." } }] }],
         };
-        const result = finishDraft(draft, snapshot);
+        const result = finishDraft(draft, pinnedSnapshot);
 
         expect(result.valid).toBe(false);
         if (!result.valid) {

@@ -156,7 +156,23 @@ function ctxWithEmitted(threadId: string): { ctx: ToolContext; emitted: unknown[
     return { ctx: { ...ctx, session: { ...ctx.session, scope } }, emitted };
 }
 
-/** A tool context whose scope names a report thread. */
+/** The tool over one seeded session: the in-memory gateway, the fixture resolver, and the given workspace root. */
+function makePreviewTool(
+    root: string,
+    seed: { document: DraftDocument; snapshot: ReportSnapshot },
+    derivations?: DerivationRecord[],
+): { gateway: ReturnType<typeof makeFakeGateway>; tool: ReturnType<typeof createPreviewReportTool> } {
+    const gateway = makeFakeGateway();
+    gateway.seed("t1", seed);
+    if (derivations !== undefined) gateway.seedDerivations("t1", derivations);
+    const tool = createPreviewReportTool({
+        gateway,
+        makeResolver: () => Promise.resolve(createFixtureResolver()),
+        resolveWorkspaceRoot: () => Promise.resolve(root),
+    });
+    return { gateway, tool };
+}
+
 function ctxForThread(threadId: string): ToolContext {
     return ctxWithEmitted(threadId).ctx;
 }
@@ -239,13 +255,7 @@ describe("the gap return", () => {
 describe("the pass path", () => {
     it("renders the page to disk, and the result carries its path", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: metricDoc(), snapshot: metricSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -284,13 +294,7 @@ describe("the pass path", () => {
 
     it("stages every manifest asset beside the page", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: metricDoc(), snapshot: metricSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -305,13 +309,7 @@ describe("the pass path", () => {
 
     it("groups each manifest static under the deps directory, and keeps the report-side files at the root", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: metricDoc(), snapshot: metricSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -350,13 +348,7 @@ describe("the pass path", () => {
 
     it("emits one data-report-rendered part when the page lands", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: metricDoc(), snapshot: metricSnapshot });
         const { ctx, emitted } = ctxWithEmitted("t1");
 
         const result = (await tool.execute({}, ctx))._unsafeUnwrap();
@@ -373,13 +365,7 @@ describe("the pass path", () => {
 
     it("gives a rerun of the call the same part id", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: metricDoc(), snapshot: metricSnapshot });
         const { ctx, emitted } = ctxWithEmitted("t1");
 
         (await tool.execute({}, ctx))._unsafeUnwrap();
@@ -451,14 +437,7 @@ describe("the derivation records of the session", () => {
         // The card of a table offers its pinned bytes as a download, thus the stage copies the derived file.
         await mkdir(join(root, "report-sessions", "t1", "derived"), { recursive: true });
         await writeFile(join(root, DERIVED), "gene,padj\nTP53,0.004\n", "utf8");
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: derivedDoc(), snapshot: derivedSnapshot });
-        gateway.seedDerivations("t1", [record]);
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: derivedDoc(), snapshot: derivedSnapshot }, [record]);
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -477,14 +456,7 @@ describe("the derivation records of the session", () => {
         const root = await makeRoot();
         await mkdir(join(root, "report-sessions", "t1", "derived"), { recursive: true });
         await writeFile(join(root, DERIVED), "gene,padj\nTP53,0.004\n", "utf8");
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: derivedDoc(), snapshot: derivedSnapshot });
-        gateway.seedDerivations("t1", [record]);
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: derivedDoc(), snapshot: derivedSnapshot }, [record]);
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -507,14 +479,7 @@ describe("the derivation records of the session", () => {
         const root = await makeRoot();
         await mkdir(join(root, "report-sessions", "t1", "derived"), { recursive: true });
         await writeFile(join(root, DERIVED), "gene,padj\nTP53,0.004\n", "utf8");
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: derivedDoc(), snapshot: derivedSnapshot });
-        gateway.seedDerivations("t1", [record]);
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { gateway, tool } = makePreviewTool(root, { document: derivedDoc(), snapshot: derivedSnapshot }, [record]);
         const assetsDir = join(root, "report-sessions", "t1", "assets");
         const script = derivationScriptName(record.scriptHash);
 
@@ -539,13 +504,7 @@ describe("the derivation records of the session", () => {
 
     it("renders no chain line for a session that derived nothing", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: metricDoc(), snapshot: metricSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -560,14 +519,8 @@ describe("the derivation records of the session", () => {
 describe("the rendered stamp", () => {
     it("stamps the hash of the draft that rendered", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
         const draft = metricDoc();
-        gateway.seed("t1", { document: draft, snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { gateway, tool } = makePreviewTool(root, { document: draft, snapshot: metricSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -671,13 +624,7 @@ describe("the staged table data", () => {
     it("stages the data asset and the raw sidecar, and the page references both", async () => {
         const root = await makeRoot();
         await seedTable(root);
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: tableDoc(), snapshot: tableSnapshot() });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: tableDoc(), snapshot: tableSnapshot() });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -992,13 +939,7 @@ describe("the track of a chart", () => {
 
     it("resolves the track through the fixture resolver, and the page draws its domains under the axis", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: trackDoc(), snapshot: trackSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: trackDoc(), snapshot: trackSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -1089,13 +1030,7 @@ describe("the trees of a heatmap", () => {
 
     it("names the block and the slot of a tree column that the tree table does not hold, and no page lands", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: treeDoc("merge_height"), snapshot: treeSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: treeDoc("merge_height"), snapshot: treeSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -1111,13 +1046,7 @@ describe("the trees of a heatmap", () => {
 
     it("resolves each tree through the fixture resolver, and the page draws the matrix in the leaf order with a dendrogram on each axis", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: treeDoc(), snapshot: treeSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: treeDoc(), snapshot: treeSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -1204,13 +1133,7 @@ describe("the result detail", () => {
 
     it("names the page path of a render", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: metricDoc(), snapshot: metricSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -1375,13 +1298,7 @@ describe("the hosted view", () => {
 
     it("carries no access field when the composition binds no publisher", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
-        gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { tool } = makePreviewTool(root, { document: metricDoc(), snapshot: metricSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 
@@ -1471,14 +1388,8 @@ describe("the report observation", () => {
 
     it("renders the same way when the composition binds no seam", async () => {
         const root = await makeRoot();
-        const gateway = makeFakeGateway();
         const draft = metricDoc();
-        gateway.seed("t1", { document: draft, snapshot: metricSnapshot });
-        const tool = createPreviewReportTool({
-            gateway,
-            makeResolver: () => Promise.resolve(createFixtureResolver()),
-            resolveWorkspaceRoot: () => Promise.resolve(root),
-        });
+        const { gateway, tool } = makePreviewTool(root, { document: draft, snapshot: metricSnapshot });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
 

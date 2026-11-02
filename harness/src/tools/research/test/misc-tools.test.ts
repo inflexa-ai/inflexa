@@ -12,6 +12,23 @@ import { resolveLibraryIdTool } from "../context7-docs.js";
 import { createInspectRunTool, type InspectRunQuerier } from "../inspect-run.js";
 import { presentAt } from "../../../lib/present.js";
 
+/** A fake inspect clock: it starts at zero, and every wait adds the asked milliseconds without delay. */
+function steppedClock(): { readonly value: number; now: () => number; wait: (ms: number) => Promise<void> } {
+    const state = { value: 0 };
+    return {
+        get value() {
+            return state.value;
+        },
+        now: () => state.value,
+        wait: (ms) => {
+            state.value += ms;
+
+            return Promise.resolve();
+        },
+    };
+}
+
+
 const realFetch = globalThis.fetch;
 
 afterEach(() => {
@@ -332,7 +349,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
 
     it("ends a wait when a workflow of the running run pauses", async () => {
         let pauseReads = 0;
-        let now = 0;
+        const clock = steppedClock();
         const pool: InspectRunQuerier = {
             query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
@@ -348,19 +365,12 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const { ctx } = makeToolContext();
 
         const result = (
-            await createInspectRunTool(pool, {
-                now: () => now,
-                wait: (ms) => {
-                    now += ms;
-
-                    return Promise.resolve();
-                },
-            }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
+            await createInspectRunTool(pool, { now: clock.now, wait: clock.wait }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
         )._unsafeUnwrap();
 
         expect(result).toMatchObject({ inspectionState: "paused", wait: { requestedSeconds: 30, cutoffReached: false } });
         expect(pauseReads).toBe(2);
-        expect(now).toBeLessThan(30_000);
+        expect(clock.value).toBeLessThan(30_000);
     });
 
     it("reports a missing run as an explicit success state", async () => {
@@ -373,7 +383,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
     it("waits until a running run becomes terminal", async () => {
         const rows = [runRow({ status: "running", completed_at: null }), runRow({ status: "completed" })];
         let reads = 0;
-        let now = 0;
+        const clock = steppedClock();
         const pool: InspectRunQuerier = {
             query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
@@ -385,14 +395,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const { ctx } = makeToolContext();
 
         const result = (
-            await createInspectRunTool(pool, {
-                now: () => now,
-                wait: (ms) => {
-                    now += ms;
-
-                    return Promise.resolve();
-                },
-            }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
+            await createInspectRunTool(pool, { now: clock.now, wait: clock.wait }).execute({ runId: "run-1", waitForTerminalSeconds: 30 }, ctx)
         )._unsafeUnwrap();
 
         expect(result).toMatchObject({
@@ -403,19 +406,12 @@ describe("inspectRun (dependency-bearing factory)", () => {
     });
 
     it("returns in progress when the bounded wait reaches its cutoff", async () => {
-        let now = 0;
+        const clock = steppedClock();
         const pool = poolForRunDetail(runRow({ status: "running", completed_at: null }), []);
         const { ctx } = makeToolContext();
 
         const result = (
-            await createInspectRunTool(pool, {
-                now: () => now,
-                wait: (ms) => {
-                    now += ms;
-
-                    return Promise.resolve();
-                },
-            }).execute({ runId: "run-1", waitForTerminalSeconds: 2 }, ctx)
+            await createInspectRunTool(pool, { now: clock.now, wait: clock.wait }).execute({ runId: "run-1", waitForTerminalSeconds: 2 }, ctx)
         )._unsafeUnwrap();
 
         expect(result).toMatchObject({

@@ -24,6 +24,7 @@ import { leaseOverClient } from "../../../sandbox/__fixtures__/leases.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
 import { presentAt } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
+import { healthySandboxTail } from "../../../agents/sandbox/__fixtures__/deps.js";
 
 const DEFAULT_CWD = "/analysis-001/runs/run-abc/step1";
 
@@ -73,17 +74,7 @@ function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
             if (opts.execError) throw opts.execError;
             return result;
         },
-        isAlive() {
-            return Promise.resolve({ alive: true, oomKilled: false });
-        },
-        isAliveById() {
-            return Promise.resolve({ alive: true, oomKilled: false });
-        },
-        async teardown() {},
-        async teardownById() {},
-        listManagedSandboxes() {
-            return Promise.resolve([]);
-        },
+        ...healthySandboxTail(),
     };
 }
 

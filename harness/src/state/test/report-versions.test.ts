@@ -17,25 +17,8 @@ import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import { upsertAnalysis } from "../analyses.js";
 import { createReportVersionStore, type ReportVersionStore } from "../report-versions.js";
 import { presentAt } from "../../lib/present.js";
+import { citedSnapshot, validDocument } from "./__fixtures__/report-docs.js";
 
-const validDocument: ReportDocument = {
-    title: "A report",
-    sections: [
-        {
-            kind: "section",
-            id: "s1",
-            title: "Findings",
-            blocks: [{ kind: "text", id: "t1", content: { prose: "A finding." } }],
-        },
-    ],
-};
-
-const snapshot: ReportSnapshot = {
-    artifacts: {
-        "runs/r1/output/de.csv": { hash: "abc123", fileType: "output" },
-    },
-    citations: ["pmid:12345"],
-};
 
 describe("createReportVersionStore", () => {
     let pool: Pool;
@@ -64,14 +47,14 @@ describe("createReportVersionStore", () => {
         const threadId = "thread-round-trip";
 
         const ref = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: "conv-anchor", parentSeq: 7 })
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: "conv-anchor", parentSeq: 7 })
         )._unsafeUnwrap();
         expect(ref.outcome).toBe("created");
 
         const version = (await store.getVersion(ref.versionId))._unsafeUnwrap();
         expect(version).not.toBeNull();
         expect(version?.document).toEqual(validDocument);
-        expect(version?.snapshot).toEqual(snapshot);
+        expect(version?.snapshot).toEqual(citedSnapshot);
         expect(version?.analysisId).toBe(analysisId);
         expect(version?.threadId).toBe(threadId);
         expect(version?.parentThreadId).toBe("conv-anchor");
@@ -86,7 +69,7 @@ describe("createReportVersionStore", () => {
         const threadId = "thread-one-per-thread";
 
         const first = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: "first-anchor", parentSeq: 1 })
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: "first-anchor", parentSeq: 1 })
         )._unsafeUnwrap();
 
         const amendedDocument: ReportDocument = {
@@ -117,7 +100,7 @@ describe("createReportVersionStore", () => {
         expect(second.versionId).toBe(first.versionId);
         expect(second.outcome).toBe("replaced");
 
-        // The whole triple carries the second record: the document, the snapshot, and the anchor.
+        // The whole triple carries the second record: the document, the snapshot: citedSnapshot, and the anchor.
         const version = (await store.getThreadVersion(threadId))._unsafeUnwrap();
         expect(version).not.toBeNull();
         expect(version?.versionId).toBe(first.versionId);
@@ -138,10 +121,10 @@ describe("createReportVersionStore", () => {
         await seedAnalysis(analysisId);
         const threadId = "thread-record-outcome";
 
-        const first = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const first = (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
         expect(first.outcome).toBe("created");
 
-        const second = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const second = (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
         expect(second.outcome).toBe("replaced");
         expect(second.versionId).toBe(first.versionId);
     });
@@ -151,12 +134,12 @@ describe("createReportVersionStore", () => {
         await seedAnalysis(analysisId);
         const threadId = "thread-replace-time";
 
-        const ref = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const ref = (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
         const stored = (await store.getVersion(ref.versionId))._unsafeUnwrap();
         if (stored === null) throw new Error("the stored version is absent");
         const created = stored.createdAt;
 
-        (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
 
         // The row keeps the time of its first record, thus the column reads as its name states.
         const replacedRow = (await store.getVersion(ref.versionId))._unsafeUnwrap();
@@ -172,10 +155,10 @@ describe("createReportVersionStore", () => {
         const threadB = "thread-two-b";
 
         const refA = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId: threadA, parentThreadId: null, parentSeq: null })
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId: threadA, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrap();
         const refB = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId: threadB, parentThreadId: null, parentSeq: null })
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId: threadB, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrap();
 
         const versionA = (await store.getThreadVersion(threadA))._unsafeUnwrap();
@@ -194,12 +177,12 @@ describe("createReportVersionStore", () => {
         const childThread = "thread-parent-null-child";
 
         const parent = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId: parentThread, parentThreadId: null, parentSeq: null })
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId: parentThread, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrap();
         const child = (
             await store.record({
                 document: validDocument,
-                snapshot,
+                snapshot: citedSnapshot,
                 analysisId,
                 threadId: childThread,
                 parentThreadId: null,
@@ -228,7 +211,7 @@ describe("createReportVersionStore", () => {
             values: [threadId, analysisId],
         });
 
-        const ref = (await store.record({ document: validDocument, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
+        const ref = (await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null }))._unsafeUnwrap();
 
         await pool.query({ text: "DELETE FROM cortex_analysis_threads WHERE thread_id = $1", values: [threadId] });
 
@@ -243,7 +226,7 @@ describe("createReportVersionStore", () => {
         const threadId = "thread-malformed";
 
         const failure = (
-            await store.record({ document: { notReport: true }, snapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
+            await store.record({ document: { notReport: true }, snapshot: citedSnapshot, analysisId, threadId, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrapErr();
         expect(failure.type).toBe("malformed_document");
         if (failure.type === "malformed_document") {
@@ -329,7 +312,7 @@ describe("createReportVersionStore", () => {
         const snapThread = "thread-corrupt-snapshot";
 
         const badDoc = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId: docThread, parentThreadId: null, parentSeq: null })
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId: docThread, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrap();
         await pool.query({ text: `UPDATE cortex_report_versions SET document = '{"bad":true}'::jsonb WHERE version_id = $1`, values: [badDoc.versionId] });
 
@@ -342,7 +325,7 @@ describe("createReportVersionStore", () => {
         }
 
         const badSnap = (
-            await store.record({ document: validDocument, snapshot, analysisId, threadId: snapThread, parentThreadId: null, parentSeq: null })
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId, threadId: snapThread, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrap();
         await pool.query({
             text: `UPDATE cortex_report_versions SET snapshot = '{"artifacts":"nope"}'::jsonb WHERE version_id = $1`,
@@ -365,13 +348,13 @@ describe("createReportVersionStore", () => {
         const otherThread = "thread-parent-other";
 
         const owned = (
-            await store.record({ document: validDocument, snapshot, analysisId: analysisOwner, threadId: ownerThread, parentThreadId: null, parentSeq: null })
+            await store.record({ document: validDocument, snapshot: citedSnapshot, analysisId: analysisOwner, threadId: ownerThread, parentThreadId: null, parentSeq: null })
         )._unsafeUnwrap();
 
         const failure = (
             await store.record({
                 document: validDocument,
-                snapshot,
+                snapshot: citedSnapshot,
                 analysisId: analysisOther,
                 threadId: otherThread,
                 parentThreadId: null,
@@ -397,7 +380,7 @@ describe("createReportVersionStore", () => {
         const failure = (
             await store.record({
                 document: validDocument,
-                snapshot,
+                snapshot: citedSnapshot,
                 analysisId,
                 threadId,
                 parentThreadId: null,

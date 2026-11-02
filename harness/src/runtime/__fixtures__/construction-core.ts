@@ -13,7 +13,9 @@ import { createNoopArtifactRegistry } from "../../execution/noop-artifact-regist
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
-import type { CoreSandboxDeps, CoreWorkflowDeps } from "../assemble.js";
+import { join } from "node:path";
+
+import type { ConversationAssemblyDeps, CoreSandboxDeps, CoreWorkflowDeps } from "../assemble.js";
 
 /** A seam no case drives: the first call throws and names the seam. */
 export function refuse(seam: string): never {
@@ -81,4 +83,23 @@ export function constructionWorkflows(): CoreWorkflowDeps {
 /** The sandboxes of a construction test: a fake client that no case drives. */
 export function constructionSandbox(): CoreSandboxDeps {
     return { client: makeFakeSandboxClient() };
+}
+
+/** The conversation deps of the construction tests: one fake workspace, the local authorizer, and the refusals. */
+export function conversationDeps(): ConversationAssemblyDeps {
+    return {
+        provider: unusedChatProvider(),
+        utilityProvider: unusedChatProvider(),
+        pool: new Pool(),
+        embedding: refuseEmbedding(),
+        workspaceFs: makeFakeWorkspaceFs(),
+        model: "test/model",
+        utilityModel: "test/utility-model",
+        resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
+        runAuthorizer: createLocalRunAuthorizer(),
+        runLauncher: refuseRunLauncher(),
+        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        skillsDir: "/skills",
+        chrome: {},
+    };
 }

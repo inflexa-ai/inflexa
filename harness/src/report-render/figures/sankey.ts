@@ -32,12 +32,15 @@ import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, CHART_PAGE_TEXT_PX, CHART
 import type { RenderProblem } from "../types.js";
 import {
     AREA_LEGEND_ICON,
+    ChartBox,
     categoricalPalette,
     chartProblem,
     demandedColumn,
+    EXPORT_SIZES,
     firstAppearance,
     legendLineCount,
     legendLinePx,
+    PAGE_BOX,
     plainColumn,
     toNumber,
 } from "./common.js";
@@ -213,16 +216,6 @@ function readFlows(rows: readonly ChartRow[], source: string, target: string, va
     }
     return ok(flows);
 }
-
-/** The size of one chart box and its text: the page, or one export. */
-type ChartBox = {
-    readonly widthPx: number;
-    readonly heightPx: number;
-    readonly textPx: number;
-};
-
-const PAGE_BOX: ChartBox = { widthPx: CHART_PAGE_WIDTH_PX, heightPx: CHART_BODY_PX, textPx: CHART_PAGE_TEXT_PX };
-const EXPORT_SIZES = [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide] as const;
 
 /**
  * The text and the node size of one box: the label text size, the room of a label between two stages, the node

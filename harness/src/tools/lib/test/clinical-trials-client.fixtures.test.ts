@@ -1,30 +1,13 @@
-import { afterEach, describe, expect, it } from "bun:test";
 
-/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
-function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
-    return Object.assign(run, { preconnect: fetch.preconnect });
-}
 
-import { requestUrlText } from "../../../lib/test/request-url.js";
+import { describe, expect, it } from "bun:test";
 import { fixtureCase, readFixture, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
+import { requestedUrls, restoreFetchAfterEach, stubBodyFetch } from "../__fixtures__/client-stubs.js";
+
+restoreFetchAfterEach();
 import { CtSearchResponseSchema, CtStudySchema, getTrialDetails, mapClinicalTrialStudy, searchTrials } from "../clinical-trials-client.js";
 import { presentAt } from "../../../lib/present.js";
 
-const realFetch = globalThis.fetch;
-let requested: string[] = [];
-
-afterEach(() => {
-    globalThis.fetch = realFetch;
-    requested = [];
-});
-
-/** Answer every request with the given payload, and record each URL. */
-function stubFetch(body: unknown): void {
-    globalThis.fetch = fetchDouble((input) => {
-        requested.push(requestUrlText(input));
-        return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
-    });
-}
 
 runFixtureSuite("clinicaltrials golden fixtures", [
     fixtureCase({
@@ -76,18 +59,18 @@ runFixtureSuite("clinicaltrials golden fixtures", [
 
 describe("the ClinicalTrials.gov client over the golden fixtures", () => {
     it("asks for the total count and never for filter.phase", async () => {
-        stubFetch(readFixture("clinicaltrials", "search-adalimumab-counttotal.json"));
+        stubBodyFetch(readFixture("clinicaltrials", "search-adalimumab-counttotal.json"));
 
         const result = await searchTrials("adalimumab", { limit: 3 });
 
-        expect(requested[0]).toContain("countTotal=true");
-        expect(requested[0]).not.toContain("filter.phase");
+        expect(requestedUrls[0]).toContain("countTotal=true");
+        expect(requestedUrls[0]).not.toContain("filter.phase");
         expect(result.totalFound).toBe(881);
         expect(result.trials).toHaveLength(3);
     });
 
     it("filters the phase after the fetch, over designModule.phases", async () => {
-        stubFetch(readFixture("clinicaltrials", "search-adalimumab-counttotal.json"));
+        stubBodyFetch(readFixture("clinicaltrials", "search-adalimumab-counttotal.json"));
 
         const result = await searchTrials("adalimumab", { phase: "PHASE3", limit: 3 });
 
@@ -97,7 +80,7 @@ describe("the ClinicalTrials.gov client over the golden fixtures", () => {
     });
 
     it("parses a measurement value into the quantitative effect", async () => {
-        stubFetch(readFixture("clinicaltrials", "details-NCT00760929-results.json"));
+        stubBodyFetch(readFixture("clinicaltrials", "details-NCT00760929-results.json"));
 
         const details = await getTrialDetails("NCT00760929");
 

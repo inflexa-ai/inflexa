@@ -1139,16 +1139,10 @@ function deriveBar(
     columns: readonly string[] | undefined,
     mode: BarMode,
 ): Result<EchartOption, RenderProblem> {
-    const xResult = requireColumn(block, rows, columns, "x");
-    if (xResult.isErr()) return err(xResult.error);
-    const yResult = requireColumn(block, rows, columns, "y");
-    if (yResult.isErr()) return err(yResult.error);
-    const x = xResult.value;
-    const y = yResult.value;
+    const axes = axesOf(block, rows, columns);
+    if (axes.isErr()) return err(axes.error);
+    const { x, y, categories } = axes.value;
 
-    const ordered = orderQuickCategories(block.id, rows, x, block.orders.x);
-    if (ordered.isErr()) return err(ordered.error);
-    const categories = ordered.value;
     const horizontal = block.orientation === "horizontal";
 
     let series: EchartOption[];
@@ -1467,21 +1461,12 @@ function deriveHistogram(block: ResolvedChartBlock, rows: readonly ChartRow[], c
  * point inside the slot of its group.
  */
 function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns: readonly string[] | undefined): Result<EchartOption, RenderProblem> {
-    const xResult = requireColumn(block, rows, columns, "x");
-    if (xResult.isErr()) return err(xResult.error);
-    const yResult = requireColumn(block, rows, columns, "y");
-    if (yResult.isErr()) return err(yResult.error);
-    const x = xResult.value;
-    const y = yResult.value;
-
-    const ordered = orderQuickCategories(block.id, rows, x, block.orders.x);
-    if (ordered.isErr()) return err(ordered.error);
-    const categories = ordered.value;
-    const groupColumn = block.encoding.group;
-    const groups: Array<{ name: Cell | undefined }> =
-        groupColumn === undefined ? [{ name: undefined }] : firstAppearance(rows.map((row) => row[groupColumn])).map((name) => ({ name }));
-    const bound = slotFault(block.id, categories.length, groups.length);
-    if (bound !== undefined) return err(bound);
+    const axes = axesOf(block, rows, columns);
+    if (axes.isErr()) return err(axes.error);
+    const { x, y, categories } = axes.value;
+    const slots = slotGroupsOf(block, rows, categories);
+    if (slots.isErr()) return err(slots.error);
+    const { groupColumn, groups } = slots.value;
     const focused = focusSet(
         block.id,
         block.focus,
@@ -1760,21 +1745,12 @@ function derivePie(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
  * violin draws its points on the hidden slot axis, each point inside the slot of its group.
  */
 function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], columns: readonly string[] | undefined): Result<EchartOption, RenderProblem> {
-    const xResult = requireColumn(block, rows, columns, "x");
-    if (xResult.isErr()) return err(xResult.error);
-    const yResult = requireColumn(block, rows, columns, "y");
-    if (yResult.isErr()) return err(yResult.error);
-    const x = xResult.value;
-    const y = yResult.value;
-
-    const ordered = orderQuickCategories(block.id, rows, x, block.orders.x);
-    if (ordered.isErr()) return err(ordered.error);
-    const categories = ordered.value;
-    const groupColumn = block.encoding.group;
-    const groups: Array<{ name: Cell | undefined }> =
-        groupColumn === undefined ? [{ name: undefined }] : firstAppearance(rows.map((row) => row[groupColumn])).map((name) => ({ name }));
-    const bound = slotFault(block.id, categories.length, groups.length);
-    if (bound !== undefined) return err(bound);
+    const axes = axesOf(block, rows, columns);
+    if (axes.isErr()) return err(axes.error);
+    const { x, y, categories } = axes.value;
+    const slots = slotGroupsOf(block, rows, categories);
+    if (slots.isErr()) return err(slots.error);
+    const { groupColumn, groups } = slots.value;
     const named = groups.flatMap((group) => (group.name === undefined ? [] : [group.name]));
     const focused = focusSet(block.id, block.focus, rows.length, named);
     if (focused.isErr()) return err(focused.error);
@@ -1960,6 +1936,41 @@ function slotFault(blockId: string, categories: number, groups: number): RenderP
         blockId,
         `The chart holds ${categories} categories and ${groups} groups, thus ${slots} slots. A chart holds ${CHART_SLOT_LIMIT} slots at most, thus a table of fewer categories or fewer groups serves the reader.`,
     );
+}
+
+/**
+ * The x and y columns and the category order that the category derivations share: each one demands both
+ * channels and reads its categories through the quick-path order.
+ */
+function axesOf(
+    block: ResolvedChartBlock,
+    rows: readonly ChartRow[],
+    columns: readonly string[] | undefined,
+): Result<{ x: string; y: string; categories: Array<Cell | undefined> }, RenderProblem> {
+    const xResult = requireColumn(block, rows, columns, "x");
+    if (xResult.isErr()) return err(xResult.error);
+    const yResult = requireColumn(block, rows, columns, "y");
+    if (yResult.isErr()) return err(yResult.error);
+    const ordered = orderQuickCategories(block.id, rows, xResult.value, block.orders.x);
+    if (ordered.isErr()) return err(ordered.error);
+    return ok({ x: xResult.value, y: yResult.value, categories: ordered.value });
+}
+
+/**
+ * The slot layout that the box and the violin share: a chart with no group channel holds one unnamed group,
+ * and a layout past the slot limit refuses before any series is built.
+ */
+function slotGroupsOf(
+    block: ResolvedChartBlock,
+    rows: readonly ChartRow[],
+    categories: readonly (Cell | undefined)[],
+): Result<{ groupColumn: string | undefined; groups: Array<{ name: Cell | undefined }> }, RenderProblem> {
+    const groupColumn = block.encoding.group;
+    const groups: Array<{ name: Cell | undefined }> =
+        groupColumn === undefined ? [{ name: undefined }] : firstAppearance(rows.map((row) => row[groupColumn])).map((name) => ({ name }));
+    const bound = slotFault(block.id, categories.length, groups.length);
+    if (bound !== undefined) return err(bound);
+    return ok({ groupColumn, groups });
 }
 
 /** The radius of a radar. The legend and the indicator names sit outside it. */

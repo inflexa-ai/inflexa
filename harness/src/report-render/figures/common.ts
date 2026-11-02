@@ -28,9 +28,12 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
 import {
     CHART_BODY_MAX_PX,
+    CHART_BODY_PX,
+    CHART_EXPORT_SIZES,
     CHART_FONT_STACK,
     CHART_INK,
     CHART_PAGE_TEXT_PX,
+    CHART_PAGE_WIDTH_PX,
     CHART_PALETTE,
     CHART_WIDE_PALETTE,
     DIVERGING_RAMP,
@@ -43,6 +46,17 @@ import {
 import { formatNumberCell, selectNumberKind, typographicExponent } from "../number-format.js";
 import { STEM_RENDERER } from "../chart-renderers.js";
 import type { RenderProblem } from "../types.js";
+
+/** The size of one chart box and its text: the page, or one export. */
+export type ChartBox = {
+    readonly widthPx: number;
+    readonly heightPx: number;
+    readonly textPx: number;
+};
+
+/** The page box, and the export sizes that take a rule of their own: the two journal columns and the slide. */
+export const PAGE_BOX: ChartBox = { widthPx: CHART_PAGE_WIDTH_PX, heightPx: CHART_BODY_PX, textPx: CHART_PAGE_TEXT_PX };
+export const EXPORT_SIZES = [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide] as const;
 
 /** The display labels that a bound table declares, keyed by the raw column name. */
 export type ColumnLabels = ArtifactTableReference["columnLabels"];

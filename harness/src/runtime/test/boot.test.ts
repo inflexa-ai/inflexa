@@ -6,10 +6,7 @@ import { silentLogger } from "../../__tests__/setup/logger.js";
 import { Pool } from "pg";
 
 import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
-import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
-import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
-import { constructionSandbox, constructionWorkflows, refuseEmbedding, refuseRunLauncher } from "../__fixtures__/construction-core.js";
-import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
+import { conversationDeps, constructionSandbox, constructionWorkflows } from "../__fixtures__/construction-core.js";
 import { bootHarness, type BootHarnessDeps } from "../boot.js";
 
 import type { Querier } from "../../state/db.js";
@@ -26,21 +23,7 @@ function explodingPool(onUse: () => void): Querier & Pick<Pool, "connect" | "end
 function bootDeps(overrides: Partial<BootHarnessDeps>): BootHarnessDeps {
     return {
         core: {
-            conversation: {
-                provider: unusedChatProvider(),
-                utilityProvider: unusedChatProvider(),
-                pool: new Pool(),
-                embedding: refuseEmbedding(),
-                workspaceFs: makeFakeWorkspaceFs(),
-                model: "test/model",
-                utilityModel: "test/utility-model",
-                resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
-                runAuthorizer: createLocalRunAuthorizer(),
-                runLauncher: refuseRunLauncher(),
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                skillsDir: "/skills",
-                chrome: {},
-            },
+            conversation: conversationDeps(),
             workflows: constructionWorkflows(),
             sandbox: constructionSandbox(),
         },

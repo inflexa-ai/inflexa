@@ -17,8 +17,11 @@ of the `src` and `scripts` trees — TypeScript, TSX, JavaScript, Python, R, and
 bash — the minimum size of a reported copy in tokens and in lines. The
 configuration MUST carry the reason for that floor, the reason for each ignored
 tree, and the reason for the data formats that stay outside the scan, inside the
-configuration file. The configuration MUST exclude `dist`, `node_modules`, and
-the generated gallery data directories from the scan, and MUST NOT exclude any
+configuration file. The reason for the floor MUST state the measured clone
+counts at the chosen floor and at the floors immediately above and below it, so
+a future calibration re-runs the same ladder instead of a new judgment. The
+configuration MUST exclude `dist`, `node_modules`, and the generated gallery
+data directories from the scan, and MUST NOT exclude any
 tree that holds hand-written code of the harness.
 
 #### Scenario: The configuration names the floor and its reasons
@@ -27,6 +30,12 @@ tree that holds hand-written code of the harness.
 - **THEN** it holds a minimum token count and a minimum line count for a
   reported copy, and the reason for the floor, for each ignored tree, and for
   the data formats left out sits in the same file
+
+#### Scenario: The reason records the calibration ladder
+
+- **WHEN** `harness/.jscpd.json` is read
+- **THEN** the reason for the floor states the measured clone counts at the
+  chosen floor and at the floors immediately above and below it
 
 #### Scenario: Data formats stay outside the gate
 

@@ -200,6 +200,15 @@ const BASELINE_EXPRESSION_PAGE_SIZE = 3000;
 // bare `.optional()` rejects, turning a clean "not found" into a thrown error.
 const DatatypeScoreSchema = z.object({ id: z.string().optional(), score: z.number().optional() });
 
+/** The datatype-scores list follows the same nullable-optional reading rule as its row, and may be absent or null. */
+const scoresField = z.array(DatatypeScoreSchema).nullable().optional();
+
+/** The paged rows list of an association query: the API may omit or null the whole envelope. */
+const rowsEnvelope = <T extends z.ZodType>(
+    item: T,
+): z.ZodObject<{ rows: z.ZodOptional<z.ZodNullable<z.ZodArray<T>>> }> =>
+    z.object({ rows: z.array(item).nullable().optional() });
+
 export const TargetAssociationsDataSchema = z.object({
     target: z
         .object({
@@ -215,20 +224,13 @@ export const TargetAssociationsDataSchema = z.object({
         .optional(),
     associations: z
         .object({
-            associatedDiseases: z
-                .object({
-                    rows: z
-                        .array(
-                            z.object({
-                                disease: z.object({ id: z.string(), name: z.string() }),
-                                score: z.number(),
-                                datatypeScores: z.array(DatatypeScoreSchema).nullable().optional(),
-                            }),
-                        )
-                        .nullable()
-                        .optional(),
-                })
-                .optional(),
+            associatedDiseases: rowsEnvelope(
+                z.object({
+                    disease: z.object({ id: z.string(), name: z.string() }),
+                    score: z.number(),
+                    datatypeScores: scoresField,
+                }),
+            ).optional(),
         })
         .nullable()
         .optional(),
@@ -239,23 +241,16 @@ const DiseaseAssociationsDataSchema = z.object({
         .object({
             id: z.string().optional(),
             name: z.string().optional(),
-            associatedTargets: z
-                .object({
-                    rows: z
-                        .array(
-                            z.object({
-                                target: z
-                                    .object({ id: z.string().optional(), approvedSymbol: z.string().optional(), approvedName: z.string().optional() })
-                                    .nullable()
-                                    .optional(),
-                                score: z.number(),
-                                datatypeScores: z.array(DatatypeScoreSchema).nullable().optional(),
-                            }),
-                        )
+            associatedTargets: rowsEnvelope(
+                z.object({
+                    target: z
+                        .object({ id: z.string().optional(), approvedSymbol: z.string().optional(), approvedName: z.string().optional() })
                         .nullable()
                         .optional(),
-                })
-                .optional(),
+                    score: z.number(),
+                    datatypeScores: scoresField,
+                }),
+            ).optional(),
         })
         .nullable()
         .optional(),

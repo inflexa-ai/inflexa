@@ -29,9 +29,9 @@ import { err, ok, type Result } from "neverthrow";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
-import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, CHART_PAGE_TEXT_PX, CHART_PAGE_WIDTH_PX } from "../design.js";
+import { CHART_EXPORT_SIZES, CHART_INK } from "../design.js";
 import type { RenderProblem } from "../types.js";
-import { axisNameFields, chartProblem, demandedColumn, valueAxis } from "./common.js";
+import { axisNameFields, ChartBox, chartProblem, demandedColumn, EXPORT_SIZES, PAGE_BOX, valueAxis } from "./common.js";
 import type { FigureContext, FigureModule } from "./index.js";
 
 /**
@@ -164,17 +164,6 @@ function compareMembers(a: readonly number[], b: readonly number[]): number {
     }
     return a.length - b.length;
 }
-
-/** The size of one chart box and its text: the page, or one export. */
-type ChartBox = {
-    readonly widthPx: number;
-    readonly heightPx: number;
-    readonly textPx: number;
-};
-
-/** The page box and the box of each export size. */
-const PAGE_BOX: ChartBox = { widthPx: CHART_PAGE_WIDTH_PX, heightPx: CHART_BODY_PX, textPx: CHART_PAGE_TEXT_PX };
-const EXPORT_SIZES = [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide] as const;
 
 /** The places of the grids in percent of the chart. */
 type UpsetLayout = {

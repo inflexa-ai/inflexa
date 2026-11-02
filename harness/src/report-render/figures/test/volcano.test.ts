@@ -11,10 +11,11 @@ import type { ChartBlock } from "../../../contracts/report-blocks.js";
 import { VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "../../chart-presets.js";
 import { deriveChartOption, deriveChartRender, type ChartOpts, type ChartRow, type EchartOption } from "../../chart.js";
 import { exportOption } from "../../chart-renderers.js";
-import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
+import { CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../../design.js";
 import { CHART_SERIES_BUILDER } from "../../page.js";
 import { BELOW_RESOLUTION_SYMBOL, DENSE_NULL_SYMBOL_PX, DENSE_NULL_Z, DENSE_SIGNAL_SYMBOL_PX, niceCeiling, POINT_NAMES } from "../dense.js";
-import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, type LeaderName, type NameFrame } from "../label-room.js";
+import { leaderNameBox, overlaps, PAGE_PLOT_FRAME, type LeaderName } from "../label-room.js";
+import { sizeRenders } from "./__fixtures__/size-renders.js";
 import { FIGURE_MODULES } from "../index.js";
 import { VOLCANO_FIGURE, VOLCANO_LABEL_COUNT } from "../volcano.js";
 import {
@@ -304,21 +305,7 @@ describe("the volcano names at each size", () => {
     const peak = Math.max(...ROWS.flatMap((row) => (row.padj === "" || !(Number(row.padj) > 0) ? [] : [-Math.log10(Number(row.padj))])));
     const plot = { x: { min: optionNumber(x.min), max: optionNumber(x.max) }, y: { min: 0, max: niceCeiling(peak) } };
 
-    /** The export sizes under test, in the order of the table. */
-    const EXPORT_KINDS = ["single", "double", "slide"] as const satisfies readonly (keyof typeof CHART_EXPORT_SIZES)[];
-
-    /** The page option, and the export option of each export size, with the frame where its names place. */
-    const renders: Array<readonly [string, EchartOption, NameFrame]> = [
-        ["page", option, PAGE_PLOT_FRAME],
-        ...EXPORT_KINDS.map(
-            (kind) =>
-                [
-                    kind,
-                    exportOption(option, CHART_EXPORT_SIZES[kind].textPx, CHART_EXPORT_SIZES[kind].widthPx, CHART_EXPORT_SIZES[kind].heightPx),
-                    EXPORT_PLOT_FRAMES[kind],
-                ] as const,
-        ),
-    ];
+    const renders = sizeRenders(option, exportOption);
 
     for (const [kind, render, frame] of renders) {
         it(`prints no name over another name at the ${kind} size`, () => {

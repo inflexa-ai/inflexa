@@ -1315,10 +1315,11 @@ describe("docker createSandbox — recovery reconciliation", () => {
         expect(removed).toEqual([]);
     });
 
-    test("refuses a standing container owned by a different workflow with name_conflict", async () => {
+    /** A foreign standing container: the reconcile pass refuses it with name_conflict, and it names no owner change. */
+    async function refuseForeignStanding(running: boolean) {
         const { docker, created, removed } = reconcileDocker({
             createStatus: 500,
-            standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: true },
+            standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running },
         });
 
         const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
@@ -1328,24 +1329,20 @@ describe("docker createSandbox — recovery reconciliation", () => {
             expect(result.error.type).toBe("name_conflict");
             if (result.error.type === "name_conflict") expect(result.error.owner).toBe("someone-else");
         }
+        return { created, removed };
+    }
+
+    test("refuses a standing container owned by a different workflow with name_conflict", async () => {
+        const { created, removed } = await refuseForeignStanding(true);
+
         // A foreign container is neither adopted nor removed.
         expect(created).toEqual([]);
         expect(removed).toEqual([]);
     });
 
     test("refuses a STOPPED standing container owned by a different workflow with name_conflict, and never removes it", async () => {
-        const { docker, created, removed } = reconcileDocker({
-            createStatus: 500,
-            standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: false },
-        });
+        const { created, removed } = await refuseForeignStanding(false);
 
-        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
-
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error.type).toBe("name_conflict");
-            if (result.error.type === "name_conflict") expect(result.error.owner).toBe("someone-else");
-        }
         // The ownership guard is checked before the running-state check, so a foreign
         // container is refused whether it is running or stopped. A stopped one must not be
         // treated as our own reclaimable leftover and removed — the empty removal record

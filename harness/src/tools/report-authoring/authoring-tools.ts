@@ -93,12 +93,17 @@ const DESTINATION_NOTES = {
 } as const;
 
 /** The flat destination fields. An anchor is `before` or `after`, and a place is `start` or `end`. */
-const addBlockInput = z.object({
-    block: blockPayload,
+const destinationFields = {
     parentId: absentable(z.string()).describe(DESTINATION_NOTES.parentId),
     place: absentable(z.enum(["start", "end"])).describe(DESTINATION_NOTES.place),
     before: absentable(z.string()).describe(DESTINATION_NOTES.before),
     after: absentable(z.string()).describe(DESTINATION_NOTES.after),
+} as const;
+
+/** The flat destination fields of the add, plus the payload of the new block. */
+const addBlockInput = z.object({
+    block: blockPayload,
+    ...destinationFields,
 });
 
 /**
@@ -118,10 +123,7 @@ const removeBlockInput = z.object({
 
 const moveBlockInput = z.object({
     targetId: z.string().describe("The id of the block to move, as the outline gives it."),
-    parentId: absentable(z.string()).describe(DESTINATION_NOTES.parentId),
-    place: absentable(z.enum(["start", "end"])).describe(DESTINATION_NOTES.place),
-    before: absentable(z.string()).describe(DESTINATION_NOTES.before),
-    after: absentable(z.string()).describe(DESTINATION_NOTES.after),
+    ...destinationFields,
 });
 
 const readOutlineInput = z.object({});

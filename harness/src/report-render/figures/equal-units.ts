@@ -24,8 +24,8 @@
 
 import type { EchartOption } from "../chart.js";
 import { TOOLBOX_BAND_PX } from "../chart-toolbox.js";
-import { CHART_EXPORT_SIZES, CHART_PAGE_TEXT_PX, FACET_COLUMNS } from "../design.js";
-import { legendLineCount, legendLinePx } from "./common.js";
+import { CHART_PAGE_TEXT_PX, FACET_COLUMNS } from "../design.js";
+import { EXPORT_SIZES, legendLineCount, legendLinePx } from "./common.js";
 
 /** The margins around the squares, in pixels at the page text size. */
 export type SquareMargins = {
@@ -146,9 +146,6 @@ export function squareLayout(fields: SquareLayoutFields): SquareLayout {
         media,
     };
 }
-
-/** The export sizes that take a rule of their own: the two journal columns and the slide. */
-const EXPORT_SIZES = [CHART_EXPORT_SIZES.single, CHART_EXPORT_SIZES.double, CHART_EXPORT_SIZES.slide] as const;
 
 /** The scale of the margins of a page square: one up to the page square, and larger with a larger square. */
 function marginScale(side: number): number {
