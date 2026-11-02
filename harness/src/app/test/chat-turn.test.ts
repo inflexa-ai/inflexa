@@ -338,7 +338,7 @@ describe("prepareChatTurn", () => {
         expect(events).toEqual([]);
     });
 
-    it("emits nothing on a turn over an archived thread", async () => {
+    it("gives not_found for an archived thread of the same analysis, and writes nothing into it", async () => {
         const events: SessionProvenanceEvent[] = [];
         const store = createThreadStore(pool);
         (await store.createThread({ threadId: "t-archived", analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
@@ -349,8 +349,56 @@ describe("prepareChatTurn", () => {
             { analysisId: ANALYSIS_A, threadId: "t-archived", userInput: "hello again" },
         );
 
-        expect(result.kind).toBe("ok");
+        expect(result).toEqual({ kind: "not_found" });
         expect(events).toEqual([]);
+        expect((await store.getThread("t-archived"))._unsafeUnwrap()).toBeNull();
+        const { rows } = await pool.query<{ analysis_id: string; deleted_at: Date | null }>(
+            "SELECT analysis_id, deleted_at FROM cortex_analysis_threads WHERE thread_id = $1",
+            ["t-archived"],
+        );
+        expect(rows.map((row) => [row.analysis_id, row.deleted_at !== null])).toEqual([[ANALYSIS_A, true]]);
+        expect((await createThreadHistory(pool).loadAll("t-archived"))._unsafeUnwrap().flat()).toEqual([]);
+    });
+
+    it("gives not_found for an archived thread of a different analysis, and writes nothing into it", async () => {
+        const events: SessionProvenanceEvent[] = [];
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: "t-archived-b", analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();
+        (await store.archiveThread("t-archived-b"))._unsafeUnwrap();
+
+        const result = await prepareChatTurn(
+            { pool, provenance: { emitSessionEvent: (event) => events.push(event) } },
+            { analysisId: ANALYSIS_A, threadId: "t-archived-b", userInput: "hello" },
+        );
+
+        expect(result).toEqual({ kind: "not_found" });
+        expect(events).toEqual([]);
+        const { rows } = await pool.query<{ analysis_id: string; deleted_at: Date | null }>(
+            "SELECT analysis_id, deleted_at FROM cortex_analysis_threads WHERE thread_id = $1",
+            ["t-archived-b"],
+        );
+        expect(rows.map((row) => [row.analysis_id, row.deleted_at !== null])).toEqual([[ANALYSIS_B, true]]);
+        expect((await createThreadHistory(pool).loadAll("t-archived-b"))._unsafeUnwrap().flat()).toEqual([]);
+    });
+
+    it("rejects when the make of an absent thread fails", async () => {
+        const insertFailing: Querier & Connectable = {
+            query: (textOrConfig, values) => {
+                const text = typeof textOrConfig === "string" ? textOrConfig : textOrConfig.text;
+                if (text.includes("INSERT INTO cortex_analysis_threads")) return Promise.reject(new Error("insert unavailable"));
+                return pool.query(textOrConfig, values);
+            },
+            connect: () => pool.connect(),
+        };
+
+        const rejection = await prepareChatTurn({ pool: insertFailing }, { analysisId: ANALYSIS_A, threadId: "t-no-insert", userInput: "hello" }).then(
+            () => null,
+            (cause: unknown) => cause,
+        );
+
+        if (!(rejection instanceof ResultError)) throw new Error("the preparation did not reject with the failure of the make");
+        expect(rejection.value).toMatchObject({ type: "mutation_failed", op: "thread-store.createThread.insert" });
+        expect((await createThreadStore(pool).getThread("t-no-insert"))._unsafeUnwrap()).toBeNull();
     });
 
     it("emits nothing for a thread that another analysis owns", async () => {
@@ -969,6 +1017,21 @@ describe("the run of a chat turn", () => {
         expect(result).toEqual({ kind: "not_found" });
         expect((await store.getThread(THREAD))._unsafeUnwrap()).toEqual(before);
         expect(await storedRows()).toEqual([]);
+        expect(model.calls).toEqual([]);
+    });
+
+    it("gives not_found for a turn on an archived thread, sends no model request, and leaves the thread archived", async () => {
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "Archived" }))._unsafeUnwrap();
+        (await store.archiveThread(THREAD))._unsafeUnwrap();
+        const model = scriptedModel([]);
+
+        const result = await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+
+        expect(result).toEqual({ kind: "not_found" });
+        expect((await store.getThread(THREAD))._unsafeUnwrap()).toBeNull();
+        expect(await storedRows()).toEqual([]);
+        expect(await turnRecords()).toEqual([]);
         expect(model.calls).toEqual([]);
     });
 

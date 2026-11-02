@@ -333,7 +333,9 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
             "drives a multi-step research sub-agent (up to 40 model turns) over live " +
             "literature search, so it is slow; a fact that one lookup answers does " +
             "not need it.\n" +
-            "RETURNS an AnalogyReport envelope the UI renders as an inline card. An " +
+            "RETURNS an AnalogyReport envelope. No surface shows the envelope, thus " +
+            "give the report in your reply: each analogy that matters, with its " +
+            "solutions and their sources. An " +
             "analogy the search could not fill carries a `coverage` tag " +
             "(`queried_no_data` | `search_failed` | `not_loaded`) with an empty " +
             "`solutions` array — a partial result, not an error. A top-level `error` " +
