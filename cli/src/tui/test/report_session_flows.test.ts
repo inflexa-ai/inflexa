@@ -23,6 +23,7 @@ import { shortSessionId } from "../hooks/sidebar_live.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import { stringContaining } from "../../test_support/matchers.ts";
 
 // The three report-session flows reach the server and the toast channel through `SessionOpts`, thus
 // every case here runs offline. Each assertion reads an OUTCOME the user meets: which thread the swap
@@ -512,7 +513,7 @@ describe("report session flows", () => {
 
             expect(w.dialogs()).toBe(0);
             expect(w.opened).toEqual([]);
-            expect(t.notices).toEqual([{ kind: "info", text: expect.stringContaining("No analysis is open") }]);
+            expect<unknown>(t.notices).toEqual([{ kind: "info", text: stringContaining("No analysis is open") }]);
         });
 
         test("a report session lists its siblings — the children of its parent", async () => {
@@ -911,7 +912,7 @@ describe("report session flows", () => {
 
             expect(t.requests).toEqual([]);
             expect(t.urls).toEqual([]);
-            expect(t.notices).toEqual([{ kind: "info", text: expect.stringContaining("No analysis is open") }]);
+            expect<unknown>(t.notices).toEqual([{ kind: "info", text: stringContaining("No analysis is open") }]);
             expect(w.dialogs()).toBe(0);
             expect(w.opened).toEqual([]);
         });
@@ -924,7 +925,7 @@ describe("report session flows", () => {
             await openReportPage(w.ws, booting.opts);
             expect(booting.requests).toEqual([]);
             expect(booting.urls).toEqual([]);
-            expect(booting.notices).toEqual([{ kind: "info", text: expect.stringContaining("still booting") }]);
+            expect<unknown>(booting.notices).toEqual([{ kind: "info", text: stringContaining("still booting") }]);
 
             __setBootStateForTest({ phase: "failed" } as never);
             const failed = pageOpts(GRANT);

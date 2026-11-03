@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { objectContaining } from "../../test_support/matchers.ts";
 import { migrations, runMigrations } from "../primary_migrations.ts";
 
 // The migration runner takes an explicit Database, so these run against a throwaway in-memory DB
@@ -427,7 +428,7 @@ describe("migration 12 — the seen marks of the runs", () => {
             ["analysis_id", 0],
         ]);
         const fks = db.query<{ table: string; to: string; on_delete: string }, []>("PRAGMA foreign_key_list(run_seen_marks)").all();
-        expect(fks).toEqual([expect.objectContaining({ table: "analyses", to: "id", on_delete: "CASCADE" })]);
+        expect<unknown>(fks).toEqual([objectContaining({ table: "analyses", to: "id", on_delete: "CASCADE" })]);
     });
 });
 

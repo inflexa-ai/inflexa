@@ -23,6 +23,7 @@ import {
     describeRecordedFlightFailure,
     describeStoreFlightSpec,
     enqueueStoreAdd,
+    packageQuery,
     readStoreFlights,
     storeFlightKey,
     type StoreFlightReport,
@@ -112,11 +113,7 @@ export function storeRoutes(opts: StoreRouteOpts = DEFAULT_STORE_ROUTE_OPTS): Ho
         if (row === null) return apiError(c, "not_found", `No failed flight ${c.req.param("flightId")}.`);
         // The retry is a new query, and the row already holds it: the spelling, the track, and the specifier.
         const enqueued = enqueueStoreAdd({
-            query: {
-                spelling: row.spelling,
-                ...(row.ecosystem === null ? {} : { track: row.ecosystem }),
-                ...(row.specifier.startsWith("==") ? { version: row.specifier.slice(2) } : {}),
-            },
+            query: packageQuery(row.spelling, row.ecosystem ?? undefined, row.specifier.startsWith("==") ? row.specifier.slice(2) : undefined),
             analysisId: null,
         });
         if (enqueued.isErr()) {

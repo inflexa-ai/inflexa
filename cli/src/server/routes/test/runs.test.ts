@@ -54,6 +54,7 @@ import type { ServerEnv } from "../../http.ts";
 import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, watchInputDrift } from "../../profile_queue.ts";
 import { __resetTurnsForTest, refuseNewTurns, startTurn } from "../../turns.ts";
 import { DEFAULT_RUN_ROUTES_OPTS, runRoutes, type RunRoutesOpts } from "../runs.ts";
+import { anything, objectContaining } from "../../../test_support/matchers.ts";
 
 // The routes under the mount path of the app, with no bearer check and no analysis guard: `app.test.ts` covers
 // those. Each harness read is a fake, because each needs Postgres or DBOS. Each `as` cast of a body below reads
@@ -210,7 +211,7 @@ function seedUsage(analysisId: string, where: { runId: string; stepId?: string }
         scopeKind: "analysis",
         scopeId: analysisId,
         runId: where.runId,
-        ...(where.stepId === undefined ? {} : { stepId: where.stepId }),
+        stepId: where.stepId,
         usage: { inputTokens },
     })._unsafeUnwrap();
 }
@@ -541,9 +542,9 @@ describe("GET {A}/run/:runId", () => {
         const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
 
         expect(detail).toMatchObject({ runId: "r1", planTitle: "Plan", usage: { calls: 2, inputTokens: 10 }, unattributedUsage: { calls: 1, inputTokens: 3 } });
-        expect(detail.steps).toEqual([
-            expect.objectContaining({ stepId: "T1S1", name: "Align reads", status: "completed", usage: { calls: 1, inputTokens: 7 } }),
-            expect.objectContaining({ stepId: "T1S2", status: "blocked", blockedReason: "no data" }),
+        expect<unknown>(detail.steps).toEqual([
+            objectContaining({ stepId: "T1S1", name: "Align reads", status: "completed", usage: { calls: 1, inputTokens: 7 } }),
+            objectContaining({ stepId: "T1S2", status: "blocked", blockedReason: "no data" }),
         ]);
         expect(detail.steps[1]).not.toHaveProperty("name");
         expect(detail.steps[1]).not.toHaveProperty("usage");
@@ -1206,12 +1207,12 @@ describe("POST {A}/run/:runId/cancel", () => {
         const response = await app.request("/api/v1/analyses/mine/run/r1/cancel", { method: "POST" });
         expect(response.status).toBe(200);
         expect((await response.json()) as CancelRunResult).toEqual(result);
-        expect(sessions).toEqual([
+        expect<unknown>(sessions).toEqual([
             {
                 identity: { user: "local" },
                 scope: { kind: "analysis", analysisId: "mine" },
                 provenance: { agentId: "run-cancel", callPath: ["run-cancel"] },
-                auth: expect.anything(),
+                auth: anything(),
             },
         ]);
     });

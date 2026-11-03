@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 
 import "../../../extensions/index.ts"; // installs Response.prototype.jsonWith, which resolveModelId + checkModelAccess use
 import { env } from "../../../lib/env.ts";
+import { requestedModel } from "../../../test_support/request_body.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     __resetModelCacheForTest,
@@ -232,7 +233,7 @@ describe("checkModelAccess", () => {
     });
 
     test("a 404 carrying not_found_error → not_found (the credential definitively cannot serve it)", async () => {
-        stubOnce((_url, init) => notFoundBody(JSON.parse(String(init?.body)).model));
+        stubOnce((_url, init) => notFoundBody(requestedModel(init)));
         expect(await checkModelAccess("sk-test", "claude-x")).toBe("not_found");
     });
 
@@ -259,7 +260,7 @@ describe("checkModelAccess", () => {
         // `string | null` type at the assertion sites rather than narrowing to the seed value.
         const seen: Array<{ url: string; auth: string | null; model: string }> = [];
         globalThis.fetch = (async (url: string, init?: RequestInit) => {
-            seen.push({ url: String(url), auth: new Headers(init?.headers).get("Authorization"), model: JSON.parse(String(init?.body)).model });
+            seen.push({ url: String(url), auth: new Headers(init?.headers).get("Authorization"), model: requestedModel(init) });
             return new Response("{}", { status: 200 });
         }) as unknown as typeof fetch;
 
@@ -375,7 +376,7 @@ describe("resolveModelId", () => {
             calls += 1;
             if (String(url).endsWith("/messages/count_tokens")) {
                 validations += 1;
-                return access(JSON.parse(String(init?.body)).model);
+                return access(requestedModel(init));
             }
             return new Response(JSON.stringify({ data: candidates }));
         }) as unknown as typeof fetch;

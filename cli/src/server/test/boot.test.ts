@@ -7,6 +7,7 @@ import * as harnessRuntime from "../../modules/harness/runtime.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import * as setup from "../../modules/infra/setup.ts";
 import { createServerBoot, DEFAULT_SERVER_BOOT_OPTS, type BootProgressOpts, type ServerBootOpts } from "../boot.ts";
+import { anyOf } from "../../test_support/matchers.ts";
 
 const STARTED_AT = new Date("2026-10-02T08:00:00.000Z");
 
@@ -75,8 +76,8 @@ function controlled(): {
 describe("createServerBoot", () => {
     test("is `starting` with no runtime before the boot settles", () => {
         const boot = createServerBoot(STARTED_AT, controlled().opts);
-        expect(boot.state()).toEqual({
-            version: expect.any(String),
+        expect<unknown>(boot.state()).toEqual({
+            version: anyOf(String),
             apiVersion: 1,
             startedAt: STARTED_AT.toISOString(),
             phase: "starting",

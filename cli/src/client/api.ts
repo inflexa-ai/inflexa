@@ -236,22 +236,21 @@ function send(
     accept: string,
     opts: ClientOpts,
 ): ResultAsync<{ response: Response; baseUrl: string }, ClientError> {
-    return opts.discover().asyncAndThen((endpoint) =>
-        ResultAsync.fromPromise(
-            opts.fetch(`${endpoint.baseUrl}${path}`, {
-                method,
-                headers: {
-                    ...req.headers,
-                    Authorization: `Bearer ${endpoint.token}`,
-                    Accept: accept,
-                    ...(req.body === undefined ? {} : { "Content-Type": "application/json" }),
-                },
-                ...(req.body === undefined ? {} : { body: JSON.stringify(req.body) }),
-                ...(req.signal === undefined ? {} : { signal: req.signal }),
-            }),
-            (cause) => connectionError(endpoint.baseUrl, req.signal, cause),
-        ).map((response) => ({ response, baseUrl: endpoint.baseUrl })),
-    );
+    return opts.discover().asyncAndThen((endpoint) => {
+        // Each optional key stays absent, not `undefined`: `fetch` turns the header record into `Headers`, where an
+        // `undefined` value becomes the text "undefined", and `opts.fetch` is a replaceable function that can tell a
+        // missing `body` or `signal` from an `undefined` one. A caller header passes through as it is.
+        const headers: Record<string, string> = { ...req.headers, Authorization: `Bearer ${endpoint.token}`, Accept: accept };
+        const init: RequestInit = { method, headers };
+        if (req.body !== undefined) {
+            headers["Content-Type"] = "application/json";
+            init.body = JSON.stringify(req.body);
+        }
+        if (req.signal !== undefined) init.signal = req.signal;
+        return ResultAsync.fromPromise(opts.fetch(`${endpoint.baseUrl}${path}`, init), (cause) => connectionError(endpoint.baseUrl, req.signal, cause)).map(
+            (response) => ({ response, baseUrl: endpoint.baseUrl }),
+        );
+    });
 }
 
 /** The parsed JSON body. A body that is not JSON is a `bad_json` error that carries the start of the text. */

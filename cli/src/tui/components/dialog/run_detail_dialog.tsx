@@ -139,7 +139,7 @@ export function RunDetailDialog(props: RunDetailDialogProps): JSX.Element {
                             startedAt: step.startedAt,
                             // Absent, not "", so a step that reported nothing adds no row at all — the
                             // same absence rule every other figure on this surface follows.
-                            ...(figure === "" ? {} : { usageFigure: figure }),
+                            usageFigure: figure === "" ? undefined : figure,
                         };
                     }),
                     unattributed: loaded.unattributedUsage,

@@ -264,7 +264,7 @@ export function analysisCollectionRoutes(boot: ServerBoot, opts: AnalysisListOpt
             return {
                 ...toAnalysisView(item.analysis),
                 anchorPath: item.anchorPath,
-                ...(totals === undefined ? {} : { usage: totals }),
+                usage: totals,
                 lastActivityAt: new Date(item.lastActivityAt).toISOString(),
                 // `summarizePage` gives one summary for each id, in the order of `ids`.
                 ...summaries[index]!,
@@ -471,7 +471,7 @@ export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAU
         if (after.isErr()) return internalError(c, after.error, "read the analysis");
         if (after.value === null) return apiError(c, "not_found", "Analysis not found.");
         return (await analysisDetail(after.value, boot.runtime(), opts, { touch: false })).match(
-            (detail) => c.json({ ...detail, ...(workspaceNotMoved === undefined ? {} : { workspaceNotMoved }) } satisfies UpdateAnalysisResponse),
+            (detail) => c.json({ ...detail, workspaceNotMoved } satisfies UpdateAnalysisResponse),
             (e) => internalError(c, e, "read the analysis"),
         );
     });

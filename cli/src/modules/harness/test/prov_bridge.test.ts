@@ -51,7 +51,7 @@ afterEach(() => {
 // unknown as` stub below never needs the full shape, so these structural mirrors are honest.
 type FakeInputRef = { path: string; hash: string; source: "data" | "upstream" | "prior" | "artifacts"; fileId?: string };
 type FakeProducer =
-    | { type: "command"; command: string; args?: string[]; exitCode: number; durationMs: number; timestamp: string }
+    | { type: "command"; command: string; args?: string[]; exitCode: number; durationMs?: number; timestamp: string }
     | { type: "file_tool"; tool: string; invocationId: string };
 type FakeRecord = { outputPath: string; producer: FakeProducer; inputs?: FakeInputRef[]; scriptPath?: string | null };
 
@@ -236,6 +236,72 @@ describe("createBusArtifactRegistry — register", () => {
         expect(fileQName(cmdBRef.inputs[0]!)).toBe(fileQName({ path: "runs/run-001/de-analysis/output/de_results.csv", hash: "sha256:aaa" }));
     });
 
+    test("a command input carries the fileId key only when a file id resolved, for a read and for a self-read", async () => {
+        const registry = createBusArtifactRegistry(modelId);
+        const cmdA: FakeProducer = { type: "command", command: "python3 de.py", exitCode: 0, durationMs: 900, timestamp: "t" };
+        const cmdB: FakeProducer = { type: "command", command: "python3 plot.py", exitCode: 0, durationMs: 300, timestamp: "t" };
+        const input: ArtifactRegistrationInput = {
+            resourceId: "an-1",
+            runId: "run-001",
+            stepId: "de-analysis",
+            artifacts: [entry("output/a.csv", "sha256:aaa", 10), entry("output/c.csv", "sha256:ccc", 11), entry("figures/heatmap.png", "sha256:bbb", 20)],
+            collector: fakeCollector([
+                { outputPath: "output/a.csv", producer: cmdA },
+                { outputPath: "output/c.csv", producer: cmdA },
+                {
+                    outputPath: "figures/heatmap.png",
+                    producer: cmdB,
+                    inputs: [
+                        { path: "/an-1/data/inputs/raw.csv", hash: "sha256:d1", source: "data", fileId: "file-1" },
+                        { path: "/an-1/data/inputs/other.csv", hash: "sha256:d2", source: "data" },
+                        { path: "/an-1/runs/run-001/de-analysis/output/a.csv", hash: "sha256:aaa", source: "artifacts", fileId: "file-2" },
+                        { path: "/an-1/runs/run-001/de-analysis/output/c.csv", hash: "sha256:ccc", source: "artifacts" },
+                    ],
+                },
+            ]),
+        };
+
+        (await registry.register(input, noSession))._unsafeUnwrap();
+
+        const ref = commandEvents()[1]?.command;
+        if (ref?.kind !== "command") throw new Error("expected a command-kind ref");
+        expect(ref.inputs.map((i) => [i.source, Object.hasOwn(i, "fileId")])).toEqual([
+            ["data", true],
+            ["data", false],
+            ["step", true],
+            ["step", false],
+        ]);
+        expect(ref.inputs.map((i) => i.fileId)).toEqual(["file-1", undefined, "file-2", undefined]);
+    });
+
+    test("a command carries args, durationMs, and scriptPath as keys only when the collector captured them", async () => {
+        const registry = createBusArtifactRegistry(modelId);
+        const bare: FakeProducer = { type: "command", command: "make", exitCode: 0, timestamp: "t" };
+        const full: FakeProducer = { type: "command", command: "python3 de.py", args: ["--n", "3"], exitCode: 0, durationMs: 500, timestamp: "t" };
+        const input: ArtifactRegistrationInput = {
+            resourceId: "an-1",
+            runId: "run-001",
+            stepId: "de-analysis",
+            artifacts: [entry("output/a.csv", "sha256:aaa", 10), entry("output/b.csv", "sha256:bbb", 11)],
+            collector: fakeCollector([
+                { outputPath: "output/a.csv", producer: bare },
+                { outputPath: "output/b.csv", producer: full, scriptPath: "scripts/de.py" },
+            ]),
+        };
+
+        (await registry.register(input, noSession))._unsafeUnwrap();
+
+        const [bareRef, fullRef] = commandEvents().map((e) => e.command);
+        if (bareRef?.kind !== "command" || fullRef?.kind !== "command") throw new Error("expected command-kind refs");
+        for (const key of ["args", "durationMs", "scriptPath"]) {
+            expect(Object.hasOwn(bareRef, key)).toBe(false);
+            expect(Object.hasOwn(fullRef, key)).toBe(true);
+        }
+        expect(fullRef.args).toEqual(["--n", "3"]);
+        expect(fullRef.durationMs).toBe(500);
+        expect(fullRef.scriptPath).toBe("runs/run-001/de-analysis/scripts/de.py");
+    });
+
     test("a step-relative scriptPath is scoped to the analysis output space so the builder can resolve it", async () => {
         const registry = createBusArtifactRegistry(modelId);
         const cmd: FakeProducer = { type: "command", command: "python3 scripts/de.py", exitCode: 0, durationMs: 500, timestamp: "t" };
@@ -290,6 +356,7 @@ describe("createBusArtifactRegistry — register", () => {
         expect(inputs.map((i) => i.input.source)).toEqual(["data", "upstream", "prior"]);
         expect(inputs.map((i) => i.input.hash)).toEqual(["sha256:d1", "sha256:u1", "sha256:p1"]);
         expect(inputs.map((i) => i.input.fileId)).toEqual(["file-1", undefined, undefined]);
+        expect(inputs.map((i) => Object.hasOwn(i.input, "fileId"))).toEqual([true, false, false]);
         for (const i of inputs) {
             expect(i.analysisId).toBe("an-1");
             expect(i.actor.kind).toBe("system");
@@ -434,6 +501,7 @@ describe("createRunProvenanceEmitter", () => {
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
         expect(busEvent.outcome).toEqual({ runId: "run-001", stepId: "step-de", status: "failed", completedAtMs: 1_700_000_123_000, durationMs: 90_000 });
+        expect(Object.hasOwn(busEvent.outcome, "durationMs")).toBe(true);
         // The construction-time model id rides the event — which model drove the step.
         expect(busEvent.model).toBe(modelId);
     });
@@ -456,6 +524,7 @@ describe("createRunProvenanceEmitter", () => {
         if (busEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(busEvent.outcome).toEqual({ runId: "run-001", stepId: "step-err", status: "failed", completedAtMs: 1_700_000_200_000 });
         expect(busEvent.outcome.durationMs).toBeUndefined();
+        expect(Object.hasOwn(busEvent.outcome, "durationMs")).toBe(false);
     });
 
     test("the construction-time model id is stamped verbatim — an arbitrary configured provider, no sniffing path", () => {
@@ -704,6 +773,26 @@ describe("createSessionEmit", () => {
             tools: ["read_table", "write_derived"],
             ok: true,
         });
+        expect(Object.hasOwn(event.script, "threadId")).toBe(true);
+        expect(Object.hasOwn(event.script, "script")).toBe(true);
+    });
+
+    test("a script run with no thread and no saved script carries neither key", () => {
+        emitSession({
+            type: "run-script",
+            analysisId: sessionAnalysisId,
+            invocationId: "toolu_2",
+            reads: [],
+            writes: [],
+            tools: [],
+            ok: false,
+        });
+
+        const event = onlyEvent();
+        if (event.type !== "prov.script_run") throw new Error(`expected prov.script_run, got ${event.type}`);
+        expect(Object.hasOwn(event.script, "threadId")).toBe(false);
+        expect(Object.hasOwn(event.script, "script")).toBe(false);
+        expect(event.script).toEqual({ invocationId: "toolu_2", reads: [], writes: [], tools: [], ok: false });
     });
 
     test("a derivation carries its chain, restated pair by pair", () => {

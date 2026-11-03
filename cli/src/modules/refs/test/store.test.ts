@@ -9,6 +9,7 @@ import {
     REFERENCE_DATA_CATALOG_VERSION,
     REFERENCE_INSTALL_RECEIPT_VERSION,
     UnknownReferenceDatasetError,
+    parseReferenceInstallReceipt,
     referenceReceiptContentDigest,
     type ReferenceDataCatalog,
     type ReferenceInstallReceipt,
@@ -30,6 +31,7 @@ import {
     type ReferenceStoreInspection,
     type ReferenceVerification,
 } from "../store.ts";
+import { objectContaining } from "../../../test_support/matchers.ts";
 
 const roots: string[] = [];
 
@@ -231,7 +233,7 @@ describe("installation", () => {
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
         expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
             artifactsToFetch: 0,
-            artifacts: expect.objectContaining({ length: 0 }),
+            artifacts: objectContaining({ length: 0 }),
         });
 
         // An intact install is skipped: the upstream below serves entirely different bytes, so a clean
@@ -256,7 +258,7 @@ describe("installation", () => {
     // A consumer pins a store by the content of its receipts, so the install time must not change the identity.
     test("installs of the same bytes at different times share one content digest", async () => {
         const fixture = catalog();
-        const receipts = [];
+        const receipts: (ReferenceInstallReceipt | undefined)[] = [];
         for (const now of ["2026-07-14T12:00:00.000Z", "2026-09-01T08:00:00.000Z"]) {
             const path = root();
             const installed = await installReferenceDatasets(["demo"], {
@@ -266,12 +268,12 @@ describe("installation", () => {
                 now: () => new Date(now),
             });
             expect(installed.isOk()).toBe(true);
-            receipts.push(JSON.parse(readFileSync(join(referenceStorePaths(path).receipts, "demo.json"), "utf8")));
+            receipts.push(parseReferenceInstallReceipt(JSON.parse(readFileSync(join(referenceStorePaths(path).receipts, "demo.json"), "utf8"))));
         }
 
-        expect(receipts[0].activatedAt).not.toBe(receipts[1].activatedAt);
-        expect(receipts[0].contentDigest).toBe(receipts[1].contentDigest);
-        expect(receipts[0].contentDigest).toBe(
+        expect(receipts[0]?.activatedAt).not.toBe(receipts[1]?.activatedAt);
+        expect(receipts[0]?.contentDigest).toBe(receipts[1]?.contentDigest);
+        expect(receipts[0]?.contentDigest).toBe(
             referenceReceiptContentDigest({ datasetId: "demo", datasetVersion: "2026.07", artifacts: [{ path: "a.txt", bytes: 5, sha256: sha("alpha") }] }),
         );
     });
@@ -332,9 +334,8 @@ describe("mutable upstream installation", () => {
 
         const paths = referenceStorePaths(path);
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "gene_info.gz"), "utf8")).toBe("mutable-bytes");
-        expect(JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8")).artifacts).toEqual([
-            { path: "gene_info.gz", bytes: 13, sha256: sha("mutable-bytes") },
-        ]);
+        const receipt: unknown = JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8"));
+        expect(receipt).toHaveProperty("artifacts", [{ path: "gene_info.gz", bytes: 13, sha256: sha("mutable-bytes") }]);
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]).toMatchObject({
             state: "valid",
             files: [{ path: "gene_info.gz", state: "valid" }],
@@ -376,9 +377,8 @@ describe("mutable upstream installation", () => {
         const forced = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(refreshed) }, { force: true });
         expect(forced._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(16);
         expect(readFileSync(active, "utf8")).toBe("release-b-longer");
-        expect(JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8")).artifacts).toEqual([
-            { path: "gene_info.gz", bytes: 16, sha256: sha("release-b-longer") },
-        ]);
+        const receipt: unknown = JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8"));
+        expect(receipt).toHaveProperty("artifacts", [{ path: "gene_info.gz", bytes: 16, sha256: sha("release-b-longer") }]);
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
     });
 });
@@ -399,7 +399,7 @@ describe("self-healing installs", () => {
         expect((await inspectReferenceStore(path, fixture))._unsafeUnwrap().datasets[0]?.state).toBe("installed");
         expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
             artifactsToFetch: 1,
-            artifacts: expect.objectContaining({ length: 1 }),
+            artifacts: objectContaining({ length: 1 }),
         });
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("modified");
 
@@ -585,7 +585,7 @@ describe("download estimate", () => {
         // the artifacts a fresh install would fetch — never going to the network to size them.
         expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
             artifactsToFetch: 2,
-            artifacts: expect.objectContaining({ length: 2 }),
+            artifacts: objectContaining({ length: 2 }),
         });
 
         // A leftover partial nets out nothing now: the installer always refetches the whole artifact.
@@ -593,18 +593,18 @@ describe("download estimate", () => {
         writeFileSync(join(paths.downloads, `${sha("demo/2026.07/a.txt")}.part`), "al");
         expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
             artifactsToFetch: 2,
-            artifacts: expect.objectContaining({ length: 2 }),
+            artifacts: objectContaining({ length: 2 }),
         });
 
         const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(files) });
         expect(installed.isOk()).toBe(true);
         expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
             artifactsToFetch: 0,
-            artifacts: expect.objectContaining({ length: 0 }),
+            artifacts: objectContaining({ length: 0 }),
         });
         expect((await referenceDownloadEstimate(["demo"], path, source(fixture), { force: true }))._unsafeUnwrap()).toMatchObject({
             artifactsToFetch: 2,
-            artifacts: expect.objectContaining({ length: 2 }),
+            artifacts: objectContaining({ length: 2 }),
         });
         expect((await referenceDownloadEstimate(["unknown"], path, source(fixture)))._unsafeUnwrapErr().type).toBe("unknown_dataset");
     });

@@ -10,6 +10,7 @@ import { freshDb } from "../../../test_support/db.ts";
 import { writeMarker } from "../../anchor/marker.ts";
 import { canRead, canWrite, classifyRealPath, workspaceReadRoot, type ReadRoot, type Roots } from "../boundary.ts";
 import { invalidateWorkspaceRoot } from "../output.ts";
+import { stringContaining } from "../../../test_support/matchers.ts";
 
 const roots: Roots = {
     writable: ["/work/out"],
@@ -201,6 +202,6 @@ describe("the workspace root of a read", () => {
 
     test("an unlocatable workspace gives the message of the workspace error", async () => {
         const error = (await workspaceReadRoot("no-such-analysis"))._unsafeUnwrapErr();
-        expect(error).toMatchObject({ type: "workspace_unavailable", message: expect.stringContaining("no longer exists") });
+        expect(error).toMatchObject({ type: "workspace_unavailable", message: stringContaining("no longer exists") });
     });
 });

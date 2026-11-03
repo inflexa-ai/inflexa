@@ -340,7 +340,7 @@ export function referencePickerModel(catalog: ReferenceDataCatalog, withheld: re
             // consent line carry: repeated down a list this long it wraps rows and says nothing the
             // one place it matters — the plan shown before consent — does not already say.
             label: `${dataset.title} (${dataset.artifacts.length} file${dataset.artifacts.length === 1 ? "" : "s"})`,
-            ...(dataset.recommendation.recommended ? { hint: "recommended" } : {}),
+            hint: dataset.recommendation.recommended ? "recommended" : undefined,
         });
     }
     const recommended = catalog.datasets.filter((dataset) => dataset.recommendation.recommended).map((dataset) => dataset.id);
@@ -681,7 +681,7 @@ export function createReferenceDownloadProgress(
     function snapshot(now: number = Date.now()): ReferenceProgressSnapshot {
         const rate = rateBytesPerSecond(now);
         const line = `${completed}/${total} files · ${bytes.formatBytes()}${planned}${rate === undefined ? "" : ` · ${rate.formatBytes()}/s`}${renderInFlight()}`;
-        return { line, completed, total, ...(path === undefined ? {} : { path }) };
+        return { line, completed, total, path };
     }
 
     painter.start(snapshot());
@@ -696,10 +696,7 @@ export function createReferenceDownloadProgress(
             switch (event.type) {
                 case "artifact_started":
                     path = event.path;
-                    inFlight.set(artifactKey(event.datasetId, event.path), {
-                        bytes: 0,
-                        ...(event.declaredBytes === undefined ? {} : { declared: event.declaredBytes }),
-                    });
+                    inFlight.set(artifactKey(event.datasetId, event.path), { bytes: 0, declared: event.declaredBytes });
                     painter.refresh(snapshot(now));
                     return;
                 case "artifact_bytes": {
@@ -818,9 +815,9 @@ export async function downloadReferences(
             ids,
             {
                 root: env.refsDir,
-                ...(options.source === undefined ? {} : { source: options.source }),
-                ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-                ...(readout === undefined ? {} : { onProgress: readout.report }),
+                source: options.source,
+                fetch: options.fetch,
+                onProgress: readout?.report,
             },
             install,
         );
@@ -1062,8 +1059,8 @@ export async function runReferenceSetup(options: ReferenceSetupOptions): Promise
             // of it would make that flag mean "I meant it" rather than "do not prompt me".
             yes: true,
             interactive: options.interactive,
-            ...(options.source === undefined ? {} : { source: options.source }),
-            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+            source: options.source,
+            fetch: options.fetch,
         });
         return downloaded.map(() => undefined);
     }
@@ -1102,8 +1099,8 @@ export async function runReferenceSetup(options: ReferenceSetupOptions): Promise
     const downloaded = await downloadReferences({
         ids: chosen,
         interactive: true,
-        ...(options.source === undefined ? {} : { source: options.source }),
-        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+        source: options.source,
+        fetch: options.fetch,
     });
     return downloaded.map(() => undefined);
 }

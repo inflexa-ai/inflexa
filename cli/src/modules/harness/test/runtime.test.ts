@@ -79,7 +79,7 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
 function fakeEmbedding(): EmbeddingProvider {
     return {
         dimensions: 1536,
-        embed: (texts) => okAsync(texts.map(() => new Array(1536).fill(0))),
+        embed: (texts) => okAsync(texts.map(() => new Array<number>(1536).fill(0))),
     };
 }
 

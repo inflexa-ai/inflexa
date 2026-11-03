@@ -560,7 +560,7 @@ async function runCustomLocalSetup(config: ReturnType<typeof readConfig>, answer
 
     // Record dimensions only when it differs from the built-in default (which the provider already applies),
     // keeping config minimal — a 384-dim custom model persists just its path.
-    const embedding = { mode: "local" as const, modelPath, ...(dimensions === LOCAL_EMBEDDING_DIMENSIONS ? {} : { dimensions }) };
+    const embedding = { mode: "local" as const, modelPath, dimensions: dimensions === LOCAL_EMBEDDING_DIMENSIONS ? undefined : dimensions };
     return writeConfig({ ...config, embedding })
         .mapErr((e) => configWriteFailed("Your model verified", e))
         .map(() => {
@@ -722,9 +722,9 @@ async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: Api
     const embedding = {
         mode: "api-key" as const,
         apiKey,
-        ...(confirmedURL === DEFAULT_API_BASE_URL ? {} : { baseURL: confirmedURL }),
-        ...(model === DEFAULT_API_EMBEDDING_MODEL ? {} : { model }),
-        ...(dimensions === DEFAULT_API_EMBEDDING_DIMENSIONS ? {} : { dimensions }),
+        baseURL: confirmedURL === DEFAULT_API_BASE_URL ? undefined : confirmedURL,
+        model: model === DEFAULT_API_EMBEDDING_MODEL ? undefined : model,
+        dimensions: dimensions === DEFAULT_API_EMBEDDING_DIMENSIONS ? undefined : dimensions,
     };
     return writeConfig({ ...config, embedding })
         .mapErr((e) => configWriteFailed(inputs.validate ? "The endpoint probe passed" : "The endpoint was resolved", e))

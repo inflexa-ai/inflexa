@@ -83,9 +83,9 @@ export async function readPoolInventorySections(storeRoot: string): Promise<Pool
             const hash = await readHashMarker(join(storeRoot, "store", head));
             packages.push({
                 name: node?.name ?? name,
-                ...(node?.version === undefined ? {} : { version: node.version }),
+                version: node?.version,
                 storeDir: head,
-                ...(hash === undefined ? {} : { hash }),
+                hash,
             });
         }
         if (packages.length > 0) sections.push({ title, track, packages });

@@ -474,7 +474,7 @@ function cliSbom(
             version: pkg.version,
             purl: npmPurl(pkg.name, pkg.version),
             licenses: npmLicenses(pkg),
-            ...(pkg.homepage ? { externalReferences: [{ type: "website", url: pkg.homepage }] } : {}),
+            externalReferences: pkg.homepage ? [{ type: "website", url: pkg.homepage }] : undefined,
         }));
 
     components.push({
@@ -646,10 +646,11 @@ for (const target of targets) {
         // __INFLEXA_COMPILED__ precedent: modules/sbom/sbom.ts reads it under a `typeof` guard, thus a
         // from-source run (no define) sees it undeclared and reports that it carries no SBOM.
         __INFLEXA_SBOM__: JSON.stringify(sbomText),
-        // opentui's native loader consults OPENTUI_LIBC on linux to pick the glibc vs musl lib; bake it
-        // so the choice cannot be swayed at runtime (per opencode's build; we only ship glibc).
-        ...(target.os === "linux" ? { "process.env.OPENTUI_LIBC": JSON.stringify("glibc") } : {}),
     };
+    // opentui's native loader consults OPENTUI_LIBC on linux to pick the glibc vs musl lib; bake it
+    // so the choice cannot be swayed at runtime (per opencode's build; we only ship glibc). Other targets
+    // add no key, because a define value must be a string.
+    if (target.os === "linux") targetDefine["process.env.OPENTUI_LIBC"] = JSON.stringify("glibc");
 
     const result = await Bun.build({
         entrypoints: ["src/index.ts", workerEntry, codemodeWorkerEntry],

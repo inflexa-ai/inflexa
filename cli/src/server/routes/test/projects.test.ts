@@ -8,6 +8,7 @@ import { getAnalysis } from "../../../db/primary_query.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { projectRoutes } from "../projects.ts";
+import { anyOf } from "../../../test_support/matchers.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. Each `as` cast of a body
 // below reads JSON that the route under test builds from the same `src/api/` type.
@@ -45,7 +46,7 @@ describe("POST /api/v1/projects", () => {
         for (const body of [{}, { name: "x", tags: ["a,b"] }]) {
             const response = await post(body);
             expect(response.status).toBe(400);
-            expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: expect.any(Object) } });
+            expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: anyOf(Object) } });
         }
     });
 

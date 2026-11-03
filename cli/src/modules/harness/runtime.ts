@@ -1000,6 +1000,20 @@ async function bootHarnessRuntimeOnce(
         const conversationBackend: AgentBackend = { provider: conversationProvider, model: conversationModel };
         const sandboxBackend: AgentBackend = { provider: sandboxProvider, model: sandboxModel };
         const utilityBackend: AgentBackend = { provider: utilityProvider, model: utilityModel };
+        // Docker resolves to no socket path and no ownership fact. For a docker pin each key stays absent,
+        // so dockerode keeps its default socket resolution (including any DOCKER_HOST the user relies on)
+        // and the harness leaves the modes of the step tree untouched.
+        const engineOptions: { engineSocketPath?: string; engineBindOwnership?: "host-preserved" } = {};
+        // Pull (`ensureSandboxImage`) and create must target the SAME engine, so dial the socket resolved
+        // for the pinned runtime.
+        if (engineSocketPath !== undefined) engineOptions.engineSocketPath = engineSocketPath;
+        // A podman pin declares an engine fact: its bind mounts expose honest host
+        // ownership — virtiofs on macOS, native binds / rootless userns uid-mapping
+        // on Linux — presenting a host uid the uid-1000 sandbox workload cannot
+        // write; the harness compensates (today by loosening each step's write
+        // tree). Docker Desktop's file-sharing layer masks that mismatch, so a
+        // docker pin leaves the field unset and the modes untouched.
+        if (pinnedRuntime.id === "podman") engineOptions.engineBindOwnership = "host-preserved";
         const sandboxClient = seams.createSandbox({
             // Podman speaks the Docker API, so the harness's dockerode-based `docker`
             // backend drives it unchanged — the only divergence is the *socket* it
@@ -1039,19 +1053,7 @@ async function bootHarnessRuntimeOnce(
             // adoption) are observable only through this seam — unset, they fall to
             // the harness's noop logger and vanish.
             logger,
-            // Pull (`ensureSandboxImage`) and create must target the SAME engine, so
-            // dial the socket resolved for the pinned runtime. Docker resolves to
-            // `undefined`: for a docker pin the conditional spread materializes no key,
-            // so dockerode keeps its default socket resolution — including any
-            // DOCKER_HOST the user relies on.
-            ...(engineSocketPath === undefined ? {} : { engineSocketPath }),
-            // A podman pin declares an engine fact: its bind mounts expose honest host
-            // ownership — virtiofs on macOS, native binds / rootless userns uid-mapping
-            // on Linux — presenting a host uid the uid-1000 sandbox workload cannot
-            // write; the harness compensates (today by loosening each step's write
-            // tree). Docker Desktop's file-sharing layer masks that mismatch, so a
-            // docker pin leaves the field unset and the modes untouched.
-            ...(pinnedRuntime.id === "podman" ? { engineBindOwnership: "host-preserved" as const } : {}),
+            ...engineOptions,
         });
         const workspaceFs = createWorkspaceFilesystem({ resolveWorkspaceRoot });
         // One authorizer instance, shared by the parent workflow's terminal revoke,
@@ -1145,7 +1147,7 @@ async function bootHarnessRuntimeOnce(
             // acquisition is a host action behind its own approval.
             extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
             bioKeys: cfg.bioKeys,
-            ...(knowledge ? { knowledge } : {}),
+            knowledge,
             scriptRuntime: codemodeRuntime(),
         };
 
@@ -1212,7 +1214,7 @@ async function bootHarnessRuntimeOnce(
             runLauncher,
             bioKeys: cfg.bioKeys,
             // The planner of `generate_plan` gains the two knowledge tools when the client is bound.
-            ...(knowledge ? { knowledge } : {}),
+            knowledge,
             // The web-search engine over the SearXNG service the CLI's compose stack runs, so
             // `web_search` attaches. The URL is a derived stack constant the CLI owns — no
             // config field and no environment variable, the same rule as the proxy endpoint.
@@ -1305,6 +1307,10 @@ async function bootHarnessRuntimeOnce(
             seams.registerNotificationSweep({ pool: composition.pool, logger });
         };
 
+        // A runtime that no server holds binds no publisher, and its core bag then has no such key.
+        const sessionPageOptions: { makeSessionPagePublisher?: MakeSessionPagePublisher } = {};
+        if (makeSessionPagePublisher) sessionPageOptions.makeSessionPagePublisher = makeSessionPagePublisher;
+
         // Hand the harness the resolved inputs and let it own the ordered boot
         // tail — validate skills → init state → assert the connection budget →
         // assemble the durable cohort → `beforeLaunch` → launch — plus the
@@ -1324,8 +1330,8 @@ async function bootHarnessRuntimeOnce(
                 sandbox: { client: sandboxClient },
                 resourcePolicy: cfg.resourcePolicy,
                 usageRecorder,
-                ...(assetsDir ? { resolveReportPageAsset: makeReportPageAssetLookup(assetsDir) } : {}),
-                ...(makeSessionPagePublisher ? { makeSessionPagePublisher } : {}),
+                resolveReportPageAsset: assetsDir ? makeReportPageAssetLookup(assetsDir) : undefined,
+                ...sessionPageOptions,
                 // The eyes of a report session. A spawn refuses outright without them, thus this binding is
                 // what makes the report path exist here at all. The realization runs on the same pinned
                 // runtime that the sandbox uses, thus one boot names one container engine.

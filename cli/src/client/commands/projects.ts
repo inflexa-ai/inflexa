@@ -8,7 +8,7 @@ import { createProject, fetchProjects } from "../projects.ts";
 export async function projectNew(name: string, flags: { description?: string; tags?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
     // `--tags` is one comma-separated flag value. The server trims each tag and drops a blank one.
     const tags = flags.tags === undefined ? [] : flags.tags.split(",");
-    (await createProject({ name, tags, ...(flags.description === undefined ? {} : { description: flags.description }) }, opts)).match(
+    (await createProject({ name, tags, description: flags.description }, opts)).match(
         (project) => console.log(`Created project "${project.name}" (${project.id})`),
         (e) => fail(describeClientError(e)),
     );

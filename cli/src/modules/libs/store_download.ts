@@ -293,7 +293,7 @@ function reportProgress(onProgress: ((event: StoreDownloadProgress) => void) | u
 function forwardLayerProgress(onProgress: ((event: StoreDownloadProgress) => void) | undefined, digest: string, event: DownloadProgress): void {
     switch (event.type) {
         case "started":
-            reportProgress(onProgress, { type: "layer_started", digest, ...(event.declaredBytes === undefined ? {} : { declaredBytes: event.declaredBytes }) });
+            reportProgress(onProgress, { type: "layer_started", digest, declaredBytes: event.declaredBytes });
             return;
         case "bytes":
             reportProgress(onProgress, { type: "layer_bytes", digest, bytes: event.bytes });
@@ -320,7 +320,7 @@ function errorText(cause: unknown): string {
 function mapDownloadError(error: DownloadError): StoreDownloadError {
     return error.type === "io_failed"
         ? { type: "io_failed", message: error.message, cause: error.cause }
-        : { type: "download_failed", message: error.message, ...("cause" in error ? { cause: error.cause } : {}) };
+        : { type: "download_failed", message: error.message, cause: "cause" in error ? error.cause : undefined };
 }
 
 /** The digest is the content id; a colon is not a portable path segment, so it becomes the file stem. */
@@ -1172,7 +1172,7 @@ export async function downloadPackageStore(deps: StoreDownloadDeps): Promise<Res
     const attemptId = deps.attemptId?.() ?? randomUUIDv7();
     const bounds = {
         windowMs: deps.unpackWindowMs ?? LIVENESS_WINDOW_MS,
-        ...(deps.tarBoundMs === undefined ? {} : { tarBoundMs: deps.tarBoundMs }),
+        tarBoundMs: deps.tarBoundMs,
     };
     // `force` IS the `--update` consent, thus it is also the consent that replaces the dependency
     // graph: the new catalog resolved a different set, and the two graphs must not merge.
@@ -1259,8 +1259,8 @@ export async function startCatalogTransfer(params: {
         const resolved = await downloadPackageStore({
             storeRoot: params.storeRoot,
             onProgress: recordResolvedManifest,
-            ...(params.fetch === undefined ? {} : { fetch: params.fetch }),
-            ...(params.arch === undefined ? {} : { arch: params.arch }),
+            fetch: params.fetch,
+            arch: params.arch,
         });
         if (resolved.isErr()) return err(resolved.error);
         if (resolved.value.type === "up_to_date") return ok({ type: "up_to_date", manifestDigest: resolved.value.manifestDigest });
@@ -1386,11 +1386,11 @@ export async function runCatalogTransfer(params: {
         const result = await downloadPackageStore({
             storeRoot: params.storeRoot,
             force: params.update,
-            ...(params.fetch === undefined ? {} : { fetch: params.fetch }),
-            ...(params.retry === undefined ? {} : { retry: params.retry }),
-            ...(params.arch === undefined ? {} : { arch: params.arch }),
-            ...(params.unpackWindowMs === undefined ? {} : { unpackWindowMs: params.unpackWindowMs }),
-            ...(params.tarBoundMs === undefined ? {} : { tarBoundMs: params.tarBoundMs }),
+            fetch: params.fetch,
+            retry: params.retry,
+            arch: params.arch,
+            unpackWindowMs: params.unpackWindowMs,
+            tarBoundMs: params.tarBoundMs,
             onProgress: (event) => {
                 switch (event.type) {
                     case "manifest_resolved":

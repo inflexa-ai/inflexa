@@ -70,6 +70,7 @@ import {
     describeStoreFlightSpec,
     enqueueStoreAdd,
     flushPendingStoreAdds,
+    packageQuery,
     readStoreFlights,
     type FlushDeps,
     type FlushSpecOutcome,
@@ -942,11 +943,7 @@ function mergeCommandFlags(
         });
     }
     const version = query.version ?? flagVersion;
-    return ok({
-        spelling: query.spelling,
-        ...(flags.lang === null ? {} : { track: flags.lang }),
-        ...(version === undefined ? {} : { version }),
-    });
+    return ok(packageQuery(query.spelling, flags.lang ?? undefined, version));
 }
 
 /** The flags of `inflexa store add` that shape the add. */

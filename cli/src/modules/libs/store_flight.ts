@@ -113,17 +113,27 @@ export function describeStoreFlightSpec(spec: Pick<StoreFlightSpec, "ecosystem" 
 }
 
 /**
+ * The query of a spelling, with its track and version when the caller has them. Each caller
+ * computes its own track and version, because the three of them read them from different
+ * sources (a ledger row, a command flag, a failed flight). A query that has no track or no
+ * version has no such key: the query reaches the provisioner grammar and the harness, and
+ * neither may meet an `undefined` key.
+ */
+export function packageQuery(spelling: string, track: PackageQuery["track"], version: string | undefined): PackageQuery {
+    const query: { spelling: string; track?: NonNullable<PackageQuery["track"]>; version?: string } = { spelling };
+    if (track !== undefined) query.track = track;
+    if (version !== undefined) query.version = version;
+    return query;
+}
+
+/**
  * The query that one spec asks. The two shapes hold one fact: the spec is the
  * row of the ledger, and the query is the grammar that crosses to the
  * provisioner. Only this module mints a specifier, and it mints `==<v>` or
  * nothing, thus the two characters after the `==` are the version.
  */
 function specQuery(spec: Pick<StoreFlightSpec, "ecosystem" | "spelling" | "specifier">): PackageQuery {
-    return {
-        spelling: spec.spelling,
-        ...(spec.ecosystem === null ? {} : { track: spec.ecosystem }),
-        ...(spec.specifier === "" ? {} : { version: spec.specifier.slice(2) }),
-    };
+    return packageQuery(spec.spelling, spec.ecosystem ?? undefined, spec.specifier === "" ? undefined : spec.specifier.slice(2));
 }
 
 /**

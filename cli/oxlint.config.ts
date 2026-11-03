@@ -261,15 +261,6 @@ export default solid({
             // back on.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #805: decide on exactOptionalPropertyTypes, then turn on the no-unsafe family
-                // and the conditional-spread rule.
-                "typescript/no-unsafe-argument": "off",
-                "typescript/no-unsafe-assignment": "off",
-                "typescript/no-unsafe-call": "off",
-                "typescript/no-unsafe-member-access": "off",
-                "typescript/no-unsafe-return": "off",
-                "@inflexa-ai/no-conditional-spread": "off",
-
                 // #806: make each type assertion safe.
                 "@inflexa-ai/require-assertion-safety": "off",
                 "typescript/no-unsafe-type-assertion": "off",

@@ -51,6 +51,7 @@ import { readConfig, writeConfig } from "../../../lib/config.ts";
 import type { BootStepId } from "../../../api/server.ts";
 import * as container from "../../../lib/container.ts";
 import * as cliPrompts from "../../../lib/cli.ts";
+import { requestedModel } from "../../../test_support/request_body.ts";
 // Namespace import beside the named one purely so `detectProviderEnv` is spyable at the seam setup.ts
 // calls it through; `env` itself is a value the assertions read, so it stays a named import.
 import * as envModule from "../../../lib/env.ts";
@@ -1123,7 +1124,7 @@ describe("probeOnce — the election feeds the probe a servable model", () => {
         globalThis.fetch = (async (url: string, init?: RequestInit) => {
             const target = String(url);
             if (target.endsWith("/messages/count_tokens")) {
-                const model = JSON.parse(String(init?.body)).model;
+                const model = requestedModel(init);
                 return model === "claude-new"
                     ? new Response(JSON.stringify({ error: { type: "not_found_error" } }), { status: 404 })
                     : new Response("{}", { status: 200 });
@@ -2395,7 +2396,7 @@ describe("setup() — batch orchestration", () => {
             test(`${key} is consumed, not merely parsed`, async () => {
                 const configPath = entry.file === undefined ? undefined : join(answersDir, "answers.yml");
                 if (configPath !== undefined && entry.file !== undefined) writeFileSync(configPath, entry.file);
-                const flags: SetupAnswerFlags = { ...entry.flags, ...(configPath !== undefined && { config: configPath }) };
+                const flags: SetupAnswerFlags = { ...entry.flags, config: configPath };
 
                 // `Bun.env` rather than `process.env` — the same object (Bun aliases it), spelled the way
                 // gen_docs.test.ts already does to stay clear of the `no-restricted-properties` ban on

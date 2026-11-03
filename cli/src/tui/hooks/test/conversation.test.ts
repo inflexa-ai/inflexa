@@ -135,7 +135,7 @@ function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () 
 /** The frame that ends the stream of a turn: `error` for a failed turn, else `finish`, as the route sends them. */
 function terminalFrame(end: End): ChatFrame {
     if (end.status === "failed") return { type: "error", message: end.failure?.message ?? "The turn failed.", source: ROUTE_SOURCE };
-    return { type: "finish", source: ROUTE_SOURCE, finishReason: "stop", ...(end.turnUsage === undefined ? {} : { turnUsage: end.turnUsage }) };
+    return { type: "finish", source: ROUTE_SOURCE, finishReason: "stop", turnUsage: end.turnUsage };
 }
 
 /** A fake of the local server, with what the hook sent it. */

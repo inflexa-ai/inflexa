@@ -58,7 +58,7 @@ function analysisIn(dir: string, name: string, usage?: UsageTotals): AnalysisSum
         latestRun: null,
         pendingAsks: null,
         busy: [],
-        ...(usage === undefined ? {} : { usage }),
+        usage,
     };
     rows.unshift(row);
     return row;

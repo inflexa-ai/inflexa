@@ -46,7 +46,15 @@ import { getLogger } from "../../lib/log.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { locateExistingOutputDir } from "../../modules/analysis/output.ts";
 import { resolveModelConnection, type ModelConnectionIdentity } from "../../modules/harness/config.ts";
-import { buildChatSession, healTailOrphan, retractTailTurn, runChatTurn, type RunChatTurnArgs, type TurnOutcome } from "../../modules/harness/turn.ts";
+import {
+    buildChatSession,
+    healTailOrphan,
+    retractTailTurn,
+    runChatTurn,
+    turnSpend,
+    type RunChatTurnArgs,
+    type TurnOutcome,
+} from "../../modules/harness/turn.ts";
 import { readCredentialVerdict, type CredentialStateError, type CredentialVerdict } from "../../modules/infra/credential_state.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
 import { startPendingFlushChild } from "../../modules/libs/store.ts";
@@ -187,8 +195,8 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
             page: page.page,
             perPage: page.perPage,
             includeArchived: c.req.query("includeArchived") === "true",
-            ...(type === undefined ? {} : { type }),
-            ...(parentThreadId === undefined ? {} : { parentThreadId }),
+            type,
+            parentThreadId,
         });
         const listed = threadRead.andThen((result) =>
             opts
@@ -591,8 +599,8 @@ async function endingOf(outcome: TurnOutcome, opts: ConversationRouteOpts): Prom
                 ending: {
                     status: "done",
                     opened: outcome.opened,
-                    ...(outcome.fallbackText === "" ? {} : { fallbackText: outcome.fallbackText }),
-                    ...spendOf(outcome),
+                    fallbackText: outcome.fallbackText === "" ? undefined : outcome.fallbackText,
+                    ...turnSpend(outcome),
                 },
                 frame: finishFrame(outcome),
             };
@@ -600,26 +608,26 @@ async function endingOf(outcome: TurnOutcome, opts: ConversationRouteOpts): Prom
             // The endpoint's own word is the one detail of a refusal, thus the details view shows it.
             const cause = {
                 type: "content_filter",
-                ...(outcome.rawFinishReason === undefined ? {} : { rawFinishReason: outcome.rawFinishReason }),
+                rawFinishReason: outcome.rawFinishReason,
                 message: "The model declined this request and stopped the turn.",
             };
             return {
                 ending: {
                     status: "filtered",
                     opened: outcome.opened,
-                    ...(outcome.fallbackText === "" ? {} : { fallbackText: outcome.fallbackText }),
-                    ...spendOf(outcome),
+                    fallbackText: outcome.fallbackText === "" ? undefined : outcome.fallbackText,
+                    ...turnSpend(outcome),
                     failure: { message: cause.message, reason: "content_filter", detailLines: causeDetailLines(cause) },
                 },
                 frame: finishFrame(outcome),
             };
         }
         case "aborted":
-            return { ending: { status: "aborted", opened: outcome.opened, ...spendOf(outcome) }, frame: finishFrame(outcome) };
+            return { ending: { status: "aborted", opened: outcome.opened, ...turnSpend(outcome) }, frame: finishFrame(outcome) };
         case "failed": {
             const failure = await failureOf(outcome, opts);
             return {
-                ending: { status: "failed", opened: outcome.opened, ...spendOf(outcome), failure },
+                ending: { status: "failed", opened: outcome.opened, ...turnSpend(outcome), failure },
                 frame: { type: "error", message: failure.message, source: ROOT_SOURCE },
             };
         }
@@ -640,17 +648,9 @@ async function endingOf(outcome: TurnOutcome, opts: ConversationRouteOpts): Prom
     }
 }
 
-/** The usage and the store fault of a turn that ran. An absent rollup leaves no key. */
-function spendOf(outcome: Extract<TurnOutcome, { opened: boolean }>): Pick<TurnEnding, "turnUsage" | "storeFailed"> {
-    return {
-        ...(outcome.turnUsage === undefined ? {} : { turnUsage: { ...outcome.turnUsage } }),
-        ...(outcome.storeFailed === true ? { storeFailed: true } : {}),
-    };
-}
-
 function finishFrame(outcome: Extract<TurnOutcome, { kind: "ok" | "filtered" | "aborted" }>): ChatFrame {
     const finishReason = outcome.kind === "ok" ? outcome.finishReason : outcome.kind === "filtered" ? "content-filter" : "aborted";
-    return { type: "finish", source: ROOT_SOURCE, finishReason, ...(outcome.turnUsage === undefined ? {} : { turnUsage: { ...outcome.turnUsage } }) };
+    return { type: "finish", source: ROOT_SOURCE, finishReason, turnUsage: turnSpend(outcome).turnUsage };
 }
 
 /**
@@ -809,14 +809,14 @@ export function threadActivityOf(pending: readonly PendingAsk[], runningTurns: R
 export function toThreadSummary(thread: Thread, activity: ThreadActivity): ThreadSummary {
     return {
         id: thread.threadId,
-        ...(thread.title === null ? {} : { title: thread.title }),
+        title: thread.title ?? undefined,
         resourceId: thread.analysisId,
         threadType: thread.threadType,
-        ...(thread.parentThreadId === null ? {} : { parentThreadId: thread.parentThreadId }),
-        ...(thread.parentSeq === null ? {} : { parentSeq: thread.parentSeq }),
+        parentThreadId: thread.parentThreadId ?? undefined,
+        parentSeq: thread.parentSeq ?? undefined,
         createdAt: thread.createdAt.toISOString(),
         updatedAt: thread.updatedAt.toISOString(),
-        ...(thread.deletedAt === null ? {} : { archivedAt: thread.deletedAt.toISOString() }),
+        archivedAt: thread.deletedAt?.toISOString(),
         ...activity,
     };
 }

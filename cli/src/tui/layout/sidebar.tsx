@@ -252,7 +252,7 @@ function packageLinesOf(pending: readonly PendingAddLine[], flights: readonly St
                 glyph: GLYPHS.cross,
                 role: "error",
                 text: `${clamp(flight.spec)} failed`,
-                ...(onOpenFailed === undefined ? {} : { onActivate: () => onOpenFailed(flight.id) }),
+                onActivate: onOpenFailed === undefined ? undefined : () => onOpenFailed(flight.id),
             });
             continue;
         }

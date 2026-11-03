@@ -524,7 +524,7 @@ function applyDataFrame(frame: ChatPartFrame): void {
         // The ask part reconciles under one id: `pending` opens the card and docks the prompt; a
         // terminal re-emission folds latest-wins onto the same card and drains the queue entry.
         if (frame.status === "pending") {
-            pushAsk({ askId: frame.id, title: frame.title, command: frame.command, ...(frame.detail !== undefined ? { detail: frame.detail } : {}) });
+            pushAsk({ askId: frame.id, title: frame.title, command: frame.command, detail: frame.detail });
         } else {
             settleAsk(frame.id);
         }
@@ -1255,7 +1255,7 @@ async function driveTurn(
     if (terminal?.type === "finish") {
         return {
             kind: "ended",
-            end: { status: turn.signal.aborted ? "aborted" : "done", ...(terminal.turnUsage === undefined ? {} : { turnUsage: terminal.turnUsage }) },
+            end: { status: turn.signal.aborted ? "aborted" : "done", turnUsage: terminal.turnUsage },
         };
     }
     if (terminal?.type === "error")

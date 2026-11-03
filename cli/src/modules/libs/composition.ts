@@ -653,7 +653,7 @@ export function resolvePackageRequest(graph: DepsGraph, query: PackageQuery): Re
         case "unknown":
             return err({
                 type: "unknown_distribution",
-                ...(resolution.suggestion === undefined ? {} : { suggestion: identityKey(resolution.suggestion) }),
+                suggestion: resolution.suggestion === undefined ? undefined : identityKey(resolution.suggestion),
             });
         default: {
             // The union is closed, thus the compiler proves that this is unreachable.
@@ -1125,10 +1125,10 @@ function linkClosure(
         arch: template.arch,
         packages: entries.value.sort((one, two) => (one.track + one.name).localeCompare(two.track + two.name)),
         languages: {
-            ...(tracks.includes("python") && template.languages.python !== undefined ? { python: template.languages.python } : {}),
-            ...(tracks.includes("r") && template.languages.r !== undefined ? { r: template.languages.r } : {}),
+            python: tracks.includes("python") ? template.languages.python : undefined,
+            r: tracks.includes("r") ? template.languages.r : undefined,
         },
-        ...(plan.keptFirst.length > 0 ? { merge_conflicts: plan.keptFirst.sort().map((entry) => ({ entry, action: "kept-first" as const })) } : {}),
+        merge_conflicts: plan.keptFirst.length > 0 ? plan.keptFirst.sort().map((entry) => ({ entry, action: "kept-first" as const })) : undefined,
     };
 
     return writeFarmLockFile(farmPath, lock)
@@ -1597,21 +1597,18 @@ function acquisitionPossible(): boolean {
  */
 function absentOutcome(query: PackageQuery, failure: RequestResolutionError): PackageRequestOutcome {
     switch (failure.type) {
-        case "unknown_distribution":
+        case "unknown_distribution": {
             // The suggestion rides in the detail, thus the launch refusal names
-            // the spelling the pool holds before it asks for an acquisition.
-            return {
-                kind: "absent",
-                spelling: query.spelling,
-                acquisitionPossible: acquisitionPossible(),
-                ...(failure.suggestion === undefined
-                    ? {}
-                    : {
-                          detail:
-                              `the pool holds "${identityKeySpelling(failure.suggestion)}" (${failure.suggestion}) — ` +
-                              `an R package name is case-sensitive, thus the two spellings are two names`,
-                      }),
-            };
+            // the spelling the pool holds before it asks for an acquisition. The outcome
+            // crosses to the harness, thus an absent suggestion leaves the key out.
+            const suggested: { detail?: string } = {};
+            if (failure.suggestion !== undefined) {
+                suggested.detail =
+                    `the pool holds "${identityKeySpelling(failure.suggestion)}" (${failure.suggestion}) — ` +
+                    `an R package name is case-sensitive, thus the two spellings are two names`;
+            }
+            return { kind: "absent", spelling: query.spelling, acquisitionPossible: acquisitionPossible(), ...suggested };
+        }
         case "unknown_version":
             return { kind: "absent", spelling: query.spelling, acquisitionPossible: acquisitionPossible() };
         case "ambiguous_ecosystem":

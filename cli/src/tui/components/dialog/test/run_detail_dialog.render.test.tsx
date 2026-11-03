@@ -67,7 +67,7 @@ function step(stepId: string, status: RunStepSummary["status"], usage?: UsageTot
         error: null,
         attempts: 1,
         blockedReason: null,
-        ...(usage === undefined ? {} : { usage }),
+        usage,
     };
 }
 

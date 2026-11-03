@@ -150,12 +150,12 @@ function activityMeta(node: LineageActivityNode | undefined, qn: string): Omit<L
     return {
         qn: node.qn,
         kind,
-        ...(node.command !== undefined ? { command: node.command } : {}),
-        ...(node.exitCode !== undefined ? { exitCode: node.exitCode } : {}),
-        ...(node.tool !== undefined ? { tool: node.tool } : {}),
-        ...(node.unresolvedScript !== undefined ? { unresolvedScript: node.unresolvedScript } : {}),
-        ...(node.runId !== undefined ? { runId: node.runId } : {}),
-        ...(node.stepId !== undefined ? { stepId: node.stepId } : {}),
+        command: node.command,
+        exitCode: node.exitCode,
+        tool: node.tool,
+        unresolvedScript: node.unresolvedScript,
+        runId: node.runId,
+        stepId: node.stepId,
     };
 }
 
@@ -382,7 +382,7 @@ function buildRootTree(
         const activityQns = onwardActivities(qn);
         if (remaining <= 0) {
             const cut = activityQns.length > 0 || truncated.has(qn);
-            return { ...info, ...(cut ? { marker: "depth" as const } : {}), activities: [] };
+            return { ...info, marker: cut ? "depth" : undefined, activities: [] };
         }
         visited.add(qn);
         const activities = activityQns.map((aqn): LineageActivity => ({
@@ -548,15 +548,16 @@ export function formatTree(walk: LineageWalk, opts: { forward: boolean; depth?: 
 /** The JSON node for a file entity, carrying `truncated: true` exactly when the walk recorded no expansion of it. */
 function fileJsonNode(node: LineageNode, truncated: boolean): LineageJsonNode {
     const info = toFileInfo(node);
-    return { kind: "file", path: info.path, hash: info.hash, source: info.source, ...(truncated ? { truncated: true as const } : {}) };
+    return { kind: "file", path: info.path, hash: info.hash, source: info.source, truncated: truncated ? true : undefined };
 }
 
 /** The JSON node for an activity — its rendering facts minus the QName key and the tree-only `files`. */
 function activityJsonNode(node: LineageNode): LineageJsonNode {
     const { qn: _qn, ...facts } = activityMeta(node.kind === "activity" ? node : undefined, node.qn);
-    // `facts` is the kind plus only the fields that kind carries (a command never has `tool`, a
-    // file tool never has `command`), because `activityMeta` projects them off the model node's own
-    // attributes — so the shape already satisfies the kind-discriminated union the assertion names.
+    // `facts` is the kind plus only the fields that kind carries a value for (a command never has a
+    // `tool`, a file tool never has a `command`), because `activityMeta` projects them off the model
+    // node's own attributes — so the shape already satisfies the kind-discriminated union the assertion
+    // names. A field with no value is `undefined`, which the JSON text of the view leaves out.
     return facts as LineageJsonNode;
 }
 

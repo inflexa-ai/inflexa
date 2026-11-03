@@ -22,6 +22,7 @@ import type { ServerBoot } from "../boot.ts";
 import type { ServerLifecycle } from "../lifecycle.ts";
 import { createPageGrantStore } from "../report_page_grants.ts";
 import { serverRoutes, type ServerRouteOpts } from "../routes/server.ts";
+import { anyOf, stringContaining } from "../../test_support/matchers.ts";
 
 const TOKEN = "a".repeat(64);
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
@@ -84,7 +85,7 @@ describe("the file system routes", () => {
         expect((await app.request("/api/v1/fs/home")).status).toBe(401);
         const response = await app.request(listPath, { headers: AUTH });
         expect(response.status).toBe(200);
-        expect(await response.json()).toMatchObject({ folder: { path: "/" }, entries: expect.any(Array) });
+        expect(await response.json()).toMatchObject({ folder: { path: "/" }, entries: anyOf(Array) });
         expect((await app.request("/api/v1/fs/home", { headers: AUTH })).status).toBe(200);
     });
 
@@ -143,7 +144,7 @@ describe("the read route", () => {
     test("an unknown analysis gets 404 from the guard", async () => {
         const response = await app.request(readUrl("&analysisId=nope"), { headers: AUTH });
         expect(response.status).toBe(404);
-        expect(await response.json()).toMatchObject({ error: "not_found", message: expect.stringContaining("nope") });
+        expect(await response.json()).toMatchObject({ error: "not_found", message: stringContaining("nope") });
     });
 
     test("the route `GET {A}/files` does not exist: a known analysis gets the not-found message of the app, not the guard", async () => {
@@ -463,7 +464,7 @@ describe("a handler that throws", () => {
         });
         const response = await app.request("/api/v1/boom", { headers: AUTH });
         expect(response.status).toBe(500);
-        const body = await response.json();
+        const body: unknown = await response.json();
         expect(body).toMatchObject({ error: "internal_error" });
         expect(JSON.stringify(body)).not.toContain("secret internal detail");
     });

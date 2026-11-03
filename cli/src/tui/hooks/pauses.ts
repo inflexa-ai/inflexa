@@ -54,7 +54,7 @@ export function applyPausePart(waits: readonly TurnWait[], part: PausePart): Tur
         state: part.state,
         cause: part.cause,
         attempt: part.attempt ?? 0,
-        ...(part.retryAt === undefined ? {} : { retryAt: part.retryAt }),
+        retryAt: part.retryAt,
     };
     const index = waits.findIndex((existing) => existing.workflowId === part.id);
     if (index === -1) return [...waits, wait];

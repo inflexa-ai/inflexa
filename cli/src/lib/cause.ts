@@ -58,8 +58,11 @@ export function describeCause(cause: unknown): string {
  * iterable — `new AggregateError(someSet)` is legal, and only a spec-conformant engine normalizes it.
  */
 function aggregateErrors(cause: unknown): unknown[] | null {
-    if (!(cause instanceof AggregateError) || !Array.isArray(cause.errors) || cause.errors.length === 0) return null;
-    return cause.errors;
+    if (!(cause instanceof AggregateError)) return null;
+    const errors: unknown = cause.errors;
+    if (!Array.isArray(errors) || errors.length === 0) return null;
+    const members: unknown[] = errors;
+    return members;
 }
 
 /** `N errors: a; b; c; +M more` — the one-line, shallow (non-recursing) view of an aggregate's members. */

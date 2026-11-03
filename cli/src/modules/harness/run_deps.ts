@@ -165,17 +165,17 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
         imagePackagesFile: comp.imagePackagesFile,
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
-        ...(comp.knowledge ? { knowledge: comp.knowledge } : {}),
+        knowledge: comp.knowledge,
         scriptRuntime: comp.scriptRuntime,
         reportsBlocker: ctx.reportsBlocker,
         fileMetadata: ctx.fileMetadata,
-        ...(ctx.toolOutputStore ? { toolOutputStore: ctx.toolOutputStore } : {}),
+        toolOutputStore: ctx.toolOutputStore,
         step: {
             lease: ctx.lease,
             workspaceRoot: await comp.resolveWorkspaceRoot(ctx.input.analysisId),
             analysisId: ctx.input.analysisId,
             allowedWritePrefix: ctx.stepWritePrefix,
-            ...(ctx.input.templateBinding ? { templateBinding: ctx.input.templateBinding } : {}),
+            templateBinding: ctx.input.templateBinding,
         },
     };
 
@@ -261,6 +261,8 @@ export function buildExecuteAnalysisDeps(
     sandboxStepCallable: ExecuteAnalysisDeps["sandboxStepCallable"],
     runAuthorizer: RunAuthorizer,
 ): ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]> {
+    const knowledgeOption: { knowledge?: KnowledgeClient } = {};
+    if (comp.knowledge) knowledgeOption.knowledge = comp.knowledge;
     return {
         pool: comp.pool,
         provider: comp.sandbox.provider,
@@ -271,7 +273,7 @@ export function buildExecuteAnalysisDeps(
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
-        ...(comp.knowledge ? { knowledge: comp.knowledge } : {}),
+        ...knowledgeOption,
         provenance: provenanceSeam(),
         // The run-observation seam, injected beside the provenance one and sharing nothing with it.
         // Unlike the run emit this is NOT a swappable delegating handle: it binds no model and no

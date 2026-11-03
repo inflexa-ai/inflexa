@@ -11,6 +11,7 @@ import { readServerDiscovery } from "../../client/api.ts";
 import { SERVE_DETACHED_CHILD_FLAG } from "../../lib/child_flags.ts";
 import { fsPoolVar, serverChildEnv } from "../../lib/env.ts";
 import { rotateServerLog, serverStopLine, spawnDetachedServer, writeServerDiscovery, type DetachedServerSpawnOptions } from "../serve.ts";
+import { arrayContaining } from "../../test_support/matchers.ts";
 
 let dir: string | null = null;
 afterEach(() => {
@@ -139,7 +140,7 @@ test("the help of `server` lists its commands and not the hidden walk child", ()
         .createHelp()
         .visibleCommands(server)
         .map((command) => command.name());
-    expect(visible).toEqual(expect.arrayContaining(["status", "stop", "logs"]));
+    expect<unknown>(visible).toEqual(arrayContaining(["status", "stop", "logs"]));
     expect(visible).not.toContain("walk");
     expect(server.commands.map((command) => command.name())).toContain("walk");
 });

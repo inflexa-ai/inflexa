@@ -18,6 +18,7 @@ import {
 import { until } from "../../../test_support/until.ts";
 import { inProcessSpawner, type FakeChild } from "../../../test_support/walk_spawner.ts";
 import { readFolderEntries, walkToRecords, type ReadEntries } from "../walk_child.ts";
+import { stringContaining } from "../../../test_support/matchers.ts";
 
 let root = "";
 let clock = 0;
@@ -460,7 +461,7 @@ describe("the cache", () => {
         const cache = cacheWith({}, inProcessSpawner(recorder.read).spawn);
         const missing = join(root, "missing");
         const error = (await cache.search(missing, false, "a", 10))._unsafeUnwrapErr();
-        expect(error).toMatchObject({ type: "absent", path: missing, cause: { code: "ENOENT", message: expect.stringContaining("missing") } });
+        expect(error).toMatchObject({ type: "absent", path: missing, cause: { code: "ENOENT", message: stringContaining("missing") } });
         expect((await cache.search(missing, false, "a", 10))._unsafeUnwrapErr().type).toBe("absent");
         expect(recorder.reads).toEqual([missing, missing]);
     });

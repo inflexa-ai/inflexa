@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test, type Mock } from "bun:test";
 
 import type { Database } from "bun:sqlite";
 
@@ -411,7 +411,7 @@ describe("the pins of the picker", () => {
 
 describe("the recent files of the picker", () => {
     let now = 1_000;
-    let clock: ReturnType<typeof spyOn>;
+    let clock: Mock<typeof Date.now>;
 
     beforeEach(() => {
         now = 1_000;

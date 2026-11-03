@@ -80,7 +80,11 @@ export function unpackTo(archive: Buffer, destDir: string): Result<ReadonlyArray
     } catch (cause) {
         return err({ type: "malformed_header", detail: String(cause) });
     }
-    if (header.v !== PACK_VERSION || !Array.isArray(header.entries)) {
+    // Held in a variable on purpose: `Array.isArray` on `header.entries` itself would narrow it to
+    // `any[]` and make every entry read below an unchecked `any`. `header` is reassigned, so the
+    // variable gives no narrowing and `header.entries` keeps its entry type.
+    const hasEntryList = Array.isArray(header.entries);
+    if (header.v !== PACK_VERSION || !hasEntryList) {
         return err({ type: "malformed_header", detail: `unexpected header (v=${String(header?.v)})` });
     }
 

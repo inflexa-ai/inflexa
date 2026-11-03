@@ -102,17 +102,18 @@ export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFA
         const path = filterValue(c.req.query("path"));
         const extensions = parseExtensions(filterValue(c.req.query("extension")));
         const query: ArtifactPageQuery = {
-            ...(role === undefined ? {} : { role: role.data }),
-            ...(runId === undefined ? {} : { runId }),
-            ...(stepId === undefined ? {} : { stepId }),
-            ...(fileType === undefined ? {} : { fileType }),
-            ...(q === undefined ? {} : { q }),
-            ...(path === undefined ? {} : { path }),
-            ...(extensions.length === 0 ? {} : { extensions }),
+            role: role?.data,
+            runId,
+            stepId,
+            fileType,
+            q,
+            path,
             sort: sort.data,
             limit: page.perPage,
             offset: page.page * page.perPage,
         };
+        // An empty list selects each row, and the key stays absent for it, the same as for any other filter that the request omits.
+        if (extensions.length > 0) query.extensions = extensions;
         // One lookup of the root for the request, in parallel with the ledger read. A workspace folder that
         // the server cannot locate is a normal state of the database and the folders, thus it gives `null`
         // paths and not an error.
@@ -153,7 +154,7 @@ async function resolveArtifact(analysisId: string, target: OpenTarget, materiali
             kind: target.kind,
             path: null,
             degraded: true,
-            ...(materialize ? { error: { type: "unavailable", reason: "the path is not inside the analysis" } } : {}),
+            error: materialize ? { type: "unavailable", reason: "the path is not inside the analysis" } : undefined,
         };
     }
     const path = await resolveEntryPath(analysisId, target);

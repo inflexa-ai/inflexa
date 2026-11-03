@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { randomUUIDv7 } from "bun";
+import { z } from "zod";
 
 import { env } from "../../../lib/env.ts";
 import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../../lib/lock.ts";
@@ -106,15 +107,20 @@ function tempStore(): string {
     return root;
 }
 
+// Loose objects keep each key that the schema does not name, so the parsed lock still carries the exact shape the gate reads.
+const farmLockSchema = z.looseObject({
+    schema: z.number(),
+    arch: z.string(),
+    packages: z.array(
+        z.looseObject({ name: z.string(), version: z.string(), track: z.string(), store_dir: z.string(), hash: z.string(), requested: z.boolean() }),
+    ),
+    languages: z.record(z.string(), z.unknown()),
+    merge_conflicts: z.array(z.looseObject({ entry: z.string(), action: z.string() })).optional(),
+});
+
 /** The parsed `inflexa.lock` of one farm, read raw so a test asserts on the exact shape the gate reads. */
-function farmLockOf(farmPath: string): {
-    schema: number;
-    arch: string;
-    packages: { name: string; version: string; track: string; store_dir: string; hash: string; requested: boolean }[];
-    languages: Record<string, unknown>;
-    merge_conflicts?: { entry: string; action: string }[];
-} {
-    return JSON.parse(readFileSync(join(farmPath, "inflexa.lock"), "utf8"));
+function farmLockOf(farmPath: string): z.infer<typeof farmLockSchema> {
+    return farmLockSchema.parse(JSON.parse(readFileSync(join(farmPath, "inflexa.lock"), "utf8")));
 }
 
 /** Every path of a tree, with what it holds: a directory, a file, or a link and its target. */
@@ -486,6 +492,16 @@ describe("linkPackagesIntoFarm — the outcome of a two-track name", () => {
         expect(outcomes[0]).toMatchObject({ kind: "absent", spelling: "seurat", acquisitionPossible: true });
         expect(outcomes[0]).toHaveProperty("detail", expect.stringContaining('"Seurat"'));
         expect(outcomes[0]).toHaveProperty("detail", expect.stringContaining("r:Seurat"));
+    });
+
+    test("a name that no spelling of the pool matches reports absent with no detail key", async () => {
+        const root = twoTrackStore();
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "nosuchpackage" }]);
+
+        expect(outcomes).toHaveLength(1);
+        expect(outcomes[0]).toMatchObject({ kind: "absent", spelling: "nosuchpackage" });
+        expect(outcomes[0]).not.toHaveProperty("detail");
     });
 });
 

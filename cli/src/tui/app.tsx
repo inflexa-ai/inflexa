@@ -1421,7 +1421,7 @@ export function App(props: AppProps) {
                                     queuedCount={queuedCount()}
                                     busy={answerBusy()}
                                     onApprove={(kind: "once" | "always") => answerAsk(ask.askId, { kind })}
-                                    onReject={(feedback?: string) => answerAsk(ask.askId, { kind: "reject", ...(feedback ? { feedback } : {}) })}
+                                    onReject={(feedback?: string) => answerAsk(ask.askId, { kind: "reject", feedback: feedback || undefined })}
                                     onFocusReady={(r: BoxRenderable) => (promptRef = r)}
                                 />
                             )}

@@ -134,6 +134,20 @@ describe("createUsageRecorder — the row it builds", () => {
         }
     });
 
+    test("carries every optional the record did carry, each under its own key", async () => {
+        const { upsert, entries } = capturingUpsert();
+
+        const written = await createUsageRecorder({ upsert }).record(record({ runId: "run-1", stepId: "step-a" }));
+
+        expect(written.isOk()).toBe(true);
+
+        const entry = entries[0] ?? ({} as LlmUsageEntry);
+        for (const key of ["threadId", "runId", "stepId", "requestedModelId", "servedModelId"]) {
+            expect(Object.hasOwn(entry, key)).toBe(true);
+        }
+        expect(entry).toMatchObject({ threadId: "thr-1", runId: "run-1", stepId: "step-a", requestedModelId: "asked-for", servedModelId: "answered-with" });
+    });
+
     test("a run-framed record carries its run and step alongside the analysis", async () => {
         const { upsert, entries } = capturingUpsert();
 
