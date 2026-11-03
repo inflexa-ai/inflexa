@@ -106,8 +106,14 @@ it classifies each effect class independently.
 that can fail gives a `Result` (sync) or a `ResultAsync` (async). The
 `must-use-result` rule of the type check command `inflexa-typecheck` is set to
 `error` for `src/`, thus a `Result` that nothing consumes is a build failure.
-`typecheck.config.ts` configures the rule. The rule is off in the test files
-until #810 fixes their sites.
+`typecheck.config.ts` configures the rule. The rule is on in the test files too.
+A test states each `Result` that it awaits, in one of two forms:
+
+- `await awaitOk(<call>)` for a call that must give an ok. `awaitOk` is in
+  `src/test_support/result.ts`. If the call gives an err, the helper throws an
+  `Error` that has the err value as its `cause`.
+- `expect((await <call>)._unsafeUnwrapErr()).toEqual(<err>)` for a call that must
+  give an err. Use `toMatchObject` if the test does not own the full err value.
 
 ### The rule
 

@@ -8,15 +8,12 @@ export default typecheck({
             //   transfer start and `.match`es it into the wire view.
             // - `readImageSbom` (src/modules/sbom/sbom.ts) takes the Result of the container
             //   runtime and checks `isErr()` itself before it reads the runtime.
+            // - `awaitOk` (src/test_support/result.ts) awaits a call in a test and gives its ok
+            //   value. An err throws, so a call through it states that the call succeeded.
             files: ["src/**"],
             rules: {
-                "must-use-result": ["error", { consumers: ["fromCatalogStart", "readImageSbom"] }],
+                "must-use-result": ["error", { consumers: ["fromCatalogStart", "readImageSbom", "awaitOk"] }],
             },
-        },
-        {
-            // The tests discard Results at many sites; #810 turns the rule on there with its fixes.
-            files: ["**/*.test.{ts,tsx}"],
-            rules: { "must-use-result": "off" },
         },
     ],
 });

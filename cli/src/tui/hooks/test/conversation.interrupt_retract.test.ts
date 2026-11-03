@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { errAsync, ok, okAsync, ResultAsync, type Result } from "neverthrow";
-import { toChatFrame, type ChatFrame, type ChatMessage } from "@inflexa-ai/harness/contracts/index.js";
+import { errAsync, okAsync, ResultAsync, type Result } from "neverthrow";
+import { toChatFrame, type ChatMessage } from "@inflexa-ai/harness/contracts/index.js";
 
 import type { MessageList, RetractResponse, TurnSummary } from "../../../api/conversation.ts";
 import type { ClientError } from "../../../client/api.ts";
@@ -21,6 +21,7 @@ import {
     send,
     type SendOpts,
 } from "../conversation.ts";
+import { frameChannel } from "../../../test_support/stream.ts";
 import { chatStatus } from "../status.ts";
 import { __resetNoticesForTest, currentNotice } from "../notice.ts";
 
@@ -50,48 +51,6 @@ const ABORTED: End = { status: "aborted", opened: true };
 
 /** A refusal or a transport fault, as the client gives it. */
 const SERVER_FAULT: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "The server failed to handle the request." } };
-
-/**
- * The frame stream of one turn. Each frame is serialized and parsed again, as the wire does. A frame
- * resolves its `send` when the reader asks for the next one, which is after the hook applied it.
- */
-function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () => void; frames: AsyncGenerator<Result<ChatFrame, ClientError>> } {
-    const waiting: { frame: ChatFrame; applied: () => void }[] = [];
-    let closed = false;
-    let wake: (() => void) | null = null;
-    const notify = (): void => {
-        const resume = wake;
-        wake = null;
-        resume?.();
-    };
-    async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-        for (;;) {
-            const item = waiting.shift();
-            if (item !== undefined) {
-                yield ok(item.frame);
-                item.applied();
-                continue;
-            }
-            if (closed) return;
-            await new Promise<void>((resolve) => {
-                wake = resolve;
-            });
-        }
-    }
-    return {
-        send: (frame) =>
-            new Promise<void>((applied) => {
-                // A copy, thus a later change of the frame by the sender cannot reach the queued one.
-                waiting.push({ frame: structuredClone(frame), applied });
-                notify();
-            }),
-        close: () => {
-            closed = true;
-            notify();
-        },
-        frames: frames(),
-    };
-}
 
 /** A fake of the local server, with each abort that the hook sent it. */
 type FakeServer = SendOpts & { readonly aborted: string[] };

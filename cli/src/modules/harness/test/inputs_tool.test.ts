@@ -19,6 +19,7 @@ import { buildAgentSession } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { createAnalysis, removeInput } from "../../analysis/analysis.ts";
 import { createManageInputsTool } from "../inputs_tool.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 /** A minimal `ToolContext` carrying the analysis scope the tool reads. */
 function ctxFor(analysisId: string): ToolContext {
@@ -122,7 +123,7 @@ describe("manage_inputs tool", () => {
         writeFileSync(join(dir, "data.csv"), "x\n");
         acquireInstanceLock(analysisId);
         const ask = recordingAsk();
-        await runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn);
+        await awaitOk(runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn));
 
         const prov = captureProv();
         const result = (await runCall(tool, { action: "remove", paths: ["data.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
@@ -178,7 +179,7 @@ describe("manage_inputs tool", () => {
         writeFileSync(join(dir, "data.csv"), "x\n");
         acquireInstanceLock(analysisId);
         const ask = recordingAsk();
-        await runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn);
+        await awaitOk(runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn));
         releaseInstanceLock(analysisId);
 
         const result = (await runCall(tool, { action: "list" }, analysisId, ask.fn))._unsafeUnwrap();

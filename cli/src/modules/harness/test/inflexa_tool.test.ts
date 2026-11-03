@@ -21,6 +21,7 @@ import { present } from "../../../lib/present.ts";
 import { runAfter } from "../../../lib/timer.ts";
 import { withoutPrefix } from "../../../lib/text.ts";
 import { countOccurrences } from "../../../test_support/text_shapes.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
 const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
@@ -148,7 +149,7 @@ describe("run_inflexa — execute", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        await runCall(tool, { argv: ["refs", "download", "x", "--yes"] }, ask.fn);
+        await awaitOk(runCall(tool, { argv: ["refs", "download", "x", "--yes"] }, ask.fn));
 
         // Neither key is present: a download outlives any ceiling worth setting, and it is silent for the
         // whole of one large file, so either bound could only ever cut an honest transfer short.
@@ -162,7 +163,7 @@ describe("run_inflexa — execute", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        await runCall(tool, { argv: ["status"] }, ask.fn);
+        await awaitOk(runCall(tool, { argv: ["status"] }, ask.fn));
 
         expect(sub.bounds[0]?.timeoutMs).toBeGreaterThan(0);
         expect(sub.bounds[0]?.idleTimeoutMs).toBeGreaterThan(0);
@@ -715,7 +716,7 @@ describe("run_inflexa — the child's working directory", () => {
         const sub = recordingSubprocess();
         const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a" });
 
-        await runCall(tool, { argv: ["--help"] }, recordingAsk().fn, "an-abc");
+        await awaitOk(runCall(tool, { argv: ["--help"] }, recordingAsk().fn, "an-abc"));
 
         expect(sub.cwds[0]).toBe("/data/study-a");
     });
@@ -725,7 +726,7 @@ describe("run_inflexa — the child's working directory", () => {
         const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a", "an-other": "/data/study-b" });
 
         // The argv names a different analysis; the spawn directory must still be the session's.
-        await runCall(tool, { argv: ["refs", "download", "x", "--yes", "--analysis", "an-other"] }, recordingAsk().fn, "an-abc");
+        await awaitOk(runCall(tool, { argv: ["refs", "download", "x", "--yes", "--analysis", "an-other"] }, recordingAsk().fn, "an-abc"));
 
         expect(sub.cwds[0]).toBe("/data/study-a");
     });
@@ -734,7 +735,7 @@ describe("run_inflexa — the child's working directory", () => {
         const sub = recordingSubprocess();
         const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a" });
 
-        await runCall(tool, { argv: ["--help"] }, recordingAsk().fn, null);
+        await awaitOk(runCall(tool, { argv: ["--help"] }, recordingAsk().fn, null));
 
         expect(sub.cwds[0]).toBeUndefined();
     });
@@ -799,7 +800,7 @@ describe("run_inflexa — describeCall", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        await runCall(tool, { argv }, ask.fn);
+        await awaitOk(runCall(tool, { argv }, ask.fn));
 
         const prompt = present(ask.calls[0]).command;
         expect(prompt.startsWith("inflexa ")).toBe(true);

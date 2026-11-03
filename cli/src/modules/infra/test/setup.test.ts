@@ -28,6 +28,7 @@ import {
     pingMessagesEndpoint,
     probeCredentialSource,
     probeOnce,
+    ProxyError,
     providerKindForSlug,
     readClaudeSettings,
     recordCliproxyProvider,
@@ -2821,8 +2822,11 @@ describe("ensureProxyReady — the boot steps", () => {
             }),
         );
 
-        await ensureProxyReady("direct", { ...DEFAULT_PROXY_READY_OPTS, interactiveLogin: false, onPullProgress });
+        const ready = await ensureProxyReady("direct", { ...DEFAULT_PROXY_READY_OPTS, interactiveLogin: false, onPullProgress });
 
+        const failure = ready._unsafeUnwrapErr();
+        expect(failure).toBeInstanceOf(ProxyError);
+        expect(failure.message).toContain("Failed to start containers");
         expect(given).toBe(onPullProgress);
     });
 });

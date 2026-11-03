@@ -26,6 +26,7 @@ import {
 } from "../composition.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { isLowerHex } from "../../../test_support/text_shapes.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 // The provisioner that owns the other implementation of the farm layout.
 const PROVISIONER = join(import.meta.dir, "..", "..", "..", "..", "..", "images", "sandbox-provisioner");
@@ -547,7 +548,7 @@ describe("extendFarm builds a farm from named roots", () => {
         const root = tempStore();
         const analysisId = randomUUIDv7();
 
-        await extendFarm({ storeRoot: root, analysisId, roots: [BETA, GAMMA] });
+        await awaitOk(extendFarm({ storeRoot: root, analysisId, roots: [BETA, GAMMA] }));
         const tree = treeOf(join(root, "farms", analysisId));
 
         // beta, gamma, and delta each give a part of `nsroot`, thus it is a real directory.
@@ -567,7 +568,7 @@ describe("extendFarm builds a farm from named roots", () => {
         const analysisId = randomUUIDv7();
         const roots = [ALPHA, BETA, GAMMA, RPKGA, TYPING];
 
-        await extendFarm({ storeRoot: root, analysisId, roots });
+        await awaitOk(extendFarm({ storeRoot: root, analysisId, roots }));
         const farmPath = join(root, "farms", analysisId);
 
         // The lock is the ONE metadata file: no packages.txt, no meta.json, no lock.json.
@@ -596,7 +597,7 @@ describe("extendFarm builds a farm from named roots", () => {
         const root = tempStore();
         const analysisId = randomUUIDv7();
 
-        await extendFarm({ storeRoot: root, analysisId, roots: [BETA] });
+        await awaitOk(extendFarm({ storeRoot: root, analysisId, roots: [BETA] }));
         const tree = treeOf(join(root, "farms", analysisId));
 
         // No link into the catalog caches: a shared writable cache would let one

@@ -865,7 +865,9 @@ describe("launchWithBinary (readiness: exit race + authenticated /props gate)", 
 
         // Unblock the dangling launch so it resolves and leaves no pending poll behind.
         resolveExit(0);
-        await launchP;
+        const failure = (await launchP)._unsafeUnwrapErr();
+        expect(failure.type).toBe("provider");
+        expect(failure.message).toContain("exited (code 0) before becoming ready");
     });
 
     test.skipIf(process.platform === "win32")("tail completeness on early exit through the real drain (marker survives settlement)", async () => {

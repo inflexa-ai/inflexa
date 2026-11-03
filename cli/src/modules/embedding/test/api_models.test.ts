@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { fakeFetch } from "../../../test_support/fake_fetch.ts";
 import { listEmbeddingModels } from "../api_models.ts";
 import { present } from "../../../lib/present.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 // The listing is a fetch + filter with no other state, so these stub globalThis.fetch and assert on the
 // returned Result — no network and no endpoint is ever touched. Every failure shape is covered because
@@ -35,7 +36,7 @@ describe("listEmbeddingModels", () => {
 
     test("requests {baseURL}/models with a bearer key, tolerating a trailing slash", async () => {
         const spy = stubFetch({ data: [{ id: "text-embedding-3-small" }] });
-        await listEmbeddingModels("https://gw.corp/v1/", "sk-abc");
+        await awaitOk(listEmbeddingModels("https://gw.corp/v1/", "sk-abc"));
         expect(present(spy.calls[0]).url).toBe("https://gw.corp/v1/models");
         expect(present(spy.calls[0]).auth).toBe("Bearer sk-abc");
     });
