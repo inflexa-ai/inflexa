@@ -228,7 +228,7 @@ function runRow(over: Partial<RunSummary>): RunSummary {
 }
 
 function liveNode() {
-    const ws = {
+    const ws: Workspace = {
         analysis: null,
         sessionId: "no-such-session",
         workingDir: "/x",
@@ -240,7 +240,7 @@ function liveNode() {
         openSession: () => {},
         refreshScope: () => {},
         quit: async () => {},
-    } as Workspace;
+    };
     return () => (
         <WorkspaceContext.Provider value={ws}>
             <box width="100%" height="100%">
@@ -339,7 +339,7 @@ describe("Sidebar SESSION section", () => {
     // A workspace with a BOUND thread and a distinct message count, so the loaded line's three fields
     // (title, age, count) are each distinguishable from one another in the frame.
     function sessionNode(messageCount: number) {
-        const ws = {
+        const ws: Workspace = {
             analysis: null,
             sessionId: THREAD_ID,
             workingDir: "/x",
@@ -351,7 +351,7 @@ describe("Sidebar SESSION section", () => {
             openSession: () => {},
             refreshScope: () => {},
             quit: async () => {},
-        } as Workspace;
+        };
         return () => (
             <WorkspaceContext.Provider value={ws}>
                 <box width="100%" height="100%">
@@ -915,7 +915,7 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
     }
 
     function runsNode(onOpenRuns: () => void) {
-        const ws = {
+        const ws: Workspace = {
             analysis: null,
             sessionId: "no-such-session",
             workingDir: "/x",
@@ -927,7 +927,7 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
             openSession: () => {},
             refreshScope: () => {},
             quit: async () => {},
-        } as Workspace;
+        };
         return () => (
             <WorkspaceContext.Provider value={ws}>
                 <box width="100%" height="100%">

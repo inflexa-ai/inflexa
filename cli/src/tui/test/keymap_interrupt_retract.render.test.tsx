@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { For } from "solid-js";
 import { testRender } from "@opentui/solid";
-import type { Renderable, ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
+import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 
 import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "../keymap.ts";
 import { askDrainRefocusTarget, interruptLayer, paneRetractLayer, retractLayer } from "../app.tsx";
@@ -364,8 +364,8 @@ describe("ask-drain refocus target (pure decision)", () => {
     test("busy → pane, ended → composer", () => {
         // Sentinels: the function only chooses BETWEEN the two refs, it never touches them, so plain
         // objects stand in for the renderables and identity comparison proves which branch was taken.
-        const pane = { id: "pane" } as unknown as Renderable;
-        const composer = { id: "composer" } as unknown as Renderable;
+        const pane = { id: "pane" };
+        const composer = { id: "composer" };
         // Mid-turn drain keeps the user in NORMAL on the pane; a turn that has ended returns to the composer.
         expect(askDrainRefocusTarget(true, pane, composer)).toBe(pane);
         expect(askDrainRefocusTarget(false, pane, composer)).toBe(composer);

@@ -6,7 +6,7 @@ import type { ProvAttestation, ProvSigningError } from "@inflexa-ai/prov-kernel"
 import { err, errAsync, ok, okAsync } from "neverthrow";
 
 import type { DbError } from "../../../db/errors.ts";
-import type { Analysis } from "../../../types/analysis.ts";
+import { buildAnalysis } from "../../../test_support/builders.ts";
 import type { WorkspaceError } from "../../analysis/output.ts";
 import { exportAnalysisProvenance, type ExportProvenanceOpts } from "../export.ts";
 
@@ -15,7 +15,7 @@ import { exportAnalysisProvenance, type ExportProvenanceOpts } from "../export.t
 // temp directory for that reason — a recorded call list would prove the calls happened in an order,
 // not that a failure left the destination untouched.
 describe("exportAnalysisProvenance", () => {
-    const ANALYSIS = { id: "a1", name: "Alpha", slug: "alpha", anchorId: "anchor-1", projectId: null } as unknown as Analysis;
+    const ANALYSIS = buildAnalysis();
     const DOCUMENT = '{"prefix":{},"entity":{}}';
     const ATTESTATION: ProvAttestation = {
         payloadType: "application/json; profile=prov-json",

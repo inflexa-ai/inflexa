@@ -1,22 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import type { Pool } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 
+import { fakePool, type FakeQuery } from "../../test_support/fake_pool.ts";
 import { countLiveDurableWork, countLiveDurableWorkByAnalysis, listLiveRunIds, listLiveTurns } from "../durable_work.ts";
 
 // No cli test reaches Postgres. The pool below records the query and answers with one row, thus the tests
 // pin the scope, the live status set, and the mapping of the counts.
 
-type Query = { readonly text: string; readonly values: readonly unknown[] };
+type Query = FakeQuery;
 
 /** A pool that records each query and answers with `row`, or rejects with `failure`. */
-function recordingPool(answer: { row: Record<string, string> } | { failure: Error }): { pool: Pool; queries: Query[] } {
+function recordingPool(answer: { row: Record<string, string> } | { failure: Error }): { pool: Querier; queries: Query[] } {
     const queries: Query[] = [];
-    const query = (config: Query): Promise<{ rows: unknown[]; rowCount: number }> => {
-        queries.push(config);
-        return "failure" in answer ? Promise.reject(answer.failure) : Promise.resolve({ rows: [answer.row], rowCount: 1 });
-    };
-    // The function under test calls only `query`, thus a stand-in object with that one method is enough.
-    return { pool: { query } as unknown as Pool, queries };
+    const pool = fakePool((query) => {
+        queries.push(query);
+        return "failure" in answer ? Promise.reject(answer.failure) : [answer.row];
+    });
+    return { pool, queries };
 }
 
 describe("countLiveDurableWork", () => {
@@ -62,14 +62,13 @@ describe("countLiveDurableWork", () => {
 
 describe("countLiveDurableWorkByAnalysis", () => {
     /** A pool that records each query and answers with `rows`, or rejects with `failure`. */
-    function groupedPool(answer: { rows: Record<string, string>[] } | { failure: Error }): { pool: Pool; queries: Query[] } {
+    function groupedPool(answer: { rows: Record<string, string>[] } | { failure: Error }): { pool: Querier; queries: Query[] } {
         const queries: Query[] = [];
-        const query = (config: Query): Promise<{ rows: unknown[]; rowCount: number }> => {
-            queries.push(config);
-            return "failure" in answer ? Promise.reject(answer.failure) : Promise.resolve({ rows: answer.rows, rowCount: answer.rows.length });
-        };
-        // The function under test calls only `query`, thus a stand-in object with that one method is enough.
-        return { pool: { query } as unknown as Pool, queries };
+        const pool = fakePool((query) => {
+            queries.push(query);
+            return "failure" in answer ? Promise.reject(answer.failure) : answer.rows;
+        });
+        return { pool, queries };
     }
 
     test("sends one query for the whole list, and maps the rows by analysis id", async () => {

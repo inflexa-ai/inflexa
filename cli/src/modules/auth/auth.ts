@@ -4,6 +4,7 @@ import { err, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 
 import { bakedEnv, env } from "../../lib/env.ts";
+import { errnoCode } from "../../lib/fs.ts";
 
 /**
  * offline_access is required: inflexa's sliding session (log in once, renew on
@@ -202,7 +203,7 @@ export function loadAuth(): Result<StoredAuth, AuthError> {
     try {
         raw = readFileSync(env.authPath, "utf8");
     } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code === "ENOENT") return err({ type: "not_authenticated" });
+        if (errnoCode(cause) === "ENOENT") return err({ type: "not_authenticated" });
         return err({ type: "token_read_failed", cause });
     }
 
@@ -437,7 +438,7 @@ async function acquireRefreshLock(): Promise<Result<string, AuthError>> {
             writeFileSync(path, token + "\n", { flag: "wx", mode: 0o600 });
             return ok(token);
         } catch (cause) {
-            if ((cause as NodeJS.ErrnoException).code !== "EEXIST") {
+            if (errnoCode(cause) !== "EEXIST") {
                 return err({ type: "token_write_failed", cause });
             }
         }

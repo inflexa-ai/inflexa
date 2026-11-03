@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
@@ -11,8 +11,10 @@ import { asStr256 } from "../../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../../modules/analysis/output.ts";
 import { writeMarker } from "../../../modules/anchor/marker.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { errorBody } from "../../../test_support/response_body.ts";
 import { idleBoot } from "../../../test_support/server.ts";
 import type { ServerEnv } from "../../http.ts";
+import type { OpenFile } from "../files.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "../fs.ts";
 
 // The read route alone, with no credential check and no app: `app.test.ts` covers those. The analysis guard takes
@@ -71,7 +73,7 @@ function workspaceFile(rel: string, content: string | Uint8Array): string {
 
 async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
     expect(response.status).toBe(status);
-    const body = (await response.json()) as ApiError;
+    const body = await errorBody(response);
     expect(body.error).toBe(code);
     return body;
 }
@@ -417,7 +419,7 @@ describe("the range", () => {
 
 describe("the stream of the body", () => {
     /** The options that count the handles that the route opens and closes, and that run `wrap` on each open handle. */
-    function tracked(wrap?: (handle: FileHandle) => void): { opts: Pick<FsRouteOpts, "open" | "chunkBytes">; opened: () => number; closed: () => number } {
+    function tracked(wrap?: (file: OpenFile) => OpenFile): { opts: Pick<FsRouteOpts, "open" | "chunkBytes">; opened: () => number; closed: () => number } {
         let opened = 0;
         let closed = 0;
         const opts: Pick<FsRouteOpts, "open" | "chunkBytes"> = {
@@ -425,13 +427,15 @@ describe("the stream of the body", () => {
             open: async (path, flags) => {
                 const handle = await open(path, flags);
                 opened += 1;
-                const close = handle.close.bind(handle);
-                handle.close = async () => {
-                    closed += 1;
-                    await close();
+                const file: OpenFile = {
+                    stat: (options) => handle.stat(options),
+                    read: (buffer, offset, length, position) => handle.read(buffer, offset, length, position),
+                    close: async () => {
+                        closed += 1;
+                        await handle.close();
+                    },
                 };
-                wrap?.(handle);
-                return handle;
+                return wrap?.(file) ?? file;
             },
         };
         return { opts, opened: () => opened, closed: () => closed };
@@ -494,11 +498,8 @@ describe("the stream of the body", () => {
 
     test("a handle whose read fails ends the stream with an error and closes the handle", async () => {
         workspaceFile("big.bin", new Uint8Array(100_000));
-        const { opts, closed } = tracked((handle) => {
-            // The first read is the one that follows the status.
-            // The cast is sound because the route calls `read` only to await its result, and a rejection is a valid result of the real method.
-            handle.read = (() => Promise.reject(Object.assign(new Error("EIO: i/o error"), { code: "EIO" }))) as unknown as FileHandle["read"];
-        });
+        // The first read is the one that follows the status.
+        const { opts, closed } = tracked((file) => ({ ...file, read: () => Promise.reject(Object.assign(new Error("EIO: i/o error"), { code: "EIO" })) }));
         app = appWith(opts);
         const response = await getAt("big.bin");
         expect(response.status).toBe(200);
@@ -509,16 +510,16 @@ describe("the stream of the body", () => {
 
     test("a file that gets shorter during the stream ends the body with an error", async () => {
         workspaceFile("big.bin", new Uint8Array(10_000));
-        const { opts, closed } = tracked((handle) => {
-            // The cast is sound because the route calls `read` with a buffer, an offset, a length, and a position, and the real method returns `{ bytesRead, buffer }` for that call.
-            const read = handle.read.bind(handle) as (...args: unknown[]) => Promise<{ bytesRead: number; buffer: Uint8Array }>;
+        const { opts, closed } = tracked((file) => {
             let calls = 0;
-            // The second read finds the end of the file. The cast is sound because the stub returns the `{ bytesRead, buffer }` shape of the real method, and the route reads only those fields.
-            handle.read = (async (...args: unknown[]) => {
-                calls += 1;
-                // The route passes its buffer as the first argument of `read` (`fileBody` in files.ts), thus `args[0]` is a `Uint8Array`.
-                return calls >= 2 ? { bytesRead: 0, buffer: args[0] as Uint8Array } : read(...args);
-            }) as unknown as FileHandle["read"];
+            // The second read finds the end of the file.
+            return {
+                ...file,
+                read: async (buffer, offset, length, position) => {
+                    calls += 1;
+                    return calls >= 2 ? { bytesRead: 0 } : file.read(buffer, offset, length, position);
+                },
+            };
         });
         app = appWith(opts);
         const response = await getAt("big.bin");

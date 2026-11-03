@@ -10,12 +10,12 @@ import { apiError, listenerPort, type ServerEnv } from "./http.ts";
 import type { ServerLifecycle } from "./lifecycle.ts";
 import type { PageGrantStore } from "./report_page_grants.ts";
 import { analysisGuard } from "./analysis_guard.ts";
-import { analysisCollectionRoutes, analysisRoutes } from "./routes/analyses.ts";
-import { anchorRoutes } from "./routes/anchors.ts";
+import { analysisCollectionRoutes, analysisRoutes, DEFAULT_ANALYSIS_LIST_OPTS, DEFAULT_ANALYSIS_ROUTE_OPTS } from "./routes/analyses.ts";
+import { anchorRoutes, DEFAULT_ANCHOR_ROUTE_OPTS } from "./routes/anchors.ts";
 import { artifactRoutes } from "./routes/artifacts.ts";
-import { attentionRoutes } from "./routes/attention.ts";
+import { attentionRoutes, DEFAULT_ATTENTION_ROUTE_OPTS } from "./routes/attention.ts";
 import { browserSessionRoutes } from "./routes/browser_session.ts";
-import { conversationRoutes } from "./routes/conversation.ts";
+import { conversationRoutes, DEFAULT_CONVERSATION_ROUTE_OPTS } from "./routes/conversation.ts";
 import { fsRoutes } from "./routes/fs.ts";
 import { guiRoutes } from "./routes/gui.ts";
 import { machineRoutes } from "./routes/machine.ts";
@@ -23,7 +23,7 @@ import { pausedWorkCollectionRoutes, pausedWorkRoutes } from "./routes/paused_wo
 import { projectRoutes } from "./routes/projects.ts";
 import { provenanceRoutes } from "./routes/provenance.ts";
 import { reportPageRoutes, reportSessionAccessRoutes } from "./routes/report_pages.ts";
-import { runRoutes } from "./routes/runs.ts";
+import { DEFAULT_RUN_ROUTES_OPTS, runRoutes } from "./routes/runs.ts";
 import { serverRoutes } from "./routes/server.ts";
 import { farmLinkRoutes, storeRoutes } from "./routes/store.ts";
 import { usageRoutes } from "./routes/usage.ts";
@@ -62,21 +62,21 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/projects", projectRoutes());
     app.route("/api/v1", machineRoutes());
     app.route("/api/v1", storeRoutes());
-    app.route("/api/v1/anchors", anchorRoutes(deps.boot));
-    app.route("/api/v1/analyses", analysisCollectionRoutes(deps.boot));
-    app.route("/api/v1/attention", attentionRoutes(deps.boot));
+    app.route("/api/v1/anchors", anchorRoutes(deps.boot, DEFAULT_ANCHOR_ROUTE_OPTS));
+    app.route("/api/v1/analyses", analysisCollectionRoutes(deps.boot, DEFAULT_ANALYSIS_LIST_OPTS));
+    app.route("/api/v1/attention", attentionRoutes(deps.boot, DEFAULT_ATTENTION_ROUTE_OPTS));
     app.route("/api/v1/paused-work", pausedWorkCollectionRoutes(deps.boot));
     // The guard of each `{A}` route: 404 for an unknown analysis, then its instance lock. Each route under
     // `/api/v1/analyses/:analysisId` mounts AFTER this line, or it answers before the guard runs.
     app.use("/api/v1/analyses/:analysisId/*", analysisGuard());
-    app.route("/api/v1/analyses/:analysisId", analysisRoutes(deps.boot));
-    app.route("/api/v1/analyses", conversationRoutes(deps.boot));
+    app.route("/api/v1/analyses/:analysisId", analysisRoutes(deps.boot, DEFAULT_ANALYSIS_ROUTE_OPTS));
+    app.route("/api/v1/analyses", conversationRoutes(deps.boot, DEFAULT_CONVERSATION_ROUTE_OPTS));
     app.route("/api/v1/analyses/:analysisId/usage", usageRoutes());
     app.route("/api/v1/analyses/:analysisId/provenance", provenanceRoutes());
     app.route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes(deps.boot));
     app.route("/api/v1/analyses/:analysisId/report-sessions", reportSessionAccessRoutes(deps.pageGrants));
     app.route("/api/v1/analyses/:analysisId/paused-work", pausedWorkRoutes(deps.boot));
-    app.route("/api/v1/analyses/:analysisId", runRoutes(deps.boot));
+    app.route("/api/v1/analyses/:analysisId", runRoutes(deps.boot, DEFAULT_RUN_ROUTES_OPTS));
     app.route("/api/v1/analyses/:analysisId", farmLinkRoutes());
     // Outside `/api`: no API credential reaches it, and only a page grant gives access.
     app.route("/report-sessions", reportPageRoutes(deps.pageGrants));

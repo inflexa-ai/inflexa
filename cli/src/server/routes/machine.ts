@@ -26,6 +26,7 @@ import { env, isReservedPostgresPort } from "../../lib/env.ts";
 import { errnoCode, mkdirResultAsync, pathExistsAsync, statResultAsync } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { openExternal, type OpenExternalError } from "../../lib/open_external.ts";
+import { isMember } from "../../lib/types.ts";
 import { findAnalysis } from "../../modules/analysis/analysis.ts";
 import { classifyRealPath, workspaceReadRoot } from "../../modules/analysis/boundary.ts";
 import { resolveInputPath } from "../../modules/analysis/input.ts";
@@ -368,8 +369,7 @@ async function ensureStoreFolder(c: Context<ServerEnv>, dir: string): Promise<Re
 }
 
 function isAgentName(role: string): role is AgentName {
-    // The predicate is sound: it tests membership in the closed agent set.
-    return (AGENT_NAMES as readonly string[]).includes(role);
+    return isMember(AGENT_NAMES, role);
 }
 
 /** One agent as the live switch has it. Before the runtime installs the switch, it has no current selection. */

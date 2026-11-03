@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUIDv7 } from "bun";
-import type { AgentSession, ArtifactManifestEntry, ArtifactRegistrationInput, ProvenanceCollector, RunProvenanceEvent } from "@inflexa-ai/harness";
+import type { ArtifactManifestEntry, ArtifactRegistrationInput, RunProvenanceEvent } from "@inflexa-ai/harness";
 import { attestationSchema, verifyAttestation } from "@inflexa-ai/prov-kernel";
 
 import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
@@ -12,7 +12,9 @@ import { getAnalysisProvenance } from "../../../db/primary_query.ts";
 import { Bus } from "../../../lib/bus.ts";
 import { env } from "../../../lib/env.ts";
 import { asStr256 } from "../../../lib/types.ts";
+import { buildAgentSession } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { fakeCollector, type FakeProducer } from "../../../test_support/fake_collector.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type { StampedEvent } from "../../../types/events.ts";
 import type { ProvModelId } from "../../../types/prov.ts";
@@ -46,26 +48,6 @@ afterEach(() => {
     Bus.off("inflexa", spy);
 });
 
-// The input/record shapes the adapter reads off the collector — the subset of the harness's
-// `InputRef`/`ProvenanceRecord` the adapter touches. Neither is re-exported from the barrel, and the `as
-// unknown as` stub below never needs the full shape, so these structural mirrors are honest.
-type FakeInputRef = { path: string; hash: string; source: "data" | "upstream" | "prior" | "artifacts"; fileId?: string };
-type FakeProducer =
-    | { type: "command"; command: string; args?: string[]; exitCode: number; durationMs?: number; timestamp: string }
-    | { type: "file_tool"; tool: string; invocationId: string };
-type FakeRecord = { outputPath: string; producer: FakeProducer; inputs?: FakeInputRef[]; scriptPath?: string | null };
-
-// The adapter reads `getRecords()` (→ full `{outputPath, producer, inputs, scriptPath}`) and
-// `getTrackedInputs()` off the collector, so a structural stub of those two methods is cleaner than
-// instantiating the real class (whose private fields would reject an object literal and whose ingest
-// methods need write fixtures). The `as unknown as` bridges the private-member gap the adapter never
-// touches. `producer` is passed through by REFERENCE so a test can form a command group by sharing one
-// producer object across several records — exactly how the real collector keys a multi-output command.
-function fakeCollector(records: FakeRecord[], trackedInputs: FakeInputRef[] = []): ProvenanceCollector {
-    const recs = records.map((r) => ({ outputPath: r.outputPath, producer: r.producer, inputs: r.inputs ?? [], scriptPath: r.scriptPath ?? null }));
-    return { getRecords: () => recs, getTrackedInputs: () => trackedInputs } as unknown as ProvenanceCollector;
-}
-
 type FileEvent = Extract<StampedEvent, { type: "prov.file_written" }>;
 type CommandEvent = Extract<StampedEvent, { type: "prov.command_executed" }>;
 type InputEvent = Extract<StampedEvent, { type: "prov.input_used" }>;
@@ -73,9 +55,8 @@ const commandEvents = (): CommandEvent[] => captured.filter((e): e is CommandEve
 const fileEvents = (): FileEvent[] => captured.filter((e): e is FileEvent => e.type === "prov.file_written");
 const inputEvents = (): InputEvent[] => captured.filter((e): e is InputEvent => e.type === "prov.input_used");
 
-// The bus adapter addresses no external system, so it ignores the session entirely — an empty stand-in
-// is honest here (the adapter never dereferences it).
-const noSession = {} as unknown as AgentSession;
+// The bus adapter addresses no external system, so it ignores the session entirely.
+const noSession = buildAgentSession();
 
 // The construction-time {provider}/{model} name both bridge halves stamp onto their model-driven events.
 const modelId: ProvModelId = "anthropic/claude-test";

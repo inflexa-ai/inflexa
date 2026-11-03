@@ -4,6 +4,8 @@ import { randomUUIDv7 } from "bun";
 
 import { type Result, ok, err } from "neverthrow";
 
+import { errnoCode } from "../../lib/fs.ts";
+
 // Classify-and-heal machinery for a FILE-typed host bind-mount source, shared by the stack's file
 // provisioners (the CLIProxyAPI config of proxy_config.ts and the SearXNG settings of
 // searxng_config.ts). A file-typed mount source has one hazard a directory source does not: a
@@ -67,10 +69,9 @@ export async function classifyPath(path: string): Promise<Result<PathOccupant, I
         stats = await lstat(path);
     } catch (cause) {
         // ENOENT means "nothing here yet" — the ordinary fresh state, so it travels the ok channel; any
-        // other throw is a real IO fault. `cause` is unknown, so read the errno discriminant defensively:
-        // a throw without a `.code` string simply isn't ENOENT and correctly falls through to io_failed.
-        const code = (cause as { code?: unknown } | null)?.code;
-        if (code === "ENOENT") return ok({ kind: "absent" });
+        // other throw is a real IO fault. A throw without a `.code` string simply isn't ENOENT and
+        // correctly falls through to io_failed.
+        if (errnoCode(cause) === "ENOENT") return ok({ kind: "absent" });
         return err({ type: "io_failed", path, cause });
     }
     // Symlink first: lstat reports the link itself (isFile/isDirectory both false for it), so classifying
@@ -153,11 +154,10 @@ export async function publishFileExclusively(
 
     const linked = await tryFs(path, () => link(tmp, path));
     if (linked.isErr()) {
-        // The cause is unknown, so read the errno discriminant defensively: a throw without a `.code`
-        // string simply isn't EEXIST and correctly falls through as the io_failed it wrapped.
+        // A throw without a `.code` string simply isn't EEXIST and correctly falls through as the
+        // io_failed it wrapped.
         const cause = linked.error.type === "io_failed" ? linked.error.cause : null;
-        const code = (cause as { code?: unknown } | null)?.code;
-        if (code !== "EEXIST") return err(linked.error);
+        if (errnoCode(cause) !== "EEXIST") return err(linked.error);
     }
     // The winner reaps the temp name the link left behind; a loser reaps the file it never published.
     return (await tryFs(tmp, () => unlink(tmp))).map((): PublishOutcome => (linked.isErr() ? "existing" : "published"));

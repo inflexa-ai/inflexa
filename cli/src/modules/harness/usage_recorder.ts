@@ -118,9 +118,9 @@ export function createUsageRecorder(deps: UsageRecorderDeps = {}): UsageRecorder
         (call: LlmUsageRecord): Result<void, NoticeFailure> => {
             const scope = scopeColumns(call.scope);
             if (scope === null) {
-                // Statically `never`, so the cast only names what actually arrived at runtime —
-                // the whole point of the report is to say which unknown variant was dropped.
-                return err({ reason: `usage record dropped: unhandled scope variant ${(call.scope as { kind: string }).kind}` });
+                // The type has no variant that reaches here, so this names what actually arrived at
+                // runtime — the whole point of the report is to say which unknown variant was dropped.
+                return err({ reason: `usage record dropped: unhandled scope variant ${call.scope.kind}` });
             }
             return upsert(toEntry(call, Date.now(), scope)).mapErr((error): NoticeFailure => ({
                 reason: `usage ledger write failed for ${call.recordKey}: ${error.type}`,

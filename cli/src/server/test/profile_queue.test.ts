@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import type { ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { StampedEvent } from "../../types/events.ts";
+import type { ProvInputRef } from "../../types/prov.ts";
 import {
     __resetProfileQueueForTest,
     profileWorkInFlight,
@@ -74,11 +74,13 @@ describe("serializeProfileWork", () => {
 });
 
 describe("watchInputDrift", () => {
-    const runtime = { tag: "runtime" } as unknown as HarnessRuntime;
+    // The watch gives the handle to `reprofile` and never reads it, thus any small value stands in for the runtime.
+    type Handle = { readonly tag: string };
+    const runtime: Handle = { tag: "runtime" };
     const analysisOf = (id: string): Analysis => ({ id, createdAt: 0, updatedAt: 0, name: asStr256(id), slug: id, anchorId: "anchor", projectId: null });
 
     /** A drift watch over a fake bus and a fake timer, with the reprofiles that it starts. */
-    function harness(overrides: Partial<InputDriftOpts> = {}): {
+    function harness(overrides: Partial<InputDriftOpts<Handle>> = {}): {
         emit: (event: StampedEvent) => void;
         fire: () => void;
         armed: () => number;
@@ -125,17 +127,18 @@ describe("watchInputDrift", () => {
         };
     }
 
-    // The field of a stamped event that the watch does not read.
-    const stamp = { __infId: "test" } as const;
-    const added = (analysisId: string): StampedEvent => ({ ...stamp, type: "prov.input_added", analysisId }) as unknown as StampedEvent;
-    const removed = (analysisId: string): StampedEvent => ({ ...stamp, type: "prov.input_removed", analysisId }) as unknown as StampedEvent;
+    // The fields of a stamped event that the watch does not read.
+    const stamp = { __infId: "test", actor: { kind: "anonymous" } } as const;
+    const input: ProvInputRef = { path: "/inputs/data.csv", isDir: false, anchorId: null };
+    const added = (analysisId: string): StampedEvent => ({ ...stamp, type: "prov.input_added", analysisId, input, derivedFromAnalysisId: null });
+    const removed = (analysisId: string): StampedEvent => ({ ...stamp, type: "prov.input_removed", analysisId, input });
 
     test("a burst of input events gives one re-profile for each analysis", async () => {
         const h = harness();
         h.emit(added("a"));
         h.emit(removed("a"));
         h.emit(added("b"));
-        h.emit({ ...stamp, type: "prov.analysis_created", analysisId: "a" } as unknown as StampedEvent);
+        h.emit({ ...stamp, type: "prov.analysis_created", analysisId: "a" });
         expect(h.armed()).toBe(2);
         h.fire();
         await Promise.sleep(0);
@@ -155,7 +158,7 @@ describe("watchInputDrift", () => {
     });
 
     test("an input change whose debounce ends before the ready edge re-profiles after the runtime is ready", async () => {
-        let ready: HarnessRuntime | null = null;
+        let ready: Handle | null = null;
         const h = harness({ runtime: () => ready });
         h.emit(added("a"));
         h.fire();

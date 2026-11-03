@@ -31,7 +31,6 @@ import {
     type CortexRunRow,
     type DataProfileStatus,
     type DbError,
-    type Pool,
     type PlanApproval,
     type PlanPage,
     type PlanRecord,
@@ -40,6 +39,7 @@ import {
     type RunEventSubscribeOptions,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import type { RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
 import { CONVERSATION_AGENT_ID } from "@inflexa-ai/harness/agents/conversation-agent.js";
 import { queryRunsByThread } from "@inflexa-ai/harness/state/runs.js";
@@ -102,6 +102,7 @@ import {
     readBody,
     requireRuntime,
     sseResponse,
+    type PoolRuntime,
     type ServerEnv,
 } from "../http.ts";
 import { profileWorkPending, serializeProfileWork } from "../profile_queue.ts";
@@ -118,50 +119,53 @@ const PLAN_LOAD_CONCURRENCY = 4;
 /** The most run ids that `GET {A}/plans/:planId` gives. The route reads one more, to tell if the plan has more. */
 const PLAN_RUN_IDS_LIMIT = 100;
 
-/** The harness reads and the machine probes that the routes call. Tests replace each one, because each needs Postgres, DBOS, or the container engine. */
-export type RunRoutesOpts = {
+/**
+ * The harness reads and the machine probes that the routes call. Tests replace each one, because each needs Postgres, DBOS, or the container engine.
+ * `R` is the runtime handle: the routes read its pool, and pass it to the stream, the cancel, the drives, and the approval. A test gives a small handle for `R`.
+ */
+export type RunRoutesOpts<R extends PoolRuntime = HarnessRuntime> = {
     /** One page of the runs of an analysis that the text `q` selects, newest first, and the count of all the runs that it selects. */
     readonly listRuns: (
-        pool: Pool,
+        pool: Querier,
         analysisId: string,
         query: { q?: string; limit: number; offset: number },
     ) => ResultAsync<{ rows: CortexRunRow[]; total: number }, DbError>;
     /** One page of the runs that the turns of one thread launched and that the text `q` selects, newest first. */
     readonly listThreadRuns: (
-        pool: Pool,
+        pool: Querier,
         analysisId: string,
         threadId: string,
         query: { q?: string; limit: number; offset: number },
     ) => ResultAsync<CortexRunRow[], DbError>;
     /** Each run of the analysis that is not terminal and that the text `q` selects. The set is bounded by the live concurrency, not by the history. */
-    readonly listActiveRuns: (pool: Pool, analysisId: string, filter: { q?: string }) => ResultAsync<CortexRunRow[], DbError>;
-    readonly getRun: (pool: Pool, runId: string) => ResultAsync<CortexRunRow | null, DbError>;
+    readonly listActiveRuns: (pool: Querier, analysisId: string, filter: { q?: string }) => ResultAsync<CortexRunRow[], DbError>;
+    readonly getRun: (pool: Querier, runId: string) => ResultAsync<CortexRunRow | null, DbError>;
     /** The step-output count of each run of the list, in one read. A run with no step output has no entry. */
-    readonly countArtifacts: (pool: Pool, analysisId: string, runIds: readonly string[]) => ResultAsync<RunArtifactCount[], DbError>;
+    readonly countArtifacts: (pool: Querier, analysisId: string, runIds: readonly string[]) => ResultAsync<RunArtifactCount[], DbError>;
     /** The step counts of each run of the list, in one read. A run with no step has no entry. */
-    readonly countSteps: (pool: Pool, analysisId: string, runIds: readonly string[]) => ResultAsync<RunStepCounts[], DbError>;
+    readonly countSteps: (pool: Querier, analysisId: string, runIds: readonly string[]) => ResultAsync<RunStepCounts[], DbError>;
     /** The flat synthesis part of the record on disk, or `null` when the record cannot be read. The route asks only for a run whose outcome is `produced`. */
     readonly readSynthesis: (analysisId: string, runId: string) => Promise<RunSynthesisPart | null>;
-    readonly listSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
+    readonly listSteps: (pool: Querier, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
     /** The stored plan document, or `null` when it is gone. */
-    readonly loadPlan: (pool: Pool, planId: string, analysisId: string) => ResultAsync<unknown, DbError>;
+    readonly loadPlan: (pool: Querier, planId: string, analysisId: string) => ResultAsync<unknown, DbError>;
     /** The stored plan with its parent and the plan that replaced it, or `null` when the plan is gone or belongs to another analysis. */
-    readonly loadPlanRecord: (pool: Pool, planId: string, analysisId: string) => ResultAsync<PlanRecord | null, DbError>;
+    readonly loadPlanRecord: (pool: Querier, planId: string, analysisId: string) => ResultAsync<PlanRecord | null, DbError>;
     /** The ids of the runs of one plan, newest first, at most `limit`. */
-    readonly listPlanRunIds: (pool: Pool, analysisId: string, planId: string, limit: number) => ResultAsync<string[], DbError>;
+    readonly listPlanRunIds: (pool: Querier, analysisId: string, planId: string, limit: number) => ResultAsync<string[], DbError>;
     /** One page of the plans of an analysis, newest first, and the count of all its plans. */
-    readonly listPlans: (pool: Pool, analysisId: string, query: { limit: number; offset: number }) => ResultAsync<PlanPage, DbError>;
-    readonly loadProfile: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, DbError>;
+    readonly listPlans: (pool: Querier, analysisId: string, query: { limit: number; offset: number }) => ResultAsync<PlanPage, DbError>;
+    readonly loadProfile: (pool: Querier, analysisId: string) => ResultAsync<DataProfileStatus | null, DbError>;
     /** Deliver each part of the run, and of its children, until the run is terminal or the signal aborts. */
-    readonly subscribeRun: (pool: Pool, options: RunEventSubscribeOptions) => Promise<void>;
+    readonly subscribeRun: (pool: R["pool"], options: RunEventSubscribeOptions) => Promise<void>;
     /** Cancel the run and its children, and converge the ledgers. Rejects with {@link UnknownRunError} for an unknown run. */
-    readonly cancelRun: (runtime: HarnessRuntime, runId: string, session: AgentSession) => Promise<CancelRunResult>;
+    readonly cancelRun: (runtime: R, runId: string, session: AgentSession) => Promise<CancelRunResult>;
     /** The parity drive of a chat open. */
-    readonly ensureParity: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    readonly ensureParity: (runtime: R, analysis: Analysis) => Promise<ProfileParityOutcome>;
     /** The deliberate re-profile. */
-    readonly forceReprofile: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    readonly forceReprofile: (runtime: R, analysis: Analysis) => Promise<ProfileParityOutcome>;
     /** Approve a stored plan and start its run with no model call. Each outcome rides the `Result`. */
-    readonly approvePlan: (runtime: HarnessRuntime, input: ApprovePlanInput) => ResultAsync<PlanApproval, ApprovePlanRefusal>;
+    readonly approvePlan: (runtime: R, input: ApprovePlanInput) => ResultAsync<PlanApproval, ApprovePlanRefusal>;
     /** The image, the store, and the farm verdict for a sandbox of the analysis. */
     readonly readiness: (analysisId: string) => Promise<Omit<SandboxReadiness, "inputCount">>;
     /** Why a profile drive cannot start a sandbox now, or `null` when it can. Each profile route asks it before its drive. */
@@ -170,8 +174,20 @@ export type RunRoutesOpts = {
     readonly healFarm: (analysisId: string) => Promise<FarmHealOutcome>;
 };
 
-/** The production {@link RunRoutesOpts}. */
-export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
+/**
+ * The pool reads that the helpers of the routes call. They do not depend on the runtime handle, thus a helper takes
+ * this part and each {@link RunRoutesOpts} satisfies it.
+ */
+type RunReads = Pick<
+    RunRoutesOpts<PoolRuntime>,
+    "listRuns" | "listThreadRuns" | "listActiveRuns" | "getRun" | "countArtifacts" | "countSteps" | "loadPlan" | "loadProfile"
+>;
+
+/**
+ * The production {@link RunRoutesOpts}. The approval and the cancel name the one member of the runtime that
+ * they call, thus a test calls them with a handle that has that member only.
+ */
+export const DEFAULT_RUN_ROUTES_OPTS = {
     listRuns: (pool, analysisId, query) =>
         ResultAsync.combine([
             queryRunsByAnalysis(pool, analysisId, query),
@@ -190,22 +206,22 @@ export const DEFAULT_RUN_ROUTES_OPTS: RunRoutesOpts = {
     listPlans: queryPlanPage,
     loadProfile: loadDataProfileStatus,
     subscribeRun: (pool, options) => createRunEventStream({ pool }).subscribe(options),
-    cancelRun: (runtime, runId, session) => runtime.runCanceler.cancel(runId, session),
+    cancelRun: (runtime: Pick<HarnessRuntime, "runCanceler">, runId, session) => runtime.runCanceler.cancel(runId, session),
     ensureParity: ensureProfileAtParity,
     forceReprofile,
     readiness: readSandboxReadiness,
     sandboxRefusal,
     healFarm: healAnalysisFarm,
-    approvePlan: (runtime, input) => runtime.approvePlan(input),
-};
+    approvePlan: (runtime: Pick<HarnessRuntime, "approvePlan">, input) => runtime.approvePlan(input),
+} satisfies RunRoutesOpts;
 
 /**
  * The routes of draft 2.4 under `/api/v1/analyses/:analysisId`: the runs, the run stream and the cancel, the
  * data profile, the sandbox readiness, and the farm heal. Each run route gives 404 `not_found` for a run of a
  * different analysis. The sandbox readiness and the farm heal need no runtime.
  */
-export function runRoutes(boot: ServerBoot, opts: RunRoutesOpts = DEFAULT_RUN_ROUTES_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function runRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts: RunRoutesOpts<R>): Hono<ServerEnv<R>> {
+    const routes = new Hono<ServerEnv<R>>();
     const runtimeGate = requireRuntime(boot);
 
     routes.get("/runs", runtimeGate, async (c) => {
@@ -472,12 +488,12 @@ export function isTerminalRunStatus(status: RunStatus): status is TerminalRunSta
 }
 
 /** The `analysisId` of the mount path. A route outside that mount reads an empty id, which matches no row. */
-function analysisParam(c: Context<ServerEnv>): string {
+function analysisParam(c: Context): string {
     return c.req.param("analysisId") ?? "";
 }
 
 /** The response for a refusal of the approval of a plan. The refusals of the plan and of the launch are 409; the failures of the store and of the start are 500. */
-function approvalRefusal(c: Context<ServerEnv>, planId: string, refusal: ApprovePlanRefusal): Response {
+function approvalRefusal(c: Context, planId: string, refusal: ApprovePlanRefusal): Response {
     const conflict = (message: string, details: PlanApprovalConflict): Response => apiError(c, "conflict", message, details);
     switch (refusal.type) {
         case "thread_not_found":
@@ -526,11 +542,11 @@ function approvalRefusal(c: Context<ServerEnv>, planId: string, refusal: Approve
     }
 }
 
-function runNotFound(c: Context<ServerEnv>, runId: string): Response {
+function runNotFound(c: Context, runId: string): Response {
     return apiError(c, "not_found", `This analysis has no run ${runId}.`);
 }
 
-function analysisNotFound(c: Context<ServerEnv>, analysisId: string): Response {
+function analysisNotFound(c: Context, analysisId: string): Response {
     return apiError(c, "not_found", `No analysis ${analysisId}.`);
 }
 
@@ -557,7 +573,7 @@ async function queuedDrive(analysisId: string, drive: () => Promise<ProfileParit
  * The body of `GET {A}/data-profile`. The read also feeds the agent-switch gauge: a profile that is pending or
  * running holds the sandbox agent busy, and any other state releases it.
  */
-function loadProfileView(pool: Pool, analysisId: string, opts: RunRoutesOpts): ResultAsync<DataProfileView, DbError> {
+function loadProfileView(pool: Querier, analysisId: string, opts: RunReads): ResultAsync<DataProfileView, DbError> {
     return opts.loadProfile(pool, analysisId).map((row): DataProfileView => {
         const work = profileWorkPending(analysisId) ? { workPending: true as const } : {};
         if (row === null) {
@@ -587,11 +603,11 @@ function loadProfileView(pool: Pool, analysisId: string, opts: RunRoutesOpts): R
  * a later page has runs, and with no count of a thread, `total` is a lower bound (the RunList contract).
  */
 function listRunPage(
-    pool: Pool,
+    pool: Querier,
     analysisId: string,
     filter: { active: boolean; threadId: string | undefined; q: string | undefined },
     page: PageQuery,
-    opts: RunRoutesOpts,
+    opts: RunReads,
 ): ResultAsync<{ rows: CortexRunRow[]; total: number }, DbError> {
     const offset = page.page * page.perPage;
     // The harness reads take an absent `q` as no filter, and `exactOptionalPropertyTypes` bars an explicit `undefined`.
@@ -607,7 +623,7 @@ function listRunPage(
 }
 
 /** True when `runId` is a run of the analysis, or the workflow of its data profile. */
-function streamBelongsTo(pool: Pool, analysisId: string, runId: string, opts: RunRoutesOpts): ResultAsync<boolean, DbError> {
+function streamBelongsTo(pool: Querier, analysisId: string, runId: string, opts: RunReads): ResultAsync<boolean, DbError> {
     return opts.getRun(pool, runId).andThen((row) => {
         if (row !== null) return okAsync(row.analysisId === analysisId);
         return opts.loadProfile(pool, analysisId).map((profile) => profile !== null && profile.workflowId === runId);
@@ -619,7 +635,7 @@ function streamBelongsTo(pool: Pool, analysisId: string, runId: string, opts: Ru
  * fixed width, and the usage of each run from one grouped read of the local ledger. A failed plan read or
  * usage read costs that figure, never the row.
  */
-async function summarizeRuns(pool: Pool, analysisId: string, rows: readonly CortexRunRow[], opts: RunRoutesOpts): Promise<RunSummary[]> {
+async function summarizeRuns(pool: Querier, analysisId: string, rows: readonly CortexRunRow[], opts: RunReads): Promise<RunSummary[]> {
     const planIds = [...new Set(rows.flatMap((row) => (row.planId === null ? [] : [row.planId])))];
     const queue = new PQueue({ concurrency: PLAN_LOAD_CONCURRENCY });
     const titles = new Map<string, string>();
@@ -661,7 +677,7 @@ async function summarizeRuns(pool: Pool, analysisId: string, rows: readonly Cort
  * The step-output count of each run of the list, from one grouped read. A failed read gives `null` and a log
  * line: the runs then carry no count, because a false 0 would state that a run has no files.
  */
-async function readArtifactCounts(pool: Pool, analysisId: string, runIds: readonly string[], opts: RunRoutesOpts): Promise<ReadonlyMap<string, number> | null> {
+async function readArtifactCounts(pool: Querier, analysisId: string, runIds: readonly string[], opts: RunReads): Promise<ReadonlyMap<string, number> | null> {
     return opts.countArtifacts(pool, analysisId, runIds).match(
         (counts) => new Map(counts.map((entry) => [entry.runId, entry.count] as const)),
         (error) => {
@@ -684,7 +700,7 @@ const NO_STEPS: StepCounts = { doneSteps: 0, runningSteps: 0, totalSteps: 0 };
  * The step counts of each run of the list, from one grouped read. A failed read gives `null` and a log line: the
  * runs then carry no counts, because a false 0 would state that a run has no steps.
  */
-async function readStepCounts(pool: Pool, analysisId: string, runIds: readonly string[], opts: RunRoutesOpts): Promise<ReadonlyMap<string, StepCounts> | null> {
+async function readStepCounts(pool: Querier, analysisId: string, runIds: readonly string[], opts: RunReads): Promise<ReadonlyMap<string, StepCounts> | null> {
     return opts.countSteps(pool, analysisId, runIds).match(
         (counts) => new Map(counts.map(({ runId, ...entry }) => [runId, entry] as const)),
         (error) => {

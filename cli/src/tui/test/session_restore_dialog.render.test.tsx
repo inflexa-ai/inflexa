@@ -5,11 +5,11 @@ import { err, errAsync, okAsync } from "neverthrow";
 import type { ThreadList, ThreadSummary } from "../../api/conversation.ts";
 import { useKeymapRoot, __resetKeybindCache } from "../keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
-import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
+import { WorkspaceContext } from "../contexts/workspace.ts";
 import { openRestoreSession, type SessionOpts } from "../commands.tsx";
 import { __setBootStateForTest, __resetBootForTest } from "../hooks/boot.ts";
 import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
-import type { Analysis } from "../../types/analysis.ts";
+import { buildAnalysis, buildWorkspace } from "../../test_support/builders.ts";
 import type { Notice } from "../theme.ts";
 
 // The restore picker's rows are the only place the archived listing becomes visible, and the server
@@ -27,7 +27,7 @@ afterEach(() => {
     dialogClear();
 });
 
-const ANALYSIS = { id: "a1", name: "Alpha", projectId: null } as unknown as Analysis;
+const ANALYSIS = buildAnalysis();
 // Distinct from the activity clock below, which an archive deliberately leaves alone.
 const ARCHIVED_AT = "2026-07-09T09:30:00.000Z";
 
@@ -67,18 +67,14 @@ function sessionOpts(page: ThreadList, notices: Notice[], restored: string[]): S
 async function openRestorePicker(page: ThreadList) {
     const notices: Notice[] = [];
     const restored: string[] = [];
-    const ws = {
+    const ws = buildWorkspace({
         analysis: ANALYSIS,
         sessionId: "thread-open",
-        workingDir: "/work",
-        project: null,
         // The workspace capability App wires to `dialogPush`; supplying the same wiring is what makes
         // the dialog under assertion the one production mounts.
         openDialog: dialogPush,
         closeDialog: dialogClear,
-        openSession: () => {},
-        quit: async () => {},
-    } as unknown as Workspace;
+    });
 
     const setup = await testRender(
         () => {

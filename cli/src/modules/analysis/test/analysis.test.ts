@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { z } from "zod";
 
 import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis, createAnalysis, applyInputsDiff, renameAnalysisAndMoveWorkspace } from "../analysis.ts";
 import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace, invalidateWorkspaceRoot, resolveOutputDir } from "../output.ts";
@@ -144,7 +145,7 @@ describe("createAnalysis makes the empty farm", () => {
 
         const lockPath = join(env.packageStoreDir, "farms", a.id, "inflexa.lock");
         expect(existsSync(lockPath)).toBe(true);
-        const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { schema: number; arch: string; packages: unknown[] };
+        const lock = z.object({ schema: z.number(), arch: z.string(), packages: z.array(z.unknown()) }).parse(JSON.parse(readFileSync(lockPath, "utf8")));
         expect(lock.schema).toBe(1);
         expect(lock.packages).toEqual([]);
     });

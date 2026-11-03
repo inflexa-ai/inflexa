@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 
 import { env } from "./env.ts";
+import { errnoCode } from "./fs.ts";
 import { getLogger } from "./log.ts";
 
 // A keyed advisory instance lock so a resource is held by at most one `inflexa` process at a time.
@@ -105,7 +106,7 @@ export function isPidAlive(pid: number): boolean {
         process.kill(pid, 0);
         return true;
     } catch (cause) {
-        return (cause as NodeJS.ErrnoException).code !== "ESRCH";
+        return errnoCode(cause) !== "ESRCH";
     }
 }
 
@@ -127,7 +128,7 @@ export function acquireInstanceLock(key: string): LockOutcome {
         heldKeys.add(key);
         return { acquired: true };
     } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code !== "EEXIST") {
+        if (errnoCode(cause) !== "EEXIST") {
             getLogger("lock").warn({ err: cause, key }, "lock write failed; proceeding without lock");
             return { acquired: true };
         }
@@ -151,7 +152,7 @@ export function acquireInstanceLock(key: string): LockOutcome {
         heldKeys.add(key);
         return { acquired: true };
     } catch (cause) {
-        if ((cause as NodeJS.ErrnoException).code === "EEXIST") {
+        if (errnoCode(cause) === "EEXIST") {
             return { acquired: false, holderPid: readHolderPid(path) ?? -1 };
         }
         getLogger("lock").warn({ err: cause, key }, "lock reclaim failed; proceeding without lock");

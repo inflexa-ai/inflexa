@@ -1,4 +1,5 @@
-import { queryArtifactPage, type ArtifactPage, type ArtifactPageQuery, type DbError, type Pool } from "@inflexa-ai/harness";
+import { queryArtifactPage, type ArtifactPage, type ArtifactPageQuery, type DbError } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import { Hono } from "hono";
 import { join } from "node:path";
 import type { ResultAsync } from "neverthrow";
@@ -21,7 +22,7 @@ import { fileKindOf, languageOf } from "../../modules/fs/file_kind.ts";
 import { entryDegraded, materializeTarget, resolveEntryPath, workspaceFileResolvable, type OpenArtifactError } from "../../modules/harness/artifact_open.ts";
 import type { OpenTarget } from "../../types/session.ts";
 import type { ServerBoot } from "../boot.ts";
-import { apiError, filterValue, internalError, listEnvelope, parsePage, readBody, requireRuntime, type ServerEnv } from "../http.ts";
+import { apiError, filterValue, internalError, listEnvelope, parsePage, readBody, requireRuntime, type PoolRuntime, type ServerEnv } from "../http.ts";
 
 /** The harness mints each presentation id as `pres-` and a hex digest. The id names a file in the workspace, thus nothing else passes. */
 const presId = z.string().regex(/^pres-[A-Za-z0-9_-]+$/, "A presentation id is `pres-` and a digest.");
@@ -43,7 +44,7 @@ const sortQuery = z.enum(["path", "recent"] satisfies ArtifactSort[]);
 /** The harness read that the list route calls. A test replaces it, because it needs Postgres. */
 export type ArtifactRoutesOpts = {
     /** One page of the artifact ledger of the analysis, and the count of the rows that the filters select. */
-    readonly listArtifacts: (pool: Pool, analysisId: string, query: ArtifactPageQuery) => ResultAsync<ArtifactPage, DbError>;
+    readonly listArtifacts: (pool: Querier, analysisId: string, query: ArtifactPageQuery) => ResultAsync<ArtifactPage, DbError>;
 };
 
 /** The production {@link ArtifactRoutesOpts}. */
@@ -80,8 +81,8 @@ const RESOLVE_WIDTH = 8;
  * of the workspace. The client opens the path, because the desktop opener runs on the machine of the client.
  * It reads SQLite and the disk only, thus it needs no runtime.
  */
-export function artifactRoutes(boot: ServerBoot, opts: ArtifactRoutesOpts = DEFAULT_ARTIFACT_ROUTES_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function artifactRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts: ArtifactRoutesOpts = DEFAULT_ARTIFACT_ROUTES_OPTS): Hono<ServerEnv<R>> {
+    const routes = new Hono<ServerEnv<R>>();
 
     routes.get("/", requireRuntime(boot), async (c) => {
         const analysisId = c.req.param("analysisId") ?? "";

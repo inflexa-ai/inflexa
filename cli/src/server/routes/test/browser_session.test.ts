@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 
-import type { SessionNonce } from "../../../api/browser_session.ts";
 import { signIn } from "../../../test_support/browser_session.ts";
+import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { idleBoot, idleLifecycle } from "../../../test_support/server.ts";
 import { buildApp } from "../../app.ts";
 import { createPageGrantStore } from "../../report_page_grants.ts";
 import { stringContaining } from "../../../test_support/matchers.ts";
+
+const sessionNonce = z.object({ nonce: z.string(), expiresAt: z.string() });
 
 const TOKEN = "a".repeat(64);
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
@@ -20,11 +23,10 @@ function appWithClock(): { app: ReturnType<typeof buildApp>; advance: (ms: numbe
     };
 }
 
-async function getNonce(app: ReturnType<typeof buildApp>): Promise<SessionNonce> {
+async function getNonce(app: ReturnType<typeof buildApp>): Promise<z.infer<typeof sessionNonce>> {
     const response = await app.request("/api/v1/session/nonce", { method: "POST", headers: AUTH });
     expect(response.status).toBe(201);
-    // The nonce route sends a `SessionNonce` body on 201.
-    return (await response.json()) as SessionNonce;
+    return sessionNonce.parse(await jsonBody(response));
 }
 
 /** The sign-in link GET, with no credential. */
@@ -34,8 +36,7 @@ async function open(app: ReturnType<typeof buildApp>, query: string, headers: Re
 
 async function expectSignInAgain(response: Response): Promise<void> {
     expect(response.status).toBe(401);
-    // An error body of the app is an `ApiError`.
-    const body = (await response.json()) as { error: string; message: string };
+    const body = await errorBody(response);
     expect(body.error).toBe("unauthorized");
     expect(body.message).toContain("`inflexa gui`");
     expect(response.headers.get("Set-Cookie")).toBeNull();
@@ -99,7 +100,7 @@ describe("GET /api/v1/session", () => {
         const listener = { port: 8436 };
         const host = { Host: "127.0.0.1:8436" };
         const issued = await app.request("/api/v1/session/nonce", { method: "POST", headers: { ...AUTH, ...host } }, listener);
-        const { nonce } = (await issued.json()) as SessionNonce;
+        const { nonce } = sessionNonce.parse(await jsonBody(issued));
         const response = await app.request(`/api/v1/session?nonce=${nonce}`, { headers: host }, listener);
         expect(response.headers.get("Set-Cookie")).toStartWith("inflexa_session_8436=");
     });

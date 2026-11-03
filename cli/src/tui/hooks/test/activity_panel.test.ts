@@ -7,6 +7,7 @@ import type { StepActivityPart } from "@inflexa-ai/harness/contracts/index.js";
 import type { CancelRunResult, DataProfileState, DataProfileView, RunDetail, RunSummary } from "../../../api/runs.ts";
 import { describeClientError, type ClientError } from "../../../client/api.ts";
 import type { Workspace } from "../../contexts/workspace.ts";
+import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
 import type { Notice } from "../../theme.ts";
 import { __pendingNoticeCountForTest, __resetNoticesForTest, currentNotice } from "../notice.ts";
 import { __resetRunCompletionsForTest, watchRunCompletions } from "../run_completion.ts";
@@ -167,13 +168,10 @@ function focusedRunSubject(): ActiveRunProgress | null {
     return subject?.kind === "run" ? subject.run : null;
 }
 
-/**
- * A workspace whose open analysis a test can swap. The panel reads only `analysis.id`, thus a store
- * with that one field stands in for the whole workspace.
- */
+/** A workspace whose open analysis a test can swap. The panel reads only `analysis.id`. */
 function workspaceOn(analysisId: string): { ws: Workspace; open: (id: string) => void } {
-    const [store, setStore] = createStore({ analysis: { id: analysisId } });
-    return { ws: store as unknown as Workspace, open: (id) => setStore("analysis", { id }) };
+    const [store, setStore] = createStore(buildWorkspace({ analysis: buildAnalysis({ id: analysisId }) }));
+    return { ws: store, open: (id) => setStore({ analysis: buildAnalysis({ id }) }) };
 }
 
 /** The workspace of each test that does not swap analyses. */

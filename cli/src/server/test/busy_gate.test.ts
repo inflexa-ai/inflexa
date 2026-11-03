@@ -1,18 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
-import type { Pool } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import { fakePool } from "../../test_support/fake_pool.ts";
 import { busyReasonsOf, DEFAULT_BUSY_GATE_OPTS, workspaceBusyReasons, type BusyFacts, type BusyGateOpts } from "../busy_gate.ts";
 
-// The gate over a runtime whose pool answers from fixed rows. Each `as` cast below makes a stand-in that
-// carries only the pool, which is the one part of the runtime that the gate reads.
+// The gate over a runtime whose pool answers from fixed rows. The gate reads only the pool of the runtime.
 
 /** A pool whose profile ledger row reads `running`, and whose DBOS status table holds the profile workflow as live. */
-function poolWithRunningProfile(analysisId: string): Pool {
+function poolWithRunningProfile(analysisId: string): Querier {
     const workflowId = `dataprofile:${analysisId}:nonce-1`;
-    const query = async (config: string | { readonly text: string }): Promise<{ rows: unknown[]; rowCount: number }> => {
-        const text = typeof config === "string" ? config : config.text;
+    return fakePool(({ text }) => {
         if (text.includes("cortex_analysis_state")) {
             const row = {
                 data_profile_status: "running",
@@ -23,18 +21,17 @@ function poolWithRunningProfile(analysisId: string): Pool {
                 data_profile_workflow_id: workflowId,
                 seed_input_file_ids: ["f1"],
             };
-            return { rows: [row], rowCount: 1 };
+            return [row];
         }
-        if (text.includes("workflow_status")) return { rows: [{ n: "1", status: "PENDING", workflow_uuid: workflowId }], rowCount: 1 };
-        return { rows: [], rowCount: 0 };
-    };
-    return { query } as unknown as Pool;
+        if (text.includes("workflow_status")) return [{ n: "1", status: "PENDING", workflow_uuid: workflowId }];
+        return [];
+    });
 }
 
 describe("workspaceBusyReasons", () => {
     test("a data profile workflow that runs holds the folder, with no profile drive in the queue", async () => {
         const analysisId = "analysis-1";
-        const runtime = { pool: poolWithRunningProfile(analysisId) } as unknown as HarnessRuntime;
+        const runtime = { pool: poolWithRunningProfile(analysisId) };
         // No turn, no queued drive, and no active run: the running profile workflow is the only work.
         const opts: BusyGateOpts = {
             ...DEFAULT_BUSY_GATE_OPTS,
@@ -47,7 +44,7 @@ describe("workspaceBusyReasons", () => {
     });
 
     test("a run with a live workflow holds the folder, and an unreadable ledger reads as busy", async () => {
-        const runtime = { pool: poolWithRunningProfile("analysis-1") } as unknown as HarnessRuntime;
+        const runtime = { pool: poolWithRunningProfile("analysis-1") };
         const idle: BusyGateOpts = {
             ...DEFAULT_BUSY_GATE_OPTS,
             hasRunningTurn: () => false,
@@ -65,7 +62,7 @@ describe("workspaceBusyReasons", () => {
     });
 
     test("a live turn workflow that the registry does not hold, for example a paused turn after a restart, holds the folder", async () => {
-        const runtime = { pool: poolWithRunningProfile("analysis-1") } as unknown as HarnessRuntime;
+        const runtime = { pool: poolWithRunningProfile("analysis-1") };
         const opts: BusyGateOpts = {
             ...DEFAULT_BUSY_GATE_OPTS,
             hasRunningTurn: () => false,
@@ -78,7 +75,7 @@ describe("workspaceBusyReasons", () => {
     });
 
     test("a run whose step waits in a pause holds the folder: its workflow is live", async () => {
-        const runtime = { pool: poolWithRunningProfile("analysis-1") } as unknown as HarnessRuntime;
+        const runtime = { pool: poolWithRunningProfile("analysis-1") };
         const opts: BusyGateOpts = {
             ...DEFAULT_BUSY_GATE_OPTS,
             hasRunningTurn: () => false,

@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyProvEvent, PROV_UNIFY_OPTIONS, type ProvAttestation } from "@inflexa-ai/prov-kernel";
+import { applyProvEvent, PROV_UNIFY_OPTIONS } from "@inflexa-ai/prov-kernel";
 import { Hono } from "hono";
+import { z } from "zod";
 
-import type { ExportProvenanceResult, LineageView } from "../../../api/provenance.ts";
 import { insertAnalysis, insertAnchor, updateAnalysisProvenance } from "../../../db/primary_mutation.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { defaultOutputSubdir, invalidateWorkspaceRoot } from "../../../modules/analysis/output.ts";
@@ -13,15 +13,17 @@ import { writeMarker } from "../../../modules/anchor/marker.ts";
 import { provModel, provSubject } from "../../../modules/prov/document.ts";
 import { loadOrGenerateKeypair, resetSigningForTests } from "../../../modules/prov/signing.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { jsonBody } from "../../../test_support/response_body.ts";
 import type { Analysis } from "../../../types/analysis.ts";
-import type { ProvActor, ProvCommandRef, ProvStepRef, VerifyResult } from "../../../types/prov.ts";
+import type { ProvActor, ProvCommandRef, ProvStepRef } from "../../../types/prov.ts";
 import type { ServerEnv } from "../../http.ts";
 import { provenanceRoutes } from "../provenance.ts";
 
 // The routes alone, mounted at their path with no bearer check and no analysis guard: `app.test.ts`
-// covers those. Each `as` cast of a body below reads JSON that the route under test builds from the same
-// `src/api/` type. The recorder has no subscriber in this process, thus the flush before each read is a
-// no-op and the stored column is what the routes read.
+// covers those. The recorder has no subscriber in this process, thus the flush before each read is a
+// no-op and the stored column is what the routes read. A test that computes on a body parses the fields that it reads.
+const treeLineage = z.looseObject({ format: z.literal("tree"), text: z.string() });
+const jsonLineage = z.looseObject({ format: z.literal("json"), lineage: z.looseObject({ nodes: z.record(z.string(), z.looseObject({ kind: z.string() })) }) });
 const app = new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId/provenance", provenanceRoutes());
 
 const ANALYSIS: Analysis = {
@@ -99,9 +101,9 @@ describe("POST {A}/provenance/export", () => {
 
         expect(response.status).toBe(200);
         const path = join(home, defaultOutputSubdir(ANALYSIS.slug), "provenance.json");
-        expect((await response.json()) as ExportProvenanceResult).toEqual({ path, attestationPath: `${path}.sig.json` });
+        expect(await jsonBody(response)).toEqual({ path, attestationPath: `${path}.sig.json` });
         expect(existsSync(path)).toBe(true);
-        expect((JSON.parse(readFileSync(`${path}.sig.json`, "utf8")) as ProvAttestation).payloadType).toBe("application/json; profile=prov-json");
+        expect(JSON.parse(readFileSync(`${path}.sig.json`, "utf8"))).toHaveProperty("payloadType", "application/json; profile=prov-json");
     });
 
     test("a PROV-N export has no attestation, and an absolute `output` is written as given", async () => {
@@ -110,7 +112,7 @@ describe("POST {A}/provenance/export", () => {
         const response = await post("export", { format: "prov-n", output });
 
         expect(response.status).toBe(200);
-        expect((await response.json()) as ExportProvenanceResult).toEqual({ path: output });
+        expect(await jsonBody(response)).toEqual({ path: output });
         expect(existsSync(output)).toBe(true);
         expect(existsSync(`${output}.sig.json`)).toBe(false);
     });
@@ -139,13 +141,12 @@ describe("GET {A}/provenance/verify", () => {
     test("gives the verdict of the kernel on the stored chain", async () => {
         const empty = await get("verify");
         expect(empty.status).toBe(200);
-        expect((await empty.json()) as VerifyResult).toEqual({ status: "empty" });
+        expect(await jsonBody(empty)).toEqual({ status: "empty" });
 
         storeLineageDocument();
         (await loadOrGenerateKeypair())._unsafeUnwrap();
         // The placeholder chain hash cannot match the bytes, which is the verdict a changed document gets.
-        const stored = (await (await get("verify")).json()) as VerifyResult;
-        expect(stored.status).toBe("tampered");
+        expect(await jsonBody(get("verify"))).toHaveProperty("status", "tampered");
     });
 });
 
@@ -160,16 +161,14 @@ describe("GET {A}/provenance/lineage", () => {
     test("walks a file back to the command that wrote it, as a tree or as the flat graph", async () => {
         storeLineageDocument();
 
-        const tree = (await (await get("lineage?ref=runs/r1/s1/out.csv")).json()) as LineageView;
+        const tree = treeLineage.parse(await jsonBody(get("lineage?ref=runs/r1/s1/out.csv")));
         expect(tree.format).toBe("tree");
-        if (tree.format !== "json") {
-            expect(tree.text).toContain("runs/r1/s1/out.csv");
-            expect(tree.text).toContain("python make.py");
-        }
+        expect(tree.text).toContain("runs/r1/s1/out.csv");
+        expect(tree.text).toContain("python make.py");
 
-        const json = (await (await get("lineage?ref=runs/r1/s1/out.csv&format=json")).json()) as LineageView;
+        const json = jsonLineage.parse(await jsonBody(get("lineage?ref=runs/r1/s1/out.csv&format=json")));
         expect(json.format).toBe("json");
-        if (json.format === "json") expect(Object.values(json.lineage.nodes).some((n) => n.kind === "command")).toBe(true);
+        expect(Object.values(json.lineage.nodes).some((n) => n.kind === "command")).toBe(true);
     });
 
     test("a ref that matches nothing is 404 with the known files", async () => {

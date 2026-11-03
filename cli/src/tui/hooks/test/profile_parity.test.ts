@@ -5,7 +5,8 @@ import { createRoot } from "solid-js";
 import type { ChatContext, DataProfileState, DataProfileView, ProfileOutcome } from "../../../api/runs.ts";
 import { describeClientError, type ClientError } from "../../../client/api.ts";
 import { GLYPHS } from "../../../lib/design_system.ts";
-import type { Analysis } from "../../../types/analysis.ts";
+import { asStr256 } from "../../../lib/types.ts";
+import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
 import type { Notice } from "../../theme.ts";
 import type { Workspace } from "../../contexts/workspace.ts";
 import { __resetBootForTest, __setBootStateForTest } from "../boot.ts";
@@ -32,7 +33,7 @@ import {
 // src/server/routes/test/runs.test.ts cover them.
 
 // The drivers read only `.name`/`.id` off the analysis.
-const ANALYSIS = { id: "a1", name: "My analysis" } as unknown as Analysis;
+const ANALYSIS = buildAnalysis({ id: "a1", name: asStr256("My analysis") });
 
 /** A 500 of the server, as the client gives it. */
 const SERVER_ERROR: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "The server failed to handle the request." } };
@@ -280,7 +281,7 @@ function bootReady(): void {
 
 /** A mutable workspace stand-in — the reactive edges read `.analysis` off it live (no reactive store). */
 function wsMut(id: string): Workspace {
-    return { analysis: { id, name: `n-${id}` } as unknown as Analysis } as unknown as Workspace;
+    return buildWorkspace({ analysis: buildAnalysis({ id, name: asStr256(`n-${id}`) }) });
 }
 
 /** Record every `drive` call. */
@@ -438,7 +439,7 @@ describe("watchProfileParity — run-terminal edge", () => {
             try {
                 h.drives.length = 0;
                 await refreshSidebarData("A", refreshOpts(profileState({ status: "running" })));
-                ws.analysis = { id: "B", name: "n-B" } as unknown as Analysis;
+                ws.analysis = buildAnalysis({ id: "B", name: asStr256("n-B") });
                 await refreshSidebarData("B", refreshOpts(terminal));
                 expect(h.drives).toEqual([]);
             } finally {

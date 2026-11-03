@@ -47,7 +47,7 @@ const ANCHOR_COLS = "id, created_at, updated_at, cached_path, marker_written, la
 /** Loads an anchor by its id (the marker UUID); `null` when there is no such row. */
 export function getAnchor(id: string): Result<Anchor | null, DbError> {
     return tryQuery("getAnchor", (conn) => {
-        const row = conn.query(`SELECT ${ANCHOR_COLS} FROM anchors WHERE id = ?`).get(id) as AnchorRow | null;
+        const row = conn.query<AnchorRow, [string]>(`SELECT ${ANCHOR_COLS} FROM anchors WHERE id = ?`).get(id);
         return row ? anchorFromRow(row) : null;
     });
 }
@@ -55,7 +55,7 @@ export function getAnchor(id: string): Result<Anchor | null, DbError> {
 /** Every anchor row — the candidate set for the bounded path search during anchor reconciliation. */
 export function listAnchors(): Result<Anchor[], DbError> {
     return tryQuery("listAnchors", (conn) => {
-        const rows = conn.query(`SELECT ${ANCHOR_COLS} FROM anchors`).all() as AnchorRow[];
+        const rows = conn.query<AnchorRow, []>(`SELECT ${ANCHOR_COLS} FROM anchors`).all();
         return rows.map(anchorFromRow);
     });
 }
@@ -101,12 +101,12 @@ export type ProjectWithCount = {
 export function listProjectPage(page: { limit: number; offset: number }): Result<{ items: ProjectWithCount[]; total: number }, DbError> {
     return tryQuery("listProjectPage", (conn) => {
         const rows = conn
-            .query(
+            .query<ProjectRow & { analysis_count: number }, [number, number]>(
                 `SELECT ${PROJECT_COLS}, (SELECT COUNT(*) FROM analyses WHERE analyses.project_id = projects.id) AS analysis_count
                  FROM projects ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
             )
-            .all(page.limit, page.offset) as (ProjectRow & { analysis_count: number })[];
-        const total = (conn.query("SELECT COUNT(*) AS n FROM projects").get() as { n: number }).n;
+            .all(page.limit, page.offset);
+        const total = conn.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM projects").get()?.n ?? 0;
         return { items: rows.map((r) => ({ project: projectFromRow(r), analysisCount: r.analysis_count })), total };
     });
 }
@@ -118,10 +118,10 @@ export function listProjectPage(page: { limit: number; offset: number }): Result
 export function getProjectWithCount(id: string): Result<ProjectWithCount | null, DbError> {
     return tryQuery("getProjectWithCount", (conn) => {
         const row = conn
-            .query(
+            .query<ProjectRow & { analysis_count: number }, [string]>(
                 `SELECT ${PROJECT_COLS}, (SELECT COUNT(*) FROM analyses WHERE analyses.project_id = projects.id) AS analysis_count FROM projects WHERE id = ?`,
             )
-            .get(id) as (ProjectRow & { analysis_count: number }) | null;
+            .get(id);
         return row ? { project: projectFromRow(row), analysisCount: row.analysis_count } : null;
     });
 }
@@ -134,8 +134,8 @@ export function getProjectWithCount(id: string): Result<ProjectWithCount | null,
 export function findProjectByRef(ref: IdOrName): Result<Project | null, DbError> {
     return tryQuery("findProjectByRef", (conn) => {
         const row = conn
-            .query(`SELECT ${PROJECT_COLS} FROM projects WHERE id = $ref OR name = $ref ORDER BY (id = $ref) DESC LIMIT 1`)
-            .get({ $ref: ref }) as ProjectRow | null;
+            .query<ProjectRow, { $ref: string }>(`SELECT ${PROJECT_COLS} FROM projects WHERE id = $ref OR name = $ref ORDER BY (id = $ref) DESC LIMIT 1`)
+            .get({ $ref: ref });
         return row ? projectFromRow(row) : null;
     });
 }
@@ -178,8 +178,10 @@ const ANALYSIS_COLS = "id, created_at, updated_at, name, slug, anchor_id, projec
 export function findAnalysesByRef(ref: IdOrName): Result<Analysis[], DbError> {
     return tryQuery("findAnalysesByRef", (conn) => {
         const rows = conn
-            .query(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE id = $ref OR slug = $ref OR name = $ref ORDER BY (id = $ref) DESC, created_at DESC`)
-            .all({ $ref: ref }) as AnalysisRow[];
+            .query<AnalysisRow, { $ref: string }>(
+                `SELECT ${ANALYSIS_COLS} FROM analyses WHERE id = $ref OR slug = $ref OR name = $ref ORDER BY (id = $ref) DESC, created_at DESC`,
+            )
+            .all({ $ref: ref });
         return rows.map(analysisFromRow);
     });
 }
@@ -205,13 +207,13 @@ type AnalysisWithAnchorRow = AnalysisRow & { anchor_cached_path: string | null }
 export function findAnalysesByRefWithAnchor(ref: IdOrName): Result<{ analysis: Analysis; anchorPath: string | null }[], DbError> {
     return tryQuery("findAnalysesByRefWithAnchor", (conn) => {
         const rows = conn
-            .query(
+            .query<AnalysisWithAnchorRow, { $ref: string }>(
                 `SELECT ${ANALYSIS_COLS_QUALIFIED}, anchors.cached_path AS anchor_cached_path
                  FROM analyses LEFT JOIN anchors ON anchors.id = analyses.anchor_id
                  WHERE analyses.id = $ref OR analyses.slug = $ref OR analyses.name = $ref
                  ORDER BY (analyses.id = $ref) DESC, analyses.created_at DESC`,
             )
-            .all({ $ref: ref }) as AnalysisWithAnchorRow[];
+            .all({ $ref: ref });
         return rows.map((r) => ({ analysis: analysisFromRow(r), anchorPath: r.anchor_cached_path }));
     });
 }
@@ -219,7 +221,7 @@ export function findAnalysesByRefWithAnchor(ref: IdOrName): Result<{ analysis: A
 /** Every analysis, newest first. */
 export function listAnalyses(): Result<Analysis[], DbError> {
     return tryQuery("listAnalyses", (conn) => {
-        const rows = conn.query(`SELECT ${ANALYSIS_COLS} FROM analyses ORDER BY created_at DESC`).all() as AnalysisRow[];
+        const rows = conn.query<AnalysisRow, []>(`SELECT ${ANALYSIS_COLS} FROM analyses ORDER BY created_at DESC`).all();
         return rows.map(analysisFromRow);
     });
 }
@@ -227,7 +229,7 @@ export function listAnalyses(): Result<Analysis[], DbError> {
 /** Analyses homed at an anchor, newest first. The home is unique-slug scoped, so this is also the slug-collision candidate set at creation. */
 export function listAnalysesByAnchor(anchorId: string): Result<Analysis[], DbError> {
     return tryQuery("listAnalysesByAnchor", (conn) => {
-        const rows = conn.query(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE anchor_id = ? ORDER BY created_at DESC`).all(anchorId) as AnalysisRow[];
+        const rows = conn.query<AnalysisRow, [string]>(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE anchor_id = ? ORDER BY created_at DESC`).all(anchorId);
         return rows.map(analysisFromRow);
     });
 }
@@ -235,7 +237,7 @@ export function listAnalysesByAnchor(anchorId: string): Result<Analysis[], DbErr
 /** Analyses grouped under a project, newest first. */
 export function listAnalysesByProject(projectId: string): Result<Analysis[], DbError> {
     return tryQuery("listAnalysesByProject", (conn) => {
-        const rows = conn.query(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE project_id = ? ORDER BY created_at DESC`).all(projectId) as AnalysisRow[];
+        const rows = conn.query<AnalysisRow, [string]>(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE project_id = ? ORDER BY created_at DESC`).all(projectId);
         return rows.map(analysisFromRow);
     });
 }
@@ -243,7 +245,7 @@ export function listAnalysesByProject(projectId: string): Result<Analysis[], DbE
 /** The analysis with exactly this id, never a name or slug hit. `null` when the row is gone. */
 export function getAnalysis(id: string): Result<Analysis | null, DbError> {
     return tryQuery("getAnalysis", (conn) => {
-        const row = conn.query(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE id = ?`).get(id) as AnalysisRow | null;
+        const row = conn.query<AnalysisRow, [string]>(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE id = ?`).get(id);
         return row ? analysisFromRow(row) : null;
     });
 }
@@ -272,13 +274,13 @@ export function listAnalysisPage(page: {
         const filter = page.projectId === null ? [] : [page.projectId];
         const orderColumn = page.sort === "activity" ? "analyses.last_activity_at" : "analyses.created_at";
         const rows = conn
-            .query(
+            .query<AnalysisWithAnchorRow & { last_activity_at: number }, (string | number)[]>(
                 `SELECT ${ANALYSIS_COLS_QUALIFIED}, analyses.last_activity_at AS last_activity_at, anchors.cached_path AS anchor_cached_path
                  FROM analyses LEFT JOIN anchors ON anchors.id = analyses.anchor_id ${where}
                  ORDER BY ${orderColumn} DESC, analyses.id DESC LIMIT ? OFFSET ?`,
             )
-            .all(...filter, page.limit, page.offset) as (AnalysisWithAnchorRow & { last_activity_at: number })[];
-        const total = (conn.query(`SELECT COUNT(*) AS n FROM analyses ${where}`).get(...filter) as { n: number }).n;
+            .all(...filter, page.limit, page.offset);
+        const total = conn.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n FROM analyses ${where}`).get(...filter)?.n ?? 0;
         return {
             items: rows.map((r) => ({ analysis: analysisFromRow(r), anchorPath: r.anchor_cached_path, lastActivityAt: r.last_activity_at })),
             total,
@@ -290,19 +292,24 @@ export function listAnalysisPage(page: {
 export function countAnalysisInputs(analysisId: string): Result<number, DbError> {
     return tryQuery(
         "countAnalysisInputs",
-        (conn) => (conn.query("SELECT COUNT(*) AS n FROM analysis_inputs WHERE analysis_id = ?").get(analysisId) as { n: number }).n,
+        (conn) => conn.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM analysis_inputs WHERE analysis_id = ?").get(analysisId)?.n ?? 0,
     );
 }
 
 /** An analysis's input refs. `path` is relative-to-anchor when `anchorId` is set, absolute otherwise. */
 export function listAnalysisInputs(analysisId: string): Result<AnalysisInput[], DbError> {
     return tryQuery("listAnalysisInputs", (conn) => {
-        const rows = conn.query("SELECT path, is_dir, analysis_id, anchor_id FROM analysis_inputs WHERE analysis_id = ?").all(analysisId) as {
-            path: string;
-            is_dir: number;
-            analysis_id: string;
-            anchor_id: string | null;
-        }[];
+        const rows = conn
+            .query<
+                {
+                    path: string;
+                    is_dir: number;
+                    analysis_id: string;
+                    anchor_id: string | null;
+                },
+                [string]
+            >("SELECT path, is_dir, analysis_id, anchor_id FROM analysis_inputs WHERE analysis_id = ?")
+            .all(analysisId);
         return rows.map((r) => ({
             path: r.path,
             isDir: r.is_dir === 1,
@@ -319,9 +326,11 @@ export function listAnalysisInputs(analysisId: string): Result<AnalysisInput[], 
 export function listAnalysisInputPage(analysisId: string, page: { limit: number; offset: number }): Result<{ items: AnalysisInput[]; total: number }, DbError> {
     return tryQuery("listAnalysisInputPage", (conn) => {
         const rows = conn
-            .query("SELECT path, is_dir, analysis_id, anchor_id FROM analysis_inputs WHERE analysis_id = ? ORDER BY rowid LIMIT ? OFFSET ?")
-            .all(analysisId, page.limit, page.offset) as { path: string; is_dir: number; analysis_id: string; anchor_id: string | null }[];
-        const total = (conn.query("SELECT COUNT(*) AS n FROM analysis_inputs WHERE analysis_id = ?").get(analysisId) as { n: number }).n;
+            .query<{ path: string; is_dir: number; analysis_id: string; anchor_id: string | null }, [string, number, number]>(
+                "SELECT path, is_dir, analysis_id, anchor_id FROM analysis_inputs WHERE analysis_id = ? ORDER BY rowid LIMIT ? OFFSET ?",
+            )
+            .all(analysisId, page.limit, page.offset);
+        const total = conn.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM analysis_inputs WHERE analysis_id = ?").get(analysisId)?.n ?? 0;
         return { items: rows.map((r) => ({ path: r.path, isDir: r.is_dir === 1, analysisId: r.analysis_id, anchorId: r.anchor_id })), total };
     });
 }
@@ -331,7 +340,7 @@ export function listAnalysisInputPage(analysisId: string, page: { limit: number;
 /** The stored PROV-JSON serialization of an analysis's provenance document; `null` when nothing has been recorded yet (treated as an empty document). */
 export function getAnalysisProvenance(id: string): Result<string | null, DbError> {
     return tryQuery("getAnalysisProvenance", (conn) => {
-        const row = conn.query("SELECT provenance FROM analyses WHERE id = ?").get(id) as { provenance: string | null } | null;
+        const row = conn.query<{ provenance: string | null }, [string]>("SELECT provenance FROM analyses WHERE id = ?").get(id);
         return row?.provenance ?? null;
     });
 }
@@ -348,13 +357,16 @@ export type AnalysisIntegrity = {
 export function getAnalysisIntegrity(id: string): Result<AnalysisIntegrity | null, DbError> {
     return tryQuery("getAnalysisIntegrity", (conn) => {
         const row = conn
-            .query("SELECT provenance, provenance_prev_chain_hash, provenance_chain_hash, provenance_signature FROM analyses WHERE id = ?")
-            .get(id) as {
-            provenance: string | null;
-            provenance_prev_chain_hash: string | null;
-            provenance_chain_hash: string | null;
-            provenance_signature: string | null;
-        } | null;
+            .query<
+                {
+                    provenance: string | null;
+                    provenance_prev_chain_hash: string | null;
+                    provenance_chain_hash: string | null;
+                    provenance_signature: string | null;
+                },
+                [string]
+            >("SELECT provenance, provenance_prev_chain_hash, provenance_chain_hash, provenance_signature FROM analyses WHERE id = ?")
+            .get(id);
         if (!row) return null;
         return {
             provenance: row.provenance,
@@ -445,6 +457,15 @@ function llmUsageTotalsFromRow(r: LlmUsageTotalsRow): LlmUsageTotals {
     return totals;
 }
 
+/**
+ * The totals of a bare aggregate over {@link LLM_USAGE_TOTAL_COLS}. A bare aggregate with no GROUP BY always
+ * yields exactly one row (all-NULL sums over an empty set), thus the `null` branch cannot run. It gives the
+ * totals of an empty set, which is what that row would have said.
+ */
+function llmUsageTotalsFromAggregate(row: LlmUsageTotalsRow | null): LlmUsageTotals {
+    return row === null ? { calls: 0 } : llmUsageTotalsFromRow(row);
+}
+
 // Aliased to the underlying column names so one row type and one mapper serve the total and both
 // breakdowns. Each quantity is summed on its own — there is deliberately no expression here that
 // combines two of them.
@@ -487,12 +508,10 @@ const LLM_USAGE_GRAIN_ORDER = "ORDER BY SUM(input_tokens) DESC, SUM(output_token
  */
 export function getAnalysisUsageTotals(analysisId: string): Result<LlmUsageTotals, DbError> {
     return tryQuery("getAnalysisUsageTotals", (conn) => {
-        // A bare aggregate with no GROUP BY always yields exactly one row (all-NULL sums over an empty
-        // set), so the non-null assertion in the cast holds unconditionally.
         const row = conn
-            .query(`SELECT ${LLM_USAGE_TOTAL_COLS} FROM llm_usage WHERE scope_kind = ? AND scope_id = ?`)
-            .get(ANALYSIS_SCOPE, analysisId) as LlmUsageTotalsRow;
-        return llmUsageTotalsFromRow(row);
+            .query<LlmUsageTotalsRow, [string, string]>(`SELECT ${LLM_USAGE_TOTAL_COLS} FROM llm_usage WHERE scope_kind = ? AND scope_id = ?`)
+            .get(ANALYSIS_SCOPE, analysisId);
+        return llmUsageTotalsFromAggregate(row);
     });
 }
 
@@ -522,12 +541,12 @@ export function listUsageTotalsByAnalysis(analysisIds: readonly string[]): Resul
         // TODO(robustness): chunk the ids if a caller ever legitimately needs more than that.
         const ids = [...totals.keys()];
         const rows = conn
-            .query(
+            .query<LlmUsageTotalsRow & { scope_id: string }, string[]>(
                 `SELECT scope_id, ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id IN (${ids.map(() => "?").join(", ")})
                  GROUP BY scope_id`,
             )
-            .all(ANALYSIS_SCOPE, ...ids) as (LlmUsageTotalsRow & { scope_id: string })[];
+            .all(ANALYSIS_SCOPE, ...ids);
         for (const r of rows) totals.set(r.scope_id, llmUsageTotalsFromRow(r));
         return totals;
     });
@@ -541,12 +560,12 @@ export function listUsageTotalsByAnalysis(analysisIds: readonly string[]): Resul
 export function listAnalysisUsageByModel(analysisId: string): Result<LlmUsageByModel[], DbError> {
     return tryQuery("listAnalysisUsageByModel", (conn) => {
         const rows = conn
-            .query(
+            .query<LlmUsageTotalsRow & { served_model_id: string | null }, [string, string]>(
                 `SELECT served_model_id, ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ?
                  GROUP BY served_model_id ORDER BY served_model_id`,
             )
-            .all(ANALYSIS_SCOPE, analysisId) as (LlmUsageTotalsRow & { served_model_id: string | null })[];
+            .all(ANALYSIS_SCOPE, analysisId);
         return rows.map((r) => ({ servedModelId: r.served_model_id, totals: llmUsageTotalsFromRow(r) }));
     });
 }
@@ -559,12 +578,12 @@ export function listAnalysisUsageByModel(analysisId: string): Result<LlmUsageByM
 export function listAnalysisUsageByAgent(analysisId: string): Result<LlmUsageByAgent[], DbError> {
     return tryQuery("listAnalysisUsageByAgent", (conn) => {
         const rows = conn
-            .query(
+            .query<LlmUsageTotalsRow & { agent_id: string }, [string, string]>(
                 `SELECT agent_id, ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ?
                  GROUP BY agent_id ORDER BY agent_id`,
             )
-            .all(ANALYSIS_SCOPE, analysisId) as (LlmUsageTotalsRow & { agent_id: string })[];
+            .all(ANALYSIS_SCOPE, analysisId);
         return rows.map((r) => ({ agentId: r.agent_id, totals: llmUsageTotalsFromRow(r) }));
     });
 }
@@ -608,12 +627,12 @@ export function listAnalysisUsageByAgent(analysisId: string): Result<LlmUsageByA
 export function listAnalysisUsageBySession(analysisId: string): Result<LlmUsageBySession[], DbError> {
     return tryQuery("listAnalysisUsageBySession", (conn) => {
         const rows = conn
-            .query(
+            .query<LlmUsageTotalsRow & { thread_id: string }, [string, string]>(
                 `SELECT thread_id, ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND thread_id IS NOT NULL AND run_id IS NULL
                  GROUP BY thread_id ${LLM_USAGE_GRAIN_ORDER}`,
             )
-            .all(ANALYSIS_SCOPE, analysisId) as (LlmUsageTotalsRow & { thread_id: string })[];
+            .all(ANALYSIS_SCOPE, analysisId);
         return rows.map((r) => ({ threadId: r.thread_id, totals: llmUsageTotalsFromRow(r) }));
     });
 }
@@ -629,12 +648,12 @@ export function listAnalysisUsageBySession(analysisId: string): Result<LlmUsageB
 export function listAnalysisUsageByRun(analysisId: string): Result<LlmUsageByRun[], DbError> {
     return tryQuery("listAnalysisUsageByRun", (conn) => {
         const rows = conn
-            .query(
+            .query<LlmUsageTotalsRow & { run_id: string }, [string, string, string]>(
                 `SELECT run_id, ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND run_id IS NOT NULL AND run_id <> ?
                  GROUP BY run_id ${LLM_USAGE_GRAIN_ORDER}`,
             )
-            .all(ANALYSIS_SCOPE, analysisId, DATA_PROFILE_RUN_LITERAL) as (LlmUsageTotalsRow & { run_id: string })[];
+            .all(ANALYSIS_SCOPE, analysisId, DATA_PROFILE_RUN_LITERAL);
         return rows.map((r) => ({ runId: r.run_id, totals: llmUsageTotalsFromRow(r) }));
     });
 }
@@ -655,15 +674,13 @@ export function listAnalysisUsageByRun(analysisId: string): Result<LlmUsageByRun
  */
 export function getRunUsageTotals(analysisId: string, runId: string): Result<LlmUsageTotals, DbError> {
     return tryQuery("getRunUsageTotals", (conn) => {
-        // A bare aggregate with no GROUP BY always yields exactly one row (all-NULL sums over an empty
-        // set), so the cast holds unconditionally — same guarantee as getAnalysisUsageTotals.
         const row = conn
-            .query(
+            .query<LlmUsageTotalsRow, [string, string, string]>(
                 `SELECT ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND run_id = ?`,
             )
-            .get(ANALYSIS_SCOPE, analysisId, runId) as LlmUsageTotalsRow;
-        return llmUsageTotalsFromRow(row);
+            .get(ANALYSIS_SCOPE, analysisId, runId);
+        return llmUsageTotalsFromAggregate(row);
     });
 }
 
@@ -682,12 +699,12 @@ export function getRunUsageTotals(analysisId: string, runId: string): Result<Llm
 export function listRunUsageByStep(analysisId: string, runId: string): Result<LlmUsageByStep[], DbError> {
     return tryQuery("listRunUsageByStep", (conn) => {
         const rows = conn
-            .query(
+            .query<LlmUsageTotalsRow & { step_id: string | null }, [string, string, string]>(
                 `SELECT step_id, ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND run_id = ?
                  GROUP BY step_id ${LLM_USAGE_GRAIN_ORDER}`,
             )
-            .all(ANALYSIS_SCOPE, analysisId, runId) as (LlmUsageTotalsRow & { step_id: string | null })[];
+            .all(ANALYSIS_SCOPE, analysisId, runId);
         return rows.map((r) => ({ stepId: r.step_id, totals: llmUsageTotalsFromRow(r) }));
     });
 }
@@ -708,15 +725,13 @@ export function listRunUsageByStep(analysisId: string, runId: string): Result<Ll
  */
 export function getAnalysisDataProfileUsageTotals(analysisId: string): Result<LlmUsageTotals, DbError> {
     return tryQuery("getAnalysisDataProfileUsageTotals", (conn) => {
-        // A bare aggregate with no GROUP BY always yields exactly one row (all-NULL sums over an empty
-        // set), so the cast holds unconditionally — same guarantee as getAnalysisUsageTotals.
         const row = conn
-            .query(
+            .query<LlmUsageTotalsRow, [string, string, string]>(
                 `SELECT ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND run_id = ?`,
             )
-            .get(ANALYSIS_SCOPE, analysisId, DATA_PROFILE_RUN_LITERAL) as LlmUsageTotalsRow;
-        return llmUsageTotalsFromRow(row);
+            .get(ANALYSIS_SCOPE, analysisId, DATA_PROFILE_RUN_LITERAL);
+        return llmUsageTotalsFromAggregate(row);
     });
 }
 
@@ -732,15 +747,13 @@ export function getAnalysisDataProfileUsageTotals(analysisId: string): Result<Ll
  */
 export function getAnalysisUnattributedUsageTotals(analysisId: string): Result<LlmUsageTotals, DbError> {
     return tryQuery("getAnalysisUnattributedUsageTotals", (conn) => {
-        // A bare aggregate with no GROUP BY always yields exactly one row (all-NULL sums over an empty
-        // set), so the cast holds unconditionally — same guarantee as getAnalysisUsageTotals.
         const row = conn
-            .query(
+            .query<LlmUsageTotalsRow, [string, string]>(
                 `SELECT ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND thread_id IS NULL AND run_id IS NULL`,
             )
-            .get(ANALYSIS_SCOPE, analysisId) as LlmUsageTotalsRow;
-        return llmUsageTotalsFromRow(row);
+            .get(ANALYSIS_SCOPE, analysisId);
+        return llmUsageTotalsFromAggregate(row);
     });
 }
 
@@ -775,15 +788,13 @@ export function getAnalysisUnattributedUsageTotals(analysisId: string): Result<L
  */
 export function getSessionUsageTotalsIncludingRuns(analysisId: string, threadId: string): Result<LlmUsageTotals, DbError> {
     return tryQuery("getSessionUsageTotalsIncludingRuns", (conn) => {
-        // A bare aggregate with no GROUP BY always yields exactly one row (all-NULL sums over an empty
-        // set), so the cast holds unconditionally — same guarantee as getAnalysisUsageTotals.
         const row = conn
-            .query(
+            .query<LlmUsageTotalsRow, [string, string, string]>(
                 `SELECT ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND thread_id = ?`,
             )
-            .get(ANALYSIS_SCOPE, analysisId, threadId) as LlmUsageTotalsRow;
-        return llmUsageTotalsFromRow(row);
+            .get(ANALYSIS_SCOPE, analysisId, threadId);
+        return llmUsageTotalsFromAggregate(row);
     });
 }
 
@@ -801,12 +812,12 @@ export function getSessionUsageTotalsIncludingRuns(analysisId: string, threadId:
 export function listSessionUsageByModel(analysisId: string, threadId: string): Result<LlmUsageByModel[], DbError> {
     return tryQuery("listSessionUsageByModel", (conn) => {
         const rows = conn
-            .query(
+            .query<LlmUsageTotalsRow & { served_model_id: string | null }, [string, string, string]>(
                 `SELECT served_model_id, ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND thread_id = ?
                  GROUP BY served_model_id ORDER BY served_model_id`,
             )
-            .all(ANALYSIS_SCOPE, analysisId, threadId) as (LlmUsageTotalsRow & { served_model_id: string | null })[];
+            .all(ANALYSIS_SCOPE, analysisId, threadId);
         return rows.map((r) => ({ servedModelId: r.served_model_id, totals: llmUsageTotalsFromRow(r) }));
     });
 }
@@ -820,12 +831,12 @@ export function listSessionUsageByModel(analysisId: string, threadId: string): R
 export function listSessionUsageByAgent(analysisId: string, threadId: string): Result<LlmUsageByAgent[], DbError> {
     return tryQuery("listSessionUsageByAgent", (conn) => {
         const rows = conn
-            .query(
+            .query<LlmUsageTotalsRow & { agent_id: string }, [string, string, string]>(
                 `SELECT agent_id, ${LLM_USAGE_TOTAL_COLS}
                  FROM llm_usage WHERE scope_kind = ? AND scope_id = ? AND thread_id = ?
                  GROUP BY agent_id ORDER BY agent_id`,
             )
-            .all(ANALYSIS_SCOPE, analysisId, threadId) as (LlmUsageTotalsRow & { agent_id: string })[];
+            .all(ANALYSIS_SCOPE, analysisId, threadId);
         return rows.map((r) => ({ agentId: r.agent_id, totals: llmUsageTotalsFromRow(r) }));
     });
 }
@@ -838,12 +849,15 @@ export function listSessionUsageByAgent(analysisId: string, threadId: string): R
  */
 const TRANSFER_COLS = "id, created_at, updated_at, state, bytes_transferred, total_bytes, layers_completed, total_layers, digest, message, holder_pid, phase";
 
-/** A row of the columnar `transfers` table — one typed column per field, so a reader filters on the state in SQL. */
+/**
+ * A row of the columnar `transfers` table — one typed column per field, so a reader filters on the state in SQL.
+ * The CHECK constraint of `id`, `state`, and `phase` names exactly the members of its union, thus SQLite refuses any other value.
+ */
 type TransferDbRow = {
-    id: string;
+    id: TransferKind;
     created_at: number;
     updated_at: number;
-    state: string;
+    state: TransferStatus;
     bytes_transferred: number;
     total_bytes: number | null;
     layers_completed: number;
@@ -851,18 +865,15 @@ type TransferDbRow = {
     digest: string | null;
     message: string | null;
     holder_pid: number | null;
-    phase: string | null;
+    phase: TransferPhase | null;
 };
 
 function transferFromRow(r: TransferDbRow): TransferRow {
     return {
-        // Each of the three cast columns carries a CHECK constraint that names exactly the members of its
-        // union, thus SQLite refuses any other value and no cast can widen. `phase` also permits NULL,
-        // which the union carries as its own member.
-        id: r.id as TransferKind,
+        id: r.id,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
-        state: r.state as TransferStatus,
+        state: r.state,
         bytesTransferred: r.bytes_transferred,
         totalBytes: r.total_bytes,
         layersCompleted: r.layers_completed,
@@ -870,7 +881,7 @@ function transferFromRow(r: TransferDbRow): TransferRow {
         digest: r.digest,
         message: r.message,
         holderPid: r.holder_pid,
-        phase: r.phase as TransferPhase | null,
+        phase: r.phase,
     };
 }
 
@@ -883,7 +894,7 @@ function transferFromRow(r: TransferDbRow): TransferRow {
  */
 export function getTransfer(kind: TransferKind): Result<TransferRow | null, DbError> {
     return tryQuery("getTransfer", (conn) => {
-        const row = conn.query(`SELECT ${TRANSFER_COLS} FROM transfers WHERE id = ?`).get(kind) as TransferDbRow | null;
+        const row = conn.query<TransferDbRow, [TransferKind]>(`SELECT ${TRANSFER_COLS} FROM transfers WHERE id = ?`).get(kind);
         return row ? transferFromRow(row) : null;
     });
 }
@@ -891,7 +902,7 @@ export function getTransfer(kind: TransferKind): Result<TransferRow | null, DbEr
 /** Every transfer row, in the fixed kind order. A kind with no row is simply absent. */
 export function listTransfers(): Result<TransferRow[], DbError> {
     return tryQuery("listTransfers", (conn) => {
-        const rows = conn.query(`SELECT ${TRANSFER_COLS} FROM transfers ORDER BY id`).all() as TransferDbRow[];
+        const rows = conn.query<TransferDbRow, []>(`SELECT ${TRANSFER_COLS} FROM transfers ORDER BY id`).all();
         return rows.map(transferFromRow);
     });
 }
@@ -901,13 +912,16 @@ export function listTransfers(): Result<TransferRow[], DbError> {
 /** The columns of `package_store_flights`, in the house order: identity, then core data. The table has no foreign key. */
 const STORE_FLIGHT_COLS = "id, created_at, updated_at, state, ecosystem, spelling, specifier, progress, message, holder_pid";
 
-/** A row of the columnar `package_store_flights` table — one typed column for each field, so a reader filters on the state in SQL. */
+/**
+ * A row of the columnar `package_store_flights` table — one typed column for each field, so a reader filters on the state in SQL.
+ * The CHECK constraint of `state` and `ecosystem` names exactly the members of its union, thus SQLite refuses any other value.
+ */
 type StoreFlightDbRow = {
     id: string;
     created_at: number;
     updated_at: number;
-    state: string;
-    ecosystem: string | null;
+    state: StoreFlightStatus;
+    ecosystem: StoreEcosystem | null;
     spelling: string;
     specifier: string;
     progress: string | null;
@@ -920,10 +934,8 @@ function storeFlightFromRow(r: StoreFlightDbRow): StoreFlightRow {
         id: r.id,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
-        // Each of the two columns carries a CHECK constraint that names exactly the members of its union,
-        // thus SQLite refuses any other value and neither cast can widen.
-        state: r.state as StoreFlightStatus,
-        ecosystem: r.ecosystem as StoreEcosystem | null,
+        state: r.state,
+        ecosystem: r.ecosystem,
         spelling: r.spelling,
         specifier: r.specifier,
         progress: r.progress,
@@ -935,7 +947,7 @@ function storeFlightFromRow(r: StoreFlightDbRow): StoreFlightRow {
 /** One flight row, or `null` when no process owns a flight for that key. Absence rides the ok channel, because no flight is a normal state. */
 export function getStoreFlight(id: string): Result<StoreFlightRow | null, DbError> {
     return tryQuery("getStoreFlight", (conn) => {
-        const row = conn.query(`SELECT ${STORE_FLIGHT_COLS} FROM package_store_flights WHERE id = ?`).get(id) as StoreFlightDbRow | null;
+        const row = conn.query<StoreFlightDbRow, [string]>(`SELECT ${STORE_FLIGHT_COLS} FROM package_store_flights WHERE id = ?`).get(id);
         return row ? storeFlightFromRow(row) : null;
     });
 }
@@ -956,7 +968,7 @@ type StoreFlightWithSubscriberRow = StoreFlightDbRow & { analysis_id: string | n
 export function listStoreFlights(): Result<{ flight: StoreFlightRow; analysisIds: readonly string[] }[], DbError> {
     return tryQuery("listStoreFlights", (conn) => {
         const rows = conn
-            .query(
+            .query<StoreFlightWithSubscriberRow, []>(
                 `SELECT ${STORE_FLIGHT_COLS.split(", ")
                     .map((c) => `f.${c} AS ${c}`)
                     .join(", ")}, s.analysis_id AS analysis_id
@@ -964,7 +976,7 @@ export function listStoreFlights(): Result<{ flight: StoreFlightRow; analysisIds
                  LEFT JOIN package_store_flight_subscriptions s ON s.flight_id = f.id
                  ORDER BY f.created_at, s.analysis_id`,
             )
-            .all() as StoreFlightWithSubscriberRow[];
+            .all();
         const grouped: { flight: StoreFlightRow; analysisIds: string[] }[] = [];
         const byId = new Map<string, { flight: StoreFlightRow; analysisIds: string[] }>();
         for (const row of rows) {
@@ -983,7 +995,7 @@ export function listStoreFlights(): Result<{ flight: StoreFlightRow; analysisIds
 /** How many subscriptions a flight still carries. The owner stops the flight when this reaches zero. */
 export function countStoreFlightSubscribers(flightId: string): Result<number, DbError> {
     return tryQuery("countStoreFlightSubscribers", (conn) => {
-        const row = conn.query("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ?").get(flightId) as { n: number } | null;
+        const row = conn.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ?").get(flightId);
         return row?.n ?? 0;
     });
 }
@@ -998,26 +1010,31 @@ export function countStoreFlightSubscribers(flightId: string): Result<number, Db
  */
 export function hasStoreFlightSubscriber(params: { flightId: string; analysisId: string | null }): Result<boolean, DbError> {
     return tryQuery("hasStoreFlightSubscriber", (conn) => {
-        const row = (
+        const row =
             params.analysisId === null
-                ? conn.query("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ? AND analysis_id IS NULL").get(params.flightId)
+                ? conn
+                      .query<{ n: number }, [string]>(
+                          "SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ? AND analysis_id IS NULL",
+                      )
+                      .get(params.flightId)
                 : conn
-                      .query("SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ? AND analysis_id = ?")
-                      .get(params.flightId, params.analysisId)
-        ) as { n: number } | null;
+                      .query<{ n: number }, [string, string]>(
+                          "SELECT COUNT(*) AS n FROM package_store_flight_subscriptions WHERE flight_id = ? AND analysis_id = ?",
+                      )
+                      .get(params.flightId, params.analysisId);
         return (row?.n ?? 0) > 0;
     });
 }
 
 // --- Data model: the pending set of `inflexa store add` ---
 
-/** A row of the columnar `pending_store_adds` table. */
+/** A row of the columnar `pending_store_adds` table. The CHECK constraint of `ecosystem` names exactly the members of its union. */
 type PendingStoreAddDbRow = {
     id: string;
     created_at: number;
     spelling: string;
     specifier: string;
-    ecosystem: string | null;
+    ecosystem: StoreEcosystem | null;
     analysis_id: string | null;
 };
 
@@ -1039,15 +1056,16 @@ export type PendingStoreAdd = {
 export function listPendingStoreAdds(): Result<PendingStoreAdd[], DbError> {
     return tryQuery("listPendingStoreAdds", (conn) => {
         const rows = conn
-            .query("SELECT id, created_at, spelling, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id")
-            .all() as PendingStoreAddDbRow[];
+            .query<PendingStoreAddDbRow, []>(
+                "SELECT id, created_at, spelling, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id",
+            )
+            .all();
         return rows.map((r) => ({
             id: r.id,
             createdAt: r.created_at,
             spelling: r.spelling,
             specifier: r.specifier,
-            // The CHECK constraint names exactly the members of the union, thus the cast cannot widen.
-            ecosystem: r.ecosystem as StoreEcosystem | null,
+            ecosystem: r.ecosystem,
             analysisId: r.analysis_id,
         }));
     });
@@ -1060,7 +1078,7 @@ export function listPendingStoreAdds(): Result<PendingStoreAdd[], DbError> {
 export function getRunSeenBaseline(): Result<number | null, DbError> {
     return tryQuery("getRunSeenBaseline", (conn) => {
         // The statement selects `since` by name, so the row shape below holds.
-        const baseline = conn.query("SELECT since FROM run_seen_baseline LIMIT 1").get() as { since: number } | null;
+        const baseline = conn.query<{ since: number }, []>("SELECT since FROM run_seen_baseline LIMIT 1").get();
         return baseline?.since ?? null;
     });
 }
@@ -1074,7 +1092,7 @@ export function listSeenRunIds(runIds: readonly string[]): Result<Set<string>, D
         const param = jsonIdsParam(runIds);
         if (param === null) return new Set<string>();
         // The statement selects `run_id` by name, so the row shape below holds.
-        const rows = conn.query("SELECT m.run_id FROM run_seen_marks m JOIN json_each(?) j ON j.value = m.run_id").all(param) as { run_id: string }[];
+        const rows = conn.query<{ run_id: string }, [string]>("SELECT m.run_id FROM run_seen_marks m JOIN json_each(?) j ON j.value = m.run_id").all(param);
         return new Set(rows.map((row) => row.run_id));
     });
 }
@@ -1089,10 +1107,15 @@ export function listAnalysisNames(ids: readonly string[]): Result<Map<string, st
         const param = jsonIdsParam(ids);
         if (param === null) return new Map<string, string>();
         // The statement selects `id` and `name` by name, so the row shape below holds.
-        const rows = conn.query("SELECT a.id, a.name FROM analyses a JOIN json_each(?) j ON j.value = a.id").all(param) as {
-            id: string;
-            name: string;
-        }[];
+        const rows = conn
+            .query<
+                {
+                    id: string;
+                    name: string;
+                },
+                [string]
+            >("SELECT a.id, a.name FROM analyses a JOIN json_each(?) j ON j.value = a.id")
+            .all(param);
         return new Map(rows.map((row) => [row.id, row.name]));
     });
 }
@@ -1128,9 +1151,9 @@ const PICKER_PIN_COLS = "id, created_at, updated_at, path, label, is_dir";
 export function listPins(page: { limit: number; offset: number }): Result<{ items: PickerPin[]; total: number }, DbError> {
     return tryQuery("listPins", (conn) => {
         const rows = conn
-            .query(`SELECT ${PICKER_PIN_COLS} FROM picker_pins ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?`)
-            .all(page.limit, page.offset) as PickerPinRow[];
-        const total = (conn.query("SELECT COUNT(*) AS n FROM picker_pins").get() as { n: number }).n;
+            .query<PickerPinRow, [number, number]>(`SELECT ${PICKER_PIN_COLS} FROM picker_pins ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?`)
+            .all(page.limit, page.offset);
+        const total = conn.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM picker_pins").get()?.n ?? 0;
         return { items: rows.map(pickerPinFromRow), total };
     });
 }
@@ -1153,11 +1176,11 @@ type RecentFileRow = {
 export function listRecentFiles(opts: { analysisId: string | null; limit: number }): Result<RecentFile[], DbError> {
     return tryQuery("listRecentFiles", (conn) => {
         const rows = conn
-            .query(
+            .query<RecentFileRow, [string | null, number]>(
                 `SELECT id, created_at, updated_at, path, is_dir, analysis_id FROM recent_files
                  WHERE analysis_id IS ? ORDER BY updated_at DESC, id DESC LIMIT ?`,
             )
-            .all(opts.analysisId, opts.limit) as RecentFileRow[];
+            .all(opts.analysisId, opts.limit);
         return rows.map((r) => ({
             id: r.id,
             createdAt: r.created_at,

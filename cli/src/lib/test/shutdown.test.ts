@@ -17,10 +17,10 @@ function captureStderr(isTTY: boolean): string[] {
     // `isTTY` is an own property of the stream in Node and Bun alike, so a plain assignment is the
     // supported way to simulate a pipe; `afterEach` restores both it and `write`.
     process.stderr.isTTY = isTTY;
-    process.stderr.write = ((chunk: string) => {
-        frames.push(chunk);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+        frames.push(String(chunk));
         return true;
-    }) as typeof process.stderr.write;
+    };
     return frames;
 }
 
@@ -72,10 +72,10 @@ describe("startExitIndicator", () => {
 
     test("survives a stderr that throws, so a dead terminal cannot crash the exit it narrates", async () => {
         process.stderr.isTTY = true;
-        process.stderr.write = (() => {
+        process.stderr.write = () => {
             // What a real stderr does once the terminal goes away mid-drain (the SIGHUP path).
             throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
-        }) as typeof process.stderr.write;
+        };
 
         const stop = startExitIndicator();
         await sleep(PAST_GRACE_MS);

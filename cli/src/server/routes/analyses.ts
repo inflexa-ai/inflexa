@@ -7,7 +7,6 @@ import {
     type DataProfileSummary,
     type DbError as PgError,
     type LatestRunSummary,
-    type Pool,
 } from "@inflexa-ai/harness";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import { Hono, type Context } from "hono";
@@ -69,7 +68,7 @@ import { busyReasonsOf, workspaceBusyReasons, type BusyFacts } from "../busy_gat
 import { countLiveDurableWorkByAnalysis, type LiveDurableWork } from "../durable_work.ts";
 import { profileWorkInFlight } from "../profile_queue.ts";
 import { hasRunningTurn } from "../turns.ts";
-import { apiError, holdConnection, internalError, listEnvelope, parsePage, readBody, requireRuntime, type ServerEnv } from "../http.ts";
+import { apiError, holdConnection, internalError, listEnvelope, parsePage, readBody, requireRuntime, type PoolRuntime, type ServerEnv } from "../http.ts";
 import { toProjectView } from "./projects.ts";
 
 /**
@@ -87,9 +86,12 @@ function mapBounded<T, U>(items: readonly T[], fn: (item: T) => Promise<U>): Pro
 /** A path of a request body. The client resolves a relative path against its own folder, never the server. */
 export const absolutePath = z.string().refine((path) => isAbsolute(path), "The path must be absolute.");
 
-/** What the analysis routes do beyond SQLite and the disk: the busy gate and the steps of the delete. Tests replace each one. */
-export type AnalysisRouteOpts = {
-    readonly busyReasons: (analysisId: string, runtime: HarnessRuntime | null) => Promise<BusyReason[]>;
+/**
+ * What the analysis routes do beyond SQLite and the disk: the busy gate and the steps of the delete. Tests replace each
+ * one. `R` is the runtime handle: the routes only give it, or its pool, to these reads, thus a test gives a small handle.
+ */
+export type AnalysisRouteOpts<R extends PoolRuntime = HarnessRuntime> = {
+    readonly busyReasons: (analysisId: string, runtime: R | null) => Promise<BusyReason[]>;
     /** Whether the analysis has a workspace folder on disk now. An unlocatable anchor folder reads as none. */
     readonly hasWorkspaceOnDisk: (analysis: Analysis) => Promise<boolean>;
     /** Drain the in-memory provenance appends into the stored chain. `false` when the flush could not run. */
@@ -98,7 +100,7 @@ export type AnalysisRouteOpts = {
     readonly exportProvenance: (analysis: Analysis, format: BuiltinProvFormat) => Promise<boolean>;
     readonly disposeWorkspace: typeof disposeWorkspace;
     /** Reclaim the Postgres footprint of the analysis. */
-    readonly purgeAnalysis: (pool: Pool, analysisId: string) => ResultAsync<AnalysisPurgeOutcome, PgError>;
+    readonly purgeAnalysis: (pool: R["pool"], analysisId: string) => ResultAsync<AnalysisPurgeOutcome, PgError>;
     /** Delete the SQLite row; its input refs cascade. */
     readonly deleteAnalysis: typeof deleteAnalysis;
     /** Remove the package farm of the analysis. A failure is swallowed: the orphan-farm reaper of `store reclaim` takes a farm that this misses. */
@@ -141,17 +143,17 @@ export const DEFAULT_ANALYSIS_ROUTE_OPTS: AnalysisRouteOpts = {
 
 /**
  * The reads of the list beyond SQLite: the grouped Postgres reads, the pending asks, the existence checks of the
- * folders, and the two in-memory facts of the busy rule. Tests replace each one.
+ * folders, and the two in-memory facts of the busy rule. Tests replace each one. `R` is the runtime handle.
  */
-export type AnalysisListOpts = {
+export type AnalysisListOpts<R extends PoolRuntime = HarnessRuntime> = {
     /** The newest run of each analysis of the page. The error channel means the ledger is unreadable. */
-    readonly latestRuns: (pool: Pool, analysisIds: string[]) => ResultAsync<LatestRunSummary[], unknown>;
+    readonly latestRuns: (pool: R["pool"], analysisIds: string[]) => ResultAsync<LatestRunSummary[], unknown>;
     /** The profile state of each analysis of the page. The error channel means the ledger is unreadable. */
-    readonly profiles: (pool: Pool, analysisIds: string[]) => ResultAsync<DataProfileSummary[], unknown>;
+    readonly profiles: (pool: R["pool"], analysisIds: string[]) => ResultAsync<DataProfileSummary[], unknown>;
     /** The live durable work of each analysis of the page. The error channel means the ledger is unreadable. */
-    readonly liveWork: (pool: Pool, analysisIds: string[]) => ResultAsync<Map<string, LiveDurableWork>, unknown>;
+    readonly liveWork: (pool: R["pool"], analysisIds: string[]) => ResultAsync<Map<string, LiveDurableWork>, unknown>;
     /** Each pending ask of the runtime. It rejects on a failure. */
-    readonly pendingAsks: (runtime: HarnessRuntime) => Promise<readonly { analysisId: string }[]>;
+    readonly pendingAsks: (runtime: R) => Promise<readonly { analysisId: string }[]>;
     /** Whether each path exists, in the order of `paths`, with at most `width` checks in flight. */
     readonly pathsExist: (paths: readonly string[], width: number) => Promise<boolean[]>;
     readonly hasRunningTurn: (analysisId: string) => boolean;
@@ -206,8 +208,8 @@ const exportQuery = z.enum(["none", "prov-json", "prov-n"]);
  * Mount them BEFORE the analysis guard: the guard pattern `/api/v1/analyses/:analysisId/*` also matches
  * `/resolve`, and a handler that answers first ends the chain.
  */
-export function analysisCollectionRoutes(boot: ServerBoot, opts: AnalysisListOpts = DEFAULT_ANALYSIS_LIST_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function analysisCollectionRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts: AnalysisListOpts<R>): Hono<ServerEnv<R>> {
+    const routes = new Hono<ServerEnv<R>>();
 
     routes.post("/resolve", async (c) => {
         const body = await readBody(c, resolveBody);
@@ -327,10 +329,10 @@ function settled<T>(read: () => ResultAsync<T, unknown>, what: string): Promise<
  * `null` and the busy rule keeps the facts that the server knows without it. A read that fails leaves its field
  * `null` on each item, and the busy rule reads that state as unreadable, as the busy gate of `GET {A}` does.
  */
-async function summarizePage(
+async function summarizePage<R extends PoolRuntime>(
     ids: string[],
-    runtime: HarnessRuntime | null,
-    opts: AnalysisListOpts,
+    runtime: R | null,
+    opts: AnalysisListOpts<R>,
     anchorPaths: readonly (string | null)[],
 ): Promise<PageSummary[]> {
     // The folders and the runtime reads start together.
@@ -373,7 +375,7 @@ async function summarizePage(
 }
 
 /** Whether the anchor folder of each analysis exists, with a bounded width. A `null` path reads as absent. */
-async function existenceOf(anchorPaths: readonly (string | null)[], opts: AnalysisListOpts): Promise<boolean[]> {
+async function existenceOf(anchorPaths: readonly (string | null)[], opts: Pick<AnalysisListOpts, "pathsExist">): Promise<boolean[]> {
     const paths = anchorPaths.filter((path): path is string => path !== null);
     const exists = await opts.pathsExist(paths, DISK_READ_WIDTH);
     let next = 0;
@@ -401,8 +403,8 @@ function toLatestRun(run: LatestRunSummary): AnalysisLatestRun {
  * The routes under `/api/v1/analyses/:analysisId` (draft 2.2): one analysis, its workspace folder, and its
  * inputs. Mount them AFTER the analysis guard, which gives 404 for an unknown id and takes the instance lock.
  */
-export function analysisRoutes(boot: ServerBoot, opts: AnalysisRouteOpts = DEFAULT_ANALYSIS_ROUTE_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function analysisRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts: AnalysisRouteOpts<R>): Hono<ServerEnv<R>> {
+    const routes = new Hono<ServerEnv<R>>();
 
     // A GET is the open of the analysis, as the launch of a chat was: it records the sighting of the folder
     // and heals a moved one. The search for a moved folder starts in the folder of the client, the `cwd` query.
@@ -633,7 +635,7 @@ function toContextView(ctx: ResolvedContext, others: { analysis: Analysis; ancho
 }
 
 /** The analysis of the path. The guard already gave 404 for an unknown id; a delete between the two gives 404 here. */
-function loadAnalysis(c: Context<ServerEnv>): Result<Analysis, Response> {
+function loadAnalysis(c: Context): Result<Analysis, Response> {
     const found = getAnalysis(c.req.param("analysisId") ?? "");
     if (found.isErr()) return err(internalError(c, found.error, "read the analysis"));
     if (found.value === null) return err(apiError(c, "not_found", "Analysis not found."));
@@ -641,7 +643,7 @@ function loadAnalysis(c: Context<ServerEnv>): Result<Analysis, Response> {
 }
 
 /** A name of 1 to 256 code points, trimmed, or the 400 `validation_error` response. */
-function validName(c: Context<ServerEnv>, raw: string): Result<Str256, Response> {
+function validName(c: Context, raw: string): Result<Str256, Response> {
     return str256(raw).mapErr((e) => {
         const reason = e === "empty" ? "must not be blank" : "must be at most 256 characters";
         return apiError(c, "validation_error", `Invalid analysis name: ${reason}.`, { fieldErrors: { name: [reason] } });
@@ -649,7 +651,7 @@ function validName(c: Context<ServerEnv>, raw: string): Result<Str256, Response>
 }
 
 /** The 400 `validation_error` response for the paths that do not exist, or `null` when each one exists. */
-async function refuseMissing(c: Context<ServerEnv>, paths: readonly string[]): Promise<Response | null> {
+async function refuseMissing(c: Context, paths: readonly string[]): Promise<Response | null> {
     const exists = await pathsExistAsync(paths, DISK_READ_WIDTH);
     const missing = paths.filter((_, i) => !exists[i]);
     return missing.length === 0 ? null : apiError(c, "validation_error", `no such file: ${missing.join(", ")}`, { missing });
@@ -681,10 +683,10 @@ async function inputViews(inputs: readonly AnalysisInput[]): Promise<InputView[]
  * One analysis with its scope. `touch` records a sighting of the anchor folder, as the open of an analysis
  * does. `searchRoots` are the folders where the search for a moved anchor folder starts.
  */
-async function analysisDetail(
+async function analysisDetail<R extends PoolRuntime>(
     analysis: Analysis,
-    runtime: HarnessRuntime | null,
-    opts: AnalysisRouteOpts,
+    runtime: R | null,
+    opts: AnalysisRouteOpts<R>,
     resolve: { touch: boolean; searchRoots?: string[] },
 ): Promise<Result<AnalysisDetail, DbError>> {
     const anchor = await resolveAnchor(analysis.anchorId, resolve);
@@ -729,13 +731,13 @@ async function analysisDetail(
  * provenance. A failed disposal or purge stops with the row intact, and the message says that nothing
  * was lost, because a new delete archives an already-moved folder as `absent` and the purge is idempotent.
  */
-async function deleteLadder(
-    c: Context<ServerEnv>,
+async function deleteLadder<R extends PoolRuntime>(
+    c: Context,
     a: Analysis,
     mode: "keep" | "delete",
     exportFormat: "none" | "prov-json" | "prov-n",
-    runtime: HarnessRuntime,
-    opts: AnalysisRouteOpts,
+    runtime: R,
+    opts: AnalysisRouteOpts<R>,
 ): Promise<Response> {
     let exportOutcome: DeleteExportOutcome = "none";
     if (mode === "keep" && exportFormat !== "none" && (await opts.hasWorkspaceOnDisk(a))) {

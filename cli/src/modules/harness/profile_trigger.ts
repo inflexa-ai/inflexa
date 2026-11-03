@@ -11,8 +11,8 @@ import {
     upsertAnalysis,
     type DataProfileTriggerParams,
     type DbError,
-    type Pool,
 } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 
 import { getLogger } from "../../lib/log.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -50,7 +50,7 @@ import type { HarnessRuntime } from "./runtime.ts";
  * pollute the agent prompt. `inputFileIds` is the staged manifest's file ids, the auth is the local
  * OSS value, and the manifest rides into the trigger params verbatim.
  */
-export function seedProfileLedger(pool: Pool, analysisId: string, staged: readonly StagedInput[]): ResultAsync<DataProfileTriggerParams, DbError> {
+export function seedProfileLedger(pool: Querier, analysisId: string, staged: readonly StagedInput[]): ResultAsync<DataProfileTriggerParams, DbError> {
     return upsertAnalysis(
         pool,
         analysisId,
@@ -108,6 +108,9 @@ export type ProfileParityOutcome =
     | { kind: "skipped_failed"; materialized: true }
     | { kind: "no_inputs"; materialized: false }
     | { kind: "failed"; reason: string; materialized: boolean };
+
+/** The part of the runtime that the drives read: the ledger pool, and the dependencies that they hand to the trigger. */
+export type ProfileRuntime = Pick<HarnessRuntime, "triggerDeps"> & { readonly pool: Querier };
 
 /**
  * The effectful seams, injectable so the condition-ladder tests run offline (no Postgres, no Docker,
@@ -191,7 +194,7 @@ async function materializeInputs(analysis: Analysis, dataDir: string, seams: Pro
  * ledger's `failed` state by different routes, so each caller owns that step.
  */
 async function seedFromManifest(
-    runtime: HarnessRuntime,
+    runtime: ProfileRuntime,
     analysis: Analysis,
     staged: StagedInput[],
     seams: ProfileParitySeams,
@@ -219,7 +222,7 @@ async function seedFromManifest(
  * trigger reports the row was `failed`. Both have already materialized, hence `materialized: true`.
  */
 async function retryFailedRow(
-    runtime: HarnessRuntime,
+    runtime: ProfileRuntime,
     analysis: Analysis,
     params: DataProfileTriggerParams,
     seams: ProfileParitySeams,
@@ -286,7 +289,7 @@ export type ProfileDriveCause = "open" | "inputs_changed";
  * waits for completion. NO terminal/TUI output: the caller maps the outcome.
  */
 async function runProfileLadder(
-    runtime: HarnessRuntime,
+    runtime: ProfileRuntime,
     analysis: Analysis,
     cause: ProfileDriveCause,
     seams: ProfileParitySeams,
@@ -420,7 +423,7 @@ async function runProfileLadder(
  * by tests.
  */
 export async function ensureProfileAtParity(
-    runtime: HarnessRuntime,
+    runtime: ProfileRuntime,
     analysis: Analysis,
     seams: ProfileParitySeams = realParitySeams,
 ): Promise<ProfileParityOutcome> {
@@ -435,7 +438,7 @@ export async function ensureProfileAtParity(
  * is shared, since an emptied input set is an input mutation too. Fire-and-forget.
  */
 export async function reprofileForInputChange(
-    runtime: HarnessRuntime,
+    runtime: ProfileRuntime,
     analysis: Analysis,
     seams: ProfileParitySeams = realParitySeams,
 ): Promise<ProfileParityOutcome> {
@@ -456,7 +459,7 @@ export async function reprofileForInputChange(
  * which the trigger's pending/completed CAS never claims — takes {@link retryFailedRow}, the same
  * recovery the input-mutation drive reaches for a `failed` row.
  */
-export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis, seams: ProfileParitySeams = realParitySeams): Promise<ProfileParityOutcome> {
+export async function forceReprofile(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams = realParitySeams): Promise<ProfileParityOutcome> {
     (await seams.reconcile(runtime.pool, analysis.id)).match(
         () => {},
         (e) => getLogger("harness").warn({ analysisId: analysis.id, err: e }, "orphaned-profile reconcile failed"),

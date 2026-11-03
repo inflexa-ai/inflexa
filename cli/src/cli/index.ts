@@ -2,7 +2,8 @@ import { Command, Option } from "commander";
 
 import pkg from "../../package.json";
 import { CATALOG_TRANSFER_FLAG, CLIENT_START_FLAG, IMAGE_TRANSFER_FLAG, SERVE_DETACHED_CHILD_FLAG, STORE_FLUSH_FLAG } from "../lib/child_flags.ts";
-import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc, type EnvDocEntry } from "../lib/env.ts";
+import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc } from "../lib/env.ts";
+import { keysOf } from "../lib/types.ts";
 // Type-only, so the registry keeps its lazy-import discipline: nothing of the setup module loads until
 // the action runs. It is the shape of `setup`'s answer flags — see the batch options declared below.
 import type { SetupAnswerFlags } from "../modules/infra/setup_answers.ts";
@@ -24,7 +25,8 @@ function renderEnvHelp(): string {
     // every path it moves.
     const baseVarLabels = new Map<string, string[]>();
 
-    for (const [key, doc] of Object.entries(envDoc) as [keyof typeof envDoc, EnvDocEntry][]) {
+    for (const key of keysOf(envDoc)) {
+        const doc = envDoc[key];
         if (doc.kind === "path") {
             pathRows.push([doc.label, env[key] ?? "", doc.description]);
             baseVarLabels.set(doc.baseVar, [...(baseVarLabels.get(doc.baseVar) ?? []), doc.label]);

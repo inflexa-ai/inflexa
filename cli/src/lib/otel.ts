@@ -21,6 +21,7 @@ import type { DestinationStream } from "pino";
 
 import pkg from "../../package.json";
 import { env } from "./env.ts";
+import { unknownRecordSchema } from "./json_record.ts";
 import { getLogger } from "./log.ts";
 
 let initialized = false;
@@ -106,7 +107,8 @@ export function createOtelLogStream(): DestinationStream {
     return {
         write(line: string): void {
             try {
-                const record = JSON.parse(line) as Record<string, unknown>;
+                const record = JSON.parseWith(line, unknownRecordSchema);
+                if (record === null) return;
                 // Records from the otel module are diag output — re-exporting
                 // them would loop a failing exporter back into itself.
                 if (record["module"] === "otel") return;
@@ -116,7 +118,9 @@ export function createOtelLogStream(): DestinationStream {
                 for (const [key, value] of Object.entries(record)) {
                     if (key === "level" || key === "time" || key === "msg" || value == null) continue;
                     if (key === MODEL_AUTHORED_KEY) continue;
-                    attributes[key] = typeof value === "object" ? JSON.stringify(value) : (value as AttributeValue);
+                    // A pino line is JSON, so a value that is not an object and not null is a string, a number, or a boolean.
+                    if (typeof value === "object") attributes[key] = JSON.stringify(value);
+                    else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") attributes[key] = value;
                 }
 
                 otelLogger.emit({

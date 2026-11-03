@@ -227,14 +227,13 @@ describe("dispatchKey sequences (leader / chords)", () => {
 
 describe("isFocusedWithin (focus-target gating)", () => {
     test("matches the target itself and any descendant, nothing else", () => {
-        // Test doubles: only the fields isFocusedWithin reads (`id`, `findDescendantById`) are
-        // present, so a cast through `unknown` to the Renderable param is the minimal stub.
-        const child = { id: "child" } as unknown as Parameters<typeof isFocusedWithin>[0];
+        // Test doubles: isFocusedWithin reads only `id` and `findDescendantById`, which its parameter types name.
+        const child = { id: "child" };
         const target = {
             id: "target",
             findDescendantById: (id: string) => (id === "child" ? child : undefined),
-        } as unknown as Parameters<typeof isFocusedWithin>[0];
-        const other = { id: "other" } as unknown as Parameters<typeof isFocusedWithin>[1];
+        };
+        const other = { id: "other" };
 
         expect(isFocusedWithin(target, target)).toBe(true);
         expect(isFocusedWithin(target, child)).toBe(true);

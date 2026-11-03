@@ -8,6 +8,7 @@ import type { ClientOpts } from "../client/api.ts";
 import { env } from "../lib/env.ts";
 import { buildApp } from "../server/app.ts";
 import type { ServerBoot } from "../server/boot.ts";
+import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { ServerLifecycle } from "../server/lifecycle.ts";
 import { createPageGrantStore } from "../server/report_page_grants.ts";
 import { listen, writeServerDiscovery } from "../server/serve.ts";
@@ -34,7 +35,7 @@ export type TestServer = {
  * A boot that never starts: the phase stays `starting`, thus a route behind `requireRuntime` gives 503
  * `unavailable`, and each SQLite route works.
  */
-export function idleBoot(): ServerBoot {
+export function idleBoot<R = HarnessRuntime>(): ServerBoot<R> {
     const startedAt = new Date().toISOString();
     const state: ServerBootState = {
         version: "0.0.0-test",

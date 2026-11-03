@@ -111,8 +111,9 @@ describe("DbError constraint classification", () => {
 
     test("a null in a NOT NULL column is a not_null violation", () => {
         // Deliberately violate the type to drive the NOT NULL path: anchors.cached_path is NOT NULL,
-        // but the typed Anchor forbids null — cast through unknown to force the DB-level error.
-        const bad = anchor("anc-null", { cachedPath: null as unknown as string });
+        // but the typed Anchor forbids null. The intersection of `string` and `null` is `never`, which
+        // the compiler accepts as an Anchor, thus the DB-level error is the first check to see the null.
+        const bad = Object.assign(anchor("anc-null"), { cachedPath: null });
         insertAnchor(bad).match(
             () => {
                 throw new Error("expected a not_null violation");
@@ -176,12 +177,12 @@ describe("the activity time of an analysis", () => {
             const item = listAnalysisPage({ projectId: null, sort: "created", limit: 10, offset: 0 })
                 ._unsafeUnwrap()
                 .items.find((i) => i.analysis.id === id);
-            expect(item?.lastActivityAt).toBe(item?.analysis.updatedAt as number);
+            expect(item?.lastActivityAt).toBe(item?.analysis.updatedAt);
             expect(item?.lastActivityAt).toBeGreaterThanOrEqual(before);
         }
 
         recordAnalysisActivity("a1", Date.now() + 100_000)._unsafeUnwrap();
-        const later = activityOf("a1") as number;
+        const later = activityOf("a1");
         renameAnalysis("a1", asStr256("again"), "again")._unsafeUnwrap();
         expect(activityOf("a1")).toBe(later);
     });

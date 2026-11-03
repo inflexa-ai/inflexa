@@ -10,12 +10,10 @@ const captured: Record<string, unknown>[] = [];
 // per call. Registering inside the helper silently kept the first stub and left
 // every subsequent capture empty.
 //
-// The SDK's `LoggerProvider` type is far wider than the two members the stream
-// touches (`getLogger` → `emit`); a structural stub is sound because the stream
-// calls nothing else, and a real provider would need a live exporter.
+// The stream calls `getLogger` and `emit` only, and a real provider would need a live exporter.
 logs.setGlobalLoggerProvider({
-    getLogger: () => ({ emit: (r: { attributes?: Record<string, unknown> }) => captured.push(r.attributes ?? {}) }),
-} as unknown as Parameters<typeof logs.setGlobalLoggerProvider>[0]);
+    getLogger: () => ({ enabled: () => true, emit: (r) => void captured.push(r.attributes ?? {}) }),
+});
 
 /**
  * What the OTLP stream would export for one pino line.
@@ -60,5 +58,17 @@ describe("createOtelLogStream", () => {
 
         expect(attributes.submitAttempts).toBe(16);
         expect(attributes.loop).toBe(JSON.stringify({ finishReason: "max_iterations", cappedOut: true }));
+    });
+
+    test("a line that is not a JSON object is skipped, and the valid lines around it still go out", () => {
+        captured.length = 0;
+        const stream = createOtelLogStream();
+        stream.write(JSON.stringify({ level: 30, time: 1, msg: "first", id: "a" }));
+        stream.write("{not json");
+        stream.write("[1,2]");
+        stream.write("null");
+        stream.write(JSON.stringify({ level: 30, time: 2, msg: "second", id: "b" }));
+
+        expect(captured.map((attributes) => attributes.id)).toEqual(["a", "b"]);
     });
 });

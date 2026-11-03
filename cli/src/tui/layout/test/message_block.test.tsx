@@ -5,7 +5,8 @@ import type { CompactionPart } from "@inflexa-ai/harness/contracts/index.js";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
 import { MessageBlock } from "../message_block.tsx";
-import { WorkspaceContext, type Workspace } from "../../contexts/workspace.ts";
+import { WorkspaceContext } from "../../contexts/workspace.ts";
+import { buildWorkspace } from "../../../test_support/builders.ts";
 import type { LiveTextPart, Part } from "../../../types/session.ts";
 
 // Guards the streaming-vs-finalized markdown bug: @opentui/core's `<markdown streaming={false}>`
@@ -183,7 +184,7 @@ describe("MessageBlock tool-call outcomes", () => {
 describe("MessageBlock unknown parts", () => {
     test("a part with no renderer shows a one-line tagged mention, not nothing", async () => {
         // A frame keeps a `data-*` type that the harness union does not name, thus such a part can reach the renderer.
-        const unknown = { type: "data-widget" } as unknown as Part;
+        const unknown: Part = { type: "data-widget" };
         const frame = await frameWith(
             () => <MessageBlock index={1} role="assistant" parts={[unknown]} streamPartId={() => null} streamText={() => ""} />,
             "[part:data-widget]",
@@ -291,7 +292,7 @@ describe("MessageBlock nested calls", () => {
 
 describe("MessageBlock report render", () => {
     test("a render of the page shows as one line that names the document", async () => {
-        const ws = { analysis: null, sessionId: "thread-r", workingDir: "/work" } as unknown as Workspace;
+        const ws = buildWorkspace({ sessionId: "thread-r" });
         const parts: Part[] = [{ type: "data-report-rendered", id: "render-1", renderedAt: new Date().toISOString(), title: "Interferon response" }];
         const frame = await frameWith(
             () => (

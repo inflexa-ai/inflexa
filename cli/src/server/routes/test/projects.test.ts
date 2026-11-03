@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
+import { z } from "zod";
 
-import type { ApiError } from "../../../api/common.ts";
-import type { ProjectList, ProjectSummary, ProjectView } from "../../../api/projects.ts";
 import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
 import { getAnalysis } from "../../../db/primary_query.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { projectRoutes } from "../projects.ts";
 import { anyOf } from "../../../test_support/matchers.ts";
 
-// The routes alone, with no app and no bearer check: `app.test.ts` covers those. Each `as` cast of a body
-// below reads JSON that the route under test builds from the same `src/api/` type.
+// The routes alone, with no app and no bearer check: `app.test.ts` covers those. A test that computes on a body
+// parses the fields that it reads. A key beyond them stays on the parsed value.
 const routes = projectRoutes();
+
+const projectBody = z.looseObject({ id: z.string(), name: z.string(), createdAt: z.string() });
+const projectPageBody = z.looseObject({ projects: z.array(z.looseObject({ name: z.string(), analysisCount: z.number() })), hasMore: z.boolean() });
 
 function post(body: unknown): Promise<Response> {
     return Promise.resolve(routes.request("/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
@@ -26,7 +29,7 @@ describe("POST /api/v1/projects", () => {
     test("201 with the project; the name and each tag are trimmed, and a blank tag is dropped", async () => {
         const response = await post({ name: "  Acme ", description: "liver work", tags: [" rna ", "", "liver"] });
         expect(response.status).toBe(201);
-        const project = (await response.json()) as ProjectView;
+        const project = projectBody.parse(await jsonBody(response));
         expect(project).toMatchObject({ name: "Acme", description: "liver work", tags: ["rna", "liver"] });
         expect(new Date(project.createdAt).toISOString()).toBe(project.createdAt);
     });
@@ -59,7 +62,7 @@ describe("POST /api/v1/projects", () => {
 
 describe("GET /api/v1/projects", () => {
     test("pages the projects newest first, each with its analysis count", async () => {
-        const create = async (name: string): Promise<ProjectView> => (await (await post({ name })).json()) as ProjectView;
+        const create = async (name: string): Promise<z.infer<typeof projectBody>> => projectBody.parse(await jsonBody(post({ name })));
         await create("first");
         await create("second");
         const third = await create("third");
@@ -68,14 +71,14 @@ describe("GET /api/v1/projects", () => {
         insertAnchor({ id: anchorId, createdAt: now, updatedAt: now, cachedPath: "/tmp/a", markerWritten: false, lastSeen: now })._unsafeUnwrap();
         insertAnalysis({ id: randomUUIDv7(), createdAt: now, updatedAt: now, name: asStr256("a"), slug: "a", anchorId, projectId: third.id })._unsafeUnwrap();
 
-        const first = (await (await routes.request("/?perPage=2")).json()) as ProjectList;
+        const first = projectPageBody.parse(await jsonBody(routes.request("/?perPage=2")));
         expect(first.projects.map((p) => [p.name, p.analysisCount])).toEqual([
             ["third", 1],
             ["second", 0],
         ]);
         expect(first).toMatchObject({ total: 3, page: 0, perPage: 2, hasMore: true });
 
-        const second = (await (await routes.request("/?page=1&perPage=2")).json()) as ProjectList;
+        const second = projectPageBody.parse(await jsonBody(routes.request("/?page=1&perPage=2")));
         expect(second.projects.map((p) => p.name)).toEqual(["first"]);
         expect(second.hasMore).toBe(false);
     });
@@ -83,7 +86,7 @@ describe("GET /api/v1/projects", () => {
 
 describe("GET /api/v1/projects/:projectId", () => {
     test("gives the project with its analysis count", async () => {
-        const project = (await (await post({ name: "Liver", description: "rna" })).json()) as ProjectView;
+        const project = projectBody.parse(await jsonBody(post({ name: "Liver", description: "rna" })));
         const now = Date.now();
         const anchorId = randomUUIDv7();
         insertAnchor({ id: anchorId, createdAt: now, updatedAt: now, cachedPath: "/tmp/a", markerWritten: false, lastSeen: now })._unsafeUnwrap();
@@ -94,11 +97,11 @@ describe("GET /api/v1/projects/:projectId", () => {
         const response = await routes.request(`/${project.id}`);
 
         expect(response.status).toBe(200);
-        expect((await response.json()) as ProjectSummary).toEqual({ ...project, analysisCount: 2 });
+        expect(await jsonBody(response)).toEqual({ ...project, analysisCount: 2 });
     });
 
     test("404 `not_found` for an unknown id, and for a project name", async () => {
-        const project = (await (await post({ name: "trial-42" })).json()) as ProjectView;
+        const project = projectBody.parse(await jsonBody(post({ name: "trial-42" })));
 
         for (const ref of ["nope", project.name]) {
             const response = await routes.request(`/${ref}`);
@@ -110,7 +113,7 @@ describe("GET /api/v1/projects/:projectId", () => {
 
 describe("DELETE /api/v1/projects/:projectId", () => {
     test("removes the project, keeps its analyses with no project, and 404 for an unknown id", async () => {
-        const project = (await (await post({ name: "Liver" })).json()) as ProjectView;
+        const project = projectBody.parse(await jsonBody(post({ name: "Liver" })));
         const now = Date.now();
         const anchorId = randomUUIDv7();
         const analysisId = randomUUIDv7();
@@ -124,6 +127,6 @@ describe("DELETE /api/v1/projects/:projectId", () => {
 
         const again = await routes.request(`/${project.id}`, { method: "DELETE" });
         expect(again.status).toBe(404);
-        expect(((await again.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(again)).toHaveProperty("error", "not_found");
     });
 });

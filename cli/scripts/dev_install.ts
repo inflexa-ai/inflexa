@@ -7,6 +7,7 @@
 import { copyFileSync, lstatSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { installDir, installedBinPath } from "../src/lib/env.ts";
+import { errnoCode } from "../src/lib/fs.ts";
 
 // The host's compiled binary in dist/, matching scripts/build.ts naming (`inflexa-<os>-<arch>`,
 // with Bun's auto `.exe` on Windows). Inline here, with its only caller, since it's a
@@ -59,7 +60,7 @@ try {
     );
 } catch (cause) {
     // fs errors carry a string errno `code` (e.g. EACCES); read it to tailor the hint.
-    const code = (cause as { code?: string }).code;
+    const code = errnoCode(cause);
     console.error(`Failed to install to ${target}: ${String(cause)}`);
     if (code === "EACCES" || code === "EPERM") {
         console.error(`\n${dir} is not writable. Install it yourself with elevated permissions:`);

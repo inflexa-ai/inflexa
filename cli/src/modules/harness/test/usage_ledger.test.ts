@@ -2,10 +2,11 @@ import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
 import { z } from "zod";
-import { defineTool, type AgentDefinition, type AgentSession, type Pool, type Tool } from "@inflexa-ai/harness";
+import { defineTool, type AgentDefinition, type AgentSession, type Tool } from "@inflexa-ai/harness";
 import { inProcessChatTurns, reply, scriptedModel, text, toolCall, type ScriptStep } from "@inflexa-ai/harness/testing";
 
 import { freshDb } from "../../../test_support/db.ts";
+import { fakeTransactionalPool, type FakeQuery } from "../../../test_support/fake_pool.ts";
 import { getAnalysisUsageTotals } from "../../../db/primary_query.ts";
 import { buildChatSession, runChatTurn, type TurnOutcome } from "../turn.ts";
 import { createUsageRecorder } from "../usage_recorder.ts";
@@ -27,29 +28,27 @@ import { createUsageRecorder } from "../usage_recorder.ts";
  * writes land nowhere, which the turn reports as a store fault and survives. Thus the model calls are the
  * only thing of the turn that reaches a store, and that store is the ledger under test.
  */
-async function emptyQuery(sql: string, params: readonly unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> {
-    if (!sql.trimStart().startsWith("INSERT INTO cortex_analysis_threads")) return { rows: [], rowCount: 0 };
+function emptyQuery(query: FakeQuery): readonly unknown[] {
+    if (!query.text.trimStart().startsWith("INSERT INTO cortex_analysis_threads")) return [];
     const now = new Date();
-    const [threadId, analysisId, title, threadType] = params;
-    const row = {
-        thread_id: threadId,
-        analysis_id: analysisId,
-        title,
-        thread_type: threadType,
-        parent_thread_id: null,
-        parent_seq: null,
-        created_at: now,
-        updated_at: now,
-        deleted_at: null,
-    };
-    return { rows: [row], rowCount: 1 };
+    const [threadId, analysisId, title, threadType] = query.values;
+    return [
+        {
+            thread_id: threadId,
+            analysis_id: analysisId,
+            title,
+            thread_type: threadType,
+            parent_thread_id: null,
+            parent_seq: null,
+            created_at: now,
+            updated_at: now,
+            deleted_at: null,
+        },
+    ];
 }
 
 // The thread store and the turn read only `query` and `connect`, thus a pool with these two members stands in for `pg.Pool`.
-const emptyPool = {
-    query: emptyQuery,
-    connect: async () => ({ query: emptyQuery, release: () => {} }),
-} as unknown as Pool;
+const emptyPool = fakeTransactionalPool(emptyQuery);
 
 let conn: Database;
 

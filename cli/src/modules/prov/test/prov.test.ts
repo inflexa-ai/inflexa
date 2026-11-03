@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { ProvDocument } from "@inflexa-ai/tsprov";
+import { z } from "zod";
 
 import { env } from "../../../lib/env.ts";
 
@@ -11,6 +12,7 @@ import { db } from "../../../db/primary.ts";
 import { insertAnchor, insertAnalysis } from "../../../db/primary_mutation.ts";
 import { getAnalysisProvenance } from "../../../db/primary_query.ts";
 import { Bus } from "../../../lib/bus.ts";
+import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type {
@@ -41,6 +43,17 @@ import { updateAnalysisProvenance } from "../../../db/primary_mutation.ts";
 import { currentUserActor, initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests, resolveAnalysisForProv } from "../prov.ts";
 import { getAnalysisIntegrity } from "../../../db/primary_query.ts";
 import { resetSigningForTests, loadOrGenerateKeypair } from "../signing.ts";
+
+/** The parts of a serialized PROV-JSON document that these tests read. A read of any other part is a type error. */
+const provJsonSchema = z.object({
+    activity: z
+        .record(
+            z.string(),
+            z.looseObject({ "prov:startTime": z.string().optional(), "prov:endTime": z.string().optional(), "inflexa:status": z.string().optional() }),
+        )
+        .optional(),
+    entity: z.record(z.string(), unknownRecordSchema).optional(),
+});
 
 const { fileQName, commandQName, modelAgentQName } = provModel;
 
@@ -290,10 +303,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
 
         // PROV-JSON structure: one entry under `activity` for the run QName, none under `entity`,
         // and the merged record carries the start time, end time, and outcome status together.
-        const json = JSON.parse(unified.serialize("json")) as {
-            activity?: Record<string, { "prov:startTime"?: string; "prov:endTime"?: string; "inflexa:status"?: string }>;
-            entity?: Record<string, unknown>;
-        };
+        const json = provJsonSchema.parse(JSON.parse(unified.serialize("json")));
         const runQn = "inflexa:run-run-001";
         expect(Object.keys(json.activity ?? {})).toContain(runQn);
         expect(Object.keys(json.entity ?? {})).not.toContain(runQn);
@@ -310,9 +320,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         appendRunStarted(doc, "a1", system, runRef);
         appendRunCompleted(doc, "a1", system, runOutcome);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        const json = JSON.parse(doc.unified().serialize("json")) as {
-            activity?: Record<string, { "prov:startTime"?: string; "prov:endTime"?: string; "inflexa:status"?: string }>;
-        };
+        const json = provJsonSchema.parse(JSON.parse(doc.unified().serialize("json")));
         const run = json.activity?.["inflexa:run-run-001"];
         // tsprov normalizes the ISO offset (`+00:00` vs `Z`), so compare on the second-precision prefix
         // Date.parse round-trips identically — the point is the VALUE is the payload's, not `Date.now()`.
@@ -534,10 +542,7 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
         const unified = doc.unified();
         const cmdQn = commandQName(stepRef, cmdRunDe.outputs);
-        const json = JSON.parse(unified.serialize("json")) as {
-            activity?: Record<string, Record<string, unknown>>;
-            entity?: Record<string, Record<string, unknown>>;
-        };
+        const json = provJsonSchema.parse(JSON.parse(unified.serialize("json")));
 
         // The lost attribution rides the command activity as a deterministic attribute.
         expect(json.activity?.[cmdQn]?.["inflexa:unresolvedScript"]).toBe("scripts/de.R");
@@ -571,7 +576,7 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         expect(provn).toContain(fileQName({ path: scriptPath, hash: "hashScr001" }));
         // ...and no attribution gap is recorded (the resolved path is not a gap).
         expect(provn).not.toContain("inflexa:unresolvedScript");
-        const json = JSON.parse(unified.serialize("json")) as { activity?: Record<string, Record<string, unknown>> };
+        const json = provJsonSchema.parse(JSON.parse(unified.serialize("json")));
         expect(json.activity?.[cmdQn]?.["inflexa:unresolvedScript"]).toBeUndefined();
     });
 
@@ -587,7 +592,7 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         expect(ids.filter((id) => id === cmdQn).length).toBe(1);
         // The attribute carries exactly one value — serialized as a bare string, never a two-element
         // array (value dedup under unified() collapses the byte-identical re-emission).
-        const json = JSON.parse(unified.serialize("json")) as { activity?: Record<string, Record<string, unknown>> };
+        const json = provJsonSchema.parse(JSON.parse(unified.serialize("json")));
         expect(json.activity?.[cmdQn]?.["inflexa:unresolvedScript"]).toBe("scripts/de.R");
     });
 
@@ -1229,7 +1234,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        const json = JSON.parse(stored!) as { activity?: Record<string, { "prov:startTime"?: string }> };
+        const json = provJsonSchema.parse(JSON.parse(stored!));
         // The last-recorded start time survives the merge (parsed to epoch-ms to normalize the offset).
         expect(Date.parse(json.activity!["inflexa:run-run-001"]!["prov:startTime"]!)).toBe(Date.parse("2000-01-01T00:00:00.000Z"));
         // The flush actually persisted — the integrity chain rotated off the seed, so it did not skip.
@@ -1286,7 +1291,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
         expect(provn).toContain("9000");
         expect(provn).not.toContain("2000");
         // The end time is superseded too (last-write-wins on the formal attribute).
-        const json = JSON.parse(stored!) as { activity?: Record<string, { "prov:endTime"?: string }> };
+        const json = provJsonSchema.parse(JSON.parse(stored!));
         expect(Date.parse(json.activity!["inflexa:run-run-001"]!["prov:endTime"]!)).toBe(1_700_000_009_000);
 
         resetSigningForTests(null);

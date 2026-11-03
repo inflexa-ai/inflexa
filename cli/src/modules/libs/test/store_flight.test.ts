@@ -7,6 +7,7 @@ import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { env } from "../../../lib/env.ts";
+import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import * as lockModule from "../../../lib/lock.ts";
 import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../../lib/lock.ts";
 import { db } from "../../../db/primary.ts";
@@ -32,6 +33,11 @@ import { flushAndPrint } from "../store.ts";
 import type { LoadCheckRunner, ProvisionerRunner } from "../provisioner.ts";
 
 const graphNodesSchema = z.object({ nodes: z.record(z.string(), z.unknown()) });
+const graphSchema = z.object({
+    nodes: z.record(z.string(), z.object({ edges: z.array(z.string()) })),
+    by_name: z.object({ python: z.record(z.string(), z.array(z.string())), r: z.record(z.string(), z.array(z.string())) }),
+});
+type StagedNodes = Parameters<typeof commitStagedNodes>[1];
 
 // The flush is the two-phase flight over the pending set: one provisioner
 // `acquire` run for the whole batch, the load check inside the sandbox image,
@@ -45,9 +51,13 @@ const graphNodesSchema = z.object({ nodes: z.record(z.string(), z.unknown()) });
  * unqualified `igraph` that both ecosystems hold, thus this suite and the
  * provisioner suite cannot drift on the wire shape.
  */
-const IDENTITY_FIXTURE = JSON.parse(
-    readFileSync(join(import.meta.dir, "..", "..", "..", "..", "..", "harness", "src", "sandbox", "__fixtures__", "package-identity.json"), "utf8"),
-) as { readonly both_hit_report: { readonly spec: string; readonly outcome: string; readonly candidates: readonly string[] } };
+const IDENTITY_FIXTURE = z
+    .object({ both_hit_report: z.object({ spec: z.string(), outcome: z.string(), candidates: z.array(z.string()) }) })
+    .parse(
+        JSON.parse(
+            readFileSync(join(import.meta.dir, "..", "..", "..", "..", "..", "harness", "src", "sandbox", "__fixtures__", "package-identity.json"), "utf8"),
+        ),
+    );
 
 const created: string[] = [];
 
@@ -67,7 +77,7 @@ function reportPathOf(storeRoot: string, args: readonly string[]): string {
 }
 
 /** A runner that acquires one fake distribution: it writes the pool directory, the markers, and the report. */
-function acquiringRunner(outcomesBySpec: Record<string, unknown>, nodes: Record<string, unknown>): ProvisionerRunner {
+function acquiringRunner(outcomesBySpec: Record<string, Record<string, unknown>>, nodes: Record<string, unknown>): ProvisionerRunner {
     return async (invocation, onLine) => {
         onLine("[provision] fake acquire");
         for (const dir of Object.keys(nodes)) {
@@ -79,7 +89,7 @@ function acquiringRunner(outcomesBySpec: Record<string, unknown>, nodes: Record<
         const report = {
             schema: 1,
             arch: "arm64",
-            outcomes: Object.entries(outcomesBySpec).map(([spec, outcome]) => ({ spec, ...(outcome as Record<string, unknown>) })),
+            outcomes: Object.entries(outcomesBySpec).map(([spec, outcome]) => ({ spec, ...outcome })),
             nodes,
         };
         writeFileSync(reportPathOf(invocation.storeRoot, invocation.args), `${JSON.stringify(report, null, 2)}\n`);
@@ -90,7 +100,7 @@ function acquiringRunner(outcomesBySpec: Record<string, unknown>, nodes: Record<
 /** A load check with a fixed verdict per staged directory. */
 function loadCheck(failing: readonly string[]): LoadCheckRunner {
     return async (params) => {
-        const raw = JSON.parse(readFileSync(join(params.storeRoot, params.reportName), "utf8")) as { nodes: Record<string, unknown> };
+        const raw = graphNodesSchema.parse(JSON.parse(readFileSync(join(params.storeRoot, params.reportName), "utf8")));
         const results = Object.keys(raw.nodes).map((dir) => ({ package: dir, track: "python", ok: !failing.includes(dir) }));
         return ok<CaptureResult, never>({ code: results.every((r) => r.ok) ? 0 : 1, stdout: JSON.stringify({ results }), stderr: "" });
     };
@@ -219,10 +229,7 @@ describe("flushPendingStoreAdds", () => {
         expect(kinds.get("ghost")).toBe("refused");
         // The commit appended the staged node under the metadata lock, and the graph
         // orders the new name by its own record.
-        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as {
-            nodes: Record<string, unknown>;
-            by_name: { python: Record<string, string[]> };
-        };
+        const graph = graphSchema.parse(JSON.parse(readFileSync(join(root, "deps.json"), "utf8")));
         expect(graph.nodes[NEW_DIR]).toBeDefined();
         expect(graph.by_name.python["newpkg"]).toEqual([NEW_DIR]);
         // The acquired flight deleted its row — a success that everyone has is
@@ -285,7 +292,7 @@ describe("flushPendingStoreAdds", () => {
         expect(result.outcomes[0]?.kind).toBe("refused");
         // No advertised state: the graph holds no node for the failed package. The
         // pool bytes stay, and the debris pass frees them.
-        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as { nodes: Record<string, unknown> };
+        const graph = graphNodesSchema.parse(JSON.parse(readFileSync(join(root, "deps.json"), "utf8")));
         expect(graph.nodes[BAD_DIR]).toBeUndefined();
         expect(existsSync(join(root, "store", BAD_DIR))).toBe(true);
         // The refusal settled durably, with the load-check phase in front.
@@ -446,10 +453,10 @@ describe("the graph commit", () => {
         // produces, because an add stages its whole closure, the reused
         // members too. The first resolution must stand, or a farm composed
         // under the old edge refuses every later extension.
-        const staged = {
+        const staged: StagedNodes = {
             "beta-0.4.1-000000000000bbbb": { track: "python", name: "beta", version: "0.4.1", order: "0b", edges: ["alpha-2.0.0-00000000000a2222"] },
             "newpkg-1.0-000000000new0001": { track: "python", name: "newpkg", version: "1.0", order: "0b", edges: [] },
-        } as Parameters<typeof commitStagedNodes>[1];
+        };
 
         const outcome = (await commitStagedNodes(root, staged))._unsafeUnwrap();
 
@@ -458,10 +465,7 @@ describe("the graph commit", () => {
         expect(outcome.committed).toContain("beta-0.4.1-000000000000bbbb");
         expect(outcome.committed).toContain("newpkg-1.0-000000000new0001");
         expect(outcome.refused).toEqual([]);
-        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as {
-            nodes: Record<string, { edges: string[] }>;
-            by_name: { python: Record<string, string[]> };
-        };
+        const graph = graphSchema.parse(JSON.parse(readFileSync(join(root, "deps.json"), "utf8")));
         expect(graph.nodes["beta-0.4.1-000000000000bbbb"]?.edges).toEqual(["alpha-1.2.0-000000000000aaaa"]);
         expect(graph.nodes["newpkg-1.0-000000000new0001"]).toBeDefined();
         // The shelf gains no duplicate entry for the kept node.
@@ -474,18 +478,15 @@ describe("the graph commit", () => {
         // node names that dependency bare, and the commit must read the shelf
         // under the SAME spelling — a fold would reach `rpkga`, which no shelf
         // holds, and the node would drop with a false dangling-edge refusal.
-        const staged = {
+        const staged: StagedNodes = {
             "rpkgc-3.0-000000000000fff2": { track: "r", name: "Rpkgc", version: "3.0", order: "0b", edges: ["Rpkga"] },
-        } as Parameters<typeof commitStagedNodes>[1];
+        };
 
         const outcome = (await commitStagedNodes(root, staged))._unsafeUnwrap();
 
         expect(outcome.refused).toEqual([]);
         expect(outcome.committed).toEqual(["rpkgc-3.0-000000000000fff2"]);
-        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as {
-            nodes: Record<string, { edges: string[] }>;
-            by_name: { r: Record<string, string[]> };
-        };
+        const graph = graphSchema.parse(JSON.parse(readFileSync(join(root, "deps.json"), "utf8")));
         expect(graph.nodes["rpkgc-3.0-000000000000fff2"]?.edges).toEqual(["rpkga-1.0-000000000000fff0"]);
         // The commit writes the shelf under the node name, thus the R shelf
         // keys the DESCRIPTION spelling here too.
@@ -495,10 +496,10 @@ describe("the graph commit", () => {
     test("a graph of another version refuses the commit, and it names the remedy of its direction", async () => {
         const root = tempStore();
         const graphPath = join(root, "deps.json");
-        const published = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
-        const staged = {
+        const published = unknownRecordSchema.parse(JSON.parse(readFileSync(graphPath, "utf8")));
+        const staged: StagedNodes = {
             "newpkg-1.0-000000000new0001": { track: "python", name: "newpkg", version: "1.0", order: "0b", edges: [] },
-        } as Parameters<typeof commitStagedNodes>[1];
+        };
 
         // A version-1 shelf keys the R track in lower case. The commit reads
         // that shelf to resolve a bare edge, thus it must stop instead of

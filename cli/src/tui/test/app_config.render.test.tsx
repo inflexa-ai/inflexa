@@ -3,11 +3,14 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { testRender } from "@opentui/solid";
+import { z } from "zod";
 
 import type { ServerSettings } from "../../api/machine.ts";
 import type { ClientOpts } from "../../client/api.ts";
 import { fetchSettings } from "../../client/machine.ts";
 import { env } from "../../lib/env.ts";
+import { unknownRecordSchema } from "../../lib/json_record.ts";
+import { fakeFetch } from "../../test_support/fake_fetch.ts";
 import { startTestServer, type TestServer } from "../../test_support/server.ts";
 import { ConfigApp } from "../app_config.tsx";
 import { dialogClear, dialogIsOpen } from "../components/dialog/dialog_host.tsx";
@@ -65,12 +68,10 @@ function recordingClientOpts(): { readonly clientOpts: ClientOpts; readonly patc
  * it too, thus only the first must meet the stub.
  */
 function stubOutsideServer(stub: typeof globalThis.fetch): void {
-    // Test-only replacement of the global fetch: the router is narrower than fetch's overloaded signature;
-    // the cast is sound because afterEach restores the captured real fetch.
-    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
-        String(input instanceof Request ? input.url : input).startsWith(server.baseUrl)
-            ? realFetch(input, init)
-            : stub(input, init)) as unknown as typeof globalThis.fetch;
+    // Test-only replacement of the global fetch: afterEach restores the captured real fetch.
+    globalThis.fetch = fakeFetch((input, init) =>
+        String(input instanceof Request ? input.url : input).startsWith(server.baseUrl) ? realFetch(input, init) : stub(input, init),
+    );
 }
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
@@ -92,12 +93,13 @@ function frame(setup: Setup): string {
         .join("\n");
 }
 
+const persistedEmbeddingSchema = z.looseObject({ embedding: unknownRecordSchema.optional() });
+
 /** The `embedding` block as it was actually written to disk — the ground truth for the Item A rule. */
 function persistedEmbedding(): Record<string, unknown> {
     // The on-disk config is validated JSON the ConfigApp just wrote; reading it raw (not through readConfig)
     // keeps the assertion honest about which keys are literally present.
-    const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { embedding?: Record<string, unknown> };
-    return parsed.embedding ?? {};
+    return persistedEmbeddingSchema.parse(JSON.parse(readFileSync(env.configPath, "utf8"))).embedding ?? {};
 }
 
 // Embedding is the last of the nine sections (telemetry, theme, runtime, the five postgres fields, then
@@ -392,9 +394,9 @@ describe("ConfigApp secrets (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             // The config file is validated JSON that the server just wrote.
-            const persisted = JSON.parse(readFileSync(env.configPath, "utf8")) as { postgres?: unknown; embedding?: unknown };
-            expect(persisted.postgres).toEqual({ password: "pg-new-2" });
-            expect(persisted.embedding).toEqual({ mode: "api-key", apiKey: "sk-secret-1" });
+            const persisted: unknown = JSON.parse(readFileSync(env.configPath, "utf8"));
+            expect(persisted).toHaveProperty("postgres", { password: "pg-new-2" });
+            expect(persisted).toHaveProperty("embedding", { mode: "api-key", apiKey: "sk-secret-1" });
         } finally {
             setup.renderer.destroy();
         }
@@ -547,10 +549,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
 
 /** A fetch that resolves immediately with `body` as JSON at `status` — the api_models test's stub shape. */
 function resolvingFetch(body: unknown, status = 200): typeof globalThis.fetch {
-    // Test-only replacement of the global fetch: the recorder is narrower than fetch's overloaded signature;
-    // the cast is sound because afterEach restores the captured real fetch.
-    return (() =>
-        Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }))) as unknown as typeof globalThis.fetch;
+    return fakeFetch(() => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })));
 }
 
 /** One in-flight probe: its URL plus the resolve/reject the test drives manually. */
@@ -567,16 +566,19 @@ type ProbeCall = {
  */
 function installControllableFetch(): ProbeCall[] {
     const calls: ProbeCall[] = [];
-    // Test-only fetch replacement; sound because afterEach restores the captured real fetch.
+    // Test-only fetch replacement: afterEach restores the captured real fetch.
     stubOutsideServer(
-        ((input: string | URL | Request): Promise<Response> =>
-            new Promise<Response>((resolve, reject) => {
-                calls.push({
-                    url: String(input),
-                    resolve: (body, status = 200) => resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })),
-                    reject,
-                });
-            })) as unknown as typeof globalThis.fetch,
+        fakeFetch(
+            (input) =>
+                new Promise<Response>((resolve, reject) => {
+                    calls.push({
+                        url: String(input),
+                        resolve: (body, status = 200) =>
+                            resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })),
+                        reject,
+                    });
+                }),
+        ),
     );
     return calls;
 }

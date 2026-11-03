@@ -14,10 +14,10 @@ const realIsTTY = process.stderr.isTTY;
 function captureStderr(isTTY: boolean, body: () => void): string {
     const written: string[] = [];
     Object.defineProperty(process.stderr, "isTTY", { value: isTTY, configurable: true });
-    process.stderr.write = ((chunk: string) => {
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
         written.push(String(chunk));
         return true;
-    }) as typeof process.stderr.write;
+    };
     body();
     return written.join("");
 }

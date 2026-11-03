@@ -74,12 +74,13 @@ function tempStore(): string {
 
     const catalog = join(root, "farms", "catalog");
     mkdirSync(join(catalog, "python", "site-packages"), { recursive: true });
-    for (const [name, storeDir] of [
+    const rPackages: [string, string][] = [
         ["Rpkga", RPKGA],
         ["Rpkgb", RPKGB],
-    ]) {
+    ];
+    for (const [name, storeDir] of rPackages) {
         mkdirSync(join(catalog, "r", "cran"), { recursive: true });
-        symlinkSync(`${MOUNT}/store/${storeDir}/${name}`, join(catalog, "r", "cran", name as string));
+        symlinkSync(`${MOUNT}/store/${storeDir}/${name}`, join(catalog, "r", "cran", name));
     }
     for (const cache of ["numba-cache", "matplotlib_config"]) {
         mkdirSync(join(catalog, cache), { recursive: true });
@@ -1030,7 +1031,7 @@ describe("linkPackagesIntoFarm", () => {
         // whole pool, and the seam must say THAT — a per-package "absent"
         // here would send the caller after packages the pool holds.
         const graphPath = join(root, "deps.json");
-        const graph = JSON.parse(readFileSync(graphPath, "utf8")) as { nodes: Record<string, unknown> };
+        const graph = z.looseObject({ nodes: z.record(z.string(), z.unknown()) }).parse(JSON.parse(readFileSync(graphPath, "utf8")));
         delete graph.nodes[ALPHA];
         writeFileSync(graphPath, JSON.stringify(graph));
 
@@ -1085,9 +1086,9 @@ describe("the durable first resolution", () => {
         // rewrite, thus the next extension — an UNRELATED package — still
         // composes. Without the rule, the moved edge puts both alpha pins
         // into one closure, and even a gamma link refuses.
-        const staged = {
+        const staged: Parameters<typeof commitStagedNodes>[1] = {
             [BETA]: { track: "python", name: "beta", version: "0.4.1", order: "0b", edges: [ALPHA_2] },
-        } as Parameters<typeof commitStagedNodes>[1];
+        };
         (await commitStagedNodes(root, staged))._unsafeUnwrap();
 
         const extended = await extendFarm({ storeRoot: root, analysisId, roots: [GAMMA] });

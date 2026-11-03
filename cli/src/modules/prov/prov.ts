@@ -116,8 +116,9 @@ type KernelEventOf<E> = E extends { type: `prov.${infer K}` } ? Omit<E, "type" |
  * lifecycle, the execution, and the report acts alike, so the guard covers the whole contract.
  */
 function toKernelEvent(event: StampedProvEvent): ProvEvent {
-    // The cast only re-labels `type` after the mechanical prefix strip; the conditional type above
+    // SAFETY: The cast only re-labels `type` after the mechanical prefix strip; the conditional type above
     // carries every payload field through unchanged, and the return type checks the result.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `slice` gives `string`, and no type can express that dropping the `prov.` prefix of a template-literal member gives its `infer K`
     return { ...event, type: event.type.slice("prov.".length) } as KernelEventOf<StampedProvEvent>;
 }
 

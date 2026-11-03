@@ -3,6 +3,8 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { z } from "zod";
+
 import {
     EMBEDDING_API_KEY_VAR,
     anthropicAuthTokenSet,
@@ -364,6 +366,8 @@ describe("reference-data paths", () => {
     });
 });
 
+const resolvedPathsSchema = z.object({ dataDir: z.string(), configPath: z.string() });
+
 describe("the base folders of the data and the configuration", () => {
     // env.ts reads the variables at import, thus a child process imports it with the variables under test.
     function resolvedPaths(vars: Record<string, string>): { dataDir: string; configPath: string; home: string } {
@@ -382,7 +386,7 @@ describe("the base folders of the data and the configuration", () => {
                 },
             );
             expect(run.exitCode).toBe(0);
-            return { ...(JSON.parse(run.stdout.toString()) as { dataDir: string; configPath: string }), home };
+            return { ...resolvedPathsSchema.parse(JSON.parse(run.stdout.toString())), home };
         } finally {
             rmSync(home, { recursive: true, force: true });
         }

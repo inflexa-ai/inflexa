@@ -99,8 +99,8 @@ function describeNonError(cause: unknown): string {
     if (cause === null || typeof cause !== "object") return String(cause);
     // A discriminated domain error `{ type, ... }`. Prefer a human `message` field (ProviderError et
     // al.) after the discriminant so the line names both the KIND of failure and its reason.
-    // `type`/`message` are read structurally off an opaque object, hence the narrow cast.
-    const record = cause as { type?: unknown; message?: unknown };
+    // `type`/`message` are read structurally off an opaque object.
+    const record: { type?: unknown; message?: unknown } = cause;
     if (typeof record.type === "string") {
         return typeof record.message === "string" && record.message.length > 0 ? `${record.type}: ${record.message}` : record.type;
     }
@@ -118,7 +118,7 @@ function describeNonError(cause: unknown): string {
  */
 export function findAuthCause(cause: unknown, depth = 0): { message: string } | null {
     if (depth > MAX_CAUSE_DEPTH || cause === null || typeof cause !== "object") return null;
-    const record = cause as { type?: unknown; retryable?: unknown; message?: unknown; cause?: unknown };
+    const record: { type?: unknown; retryable?: unknown; message?: unknown; cause?: unknown } = cause;
     if (record.type === "auth" && record.retryable === false && typeof record.message === "string") return { message: record.message };
     const aggregated = aggregateErrors(cause);
     if (aggregated) {

@@ -27,6 +27,7 @@ import type { Renderable } from "@opentui/core";
 
 import { GLYPHS } from "../lib/design_system.ts";
 import { readConfig } from "../lib/config.ts";
+import { keysOf } from "../lib/types.ts";
 
 /** A platform-neutral key chord, matched structurally against opentui's parsed key. */
 export type Chord = {
@@ -282,7 +283,7 @@ export type KeybindId = keyof typeof KEYBIND_DEFAULTS;
 // first read and caching avoids a disk read (`readConfig`) on every keystroke. An override for an
 // unknown id is never read; an unparsable value degrades to a non-matching chord. resolveKeybind
 // takes the FIRST alternative only (the app keys are single-stroke); sequences come via parseKeySpec.
-let resolvedCache: Record<KeybindId, Chord> | null = null;
+let resolvedCache: ReadonlyMap<KeybindId, Chord> | null = null;
 let leaderTimeoutCache: number | null = null;
 /**
  * Ids this build honours from a config file written against an earlier one.
@@ -302,22 +303,23 @@ const LEGACY_KEYBIND_IDS: Partial<Record<KeybindId, string>> = {
     "app.activity-panel-toggle": "app.run-panel-toggle",
 };
 
-function resolved(): Record<KeybindId, Chord> {
+function resolved(): ReadonlyMap<KeybindId, Chord> {
     if (!resolvedCache) {
         const overrides = readConfig().keybinds ?? {};
-        resolvedCache = Object.fromEntries(
-            (Object.keys(KEYBIND_DEFAULTS) as KeybindId[]).map((id) => {
+        resolvedCache = new Map(
+            keysOf(KEYBIND_DEFAULTS).map((id) => {
                 const legacy = LEGACY_KEYBIND_IDS[id];
                 return [id, parseChord(overrides[id] ?? (legacy ? overrides[legacy] : undefined) ?? KEYBIND_DEFAULTS[id])];
             }),
-        ) as Record<KeybindId, Chord>;
+        );
     }
     return resolvedCache;
 }
 
 /** The resolved chord for a keybinding id (user override over default). */
 export function resolveKeybind(id: KeybindId): Chord {
-    return resolved()[id];
+    // The map holds every id of KEYBIND_DEFAULTS, so the fallback is never reached.
+    return resolved().get(id) ?? parseChord(KEYBIND_DEFAULTS[id]);
 }
 
 /** The lowercase display label for a keybinding id, e.g. `ctrl+k`. */
@@ -407,8 +409,11 @@ export function pushMode(mode: string): () => void {
 // renderer) and read at dispatch — a plain var, since there is exactly one live renderer.
 let activeRenderer: ReturnType<typeof useRenderer> | null = null;
 
+/** The members of a renderable that the focus filter reads. */
+type FocusNode = { readonly id: string; findDescendantById(id: string): unknown };
+
 /** True when `focused` is `target` itself or a descendant of it (the fine-grained focus filter). */
-export function isFocusedWithin(target: Renderable, focused: Renderable | null): boolean {
+export function isFocusedWithin(target: FocusNode, focused: Pick<FocusNode, "id"> | null): boolean {
     if (!focused) return false;
     if (focused === target) return true;
     return target.findDescendantById(focused.id) !== undefined;

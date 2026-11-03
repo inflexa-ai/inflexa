@@ -80,7 +80,12 @@ export function createSwappableProvider(initial: ChatProvider): SwappableChatPro
  * same model share one instance — without unwrapping the delegating wrapper by hand.
  */
 export function agentProviderInner(provider: ChatProvider): ChatProvider {
-    return "current" in provider && "swap" in provider ? (provider as SwappableChatProvider).current : provider;
+    return isSwappable(provider) ? provider.current : provider;
+}
+
+/** `createSwappableProvider` is the only producer of a provider with both `current` and `swap`, so the two members identify its handle. */
+function isSwappable(provider: ChatProvider): provider is SwappableChatProvider {
+    return "current" in provider && "swap" in provider;
 }
 
 // ---- Agent-work gauge ---------------------------------------------------------------------------

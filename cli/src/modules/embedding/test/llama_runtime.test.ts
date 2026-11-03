@@ -47,7 +47,7 @@ function pinWith(sha256: string): ResolvedPin {
 
 /** An acquire stub that writes `bytes` to the staging path and records how many times / from which source. */
 function stubAcquire(bytes: Uint8Array): { calls: number; sources: string[] } {
-    const spy = { calls: 0, sources: [] as string[] };
+    const spy: { calls: number; sources: string[] } = { calls: 0, sources: [] };
     __setLlamaAcquireForTest(async (source, destPath) => {
         spy.calls += 1;
         spy.sources.push(source);

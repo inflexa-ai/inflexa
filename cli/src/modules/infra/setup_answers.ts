@@ -4,6 +4,8 @@ import { z } from "zod";
 
 import { runtimeIds } from "../../lib/container.ts";
 import { EMBEDDING_API_KEY_VAR, isReservedPostgresPort, reservedPostgresPorts, resolveEmbeddingApiKey } from "../../lib/env.ts";
+import { unknownRecordSchema } from "../../lib/json_record.ts";
+import { isMember, keysOf } from "../../lib/types.ts";
 import { type ConnectionMode } from "./compose.ts";
 
 // The setup ANSWERS layer: one schema for every interactive decision point of `inflexa setup`, two
@@ -405,13 +407,6 @@ function isAnswerKey(key: string): key is AnswerKey {
     return Object.hasOwn(ANSWER_QUESTIONS, key);
 }
 
-/** `Object.keys` for an `as const` table: the stdlib signature widens to `string[]`, losing what the declaration proves. */
-function keysOf<T extends object>(table: T): (keyof T & string)[] {
-    // Sound because every key of a `const`-asserted object literal IS one of its literal key types; the
-    // widening TypeScript applies here is a limitation of the signature, not a real loss of knowledge.
-    return Object.keys(table) as (keyof T & string)[];
-}
-
 /** A block whose `mode` leaf decides which of its OTHER leaves are answerable at all. */
 type ModeGatedBlock = Extract<AnswerBlock, "connection" | "embedding">;
 
@@ -678,11 +673,12 @@ const NUMERIC_ANSWER_KEYS = ["postgres.port", "resources.sharePct", "connection.
 function answerAt(document: unknown, key: string): unknown {
     let node: unknown = document;
     for (const segment of key.split(".")) {
-        if (typeof node !== "object" || node === null) return undefined;
         // unknown in, unknown out: the document is unvalidated YAML, and an indexed read is the only way
         // into it. Nothing downstream treats the result as a checked value — the only question asked of it
         // below is `typeof === "number"`.
-        node = (node as Record<string, unknown>)[segment];
+        const record = unknownRecordSchema.safeParse(node);
+        if (!record.success) return undefined;
+        node = record.data[segment];
     }
     return node;
 }
@@ -1018,7 +1014,8 @@ export type ResolvedSetupAnswers = {
  * is a real leaf of a real block.
  */
 function leafOf(answers: SetupAnswers, block: AnswerBlock, leaf: string): unknown {
-    return (answers[block] as Readonly<Record<string, unknown>> | undefined)?.[leaf];
+    const leaves: Readonly<Record<string, unknown>> | undefined = answers[block];
+    return leaves?.[leaf];
 }
 
 /**
@@ -1078,7 +1075,7 @@ function mergeAnswers(file: SetupAnswers, flags: SetupAnswers): { readonly answe
     }
     for (const [block, leaves] of blocks) merged[block] = pruned(leaves);
 
-    // The loop writes exactly the keys the table declares, each with the value type its schema leaf owns —
+    // SAFETY: the loop writes exactly the keys the table declares, each with the value type its schema leaf owns —
     // a shape TypeScript cannot follow key-by-key out of a generic walk, but that the table's `satisfies`
     // link has already proven. Nothing else can reach this object, so the assertion cannot go stale
     // silently: a table entry naming a leaf the schema dropped is a compile error at the declaration.
@@ -1086,10 +1083,7 @@ function mergeAnswers(file: SetupAnswers, flags: SetupAnswers): { readonly answe
 }
 
 function isOAuthAccountKind(value: string): boolean {
-    // The cast widens a readonly TUPLE of string literals to `readonly string[]` purely so `.includes`
-    // accepts an arbitrary string — untouched, TS demands the argument already BE an OAuthAccountKind, which
-    // is the very thing being tested. Type-level only: the array and the comparison are unchanged at runtime.
-    return (OAUTH_ACCOUNT_KINDS as readonly string[]).includes(value);
+    return isMember(OAUTH_ACCOUNT_KINDS, value);
 }
 
 /**

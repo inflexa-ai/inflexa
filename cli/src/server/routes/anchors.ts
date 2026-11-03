@@ -21,12 +21,15 @@ import { workspaceBusyReasons } from "../busy_gate.ts";
 import { apiError, internalError, readBody, unavailableDetails, type ServerEnv } from "../http.ts";
 import { absolutePath } from "./analyses.ts";
 
-/** What the anchor routes read beyond SQLite and the disk. Tests replace each one. */
-export type AnchorRouteOpts = {
+/**
+ * What the anchor routes read beyond SQLite and the disk. Tests replace each one. `R` is the runtime handle: the
+ * routes only give it to these two reads, thus a test gives a small handle for `R`.
+ */
+export type AnchorRouteOpts<R = HarnessRuntime> = {
     /** The busy gate of the workspace folder of one analysis. A prune keeps an anchor with a busy analysis. */
-    readonly busyReasons: (analysisId: string, runtime: HarnessRuntime | null) => Promise<BusyReason[]>;
+    readonly busyReasons: (analysisId: string, runtime: R | null) => Promise<BusyReason[]>;
     /** The purge of the Postgres footprint of an analysis, over the pool of the booted runtime. */
-    readonly purgeFor: (runtime: HarnessRuntime) => PurgeAnalysisFn;
+    readonly purgeFor: (runtime: R) => PurgeAnalysisFn;
 };
 
 /** The production {@link AnchorRouteOpts}. */
@@ -51,8 +54,8 @@ const pruneBody = z.object({ dryRun: z.boolean().optional(), anchorIds: z.array(
  * repair and a relocation touch SQLite and the disk only. A prune that must purge an analysis needs the
  * runtime, for the pool of the server.
  */
-export function anchorRoutes(boot: ServerBoot, opts: AnchorRouteOpts = DEFAULT_ANCHOR_ROUTE_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function anchorRoutes<R>(boot: ServerBoot<R>, opts: AnchorRouteOpts<R>): Hono<ServerEnv<R>> {
+    const routes = new Hono<ServerEnv<R>>();
 
     routes.post("/repair", async (c) => {
         const body = await readBody(c, repairBody);

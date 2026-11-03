@@ -24,29 +24,35 @@ import {
 } from "../agent_switch.ts";
 import type { AgentEffort } from "../config.ts";
 
-// A provider stub tagged with its bound model and effort so a swap is observable by identity. The switch
+// A provider stub tagged (in `TAGS`) with its bound model and effort so a swap is observable by identity. The switch
 // only rebuilds and swaps handles, and never binds a model, thus `bind` refuses and names the inner that
 // it reached — the one test that binds reads which inner the handle delegated to from that refusal.
-type TaggedProvider = ChatProvider & { readonly __model: string; readonly __effort: AgentEffort };
-function fakeProvider({ model, effort }: AgentSelection): TaggedProvider {
-    return {
-        __model: model,
-        __effort: effort,
+const TAGS = new WeakMap<ChatProvider, AgentSelection>();
+function fakeProvider({ model, effort }: AgentSelection): ChatProvider {
+    const provider: ChatProvider = {
         capabilities: { toolCalling: true },
         bind: () => {
             throw new Error(`bind reached ${model}`);
         },
     };
+    TAGS.set(provider, { model, effort });
+    return provider;
+}
+
+function tagOf(handle: SwappableChatProvider): AgentSelection {
+    const tag = TAGS.get(agentProviderInner(handle));
+    if (tag === undefined) throw new Error("the handle does not delegate to a provider of fakeProvider");
+    return tag;
 }
 
 /** Read the bound model of the inner provider an agent's swappable handle currently delegates to. */
 function agentModel(handle: SwappableChatProvider): string {
-    return (agentProviderInner(handle) as TaggedProvider).__model;
+    return tagOf(handle).model;
 }
 
 /** Read the bound effort of the inner provider an agent's swappable handle currently delegates to. */
 function agentEffort(handle: SwappableChatProvider): AgentEffort {
-    return (agentProviderInner(handle) as TaggedProvider).__effort;
+    return tagOf(handle).effort;
 }
 
 /** A selection at the effort `setup` boots each agent on, unless the case names another. */
@@ -325,8 +331,9 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         // turn is genuinely mid-flight, inside `runChatTurn`'s gauge bracket.
         const chunks = ["Each ", "analysis ", "row ", "carries ", "a slug."];
         const source = { agentId: "conv", callPath: ["conv"] };
+        const conversationAgent: AgentDefinition = { id: "conv", systemPrompt: "", model: "claude-conv", tools: [], maxIterations: 1 };
         const chatTurns: ChatTurns = {
-            open: () => Promise.resolve({ kind: "started", turnId: "turn-1", agent: { id: "conv" } as unknown as AgentDefinition }),
+            open: () => Promise.resolve({ kind: "started", turnId: "turn-1", agent: conversationAgent }),
             async *read() {
                 for (let i = 0; i < chunks.length; i++) {
                     await Promise.resolve();

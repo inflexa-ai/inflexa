@@ -402,7 +402,7 @@ export async function commitStagedNodes(
             if (accepted.size === 0) return ok({ committed: kept, refused });
 
             for (const [storeDir, node] of accepted) {
-                raw.nodes[storeDir] = node as Record<string, unknown>;
+                raw.nodes[storeDir] = node;
                 const shelf = raw.by_name[node.track];
                 const list = shelf[node.name] ?? [];
                 if (!list.includes(storeDir)) list.push(storeDir);
@@ -726,7 +726,8 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
             if (failedDirs.size > 0) {
                 staged = Object.fromEntries(Object.entries(staged).filter(([dir]) => !failedDirs.has(dir)));
                 for (let index = acquired.length - 1; index >= 0; index -= 1) {
-                    const item = acquired[index] as { entry: BatchEntry; storeDirs: string[] };
+                    const item = acquired[index];
+                    if (item === undefined) continue;
                     const bad = item.storeDirs.filter((dir) => failedDirs.has(dir));
                     if (bad.length > 0) {
                         const detail = bad.map((dir) => `${dir}: ${failedDirs.get(dir) ?? "no reason recorded"}`).join("\n");
@@ -751,7 +752,8 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
             }
             const refusedDirs = new Map(committed.value.refused.map((refusal) => [refusal.storeDir, refusal.reason]));
             for (let index = acquired.length - 1; index >= 0; index -= 1) {
-                const item = acquired[index] as { entry: BatchEntry; storeDirs: string[] };
+                const item = acquired[index];
+                if (item === undefined) continue;
                 const bad = item.storeDirs.find((dir) => refusedDirs.has(dir));
                 if (bad !== undefined) {
                     const reason = refusedDirs.get(bad) ?? "the commit refused a dependency";

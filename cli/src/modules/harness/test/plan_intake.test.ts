@@ -116,7 +116,7 @@ describe("intakePlan — valid plans", () => {
         expect(call.planId).toBe(out.planId);
         expect(call.analysisId).toBe("analysis-1");
         // The seam receives the PARSED plan, not the raw bytes.
-        expect((call.plan as { analytical_narrative: string }).analytical_narrative).toBe("Explore the dataset and quantify differences between the groups.");
+        expect(call.plan).toHaveProperty("analytical_narrative", "Explore the dataset and quantify differences between the groups.");
         expect(out.planId).toBe(expectedId("analysis-1", content));
         expect(out.planId).toMatch(/^pln-[a-f0-9]{8}$/);
         expect(out.plan.steps[0]?.agent).toBe("scientific-executor");

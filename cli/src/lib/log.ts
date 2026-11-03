@@ -6,6 +6,7 @@ import pino from "pino";
 import type { LogFields, Logger } from "@inflexa-ai/harness";
 
 import { env } from "./env.ts";
+import { isMember } from "./types.ts";
 
 const MAX_LOG_AGE_DAYS = 7;
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
@@ -149,12 +150,12 @@ export function scheduleMidnightRoll(destination: RollableDestination, deps: Mid
     arm(deps.now());
 }
 
+/** The levels of the default `pino.levels.values`: the set that an `INFLEXA_LOG_LEVEL` value can name. `silent` is not one of them. */
+const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace"] as const satisfies readonly pino.Level[];
+
 function resolveLevel(): pino.Level {
     const requested = env.logLevel;
-    if (requested && Object.hasOwn(pino.levels.values, requested)) {
-        return requested as pino.Level;
-    }
-    return "info";
+    return requested && isMember(LOG_LEVELS, requested) ? requested : "info";
 }
 
 const level = resolveLevel();
@@ -180,8 +181,8 @@ function openFileDestination(): { destination: ReturnType<typeof pino.destinatio
         // it throws "Unable to reopen a file descriptor". Naming the path we opened is therefore what
         // makes the midnight roll legal on the synchronously opened fd above. The write is the same
         // one sonic-boom's own `fileOpened` makes after every open; only the published type omits the
-        // field, which is the whole reason for the cast.
-        (destination as ReturnType<typeof pino.destination> & { file: string }).file = file;
+        // field, which is the whole reason for `Object.assign` in place of a property write.
+        Object.assign(destination, { file });
         return { destination, file };
     } catch {
         // Unwritable log location (a broken environment): fall back to the path-based asynchronous

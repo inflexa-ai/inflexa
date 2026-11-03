@@ -43,6 +43,7 @@ import { z } from "zod";
 import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../lib/lock.ts";
 import { type FsError, readFileResult, writeFileResult } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
+import { isMember } from "../../lib/types.ts";
 
 // --- The store layout ---------------------------------------------------------
 
@@ -496,10 +497,7 @@ export function closureOf(graph: DepsGraph, roots: readonly string[]): Result<Re
 
     const reached = new Set<string>();
     const pending = [...roots];
-    while (pending.length > 0) {
-        // The `pop` of a non-empty array gives a value, and the loop condition proves
-        // that the array is non-empty.
-        const key = pending.pop() as string;
+    for (let key = pending.pop(); key !== undefined; key = pending.pop()) {
         if (reached.has(key)) continue;
         reached.add(key);
         for (const edge of graph.nodes.get(key)?.edges ?? []) {
@@ -893,7 +891,7 @@ type Template = {
 
 /** Whether a lock `track` value names one of the three R subtrees. */
 function isRSubtree(track: string): track is RSubtree {
-    return (R_SUBTREES as readonly string[]).includes(track);
+    return isMember(R_SUBTREES, track);
 }
 
 /**

@@ -9,20 +9,18 @@ import {
     createSandboxClient,
     createWorkspaceFilesystem,
     SANDBOX_AGENT_META,
-    type AgentSession,
     type ArtifactRegistrationInput,
     type ChatProvider,
     type ExecuteAnalysisDeps,
     type KnowledgeClient,
-    type ProvenanceCollector,
-    type RunAuthorizer,
-    type RunSession,
     type SandboxAgentBuildContext,
+    type SandboxStepInput,
 } from "@inflexa-ai/harness";
 
-const runSession = {} as unknown as RunSession;
-
 import { Bus } from "../../../lib/bus.ts";
+import { buildAgentSession, buildRunSession } from "../../../test_support/builders.ts";
+import { fakeCollector, type FakeRecord } from "../../../test_support/fake_collector.ts";
+import { refuse, refusingRunAuthorizer } from "../../../test_support/harness_stubs.ts";
 import type { StampedEvent } from "../../../types/events.ts";
 import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "../prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "../run_deps.ts";
@@ -80,20 +78,37 @@ function installSeamFor(comp: RunEngineComposition): void {
     installProvenanceSeam(createProvenanceSeam({ emitters: comp.sandboxEmitters, sessionModel: () => "anthropic/claude-test" }));
 }
 
-// buildAgent never dereferences the sandbox / lineage-collector / file-metadata
-// fields, so empty placeholders are safe; the cast avoids deep-importing
-// harness internals to build the real placeholder types.
+const runSession = buildRunSession();
+
+/** Registered in place of the child callable: the builder only stores it, so a dispatch fails the test. */
+const unusedCallable: ExecuteAnalysisDeps["sandboxStepCallable"] = () => refuse("sandboxStepCallable");
+
+function stepInput(agentId: string): SandboxStepInput {
+    return {
+        analysisId: "an-1",
+        runId: "run-1",
+        stepId: "step-1",
+        agentId,
+        level: 0,
+        prompt: "test prompt",
+        runSession: { ...buildRunSession(), runFrame: { runId: "run-1", stepId: "step-1" } },
+    };
+}
+
+// `buildAgent` reads the lease, the collector, the file-metadata cell, and the tool output store only to hand them to the
+// agent factory, which stores them. Each stand-in refuses a call, thus a read of one fails the test.
 function fakeBuildContext(agentId: string, stepWritePrefix: string): SandboxAgentBuildContext {
     return {
-        input: { analysisId: "an-1", runId: "run-1", stepId: "step-1", agentId },
+        input: stepInput(agentId),
+        session: runSession,
+        lease: { acquire: () => refuse("lease.acquire"), release: () => refuse("lease.release"), exec: () => refuse("lease.exec") },
         stepWritePrefix,
-        deadlineMs: () => Date.now() + 60_000,
-        lineageCollector: {},
+        lineageCollector: fakeCollector(),
         reportsBlocker: true,
-        fileMetadata: {},
-        toolOutputStore: {},
-        sandbox: {},
-    } as unknown as SandboxAgentBuildContext;
+        fileMetadata: { knownPaths: null, described: new Set(), expect: () => refuse("fileMetadata.expect"), fold: () => refuse("fileMetadata.fold") },
+        citationResolver: { resolveOne: () => refuse("citationResolver.resolveOne"), resolveMany: () => refuse("citationResolver.resolveMany") },
+        toolOutputStore: { put: () => refuse("toolOutputStore.put"), get: () => refuse("toolOutputStore.get") },
+    };
 }
 
 // The composed deps carry the bus-adapter registry + the run-lifecycle emitter (not the old no-op
@@ -111,8 +126,8 @@ describe("run-engine provenance wiring", () => {
 
     // The bus adapter reads `getRecords()` + `getTrackedInputs()` off the collector and never touches
     // the session; both return empty here so only the file event fires.
-    const emptyCollector = { getRecords: () => [], getTrackedInputs: () => [] } as unknown as ProvenanceCollector;
-    const noSession = {} as unknown as AgentSession;
+    const emptyCollector = fakeCollector();
+    const noSession = buildAgentSession();
 
     test("buildSandboxStepDeps wires the bus-adapter registry — registering emits provenance events", async () => {
         const deps = buildSandboxStepDeps(testComposition());
@@ -136,11 +151,9 @@ describe("run-engine provenance wiring", () => {
 
     test("buildExecuteAnalysisDeps carries the provenance seam, whose run emit lands run events on the bus", () => {
         // `sandboxStepCallable` + `runAuthorizer` are stored, never invoked by the builder.
-        const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
-        const authorizer = {} as unknown as RunAuthorizer;
         const comp = testComposition();
         installSeamFor(comp);
-        const deps = buildExecuteAnalysisDeps(comp, callable, authorizer);
+        const deps = buildExecuteAnalysisDeps(comp, unusedCallable, refusingRunAuthorizer);
 
         expect(deps.provenance!.emitRunEvent).toBeInstanceOf(Function);
 
@@ -169,11 +182,9 @@ describe("run-engine provenance wiring", () => {
         // A direct connection to a provider absent from any family table: `deepseek/some-alias-v2` can
         // only appear if the composition carried the CONFIGURED slug, since no derivation would ever
         // produce it from the opaque model alias.
-        const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
-        const authorizer = {} as unknown as RunAuthorizer;
         const comp = testComposition({ sandbox: "some-alias-v2", modelProvider: "deepseek" });
         installSeamFor(comp);
-        const deps = buildExecuteAnalysisDeps(comp, callable, authorizer);
+        const deps = buildExecuteAnalysisDeps(comp, unusedCallable, refusingRunAuthorizer);
 
         captured = [];
         Bus.on("inflexa", spy);
@@ -204,14 +215,12 @@ describe("snapshot-safety — a captured deps field observes a live swap through
         installProvenanceSeam(null);
     });
 
-    const noSession = {} as unknown as AgentSession;
-    const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
-    const authorizer = {} as unknown as RunAuthorizer;
+    const noSession = buildAgentSession();
 
     test("the run emit captured at registration stamps the NEW name after a swap through that captured reference", () => {
         const comp = testComposition();
         installSeamFor(comp);
-        const deps = buildExecuteAnalysisDeps(comp, callable, authorizer);
+        const deps = buildExecuteAnalysisDeps(comp, unusedCallable, refusingRunAuthorizer);
         // The worst case: a consumer snapshots the field ONCE, before any switch. A field mutation on a
         // consumer-held object would leave this stale; a stable delegating handle does not.
         const capturedEmit = deps.provenance!.emitRunEvent!;
@@ -241,13 +250,13 @@ describe("snapshot-safety — a captured deps field observes a live swap through
         Bus.on("inflexa", spy);
         // A command-producing registration: the shared producer record makes the registry emit a
         // `prov.command_executed` whose `model` carries the stamped name.
-        const cmdRecord = {
+        const cmdRecord: FakeRecord = {
             outputPath: "output/r.csv",
             producer: { type: "command", command: "python3 x.py", exitCode: 0, durationMs: 1, timestamp: "t" },
             inputs: [],
             scriptPath: null,
         };
-        const collector = { getRecords: () => [cmdRecord], getTrackedInputs: () => [] } as unknown as ProvenanceCollector;
+        const collector = fakeCollector([cmdRecord]);
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
             runId: "run-1",
@@ -276,9 +285,7 @@ describe("per-agent composition — run-engine bundles draw the sandbox agent", 
         expect(stepDeps.provider).not.toBe(comp.conversation.provider);
         expect(stepDeps.model).toBe("sandbox-model");
 
-        const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
-        const authorizer = {} as unknown as RunAuthorizer;
-        const execDeps = buildExecuteAnalysisDeps(comp, callable, authorizer);
+        const execDeps = buildExecuteAnalysisDeps(comp, unusedCallable, refusingRunAuthorizer);
         expect(execDeps.provider).toBe(comp.sandbox.provider);
         expect(execDeps.synthesisModel).toBe("sandbox-model");
     });
@@ -287,7 +294,7 @@ describe("per-agent composition — run-engine bundles draw the sandbox agent", 
 describe("buildSandboxStepDeps", () => {
     test("resolveWritePrefix is the absolute runs/{runId}/{stepId} path under the analysis's workspace root", async () => {
         const deps = buildSandboxStepDeps(testComposition());
-        const prefix = await deps.resolveWritePrefix({ analysisId: "an-1", runId: "run-1", stepId: "step-1" } as never);
+        const prefix = await deps.resolveWritePrefix(stepInput("bulk-transcriptomics-agent"));
 
         expect(prefix).toBe("/tmp/sessions/an-1/runs/run-1/step-1");
     });
@@ -354,18 +361,14 @@ describe("run-engine knowledge wiring", () => {
         render: async () => unavailable,
         contract: async () => unavailable,
     };
-    const callable: ExecuteAnalysisDeps["sandboxStepCallable"] = async () => {
-        throw new Error("not dispatched in this test");
-    };
-    const authorizer = {} as unknown as RunAuthorizer;
 
     test("buildExecuteAnalysisDeps passes the knowledge client when the composition holds one", () => {
-        const deps = buildExecuteAnalysisDeps({ ...testComposition(), knowledge }, callable, authorizer);
+        const deps = buildExecuteAnalysisDeps({ ...testComposition(), knowledge }, unusedCallable, refusingRunAuthorizer);
         expect(deps.knowledge).toBe(knowledge);
     });
 
     test("buildExecuteAnalysisDeps carries no knowledge field when the composition holds none", () => {
-        const deps = buildExecuteAnalysisDeps(testComposition(), callable, authorizer);
+        const deps = buildExecuteAnalysisDeps(testComposition(), unusedCallable, refusingRunAuthorizer);
         expect("knowledge" in deps).toBe(false);
     });
 });

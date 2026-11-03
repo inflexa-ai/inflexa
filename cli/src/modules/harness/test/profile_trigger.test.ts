@@ -1,12 +1,28 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { err, errAsync, ok, okAsync } from "neverthrow";
-import { makeLocalAuth, type DataProfileStatus, type DataProfileTriggerParams, type SignableInput, computeInputSignature } from "@inflexa-ai/harness";
+import {
+    makeLocalAuth,
+    type DataProfileStatus,
+    type DataProfileTriggerDeps,
+    type DataProfileTriggerParams,
+    type SignableInput,
+    computeInputSignature,
+} from "@inflexa-ai/harness";
 
-import { ensureProfileAtParity, forceReprofile, reprofileForInputChange, seedProfileLedger, type ProfileParitySeams } from "../profile_trigger.ts";
+import {
+    ensureProfileAtParity,
+    forceReprofile,
+    reprofileForInputChange,
+    seedProfileLedger,
+    type ProfileParitySeams,
+    type ProfileRuntime,
+} from "../profile_trigger.ts";
 import { __resetGaugeForTest } from "../agent_switch.ts";
-import type { HarnessRuntime } from "../runtime.ts";
 import { type StagedInput } from "../../staging/staging.ts";
-import type { Analysis } from "../../../types/analysis.ts";
+import { asStr256 } from "../../../lib/types.ts";
+import { buildAnalysis } from "../../../test_support/builders.ts";
+import { fakePool, type FakeQuery } from "../../../test_support/fake_pool.ts";
+import { refuse, refusingRunAuthorizer } from "../../../test_support/harness_stubs.ts";
 
 // The seed step feeds the agent-switch gauge (marks a data profile busy on dispatch); it mutates
 // the shared gauge singleton, so drop that state between tests to keep it out of any later gauge read.
@@ -18,8 +34,7 @@ afterEach(() => __resetGaugeForTest());
 // `seedProfileLedger` so the params reaching the trigger are exactly what `inflexa profile` builds —
 // the seed's fileId mapping is verified via the fake pool's recorded query.
 
-// Only `id`/`name` are read by the helper; the rest of the Analysis shape is inert here.
-const ANALYSIS = { id: "a1", name: "My analysis" } as unknown as Analysis;
+const ANALYSIS = buildAnalysis({ id: "a1", name: asStr256("My analysis") });
 
 /** A staged manifest with two files, used for the (re-)trigger paths. */
 const STAGED: StagedInput[] = [
@@ -72,8 +87,16 @@ function completedWithSignature(files: SignableInput[]): DataProfileStatus {
     };
 }
 
-/** A stub runtime whose pool/triggerDeps are never dereferenced (the seams stand in for every read). */
-const stubRuntime = { pool: {}, triggerDeps: {} } as unknown as HarnessRuntime;
+/** Trigger dependencies that refuse each call: the seams stand in for every read, thus the ladder never reaches them. */
+const unusedTriggerDeps: DataProfileTriggerDeps = {
+    pool: fakePool(() => refuse("pool.query")),
+    runAuthorizer: refusingRunAuthorizer,
+    runLauncher: { launch: () => refuse("runLauncher.launch") },
+    workflow: () => refuse("workflow"),
+};
+
+/** A runtime whose pool and trigger dependencies are never used (the seams stand in for every read). */
+const stubRuntime: ProfileRuntime = { pool: fakePool(() => refuse("pool.query")), triggerDeps: unusedTriggerDeps };
 
 /** Seams recording whether each expensive edge ran, so a skip can assert the ladder stopped early. */
 function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParitySeams; ran: { stage: boolean; seed: boolean; trigger: boolean } } {
@@ -444,18 +467,16 @@ describe("ensureProfileAtParity — faults", () => {
 describe("ensureProfileAtParity — trigger path (real seed)", () => {
     test("happy path triggers with the exact params inflexa profile builds", async () => {
         let capturedParams: DataProfileTriggerParams | null = null;
-        const queries: { text: string; values: readonly unknown[] }[] = [];
+        const queries: FakeQuery[] = [];
         // A pool whose query resolves ok, so the REAL seedProfileLedger's upsert succeeds offline and
         // the fileId mapping it sends is observable.
-        const runtime = {
-            pool: {
-                query: async (q: { text: string; values: readonly unknown[] }) => {
-                    queries.push(q);
-                    return { rows: [] };
-                },
-            },
-            triggerDeps: {},
-        } as unknown as HarnessRuntime;
+        const runtime: ProfileRuntime = {
+            pool: fakePool((q) => {
+                queries.push(q);
+                return [];
+            }),
+            triggerDeps: unusedTriggerDeps,
+        };
         const seams: ProfileParitySeams = {
             reconcile: () => okAsync(false),
             enumerate: () => okAsync(new Set(["f1", "f2"])),

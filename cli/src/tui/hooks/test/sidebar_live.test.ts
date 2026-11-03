@@ -14,6 +14,7 @@ import { toAnalysis } from "../../../client/analyses.ts";
 import type { ClientError } from "../../../client/api.ts";
 import { GLYPHS } from "../../../lib/design_system.ts";
 import { asStr256 } from "../../../lib/types.ts";
+import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
 import { createWorkspace, type Workspace } from "../../contexts/workspace.ts";
 import { __resetBootForTest, __setBootStateForTest } from "../boot.ts";
 import { pollOpenThread, resetHotState, type ThreadPollOpts } from "../conversation.ts";
@@ -145,11 +146,10 @@ function bootReady(): void {
     __setBootStateForTest({ phase: "ready", model: "m", connection: { provider: "anthropic", mode: "cliproxy" } });
 }
 
-// The watch reads only `workspace.analysis?.id`, the bound session, and the scope read, so a partial
-// stand-in cast is sound and keeps the trigger tests offline (no reactive store, no lock, no session).
+// The watch reads only `workspace.analysis?.id`, the bound session, and the scope read, so a plain workspace
+// keeps the trigger tests offline (no reactive store, no lock, no session).
 function wsFor(id: string | null): Workspace {
-    const analysis = id === null ? null : ({ id } as unknown as Workspace["analysis"]);
-    return { analysis, sessionId: null, refreshScope: () => {} } as unknown as Workspace;
+    return buildWorkspace({ analysis: id === null ? null : buildAnalysis({ id }) });
 }
 
 /** Build a `loaded` profile snapshot for the {@link profileDetailLines} composer tests. */
@@ -516,8 +516,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
 
     test("an analysis swap clears the row synchronously, before the new analysis loads", async () => {
         // A reactive workspace so Trigger 1's effect re-runs on the swap (mirrors the snapshot-swap test).
-        const [store, setStore] = createStore<{ analysis: { id: string } | null }>({ analysis: { id: "A" } });
-        const ws = store as unknown as Workspace;
+        const [ws, setStore] = createStore(buildWorkspace({ analysis: buildAnalysis({ id: "A" }) }));
 
         // B's profile read is gated so the reset window (row empty) is deterministically observable.
         const gatedB = gatedProfile();
@@ -535,7 +534,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             await new Promise<void>((r) => setTimeout(r, 0)); // let A's reads settle
             expect(activeRunProgress().size).toBeGreaterThan(0); // A's active run is pinned
 
-            setStore("analysis", { id: "B" }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
+            setStore({ analysis: buildAnalysis({ id: "B" }) }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
             expect(activeRunProgress().size).toBe(0); // no stale A entries during the swap window
 
             gatedB.release(profileState({ status: "completed" })); // let B settle so no read leaks past the test
@@ -938,7 +937,7 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
 
     test("a tick reads the open thread of the open analysis", async () => {
         const reads: [string, string][] = [];
-        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => {} } as unknown as Workspace;
+        const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T" });
         const poll = mountPoll(ws, { pollThread: async (analysisId, threadId) => void reads.push([analysisId, threadId]) });
         try {
             await poll.tick();
@@ -952,7 +951,7 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         let scopeReads = 0;
         let threadReads = 0;
         let pausedReads = 0;
-        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => void (scopeReads += 1) } as unknown as Workspace;
+        const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T", refreshScope: () => void (scopeReads += 1) });
         const poll = mountPoll(ws, {
             checkServer: async () => false,
             pollThread: async () => void (threadReads += 1),
@@ -968,7 +967,7 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
 
     test("a tick reads the paused work of the analysis with the open thread", async () => {
         const reads: [string, string | null][] = [];
-        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => {} } as unknown as Workspace;
+        const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T" });
         const poll = mountPoll(ws, { pollPaused: async (analysisId, threadId) => void reads.push([analysisId, threadId]) });
         try {
             await poll.tick();
@@ -981,7 +980,7 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
     test("the open of an analysis reads its paused work at the ready edge, not one tick later", () => {
         bootReady();
         const reads: [string, string | null][] = [];
-        const ws = { analysis: { id: "A" }, sessionId: "T", refreshScope: () => {} } as unknown as Workspace;
+        const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T" });
         const dispose = mountWatch(ws, {
             refresh: async () => {},
             arm: () => () => {},
@@ -1058,8 +1057,7 @@ describe("watchSidebarData — swap resets the snapshots before the new analysis
     test("a swap immediately renders not_ready, then B's data once its read resolves", async () => {
         // A reactive workspace (real store) so Trigger 1's effect re-runs on the analysis swap — the
         // plain-object `wsFor` stand-in would not repaint.
-        const [store, setStore] = createStore<{ analysis: { id: string } | null }>({ analysis: { id: "A" } });
-        const ws = store as unknown as Workspace;
+        const [ws, setStore] = createStore(buildWorkspace({ analysis: buildAnalysis({ id: "A" }) }));
 
         // B's profile read is GATED so the reset window (not_ready) is deterministically observable
         // before B's data lands — the same technique the staleness-guard test uses.
@@ -1075,7 +1073,7 @@ describe("watchSidebarData — swap resets the snapshots before the new analysis
             await new Promise<void>((r) => setTimeout(r, 0)); // let A's reads settle
             expect(profileSnapshot().kind).toBe("loaded"); // A's data is on screen — stale state to clear
 
-            setStore("analysis", { id: "B" }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
+            setStore({ analysis: buildAnalysis({ id: "B" }) }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
             expect(profileSnapshot().kind).toBe("not_ready"); // no stale A render during the swap window
             expect(runsSnapshot().kind).toBe("not_ready");
 

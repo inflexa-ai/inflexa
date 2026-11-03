@@ -9,6 +9,8 @@ import { err, ok } from "neverthrow";
 import type { ProviderError } from "@inflexa-ai/harness";
 
 import { env } from "../../../lib/env.ts";
+import { buildAgentSession } from "../../../test_support/builders.ts";
+import { embeddingsRequestSchema, tokenizeRequestSchema } from "../../../test_support/embedding_requests.ts";
 import {
     __resetLocalRuntimeForTest,
     __setProcessScanForTest,
@@ -25,10 +27,8 @@ import {
 } from "../local-provider.ts";
 import { materializedLlamaServer } from "../llama_runtime.ts";
 
-// A minimal stand-in for AgentSession — the harness client reads only `scope`
-// (for a log label) and the noop billing resolver ignores the rest, so any
-// structural match satisfies the seam.
-const fakeSession = { scope: { kind: "analysis", analysisId: "test" } } as never;
+// The harness client reads only `scope` (for a log label) and the noop billing resolver ignores the rest.
+const fakeSession = buildAgentSession({ scope: { kind: "analysis", analysisId: "test" } });
 
 // The launcher handle type is intentionally not exported; a structural literal
 // (`baseURL` / `origin` / `key` / `stop`, plus the optional `exited` for the
@@ -102,7 +102,7 @@ function llamaShapedFetch(
         }
         if (url.pathname === "/tokenize" && req.method === "POST") {
             if (!authed) return new Response("unauthorized", { status: 401 });
-            const body = (await req.json()) as { content: string };
+            const body = tokenizeRequestSchema.parse(await req.json());
             opts?.onTokenize?.(body.content);
             // Never resolve — models a wedged server so the fit's per-request timeout fires.
             if (opts?.tokenizeHang) return new Promise<Response>(() => {});
@@ -112,7 +112,7 @@ function llamaShapedFetch(
         }
         if (url.pathname === "/v1/embeddings" && req.method === "POST") {
             if (!authed) return Response.json({ error: { message: "invalid api key" } }, { status: 401 });
-            const body = (await req.json()) as { input: string[] };
+            const body = embeddingsRequestSchema.parse(await req.json());
             opts?.onEmbedInputs?.(body.input);
             const data = body.input.map((_, index) => ({ object: "embedding", index, embedding: fixedVector() }));
             return Response.json({ object: "list", data, model: "bge-small-en-v1.5", usage: { prompt_tokens: 0, total_tokens: 0 } });
@@ -967,12 +967,11 @@ describe("sweepOrphanedSidecars (orphan reap decision table)", () => {
         );
         const killed: number[] = [];
         // Spy on process.kill so the injected pids are recorded, never actually signalled:
-        // the decision is observed through the spy, not against real processes. The cast
-        // narrows the recorder to process.kill's exact `(pid, signal?) => true` signature.
-        const killSpy = spyOn(process, "kill").mockImplementation(((pid: number): true => {
+        // the decision is observed through the spy, not against real processes.
+        const killSpy = spyOn(process, "kill").mockImplementation((pid: number): true => {
             killed.push(pid);
             return true;
-        }) as typeof process.kill);
+        });
         try {
             await sweepOrphanedSidecars(serverBin);
         } finally {

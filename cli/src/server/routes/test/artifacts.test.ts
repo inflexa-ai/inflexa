@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ArtifactPage, ArtifactPageQuery, Pool } from "@inflexa-ai/harness";
+import type { ArtifactPage, ArtifactPageQuery } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import { Hono } from "hono";
 import { errAsync, okAsync } from "neverthrow";
+import { z } from "zod";
 
-import type { ArtifactList, ResolvedArtifacts } from "../../../api/artifacts.ts";
 import type { ServerBootState } from "../../../api/server.ts";
 import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
 import { asStr256 } from "../../../lib/types.ts";
@@ -14,31 +15,40 @@ import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../../mo
 import { writeMarker } from "../../../modules/anchor/marker.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { SPEC_FILE_TYPES } from "../../../test_support/file_types.ts";
-import type { HarnessRuntime } from "../../../modules/harness/runtime.ts";
+import { jsonBody } from "../../../test_support/response_body.ts";
 import type { ServerBoot } from "../../boot.ts";
 import type { OpenTarget } from "../../../types/session.ts";
-import type { ServerEnv } from "../../http.ts";
+import type { PoolRuntime, ServerEnv } from "../../http.ts";
 import { artifactRoutes, type ArtifactRoutesOpts } from "../artifacts.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes } from "../fs.ts";
 import { anyOf } from "../../../test_support/matchers.ts";
 
 // The route alone, mounted at its path with no bearer check and no analysis guard: `app.test.ts` covers
-// those. Each `as` cast of a body below reads JSON that the route under test builds from the same
-// `src/api/` type.
-const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
-// The routes only pass the pool to the injected read, thus a stand-in object is enough.
-const runtime = { pool: {} as Pool } as unknown as HarnessRuntime;
+// those. A test that computes on a body parses the fields that it reads. A key beyond them stays on the parsed value.
+const resolvedBody = z.looseObject({ entries: z.array(z.looseObject({ error: z.looseObject({ type: z.string() }).optional() })) });
+const listBody = z.looseObject({
+    artifacts: z.array(
+        z.looseObject({ path: z.string(), role: z.string(), kind: z.string().nullable(), language: z.string(), absolutePath: z.string().nullable() }),
+    ),
+    total: z.number(),
+    extensionCounts: z.array(z.unknown()),
+});
 
-const readyBoot: ServerBoot = {
+const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
+// The routes only pass the pool to the injected read, thus a stand-in that rejects each query is enough.
+const standInPool: Querier = { query: () => Promise.reject(new Error("the route must not query the pool")) };
+const runtime: PoolRuntime = { pool: standInPool };
+
+const readyBoot: ServerBoot<PoolRuntime> = {
     state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
     runtime: () => runtime,
     start: async () => undefined,
 };
 
 const startingState: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
-const startingBoot: ServerBoot = { state: () => startingState, runtime: () => null, start: async () => undefined };
+const startingBoot: ServerBoot<PoolRuntime> = { state: () => startingState, runtime: () => null, start: async () => undefined };
 
-function appWith(opts: ArtifactRoutesOpts, boot: ServerBoot = readyBoot): Hono<ServerEnv> {
+function appWith(opts: ArtifactRoutesOpts, boot: ServerBoot<PoolRuntime> = readyBoot): Hono<ServerEnv> {
     return new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes(boot, opts));
 }
 
@@ -106,7 +116,7 @@ describe("POST {A}/artifacts/resolve", () => {
         );
 
         expect(response.status).toBe(200);
-        expect(((await response.json()) as ResolvedArtifacts).entries).toEqual([
+        expect(await jsonBody(response)).toHaveProperty("entries", [
             { kind: "workspace-file", path: join(root, "runs", "out.csv"), degraded: false },
             { kind: "workspace-file", path: join(root, "runs", "gone.csv"), degraded: true },
             // An echart file is made on open, thus its absence is not a fault.
@@ -125,7 +135,7 @@ describe("POST {A}/artifacts/resolve", () => {
             true,
         );
 
-        const { entries } = (await response.json()) as ResolvedArtifacts;
+        const { entries } = resolvedBody.parse(await jsonBody(response));
         expect(entries[0]).toEqual({ kind: "echart", path: join(root, "presentations", "pres-0123abcd.html"), degraded: false });
         expect(existsSync(join(root, "presentations", "pres-0123abcd.html"))).toBe(true);
         expect(entries[1]?.error).toEqual({ type: "missing", path: join(root, "runs", "gone.csv") });
@@ -137,7 +147,7 @@ describe("POST {A}/artifacts/resolve", () => {
 
         for (const materialize of [false, true]) {
             const response = await resolve("ana-1", [{ kind: "workspace-file", path: "../../outside.txt" }], materialize);
-            const [entry] = ((await response.json()) as ResolvedArtifacts).entries;
+            const [entry] = resolvedBody.parse(await jsonBody(response)).entries;
             expect(entry).toMatchObject({ path: null, degraded: true });
             if (materialize) expect(entry?.error?.type).toBe("unavailable");
         }
@@ -161,7 +171,7 @@ describe("POST {A}/artifacts/resolve", () => {
                 ],
                 materialize,
             );
-            for (const entry of ((await response.json()) as ResolvedArtifacts).entries) {
+            for (const entry of resolvedBody.parse(await jsonBody(response)).entries) {
                 expect(entry).toMatchObject({ path: null, degraded: true });
                 if (materialize) expect(entry.error).toEqual({ type: "unavailable", reason: "the path is not inside the analysis" });
             }
@@ -184,7 +194,7 @@ describe("POST {A}/artifacts/resolve", () => {
             true,
         );
 
-        const { entries } = (await response.json()) as ResolvedArtifacts;
+        const { entries } = resolvedBody.parse(await jsonBody(response));
         // The response keeps the joined path, not the real path.
         expect(entries[0]).toEqual({ kind: "workspace-file", path: join(root, "runs", "R", "A", "alias.csv"), degraded: false });
         expect(entries[1]).toEqual({ kind: "workspace-file", path: join(root, "runs", "R", "A", "figures"), degraded: false });
@@ -199,7 +209,7 @@ describe("POST {A}/artifacts/resolve", () => {
     test("an analysis whose folder cannot be located resolves each entry to `unresolved`", async () => {
         const response = await resolve("no-such-analysis", [{ kind: "workspace-file", path: "runs/out.csv" }], true);
 
-        const [entry] = ((await response.json()) as ResolvedArtifacts).entries;
+        const [entry] = resolvedBody.parse(await jsonBody(response)).entries;
         expect(entry).toEqual({ kind: "workspace-file", path: null, degraded: true, error: { type: "unresolved" } });
     });
 
@@ -244,7 +254,7 @@ describe("GET {A}/artifacts", () => {
         const { app: routes, reads } = listing({ entries: [entry], total: 2, extensionCounts: [{ extension: "png", count: 2 }] });
 
         const response = await routes.request("/api/v1/analyses/a1/artifacts?fileType=figure&q=volcano&runId=r1&stepId=s1");
-        const list = (await response.json()) as ArtifactList;
+        const list = await jsonBody(response);
 
         expect(response.status).toBe(200);
         expect(list).toEqual({
@@ -265,7 +275,7 @@ describe("GET {A}/artifacts", () => {
         const entries = expected.map(([name]) => ({ ...entry, path: `runs/r1/s1/output/${name}` }));
         const { app: routes } = listing({ entries, total: entries.length, extensionCounts: [] });
 
-        const list = (await (await routes.request("/api/v1/analyses/a1/artifacts")).json()) as ArtifactList;
+        const list = listBody.parse(await jsonBody(routes.request("/api/v1/analyses/a1/artifacts")));
 
         expect(list.artifacts.map((row) => [row.path, row.kind, row.language])).toEqual(
             expected.map(([name, kind, language]) => [`runs/r1/s1/output/${name}`, kind, language]),
@@ -278,7 +288,7 @@ describe("GET {A}/artifacts", () => {
         const { app: routes } = listing({ entries: [entry, second], total: 2, extensionCounts: [] });
 
         const response = await routes.request("/api/v1/analyses/ana-1/artifacts");
-        const list = (await response.json()) as ArtifactList;
+        const list = listBody.parse(await jsonBody(response));
 
         expect(response.status).toBe(200);
         expect(list.artifacts.map((item) => item.path)).toEqual([entry.path, second.path]);
@@ -293,7 +303,7 @@ describe("GET {A}/artifacts", () => {
         const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
         writeFileSync(join(root, figure.path), bytes);
         const { app: routes } = listing({ entries: [figure], total: 1, extensionCounts: [] });
-        const list = (await (await routes.request("/api/v1/analyses/ana-1/artifacts")).json()) as ArtifactList;
+        const list = listBody.parse(await jsonBody(routes.request("/api/v1/analyses/ana-1/artifacts")));
         const absolutePath = list.artifacts[0]?.absolutePath;
         expect(absolutePath).toBe(join(root, figure.path));
 
@@ -315,7 +325,7 @@ describe("GET {A}/artifacts", () => {
         insertAnalysis({ id: "ana-1", createdAt: 1, updatedAt: 1, name: asStr256("A"), slug: "a", anchorId: "A1", projectId: null })._unsafeUnwrap();
         const { app: routes } = listing();
 
-        const list = (await (await routes.request("/api/v1/analyses/ana-1/artifacts")).json()) as ArtifactList;
+        const list = listBody.parse(await jsonBody(routes.request("/api/v1/analyses/ana-1/artifacts")));
 
         expect(list.artifacts[0]?.absolutePath).toBe(join(real, ".inflexa", "analyses", "a", entry.path));
     });
@@ -324,7 +334,7 @@ describe("GET {A}/artifacts", () => {
         const { app: routes } = listing({ entries: [entry, { ...entry, path: "runs/r1/s1/output/de.csv" }], total: 2, extensionCounts: [] });
 
         const response = await routes.request("/api/v1/analyses/no-such-analysis/artifacts");
-        const list = (await response.json()) as ArtifactList;
+        const list = listBody.parse(await jsonBody(response));
 
         expect(response.status).toBe(200);
         expect(list.artifacts.map((item) => item.absolutePath)).toEqual([null, null]);
@@ -340,7 +350,7 @@ describe("GET {A}/artifacts", () => {
         const response = await routes.request("/api/v1/analyses/ana-1/artifacts");
 
         expect(response.status).toBe(200);
-        expect(((await response.json()) as ArtifactList).artifacts.map((item) => item.absolutePath)).toEqual([null]);
+        expect(listBody.parse(await jsonBody(response)).artifacts.map((item) => item.absolutePath)).toEqual([null]);
     });
 
     test("sends one read with the limit and the offset of the page", async () => {
@@ -395,7 +405,7 @@ describe("GET {A}/artifacts", () => {
         ];
         const { app: routes } = listing({ entries: [entry], total: 4, extensionCounts });
 
-        const list = (await (await routes.request("/api/v1/analyses/a1/artifacts?runId=r1&perPage=1")).json()) as ArtifactList;
+        const list = listBody.parse(await jsonBody(routes.request("/api/v1/analyses/a1/artifacts?runId=r1&perPage=1")));
 
         expect(list.artifacts).toHaveLength(1);
         expect(list).toMatchObject({ total: 4, perPage: 1, hasMore: true });
@@ -433,7 +443,7 @@ describe("GET {A}/artifacts", () => {
             ],
         });
 
-        const list = (await (await routes.request("/api/v1/analyses/a1/artifacts?role=step_output")).json()) as ArtifactList;
+        const list = listBody.parse(await jsonBody(routes.request("/api/v1/analyses/a1/artifacts?role=step_output")));
 
         expect(list.artifacts.map((item) => item.role)).toEqual(["step_output", "step_output", "step_output"]);
         expect(list.total).toBe(3);

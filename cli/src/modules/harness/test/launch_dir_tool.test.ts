@@ -4,9 +4,10 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { AgentSession, ToolContext } from "@inflexa-ai/harness";
+import type { ToolContext } from "@inflexa-ai/harness";
 
 import { str256 } from "../../../lib/types.ts";
+import { buildAgentSession } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { listAnalysisInputs } from "../../../db/primary_query.ts";
 import { addInputs, createAnalysis } from "../../analysis/analysis.ts";
@@ -14,7 +15,7 @@ import { createLaunchDirTool } from "../launch_dir_tool.ts";
 
 function ctxFor(analysisId: string): ToolContext {
     return {
-        session: { scope: { kind: "analysis", analysisId } } as unknown as AgentSession,
+        session: buildAgentSession({ scope: { kind: "analysis", analysisId } }),
         invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},
@@ -69,8 +70,11 @@ describe("list_launch_dir tool", () => {
     });
 
     test("reports no_analysis outside an analysis scope", async () => {
+        const session = buildAgentSession();
+        // The harness `Scope` has the analysis kind only, thus the other kind is forced at runtime.
+        Object.assign(session, { scope: { kind: "target-assessment", targetAssessmentId: "ta1", billingContextId: "b1" } });
         const ctx: ToolContext = {
-            session: { scope: { kind: "target-assessment", targetAssessmentId: "ta1", billingContextId: "b1" } } as unknown as AgentSession,
+            session,
             invocationId: "test-tool-call",
             signal: new AbortController().signal,
             emit: () => {},

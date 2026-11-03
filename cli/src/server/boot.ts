@@ -21,12 +21,15 @@ import { bootHarnessRuntime, describeBootError, type HarnessBootError, type Harn
 import { ensureProxyReady, ProxyError } from "../modules/infra/setup.ts";
 import { collectStoreDebris } from "../modules/libs/store.ts";
 
-/** The boot of the harness runtime inside the server, as the routes see it. */
-export type ServerBoot = {
+/**
+ * The boot of the harness runtime inside the server, as the routes see it. `R` is the handle that a route gets
+ * from `runtime()`. A route that reads only a part of it is generic over `R`, and a test gives a small handle.
+ */
+export type ServerBoot<R = HarnessRuntime> = {
     /** The boot part of the body of `GET /api/v1/server`: the route joins the stop. */
     state(): ServerBootState;
     /** The booted runtime, or `null` until the phase is `ready`. */
-    runtime(): HarnessRuntime | null;
+    runtime(): R | null;
     /**
      * Start a boot when none runs and none succeeded: at the start of the server, and again after `failed`.
      * Otherwise it does nothing. The promise settles when the attempt settles. It never rejects.
@@ -34,19 +37,22 @@ export type ServerBoot = {
     start(): Promise<void>;
 };
 
-/** The work of a boot, and the reactions to its outcome. Tests replace each one. */
-export type ServerBootOpts = {
+/** The part of the runtime that the boot holder reads: the connection identity and the conversation model. */
+export type BootedRuntime = Pick<HarnessRuntime, "connection"> & { readonly conversation: Pick<HarnessRuntime["conversation"], "model"> };
+
+/** The work of a boot, and the reactions to its outcome. Tests replace each one. `R` is the runtime handle that the boot gives. */
+export type ServerBootOpts<R extends BootedRuntime = HarnessRuntime> = {
     /**
      * Make the machine ready (containers, proxy, embedder), then boot the harness runtime. It reports its steps
      * through `progress`, and it binds `makeSessionPagePublisher` on the runtime when that value is present.
      */
-    readonly boot: (progress: BootProgressOpts, makeSessionPagePublisher?: MakeSessionPagePublisher) => Promise<Result<HarnessRuntime, ServerBootError>>;
+    readonly boot: (progress: BootProgressOpts, makeSessionPagePublisher?: MakeSessionPagePublisher) => Promise<Result<R, ServerBootError>>;
     /** The hosted view of a report page: the realization over the grant store of this server. */
     readonly makeSessionPagePublisher?: MakeSessionPagePublisher;
     /** The clock of the step times. */
     readonly now: () => Date;
     /** Runs one time at the ready edge. */
-    readonly onReady: (runtime: HarnessRuntime) => void;
+    readonly onReady: (runtime: R) => void;
     /** Runs when an attempt settles, with the new state. */
     readonly onSettle: (state: ServerBootState) => void;
 };
@@ -68,9 +74,9 @@ export const DEFAULT_SERVER_BOOT_OPTS: ServerBootOpts = {
 };
 
 /** The phase without the runtime: the runtime handle is kept apart, because no client gets it. */
-type Phase =
+type Phase<R> =
     | { phase: "starting"; attemptStartedAt: string; step: BootStepRunning | null; done: BootStepDone[] }
-    | { phase: "ready"; runtime: HarnessRuntime }
+    | { phase: "ready"; runtime: R }
     | { phase: "failed"; bootError: ServerBootError; attemptStartedAt: string; failedAt: string; failedStep: BootStepId | null };
 
 /**
@@ -78,8 +84,8 @@ type Phase =
  * server starts the boot right after it binds its port. Before the first attempt starts, the attempt start is
  * the start of the server, with no step.
  */
-export function createServerBoot(startedAt: Date, opts: ServerBootOpts = DEFAULT_SERVER_BOOT_OPTS): ServerBoot {
-    let current: Phase = { phase: "starting", attemptStartedAt: startedAt.toISOString(), step: null, done: [] };
+export function createServerBoot<R extends BootedRuntime>(startedAt: Date, opts: ServerBootOpts<R>): ServerBoot<R> {
+    let current: Phase<R> = { phase: "starting", attemptStartedAt: startedAt.toISOString(), step: null, done: [] };
     let attempt: Promise<void> | null = null;
 
     function state(): ServerBootState {
@@ -117,14 +123,14 @@ export function createServerBoot(startedAt: Date, opts: ServerBootOpts = DEFAULT
         }
     }
 
-    function settle(next: Phase): void {
+    function settle(next: Phase<R>): void {
         current = next;
         attempt = null;
         if (next.phase === "ready") opts.onReady(next.runtime);
         opts.onSettle(state());
     }
 
-    function fail(running: Extract<Phase, { phase: "starting" }>, bootError: ServerBootError): Phase {
+    function fail(running: Extract<Phase<R>, { phase: "starting" }>, bootError: ServerBootError): Phase<R> {
         return {
             phase: "failed",
             bootError,
@@ -137,7 +143,7 @@ export function createServerBoot(startedAt: Date, opts: ServerBootOpts = DEFAULT
     function start(): Promise<void> {
         if (attempt !== null) return attempt;
         if (current.phase === "ready") return Promise.resolve();
-        const running: Extract<Phase, { phase: "starting" }> = { phase: "starting", attemptStartedAt: opts.now().toISOString(), step: null, done: [] };
+        const running: Extract<Phase<R>, { phase: "starting" }> = { phase: "starting", attemptStartedAt: opts.now().toISOString(), step: null, done: [] };
         current = running;
         // `settle` replaces `current`, so a callback that runs after its attempt settled sees another object and does nothing.
         const progress: BootProgressOpts = {
@@ -158,8 +164,8 @@ export function createServerBoot(startedAt: Date, opts: ServerBootOpts = DEFAULT
             (result) =>
                 settle(
                     result.match(
-                        (runtime): Phase => ({ phase: "ready", runtime }),
-                        (bootError): Phase => fail(running, bootError),
+                        (runtime): Phase<R> => ({ phase: "ready", runtime }),
+                        (bootError): Phase<R> => fail(running, bootError),
                     ),
                 ),
             (cause: unknown) => settle(fail(running, { reason: "runtime_boot_failed", message: describeCause(cause), detailLines: causeDetailLines(cause) })),

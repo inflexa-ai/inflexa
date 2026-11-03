@@ -18,35 +18,48 @@ import {
     type ThreadStore,
     type TurnPage,
 } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
+import { z } from "zod";
 
 import type { ServerBootState } from "../../../api/server.ts";
-import {
-    TURN_ID_HEADER,
-    type AskList,
-    type MessageList,
-    type PurgedThread,
-    type ThreadList,
-    type ThreadSummary,
-    type TurnList,
-    type TurnSummary,
-} from "../../../api/conversation.ts";
+import { TURN_ID_HEADER, type TurnSummary } from "../../../api/conversation.ts";
 import { readSseFrames } from "../../../client/api.ts";
 import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
 import { listAnalysisPage } from "../../../db/primary_query.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { jsonBody } from "../../../test_support/response_body.ts";
 import type { RunChatTurnArgs, TurnOutcome } from "../../../modules/harness/turn.ts";
-import type { HarnessRuntime } from "../../../modules/harness/runtime.ts";
 import { conversationThread, FIXTURE_ANALYSIS_ID, reportThread } from "../../../test_support/threads.ts";
 import { idleBoot } from "../../../test_support/server.ts";
 import type { ServerBoot } from "../../boot.ts";
 import { __resetTurnsForTest, findTurn, hasRunningTurn, refuseNewTurns, startTurn } from "../../turns.ts";
-import { conversationRoutes, DEFAULT_CONVERSATION_ROUTE_OPTS, type ConversationRouteOpts } from "../conversation.ts";
+import { conversationRoutes, DEFAULT_CONVERSATION_ROUTE_OPTS, type ConversationRouteOpts, type ConversationRuntime } from "../conversation.ts";
 import { anyOf } from "../../../test_support/matchers.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. No cli test reaches Postgres
-// or a model, thus each store and the chat turn are fakes that the options inject. Each `as` cast of a body
-// below reads JSON that the route under test builds from the same `src/api/` type.
+// or a model, thus each store and the chat turn are fakes that the options inject. A test that computes on a body
+// parses the fields that it reads. A key beyond them stays on the parsed value.
+
+const threadSummary = z.looseObject({ id: z.string(), title: z.string().optional(), runningTurnId: z.string().nullable() });
+const threadList = z.looseObject({ threads: z.array(threadSummary) });
+const messageList = z.looseObject({
+    messages: z.array(z.looseObject({ parts: z.array(z.looseObject({ type: z.string(), text: z.string().optional() })) })),
+    before: z.string().nullable(),
+    perPage: z.number(),
+});
+const turnSummary = z.looseObject({
+    status: z.string(),
+    durationMs: z.number().optional(),
+    failure: z.looseObject({ message: z.string(), detailLines: z.array(z.string()), credential: z.unknown().optional() }).optional(),
+});
+const turnList = z.looseObject({ turns: z.array(z.looseObject({ turnId: z.string(), status: z.string() })), total: z.number() });
+const askList = z.looseObject({ asks: z.array(z.looseObject({ id: z.string() })), total: z.number() });
+
+/** The pool of the booted runtime of a route test. Each fake below ignores it, thus a stand-in that rejects each query is enough. */
+const standInPool: Querier = { query: () => Promise.reject(new Error("the route must not query the pool")) };
+
+type Handle = ConversationRuntime<Querier>;
 
 const A = FIXTURE_ANALYSIS_ID;
 /** The answer of a store method that no route calls. */
@@ -114,21 +127,24 @@ function fakeGateway(pending: PendingAsk[], outcome: AnswerOutcome = "applied"):
 
 /**
  * A boot whose runtime is ready. The routes read the pool, the chat turns, and the gateway of the runtime, and each
- * fake below ignores the pool. The chat turns answer through the gateway, and a read gives `frames`.
+ * fake below ignores the pool. The chat turns answer through the gateway, a read gives `frames`, and `stop` records the
+ * turns that the abort route stops through the harness. The route opens a turn through `runTurn`, which each test replaces.
  */
-function readyBoot(gateway: AskGateway = fakeGateway([]), frames: readonly ChatFrame[] = []): ServerBoot {
-    const chatTurns: Pick<ChatTurns, "answer" | "read"> = {
+function readyBoot(
+    gateway: AskGateway = fakeGateway([]),
+    frames: readonly ChatFrame[] = [],
+    stop: (turnId: string) => Promise<void> = () => Promise.reject(new Error("the route must not stop a turn through the harness")),
+): ServerBoot<Handle> {
+    const chatTurns: ChatTurns = {
+        open: () => Promise.reject(new Error("the routes open a turn through `runTurn`")),
         answer: (id, reply) => gateway.answer(id, reply),
         async *read() {
             for (const frame of frames) yield frame;
         },
+        stop,
+        outcome: () => Promise.resolve(null),
     };
-    // The cast is sound for the reason above: no route under test reads another field of the runtime.
-    const runtime = {
-        pool: {},
-        chatTurns,
-        askGateway: gateway,
-    } as unknown as HarnessRuntime;
+    const runtime: Handle = { pool: standInPool, chatTurns, askGateway: gateway };
     const state: ServerBootState = {
         version: "0.0.0-test",
         apiVersion: 1,
@@ -153,9 +169,9 @@ function turnRow(index: number): StoredMessage[] {
 }
 
 /** The text of a replayed one-part chat message. */
-function textOf(message: MessageList["messages"][number]): string {
+function textOf(message: z.infer<typeof messageList>["messages"][number]): string {
     const part = message.parts[0];
-    return part?.type === "text" ? part.text : "";
+    return part?.type === "text" ? (part.text ?? "") : "";
 }
 
 /**
@@ -181,9 +197,9 @@ function turnStore(count: number): {
     };
 }
 
-type Options = Partial<ConversationRouteOpts> & { store?: ThreadStore; boot?: ServerBoot };
+type Options = Partial<ConversationRouteOpts<Querier>> & { store?: ThreadStore; boot?: ServerBoot<Handle> };
 
-function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes> {
+function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes<Querier>> {
     const store = o.store ?? memoryStore([conversationThread()]);
     return conversationRoutes(o.boot ?? readyBoot(), {
         ...DEFAULT_CONVERSATION_ROUTE_OPTS,
@@ -238,9 +254,9 @@ describe("the thread routes", () => {
         const store = memoryStore([conversationThread({ title: null }), reportThread({ deletedAt: new Date("2026-07-09T00:00:00.000Z") })]);
         const response = await routesWith({ store }).request(`/${A}/threads?type=conversation&parentThreadId=p1&includeArchived=true&perPage=5`);
         expect(response.status).toBe(200);
-        const list = (await response.json()) as ThreadList;
+        const list = threadList.parse(await jsonBody(response));
         expect(list).toMatchObject({ total: 2, page: 0, perPage: 5, hasMore: false });
-        const [conversation, report] = list.threads as [ThreadSummary, ThreadSummary];
+        const [conversation, report] = list.threads;
         // An absent title omits its key, as the Cortex payload does.
         expect(conversation).toEqual({
             id: T,
@@ -263,7 +279,7 @@ describe("the thread routes", () => {
 
     test("GET {T} gives the live thread, and 404 for a thread of a different analysis or with no row", async () => {
         const routes = routesWith();
-        expect(((await (await routes.request(`/${A}/threads/${T}`)).json()) as ThreadSummary).title).toBe("Cohort survival questions");
+        expect(threadSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}`))).title).toBe("Cohort survival questions");
         for (const path of [`/other/threads/${T}`, `/${A}/threads/missing`]) {
             const response = await routes.request(path);
             expect(response.status).toBe(404);
@@ -275,7 +291,7 @@ describe("the thread routes", () => {
         const routes = routesWith();
         const renamed = await routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "  New name " }));
         expect(renamed.status).toBe(200);
-        expect(((await renamed.json()) as ThreadSummary).title).toBe("New name");
+        expect(threadSummary.parse(await jsonBody(renamed)).title).toBe("New name");
 
         const blank = await routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "   " }));
         expect(blank.status).toBe(400);
@@ -304,12 +320,12 @@ describe("the thread routes", () => {
             const asks = [openAsk("k1", T), openAsk("k2", T), openAsk("k3", "thread-idle-other"), openAsk("k4", null)];
             const routes = routesWith({ store, boot: readyBoot(fakeGateway(asks)) });
 
-            const list = (await (await routes.request(`/${A}/threads`)).json()) as ThreadList;
+            const list = threadList.parse(await jsonBody(routes.request(`/${A}/threads`)));
             const byId = new Map(list.threads.map((thread) => [thread.id, thread]));
             expect(byId.get(T)).toMatchObject({ runningTurnId: "turn-new", pendingAsks: 2 });
             expect(byId.get("thread-idle")).toMatchObject({ runningTurnId: null, pendingAsks: 0 });
 
-            const single = (await (await routes.request(`/${A}/threads/${T}`)).json()) as ThreadSummary;
+            const single = threadSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}`)));
             expect(single).toMatchObject({ runningTurnId: "turn-new", pendingAsks: 2 });
         });
 
@@ -330,7 +346,7 @@ describe("the thread routes", () => {
                 },
             });
 
-            const list = (await (await routes.request(`/${A}/threads`)).json()) as ThreadList;
+            const list = threadList.parse(await jsonBody(routes.request(`/${A}/threads`)));
             const byId = new Map(list.threads.map((thread) => [thread.id, thread.runningTurnId]));
             expect(byId).toEqual(
                 new Map([
@@ -341,12 +357,12 @@ describe("the thread routes", () => {
             );
             expect(reads).toEqual([[T, "thread-both", "thread-idle"]]);
 
-            const single = (await (await routes.request(`/${A}/threads/${T}`)).json()) as ThreadSummary;
+            const single = threadSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}`)));
             expect(single.runningTurnId).toBe("turn-recovered");
-            const renamed = (await (await routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "New" }))).json()) as ThreadSummary;
+            const renamed = threadSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "New" }))));
             expect(renamed.runningTurnId).toBe("turn-recovered");
             await routes.request(`/${A}/threads/${T}`, { method: "DELETE" });
-            const restored = (await (await routes.request(`/${A}/threads/${T}/restore`, { method: "POST" })).json()) as ThreadSummary;
+            const restored = threadSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}/restore`, { method: "POST" })));
             expect(restored.runningTurnId).toBe("turn-recovered");
         });
 
@@ -370,11 +386,11 @@ describe("the thread routes", () => {
             const store = memoryStore([conversationThread()]);
             const routes = routesWith({ store, boot: readyBoot(fakeGateway([openAsk("k1", T)])) });
 
-            const renamed = (await (await routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "New" }))).json()) as ThreadSummary;
+            const renamed = threadSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}`, json("PATCH", { title: "New" }))));
             expect(renamed).toMatchObject({ title: "New", runningTurnId: "turn-1", pendingAsks: 1 });
 
             await routes.request(`/${A}/threads/${T}`, { method: "DELETE" });
-            const restored = (await (await routes.request(`/${A}/threads/${T}/restore`, { method: "POST" })).json()) as ThreadSummary;
+            const restored = threadSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}/restore`, { method: "POST" })));
             expect(restored).toMatchObject({ id: T, runningTurnId: "turn-1", pendingAsks: 1 });
         });
 
@@ -391,7 +407,7 @@ describe("the thread routes", () => {
 
             const response = await routesWith({ store: memoryStore(rows), boot: readyBoot(gateway) }).request(`/${A}/threads`);
 
-            expect(((await response.json()) as ThreadList).threads).toHaveLength(20);
+            expect(threadList.parse(await jsonBody(response)).threads).toHaveLength(20);
             expect(reads).toBe(1);
         });
 
@@ -429,7 +445,7 @@ describe("the thread routes", () => {
 
         const restored = await routes.request(`/${A}/threads/${T}/restore`, { method: "POST" });
         expect(restored.status).toBe(200);
-        expect(((await restored.json()) as ThreadSummary).id).toBe(T);
+        expect(threadSummary.parse(await jsonBody(restored)).id).toBe(T);
         expect((await routes.request(`/${A}/threads/${T}`)).status).toBe(200);
     });
 
@@ -462,8 +478,8 @@ describe("the thread routes", () => {
             workspaceRoot: async () => ({ kind: "root", root: "/ws" }),
             removeDir: (dir) => (dir.endsWith("thread-report") ? errAsync({ type: "io_failed", op: "test", cause: "EACCES" }) : okAsync(undefined)),
         });
-        const body = (await (await routes.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" }))).json()) as PurgedThread;
-        expect(body.pages).toEqual({ kind: "stayed", dirs: [join("/ws", "report-sessions", "thread-report")] });
+        const body = await jsonBody(routes.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" })));
+        expect(body).toHaveProperty("pages", { kind: "stayed", dirs: [join("/ws", "report-sessions", "thread-report")] });
     });
 
     test("POST {T}/purge waits for a slow remove of a page folder, and holds no other request meanwhile", async () => {
@@ -488,13 +504,13 @@ describe("the thread routes", () => {
         expect(purged).toBe(false);
 
         release();
-        expect(((await (await purging).json()) as PurgedThread).pages).toEqual({ kind: "removed" });
+        expect(await jsonBody(purging)).toHaveProperty("pages", { kind: "removed" });
     });
 
     test("POST {T}/purge reports a workspace that does not resolve, and refuses a body with no `files`", async () => {
         const unlocatable = routesWith({ workspaceRoot: async () => ({ kind: "unlocatable" }) });
-        const body = (await (await unlocatable.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" }))).json()) as PurgedThread;
-        expect(body.pages).toEqual({ kind: "unlocatable" });
+        const body = await jsonBody(unlocatable.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" })));
+        expect(body).toHaveProperty("pages", { kind: "unlocatable" });
         expect((await routesWith().request(`/${A}/threads/${T}/purge`, json("POST", {}))).status).toBe(400);
     });
 
@@ -502,7 +518,7 @@ describe("the thread routes", () => {
         const thread = turnStore(30);
         const response = await routesWith({ loadPage: thread.loadPage }).request(`/${A}/threads/${T}/messages`);
         expect(response.status).toBe(200);
-        const list = (await response.json()) as MessageList;
+        const list = messageList.parse(await jsonBody(response));
         expect(list.messages.map(textOf)).toEqual(Array.from({ length: 20 }, (_, i) => `turn ${i + 10}`));
         expect(list).toMatchObject({ total: 20, page: 0, perPage: 20, hasMore: true, before: "10" });
     });
@@ -510,20 +526,20 @@ describe("the thread routes", () => {
     test("GET {T}/messages with the cursor of a page gives the turns before it, and the last page has a null cursor", async () => {
         const thread = turnStore(30);
         const routes = routesWith({ loadPage: thread.loadPage });
-        const first = (await (await routes.request(`/${A}/threads/${T}/messages`)).json()) as MessageList;
-        const last = (await (await routes.request(`/${A}/threads/${T}/messages?before=${first.before}`)).json()) as MessageList;
+        const first = messageList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/messages`)));
+        const last = messageList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/messages?before=${first.before}`)));
         expect(last.messages.map(textOf)).toEqual(Array.from({ length: 10 }, (_, i) => `turn ${i}`));
         expect(last).toMatchObject({ total: 10, page: 0, perPage: 20, hasMore: false, before: null });
     });
 
     test("GET {T}/messages gives a short thread in one page", async () => {
-        const list = (await (await routesWith({ loadPage: turnStore(3).loadPage }).request(`/${A}/threads/${T}/messages`)).json()) as MessageList;
+        const list = messageList.parse(await jsonBody(routesWith({ loadPage: turnStore(3).loadPage }).request(`/${A}/threads/${T}/messages`)));
         expect(list.messages.map(textOf)).toEqual(["turn 0", "turn 1", "turn 2"]);
         expect(list).toMatchObject({ total: 3, hasMore: false, before: null });
     });
 
     test("GET {T}/messages gives a page of no turns for a thread that holds none", async () => {
-        const list = (await (await routesWith().request(`/${A}/threads/${T}/messages`)).json()) as MessageList;
+        const list = messageList.parse(await jsonBody(routesWith().request(`/${A}/threads/${T}/messages`)));
         expect(list).toEqual({ messages: [], total: 0, page: 0, perPage: 20, hasMore: false, before: null });
     });
 
@@ -531,7 +547,7 @@ describe("the thread routes", () => {
         const thread = turnStore(500);
         const routes = routesWith({ loadPage: thread.loadPage });
         const perPageOf = async (query: string): Promise<number> =>
-            ((await (await routes.request(`/${A}/threads/${T}/messages${query}`)).json()) as MessageList).perPage;
+            messageList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/messages${query}`))).perPage;
         expect(await perPageOf("")).toBe(20);
         expect(await perPageOf("?limit=500")).toBe(100);
         expect(await perPageOf("?limit=abc")).toBe(20);
@@ -556,9 +572,9 @@ describe("the thread routes", () => {
         for (const bad of ["abc", "", "-1", "1.5", "1e3", "0x10", "9007199254740993"]) {
             const response = await routes.request(`/${A}/threads/${T}/messages?before=${bad}`);
             expect({ bad, status: response.status }).toEqual({ bad, status: 400 });
-            const body = (await response.json()) as { error: string; details: { fieldErrors: Record<string, string[]> } };
-            expect(body.error).toBe("validation_error");
-            expect(body.details.fieldErrors.before).toBeDefined();
+            const body = await jsonBody(response);
+            expect(body).toHaveProperty("error", "validation_error");
+            expect(body).toHaveProperty(["details", "fieldErrors", "before"]);
         }
         expect(thread.calls).toEqual([]);
     });
@@ -642,7 +658,7 @@ describe("POST {A}/chat", () => {
             { type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] } },
             { type: "finish", source: { agentId: "chat", callPath: ["chat"] }, finishReason: "stop", turnUsage: { inputTokens: 10, outputTokens: 2 } },
         ]);
-        const summary = (await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary;
+        const summary = turnSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns/${turnId}`)));
         expect(summary).toMatchObject({ turnId, threadId: T, analysisId: A, status: "done", opened: true, fallbackText: "Hello" });
         expect(summary.durationMs).toBeGreaterThanOrEqual(0);
         expect(flushed).toBe(1);
@@ -681,12 +697,12 @@ describe("POST {A}/chat", () => {
     });
 
     test("gives the turn the chat turns of the runtime and the session of the thread", async () => {
-        let seen: RunChatTurnArgs | null = null;
+        const seen: RunChatTurnArgs[] = [];
         const boot = readyBoot();
         const routes = routesWith({
             boot,
             runTurn: (args) => {
-                seen = args;
+                seen.push(args);
                 args.onOpened?.(crypto.randomUUID());
                 return Promise.resolve({ kind: "ok", opened: true, finishReason: "stop", fallbackText: "" });
             },
@@ -694,7 +710,7 @@ describe("POST {A}/chat", () => {
         await framesOf(await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hello" })));
         // The chat turns of the runtime carry its recorder and its gateway. Without them, the calls of the
         // conversation agent never reach the ledger, and its asks never reach the surface.
-        const args = seen as RunChatTurnArgs | null;
+        const args = seen[0];
         expect(args?.chatTurns).toBe(boot.runtime()!.chatTurns);
         expect(args?.session.scope).toEqual({ kind: "analysis", analysisId: A, threadId: T });
         expect(args).toMatchObject({ analysisId: A, threadId: T, userInput: "hello" });
@@ -718,7 +734,7 @@ describe("POST {A}/chat", () => {
         expect(response.status).toBe(404);
         expect(response.headers.get(TURN_ID_HEADER)).toBeNull();
         expect(await response.json()).toEqual({ error: "not_found", message: "Thread not found." });
-        expect(((await (await routes.request(`/${A}/threads/${T}/turns`)).json()) as TurnList).turns).toEqual([]);
+        expect(turnList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns`))).turns).toEqual([]);
     });
 
     test("500 `internal_error` for a thread type with no agent, and for a turn that could not prepare", async () => {
@@ -768,7 +784,7 @@ describe("POST {A}/chat", () => {
         const message =
             "The anthropic endpoint rejected your API key — check INFLEXA_MODEL_API_KEY, then run `inflexa server stop`. The next `inflexa` command starts the server with the new key.";
         expect(await framesOf(response)).toEqual([{ type: "error", message, source: { agentId: "chat", callPath: ["chat"] } }]);
-        const summary = (await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary;
+        const summary = turnSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns/${turnId}`)));
         expect(summary.status).toBe("failed");
         expect(summary.failure).toMatchObject({ message, auth: { provider: "anthropic", envVar: "INFLEXA_MODEL_API_KEY" } });
         expect(summary.failure?.detailLines.length).toBeGreaterThan(0);
@@ -801,7 +817,7 @@ describe("POST {A}/chat", () => {
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
         const turnId = response.headers.get(TURN_ID_HEADER);
         await framesOf(response);
-        const summary = (await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary;
+        const summary = turnSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns/${turnId}`)));
         expect(summary.failure?.credential).toEqual({ kind: "rate_limited", retryAt: "2026-10-02T12:00:00.000Z" });
         expect(summary.failure?.message).toStartWith("anthropic is rate-limiting this account");
     });
@@ -821,7 +837,7 @@ describe("the turn registry routes", () => {
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
         const turnId = response.headers.get(TURN_ID_HEADER)!;
 
-        const running = (await (await routes.request(`/${A}/threads/${T}/turns`)).json()) as TurnList;
+        const running = turnList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns`)));
         expect(running.turns.map((t) => [t.turnId, t.status])).toEqual([[turnId, "running"]]);
         expect(hasRunningTurn(A)).toBe(true);
 
@@ -829,7 +845,7 @@ describe("the turn registry routes", () => {
         expect(await aborted.json()).toEqual({ turnId, outcome: "aborting" });
         expect((await framesOf(response)).map((f) => f.type)).toEqual(["finish"]);
         expect(sawAbort).toBe(true);
-        expect(((await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary).status).toBe("aborted");
+        expect(turnSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns/${turnId}`))).status).toBe("aborted");
 
         const again = await routes.request(`/${A}/threads/${T}/turns/${turnId}/abort`, { method: "POST" });
         expect(await again.json()).toEqual({ turnId, outcome: "already_ended" });
@@ -871,7 +887,7 @@ describe("the turn registry routes", () => {
         proceed.open();
         await finished.wait;
         expect(aborted).toBe(false);
-        const summary = (await (await routes.request(`/${A}/threads/${T}/turns/${turnId}`)).json()) as TurnSummary;
+        const summary = turnSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns/${turnId}`)));
         expect(summary).toMatchObject({ status: "done", fallbackText: "first second" });
         expect(hasRunningTurn(A)).toBe(false);
     });
@@ -932,11 +948,8 @@ describe("the turn registry routes", () => {
 
     test("POST {T}/turns/:turnId/abort stops a turn that holds the thread and that the registry does not hold, through the harness", async () => {
         const stopped: string[] = [];
-        const ready = readyBoot();
-        // The cast is sound: the abort route reads the pool and `chatTurns.stop` of the runtime, and nothing else.
-        const runtime = { ...ready.runtime(), chatTurns: { stop: async (turnId: string) => void stopped.push(turnId) } } as unknown as HarnessRuntime;
         const routes = routesWith({
-            boot: { ...ready, runtime: () => runtime },
+            boot: readyBoot(fakeGateway([]), [], async (turnId) => void stopped.push(turnId)),
             activeTurnId: () => okAsync("turn-recovered"),
         });
 
@@ -956,12 +969,12 @@ describe("the turn registry routes", () => {
             },
         });
 
-        const list = (await (await routes.request(`/${A}/threads/${T}/turns`)).json()) as TurnList;
+        const list = turnList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns`)));
         expect(list.turns).toEqual([{ turnId: "turn-recovered", threadId: T, analysisId: A, status: "running", startedAt: "2026-10-02T09:00:00.000Z" }]);
         expect(list.total).toBe(1);
         expect(reads).toEqual([[T]]);
         // The live turn of the thread is not a turn of a different analysis.
-        expect(((await (await routes.request(`/other/threads/${T}/turns`)).json()) as TurnList).turns).toEqual([]);
+        expect(turnList.parse(await jsonBody(routes.request(`/other/threads/${T}/turns`))).turns).toEqual([]);
     });
 
     test("GET {T}/turns gives a turn that the registry holds one time, as the registry holds it", async () => {
@@ -970,7 +983,7 @@ describe("the turn registry routes", () => {
             liveTurns: () => okAsync([{ turnId: "turn-1", threadId: T, analysisId: A, startedAt: "2026-10-02T09:59:59.000Z" }]),
         });
 
-        const list = (await (await routes.request(`/${A}/threads/${T}/turns`)).json()) as TurnList;
+        const list = turnList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns`)));
         expect(list.turns).toEqual([{ turnId: "turn-1", threadId: T, analysisId: A, status: "running", startedAt: "2026-10-02T10:00:00.000Z" }]);
     });
 
@@ -1001,7 +1014,7 @@ describe("the ask routes", () => {
 
     test("GET {A}/asks gives the pending asks of the analysis alone", async () => {
         const routes = routesWith({ boot: readyBoot(fakeGateway([ask("k1", A), ask("k2", "other")])) });
-        const list = (await (await routes.request(`/${A}/asks`)).json()) as AskList;
+        const list = askList.parse(await jsonBody(routes.request(`/${A}/asks`)));
         expect(list.asks.map((a) => a.id)).toEqual(["k1"]);
         expect(list.total).toBe(1);
     });

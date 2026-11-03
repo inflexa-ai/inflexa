@@ -348,7 +348,7 @@ export function sessionScopeOf(snapshot: ThreadSnapshot): SessionScope | undefin
  * composer once the turn has ended, ready to type again. Pure over the busy flag and the two refs so the
  * busy-aware branch is pinned without mounting the whole runtime; `App`'s dock effect reads it at drain.
  */
-export function askDrainRefocusTarget(busy: boolean, pane: Renderable | null, composer: Renderable | null): Renderable | null {
+export function askDrainRefocusTarget<P, C>(busy: boolean, pane: P | null, composer: C | null): P | C | null {
     return busy ? pane : composer;
 }
 
@@ -1034,11 +1034,10 @@ export function App(props: AppProps) {
     function applySelectionColors(): void {
         const bg = themeVariant() === "light" ? theme().bgActive : undefined;
         const visit = (r: Renderable): void => {
-            // text/code/diff/textarea expose the setters, a box doesn't; the `in` guard makes the cast sound.
+            // text/code/diff/textarea expose the setters, a box doesn't; the `in` guards narrow to them.
             if ("selectionBg" in r) {
-                const sel = r as Renderable & { selectionBg: string | undefined; selectionFg: string | undefined };
-                sel.selectionBg = bg; // undefined = native highlight; reassigned each call so a theme switch re-derives
-                sel.selectionFg = undefined;
+                r.selectionBg = bg; // undefined = native highlight; reassigned each call so a theme switch re-derives
+                if ("selectionFg" in r) r.selectionFg = undefined;
             }
             for (const child of r.getChildren()) visit(child);
         };

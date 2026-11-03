@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { ResultAsync, type Result } from "neverthrow";
-import type { ChatTurnSession, Work, WorkHold, WorkResume } from "@inflexa-ai/harness";
+import type { ChatTurnSession, Work, WorkHold, WorkResume, WorkSurface } from "@inflexa-ai/harness";
 
 import type { HeldWork, PausedWork, PausedWorkList, ResumedWork } from "../../api/paused_work.ts";
 import type { DbError } from "../../db/errors.ts";
@@ -35,10 +35,14 @@ export const DEFAULT_PAUSED_WORK_ROUTE_OPTS: PausedWorkRouteOpts = {
 /**
  * The routes under `{A}/paused-work`: the list of the paused work of the analysis, and the resume and the hold of one
  * work. Each reads the runtime. The stop of paused work has no route here: the abort of a turn and the cancel of a
- * run stop it.
+ * run stop it. The routes read the paused work of the runtime handle `R` only, thus a test gives a handle with that
+ * member.
  */
-export function pausedWorkRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = DEFAULT_PAUSED_WORK_ROUTE_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function pausedWorkRoutes<R extends { readonly work: WorkSurface }>(
+    boot: ServerBoot<R>,
+    opts: PausedWorkRouteOpts = DEFAULT_PAUSED_WORK_ROUTE_OPTS,
+): Hono<ServerEnv<R>> {
+    const routes = new Hono<ServerEnv<R>>();
     const runtime = requireRuntime(boot);
 
     routes.get("/", runtime, (c) => listPausedWork(c, opts, c.req.param("analysisId") ?? ""));
@@ -96,8 +100,11 @@ export function pausedWorkRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = D
  * the runtime, thus it waits for the boot. It is outside `/api/v1/analyses/:analysisId`, thus the analysis guard
  * does not cover it.
  */
-export function pausedWorkCollectionRoutes(boot: ServerBoot, opts: PausedWorkRouteOpts = DEFAULT_PAUSED_WORK_ROUTE_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function pausedWorkCollectionRoutes<R extends { readonly work: WorkSurface }>(
+    boot: ServerBoot<R>,
+    opts: PausedWorkRouteOpts = DEFAULT_PAUSED_WORK_ROUTE_OPTS,
+): Hono<ServerEnv<R>> {
+    const routes = new Hono<ServerEnv<R>>();
     routes.get("/", requireRuntime(boot), (c) => listPausedWork(c, opts, undefined));
     return routes;
 }
@@ -108,7 +115,7 @@ export function pausedWorkCollectionRoutes(boot: ServerBoot, opts: PausedWorkRou
  * SQLite row drops before the page, thus `total` counts only the items that a client gets: no `{A}` route can act on
  * that work.
  */
-async function listPausedWork(c: Context<ServerEnv>, opts: PausedWorkRouteOpts, analysisId: string | undefined): Promise<Response> {
+async function listPausedWork<R extends { readonly work: WorkSurface }>(c: Context<ServerEnv<R>>, opts: PausedWorkRouteOpts, analysisId: string | undefined): Promise<Response> {
     const page = parsePage(c.req.query("page"), c.req.query("perPage"));
     const listed = await ResultAsync.fromPromise(c.get("runtime").work.list(analysisId), (cause) => cause);
     if (listed.isErr()) return internalError(c, listed.error, "list the paused work");

@@ -1,9 +1,10 @@
-import { loadDataProfileStatus, type DataProfileStatus, type Pool } from "@inflexa-ai/harness";
+import { loadDataProfileStatus, type DataProfileStatus } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import type { ResultAsync } from "neverthrow";
 
 import type { BusyReason } from "../api/analyses.ts";
-import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { countLiveDurableWork, type LiveDurableWork } from "./durable_work.ts";
+import type { PoolRuntime } from "./http.ts";
 import { profileWorkInFlight } from "./profile_queue.ts";
 import { hasRunningTurn } from "./turns.ts";
 
@@ -12,9 +13,9 @@ export type BusyGateOpts = {
     readonly hasRunningTurn: (analysisId: string) => boolean;
     readonly profileWorkInFlight: (analysisId: string) => boolean;
     /** The data profile ledger row, or `null` when the analysis has no profile. The error channel means the ledger is unreadable. */
-    readonly profileStatus: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, unknown>;
+    readonly profileStatus: (pool: Querier, analysisId: string) => ResultAsync<DataProfileStatus | null, unknown>;
     /** The runs, the data profiles, and the chat turns of the analysis with a live durable workflow. The error channel means the ledger is unreadable. */
-    readonly liveDurableWork: (pool: Pool, analysisId: string) => ResultAsync<LiveDurableWork, unknown>;
+    readonly liveDurableWork: (pool: Querier, analysisId: string) => ResultAsync<LiveDurableWork, unknown>;
 };
 
 /** The production {@link BusyGateOpts}. */
@@ -80,7 +81,7 @@ export function busyReasonsOf(facts: BusyFacts): BusyReason[] {
  */
 export async function workspaceBusyReasons(
     analysisId: string,
-    runtime: HarnessRuntime | null,
+    runtime: PoolRuntime | null,
     opts: BusyGateOpts = DEFAULT_BUSY_GATE_OPTS,
 ): Promise<BusyReason[]> {
     const turn = opts.hasRunningTurn(analysisId);

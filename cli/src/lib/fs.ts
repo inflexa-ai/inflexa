@@ -166,7 +166,7 @@ export function processIdentity(): ProcessIdentity | null {
  * authoritative refusal stays where the file is actually opened (staging), which already reports a
  * failure the user can act on.
  */
-export function isReadableBy(stats: Stats, identity: ProcessIdentity): boolean {
+export function isReadableBy(stats: Pick<Stats, "mode" | "uid" | "gid">, identity: ProcessIdentity): boolean {
     // Root bypasses the permission bits for reads, so the mode check below would report false for a
     // 0600 file owned by someone else — a "you cannot read this" that is simply untrue as root.
     if (identity.uid === 0) return true;
@@ -183,7 +183,7 @@ export function isReadableBy(stats: Stats, identity: ProcessIdentity): boolean {
  * ACCEPTED IMPRECISION: an ACL, a read-only mount, or a file flag can deny a write that this reports
  * as permitted. The result is advisory.
  */
-export function isWritableBy(stats: Stats, identity: ProcessIdentity): boolean {
+export function isWritableBy(stats: Pick<Stats, "mode" | "uid" | "gid">, identity: ProcessIdentity): boolean {
     // Root bypasses the permission bits for writes, as it does for reads.
     if (identity.uid === 0) return true;
     if (stats.uid === identity.uid) return (stats.mode & 0o200) !== 0;

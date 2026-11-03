@@ -1,12 +1,14 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { z } from "zod";
 
 import pkg from "../../../package.json";
 // Namespace import on purpose: the doc-list guard below enumerates env.ts's exports by NAME, so a list
 // added there is discovered without editing this file — which is the whole point of the guard. Importing
 // env.ts under `bun test` is safe: bunfig's [test].preload sandboxes XDG_* before any of it evaluates.
 import * as envModule from "../../lib/env.ts";
+import { unknownRecordSchema } from "../../lib/json_record.ts";
 
 // The docs generator refuses to run in-process under `bun test` (src/lib/env.ts's data-loss guard,
 // and the script's own NODE_ENV check) — the ONLY supported invocation is a plain `bun` process. So
@@ -18,8 +20,10 @@ const CLI_ROOT = join(import.meta.dir, "..", "..", "..");
 const SCRIPT = join(CLI_ROOT, "scripts", "gen_docs.ts");
 const OUT_DIR = join(CLI_ROOT, "dist-docs");
 
-type Manifest = { schemaVersion: number; cliVersion: string; name: string; nav: NavEntry[] };
 type NavEntry = { title: string; path: string; items?: NavEntry[] };
+
+const navEntrySchema: z.ZodType<NavEntry> = z.lazy(() => z.object({ title: z.string(), path: z.string(), items: z.array(navEntrySchema).exactOptional() }));
+const manifestSchema = z.object({ schemaVersion: z.number(), cliVersion: z.string(), name: z.string(), nav: z.array(navEntrySchema) });
 
 function generate(): { exitCode: number; stderr: string } {
     // Bun.spawnSync's env REPLACES (not merges) the child environment, so copy the live env (Bun.env,
@@ -63,7 +67,8 @@ function read(rel: string): string {
 function exportedDocLists(): [string, unknown][] {
     // `unknown` because the guard's job is to survive a list whose shape it has never seen; the entries
     // are narrowed structurally in declaredVarNames rather than typed against today's two shapes.
-    return Object.entries(envModule as Record<string, unknown>).filter(([name, value]) => /envdoc$/i.test(name) && typeof value === "object" && value !== null);
+    const exports: Record<string, unknown> = envModule;
+    return Object.entries(exports).filter(([name, value]) => /envdoc$/i.test(name) && typeof value === "object" && value !== null);
 }
 
 /**
@@ -72,13 +77,13 @@ function exportedDocLists(): [string, unknown][] {
  * own — the variable it contributes is the `baseVar` that relocates its directory.
  */
 function declaredVarNames(list: unknown): string[] {
-    const entries: unknown[] = Array.isArray(list) ? list : Object.values(list as Record<string, unknown>);
+    const entries: unknown[] = Array.isArray(list) ? list : Object.values(unknownRecordSchema.parse(list));
     const names: string[] = [];
     for (const entry of entries) {
-        if (typeof entry !== "object" || entry === null) continue;
-        const fields = entry as Record<string, unknown>;
+        const fields = unknownRecordSchema.safeParse(entry);
+        if (!fields.success) continue;
         for (const field of ["name", "baseVar"]) {
-            const value = fields[field];
+            const value = fields.data[field];
             if (typeof value === "string") names.push(value);
         }
     }
@@ -93,8 +98,8 @@ function variablesSection(): string {
     return page.slice(at);
 }
 
-function readManifest(): Manifest {
-    return JSON.parse(read("manifest.json")) as Manifest;
+function readManifest(): z.infer<typeof manifestSchema> {
+    return manifestSchema.parse(JSON.parse(read("manifest.json")));
 }
 
 let gen: { exitCode: number; stderr: string };

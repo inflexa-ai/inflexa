@@ -32,6 +32,8 @@ import {
 } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialScheme } from "../../lib/credential.ts";
 import { select, promptText, promptTextOptional, confirm } from "../../lib/cli.ts";
+import { recordOrEmpty, unknownRecordSchema } from "../../lib/json_record.ts";
+import { isMember } from "../../lib/types.ts";
 import {
     AGENT_NAMES,
     detectedMachine,
@@ -81,6 +83,8 @@ import {
     isBatchRun,
     isVendorSlug,
     loadSetupAnswers,
+    OAUTH_ACCOUNT_KINDS,
+    type OAuthAccountKind,
     type SetupAnswerFlags,
     type SetupAnswers,
 } from "./setup_answers.ts";
@@ -1352,8 +1356,8 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
     // module owns its validation) — spread it as a plain record so the fields
     // this prompt does not manage (model, bioKeys, per-step overrides, …)
     // survive the rewrite.
-    const harness = (config.harness ?? {}) as Record<string, unknown>;
-    const resourceLimits = (harness.resourceLimits ?? {}) as Record<string, unknown>;
+    const harness = recordOrEmpty(config.harness);
+    const resourceLimits = recordOrEmpty(harness.resourceLimits);
     const persisted = writeConfig({
         ...config,
         harness: {
@@ -1475,8 +1479,7 @@ async function chooseConnectionMode(answered: ConnectionMode | undefined, canAsk
         { value: "cliproxy", label: "Managed local proxy (CLIProxyAPI) — default" },
         { value: "direct", label: "Direct endpoint (your own provider)" },
     ]);
-    // The select's value domain is exactly ConnectionMode's two literals, so the cast is total.
-    return chosen as ConnectionMode;
+    return chosen === "direct" ? "direct" : "cliproxy";
 }
 
 // --- ecosystem env adoption ------------------------------------------------
@@ -1641,7 +1644,7 @@ async function offerAdoption(snap: ProviderEnvSnapshot, adoptable: AdoptableProv
             { value: "_manual", label: "Enter the connection manually instead" },
         ]);
         if (chosen === "_manual") return null;
-        which = chosen as AdoptableProvider;
+        which = chosen === "anthropic" ? "anthropic" : "openai";
     } else {
         which = adoptable[0]!;
         const keyVar = which === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
@@ -1707,25 +1710,21 @@ async function promptManualDirectConnection(answered: ConnectionAnswers): Promis
         )
             .trim()
             .toLowerCase();
-    const protocol =
-        answered.protocol ??
-        // `select` is typed to the widened `string` its option values collapse to, so the assertion
-        // re-states the four literals declared one line below it — sound because clack can only return a
-        // value it was offered, and the offered set is right here rather than assembled elsewhere. It is
-        // narrowed rather than left wide because the sentinel has to be distinguishable: "infer" leaves
-        // protocol unset, and the two explicit values are exactly the schema's wire kinds.
-        ((await select("Wire protocol", [
+    let protocol = answered.protocol;
+    if (protocol === undefined) {
+        const chosen = await select("Wire protocol", [
             { value: "infer", label: "Infer from provider (default)" },
             { value: "anthropic", label: "Anthropic" },
             { value: "openai", label: "OpenAI Responses" },
             { value: "openai-compatible", label: "OpenAI-compatible" },
-        ])) as "infer" | ModelWireProtocol);
-    return {
-        provider,
-        baseURL,
-        protocol: protocol === "infer" ? undefined : protocol,
-    };
+        ]);
+        // "infer" is no wire protocol, so it leaves the protocol unset for the resolver to imply.
+        protocol = isMember(WIRE_PROTOCOLS, chosen) ? chosen : undefined;
+    }
+    return { provider, baseURL, protocol };
 }
+
+const WIRE_PROTOCOLS = ["anthropic", "openai", "openai-compatible"] as const satisfies readonly ModelWireProtocol[];
 
 /** A direct connection's user-supplied facts, written verbatim to `models.connection`. */
 type DirectConnectionInput = {
@@ -1746,7 +1745,7 @@ export function writeDirectConnection(input: DirectConnectionInput): Result<void
     const config = readConfig();
     // `config.models` is `unknown` in lib/config.ts (validated downstream by resolveModelConnection),
     // so spread it as a plain record to preserve sibling keys this write does not manage.
-    const models = (config.models ?? {}) as Record<string, unknown>;
+    const models = recordOrEmpty(config.models);
     const connection = {
         mode: "direct",
         provider: input.provider,
@@ -1841,7 +1840,7 @@ function managedClaudeSettingsPaths(): string[] {
 }
 
 /** The two setup-relevant facts a Claude Code settings file can carry — both `null` when absent. */
-type ClaudeSettingsRead = {
+export type ClaudeSettingsRead = {
     readonly helper: string | null;
     readonly baseURL: string | null;
 };
@@ -1852,16 +1851,15 @@ type ClaudeSettingsRead = {
  * field. Boundary-wrapped: a missing file is the common case, not an error — a settings file usually
  * does not exist, so `readFileSync` throwing ENOENT resolves to the all-null read.
  */
-function readClaudeSettings(path: string): ClaudeSettingsRead {
+export function readClaudeSettings(path: string): ClaudeSettingsRead {
     const none: ClaudeSettingsRead = { helper: null, baseURL: null };
     try {
-        const parsed: unknown = JSON.parse(readFileSync(path, "utf8")); // on-disk settings — shape-narrowed below
-        if (typeof parsed !== "object" || parsed === null) return none;
-        // Narrowed to a non-null object above, so a Record view for the field reads is sound.
-        const record = parsed as Record<string, unknown>;
+        const parsed = unknownRecordSchema.safeParse(JSON.parse(readFileSync(path, "utf8"))); // on-disk settings
+        if (!parsed.success) return none;
+        const record = parsed.data;
         const helper = record.apiKeyHelper;
-        const envBlock = record.env;
-        const baseURL = typeof envBlock === "object" && envBlock !== null ? (envBlock as Record<string, unknown>).ANTHROPIC_BASE_URL : undefined;
+        const envBlock = unknownRecordSchema.safeParse(record.env);
+        const baseURL = envBlock.success ? envBlock.data.ANTHROPIC_BASE_URL : undefined;
         return {
             helper: typeof helper === "string" && helper.trim() !== "" ? helper.trim() : null,
             baseURL: typeof baseURL === "string" && baseURL.trim() !== "" ? baseURL.trim() : null,
@@ -1954,11 +1952,11 @@ export type MessagePingOutcome =
  */
 function isModelNotFoundBody(text: string): boolean {
     try {
-        const parsed: unknown = JSON.parse(text); // endpoint error body — shape-narrowed below
-        if (typeof parsed !== "object" || parsed === null) return false;
-        const error = (parsed as Record<string, unknown>).error;
-        if (typeof error !== "object" || error === null) return false;
-        const { type, code, message } = error as Record<string, unknown>;
+        const parsed = unknownRecordSchema.safeParse(JSON.parse(text)); // endpoint error body
+        if (!parsed.success) return false;
+        const error = unknownRecordSchema.safeParse(parsed.data.error);
+        if (!error.success) return false;
+        const { type, code, message } = error.data;
         if (code === "model_not_found") return true;
         return type === "not_found_error" && typeof message === "string" && message.toLowerCase().includes("model");
     } catch {
@@ -2188,7 +2186,8 @@ async function offerCredentialSource(
             { value: "bearer", label: "Authorization: Bearer (an OAuth / WIF / enterprise-gateway access token)" },
         ];
         if (chosen === "command_prefill_managed") schemeOptions.reverse();
-        const scheme = (await select("How is the minted token sent on the wire?", schemeOptions)) as CredentialScheme;
+        const chosenScheme = await select("How is the minted token sent on the wire?", schemeOptions);
+        const scheme: CredentialScheme = chosenScheme === "bearer" ? "bearer" : "x-api-key";
         auth = { kind: "command", command, scheme };
     }
 
@@ -2478,7 +2477,7 @@ const PROVIDER_SLUG: Record<Provider, string> = {
 export function recordCliproxyProvider(kind: Provider): Result<void, ConfigError> {
     const config = readConfig();
     // See writeDirectConnection: `config.models` is `unknown`, spread as a record to keep siblings.
-    const models = (config.models ?? {}) as Record<string, unknown>;
+    const models = recordOrEmpty(config.models);
     return writeConfig({ ...config, models: { ...models, connection: { mode: "cliproxy", provider: PROVIDER_SLUG[kind] } } });
 }
 
@@ -2492,7 +2491,7 @@ const CONTAINER_BINARY = "./CLIProxyAPI";
 const CONTAINER_CONFIG_PATH = "/CLIProxyAPI/config.yaml";
 const CONTAINER_AUTH_DIR = "/root/.cli-proxy-api";
 
-type Provider = "gemini" | "openai" | "claude" | "qwen" | "iflow";
+type Provider = OAuthAccountKind;
 
 const PROVIDER_LOGIN_FLAG: Record<Provider, string> = {
     gemini: "--login",
@@ -2520,7 +2519,7 @@ const PROVIDER_CALLBACK_PORT: Record<Provider, number | null> = {
     qwen: null,
     iflow: 11451,
 };
-const PROVIDERS = Object.keys(PROVIDER_LOGIN_FLAG) as Provider[];
+const PROVIDERS: readonly Provider[] = OAUTH_ACCOUNT_KINDS;
 
 /**
  * Map a recorded connection provider slug back to the account kind that logs into it — the inverse of
@@ -2552,7 +2551,7 @@ export class ProxyError extends Error {
 }
 
 function isProvider(value: string): value is Provider {
-    return (PROVIDERS as string[]).includes(value);
+    return isMember(PROVIDERS, value);
 }
 
 // --- container plumbing ----------------------------------------------------
@@ -2729,8 +2728,7 @@ async function chooseProvider(preselected: Provider | undefined): Promise<Provid
     const options = [...PROVIDERS.map((p) => ({ value: p, label: PROVIDER_LABEL[p] })), { value: "_skip", label: "Skip for now" }];
 
     const chosen = await select("Authenticate a provider (opens a browser)", options);
-    if (chosen === "_skip") return null;
-    return chosen as Provider;
+    return isProvider(chosen) ? chosen : null;
 }
 
 async function authenticate(rt: ContainerRuntime, preselected: Provider | undefined): Promise<boolean> {

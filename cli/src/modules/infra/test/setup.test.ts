@@ -7,6 +7,7 @@ import { Writable } from "node:stream";
 import { REFERENCE_DATA_CATALOG } from "@inflexa-ai/harness";
 import pkg from "../../../../package.json";
 import { ok, err } from "neverthrow";
+import { z } from "zod";
 import {
     adoptedConnection,
     askProxy,
@@ -24,9 +25,11 @@ import {
     hasProviderCredential,
     launchProgress,
     normalizeAdoptedBaseURL,
+    pingMessagesEndpoint,
     probeCredentialSource,
     probeOnce,
     providerKindForSlug,
+    readClaudeSettings,
     recordCliproxyProvider,
     retryWhileUnreachable,
     selectDefaultModel,
@@ -37,7 +40,7 @@ import {
     type ProbeAttempt,
 } from "../setup.ts";
 import { type PostgresConnection } from "../postgres_types.ts";
-import { answerSpelling, type AnswerKey, type AnswerValueKey, type SetupAnswerFlags } from "../setup_answers.ts";
+import { answerSpelling, type AnswerValueKey, type SetupAnswerFlags } from "../setup_answers.ts";
 import * as compose from "../compose.ts";
 import * as embeddingSetup from "../../embedding/setup.ts";
 import * as transfersModule from "../../libs/transfers.ts";
@@ -51,10 +54,13 @@ import { readConfig, writeConfig } from "../../../lib/config.ts";
 import type { BootStepId } from "../../../api/server.ts";
 import * as container from "../../../lib/container.ts";
 import * as cliPrompts from "../../../lib/cli.ts";
+import { fakeFetch } from "../../../test_support/fake_fetch.ts";
 import { requestedModel } from "../../../test_support/request_body.ts";
 // Namespace import beside the named one purely so `detectProviderEnv` is spyable at the seam setup.ts
 // calls it through; `env` itself is a value the assertions read, so it stays a named import.
 import * as envModule from "../../../lib/env.ts";
+import { recordOrEmpty, unknownRecordSchema } from "../../../lib/json_record.ts";
+import { keysOf } from "../../../lib/types.ts";
 import { EMBEDDING_API_KEY_VAR, env, type ProviderEnvSnapshot } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 
@@ -193,6 +199,87 @@ describe("credential-helper detection", () => {
 
 // The gateway-endpoint offer is a pure decision over the detection + env snapshot, so the
 // "no credential signal → no offer" guarantee and the settings-over-shell precedence are unit-testable.
+describe("readClaudeSettings — a settings file of any shape reads, and never throws", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+        for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    });
+
+    function settingsFile(text: string): string {
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-claude-settings-"));
+        dirs.push(dir);
+        const path = join(dir, "settings.json");
+        writeFileSync(path, text);
+        return path;
+    }
+
+    const NONE = { helper: null, baseURL: null };
+
+    test("reads the helper and the gateway URL, trimmed, and ignores a key beyond them", () => {
+        const path = settingsFile(
+            JSON.stringify({ apiKeyHelper: "  /opt/mint-token ", env: { ANTHROPIC_BASE_URL: " https://gw.corp/v1 ", OTHER: "x" }, theme: "dark" }),
+        );
+
+        expect(readClaudeSettings(path)).toEqual({ helper: "/opt/mint-token", baseURL: "https://gw.corp/v1" });
+    });
+
+    test.each([
+        ["text that is not JSON", "{"],
+        ["JSON null", "null"],
+        ["an array", '["apiKeyHelper"]'],
+        ["a string", '"/opt/mint-token"'],
+    ])("a file that holds %s reads as no helper and no URL", (_name, text) => {
+        expect(readClaudeSettings(settingsFile(text))).toEqual(NONE);
+    });
+
+    test("a file that is absent reads as no helper and no URL", () => {
+        expect(readClaudeSettings(join(tmpdir(), "inflexa-no-such-claude-settings.json"))).toEqual(NONE);
+    });
+
+    test("a field of the wrong kind costs that field only", () => {
+        expect(readClaudeSettings(settingsFile(JSON.stringify({ apiKeyHelper: 5, env: { ANTHROPIC_BASE_URL: "https://gw.corp/v1" } })))).toEqual({
+            helper: null,
+            baseURL: "https://gw.corp/v1",
+        });
+        expect(readClaudeSettings(settingsFile(JSON.stringify({ apiKeyHelper: "/opt/mint-token", env: ["ANTHROPIC_BASE_URL"] })))).toEqual({
+            helper: "/opt/mint-token",
+            baseURL: null,
+        });
+        expect(readClaudeSettings(settingsFile(JSON.stringify({ apiKeyHelper: "/opt/mint-token", env: { ANTHROPIC_BASE_URL: 7 } })))).toEqual({
+            helper: "/opt/mint-token",
+            baseURL: null,
+        });
+    });
+});
+
+describe("pingMessagesEndpoint — only a recognizable not-found body names the model", () => {
+    const cred = { token: "t", scheme: "bearer" } as const;
+
+    function ping(body: string): ReturnType<typeof pingMessagesEndpoint> {
+        return pingMessagesEndpoint("https://gw.corp/v1", "anthropic", cred, "m-1", async () => new Response(body, { status: 404 }));
+    }
+
+    test.each([
+        ["the Anthropic shape that names the model", JSON.stringify({ error: { type: "not_found_error", message: "Model: m-1" } })],
+        ["the OpenAI code", JSON.stringify({ error: { code: "model_not_found" } })],
+    ])("%s reads as model_not_found", async (_name, body) => {
+        expect(await ping(body)).toEqual({ kind: "model_not_found", excerpt: body });
+    });
+
+    test.each([
+        ["text that is not JSON", "<html>404</html>"],
+        ["JSON null", "null"],
+        ["an array", '["error"]'],
+        ["an error that is null", '{"error":null}'],
+        ["an error that is an array", '{"error":["not_found_error"]}'],
+        ["an error that is a string", '{"error":"model_not_found"}'],
+        ["a bare not_found_error with no message", JSON.stringify({ error: { type: "not_found_error" } })],
+        ["a not_found_error whose message does not name the model", JSON.stringify({ error: { type: "not_found_error", message: "no such route" } })],
+    ])("%s stays ambiguous", async (_name, body) => {
+        expect(await ping(body)).toEqual({ kind: "ambiguous", status: 404, excerpt: body });
+    });
+});
+
 describe("detectedGatewayURL", () => {
     test("a settings URL beside a helper is offered", () => {
         const d = detectCredentialHelperFrom(null, "company-code token", false, "https://gw.corp");
@@ -515,7 +602,7 @@ describe("connection config writes", () => {
     // `readConfig().models` is `unknown` (validated downstream); read it as a record to inspect what
     // the setup writers persisted.
     function readModels(): Record<string, unknown> {
-        return (readConfig().models ?? {}) as Record<string, unknown>;
+        return recordOrEmpty(readConfig().models);
     }
 
     function seedConfig(value: Record<string, unknown>): void {
@@ -594,7 +681,21 @@ describe("connection config writes", () => {
         expect(readModels().agents).toEqual({ chat: "y" });
         // The written connection carries exactly mode/provider/baseURL — no apiKey/token field. The
         // direct-mode secret lives only in INFLEXA_MODEL_API_KEY, never in config.
-        expect(Object.keys(readModels().connection as Record<string, unknown>).sort()).toEqual(["baseURL", "mode", "provider"]);
+        expect(Object.keys(recordOrEmpty(readModels().connection)).sort()).toEqual(["baseURL", "mode", "provider"]);
+    });
+
+    test.each([
+        ["a string", "text"],
+        ["an array", ["a", "b"]],
+        ["null", null],
+    ])("a `models` block that is %s starts clean, and the connection lands beside no stray keys", (_name, models) => {
+        seedConfig({ telemetry: false, models });
+        writeDirectConnection({ provider: "deepseek", baseURL: "https://api.deepseek.com/v1" })._unsafeUnwrap();
+        expect(Object.keys(readModels())).toEqual(["connection"]);
+
+        seedConfig({ telemetry: false, models });
+        recordCliproxyProvider("claude")._unsafeUnwrap();
+        expect(readModels()).toEqual({ connection: { mode: "cliproxy", provider: "anthropic" } });
     });
 
     test("writeDirectConnection persists a command credential source ({command, scheme}) and no token", () => {
@@ -623,7 +724,7 @@ describe("connection config writes", () => {
             baseURL: "https://api.anthropic.com/v1",
             auth: { kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" },
         })._unsafeUnwrap();
-        const connection = readModels().connection as Record<string, unknown>;
+        const connection = recordOrEmpty(readModels().connection);
         expect(connection.auth).toEqual({ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" });
         // Only the variable NAME is stored — never a resolved token value.
         expect(JSON.stringify(connection)).not.toContain("sk-ant");
@@ -983,7 +1084,7 @@ describe("askProxy — 503 cooldown discrimination", () => {
     });
 
     function stubStatus(status: number, body: string): void {
-        globalThis.fetch = (async () => new Response(body, { status })) as unknown as typeof fetch;
+        globalThis.fetch = fakeFetch(async () => new Response(body, { status }));
     }
 
     test("a 503 carrying the proxy's auth_unavailable marker is `cooling_down`", async () => {
@@ -1121,7 +1222,7 @@ describe("probeOnce — the election feeds the probe a servable model", () => {
     test("an inaccessible top candidate is walked past, so the completion probe reads ok — not 'not verifiable'", async () => {
         // /models advertises two claude ids (newest ranks first by recency); the newest 404s the
         // count_tokens check, so the election walks to the older served one and the /messages completion 200s.
-        globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        globalThis.fetch = fakeFetch(async (url, init) => {
             const target = String(url);
             if (target.endsWith("/messages/count_tokens")) {
                 const model = requestedModel(init);
@@ -1138,7 +1239,7 @@ describe("probeOnce — the election feeds the probe a servable model", () => {
                     ],
                 }),
             );
-        }) as unknown as typeof fetch;
+        });
 
         expect(await probeOnce()).toEqual({ kind: "ok" });
     });
@@ -1267,8 +1368,8 @@ describe("selectDefaultModel", () => {
     }
 
     /** Read back the persisted per-agent overrides; `models` is `unknown` in lib/config.ts (validated elsewhere). */
-    function persistedAgents(): Record<string, string> | undefined {
-        return (readConfig().models as { agents?: Record<string, string> } | undefined)?.agents;
+    function persistedAgents(): unknown {
+        return recordOrEmpty(readConfig().models).agents;
     }
 
     test("accepting Auto writes nothing — the default stays adaptive", async () => {
@@ -1438,11 +1539,11 @@ describe("setup() — batch orchestration", () => {
 
     /** Serve per-route responses keyed by URL suffix; an unmapped route 404s (mirrors probeCredentialSource's own tests). */
     function routeFetch(routes: Record<string, () => Response>): void {
-        globalThis.fetch = ((url: string | URL) => {
+        globalThis.fetch = fakeFetch((url) => {
             const target = String(url);
             const route = Object.keys(routes).find((suffix) => target.endsWith(suffix));
             return Promise.resolve(route !== undefined ? routes[route]!() : new Response(null, { status: 404 }));
-        }) as unknown as typeof fetch;
+        });
     }
 
     /**
@@ -1528,7 +1629,14 @@ describe("setup() — batch orchestration", () => {
 
     /** `readConfig().models` is `unknown` (validated downstream); read it as a record to inspect the writes. */
     function models(): Record<string, unknown> | undefined {
-        return readConfig().models as Record<string, unknown> | undefined;
+        const parsed = unknownRecordSchema.safeParse(readConfig().models);
+        return parsed.success ? parsed.data : undefined;
+    }
+
+    /** The `budget` of the persisted `harness.resourceLimits`, or `undefined` for a config that holds none. */
+    function persistedBudget(harness: unknown): unknown {
+        const parsed = z.object({ resourceLimits: z.object({ budget: z.unknown().optional() }).optional() }).safeParse(harness);
+        return parsed.success ? parsed.data.resourceLimits?.budget : undefined;
     }
 
     test("bare `--yes` takes every default: cliproxy, no model pin, no downloads, embeddings untouched, exit 0", async () => {
@@ -1698,9 +1806,9 @@ describe("setup() — batch orchestration", () => {
     test("`--no-validate` persists the same answers with no probe at all", async () => {
         // Any fetch here would be a bug: the escape skips the NETWORK probes, and there are no others
         // on this path (the offline GGUF verification lives in the embedding step).
-        globalThis.fetch = (() => {
+        globalThis.fetch = fakeFetch((): Promise<Response> => {
             throw new Error("no network call should be made under --no-validate");
-        }) as unknown as typeof fetch;
+        });
 
         await runSetup(batch({ ...directFlags }, { validate: false }));
 
@@ -1708,7 +1816,7 @@ describe("setup() — batch orchestration", () => {
         expect(models()?.agents).toEqual({ conversation: "m-1", sandbox: "m-1", utility: "m-1" });
         const connection = models()?.connection;
         expect(connection).toBeDefined();
-        expect((connection as Record<string, unknown>).auth).toEqual({ kind: "command", command: "printf tok%s _123", scheme: "x-api-key" });
+        expect(connection).toHaveProperty("auth", { kind: "command", command: "printf tok%s _123", scheme: "x-api-key" });
     });
 
     test("a second identical batch run converges to a byte-identical config", async () => {
@@ -1743,9 +1851,9 @@ describe("setup() — batch orchestration", () => {
         spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));
         spies.push(spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)));
         // Batch cliproxy with no model answer asks the proxy nothing, so any fetch here is a defect.
-        globalThis.fetch = (() => {
+        globalThis.fetch = fakeFetch((): Promise<Response> => {
             throw new Error("a postgres-provisioning batch run should make no network call");
-        }) as unknown as typeof fetch;
+        });
 
         const flags = { postgresPassword: "s3cret", postgresPort: "6000", resourceShare: "40" } as const;
         await runSetup(batch(flags, { postgres: true }));
@@ -1760,7 +1868,7 @@ describe("setup() — batch orchestration", () => {
         expect(readFileSync(env.cliproxyConfigPath, "utf8")).toBe(firstProxyConfig);
         // Sanity on WHAT converged: an empty document would satisfy the comparisons just as well.
         expect(readConfig().postgres).toEqual({ password: "s3cret", port: 6000 });
-        expect((readConfig().harness as { resourceLimits?: { budget?: unknown } }).resourceLimits?.budget).toBeDefined();
+        expect(persistedBudget(readConfig().harness)).toBeDefined();
     });
 
     // Design D2: an answered `--refs` id list is resolved against the OFFERED catalog immediately after
@@ -1936,11 +2044,39 @@ describe("setup() — batch orchestration", () => {
         await runSetup(batch({ resourceShare: "50" }));
 
         const machine = detectedMachine();
-        const harness = readConfig().harness as { resourceLimits?: { budget?: unknown } } | undefined;
-        expect(harness?.resourceLimits?.budget).toEqual({
+        expect(persistedBudget(readConfig().harness)).toEqual({
             cpu: Math.max(1, Math.floor((machine.cpu * 50) / 100)),
             memoryGb: Math.max(1, Math.floor((machine.memoryGb * 50) / 100)),
         });
+    });
+
+    test.each([
+        ["a string", "text"],
+        ["an array", ["a", "b"]],
+        ["null", null],
+    ])("a `harness` block that is %s starts clean, and the budget lands beside no stray keys", async (_name, harness) => {
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, harness }));
+
+        await runSetup(batch({ resourceShare: "50" }));
+
+        expect(process.exitCode).toBe(0);
+        expect(Object.keys(recordOrEmpty(readConfig().harness))).toEqual(["resourceLimits"]);
+        expect(Object.keys(recordOrEmpty(recordOrEmpty(readConfig().harness).resourceLimits))).toEqual(["budget"]);
+    });
+
+    test.each([
+        ["a string", "text"],
+        ["an array", ["a", "b"]],
+        ["null", null],
+    ])("a `harness.resourceLimits` block that is %s starts clean, and the harness siblings survive", async (_name, resourceLimits) => {
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, harness: { model: "m", resourceLimits } }));
+
+        await runSetup(batch({ resourceShare: "50" }));
+
+        expect(process.exitCode).toBe(0);
+        const harness = recordOrEmpty(readConfig().harness);
+        expect(harness.model).toBe("m");
+        expect(Object.keys(recordOrEmpty(harness.resourceLimits))).toEqual(["budget"]);
     });
 
     test("answered Postgres fields persist through the persist-only-explicit filter; unanswered batch persists nothing", async () => {
@@ -1996,7 +2132,7 @@ describe("setup() — batch orchestration", () => {
             );
             // The interactive default-model step lists models off the proxy; every route 404s, so the
             // candidate list is empty and the optional manual-entry fallback is declined by the seam above.
-            globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 404 }))) as unknown as typeof fetch;
+            globalThis.fetch = fakeFetch(() => Promise.resolve(new Response(null, { status: 404 })));
         });
 
         afterEach(() => {
@@ -2061,7 +2197,7 @@ describe("setup() — batch orchestration", () => {
             // The answered endpoint survived — not the adoptable https://api.anthropic.com/v1.
             const connection = models()?.connection;
             expect(connection).toBeDefined();
-            expect((connection as Record<string, unknown>).baseURL).toBe("https://gw.corp/v1");
+            expect(connection).toHaveProperty("baseURL", "https://gw.corp/v1");
         });
     });
 
@@ -2101,9 +2237,9 @@ describe("setup() — batch orchestration", () => {
             // Every case here is hermetic BY CONSTRUCTION — batch cliproxy never lists models, and the
             // direct cases run under `--no-validate` — so a fetch reaching this stub is a defect in the
             // flow, not a missing route. Restored by the outer afterEach.
-            globalThis.fetch = (() => {
+            globalThis.fetch = fakeFetch((): Promise<Response> => {
                 throw new Error("an answer-coverage case must make no network call");
-            }) as unknown as typeof fetch;
+            });
         });
 
         afterEach(() => {
@@ -2115,12 +2251,13 @@ describe("setup() — batch orchestration", () => {
             const config = readConfig();
             // `models` and `harness` are `unknown` in lib/config.ts (each validated downstream by its
             // owning module), so both are read here as the record shapes the setup writers produce.
-            const models = config.models as { connection?: Record<string, unknown>; agents?: Record<string, string> } | undefined;
+            const models = recordOrEmpty(config.models);
+            const connection = unknownRecordSchema.safeParse(models.connection);
             return {
                 config,
-                connection: models?.connection,
-                agents: models?.agents,
-                harness: config.harness as { resourceLimits?: { budget?: unknown } } | undefined,
+                connection: connection.success ? connection.data : undefined,
+                agents: models.agents,
+                budget: persistedBudget(config.harness),
                 embedding: embedStep.mock.calls[0]?.[1],
                 refs: refsStep.mock.calls[0]?.[0].selection,
                 /** Which transfer children the sandbox answer started: the two image kinds, and whether the catalog start ran. */
@@ -2296,7 +2433,7 @@ describe("setup() — batch orchestration", () => {
                 file: "resources:\n  sharePct: 37\n",
                 effect: (run) => {
                     const machine = detectedMachine();
-                    expect(run.harness?.resourceLimits?.budget).toEqual({
+                    expect(run.budget).toEqual({
                         cpu: Math.max(1, Math.floor((machine.cpu * 37) / 100)),
                         memoryGb: Math.max(1, Math.floor((machine.memoryGb * 37) / 100)),
                     });
@@ -2379,10 +2516,10 @@ describe("setup() — batch orchestration", () => {
 
         test("the coverage table names every answerable question — a new answer cannot ship unproven", () => {
             const declared = declaredAnswerKeys();
-            for (const key of declared) {
-                // The cast is checked by the assertion it feeds: a key `ANSWER_QUESTIONS` does not own has
-                // no entry to read a flag off, so `answerSpelling` throws rather than rendering a spelling.
-                expect(answerSpelling(key as AnswerKey)).toContain(`\`${key}\``);
+            // The keys of the coverage table are typed as `AnswerValueKey` by its `satisfies`, and the
+            // comparison below pins `declared` to them, so the pattern cannot drift from the live table.
+            for (const key of keysOf(ANSWER_COVERAGE)) {
+                expect(answerSpelling(key)).toContain(`\`${key}\``);
             }
             // Both directions in one comparison, which is also what catches a pattern that matched nothing.
             expect(declared.toSorted()).toEqual(Object.keys(ANSWER_COVERAGE).toSorted());
@@ -2504,7 +2641,7 @@ describe("setup() — batch orchestration", () => {
                 spyOn(compose, "composeAvailable").mockImplementation(async () => true),
                 spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
             );
-            globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 404 }))) as unknown as typeof fetch;
+            globalThis.fetch = fakeFetch(() => Promise.resolve(new Response(null, { status: 404 })));
         });
 
         afterEach(() => {

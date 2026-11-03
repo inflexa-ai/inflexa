@@ -6,6 +6,7 @@ import { SANDBOX_IMAGE } from "../images.ts";
 import { configuredSandboxImage, inspectSandbox, migrateRetiredSandboxImageOverride } from "../pull.ts";
 import { readConfig } from "../../../lib/config.ts";
 import { env } from "../../../lib/env.ts";
+import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 
 // The read of `sandbox status` is a read-only diagnostic: it resolves a runtime for inspection
@@ -66,7 +67,7 @@ describe("migrateRetiredSandboxImageOverride", () => {
 
         expect(migrateRetiredSandboxImageOverride()).toBe("ghcr.io/inflexa-ai/sandbox-python-r:latest");
 
-        const harness = readConfig().harness as Record<string, unknown>;
+        const harness = unknownRecordSchema.parse(readConfig().harness);
         expect(harness.sandboxImage).toBeUndefined();
         expect(harness.skillsDir).toBe("/skills");
         expect(configuredSandboxImage()).toBe(SANDBOX_IMAGE);
@@ -87,5 +88,17 @@ describe("migrateRetiredSandboxImageOverride", () => {
         writeFileSync(env.configPath, JSON.stringify({ telemetry: false }));
 
         expect(migrateRetiredSandboxImageOverride()).toBeNull();
+    });
+
+    test.each([
+        ["a string", "ghcr.io/inflexa-ai/sandbox-python-r:latest"],
+        ["an array", ["sandboxImage"]],
+        ["null", null],
+    ])("a harness block that is %s changes nothing, and the default serves", (_kind, harness) => {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, harness }));
+
+        expect(migrateRetiredSandboxImageOverride()).toBeNull();
+        expect(configuredSandboxImage()).toBe(SANDBOX_IMAGE);
     });
 });

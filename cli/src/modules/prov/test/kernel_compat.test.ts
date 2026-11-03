@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { applyProvEvent, importPublicKeyJwk, verifyProvenance, PROV_UNIFY_OPTIONS, type ProvEvent } from "@inflexa-ai/prov-kernel";
+import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { cliProvDigest, provModel } from "../document.ts";
 
 // The kernel-adoption continuity suite. The fixture was generated ONCE by the pre-kernel
@@ -11,17 +13,29 @@ import { cliProvDigest, provModel } from "../document.ts";
 // have exactly this shape, so the kernel — with the cli's injected digest — must verify it,
 // rehydrate it, and dedupe re-emitted events into it.
 
-type CompatFixture = {
-    document: string;
-    chainHash: string;
-    signature: string;
-    publicKeyJwk: Record<string, unknown>;
-    events: ProvEvent[];
-    qnames: { file: string; command: string; modelAgent: string };
-};
+const fixtureSchema = z.object({
+    document: z.string(),
+    chainHash: z.string(),
+    signature: z.string(),
+    publicKeyJwk: unknownRecordSchema,
+    events: z.array(z.unknown()),
+    qnames: z.object({ file: z.string(), command: z.string(), modelAgent: z.string() }),
+});
 
-// Safe: the fixture is a checked-in artifact this suite owns; its generator wrote exactly this shape.
-const fixture = JSON.parse(readFileSync(join(import.meta.dir, "..", "__fixtures__", "kernel_compat.json"), "utf-8")) as CompatFixture;
+type CompatFixture = Omit<z.infer<typeof fixtureSchema>, "events"> & { events: ProvEvent[] };
+
+/** A serialized PROV-JSON document: sections of records, each record a bag of attributes. */
+const sectionsSchema = z.record(z.string(), unknownRecordSchema);
+const activitiesSchema = z.looseObject({ activity: z.record(z.string(), unknownRecordSchema) });
+
+const parsedFixture = fixtureSchema.parse(JSON.parse(readFileSync(join(import.meta.dir, "..", "__fixtures__", "kernel_compat.json"), "utf-8")));
+
+const fixture: CompatFixture = {
+    ...parsedFixture,
+    // SAFETY: the fixture is a checked-in artifact this suite owns, and its generator wrote each event through the historical builders, so each element has the shape of a `ProvEvent`. The kernel owns that union and gives no schema for it.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the kernel exports no schema of `ProvEvent`, and the fixture file is the only source of these events
+    events: parsedFixture.events as ProvEvent[],
+};
 
 const subject = { analysisId: "compat-a1", name: "Compat Analysis", slug: "compat-analysis" };
 
@@ -33,14 +47,18 @@ const subject = { analysisId: "compat-a1", name: "Compat Analysis", slug: "compa
  * under a NEW identifier. The stored document keeps its pseudo-command records untouched (nothing
  * re-emits them, and unify never drops a record), which the equality assertion below proves.
  */
+function commandKind(command: { readonly kind: string }): string {
+    return command.kind;
+}
+
 const executionEvents = fixture.events.filter(
     (e) =>
         e.type !== "analysis_created" &&
         e.type !== "input_added" &&
         e.type !== "input_removed" &&
-        // `as string`: the current ProvCommandRef types `kind` as the literal "command", but the
+        // Widened to `string`: the current ProvCommandRef types `kind` as the literal "command", but the
         // frozen pre-kernel fixture holds the retired "file_tool" value behind the cast above.
-        !(e.type === "command_executed" && (e.command.kind as string) !== "command"),
+        !(e.type === "command_executed" && commandKind(e.command) !== "command"),
 );
 
 /**
@@ -49,7 +67,7 @@ const executionEvents = fixture.events.filter(
  * would collapse onto one key, so the count assertion keeps a duplication visible.
  */
 function normalizeBlankIds(json: string): Record<string, Record<string, unknown>> {
-    const parsed = JSON.parse(json) as Record<string, Record<string, unknown>>;
+    const parsed = sectionsSchema.parse(JSON.parse(json));
     for (const section of Object.values(parsed)) {
         const blanks = Object.keys(section).filter((k) => k.startsWith("_:"));
         for (const key of blanks) {
@@ -86,7 +104,7 @@ describe("kernel adoption — continuity against the pre-kernel fixture", () => 
     test("kernel loadDocument rehydrates the pre-kernel document", () => {
         const doc = provModel.loadDocument(subject, fixture.document);
         expect(doc.isOk()).toBe(true);
-        const json = JSON.parse(doc._unsafeUnwrap().serialize("json")) as Record<string, Record<string, unknown>>;
+        const json = sectionsSchema.parse(JSON.parse(doc._unsafeUnwrap().serialize("json")));
         expect(Object.keys(json.entity!)).toContain("inflexa:analysis-compat-a1");
         expect(Object.keys(json.agent!)).toContain("inflexa:agent-user-alice_example_org");
     });
@@ -111,15 +129,15 @@ describe("kernel adoption — continuity against the pre-kernel fixture", () => 
             analysisId: subject.analysisId,
             actor: { kind: "user", id: "alice@example.org", email: "alice@example.org" },
         });
-        const json = JSON.parse(doc.serialize("json")) as Record<string, Record<string, unknown>>;
+        const json = sectionsSchema.parse(JSON.parse(doc.serialize("json")));
         expect(Object.keys(json.agent!)).toContain("inflexa:agent-user-alice_example_org");
     });
 
     test("accepted forward delta: a fresh kernel document omits inflexa:args when args is empty", () => {
         const doc = provModel.freshDocument(subject);
         for (const event of executionEvents) applyProvEvent(provModel, doc, event);
-        const json = JSON.parse(doc.unified(PROV_UNIFY_OPTIONS).serialize("json")) as Record<string, Record<string, Record<string, unknown>>>;
-        const cmd = json.activity![fixture.qnames.command]!;
+        const json = activitiesSchema.parse(JSON.parse(doc.unified(PROV_UNIFY_OPTIONS).serialize("json")));
+        const cmd = json.activity[fixture.qnames.command]!;
         // The pre-kernel code wrote `inflexa:args: ""` for an empty argument vector; the kernel
         // omits the attribute. Existing documents keep the old value (previous test); new ones
         // never carry it.

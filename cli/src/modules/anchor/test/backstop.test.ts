@@ -13,7 +13,7 @@ import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
 import { getAnchor, listAnalysesByAnchor } from "../../../db/primary_query.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type { Anchor } from "../../../types/anchor.ts";
-import type { Str256 } from "../../../lib/types.ts";
+import { asStr256 } from "../../../lib/types.ts";
 import { canonicalPathAsync } from "../../../lib/paths.ts";
 import { reclaimDeadAnchors, type PurgeAnalysisFn } from "../backstop.ts";
 import { writeMarker } from "../marker.ts";
@@ -94,9 +94,7 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
                     id: `analysis-${i}`,
                     createdAt: 1,
                     updatedAt: 1,
-                    // The brand is a `str256` boundary check on user input; these literals are fixed,
-                    // short, and non-empty, so the cast asserts what the constructor would verify.
-                    name: `Analysis ${i}` as Str256,
+                    name: asStr256(`Analysis ${i}`),
                     slug: `analysis-${i}`,
                     anchorId: DEAD_ANCHOR,
                     projectId: null,

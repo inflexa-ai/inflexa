@@ -6,12 +6,12 @@ import type { ChatMessage } from "@inflexa-ai/harness/contracts/index.js";
 
 import type { ThreadSummary } from "../../../api/conversation.ts";
 import type { ClientError } from "../../../client/api.ts";
+import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
 import { reportSummary, threadListOf } from "../../../test_support/threads.ts";
 import { Chat } from "../chat.tsx";
-import { WorkspaceContext, type Workspace } from "../../contexts/workspace.ts";
+import { WorkspaceContext } from "../../contexts/workspace.ts";
 import { loadMessages, type LoadOpts, resetHotState, setError } from "../../hooks/conversation.ts";
 import { __resetReportChildrenForTest, refreshReportChildren, type ReportChildrenOpts } from "../../hooks/report_children.ts";
-import type { Analysis } from "../../../types/analysis.ts";
 
 // Where a report entry SITS is the whole rule, and a position exists only as painted rows. A props
 // assertion proves that a mapping ran, not that the entry landed where the reader expects it. Thus this
@@ -30,24 +30,18 @@ const serverGone: ClientError = { type: "unreachable", reason: "connection_faile
 
 // `Chat` reads `.id` for the transcript load. The workspace has no anchor, thus the welcome block names
 // no folder, which is correct with a transcript mounted.
-const ANALYSIS = { id: AID, name: "Alpha", anchorId: "anchor-absent", projectId: null } as unknown as Analysis;
+const ANALYSIS = buildAnalysis({ id: AID, anchorId: "anchor-absent" });
 
 // What the entry's open bound, recorded so a click is assertable. Cleared between cases.
 const opened: string[] = [];
 
-const ws = {
+const ws = buildWorkspace({
     analysis: ANALYSIS,
     sessionId: SID,
-    workingDir: "/work",
-    project: null,
-    anchor: null,
-    openDialog: () => {},
-    closeDialog: () => {},
     openSession: (threadId: string | null) => {
         if (threadId !== null) opened.push(threadId);
     },
-    quit: async () => {},
-} as unknown as Workspace;
+});
 
 /** One stored row of the fixture transcript, with the report sessions that its turn spawned. */
 type FixtureRow = {

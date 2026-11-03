@@ -3,6 +3,8 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { FARM_PARITY_FIXTURE } from "../../../test_support/fixtures.ts";
 import { readPoolInventorySections } from "../packages.ts";
 
@@ -73,7 +75,7 @@ describe("readPoolInventorySections", () => {
         // Cut one edge target out of the graph: the strict reader must refuse,
         // and the reason must carry the from/to pair the repair needs.
         const graphPath = join(root, "deps.json");
-        const graph = JSON.parse(readFileSync(graphPath, "utf8")) as { nodes: Record<string, unknown> };
+        const graph = z.looseObject({ nodes: z.record(z.string(), z.unknown()) }).parse(JSON.parse(readFileSync(graphPath, "utf8")));
         delete graph.nodes["alpha-1.2.0-000000000000aaaa"];
         writeFileSync(graphPath, JSON.stringify(graph));
 

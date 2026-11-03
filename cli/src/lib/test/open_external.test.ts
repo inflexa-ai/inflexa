@@ -4,9 +4,7 @@ import { isWslVersion, openerArgv, openExternal, type OpenSeams } from "../open_
 
 /** An ENOENT-shaped spawn error, as `Bun.spawn` throws when the opener binary is missing. */
 function enoent(): Error {
-    const e = new Error("spawn wslview ENOENT");
-    (e as Error & { code: string }).code = "ENOENT";
-    return e;
+    return Object.assign(new Error("spawn wslview ENOENT"), { code: "ENOENT" });
 }
 
 describe("openerArgv", () => {

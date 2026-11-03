@@ -1,6 +1,7 @@
-import { queryArtifactOrigins, queryRunsByAnalysis, type ArtifactOrigin, type CortexRunRow, type DbError, type Pool } from "@inflexa-ai/harness";
+import { queryArtifactOrigins, queryRunsByAnalysis, type ArtifactOrigin, type CortexRunRow, type DbError } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import type { BigIntStats } from "node:fs";
-import { lstat, realpath, stat, type FileHandle } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -68,7 +69,18 @@ import { str256 } from "../../lib/types.ts";
 import type { PickerPin } from "../../types/picker.ts";
 import { analysisQueryGuard, DEFAULT_ANALYSIS_GUARD_OPTS, guardAnalysisId, type AnalysisGuardOpts } from "../analysis_guard.ts";
 import type { ServerBoot } from "../boot.ts";
-import { apiError, filterValue, holdConnection, internalError, listEnvelope, parseCount, parsePage, readBody, type ServerEnv } from "../http.ts";
+import {
+    apiError,
+    filterValue,
+    holdConnection,
+    internalError,
+    listEnvelope,
+    parseCount,
+    parsePage,
+    readBody,
+    type PoolRuntime,
+    type ServerEnv,
+} from "../http.ts";
 import {
     closeHandle,
     contentTypeOf,
@@ -78,6 +90,7 @@ import {
     unreadable,
     type FileResponseOpts,
     type FileRouteOpts,
+    type OpenFile,
 } from "./files.ts";
 
 /**
@@ -86,12 +99,15 @@ import {
  */
 export type VolumeRoot = { path: string; kind: "parent" | "volume" };
 
+/** The one field of a run that the places read uses. */
+type RunPlaceRow = Pick<CortexRunRow, "runId">;
+
 /** The reads and the lock of the file system routes. A test replaces one to count the calls or to make a read fail. */
 export type FsRouteOpts = FileRouteOpts &
     AnalysisGuardOpts & {
         readonly entryDetails: typeof entryDetails;
         /** The harness read of the step that wrote each path of a list. A test replaces it, because the real read needs Postgres. */
-        readonly artifactOrigins: (pool: Pool, analysisId: string, paths: readonly string[]) => ResultAsync<ArtifactOrigin[], DbError>;
+        readonly artifactOrigins: (pool: Querier, analysisId: string, paths: readonly string[]) => ResultAsync<ArtifactOrigin[], DbError>;
         /** The most bytes that the preview reads from the start of a file. A test sets a small value to cut the head of a small file. */
         readonly previewBytes: number;
         /** The home folder of the server user. A test gives a path behind a link without a change to the `HOME` of the shared process. */
@@ -105,7 +121,7 @@ export type FsRouteOpts = FileRouteOpts &
         /** Gets the search cache of the routes once at their creation, so that a test can stop its walks and its timer. */
         readonly onSearchCache?: (cache: SearchIndexCache) => void;
         /** The harness read of the newest runs of an analysis. A test replaces it, because the real read needs Postgres. */
-        readonly listRuns: (pool: Pool, analysisId: string, page: { limit: number }) => ResultAsync<CortexRunRow[], DbError>;
+        readonly listRuns: (pool: Querier, analysisId: string, page: { limit: number }) => ResultAsync<RunPlaceRow[], DbError>;
         /** The places in which the places read looks for mounted volumes. A test gives temporary folders. */
         readonly volumeRoots: () => readonly VolumeRoot[];
     };
@@ -251,7 +267,7 @@ async function entryView(entry: FolderEntry, list: ListContext, opts: FsRouteOpt
 async function readOrigins(
     entries: readonly FolderEntry[],
     root: string,
-    pool: Pool,
+    pool: Querier,
     analysisId: string,
     opts: FsRouteOpts,
 ): Promise<ReadonlyMap<string, FileOrigin>> {
@@ -284,7 +300,7 @@ async function readOrigins(
  */
 async function enrichEntries(
     c: Context<ServerEnv>,
-    boot: ServerBoot,
+    boot: ServerBoot<PoolRuntime>,
     opts: FsRouteOpts,
     identity: ProcessIdentity | null,
     entries: readonly FolderEntry[],
@@ -524,7 +540,7 @@ async function previewFolder(c: Context<ServerEnv>, realPath: string, opened: Bi
  * Read up to `limit + 1` bytes from the start of the file, in a loop that ends at the end of the file. A count above
  * `limit` means that the file is longer than the head, and the extra byte is dropped.
  */
-function readHead(handle: FileHandle, limit: number): ResultAsync<{ head: Uint8Array; cut: boolean }, unknown> {
+function readHead(handle: OpenFile, limit: number): ResultAsync<{ head: Uint8Array; cut: boolean }, unknown> {
     return ResultAsync.fromPromise(
         (async () => {
             const buffer = Buffer.alloc(limit + 1);
@@ -541,7 +557,7 @@ function readHead(handle: FileHandle, limit: number): ResultAsync<{ head: Uint8A
 }
 
 /** The response for an open path. The caller owns the handle and closes it after this function. */
-async function previewOpened(c: Context<ServerEnv>, opts: FsRouteOpts, handle: FileHandle, realPath: string): Promise<Response> {
+async function previewOpened(c: Context<ServerEnv>, opts: FsRouteOpts, handle: OpenFile, realPath: string): Promise<Response> {
     const stats = await ResultAsync.fromPromise(handle.stat({ bigint: true }), (cause) => cause);
     if (stats.isErr()) return unreadable(c, stats.error);
     if (stats.value.isDirectory()) return previewFolder(c, realPath, stats.value);
@@ -644,7 +660,7 @@ async function firstProbed<T, R>(items: readonly T[], limit: number, probe: (ite
 /** The `analysis` section: the workspace, the inputs, and the runs with their steps. The error channel holds the 500 response. */
 async function analysisPlaces(
     c: Context<ServerEnv>,
-    boot: ServerBoot,
+    boot: ServerBoot<PoolRuntime>,
     opts: FsRouteOpts,
     identity: ProcessIdentity | null,
     analysisId: string,
@@ -715,7 +731,7 @@ async function analysisPlaces(
 }
 
 /** A `run` item for each run whose folder exists, each followed by the `step` items of its folders. The queue bounds the folder reads. */
-async function runPlacesOf(root: string, runs: readonly CortexRunRow[], queue: PQueue): Promise<PlaceItem[]> {
+async function runPlacesOf(root: string, runs: readonly RunPlaceRow[], queue: PQueue): Promise<PlaceItem[]> {
     const read = await Promise.all(runs.map((run) => queue.add(() => readFolder(join(root, "runs", run.runId), false).unwrapOr(null))));
     const items: PlaceItem[] = [];
     for (const [index, folder] of read.entries()) {
@@ -818,7 +834,7 @@ async function drivePlaces(opts: FsRouteOpts): Promise<PlaceItem[]> {
  * the places read also for the runs, only when the boot is ready. Before that each `origin` is `null`, the places give no
  * run, and each route still answers.
  */
-export function fsRoutes(boot: ServerBoot, opts: FsRouteOpts = DEFAULT_FS_ROUTE_OPTS): Hono<ServerEnv> {
+export function fsRoutes(boot: ServerBoot<PoolRuntime>, opts: FsRouteOpts = DEFAULT_FS_ROUTE_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
     // A process cannot change its own ids, thus one read serves each request.
     const identity = processIdentity();

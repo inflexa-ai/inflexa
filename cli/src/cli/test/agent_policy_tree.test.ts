@@ -1,10 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { z } from "zod";
 
 import type { PolicyRow } from "../../test_support/agent_policy_report.ts";
 import { lintScratch, linesOf, OXLINT_SPAWN_TIMEOUT_MS, RESTRICTED_SYNTAX } from "../../test_support/oxlint.ts";
 
 const REPORT_ENTRY = join(import.meta.dir, "../../test_support/agent_policy_report.ts");
+
+const policyRowSchema = z.object({
+    grantKey: z.string(),
+    hasPolicy: z.boolean(),
+    kind: z.enum(["auto", "approval", "blocked"]).nullable(),
+    safeFlags: z.array(z.string()).nullable(),
+    transfer: z.boolean(),
+    declaredOptions: z.array(z.string()),
+    commandKind: z.enum(["instance", "machine", "standalone"]).nullable(),
+    machineFlags: z.array(z.string()).nullable(),
+}) satisfies z.ZodType<PolicyRow>;
 
 /**
  * Walk the command tree under a forced build channel and return its action-policy rows.
@@ -22,11 +34,7 @@ function runReport(channel: "development" | "production"): PolicyRow[] {
     delete childEnv.INFLEXA_DEV;
     const proc = Bun.spawnSync(["bun", "run", REPORT_ENTRY], { env: childEnv });
     if (proc.exitCode !== 0) throw new Error(`agent_policy_report failed (channel=${channel}, exit ${proc.exitCode}):\n${proc.stderr.toString()}`);
-    // The `as PolicyRow[]` is sound because both ends of this JSON are owned by the same module pair: the
-    // subprocess is `agent_policy_report.ts` printing `JSON.stringify(reportAgentPolicies())`, whose return
-    // type IS `PolicyRow[]`. The shape is fixed end-to-end by this code — not external input — so no runtime
-    // validation is warranted; a drift here would be a same-repo type change caught by tsc, not a wire skew.
-    return JSON.parse(proc.stdout.toString()) as PolicyRow[];
+    return z.array(policyRowSchema).parse(JSON.parse(proc.stdout.toString()));
 }
 
 /**

@@ -5,6 +5,7 @@ import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/
 import { type Result } from "neverthrow";
 import { AGENT_EFFORTS, modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { env, resolveKnowledgeApiKey } from "../../lib/env.ts";
+import { recordOrEmpty } from "../../lib/json_record.ts";
 import { SANDBOX_IMAGE } from "../libs/images.ts";
 
 /**
@@ -232,8 +233,8 @@ export function writeAgentModel(agent: AgentName, model: string): Result<void, C
     // `config.models` is `unknown` in lib/config.ts (validated downstream by resolveModelConnection), so
     // spread both it and its nested `agents` as plain records to preserve the sibling keys this write does
     // not manage (the connection, and the other agent).
-    const models = (config.models ?? {}) as Record<string, unknown>;
-    const agents = { ...(models.agents as Record<string, unknown> | undefined), [agent]: model };
+    const models = recordOrEmpty(config.models);
+    const agents = { ...recordOrEmpty(models.agents), [agent]: model };
     return writeConfig({ ...config, models: { ...models, agents } });
 }
 
@@ -268,9 +269,9 @@ export function writeAgentSelection(agent: AgentName, selection: { readonly mode
     const config = readConfig();
     // `config.models` is `unknown` in lib/config.ts, thus spread it and its nested `agents` and `efforts` as
     // plain records, the same as `writeAgentModel`.
-    const models = (config.models ?? {}) as Record<string, unknown>;
-    const agents = { ...(models.agents as Record<string, unknown> | undefined), [agent]: selection.model };
-    const efforts = { ...(models.efforts as Record<string, unknown> | undefined), [agent]: selection.effort };
+    const models = recordOrEmpty(config.models);
+    const agents = { ...recordOrEmpty(models.agents), [agent]: selection.model };
+    const efforts = { ...recordOrEmpty(models.efforts), [agent]: selection.effort };
     return writeConfig({ ...config, models: { ...models, agents, efforts } });
 }
 

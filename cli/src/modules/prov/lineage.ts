@@ -554,7 +554,7 @@ function fileJsonNode(node: LineageNode, truncated: boolean): LineageJsonNode {
 /** The JSON node for an activity — its rendering facts minus the QName key and the tree-only `files`. */
 function activityJsonNode(node: LineageNode): LineageJsonNode {
     const { qn: _qn, ...facts } = activityMeta(node.kind === "activity" ? node : undefined, node.qn);
-    // `facts` is the kind plus only the fields that kind carries a value for (a command never has a
+    // SAFETY: `facts` is the kind plus only the fields that kind carries a value for (a command never has a
     // `tool`, a file tool never has a `command`), because `activityMeta` projects them off the model
     // node's own attributes — so the shape already satisfies the kind-discriminated union the assertion
     // names. A field with no value is `undefined`, which the JSON text of the view leaves out.

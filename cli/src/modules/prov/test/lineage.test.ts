@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { ProvDocument } from "@inflexa-ai/tsprov";
 
 import { applyProvEvent, deriveLineageModel, PROV_UNIFY_OPTIONS, type LineageModel } from "@inflexa-ai/prov-kernel";
+import { z } from "zod";
+import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type {
@@ -978,9 +980,13 @@ describe("legacy and current file-tool shapes in one document", () => {
     const legacyKey = { path: "runs/run-000/step-old/output/old-notes.md", hash: "hashOld001" };
     const legacyCmdQn = "inflexa:cmd-run-000-step-old-legacy1";
 
+    /** The sections of the PROV-JSON text that the splice rewrites; every other section stays as it is. */
+    const records = z.record(z.string(), unknownRecordSchema).optional();
+    const splicedSectionsSchema = z.looseObject({ activity: records, entity: records, wasGeneratedBy: records });
+
     /** The canonical doc's bytes with an old-shape file-tool pseudo-command spliced in. */
     function mixedModel(): LineageModel {
-        const parsed = JSON.parse(canonicalDoc().serialize("json")) as Record<string, Record<string, unknown>>;
+        const parsed = splicedSectionsSchema.parse(JSON.parse(canonicalDoc().serialize("json")));
         parsed.activity = {
             ...parsed.activity,
             [legacyCmdQn]: { "prov:type": "inflexa:FileToolWrite", "inflexa:tool": "write_file" },

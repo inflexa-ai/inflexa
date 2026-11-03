@@ -1,13 +1,14 @@
-import type { Pool } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import { Hono } from "hono";
 import type { ResultAsync } from "neverthrow";
 import { z } from "zod";
 
 import type { DurableWork, ServerActivity, ServerState, ShutdownAccepted } from "../../api/server.ts";
 import { getLogger } from "../../lib/log.ts";
+import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { ServerBoot } from "../boot.ts";
 import { countLiveDurableWork, type LiveDurableWork } from "../durable_work.ts";
-import { readBody, type ServerEnv } from "../http.ts";
+import { readBody, type PoolRuntime, type ServerEnv } from "../http.ts";
 import type { ServerLifecycle } from "../lifecycle.ts";
 import { profileWorkCount } from "../profile_queue.ts";
 import { runningTurnCount } from "../turns.ts";
@@ -17,7 +18,7 @@ export type ServerRouteOpts = {
     readonly runningTurnCount: () => number;
     readonly profileWorkCount: () => number;
     /** The runs and the data profiles with a live workflow. The error channel means the ledger is unreadable. */
-    readonly durableWork: (pool: Pool) => ResultAsync<LiveDurableWork, unknown>;
+    readonly durableWork: (pool: Querier) => ResultAsync<LiveDurableWork, unknown>;
 };
 
 /** The production {@link ServerRouteOpts}. */
@@ -31,10 +32,15 @@ const shutdownBody = z.object({ mode: z.enum(["now", "drain"]) });
 
 /**
  * The routes under `/api/v1/server`: the boot state, a new boot after a failure, the work that a stop
- * interrupts, and the stop. None needs the runtime.
+ * interrupts, and the stop. None needs the runtime. The activity read passes the pool of the runtime handle `R`
+ * to the ledger read, thus a test gives a handle with a pool only.
  */
-export function serverRoutes(boot: ServerBoot, lifecycle: ServerLifecycle, opts: ServerRouteOpts = DEFAULT_SERVER_ROUTE_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function serverRoutes<R extends PoolRuntime = HarnessRuntime>(
+    boot: ServerBoot<R>,
+    lifecycle: ServerLifecycle,
+    opts: ServerRouteOpts = DEFAULT_SERVER_ROUTE_OPTS,
+): Hono<ServerEnv<R>> {
+    const routes = new Hono<ServerEnv<R>>();
     // The stop is a field apart from the phase: a server can stop in each boot phase.
     routes.get("/", (c) => c.json<ServerState>({ ...boot.state(), stopping: lifecycle.stopping() }));
     // 202: the boot runs after the response. The client reads `GET /api/v1/server` until the phase settles.

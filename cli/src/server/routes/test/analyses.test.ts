@@ -5,20 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { err, errAsync, okAsync, ResultAsync } from "neverthrow";
-import type { AnalysisPurgeOutcome, DataProfileSummary, DbError as PgError, LatestRunSummary, Pool } from "@inflexa-ai/harness";
+import type { AnalysisPurgeOutcome, DataProfileSummary, DbError as PgError, LatestRunSummary } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
+import { z } from "zod";
 
-import type {
-    AnalysisDetail,
-    AnalysisList,
-    BusyReason,
-    DeleteAnalysisResponse,
-    InputList,
-    InputsChange,
-    OutputDirView,
-    ResolvedContextView,
-    UpdateAnalysisResponse,
-} from "../../../api/analyses.ts";
-import type { ApiError } from "../../../api/common.ts";
+import type { BusyReason } from "../../../api/analyses.ts";
 import type { ServerBootState } from "../../../api/server.ts";
 import { createProject, insertAnalysis, insertAnalysisInput, insertAnchor, recordAnalysisActivity, upsertLlmUsage } from "../../../db/primary_mutation.ts";
 import { getAnalysis, getAnchor, listAnalysisInputs } from "../../../db/primary_query.ts";
@@ -28,14 +19,14 @@ import { asStr256 } from "../../../lib/types.ts";
 import { defaultOutputSubdir, disposeWorkspace, type WorkspaceDisposal, type WorkspaceError } from "../../../modules/analysis/output.ts";
 import { removeInput } from "../../../modules/analysis/analysis.ts";
 import { writeMarker } from "../../../modules/anchor/marker.ts";
-import type { HarnessRuntime } from "../../../modules/harness/runtime.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type { BusEvent } from "../../../types/events.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { idleBoot, idleLifecycle } from "../../../test_support/server.ts";
 import { buildApp } from "../../app.ts";
 import type { ServerBoot } from "../../boot.ts";
-import type { ServerEnv } from "../../http.ts";
+import type { PoolRuntime, ServerEnv } from "../../http.ts";
 import { createPageGrantStore } from "../../report_page_grants.ts";
 import {
     analysisCollectionRoutes,
@@ -47,22 +38,63 @@ import {
 } from "../analyses.ts";
 
 // The routes under their mount paths, with no bearer check and no guard, except the guard tests, which drive
-// the whole app. Each `as` cast of a body below reads JSON that the route under test builds from the same
-// `src/api/` type. The Postgres purge and the busy gate are fakes: the gate reads the turn registry, the
-// profile queue, and Postgres.
+// the whole app. A test that computes on a body parses the fields that it reads. A key beyond them stays on the
+// parsed value. The Postgres purge and the busy gate are fakes: the gate reads the turn registry, the profile
+// queue, and Postgres.
+
+const analysisList = z.looseObject({
+    analyses: z.array(z.looseObject({ id: z.string(), lastActivityAt: z.string(), pendingAsks: z.number().nullable(), folderPresent: z.boolean() })),
+    total: z.number(),
+});
+const analysisContext = z.looseObject({
+    kind: z.literal("analysis"),
+    analysis: z.looseObject({ id: z.string() }),
+    others: z.array(z.looseObject({ id: z.string(), anchorPath: z.string().nullable() })),
+});
+const analysisDetail = z.looseObject({
+    anchor: z.looseObject({ path: z.string().nullable() }).nullable(),
+    outputDir: z.string().nullable(),
+    project: z.looseObject({ id: z.string() }).nullable(),
+});
+const inputList = z.looseObject({ inputs: z.array(z.looseObject({ path: z.string() })) });
+const inputsChange = z.looseObject({
+    added: z.array(z.looseObject({ path: z.string() })),
+    removed: z.array(z.looseObject({ path: z.string() })),
+    notInputs: z.array(z.string()),
+});
+const outputDirView = z.looseObject({ path: z.string() });
 
 const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
-// The delete only passes the pool to the injected purge, thus a stand-in object is enough.
-const runtime = { pool: {} as unknown as Pool } as unknown as HarnessRuntime;
-const readyBoot: ServerBoot = {
+// The delete only passes the pool to the injected purge, thus a stand-in that rejects each query is enough.
+const runtime: PoolRuntime = { pool: { query: () => Promise.reject(new Error("the route must not query the pool")) } satisfies Querier };
+const readyBoot: ServerBoot<PoolRuntime> = {
     state: (): ServerBootState => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
     runtime: () => runtime,
     start: async () => undefined,
 };
 
-const IDLE: AnalysisRouteOpts = { ...DEFAULT_ANALYSIS_ROUTE_OPTS, busyReasons: async () => [] };
+const unusedRead = { type: "query_failed", op: "test.unused", cause: "the test did not expect this read" } as const;
 
-function appWith(boot: ServerBoot, opts: AnalysisRouteOpts = IDLE, listOpts: AnalysisListOpts = DEFAULT_ANALYSIS_LIST_OPTS): Hono<ServerEnv> {
+const IDLE: AnalysisRouteOpts<PoolRuntime> = {
+    ...DEFAULT_ANALYSIS_ROUTE_OPTS,
+    busyReasons: async () => [],
+    purgeAnalysis: () => errAsync(unusedRead),
+};
+
+/** The production list reads, with the reads of Postgres replaced: a test that reaches one of them without a replacement fails. */
+const LIST_DEFAULT: AnalysisListOpts<PoolRuntime> = {
+    ...DEFAULT_ANALYSIS_LIST_OPTS,
+    latestRuns: () => errAsync(unusedRead),
+    profiles: () => errAsync(unusedRead),
+    liveWork: () => errAsync(unusedRead),
+    pendingAsks: () => Promise.reject(new Error("the test did not expect this read")),
+};
+
+function appWith(
+    boot: ServerBoot<PoolRuntime>,
+    opts: AnalysisRouteOpts<PoolRuntime> = IDLE,
+    listOpts: AnalysisListOpts<PoolRuntime> = LIST_DEFAULT,
+): Hono<ServerEnv> {
     const app = new Hono<ServerEnv>();
     app.route("/api/v1/analyses", analysisCollectionRoutes(boot, listOpts));
     app.route("/api/v1/analyses/:analysisId", analysisRoutes(boot, opts));
@@ -114,20 +146,17 @@ describe("POST /api/v1/analyses/resolve", () => {
         const a = await seedAnalysis(dir);
         const response = await appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: dir }));
         expect(response.status).toBe(200);
-        const view = (await response.json()) as ResolvedContextView;
+        const view = await jsonBody(response);
         expect(view).toMatchObject({ kind: "analysis", anchorPath: dir, others: [], analysis: { id: a.id, name: "Alpha" } });
-        expect(view.describe).toBe(`context: analysis "Alpha" — ${dir}`);
+        expect(view).toHaveProperty("describe", `context: analysis "Alpha" — ${dir}`);
     });
 
     test("a reference by name names the other analyses that share the name", async () => {
         const firstDir = tmp();
         const first = await seedAnalysis(firstDir, "Same");
         const second = await seedAnalysis(tmp(), "Same", { createdAt: 2 });
-        const view = (await (
-            await appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: tmp(), ref: "Same" }))
-        ).json()) as ResolvedContextView;
+        const view = analysisContext.parse(await jsonBody(appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: tmp(), ref: "Same" }))));
         expect(view.kind).toBe("analysis");
-        if (view.kind !== "analysis") return;
         expect(view.analysis.id).toBe(second.id);
         expect(view.others.map((a) => [a.id, a.anchorPath])).toEqual([[first.id, firstDir]]);
     });
@@ -143,12 +172,12 @@ describe("POST /api/v1/analyses/resolve", () => {
 
     test("an untracked folder resolves to `empty`, and a relative cwd is a 400", async () => {
         const dir = tmp();
-        const empty = (await (await appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: dir }))).json()) as ResolvedContextView;
+        const empty = await jsonBody(appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: dir })));
         expect(empty).toEqual({ kind: "empty", cwd: dir, describe: `context: empty — ${dir} (no analysis here; start one?)` });
 
         const relative = await appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: "here" }));
         expect(relative.status).toBe(400);
-        expect(((await relative.json()) as ApiError).error).toBe("validation_error");
+        expect((await errorBody(relative)).error).toBe("validation_error");
     });
 });
 
@@ -167,11 +196,11 @@ describe("GET /api/v1/analyses", () => {
             usage: { inputTokens: 10, outputTokens: 5 },
         })._unsafeUnwrap();
 
-        const first = (await (await appWith(idleBoot()).request("/api/v1/analyses?perPage=1")).json()) as AnalysisList;
+        const first = analysisList.parse(await jsonBody(appWith(idleBoot()).request("/api/v1/analyses?perPage=1")));
         expect(first.analyses.map((a) => a.id)).toEqual([newer.id]);
         expect(first).toMatchObject({ total: 2, page: 0, perPage: 1, hasMore: true });
 
-        const second = (await (await appWith(idleBoot()).request("/api/v1/analyses?page=1&perPage=1")).json()) as AnalysisList;
+        const second = analysisList.parse(await jsonBody(appWith(idleBoot()).request("/api/v1/analyses?page=1&perPage=1")));
         expect(second.analyses[0]).toMatchObject({ id: older.id, anchorPath: dir, usage: { calls: 1, inputTokens: 10 } });
     });
 
@@ -180,17 +209,17 @@ describe("GET /api/v1/analyses", () => {
         const inProject = await seedAnalysis(tmp(), "In", { projectId: project.id });
         await seedAnalysis(tmp(), "Out");
 
-        const list = (await (await appWith(idleBoot()).request("/api/v1/analyses?project=Liver")).json()) as AnalysisList;
+        const list = analysisList.parse(await jsonBody(appWith(idleBoot()).request("/api/v1/analyses?project=Liver")));
         expect(list.analyses.map((a) => a.id)).toEqual([inProject.id]);
 
         const unknown = await appWith(idleBoot()).request("/api/v1/analyses?project=nope");
         expect(unknown.status).toBe(404);
-        expect(((await unknown.json()) as ApiError).message).toBe('No project found matching "nope".');
+        expect((await errorBody(unknown)).message).toBe('No project found matching "nope".');
     });
 });
 
 /** The list reads with no work to report. A test replaces the reads that it is about. */
-function listOptsOf(over: Partial<AnalysisListOpts> = {}): AnalysisListOpts {
+function listOptsOf(over: Partial<AnalysisListOpts<PoolRuntime>> = {}): AnalysisListOpts<PoolRuntime> {
     return {
         ...DEFAULT_ANALYSIS_LIST_OPTS,
         latestRuns: () => okAsync([]),
@@ -203,9 +232,13 @@ function listOptsOf(over: Partial<AnalysisListOpts> = {}): AnalysisListOpts {
     };
 }
 
-async function listOf(boot: ServerBoot, listOpts: AnalysisListOpts, query = ""): Promise<{ status: number; list: AnalysisList }> {
+async function listOf(
+    boot: ServerBoot<PoolRuntime>,
+    listOpts: AnalysisListOpts<PoolRuntime>,
+    query = "",
+): Promise<{ status: number; list: z.infer<typeof analysisList> }> {
     const response = await appWith(boot, IDLE, listOpts).request(`/api/v1/analyses${query}`);
-    return { status: response.status, list: (await response.json()) as AnalysisList };
+    return { status: response.status, list: analysisList.parse(await jsonBody(response)) };
 }
 
 function runOf(analysisId: string, over: Partial<LatestRunSummary> = {}): LatestRunSummary {
@@ -432,7 +465,7 @@ describe("POST /api/v1/analyses", () => {
             json("POST", { name: " Liver RNA ", folder: dir, inputs: [join(dir, "a.csv")] }),
         );
         expect(response.status).toBe(201);
-        const detail = (await response.json()) as AnalysisDetail;
+        const detail = analysisDetail.parse(await jsonBody(response));
         expect(detail).toMatchObject({ name: "Liver RNA", slug: "liver-rna", inputCount: 1, busy: [], project: null });
         expect(detail.anchor?.path).toBe(dir);
         expect(detail.outputDir).toBe(join(dir, ".inflexa", "analyses", "liver-rna"));
@@ -442,15 +475,15 @@ describe("POST /api/v1/analyses", () => {
         const dir = tmp();
         const response = await appWith(idleBoot()).request("/api/v1/analyses", json("POST", { name: "x", folder: dir, inputs: [join(dir, "gone.csv")] }));
         expect(response.status).toBe(400);
-        expect(((await response.json()) as ApiError).message).toBe(`no such file: ${join(dir, "gone.csv")}`);
-        const list = (await (await appWith(idleBoot()).request("/api/v1/analyses")).json()) as AnalysisList;
+        expect((await errorBody(response)).message).toBe(`no such file: ${join(dir, "gone.csv")}`);
+        const list = analysisList.parse(await jsonBody(appWith(idleBoot()).request("/api/v1/analyses")));
         expect(list.total).toBe(0);
     });
 
     test("a blank name is a 400, and an unknown project is a 404", async () => {
         const blank = await appWith(idleBoot()).request("/api/v1/analyses", json("POST", { name: "  ", folder: tmp() }));
         expect(blank.status).toBe(400);
-        expect(((await blank.json()) as ApiError).message).toBe("Invalid analysis name: must not be blank.");
+        expect((await errorBody(blank)).message).toBe("Invalid analysis name: must not be blank.");
 
         const unknown = await appWith(idleBoot()).request("/api/v1/analyses", json("POST", { name: "x", folder: tmp(), project: "nope" }));
         expect(unknown.status).toBe(404);
@@ -466,7 +499,7 @@ describe("the analysis guard", () => {
         for (const path of ["/api/v1/analyses/nope", "/api/v1/analyses/nope/inputs"]) {
             const response = await app.request(path, { headers: auth });
             expect(response.status).toBe(404);
-            expect(((await response.json()) as ApiError).error).toBe("not_found");
+            expect((await errorBody(response)).error).toBe("not_found");
         }
     });
 
@@ -483,7 +516,7 @@ describe("the analysis guard", () => {
                 },
             );
             expect(response.status).toBe(409);
-            const body = (await response.json()) as ApiError;
+            const body = await errorBody(response);
             expect(body).toMatchObject({ error: "locked", details: { holderPid: process.ppid } });
             expect(body.message).toContain('"Alpha" is already open in another instance');
         } finally {
@@ -508,9 +541,9 @@ describe("GET {A}", () => {
         const dir = tmp();
         const a = await seedAnalysis(dir);
         insertAnalysisInput({ path: "in.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
-        const busy: AnalysisRouteOpts = { ...IDLE, busyReasons: async () => ["data_profile"] };
+        const busy: AnalysisRouteOpts<PoolRuntime> = { ...IDLE, busyReasons: async () => ["data_profile"] };
 
-        const detail = (await (await appWith(idleBoot(), busy).request(`/api/v1/analyses/${a.id}`)).json()) as AnalysisDetail;
+        const detail = analysisDetail.parse(await jsonBody(appWith(idleBoot(), busy).request(`/api/v1/analyses/${a.id}`)));
         expect(detail).toMatchObject({
             id: a.id,
             inputCount: 1,
@@ -525,7 +558,7 @@ describe("GET {A}", () => {
         const after = join(tmp(), "moved");
         renameSync(before, after);
 
-        const detail = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?cwd=${encodeURIComponent(after)}`)).json()) as AnalysisDetail;
+        const detail = analysisDetail.parse(await jsonBody(appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?cwd=${encodeURIComponent(after)}`)));
         expect(detail.anchor?.path).toBe(after);
     });
 
@@ -533,7 +566,7 @@ describe("GET {A}", () => {
         const a = await seedAnalysis(tmp());
         const response = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?cwd=here`);
         expect(response.status).toBe(400);
-        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+        expect((await errorBody(response)).error).toBe("validation_error");
     });
 
     test("`touch=false` records no sighting of the anchor folder; the default does", async () => {
@@ -550,17 +583,17 @@ describe("GET {A}", () => {
         const a = await seedAnalysis(tmp());
         const response = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}?touch=no`);
         expect(response.status).toBe(400);
-        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+        expect((await errorBody(response)).error).toBe("validation_error");
     });
 });
 
 describe("PATCH {A}", () => {
     test("a rename while work holds the folder is a 409 `busy` that names the work, and nothing changes", async () => {
         const a = await seedAnalysis(tmp());
-        const busy: AnalysisRouteOpts = { ...IDLE, busyReasons: async () => ["chat_turn", "run"] };
+        const busy: AnalysisRouteOpts<PoolRuntime> = { ...IDLE, busyReasons: async () => ["chat_turn", "run"] };
         const response = await appWith(idleBoot(), busy).request(`/api/v1/analyses/${a.id}`, json("PATCH", { name: "Beta" }));
         expect(response.status).toBe(409);
-        expect((await response.json()) as ApiError).toEqual({
+        expect(await errorBody(response)).toEqual({
             error: "busy",
             message: "Cannot rename while a chat turn is running or paused.",
             details: { reasons: ["chat_turn", "run"] },
@@ -572,25 +605,23 @@ describe("PATCH {A}", () => {
         const dir = tmp();
         const a = await seedAnalysis(dir);
         mkdirSync(join(dir, ".inflexa", "analyses", "alpha"), { recursive: true });
-        const updated = (await (
-            await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { name: "Beta" }))
-        ).json()) as UpdateAnalysisResponse;
+        const updated = await jsonBody(appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { name: "Beta" })));
         expect(updated).toMatchObject({ name: "Beta", slug: "beta" });
-        expect(updated.workspaceNotMoved).toBeUndefined();
+        expect(updated).not.toHaveProperty("workspaceNotMoved");
         expect(existsSync(join(dir, ".inflexa", "analyses", "beta"))).toBe(true);
     });
 
     test("sets and clears the project by name, and an unknown project changes nothing", async () => {
         const project = createProject({ name: asStr256("Liver"), description: null, tags: [] })._unsafeUnwrap();
         const a = await seedAnalysis(tmp());
-        const set = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { project: "Liver" }))).json()) as AnalysisDetail;
+        const set = analysisDetail.parse(await jsonBody(appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { project: "Liver" }))));
         expect(set.project?.id).toBe(project.id);
 
         const unknown = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { project: "nope" }));
         expect(unknown.status).toBe(404);
         expect(getAnalysis(a.id)._unsafeUnwrap()?.projectId).toBe(project.id);
 
-        const cleared = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { project: null }))).json()) as AnalysisDetail;
+        const cleared = analysisDetail.parse(await jsonBody(appWith(idleBoot()).request(`/api/v1/analyses/${a.id}`, json("PATCH", { project: null }))));
         expect(cleared.project).toBeNull();
     });
 });
@@ -603,11 +634,11 @@ describe("DELETE {A} — the ordered delete", () => {
     function ladder(
         out: { onDisk?: boolean; exported?: boolean; flushed?: boolean; disposalError?: WorkspaceError; purgeError?: PgError; busy?: BusyReason[] } = {},
     ): {
-        opts: AnalysisRouteOpts;
+        opts: AnalysisRouteOpts<PoolRuntime>;
         steps: string[];
     } {
         const steps: string[] = [];
-        const opts: AnalysisRouteOpts = {
+        const opts: AnalysisRouteOpts<PoolRuntime> = {
             busyReasons: async () => out.busy ?? [],
             hasWorkspaceOnDisk: async () => out.onDisk ?? true,
             flushProvenance: async () => {
@@ -646,7 +677,7 @@ describe("DELETE {A} — the ordered delete", () => {
         const l = ladder();
         const response = await appWith(readyBoot, l.opts).request(`/api/v1/analyses/${a.id}?workspace=keep&export=prov-json`, { method: "DELETE" });
         expect(response.status).toBe(200);
-        expect((await response.json()) as DeleteAnalysisResponse).toEqual({ deleted: true, workspace: { kind: "archived", path: ARCHIVE }, export: "written" });
+        expect(await jsonBody(response)).toEqual({ deleted: true, workspace: { kind: "archived", path: ARCHIVE }, export: "written" });
         expect(l.steps).toEqual(["flush", "export:json", "dispose:archive", "purge", "delete-row", "remove-farm"]);
         expect(getAnalysis(a.id)._unsafeUnwrap()).toBeNull();
     });
@@ -659,10 +690,8 @@ describe("DELETE {A} — the ordered delete", () => {
 
         const noFolder = ladder({ onDisk: false });
         const b = await seedAnalysis(tmp(), "Beta");
-        const body = (await (
-            await appWith(readyBoot, noFolder.opts).request(`/api/v1/analyses/${b.id}?export=prov-json`, { method: "DELETE" })
-        ).json()) as DeleteAnalysisResponse;
-        expect(body.export).toBe("none");
+        const body = await jsonBody(appWith(readyBoot, noFolder.opts).request(`/api/v1/analyses/${b.id}?export=prov-json`, { method: "DELETE" }));
+        expect(body).toHaveProperty("export", "none");
         expect(noFolder.steps[0]).toBe("dispose:archive");
     });
 
@@ -671,7 +700,7 @@ describe("DELETE {A} — the ordered delete", () => {
         const l = ladder({ purgeError: { type: "query_failed", op: "purgeAnalysis", cause: new Error("boom") } });
         const response = await appWith(readyBoot, l.opts).request(`/api/v1/analyses/${a.id}`, { method: "DELETE" });
         expect(response.status).toBe(500);
-        const message = ((await response.json()) as ApiError).message;
+        const message = (await errorBody(response)).message;
         expect(message).toContain("the analysis was NOT deleted");
         expect(message).toContain(ARCHIVE);
         expect(l.steps).toEqual(["dispose:archive", "purge"]);
@@ -698,7 +727,7 @@ describe("DELETE {A} — the ordered delete", () => {
             release = resolve;
         });
         const removed: string[] = [];
-        const opts: AnalysisRouteOpts = {
+        const opts: AnalysisRouteOpts<PoolRuntime> = {
             ...IDLE,
             purgeAnalysis: () => okAsync(PURGED),
             removeFarm: async () => undefined,
@@ -755,7 +784,7 @@ describe("DELETE {A} — the ordered delete", () => {
         const busy = ladder({ busy: ["run"] });
         const refused = await appWith(readyBoot, busy.opts).request(`/api/v1/analyses/${a.id}`, { method: "DELETE" });
         expect(refused.status).toBe(409);
-        expect(((await refused.json()) as ApiError).message).toBe("Cannot delete while a run is in flight.");
+        expect((await errorBody(refused)).message).toBe("Cannot delete while a run is in flight.");
         expect(busy.steps).toEqual([]);
 
         const cold = ladder();
@@ -769,7 +798,7 @@ describe("POST {A}/output-dir", () => {
     test("makes the workspace folder and gives its path", async () => {
         const dir = tmp();
         const a = await seedAnalysis(dir);
-        const view = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/output-dir`, { method: "POST" })).json()) as OutputDirView;
+        const view = outputDirView.parse(await jsonBody(appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/output-dir`, { method: "POST" })));
         expect(view.path).toBe(join(dir, ".inflexa", "analyses", "alpha"));
         expect(existsSync(view.path)).toBe(true);
     });
@@ -782,15 +811,15 @@ describe("the inputs of an analysis", () => {
         writeFileSync(join(dir, "a.csv"), "x");
         const app = appWith(idleBoot());
 
-        const added = (await (await app.request(`/api/v1/analyses/${a.id}/inputs`, json("POST", { paths: [join(dir, "a.csv")] }))).json()) as InputsChange;
+        const added = inputsChange.parse(await jsonBody(app.request(`/api/v1/analyses/${a.id}/inputs`, json("POST", { paths: [join(dir, "a.csv")] }))));
         expect(added.added).toEqual([{ path: "a.csv", isDir: false, anchorId: a.anchorId, absolutePath: join(dir, "a.csv"), size: 1, kind: "table" }]);
 
-        const list = (await (await app.request(`/api/v1/analyses/${a.id}/inputs`)).json()) as InputList;
+        const list = inputList.parse(await jsonBody(app.request(`/api/v1/analyses/${a.id}/inputs`)));
         expect(list).toMatchObject({ total: 1, inputs: [{ path: "a.csv", absolutePath: join(dir, "a.csv") }] });
 
         const missing = await app.request(`/api/v1/analyses/${a.id}/inputs`, json("POST", { paths: [join(dir, "gone.csv")] }));
         expect(missing.status).toBe(400);
-        expect(((await missing.json()) as ApiError).details).toEqual({ missing: [join(dir, "gone.csv")] });
+        expect((await errorBody(missing)).details).toEqual({ missing: [join(dir, "gone.csv")] });
     });
 
     test("GET gives the size and the kind of a file, a file with no mapped extension, a folder, and a missing path", async () => {
@@ -810,7 +839,7 @@ describe("the inputs of an analysis", () => {
         ];
         for (const input of stored) insertAnalysisInput({ ...input, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
 
-        const list = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`)).json()) as InputList;
+        const list = inputList.parse(await jsonBody(appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`)));
         const byPath = new Map(list.inputs.map((i) => [i.path, i]));
         expect(byPath.get("counts.csv")).toMatchObject({ size: 1204, kind: "table" });
         expect(byPath.get("notes.zzz")).toMatchObject({ size: 12, kind: null });
@@ -825,7 +854,7 @@ describe("the inputs of an analysis", () => {
         writeFileSync(join(dir, "counts.csv"), "x".repeat(1204));
 
         const res = await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`, json("POST", { paths: [join(dir, "counts.csv")] }));
-        const change = (await res.json()) as InputsChange;
+        const change = inputsChange.parse(await jsonBody(res));
         expect(change.added).toMatchObject([{ path: "counts.csv", size: 1204, kind: "table" }]);
     });
 
@@ -836,7 +865,7 @@ describe("the inputs of an analysis", () => {
         insertAnalysisInput({ path: "far.csv", isDir: false, analysisId: a.id, anchorId: "lost" })._unsafeUnwrap();
         insertAnalysisInput({ path: "wide", isDir: true, analysisId: a.id, anchorId: "lost" })._unsafeUnwrap();
 
-        const list = (await (await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`)).json()) as InputList;
+        const list = inputList.parse(await jsonBody(appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`)));
         const byPath = new Map(list.inputs.map((i) => [i.path, i]));
         expect(byPath.get("far.csv")).toMatchObject({ absolutePath: null, size: null, kind: "table" });
         expect(byPath.get("wide")).toMatchObject({ absolutePath: null, size: null, kind: null });
@@ -876,9 +905,9 @@ describe("the inputs of an analysis", () => {
         insertAnchor({ id: "lost", createdAt: 1, updatedAt: 1, cachedPath: "/gone/forever", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysisInput({ path: "far.csv", isDir: false, analysisId: a.id, anchorId: "lost" })._unsafeUnwrap();
 
-        const change = (await (
-            await appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`, json("PUT", { paths: [join(dir, "new.csv")] }))
-        ).json()) as InputsChange;
+        const change = inputsChange.parse(
+            await jsonBody(appWith(idleBoot()).request(`/api/v1/analyses/${a.id}/inputs`, json("PUT", { paths: [join(dir, "new.csv")] }))),
+        );
         expect(change.added.map((i) => i.path)).toEqual(["new.csv"]);
         expect(change.removed.map((i) => i.path)).toEqual(["old.csv"]);
         expect(
@@ -898,7 +927,7 @@ describe("the inputs of an analysis", () => {
             insertAnalysisInput({ path, isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
         }
         const failing = new Set(["two.csv", "three.csv"]);
-        const opts: AnalysisRouteOpts = {
+        const opts: AnalysisRouteOpts<PoolRuntime> = {
             ...IDLE,
             removeInput: (input) => (failing.has(input.path) ? err({ type: "mutation_failed", op: "delete input", cause: "disk full" }) : removeInput(input)),
         };
@@ -906,7 +935,7 @@ describe("the inputs of an analysis", () => {
         const res = await appWith(idleBoot(), opts).request(`/api/v1/analyses/${a.id}/inputs`, json("PUT", { paths: [join(dir, "keep.csv")] }));
 
         expect(res.status).toBe(500);
-        const body = (await res.json()) as ApiError;
+        const body = await errorBody(res);
         expect(body.error).toBe("internal_error");
         expect(body.message).toContain("two.csv, three.csv");
         expect(body.message).toContain("one.csv, four.csv");
@@ -925,7 +954,7 @@ describe("the inputs of an analysis", () => {
         const names = ["one.csv", "two.csv", "three.csv", "four.csv"];
         for (const path of names) insertAnalysisInput({ path, isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
         const failing = new Set(["two.csv", "three.csv"]);
-        const opts: AnalysisRouteOpts = {
+        const opts: AnalysisRouteOpts<PoolRuntime> = {
             ...IDLE,
             removeInput: (input) => (failing.has(input.path) ? err({ type: "mutation_failed", op: "delete input", cause: "disk full" }) : removeInput(input)),
         };
@@ -939,7 +968,7 @@ describe("the inputs of an analysis", () => {
         Bus.off("inflexa", onEvent);
 
         expect(res.status).toBe(500);
-        const body = (await res.json()) as ApiError;
+        const body = await errorBody(res);
         expect(body.error).toBe("internal_error");
         for (const name of names) expect(body.message).toContain(name);
         expect(body.message).toContain("two.csv, three.csv");
@@ -961,12 +990,14 @@ describe("the inputs of an analysis", () => {
         insertAnchor({ id: "lost", createdAt: 1, updatedAt: 1, cachedPath: "/gone/forever", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysisInput({ path: "far.csv", isDir: false, analysisId: a.id, anchorId: "lost" })._unsafeUnwrap();
 
-        const change = (await (
-            await appWith(idleBoot()).request(
-                `/api/v1/analyses/${a.id}/inputs/remove`,
-                json("POST", { paths: [join(dir, "a.csv"), "far.csv", join(dir, "nope.csv")] }),
-            )
-        ).json()) as InputsChange;
+        const change = inputsChange.parse(
+            await jsonBody(
+                appWith(idleBoot()).request(
+                    `/api/v1/analyses/${a.id}/inputs/remove`,
+                    json("POST", { paths: [join(dir, "a.csv"), "far.csv", join(dir, "nope.csv")] }),
+                ),
+            ),
+        );
         expect(change.removed.map((i) => i.path).toSorted()).toEqual(["a.csv", "far.csv"]);
         expect(change.notInputs).toEqual([join(dir, "nope.csv")]);
         expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toEqual([]);
