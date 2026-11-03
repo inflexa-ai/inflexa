@@ -53,6 +53,7 @@ import {
 import { errnoCode, isReadableBy, processIdentity, statResultAsync, type ProcessIdentity } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
+import { present } from "../../lib/present.ts";
 import { ABSENT_CODES, contains, locateWorkspaceReadRoot } from "../../modules/analysis/boundary.ts";
 import { inputAbsolutePaths } from "../../modules/analysis/input.ts";
 import { defaultOutputSubdir } from "../../modules/analysis/output.ts";
@@ -912,7 +913,7 @@ export function fsRoutes(boot: ServerBoot<PoolRuntime>, opts: FsRouteOpts = DEFA
         );
         if (views.isErr()) return views.error;
         // `enrichEntries` gives one view for each entry, in the order of the entries, thus index `k` holds a view.
-        const items = hits.map((hit, k): FsSearchHit => ({ entry: views.value[k]!, subpath: hit.subpath }));
+        const items = hits.map((hit, k): FsSearchHit => ({ entry: present(views.value[k], "the view of a search hit"), subpath: hit.subpath }));
         const body: FsSearch = { hits: items, truncated };
         return c.json(body);
     });

@@ -17,6 +17,7 @@ import { FixedList } from "../../components/fixed_list.tsx";
 import { absTimeShort, idTail, shortRunName } from "../../hooks/sidebar_live.ts";
 import { DesignGallery } from "../design_gallery.tsx";
 import { mockCortexRuns, mockLongRun, mockRun, mockRunDetail, mockRunUsage, mockUsageSnapshot } from "../design_gallery_fixtures.ts";
+import { present } from "../../../lib/present.ts";
 
 // The design gallery is where a token figure gets REVIEWED, so a figure that renders invisible there
 // is worse than one missing: the reviewer signs off on a state nobody could see. This file measures
@@ -145,7 +146,7 @@ const CASES: FigureCase[] = [
         // The wide mount: every step's figure on its own indented line under the step it details.
         name: "RunBlock — per-step figure (full mount)",
         node: () => <RunBlock name={mockRun.name} tag={mockRun.tag} done={mockRun.done} total={mockRun.total} steps={mockRun.steps} />,
-        figure: mockRun.steps[0]!.usageFigure!,
+        figure: present(present(mockRun.steps[0]).usageFigure),
         surface: colors.bg,
         size: { width: 80, height: 24 },
     },
@@ -166,7 +167,7 @@ const CASES: FigureCase[] = [
         ),
         // The step the window centres on, so the assertion cannot pass on a row that happens to be
         // visible at one terminal size and scrolled away at another.
-        figure: mockLongRun.steps[7]!.usageFigure!,
+        figure: present(present(mockLongRun.steps[7]).usageFigure),
         surface: colors.bg,
         size: { width: 44, height: 24 },
     },
@@ -177,12 +178,12 @@ const CASES: FigureCase[] = [
         name: "RunDetailDialog — the usage property line",
         node: () => (
             <DialogShowcase>
-                <RunDetailDialog run={mockCortexRuns[0]!} loadDetail={() => okAsync(mockRunDetail)} onClose={() => dialogClear()} />
+                <RunDetailDialog run={present(mockCortexRuns[0])} loadDetail={() => okAsync(mockRunDetail)} onClose={() => dialogClear()} />
             </DialogShowcase>
         ),
         // The LONG form on this line, unlike every other case in this table: a `label value` property
         // line in a full-width dialog spends words where a rail decoration cannot.
-        figure: formatTokenFigureLabelled(mockRunUsage.get(mockCortexRuns[0]!.runId)!),
+        figure: formatTokenFigureLabelled(present(mockRunUsage.get(present(mockCortexRuns[0]).runId))),
         surface: colors.bgRaised,
         size: { width: 100, height: 30 },
     },
@@ -191,7 +192,7 @@ const CASES: FigureCase[] = [
         // measures the figure against the list's highlight rather than only against the panel.
         name: "FixedList — figure in a row's meta line (runs picker)",
         node: () => <FixedList items={pickerItems()} emptyText="no runs" />,
-        figure: formatTokenFigure(mockRunUsage.get(mockCortexRuns[0]!.runId)!),
+        figure: formatTokenFigure(present(mockRunUsage.get(present(mockCortexRuns[0]).runId))),
         surface: colors.bgRaised,
         size: { width: 80, height: 12 },
     },

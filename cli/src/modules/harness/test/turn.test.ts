@@ -15,6 +15,7 @@ import {
 
 import { fakeTransactionalPool } from "../../../test_support/fake_pool.ts";
 import { buildChatSession, healTailOrphan, runChatTurn, turnSpend, type ChatTurnSeams, type TurnOutcome } from "../turn.ts";
+import { present } from "../../../lib/present.ts";
 
 // The engine is exercised offline: the chat turns of the harness are one injected fake, thus no Postgres, no
 // model, and no credits. The harness suite pins what the turn itself stores.
@@ -314,7 +315,7 @@ describe("runChatTurn streams the turn to the surface", () => {
 
         await runWith(chatTurns);
 
-        const { session: openSession, request } = chatTurns.opens[0]!;
+        const { session: openSession, request } = present(chatTurns.opens[0]);
         expect(openSession).toBe(session);
         expect(request).toMatchObject({ analysisId: ANALYSIS_ID, threadId: THREAD_ID, userInput: USER_INPUT });
         expect(request.startedAtMs).toBeGreaterThanOrEqual(before);
@@ -331,7 +332,7 @@ describe("the author of a chat turn", () => {
 
         await runWith(chatTurns, { readAuthor: () => AUTHOR });
 
-        expect(chatTurns.opens[0]!.request.author).toBe(AUTHOR);
+        expect(present(chatTurns.opens[0]).request.author).toBe(AUTHOR);
     });
 
     test("a signed-out identity carries NO author key — an absent sender is absent, never empty", async () => {
@@ -339,7 +340,7 @@ describe("the author of a chat turn", () => {
 
         await runWith(chatTurns, { readAuthor: () => null });
 
-        expect("author" in chatTurns.opens[0]!.request).toBe(false);
+        expect("author" in present(chatTurns.opens[0]).request).toBe(false);
     });
 
     test("an empty email carries no author key", async () => {
@@ -347,7 +348,7 @@ describe("the author of a chat turn", () => {
 
         await runWith(chatTurns, { readAuthor: () => "" });
 
-        expect("author" in chatTurns.opens[0]!.request).toBe(false);
+        expect("author" in present(chatTurns.opens[0]).request).toBe(false);
     });
 
     test("each turn reads the identity again, so a sign-in between two turns reaches the second", async () => {
@@ -372,7 +373,7 @@ describe("the author of a chat turn", () => {
 
         await runWith(chatTurns, { readAuthor: () => (signedIn ? AUTHOR : null) });
 
-        expect(chatTurns.opens[0]!.request.author).toBe(AUTHOR);
+        expect(present(chatTurns.opens[0]).request.author).toBe(AUTHOR);
     });
 });
 

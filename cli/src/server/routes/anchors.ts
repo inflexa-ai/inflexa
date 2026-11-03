@@ -149,11 +149,10 @@ export function anchorRoutes<R>(boot: ServerBoot<R>, opts: AnchorRouteOpts<R>): 
                     case "sqlite_failed":
                         return internalError(c, e.cause, "delete the rows of the dead anchors");
                     case "busy":
-                        // `reasons[0]!`: the reclaim gives `busy` only for a gate answer that is not empty.
                         return apiError(
                             c,
                             "busy",
-                            `Cannot prune while ${describeBusyReason(e.reasons[0]!)} in analysis ${e.analysisId} — nothing was pruned. Run \`inflexa prune\` again: it keeps the anchor of a busy analysis.`,
+                            `Cannot prune while ${describeBusyReason(e.reasons[0])} in analysis ${e.analysisId} — nothing was pruned. Run \`inflexa prune\` again: it keeps the anchor of a busy analysis.`,
                             { analysisId: e.analysisId, reasons: e.reasons },
                         );
                     case "purge_failed":

@@ -8,15 +8,18 @@ import { freshDb } from "../../../test_support/db.ts";
 import type { BusEvent } from "../../../types/events.ts";
 import type { ProvActor, ProvInputRef } from "../../../types/prov.ts";
 import { noteAnalysisActivity, notifyProfileSettledActivity, watchAnalysisActivity } from "../activity.ts";
+import { present } from "../../../lib/present.ts";
 
 const ANALYSIS = "analysis-1";
 const CREATED = 1_000;
 
 /** The activity time of the analysis, as the list page reads it. */
 function activityAt(): number {
-    return listAnalysisPage({ projectId: null, sort: "created", limit: 10, offset: 0 })
-        ._unsafeUnwrap()
-        .items.find((item) => item.analysis.id === ANALYSIS)!.lastActivityAt;
+    return present(
+        listAnalysisPage({ projectId: null, sort: "created", limit: 10, offset: 0 })
+            ._unsafeUnwrap()
+            .items.find((item) => item.analysis.id === ANALYSIS),
+    ).lastActivityAt;
 }
 
 const ACTOR: ProvActor = { kind: "system", label: "inflexa cli", version: "0.0.0" };

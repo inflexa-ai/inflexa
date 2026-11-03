@@ -7,6 +7,7 @@ import type { ClientError } from "../../../client/api.ts";
 import { __resetNoticesForTest, __pendingNoticeCountForTest, currentNotice, notify } from "../notice.ts";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from "../sidebar_live.ts";
 import { __resetRunCompletionsForTest, completionNoticeText, watchRunCompletions, type RunCompletionOpts } from "../run_completion.ts";
+import { present } from "../../../lib/present.ts";
 
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
     return {
@@ -204,7 +205,7 @@ describe("run completion announcement", () => {
                 await refreshSidebarData("analysis-1", optsFor([runRow({ runId: `run-${status}`, status, completedAt: "2026-07-28T10:01:00.000Z" })]));
                 await settle();
                 expect(currentNotice()).not.toBeNull();
-                expect(currentNotice()!.kind).toBe(kind);
+                expect(present(currentNotice()).kind).toBe(kind);
                 dispose();
             });
         }
@@ -437,7 +438,7 @@ describe("a run that leaves the runs read", () => {
 
             for (const runId of ids.slice(0, 4))
                 // Every id in `ids.slice(0, 4)` was read above, and the fake `loadRun` stored its open read.
-                open.get(runId)!.release(runDetail(runRow({ runId, status: "completed", completedAt: "2026-07-28T10:02:30.000Z" })));
+                present(open.get(runId)).release(runDetail(runRow({ runId, status: "completed", completedAt: "2026-07-28T10:02:30.000Z" })));
             await settle();
             await refreshSidebarData("analysis-1", newerRuns());
             await settle();

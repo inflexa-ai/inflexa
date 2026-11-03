@@ -100,10 +100,10 @@ function jwtExpiryMs(token: string): number | null {
     // eyJ = base64url of `{"` — the invariant prefix of every JWT header. Anything else is opaque.
     if (!token.startsWith("eyJ")) return null;
     const segments = token.split(".");
-    if (segments.length !== 3) return null;
+    const payloadSegment = segments[1];
+    if (segments.length !== 3 || payloadSegment === undefined) return null;
     try {
-        // Sound: length checked === 3 above, so segments[1] exists.
-        const payload = JSON.parseWith(Buffer.from(segments[1]!, "base64url").toString("utf8"), unknownRecordSchema);
+        const payload = JSON.parseWith(Buffer.from(payloadSegment, "base64url").toString("utf8"), unknownRecordSchema);
         if (payload === null) return null;
         const exp = payload.exp;
         return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : null;

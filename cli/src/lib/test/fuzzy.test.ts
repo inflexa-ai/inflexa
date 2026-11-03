@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { rankBy, subsequenceScore, subsequenceScoreBytes } from "../fuzzy.ts";
+import { present } from "../present.ts";
 
 // These tests pin the scorer's CONTRACT, not its exact score magnitudes. They assert sign and
 // relative ordering only, so the scoring constants can be re-tuned without rewriting the suite.
@@ -76,7 +77,7 @@ describe("rankBy", () => {
             { title: "zzz", category: "open" }, // matches only on category
             { title: "open", category: "zzz" }, // matches on the higher-weighted title
         ];
-        expect(rankBy(rows, "open", fields)[0]!.title).toBe("open");
+        expect(present(rankBy(rows, "open", fields)[0]).title).toBe("open");
     });
 
     test("rows matching no field are dropped", () => {
@@ -86,7 +87,7 @@ describe("rankBy", () => {
         ];
         const ranked = rankBy(rows, "open", fields);
         expect(ranked).toHaveLength(1);
-        expect(ranked[0]!.title).toBe("open");
+        expect(present(ranked[0]).title).toBe("open");
     });
 
     test("an empty query returns items unchanged in original order", () => {

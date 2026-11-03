@@ -94,9 +94,7 @@ export function createLaunchDirTool() {
         // variation that does not exist.
         describeCall: "none",
         execute: async (_input, ctx): Promise<Result<LaunchDirResult, ToolError>> => {
-            const scoped = scopeResource(ctx.session.scope);
-            if (scoped.resourceType !== "analysis") return ok({ status: "no_analysis" as const });
-            const analysisId = scoped.resourceId;
+            const analysisId = scopeResource(ctx.session.scope).resourceId;
 
             // Keep the miss conditions distinct: a real DB fault is an `error`, a vanished analysis row
             // is `no_analysis`, and only an anchor folder that cannot be located on disk is `no_anchor`.

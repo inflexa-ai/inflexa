@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PAGE_ASSETS } from "@inflexa-ai/harness/report-render/assets.js";
 
 import { collectPageAssetEntries, type ResolveAssetSource } from "../page_assets.ts";
+import { present } from "../../../lib/present.ts";
 
 // The bytes of one fixture file. They carry the specifier, thus a collection that pairs a specifier with
 // the file of a different specifier fails the byte assertion.
@@ -60,7 +61,7 @@ describe("collectPageAssetEntries", () => {
     test("an unresolvable specifier stops the collection and names that specifier", () => {
         // The manifest is a non-empty constant of the harness, thus the last entry is present. It also
         // proves that the loop reaches the tail before it fails.
-        const unresolvable = PAGE_ASSETS[PAGE_ASSETS.length - 1]!;
+        const unresolvable = present(PAGE_ASSETS[PAGE_ASSETS.length - 1]);
         const resolver: ResolveAssetSource = (specifier) => {
             if (specifier === unresolvable.specifier) throw new Error("no resolution answers this specifier");
             return fixtureResolver()(specifier);
@@ -75,7 +76,7 @@ describe("collectPageAssetEntries", () => {
     test("a specifier that resolves to a path with no file behind it gives its own error", () => {
         // A resolver does not always read the disk, thus this failure is different from an unresolvable
         // specifier. The manifest is a non-empty constant of the harness, thus the first entry is present.
-        const target = PAGE_ASSETS[0]!;
+        const target = present(PAGE_ASSETS[0]);
         const absent = join(fixtureDir, "no-file-here.bin");
         const resolver: ResolveAssetSource = (specifier) => (specifier === target.specifier ? absent : fixtureResolver()(specifier));
 

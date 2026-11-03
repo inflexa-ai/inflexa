@@ -138,7 +138,10 @@ export async function resolveModelId(apiKey: string, signal?: AbortSignal): Prom
     if (cachedModelId) return ok(cachedModelId);
     const candidates = await listModelCandidates(apiKey, signal);
     if (candidates.isErr()) return err(candidates.error);
-    cachedModelId = await electModel(rankModelCandidates(candidates.value), apiKey, signal);
+    const ranked = rankModelCandidates(candidates.value);
+    const [top] = ranked;
+    if (top === undefined) return err({ type: "no_models" });
+    cachedModelId = await electModel(top, ranked, apiKey, signal);
     return ok(cachedModelId);
 }
 
@@ -182,14 +185,12 @@ export async function listModelCandidates(apiKey: string, signal?: AbortSignal):
  * the election — surfaces the failure. Claude-family membership comes from {@link modelMatchesProvider}
  * (provider→family via {@link MODEL_FAMILIES}'s anthropic row), never an id→provider derivation.
  */
-async function electModel(ranked: string[], apiKey: string, signal?: AbortSignal): Promise<string> {
+async function electModel(top: string, ranked: string[], apiKey: string, signal?: AbortSignal): Promise<string> {
     for (const id of ranked) {
         if (!modelMatchesProvider("anthropic", id)) return id;
         if ((await checkModelAccess(apiKey, id, signal)) !== "not_found") return id;
     }
-    // `ranked` is non-empty: resolveModelId returns `no_models` before calling this on an empty list, and
-    // rankModelCandidates preserves every id, so the top-ranked candidate always exists here.
-    return ranked[0]!;
+    return top;
 }
 
 /**

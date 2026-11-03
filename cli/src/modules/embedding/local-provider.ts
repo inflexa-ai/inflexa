@@ -506,7 +506,7 @@ function drainStderrTail(stream: ReadableStream<Uint8Array>): { tail(): string; 
             for (;;) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                if (!value || value.length === 0) continue;
+                if (value.length === 0) continue;
                 const combined = new Uint8Array(tail.length + value.length);
                 combined.set(tail, 0);
                 combined.set(value, tail.length);

@@ -14,6 +14,7 @@ import { conversationSummary, reportSummary } from "../../../test_support/thread
 import { __resetBootForTest, __setBootStateForTest, type BootState } from "../boot.ts";
 import { setChatStatus } from "../status.ts";
 import { __resetOpenThreadForTest, openThread, refreshOpenThread, resolveThreadId, watchOpenThread, type ThreadOpts } from "../thread.ts";
+import { present } from "../../../lib/present.ts";
 
 // The open-thread store is a module singleton (one chat screen at a time) and so are the boot phase
 // and the chat status the watch reads, so every case resets all three — otherwise an in-flight
@@ -655,7 +656,7 @@ describe("watchOpenThread — the ready-edge bind", () => {
             await settle();
             expect(listed).toEqual([ANALYSIS.id, OTHER_ANALYSIS.id]);
 
-            gates.get(ANALYSIS.id)!(); // the stale resolution settles
+            present(gates.get(ANALYSIS.id))(); // the stale resolution settles
             await settle();
 
             // Any repaint while the live resolution is still in flight must find the marker intact.
@@ -664,7 +665,7 @@ describe("watchOpenThread — the ready-edge bind", () => {
             await settle();
             expect(listed).toEqual([ANALYSIS.id, OTHER_ANALYSIS.id]);
 
-            gates.get(OTHER_ANALYSIS.id)!();
+            present(gates.get(OTHER_ANALYSIS.id))();
             await settle();
             expect(w.bound).toEqual([`thread-${OTHER_ANALYSIS.id}`]);
         } finally {

@@ -6,6 +6,7 @@ import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "../keymap.ts";
 import { ScrollPane } from "../components/scroll_pane.tsx";
 import { DialogOverlay, dialogPush, dialogClear } from "../components/dialog/dialog_host.tsx";
+import { present } from "../../lib/present.ts";
 
 // End-to-end verification of the REAL ScrollPane through the REAL engine: mockInput drives
 // opentui's keyboard bus → useKeymapRoot's useKeyboard → dispatchKey → ScrollPane's internal
@@ -57,7 +58,7 @@ function Harness(props: { sticky?: boolean; lines?: () => string[]; onRefs: (sb:
                 ref={(r: TextareaRenderable) => {
                     ta = r;
                     queueMicrotask(() => r.focus());
-                    props.onRefs(sb!, r);
+                    props.onRefs(present(sb), r);
                 }}
             />
             <DialogOverlay />

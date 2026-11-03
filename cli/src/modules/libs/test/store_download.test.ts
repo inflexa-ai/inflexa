@@ -29,6 +29,7 @@ import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import type { TransferRow } from "../../../types/store.ts";
 import { downloadPackageStore, inspectStoreContent, runCatalogTransfer, storeDownloadPaths, type StoreDownloadOutcome } from "../store_download.ts";
 import { transferLockKey } from "../transfers.ts";
+import { present } from "../../../lib/present.ts";
 
 // The scenarios of the `package-store-download` spec, against a fake registry on
 // the fetch seam. The layers are real zstd-compressed tars, because the module
@@ -574,7 +575,7 @@ describe("runCatalogTransfer", () => {
                 let next = 0;
                 const feed = setInterval(() => {
                     if (next < framed.frames.length) {
-                        writeSync(fd, Buffer.from(framed.frames[next]!));
+                        writeSync(fd, Buffer.from(present(framed.frames[next])));
                         next += 1;
                         return;
                     }

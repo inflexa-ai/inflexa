@@ -19,6 +19,7 @@ import { until } from "../../../test_support/until.ts";
 import { inProcessSpawner, type FakeChild } from "../../../test_support/walk_spawner.ts";
 import { readFolderEntries, walkToRecords, type ReadEntries } from "../walk_child.ts";
 import { stringContaining } from "../../../test_support/matchers.ts";
+import { present } from "../../../lib/present.ts";
 
 let root = "";
 let clock = 0;
@@ -110,8 +111,8 @@ describe("NameIndex", () => {
         const ids: number[] = [];
         for (let k = 0; k < 3000; k++) ids.push(index.add(`n${k}`, 0, "file", false));
         expect(index.count).toBe(3001);
-        expect(index.nameOf(ids[0]!)).toBe("n0");
-        expect(index.nameOf(ids[2999]!)).toBe("n2999");
+        expect(index.nameOf(present(ids[0]))).toBe("n0");
+        expect(index.nameOf(present(ids[2999]))).toBe("n2999");
     });
 
     test("builds the path and the subpath from the parent chain", () => {

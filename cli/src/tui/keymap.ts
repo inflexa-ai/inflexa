@@ -93,7 +93,10 @@ export function matchChord(chord: Chord, ev: KeyLike): boolean {
 /** True when `prefix` is a (non-strict) leading run of `seq`. */
 function isPrefix(prefix: Sequence, seq: Sequence): boolean {
     if (prefix.length > seq.length) return false;
-    return prefix.every((c, i) => chordEq(c, seq[i]!));
+    return prefix.every((c, i) => {
+        const other = seq[i];
+        return other !== undefined && chordEq(c, other);
+    });
 }
 
 /** True when `prefix` is a STRICTLY shorter leading run of `seq` (a longer sequence is reachable). */
@@ -363,7 +366,7 @@ export function leaderKeybind(id: KeybindId): Sequence {
 
 // How long a half-typed sequence stays pending before it is abandoned (config, load-once).
 function leaderTimeoutMs(): number {
-    if (leaderTimeoutCache == null) leaderTimeoutCache = readConfig().leaderTimeout ?? 2000;
+    if (leaderTimeoutCache == null) leaderTimeoutCache = readConfig().leaderTimeout;
     return leaderTimeoutCache;
 }
 
@@ -515,7 +518,7 @@ function armTimer(): void {
         setPending([]);
     }, leaderTimeoutMs());
     // Don't let a half-typed chord keep the process alive (matters for tests + clean shutdown).
-    pendingTimer.unref?.();
+    pendingTimer.unref();
 }
 
 function popPending(): void {
@@ -641,7 +644,8 @@ export function reachableKeys(): NextKey[] {
         for (const b of layer.bindings) {
             const seq = seqOf(b);
             if (!isStrictPrefix(prefix, seq)) continue;
-            const next = seq[prefix.length]!;
+            const next = seq[prefix.length];
+            if (next === undefined) continue;
             const stroke = chordLabel(next);
             const dedupe = `${stroke}|${b.desc ?? ""}`;
             if (seen.has(dedupe)) continue;

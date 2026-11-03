@@ -31,6 +31,7 @@ import {
 } from "../store_flight.ts";
 import { flushAndPrint } from "../store.ts";
 import type { LoadCheckRunner, ProvisionerRunner } from "../provisioner.ts";
+import { present } from "../../../lib/present.ts";
 
 const graphNodesSchema = z.object({ nodes: z.record(z.string(), z.unknown()) });
 const graphSchema = z.object({
@@ -673,7 +674,7 @@ describe("the spelling of a request", () => {
         expect(invocations[0]?.join(" ")).not.toContain("go-db");
         const flight = readStoreFlights().find((entry) => entry.row.id === "r::GO.db::");
         expect(flight?.row.spelling).toBe("GO.db");
-        expect(describeStoreFlightSpec(flight!.row)).toBe("GO.db (r)");
+        expect(describeStoreFlightSpec(present(flight).row)).toBe("GO.db (r)");
     });
 
     test("two spellings of one fold are two rows, because they are two queries", () => {

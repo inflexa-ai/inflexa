@@ -6,6 +6,7 @@ import { renderFrame } from "../../../test_support/tui.ts";
 import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../../lib/design_system.ts";
 import { setTheme } from "../../theme.ts";
 import { CompactionBlock, type CompactionBlockProps } from "../compaction_block.tsx";
+import { present } from "../../../lib/present.ts";
 
 const FORMS: Record<string, CompactionBlockProps> = {
     running: { status: "running", tokensBefore: 162_000 },
@@ -20,13 +21,13 @@ function frameOf(props: CompactionBlockProps, width = 100): Promise<string> {
 
 describe("CompactionBlock", () => {
     test("shows one muted progress line and no rule while running", async () => {
-        const frame = await frameOf(FORMS.running!);
+        const frame = await frameOf(present(FORMS.running));
 
         expect(frame).toBe(`Summarizing earlier conversation${GLYPHS.ellipsis}`);
     });
 
     test("shows a divider with the two token figures and the duration when done", async () => {
-        const frame = await frameOf(FORMS.done!);
+        const frame = await frameOf(present(FORMS.done));
 
         expect(frame.startsWith(GLYPHS.lineHorizontal)).toBe(true);
         expect(frame.endsWith(GLYPHS.lineHorizontal)).toBe(true);
@@ -36,7 +37,7 @@ describe("CompactionBlock", () => {
     });
 
     test("names the drop and the two token figures of a failed compaction that dropped turns", async () => {
-        const frame = await frameOf(FORMS["failed with a drop"]!);
+        const frame = await frameOf(present(FORMS["failed with a drop"]));
 
         expect(frame).toContain(
             `Could not summarize earlier conversation ${GLYPHS.middot} dropped the oldest turns ${GLYPHS.middot} 170.0k ${GLYPHS.arrowRight} 90.0k`,
@@ -45,7 +46,7 @@ describe("CompactionBlock", () => {
     });
 
     test("names no drop for a failed compaction with no tokens after", async () => {
-        const frame = await frameOf(FORMS["failed with no drop"]!);
+        const frame = await frameOf(present(FORMS["failed with no drop"]));
 
         expect(frame).toContain("Could not summarize earlier conversation");
         expect(frame).not.toContain("dropped");
@@ -53,7 +54,7 @@ describe("CompactionBlock", () => {
     });
 
     test("wraps the label on a narrow terminal and keeps each word", async () => {
-        const frame = await frameOf(FORMS["failed with a drop"]!, 40);
+        const frame = await frameOf(present(FORMS["failed with a drop"]), 40);
 
         for (const word of ["Could", "summarize", "dropped", "oldest", "170.0k", "90.0k"]) expect(frame).toContain(word);
     });

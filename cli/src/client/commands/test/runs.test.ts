@@ -4,6 +4,7 @@ import { ok } from "neverthrow";
 import type { DataProfileView, ProfileRerunResult, RunDetail, RunList, RunSummary } from "../../../api/runs.ts";
 import type { ClientOpts } from "../../api.ts";
 import { profileRun, profileStatus, runStatus } from "../runs.ts";
+import { present } from "../../../lib/present.ts";
 
 // The moved dev commands, driven in this process against a fake server: each request answers from a table
 // keyed by the method and the path. A refusal of these commands exits the process through `fail()`, thus
@@ -103,7 +104,7 @@ describe("inflexa run --status", () => {
             hasMore: false,
         };
         const detail: RunDetail = {
-            ...runs.runs[0]!,
+            ...present(runs.runs[0]),
             steps: [
                 {
                     stepId: "T1S1",

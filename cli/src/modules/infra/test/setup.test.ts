@@ -63,6 +63,7 @@ import { recordOrEmpty, unknownRecordSchema } from "../../../lib/json_record.ts"
 import { keysOf } from "../../../lib/types.ts";
 import { EMBEDDING_API_KEY_VAR, env, type ProviderEnvSnapshot } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
+import { present } from "../../../lib/present.ts";
 
 /** Build a provider-env snapshot for the adoption helpers; every field defaults to "absent". */
 function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnapshot {
@@ -77,8 +78,8 @@ function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnap
  * requires a non-empty dataset list, and a catalog with fewer than two datasets would fail its own
  * validation long before this file loads.
  */
-const CATALOG_ID = REFERENCE_DATA_CATALOG.datasets[0]!.id;
-const OTHER_CATALOG_ID = REFERENCE_DATA_CATALOG.datasets[1]!.id;
+const CATALOG_ID = present(REFERENCE_DATA_CATALOG.datasets[0]).id;
+const OTHER_CATALOG_ID = present(REFERENCE_DATA_CATALOG.datasets[1]).id;
 /** Shaped like a plausible typo of a real id, which is exactly the mistake the upfront check exists to catch. */
 const UNKNOWN_CATALOG_ID = "gtex-typo";
 
@@ -321,7 +322,7 @@ describe("probeCredentialSource", () => {
             doFetch: (url, init) => {
                 calls.push({ url, method: init.method ?? "GET", headers: new Headers(init.headers), body: typeof init.body === "string" ? init.body : null });
                 const route = Object.keys(routes).find((suffix) => url.endsWith(suffix));
-                return Promise.resolve(route !== undefined ? routes[route]!() : new Response(null, { status: 404 }));
+                return Promise.resolve(route !== undefined ? present(routes[route])() : new Response(null, { status: 404 }));
             },
         };
     }
@@ -373,9 +374,9 @@ describe("probeCredentialSource", () => {
             expect(value.validatedModel).toBeNull(); // rung 1 validated the credential, not a model
         }
         expect(calls).toHaveLength(1);
-        expect(calls[0]!.url).toBe("https://api.anthropic.com/v1/models");
-        expect(calls[0]!.headers.get("x-api-key")).toBe("tok-123");
-        expect(calls[0]!.headers.get("anthropic-version")).toBe("2023-06-01");
+        expect(present(calls[0]).url).toBe("https://api.anthropic.com/v1/models");
+        expect(present(calls[0]).headers.get("x-api-key")).toBe("tok-123");
+        expect(present(calls[0]).headers.get("anthropic-version")).toBe("2023-06-01");
     });
 
     test("a 401 on /models fails the probe with a message naming the scheme (the bad-config gate)", async () => {
@@ -406,12 +407,12 @@ describe("probeCredentialSource", () => {
         expect(value.outcome).toBe("pass");
         if (value.outcome === "pass") expect(value.validatedModel).toBe("claude-sonnet-5");
         // The ping is protocol-shaped: POST {baseURL}/messages, bearer + version headers, max_tokens 1.
-        expect(calls[1]!.url).toBe("https://gw.corp/v1/messages");
-        expect(calls[1]!.method).toBe("POST");
-        expect(calls[1]!.headers.get("authorization")).toBe("Bearer gw-tok");
-        expect(calls[1]!.headers.get("x-api-key")).toBeNull();
-        expect(calls[1]!.headers.get("anthropic-version")).toBe("2023-06-01");
-        expect(JSON.parse(calls[1]!.body!)).toEqual({ model: "claude-sonnet-5", max_tokens: 1, messages: [{ role: "user", content: "ping" }] });
+        expect(present(calls[1]).url).toBe("https://gw.corp/v1/messages");
+        expect(present(calls[1]).method).toBe("POST");
+        expect(present(calls[1]).headers.get("authorization")).toBe("Bearer gw-tok");
+        expect(present(calls[1]).headers.get("x-api-key")).toBeNull();
+        expect(present(calls[1]).headers.get("anthropic-version")).toBe("2023-06-01");
+        expect(JSON.parse(present(present(calls[1]).body))).toEqual({ model: "claude-sonnet-5", max_tokens: 1, messages: [{ role: "user", content: "ping" }] });
     });
 
     test("an openai-compatible ping targets /chat/completions", async () => {
@@ -427,8 +428,8 @@ describe("probeCredentialSource", () => {
             doFetch,
         );
         expect(result._unsafeUnwrap().outcome).toBe("pass");
-        expect(calls[1]!.url).toBe("https://gw.corp/v1/chat/completions");
-        expect(calls[1]!.headers.get("anthropic-version")).toBeNull();
+        expect(present(calls[1]).url).toBe("https://gw.corp/v1/chat/completions");
+        expect(present(calls[1]).headers.get("anthropic-version")).toBeNull();
     });
 
     test("a definite model-not-found on the ping still passes the CREDENTIAL probe (auth + routing proven)", async () => {
@@ -557,7 +558,7 @@ describe("collectDirectModel", () => {
         const { deps, written, prompts } = harness({
             promptModel: (_prefill, retryDetail) => {
                 prompts.push(retryDetail);
-                return Promise.resolve(entries.shift()!);
+                return Promise.resolve(present(entries.shift()));
             },
             validate: (model) =>
                 Promise.resolve(model === "nope-1" ? { kind: "model_not_found", excerpt: `{"error":{"message":"model: nope-1"}}` } : { kind: "pass" }),
@@ -1147,7 +1148,7 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
         // The embedding step ran (hoisted ahead of the gate) with the answered mode — configured despite
         // the dead runtime — and it receives the whole answer block, values included.
         expect(embedSpy).toHaveBeenCalledTimes(1);
-        const [interactive, answers] = embedSpy.mock.calls[0]!;
+        const [interactive, answers] = present(embedSpy.mock.calls[0]);
         expect(interactive).toBe(false); // `--yes` withdraws the terminal, so the step may not prompt
         expect(answers?.mode).toBe("local");
         expect(answers?.validate).toBe(true);
@@ -1172,7 +1173,7 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
         rmSync(dir, { recursive: true, force: true });
 
         expect(embedSpy).toHaveBeenCalledTimes(1);
-        expect(embedSpy.mock.calls[0]![1]?.mode).toBe("local");
+        expect(present(embedSpy.mock.calls[0])[1]?.mode).toBe("local");
         expect(process.exitCode).toBe(1);
     });
 
@@ -1190,7 +1191,7 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
 
         // Called exactly once — the answered step ahead of the gate; the in-flow site is guarded and skipped.
         expect(embedSpy).toHaveBeenCalledTimes(1);
-        expect(embedSpy.mock.calls[0]![1]?.mode).toBe("local");
+        expect(present(embedSpy.mock.calls[0])[1]?.mode).toBe("local");
     });
 });
 
@@ -1542,7 +1543,7 @@ describe("setup() — batch orchestration", () => {
         globalThis.fetch = fakeFetch((url) => {
             const target = String(url);
             const route = Object.keys(routes).find((suffix) => target.endsWith(suffix));
-            return Promise.resolve(route !== undefined ? routes[route]!() : new Response(null, { status: 404 }));
+            return Promise.resolve(route !== undefined ? present(routes[route])() : new Response(null, { status: 404 }));
         });
     }
 
@@ -1646,10 +1647,10 @@ describe("setup() — batch orchestration", () => {
         // No model was answered, so nothing is pinned and the launch election stays adaptive (Auto).
         expect(models()).toBeUndefined();
         // The embedding step ran with NO mode answer, which leaves the configured backend unchanged.
-        expect(embedStep.mock.calls[0]![1]?.mode).toBeUndefined();
+        expect(present(embedStep.mock.calls[0])[1]?.mode).toBeUndefined();
         // No reference selection was named, so nothing is downloaded — the value IS the consent.
-        expect(refsStep.mock.calls[0]![0].selection).toBeUndefined();
-        expect(refsStep.mock.calls[0]![0].interactive).toBe(false);
+        expect(present(refsStep.mock.calls[0])[0].selection).toBeUndefined();
+        expect(present(refsStep.mock.calls[0])[0].interactive).toBe(false);
         // The sandbox image is never pulled implicitly; the hint names the explicit command instead.
         expect(output).toContain("inflexa sandbox pull");
         // Pre-staging (design D10): no credential in the auth dir is a NOTICE plus a successful run —
@@ -1912,7 +1913,7 @@ describe("setup() — batch orchestration", () => {
             await runSetup(batch({ refs: CATALOG_ID }));
 
             expect(process.exitCode).toBe(0);
-            expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID] });
+            expect(present(refsStep.mock.calls[0])[0].selection).toEqual({ ids: [CATALOG_ID] });
         });
 
         test("a valid id list lets the run continue — the answered transfers still start", async () => {
@@ -1923,7 +1924,7 @@ describe("setup() — batch orchestration", () => {
             await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: true }));
 
             expect(process.exitCode).toBe(0);
-            expect(refsStep.mock.calls[0]![0].selection).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
+            expect(present(refsStep.mock.calls[0])[0].selection).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
             expect(imageStart.mock.calls.map((call) => call[0])).toEqual(["runtime_image", "provisioner_image"]);
             expect(catalogStart).toHaveBeenCalledTimes(1);
         });
@@ -1945,9 +1946,9 @@ describe("setup() — batch orchestration", () => {
         expect(output).toContain("embedding.baseURL");
         expect(output).toContain("embedding.model");
         // The flag won, and the file's now-moot leaves reached no writer.
-        expect(embedStep.mock.calls[0]![1]?.mode).toBe("off");
-        expect(embedStep.mock.calls[0]![1]?.baseURL).toBeUndefined();
-        expect(embedStep.mock.calls[0]![1]?.model).toBeUndefined();
+        expect(present(embedStep.mock.calls[0])[1]?.mode).toBe("off");
+        expect(present(embedStep.mock.calls[0])[1]?.baseURL).toBeUndefined();
+        expect(present(embedStep.mock.calls[0])[1]?.model).toBeUndefined();
     });
 
     // The batch cliproxy model PIN, which is deliberately asymmetric to the direct-endpoint validation:
@@ -2126,7 +2127,7 @@ describe("setup() — batch orchestration", () => {
                 spyOn(cliPrompts, "select").mockImplementation(async (message: string, options: { value: string; label: string }[]) => {
                     selects.push(message);
                     // The first option is each of these selects' documented default ("infer", "cliproxy").
-                    return options[0]!.value;
+                    return present(options[0]).value;
                 }),
                 spyOn(cliPrompts, "confirm").mockImplementation(async () => false),
             );
@@ -2510,8 +2511,8 @@ describe("setup() — batch orchestration", () => {
             expect(table).toBeDefined();
             // Both capture groups are mandatory in the pattern, so every match carries them.
             return [...(table ?? "").matchAll(/^ {4}"?([A-Za-z][\w.]*)"?: \{(.*)\},$/gm)]
-                .filter((match) => !match[2]!.includes('at: "block"'))
-                .map((match) => match[1]!);
+                .filter((match) => !present(match[2]).includes('at: "block"'))
+                .map((match) => present(match[1]));
         }
 
         test("the coverage table names every answerable question — a new answer cannot ship unproven", () => {
@@ -2632,7 +2633,7 @@ describe("setup() — batch orchestration", () => {
                     selects.push(message);
                     // Only the continue offer is steered per test; every other select takes its first
                     // option, which is each one's documented default.
-                    return message.includes(CONTINUE_QUESTION) ? continueChoice : options[0]!.value;
+                    return message.includes(CONTINUE_QUESTION) ? continueChoice : present(options[0]).value;
                 }),
                 spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 })),
                 spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 })),
@@ -2676,7 +2677,7 @@ describe("setup() — batch orchestration", () => {
             expect(asked(prompts, "Username")).toBe(false);
             expect(asked(prompts, "Port")).toBe(false);
             // The checkpoint step itself still asks — a continue starts AT the step that failed.
-            expect(refsStep.mock.calls.at(-1)![0].interactive).toBe(true);
+            expect(present(refsStep.mock.calls.at(-1))[0].interactive).toBe(true);
             // A silenced step resolves what the failed run persisted, and writes nothing new.
             expect(readConfig().postgres).toEqual({ user: "fleet" });
             // The completed run cleared the record.

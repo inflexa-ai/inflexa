@@ -18,6 +18,7 @@ import { env } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { generateComposeFile, POSTGRES_CONTAINER_NAME, PROXY_CONTAINER_NAME } from "../compose.ts";
 import { waitForReady } from "../postgres.ts";
+import { present } from "../../../lib/present.ts";
 
 describe("postgres constants", () => {
     test("container name includes inflexa-postgres (dev or prod prefix)", () => {
@@ -214,8 +215,8 @@ describe("compose file generation", () => {
 
     test("every service gets restart: unless-stopped (three in cliproxy mode, two in direct)", () => {
         const conn = resolvePostgresConfig();
-        expect(generateComposeFile(conn, "cliproxy").match(/restart: unless-stopped/g)!.length).toBe(3);
-        expect(generateComposeFile(conn, "direct").match(/restart: unless-stopped/g)!.length).toBe(2);
+        expect(present(generateComposeFile(conn, "cliproxy").match(/restart: unless-stopped/g)).length).toBe(3);
+        expect(present(generateComposeFile(conn, "direct").match(/restart: unless-stopped/g)).length).toBe(2);
     });
 });
 

@@ -4,6 +4,7 @@ import { makeLocalAuth } from "@inflexa-ai/harness";
 import { describe, expect, spyOn, test } from "bun:test";
 
 import { createPageGrantStore, createSessionPagePublisherFactory, PAGE_GRANT_LIFETIME_MS, PAGE_GRANT_LIMIT } from "../report_page_grants.ts";
+import { present } from "../../lib/present.ts";
 
 /** A store on a clock that a test moves. */
 function storeWithClock(): { store: ReturnType<typeof createPageGrantStore>; advance: (ms: number) => void } {
@@ -75,10 +76,10 @@ describe("the page grant store", () => {
     test("the oldest grant goes at the limit, and the new grant passes", () => {
         const { store } = storeWithClock();
         const grants = Array.from({ length: PAGE_GRANT_LIMIT }, (_, i) => store.mint("a1", `t${i}`));
-        expect(store.remainingSeconds(grants[0]!.token, "a1", "t0")).not.toBeNull();
+        expect(store.remainingSeconds(present(grants[0]).token, "a1", "t0")).not.toBeNull();
         const extra = store.mint("a1", "extra");
-        expect(store.remainingSeconds(grants[0]!.token, "a1", "t0")).toBeNull();
-        expect(store.remainingSeconds(grants[1]!.token, "a1", "t1")).not.toBeNull();
+        expect(store.remainingSeconds(present(grants[0]).token, "a1", "t0")).toBeNull();
+        expect(store.remainingSeconds(present(grants[1]).token, "a1", "t1")).not.toBeNull();
         expect(store.remainingSeconds(extra.token, "a1", "extra")).not.toBeNull();
     });
 
@@ -89,7 +90,7 @@ describe("the page grant store", () => {
         const live = store.mint("a1", "live");
         advance(PAGE_GRANT_LIFETIME_MS / 2);
         const fresh = store.mint("a1", "fresh");
-        expect(store.remainingSeconds(old[0]!.token, "a1", "old0")).toBeNull();
+        expect(store.remainingSeconds(present(old[0]).token, "a1", "old0")).toBeNull();
         expect(store.remainingSeconds(live.token, "a1", "live")).not.toBeNull();
         expect(store.remainingSeconds(fresh.token, "a1", "fresh")).not.toBeNull();
     });

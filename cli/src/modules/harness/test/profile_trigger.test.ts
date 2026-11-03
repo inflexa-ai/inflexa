@@ -23,6 +23,7 @@ import { asStr256 } from "../../../lib/types.ts";
 import { buildAnalysis } from "../../../test_support/builders.ts";
 import { fakePool, type FakeQuery } from "../../../test_support/fake_pool.ts";
 import { refuse, refusingRunAuthorizer } from "../../../test_support/harness_stubs.ts";
+import { present } from "../../../lib/present.ts";
 
 // The seed step feeds the agent-switch gauge (marks a data profile busy on dispatch); it mutates
 // the shared gauge singleton, so drop that state between tests to keep it out of any later gauge read.
@@ -466,7 +467,7 @@ describe("ensureProfileAtParity — faults", () => {
 
 describe("ensureProfileAtParity — trigger path (real seed)", () => {
     test("happy path triggers with the exact params inflexa profile builds", async () => {
-        let capturedParams: DataProfileTriggerParams | null = null;
+        let capturedParams: DataProfileTriggerParams | undefined;
         const queries: FakeQuery[] = [];
         // A pool whose query resolves ok, so the REAL seedProfileLedger's upsert succeeds offline and
         // the fileId mapping it sends is observable.
@@ -498,15 +499,15 @@ describe("ensureProfileAtParity — trigger path (real seed)", () => {
         const outcome = await ensureProfileAtParity(runtime, ANALYSIS, seams);
 
         expect(outcome).toEqual({ kind: "triggered", restarted: false, materialized: true });
-        expect(capturedParams).not.toBeNull();
+        expect(capturedParams).toBeDefined();
         // The params profile.ts builds: local auth, the cli analysis id, the manifest verbatim.
-        expect(capturedParams!.analysisId).toBe(ANALYSIS.id);
-        expect(capturedParams!.stagedInputs).toBe(STAGED);
-        expect(capturedParams!.auth).toEqual(makeLocalAuth());
+        expect(present(capturedParams).analysisId).toBe(ANALYSIS.id);
+        expect(present(capturedParams).stagedInputs).toBe(STAGED);
+        expect(present(capturedParams).auth).toEqual(makeLocalAuth());
         // The seed upserted with exactly the staged file ids (the ledger contract's inputFileIds).
         const seedQuery = queries.find((q) => q.text.includes("cortex_analysis_state"));
         expect(seedQuery).toBeDefined();
-        expect(seedQuery!.values).toContain(JSON.stringify(["f1", "f2"]));
+        expect(present(seedQuery).values).toContain(JSON.stringify(["f1", "f2"]));
     });
 });
 

@@ -443,11 +443,13 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
 
     // After a failure the result is decided, thus a group that has not started stages nothing.
     let failed = false;
+    // A function reads the flag: concurrent groups set it while this one awaits, which narrowing cannot see.
+    const hasFailed = (): boolean => failed;
     async function stageDest([first, ...rest]: readonly [InputFile, ...InputFile[]]): Promise<Result<StagedInput, FsError> | null> {
-        if (failed) return null;
+        if (hasFailed()) return null;
         let kept = await materializeStagedFile(first, targetDir);
         for (const file of rest) {
-            if (kept.isErr() || failed) break;
+            if (kept.isErr() || hasFailed()) break;
             const next = await materializeStagedFile(file, targetDir);
             if (next.isOk() && kept.value.hash !== next.value.hash) {
                 getLogger("staging").warn(
@@ -580,7 +582,7 @@ export function isInputSetMaterialized(analysisId: string, targetDir: string): R
         for (const file of files) expected.set(file.relativePath, file);
 
         // One mismatch decides the answer, thus a pair that has not started stats nothing after it.
-        let mismatch = false;
+        let mismatch: boolean | undefined;
         const queue = new PQueue({ concurrency: METADATA_WIDTH });
         async function matches(relativePath: string, file: InputFile): Promise<boolean> {
             const srcStats = await statResultAsync(file.absPath, "isInputSetMaterialized:src");

@@ -7,6 +7,7 @@ import { selfInvocation } from "../../lib/self_invocation.ts";
 import { walkChildEnv } from "../../lib/env.ts";
 import { readError, type FolderEntry, type FolderEntryType, type FolderReadError } from "../../lib/folder_listing.ts";
 import { subsequenceScore, subsequenceScoreBytes } from "../../lib/fuzzy.ts";
+import { present } from "../../lib/present.ts";
 import { decodeRecords, ENTRY_KIND, type EntryKindCode, type RecordSink, type WalkOpts } from "./walk_child.ts";
 
 /** The caps of a search cache. A test sets small values to reach each cap on a small tree. */
@@ -147,6 +148,8 @@ export class NameIndex {
     // Chunks and not one array that doubles: the copy of a 100 MB pool stalls the event loop. The chunks double in size up
     // to the cap, thus a small scope holds a small pool, and no byte is ever copied.
     private readonly chunks: Uint8Array[] = [];
+    /** The last chunk, the one that `add` fills. */
+    private lastChunk: Uint8Array;
     private used = 0;
     private starts = new Uint32Array(INITIAL_CAPACITY);
     private lengths = new Uint16Array(INITIAL_CAPACITY);
@@ -164,7 +167,8 @@ export class NameIndex {
         this.maxChunkBytes = 2 ** chunkShift;
         this.chunkMask = this.maxChunkBytes - 1;
         this.chunkBytes = Math.min(firstChunkBytes, this.maxChunkBytes);
-        this.chunks.push(new Uint8Array(this.chunkBytes));
+        this.lastChunk = new Uint8Array(this.chunkBytes);
+        this.chunks.push(this.lastChunk);
         this.add("", -1, "folder", false);
     }
 
@@ -173,8 +177,7 @@ export class NameIndex {
         const i = this.count;
         const at = this.reserve(name.length * 3);
         const chunkIndex = this.chunks.length - 1;
-        // `reserve` or the constructor made the last chunk.
-        const chunk = this.chunks[chunkIndex]!;
+        const chunk = this.lastChunk;
         // A plain loop for an ASCII name, because `encodeInto` needs a subarray view for each name.
         let written = name.length;
         let ascii = true;
@@ -200,12 +203,11 @@ export class NameIndex {
         const i = this.count;
         const at = this.reserve(length);
         const chunkIndex = this.chunks.length - 1;
-        // `reserve` or the constructor made the last chunk.
-        const chunk = this.chunks[chunkIndex]!;
+        const chunk = this.lastChunk;
         let high = 0;
         for (let k = 0; k < length; k++) {
             // The caller gives a name of `length` bytes inside `bytes`.
-            const byte = bytes[start + k]!;
+            const byte = present(bytes[start + k], "a byte of a name");
             high |= byte;
             chunk[at + k] = byte;
         }
@@ -223,7 +225,8 @@ export class NameIndex {
         if (this.count === this.starts.length) this.grow();
         if (this.used + bound > this.chunkBytes) {
             this.chunkBytes = Math.min(this.chunkBytes * 2, this.maxChunkBytes);
-            this.chunks.push(new Uint8Array(this.chunkBytes));
+            this.lastChunk = new Uint8Array(this.chunkBytes);
+            this.chunks.push(this.lastChunk);
             this.used = 0;
         }
         return this.used;
@@ -235,7 +238,7 @@ export class NameIndex {
         this.lengths[i] = length;
         this.parents[i] = parent;
         // The scope has no parent. Each other parent is an earlier entry, thus its depth is set.
-        this.depths[i] = parent < 0 ? 0 : this.depths[parent]! + 1;
+        this.depths[i] = parent < 0 ? 0 : this.depthOf(parent) + 1;
         this.flags[i] = flags;
         this.count = i + 1;
     }
@@ -253,36 +256,56 @@ export class NameIndex {
     depthOf(i: number): number {
         // `i` is below `count`: the caller holds a hit index from `rank`, a parent from `parents`, or a folder index from the
         // walk stack. Each reader of entry `i` below obeys the same bound.
-        return this.depths[i]!;
+        return present(this.depths[i], "the depth of an entry");
+    }
+
+    private flagsAt(i: number): number {
+        return present(this.flags[i], "the flags of an entry");
+    }
+
+    private startAt(i: number): number {
+        return present(this.starts[i], "the start of a name");
+    }
+
+    private lengthAt(i: number): number {
+        return present(this.lengths[i], "the length of a name");
+    }
+
+    private parentAt(i: number): number {
+        return present(this.parents[i], "the parent of an entry");
+    }
+
+    /** The chunk of a global offset. `add` wrote each start with the index of a chunk that it pushed. */
+    private chunkAt(start: number): Uint8Array {
+        return present(this.chunks[start >>> this.chunkShift], "the chunk of a name");
     }
 
     /** The kind of entry `i` from its dirent. */
     kindOf(i: number): FolderEntryType {
         // `i` is below `count`, with the same bound as in `depthOf`.
-        const code = this.flags[i]! & KIND_MASK;
+        const code = this.flagsAt(i) & KIND_MASK;
         return code === KIND_FOLDER ? "folder" : code === KIND_SYMLINK ? "symlink" : "file";
     }
 
     /** True when the name of entry `i` starts with `.`. */
     isHidden(i: number): boolean {
         // `i` is below `count`, with the same bound as in `depthOf`.
-        return (this.flags[i]! & FLAG_HIDDEN) !== 0;
+        return (this.flagsAt(i) & FLAG_HIDDEN) !== 0;
     }
 
     /** The name of entry `i`. The scope has the empty name. */
     nameOf(i: number): string {
-        // `i` is below `count`, with the same bound as in `depthOf`. The chunk index comes from a `starts` value that `add`
-        // wrote with the index of a chunk that it pushed, thus the chunk read finds a chunk.
-        const start = this.starts[i]!;
+        // `i` is below `count`, with the same bound as in `depthOf`.
+        const start = this.startAt(i);
         const local = start & this.chunkMask;
-        return utf8Decoder.decode(this.chunks[start >>> this.chunkShift]!.subarray(local, local + this.lengths[i]!));
+        return utf8Decoder.decode(this.chunkAt(start).subarray(local, local + this.lengthAt(i)));
     }
 
     /** The full path of entry `i`. `join` keeps one separator after the scope `/`. */
     pathOf(i: number): string {
         if (i === 0) return this.scope;
         const names: string[] = [];
-        for (let k = i; k > 0; k = this.parents[k]!) names.push(this.nameOf(k));
+        for (let k = i; k > 0; k = this.parentAt(k)) names.push(this.nameOf(k));
         names.reverse();
         return join(this.scope, ...names);
     }
@@ -290,7 +313,7 @@ export class NameIndex {
     /** The path of the folder that holds entry `i`, relative to the scope, with `/` as the separator. */
     subpathOf(i: number): string {
         const names: string[] = [];
-        for (let k = this.parents[i]!; k > 0; k = this.parents[k]!) names.push(this.nameOf(k));
+        for (let k = this.parentAt(i); k > 0; k = this.parentAt(k)) names.push(this.nameOf(k));
         return names.reverse().join("/");
     }
 
@@ -314,11 +337,11 @@ export class NameIndex {
         let size = 0;
         for (let i = 1; i < count; i++) {
             let score: number;
-            // `i` is below `count`, and the chunk index of a start is a chunk that `add` pushed.
-            if (queryBytes !== null && (this.flags[i]! & FLAG_NON_ASCII) === 0) {
-                const start = this.starts[i]!;
+            // `i` is below `count`.
+            if (queryBytes !== null && (this.flagsAt(i) & FLAG_NON_ASCII) === 0) {
+                const start = this.startAt(i);
                 const local = start & this.chunkMask;
-                score = subsequenceScoreBytes(queryBytes, this.chunks[start >>> this.chunkShift]!, local, local + this.lengths[i]!);
+                score = subsequenceScoreBytes(queryBytes, this.chunkAt(start), local, local + this.lengthAt(i));
             } else {
                 score = subsequenceScore(query, this.nameOf(i));
             }
@@ -329,7 +352,7 @@ export class NameIndex {
                 heapScores[size] = score;
                 this.siftUp(heapEntries, heapScores, size);
                 size += 1;
-            } else if (this.worse(heapEntries[0]!, heapScores[0]!, i, score)) {
+            } else if (this.worse(slot(heapEntries, 0), slot(heapScores, 0), i, score)) {
                 heapEntries[0] = i;
                 heapScores[0] = score;
                 this.siftDown(heapEntries, heapScores, 0, size);
@@ -338,9 +361,9 @@ export class NameIndex {
         const best: number[] = new Array<number>(size);
         // `end` and the root are below `size`, thus each heap read of the drain is inside the heap arrays.
         for (let end = size - 1; end >= 0; end--) {
-            best[end] = heapEntries[0]!;
-            heapEntries[0] = heapEntries[end]!;
-            heapScores[0] = heapScores[end]!;
+            best[end] = slot(heapEntries, 0);
+            heapEntries[0] = slot(heapEntries, end);
+            heapScores[0] = slot(heapScores, end);
             this.siftDown(heapEntries, heapScores, 0, end);
         }
         return best;
@@ -350,8 +373,8 @@ export class NameIndex {
     private worse(a: number, scoreA: number, b: number, scoreB: number): boolean {
         if (scoreA !== scoreB) return scoreA < scoreB;
         // `a` and `b` come from the heap, thus each is an entry below `count`.
-        const depthA = this.depths[a]!;
-        const depthB = this.depths[b]!;
+        const depthA = this.depthOf(a);
+        const depthB = this.depthOf(b);
         if (depthA !== depthB) return depthA > depthB;
         const byName = this.compareNames(a, b);
         return byName !== 0 ? byName > 0 : a > b;
@@ -364,24 +387,23 @@ export class NameIndex {
      * U+E000 to U+FFFF and UTF-16 sorts it below.
      */
     private compareNames(a: number, b: number): number {
-        // `a` and `b` are entries below `count`, and the chunk index of each start is a chunk that `add` pushed. The byte reads
-        // stay below the length of each name, inside its chunk.
-        if ((this.flags[a]! & this.flags[b]! & FLAG_NON_ASCII) !== 0) {
+        // `a` and `b` are entries below `count`. The byte reads stay below the length of each name, inside its chunk.
+        if ((this.flagsAt(a) & this.flagsAt(b) & FLAG_NON_ASCII) !== 0) {
             const nameA = this.nameOf(a);
             const nameB = this.nameOf(b);
             return nameA < nameB ? -1 : nameA > nameB ? 1 : 0;
         }
-        const startA = this.starts[a]!;
-        const startB = this.starts[b]!;
-        const chunkA = this.chunks[startA >>> this.chunkShift]!;
-        const chunkB = this.chunks[startB >>> this.chunkShift]!;
+        const startA = this.startAt(a);
+        const startB = this.startAt(b);
+        const chunkA = this.chunkAt(startA);
+        const chunkB = this.chunkAt(startB);
         const localA = startA & this.chunkMask;
         const localB = startB & this.chunkMask;
-        const lengthA = this.lengths[a]!;
-        const lengthB = this.lengths[b]!;
+        const lengthA = this.lengthAt(a);
+        const lengthB = this.lengthAt(b);
         const shared = Math.min(lengthA, lengthB);
         for (let k = 0; k < shared; k++) {
-            const diff = chunkA[localA + k]! - chunkB[localB + k]!;
+            const diff = present(chunkA[localA + k], "a byte of a name") - present(chunkB[localB + k], "a byte of a name");
             if (diff !== 0) return diff;
         }
         return lengthA - lengthB;
@@ -392,7 +414,7 @@ export class NameIndex {
         while (child > 0) {
             const parent = (child - 1) >> 1;
             // `child` and its parent are positions below the size of the heap.
-            if (!this.worse(entries[child]!, scores[child]!, entries[parent]!, scores[parent]!)) return;
+            if (!this.worse(slot(entries, child), slot(scores, child), slot(entries, parent), slot(scores, parent))) return;
             swap(entries, scores, child, parent);
             child = parent;
         }
@@ -406,8 +428,8 @@ export class NameIndex {
             const right = left + 1;
             let worst = left;
             // `left`, `right`, and `parent` are checked below `size`, the count of the heap positions in use.
-            if (right < size && this.worse(entries[right]!, scores[right]!, entries[left]!, scores[left]!)) worst = right;
-            if (!this.worse(entries[worst]!, scores[worst]!, entries[parent]!, scores[parent]!)) return;
+            if (right < size && this.worse(slot(entries, right), slot(scores, right), slot(entries, left), slot(scores, left))) worst = right;
+            if (!this.worse(slot(entries, worst), slot(scores, worst), slot(entries, parent), slot(scores, parent))) return;
             swap(entries, scores, worst, parent);
             parent = worst;
         }
@@ -419,12 +441,16 @@ function copyInto<T extends Uint8Array | Uint16Array | Uint32Array | Int32Array>
     return target;
 }
 
+function slot(heap: Int32Array, position: number): number {
+    return present(heap[position], "a heap slot");
+}
+
 function swap(entries: Int32Array, scores: Int32Array, a: number, b: number): void {
     // The callers give two heap positions below the size of the heap.
-    const entry = entries[a]!;
-    const score = scores[a]!;
-    entries[a] = entries[b]!;
-    scores[a] = scores[b]!;
+    const entry = slot(entries, a);
+    const score = slot(scores, a);
+    entries[a] = slot(entries, b);
+    scores[a] = slot(scores, b);
     entries[b] = entry;
     scores[b] = score;
 }
@@ -691,9 +717,9 @@ export function createSearchIndexCache(
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     function startWalks(): void {
-        while (live < limits.maxWalkChildren && queue.length > 0) {
-            // The loop condition holds a non-empty queue.
-            const next = queue.shift()!;
+        while (live < limits.maxWalkChildren) {
+            const next = queue.shift();
+            if (next === undefined) return;
             live += 1;
             next.begin();
         }
@@ -754,10 +780,7 @@ export function createSearchIndexCache(
      * rest of the walk until `firstWaitMs` after its start.
      */
     async function waitForWalk(cached: CachedIndex): Promise<void> {
-        if (!cached.hasStarted) {
-            await raceTimeout(cached.started, limits.firstWaitMs);
-            if (!cached.hasStarted) return;
-        }
+        if (!cached.hasStarted && !(await startedWithin(cached, limits.firstWaitMs))) return;
         await cached.scopeRead;
         const remaining = cached.startedAt + limits.firstWaitMs - now();
         if (cached.ended || remaining <= 0) return;
@@ -811,4 +834,10 @@ async function raceTimeout(promise: Promise<void>, ms: number): Promise<void> {
         wait = setTimeout(resolve, ms);
     });
     await Promise.race([promise, timeout]).finally(() => clearTimeout(wait));
+}
+
+/** True when the child of `cached` started within `ms`. `begin` sets the flag while this call waits, thus the read follows the wait in this function. */
+async function startedWithin(cached: CachedIndex, ms: number): Promise<boolean> {
+    await raceTimeout(cached.started, ms);
+    return cached.hasStarted;
 }

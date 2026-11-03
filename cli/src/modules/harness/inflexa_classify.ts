@@ -106,8 +106,8 @@ function tokenizeArgvString(input: string): string[] {
  * back to the model, never a wrong spawn.
  */
 export function toEffectiveArgv(argv: string[]): string[] {
-    // `argv[0]!` is sound: the `argv.length === 1` guard proves index 0 exists.
-    return argv.length === 1 && /\s/.test(argv[0]!) ? tokenizeArgvString(argv[0]!) : argv;
+    const [only, second] = argv;
+    return only !== undefined && second === undefined && /\s/.test(only) ? tokenizeArgvString(only) : argv;
 }
 
 /**

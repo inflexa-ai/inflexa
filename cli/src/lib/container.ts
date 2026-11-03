@@ -455,7 +455,7 @@ export async function pullImageThroughEngine(socket: string, image: string, onPr
 
     const layerBytes = new Map<string, number>();
     const layersDone = new Set<string>();
-    let failure: string | null = null;
+    let failure: string | undefined;
     let buffer = "";
     const decoder = new TextDecoder();
     const report = (): void => onProgress({ doneBytes: [...layerBytes.values()].reduce((n, b) => n + b, 0), layersCompleted: layersDone.size });
@@ -487,6 +487,6 @@ export async function pullImageThroughEngine(socket: string, image: string, onPr
     }
     if (buffer.trim() !== "") consume(buffer.trim());
     report();
-    if (failure !== null) return { kind: "failed", message: failure };
+    if (failure !== undefined) return { kind: "failed", message: failure };
     return { kind: "completed" };
 }

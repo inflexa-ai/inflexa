@@ -361,7 +361,7 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     // authority for `endedBy`: both deadlines mean "the child ran out of time", and the caller's
     // own signal must still be distinguishable from either.
     const deadline = new AbortController();
-    let timedOut = false;
+    let timedOut: boolean | undefined;
     const expire = (): void => {
         timedOut = true;
         deadline.abort();
@@ -395,7 +395,7 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
 
     // The abort kill is SIGTERM, which a child can trap and outlive; escalate to
     // SIGKILL after a grace so the deadline is a real bound, not a suggestion.
-    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const escalate = (): void => {
         killTimer = setTimeout(() => proc.kill("SIGKILL"), killGraceMs);
     };
@@ -411,7 +411,7 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     settled = true;
     if (totalTimer !== null) clearTimeout(totalTimer);
     if (idleTimer !== null) clearTimeout(idleTimer);
-    if (killTimer !== null) clearTimeout(killTimer);
+    if (killTimer !== undefined) clearTimeout(killTimer);
     // The child is reaped; a LATER abort of the caller's long-lived turn signal
     // must not schedule a stray SIGKILL timer against it. No-op when the abort
     // already fired (`once` removed the listener) — the timer was cleared above.
@@ -609,7 +609,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             if (argv[0] === "store" && argv[1] === "add") {
                 const scoped = ctx.session.scope;
                 const extra = ["--queued"];
-                if (!argv.includes("--analysis") && scoped.kind === "analysis") extra.push("--analysis", scoped.analysisId);
+                if (!argv.includes("--analysis")) extra.push("--analysis", scoped.analysisId);
                 argv = [...argv, ...extra];
             }
             const cmd = resolveInvocation(argv, { isDevelopment, execPath, scriptPath });
@@ -623,7 +623,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // there, as it is for every other approval-gated command. Unlocatable is not a failure: the
             // child then inherits this process's directory.
             const scope = ctx.session.scope;
-            const cwd = scope.kind === "analysis" ? await resolveAnalysisFolder(scope.analysisId) : undefined;
+            const cwd = await resolveAnalysisFolder(scope.analysisId);
             // A transfer runs with neither bound: `downloadToFile` ends it when the bytes stop, and a
             // second deadline out here could only ever cut an honest download short (see `TransferTrait`).
             const r = await runSubprocess(cmd, cwd, ctx.signal, transfer ? {} : { timeoutMs, idleTimeoutMs });

@@ -8,6 +8,7 @@ import { FixedList } from "../fixed_list.tsx";
 import { DynamicList } from "../dynamic_list.tsx";
 import { GLYPHS } from "../../../lib/design_system.ts";
 import type { SelectItem } from "../list_core.tsx";
+import { present } from "../../../lib/present.ts";
 
 // Behavior tests for the list primitives through the real keyboard bus. The lists register
 // their layer via useDialogBindings; outside any dialog that gates on !dialogIsOpen(), which is
@@ -591,7 +592,7 @@ describe("selection and submit", () => {
             setup.mockInput.pressEnter();
             await settle(setup);
             expect(confirmed.length).toBe(1);
-            expect(confirmed[0]!.sort()).toEqual(["apple", "carrot"]);
+            expect(present(confirmed[0]).sort()).toEqual(["apple", "carrot"]);
 
             setup.mockInput.pressKey(" "); // toggle apple back off
             frame = await settle(setup);

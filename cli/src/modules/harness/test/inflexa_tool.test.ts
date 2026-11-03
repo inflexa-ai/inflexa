@@ -17,6 +17,7 @@ import {
     type SpawnBounds,
     type SubprocessResult,
 } from "../inflexa_tool.ts";
+import { present } from "../../../lib/present.ts";
 
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
 const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
@@ -752,7 +753,7 @@ describe("run_inflexa — describeCall", () => {
     function describeCall(argv: string[]): string | undefined {
         const tool = makeTool(recordingSubprocess().fn);
         expect(tool.describeCall).toBeDefined();
-        return tool.describeCall!({ argv });
+        return present(tool.describeCall).call(tool, { argv });
     }
 
     test("a word argv describes those words", () => {
@@ -797,9 +798,9 @@ describe("run_inflexa — describeCall", () => {
 
         await runCall(tool, { argv }, ask.fn);
 
-        const prompt = ask.calls[0]!.command;
+        const prompt = present(ask.calls[0]).command;
         expect(prompt.startsWith("inflexa ")).toBe(true);
-        expect(tool.describeCall!({ argv })).toBe(prompt.slice("inflexa ".length));
+        expect(present(tool.describeCall).call(tool, { argv })).toBe(prompt.slice("inflexa ".length));
     });
 });
 

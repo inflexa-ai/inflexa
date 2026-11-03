@@ -69,6 +69,7 @@ import { countLiveDurableWorkByAnalysis, type LiveDurableWork } from "../durable
 import { profileWorkInFlight } from "../profile_queue.ts";
 import { hasRunningTurn } from "../turns.ts";
 import { apiError, holdConnection, internalError, listEnvelope, parsePage, readBody, requireRuntime, type PoolRuntime, type ServerEnv } from "../http.ts";
+import { present } from "../../lib/present.ts";
 import { toProjectView } from "./projects.ts";
 
 /**
@@ -269,7 +270,7 @@ export function analysisCollectionRoutes<R extends PoolRuntime>(boot: ServerBoot
                 usage: totals,
                 lastActivityAt: new Date(item.lastActivityAt).toISOString(),
                 // `summarizePage` gives one summary for each id, in the order of `ids`.
-                ...summaries[index]!,
+                ...present(summaries[index], "the summary of an analysis"),
             };
         });
         return c.json(listEnvelope("analyses", items, listed.value.total, page));
@@ -336,7 +337,7 @@ async function summarizePage<R extends PoolRuntime>(
     anchorPaths: readonly (string | null)[],
 ): Promise<PageSummary[]> {
     // The folders and the runtime reads start together.
-    const present = existenceOf(anchorPaths, opts);
+    const folderRead = existenceOf(anchorPaths, opts);
     const reads =
         runtime === null
             ? null
@@ -346,7 +347,7 @@ async function summarizePage<R extends PoolRuntime>(
                   settled(() => opts.liveWork(runtime.pool, ids), "the live durable work"),
                   settled(() => ResultAsync.fromPromise(opts.pendingAsks(runtime), (cause) => cause), "the pending asks"),
               ]);
-    const folderPresent = await present;
+    const folderPresent = await folderRead;
 
     const [runs, profiles, live, asks] = reads ?? [null, null, null, null];
     const runOf = new Map(runs?.map((run) => [run.analysisId, run]));
@@ -365,7 +366,7 @@ async function summarizePage<R extends PoolRuntime>(
         };
         return {
             // `existenceOf` gives one boolean for each anchor path, in the order of `ids`.
-            folderPresent: folderPresent[index]!,
+            folderPresent: present(folderPresent[index], "the folder state of an analysis"),
             profile: profile === undefined ? null : toProfileSummary(profile),
             latestRun: run === undefined ? null : toLatestRun(run),
             pendingAsks: asks === null ? null : (asksOf.get(id) ?? 0),
@@ -380,7 +381,7 @@ async function existenceOf(anchorPaths: readonly (string | null)[], opts: Pick<A
     const exists = await opts.pathsExist(paths, DISK_READ_WIDTH);
     let next = 0;
     // `pathsExist` gives one boolean for each path that it got, in order, and `next` walks the non-null paths.
-    return anchorPaths.map((path) => path !== null && exists[next++]!);
+    return anchorPaths.map((path) => path !== null && present(exists[next++], "the existence of an anchor path"));
 }
 
 function toProfileSummary(profile: DataProfileSummary): AnalysisProfileSummary {
@@ -451,7 +452,8 @@ export function analysisRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts:
             if (valid.isErr()) return valid.error;
             name = valid.value;
             const busy = await opts.busyReasons(a.id, boot.runtime());
-            if (busy.length > 0) return apiError(c, "busy", `Cannot rename while ${describeBusyReason(busy[0]!)}.`, { reasons: busy });
+            const [firstBusy] = busy;
+            if (firstBusy !== undefined) return apiError(c, "busy", `Cannot rename while ${describeBusyReason(firstBusy)}.`, { reasons: busy });
         }
 
         let workspaceNotMoved: UpdateAnalysisResponse["workspaceNotMoved"];
@@ -488,7 +490,8 @@ export function analysisRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts:
         const analysis = loadAnalysis(c);
         if (analysis.isErr()) return analysis.error;
         const busy = await opts.busyReasons(analysis.value.id, c.get("runtime"));
-        if (busy.length > 0) return apiError(c, "busy", `Cannot delete while ${describeBusyReason(busy[0]!)}.`, { reasons: busy });
+        const [firstBusy] = busy;
+        if (firstBusy !== undefined) return apiError(c, "busy", `Cannot delete while ${describeBusyReason(firstBusy)}.`, { reasons: busy });
         return deleteLadder(c, analysis.value, disposalMode.data, exportFormat.data, c.get("runtime"), opts);
     });
 

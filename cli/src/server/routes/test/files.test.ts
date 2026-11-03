@@ -16,6 +16,7 @@ import { idleBoot } from "../../../test_support/server.ts";
 import type { ServerEnv } from "../../http.ts";
 import type { OpenFile } from "../files.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "../fs.ts";
+import { present } from "../../../lib/present.ts";
 
 // The read route alone, with no credential check and no app: `app.test.ts` covers those. The analysis guard takes
 // no real lock here, because a stub answers for it. Each `as` cast of a body below reads JSON that the route under
@@ -490,7 +491,7 @@ describe("the stream of the body", () => {
         app = appWith(opts);
         const response = await getAt("big.bin");
         // A 200 response with a non-empty file always has a body stream.
-        const reader = response.body!.getReader();
+        const reader = present(response.body).getReader();
         expect((await reader.read()).done).toBe(false);
         await reader.cancel();
         expect([opened(), closed()]).toEqual([1, 1]);

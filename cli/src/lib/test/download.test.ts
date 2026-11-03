@@ -72,7 +72,7 @@ describe("downloadToFile", () => {
         const events: DownloadProgress[] = [];
         await downloadToFile(URL_OK, dest, { fetch: serve(body, { contentLength: true }), onProgress: (e) => events.push(e) });
         expect(events[0]).toEqual({ type: "started", declaredBytes: Buffer.byteLength(body) });
-        const bytes = events.filter((e) => e.type === "bytes").reduce((n, e) => n + (e.type === "bytes" ? e.bytes : 0), 0);
+        const bytes = events.filter((e) => e.type === "bytes").reduce((n, e) => n + e.bytes, 0);
         expect(bytes).toBe(Buffer.byteLength(body));
         expect(events.at(-1)).toEqual({ type: "completed", bytes: Buffer.byteLength(body) });
     });

@@ -26,6 +26,7 @@ import {
     sweepOrphanedSidecars,
 } from "../local-provider.ts";
 import { materializedLlamaServer } from "../llama_runtime.ts";
+import { present } from "../../../lib/present.ts";
 
 // The harness client reads only `scope` (for a log label) and the noop billing resolver ignores the rest.
 const fakeSession = buildAgentSession({ scope: { kind: "analysis", analysisId: "test" } });
@@ -265,9 +266,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
                 () => null,
             );
             expect(vectors).not.toBeNull();
-            expect(vectors!.length).toBe(2);
-            expect(vectors![0]!.length).toBe(384);
-            expect(vectors![1]!.length).toBe(384);
+            expect(present(vectors).length).toBe(2);
+            expect(present(present(vectors)[0]).length).toBe(384);
+            expect(present(present(vectors)[1]).length).toBe(384);
         } finally {
             stub.stop();
         }
@@ -341,7 +342,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             expect(vectors).not.toBeNull();
             const seen = stub.getLastInputs();
             expect(seen.length).toBe(1);
-            const embedded = seen[0]!;
+            const embedded = present(seen[0]);
             // A head-keeping prefix of the original, cut strictly shorter.
             expect(over.startsWith(embedded)).toBe(true);
             expect(embedded.length).toBeLessThan(over.length);
@@ -370,7 +371,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             );
             // The embed succeeds even though measurement failed.
             expect(vectors).not.toBeNull();
-            const embedded = stub.getLastInputs()[0]!;
+            const embedded = present(stub.getLastInputs()[0]);
             // Hard cut at 510 code units (word-boundary-backed) — a provable fit with no tokenizer.
             expect(over.startsWith(embedded)).toBe(true);
             expect(embedded.length).toBeLessThanOrEqual(510);
@@ -395,7 +396,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
                 () => null,
             );
             expect(vectors).not.toBeNull();
-            const embedded = stub.getLastInputs()[0]!;
+            const embedded = present(stub.getLastInputs()[0]);
             expect(over.startsWith(embedded)).toBe(true);
             expect(embedded.length).toBeLessThanOrEqual(510);
         } finally {
@@ -419,7 +420,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             (e) => e.message,
         );
         expect(message).not.toBeNull();
-        expect(message!).toContain("inflexa setup --embeddings local");
+        expect(message).toContain("inflexa setup --embeddings local");
     });
 
     test("a sidecar that exits after readiness invalidates the cache so the next embed respawns", async () => {
@@ -581,7 +582,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
                 () => null,
             );
             expect(vectors).not.toBeNull();
-            expect(vectors![0]!.length).toBe(384);
+            expect(present(present(vectors)[0]).length).toBe(384);
             // The bypass appended loopback to BOTH spellings and preserved the existing entry.
             expect(process.env.NO_PROXY).toContain("corp.example.com");
             expect(process.env.NO_PROXY).toContain("127.0.0.1");
@@ -996,9 +997,9 @@ describe.skipIf(runtimeBin === null || !modelPresent)("real llama-server sidecar
                 () => null,
             );
             expect(vectors).not.toBeNull();
-            expect(vectors!.length).toBe(1);
-            expect(vectors![0]!.length).toBe(384);
-            const norm = Math.sqrt(vectors![0]!.reduce((s, x) => s + x * x, 0));
+            expect(present(vectors).length).toBe(1);
+            expect(present(present(vectors)[0]).length).toBe(384);
+            const norm = Math.sqrt(present(present(vectors)[0]).reduce((s, x) => s + x * x, 0));
             expect(Math.abs(norm - 1.0)).toBeLessThan(0.01);
         } finally {
             stopLocalSidecar();

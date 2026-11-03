@@ -6,6 +6,7 @@ import { err, ok, ResultAsync, type Result } from "neverthrow";
 
 import { walkParentPid } from "../../lib/env.ts";
 import { errnoCode } from "../../lib/fs.ts";
+import { present } from "../../lib/present.ts";
 
 /**
  * The record protocol between the walk child (`inflexa server walk`) and the search cache of the local server. Each
@@ -192,9 +193,7 @@ export function walkToRecords(scope: string, opts: WalkOpts, read: ReadEntries, 
         // The loop can flush many buffers past MAX_PENDING_WRITES, because the guard runs only between reads. The bound:
         // the records of one folder are smaller than the dirent list that `readdir` already holds, thus the memory of the
         // child at most doubles for that folder.
-        for (let k = 0; k < dirents.length; k++) {
-            // `k` is below the length of the array.
-            const dirent = dirents[k]!;
+        for (const dirent of dirents) {
             const name = dirent.name;
             if (!opts.hidden && name.charCodeAt(0) === 0x2e) continue;
             const isFolder = dirent.isDirectory();
@@ -220,9 +219,9 @@ export function walkToRecords(scope: string, opts: WalkOpts, read: ReadEntries, 
         if (finished) return;
         while (!halted() && inFlight < opts.width && pendingWrites < MAX_PENDING_WRITES && stackIds.length > 0) {
             // The three stacks have the same length, and the loop condition holds a non-empty stack.
-            const folder = stackIds.pop()!;
-            const path = stackPaths.pop()!;
-            const depth = stackDepths.pop()!;
+            const folder = present(stackIds.pop(), "the folder index at the top of the walk stack");
+            const path = present(stackPaths.pop(), "the path at the top of the walk stack");
+            const depth = present(stackDepths.pop(), "the depth at the top of the walk stack");
             inFlight += 1;
             read(path).then(
                 (dirents) => {
@@ -279,17 +278,19 @@ const DISPATCH_GO = 0;
 const DISPATCH_STOP = 1;
 const DISPATCH_BAD = 2;
 
-/** The size of the record at `start`, {@link UNKNOWN_SIZE} when `available` bytes do not show it yet, or {@link BAD_TAG}. */
-function recordSize(bytes: Uint8Array, start: number, available: number): number {
-    // Each read below is at an offset below `start + available`, inside `bytes`.
-    switch (bytes[start]!) {
+/**
+ * The size of the record at `start` of `view`, {@link UNKNOWN_SIZE} when `available` bytes do not show it yet, or
+ * {@link BAD_TAG}. A `DataView` read past the end throws, thus each read below stays at an offset below `start + available`.
+ */
+function recordSize(view: DataView, start: number, available: number): number {
+    switch (view.getUint8(start)) {
         case TAG_ENTRY:
-            return available < ENTRY_HEADER_BYTES ? UNKNOWN_SIZE : ENTRY_HEADER_BYTES + (bytes[start + 6]! | (bytes[start + 7]! << 8));
+            return available < ENTRY_HEADER_BYTES ? UNKNOWN_SIZE : ENTRY_HEADER_BYTES + view.getUint16(start + 6, true);
         case TAG_SCOPE_ERROR: {
             if (available < 2) return UNKNOWN_SIZE;
-            const codeEnd = 2 + bytes[start + 1]!;
+            const codeEnd = 2 + view.getUint8(start + 1);
             if (available < codeEnd + 2) return UNKNOWN_SIZE;
-            return codeEnd + 2 + (bytes[start + codeEnd]! | (bytes[start + codeEnd + 1]! << 8));
+            return codeEnd + 2 + view.getUint16(start + codeEnd, true);
         }
         case TAG_SCOPE_READ:
         case TAG_END:
@@ -310,22 +311,23 @@ const MAX_RECORD_BYTES = 4 + 255 + 0xffff;
  */
 export function decodeRecords(sink: RecordSink): (chunk: Uint8Array) => Result<boolean, RecordDecodeError> {
     const carry = new Uint8Array(MAX_RECORD_BYTES);
+    const carryView = new DataView(carry.buffer, carry.byteOffset, carry.byteLength);
     let carried = 0;
 
-    function dispatch(bytes: Uint8Array, start: number): number {
+    function dispatch(bytes: Uint8Array, view: DataView, start: number): number {
         // `recordSize` measured a whole record at `start`, thus each read below is inside it.
-        const tag = bytes[start]!;
+        const tag = view.getUint8(start);
         switch (tag) {
             case TAG_ENTRY: {
-                const kind = bytes[start + 5]!;
+                const kind = view.getUint8(start + 5);
                 if (kind !== ENTRY_KIND.file && kind !== ENTRY_KIND.folder && kind !== ENTRY_KIND.symlink) return DISPATCH_BAD;
-                const parent = (bytes[start + 1]! | (bytes[start + 2]! << 8) | (bytes[start + 3]! << 16) | (bytes[start + 4]! << 24)) >>> 0;
-                const length = bytes[start + 6]! | (bytes[start + 7]! << 8);
+                const parent = view.getUint32(start + 1, true);
+                const length = view.getUint16(start + 6, true);
                 return sink.entry(bytes, start + ENTRY_HEADER_BYTES, length, parent, kind) ? DISPATCH_GO : DISPATCH_STOP;
             }
             case TAG_SCOPE_ERROR: {
-                const codeEnd = start + 2 + bytes[start + 1]!;
-                const messageLength = bytes[codeEnd]! | (bytes[codeEnd + 1]! << 8);
+                const codeEnd = start + 2 + view.getUint8(start + 1);
+                const messageLength = view.getUint16(codeEnd, true);
                 const code = utf8Decoder.decode(bytes.subarray(start + 2, codeEnd));
                 const message = utf8Decoder.decode(bytes.subarray(codeEnd + 2, codeEnd + 2 + messageLength));
                 sink.scopeError(code, message);
@@ -349,11 +351,13 @@ export function decodeRecords(sink: RecordSink): (chunk: Uint8Array) => Result<b
     // The tag reads of a bad record below are at offset 0 of a carry that holds bytes, or at an offset that the loop keeps
     // below the length of the chunk.
     return (chunk) => {
+        // A chunk can be a view into a larger buffer, thus the view carries its offset and length.
+        const chunkView = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
         let at = 0;
         if (carried > 0) {
             for (;;) {
-                const size = recordSize(carry, 0, carried);
-                if (size === BAD_TAG) return err({ type: "bad_record", tag: carry[0]! });
+                const size = recordSize(carryView, 0, carried);
+                if (size === BAD_TAG) return err({ type: "bad_record", tag: carryView.getUint8(0) });
                 if (size !== UNKNOWN_SIZE && carried >= size) break;
                 if (at >= chunk.length) return ok(true);
                 // Before the size is known, take one byte at a time: the header of a record is a few bytes.
@@ -363,19 +367,19 @@ export function decodeRecords(sink: RecordSink): (chunk: Uint8Array) => Result<b
                 at += take;
             }
             carried = 0;
-            const status = dispatch(carry, 0);
-            if (status !== DISPATCH_GO) return settle(status, carry[0]!);
+            const status = dispatch(carry, carryView, 0);
+            if (status !== DISPATCH_GO) return settle(status, carryView.getUint8(0));
         }
         while (at < chunk.length) {
-            const size = recordSize(chunk, at, chunk.length - at);
-            if (size === BAD_TAG) return err({ type: "bad_record", tag: chunk[at]! });
+            const size = recordSize(chunkView, at, chunk.length - at);
+            if (size === BAD_TAG) return err({ type: "bad_record", tag: chunkView.getUint8(at) });
             if (size === UNKNOWN_SIZE || at + size > chunk.length) {
                 carry.set(chunk.subarray(at), 0);
                 carried = chunk.length - at;
                 return ok(true);
             }
-            const status = dispatch(chunk, at);
-            if (status !== DISPATCH_GO) return settle(status, chunk[at]!);
+            const status = dispatch(chunk, chunkView, at);
+            if (status !== DISPATCH_GO) return settle(status, chunkView.getUint8(at));
             at += size;
         }
         return ok(true);

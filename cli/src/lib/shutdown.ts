@@ -85,6 +85,11 @@ function draw(frame: string): void {
     }
 }
 
+// `columns` is absent when the stream has no terminal size, which the Bun type of `process.stderr` does not show.
+function columnsOf(stream: { readonly columns?: number }): number {
+    return stream.columns ?? INDICATOR_FALLBACK_COLUMNS;
+}
+
 /**
  * Narrate a slow exit, returning a stop function that erases what it drew.
  *
@@ -105,12 +110,12 @@ export function startExitIndicator(): () => void {
     const timer = setInterval(() => {
         const elapsedMs = Date.now() - startedAt;
         if (elapsedMs < INDICATOR_DELAY_MS) return;
-        // `frame % length` is in range by construction, which `noUncheckedIndexedAccess` cannot see.
-        const glyph = GLYPHS.spinner[frame++ % GLYPHS.spinner.length]!;
+        const glyph = GLYPHS.spinner[frame++ % GLYPHS.spinner.length];
+        if (glyph === undefined) return;
         // `\r\x1b[2K` returns to column 0 and clears the row, so each frame overwrites the last
         // in place instead of scrolling a new line per tick. Width is re-read every frame so a
         // resize mid-drain is picked up without a SIGWINCH listener to unregister.
-        draw(`\r\x1b[2K${exitIndicatorFrame(glyph, startedAt, process.stderr.columns ?? INDICATOR_FALLBACK_COLUMNS)}`);
+        draw(`\r\x1b[2K${exitIndicatorFrame(glyph, startedAt, columnsOf(process.stderr))}`);
     }, INDICATOR_FRAME_MS);
     // The indicator must never be the reason the process stays alive: `beforeExit` reaches
     // `shutdown()` precisely when nothing else is pending, and a ref'd timer would re-arm the loop.

@@ -20,6 +20,7 @@ import {
     resolveModelId,
     type ModelCandidate,
 } from "../models.ts";
+import { present } from "../../../lib/present.ts";
 
 describe("modelMatchesProvider", () => {
     test("a resolved id whose family matches the configured provider agrees (provider→family, case-insensitive)", () => {
@@ -84,7 +85,7 @@ describe("rankModelCandidates", () => {
             { id: "claude-c", created: 100 },
         ];
         const forward = rankModelCandidates(set);
-        const shuffled = rankModelCandidates([set[2]!, set[0]!, set[1]!]);
+        const shuffled = rankModelCandidates([present(set[2]), present(set[0]), present(set[1])]);
         expect(forward).toEqual(["claude-a", "claude-b", "claude-c"]);
         expect(shuffled).toEqual(forward);
     });
@@ -269,9 +270,9 @@ describe("checkModelAccess", () => {
 
         await checkModelAccess("sk-test", "claude-x");
         expect(seen).toHaveLength(1);
-        expect(seen[0]!.url.endsWith("/messages/count_tokens")).toBe(true);
-        expect(seen[0]!.auth).toBe("Bearer sk-test");
-        expect(seen[0]!.model).toBe("claude-x");
+        expect(present(seen[0]).url.endsWith("/messages/count_tokens")).toBe(true);
+        expect(present(seen[0]).auth).toBe("Bearer sk-test");
+        expect(present(seen[0]).model).toBe("claude-x");
     });
 });
 

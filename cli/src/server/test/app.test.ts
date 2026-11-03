@@ -24,6 +24,7 @@ import type { PoolRuntime } from "../http.ts";
 import { createPageGrantStore } from "../report_page_grants.ts";
 import { serverRoutes, type ServerRouteOpts } from "../routes/server.ts";
 import { anyOf, stringContaining } from "../../test_support/matchers.ts";
+import { present } from "../../lib/present.ts";
 
 const TOKEN = "a".repeat(64);
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
@@ -301,7 +302,7 @@ describe("the Host and Origin check", () => {
 
 describe("the Origin null exception of the report pages", () => {
     // A font of the page asset manifest needs no grant, thus the page route answers it past the proof.
-    const FONT_PATH = `/report-sessions/a1/t1/assets/${PAGE_ASSETS.find((asset) => asset.file.endsWith(".woff2"))!.file}`;
+    const FONT_PATH = `/report-sessions/a1/t1/assets/${present(PAGE_ASSETS.find((asset) => asset.file.endsWith(".woff2"))).file}`;
     let server: TestServer;
 
     beforeEach(() => {

@@ -117,7 +117,7 @@ export function defaultInputDriftOpts(runtime: () => HarnessRuntime | null): Inp
         schedule: (fn, ms) => {
             const handle = setTimeout(fn, ms);
             // A half-elapsed debounce must not keep the process alive at shutdown.
-            handle.unref?.();
+            handle.unref();
             return () => clearTimeout(handle);
         },
         subscribe: (handler) => {

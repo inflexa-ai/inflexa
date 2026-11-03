@@ -3,6 +3,7 @@ import { createSignal, For } from "solid-js";
 import { testRender } from "@opentui/solid";
 
 import { ScrollPane } from "../scroll_pane.tsx";
+import { present } from "../../../lib/present.ts";
 
 // Regression sentinel for the opentui rendering contract FixedList relies on (see
 // HORRIBLE_BUG_FIXES.md entry 1): Solid's `<For>` keys rows by reference, so when a filtered
@@ -63,7 +64,7 @@ describe("For inside a scrollbox reuses rows correctly (FixedList's rendering co
             await setup.renderOnce();
             expectExactly(setup.captureCharFrame(), ["alpha", "bravo", "charlie", "delta", "echo"]);
 
-            setItems([ALL[1]!]); // same object reference — the reuse path, not a rebuild
+            setItems([present(ALL[1])]); // same object reference — the reuse path, not a rebuild
             await setup.renderOnce();
             expectExactly(setup.captureCharFrame(), ["bravo"]);
 
@@ -90,11 +91,11 @@ describe("For inside a scrollbox reuses rows correctly (FixedList's rendering co
         try {
             await setup.renderOnce();
 
-            setItems([ALL[3]!, ALL[1]!]); // subset AND reordered — rankBy's shape
+            setItems([present(ALL[3]), present(ALL[1])]); // subset AND reordered — rankBy's shape
             await setup.renderOnce();
             expectExactly(setup.captureCharFrame(), ["delta", "bravo"]);
 
-            setItems([ALL[4]!, ALL[2]!, ALL[0]!, ALL[1]!, ALL[3]!]); // full set, scrambled
+            setItems([present(ALL[4]), present(ALL[2]), present(ALL[0]), present(ALL[1]), present(ALL[3])]); // full set, scrambled
             await setup.renderOnce();
             expectExactly(setup.captureCharFrame(), ["alpha", "bravo", "charlie", "delta", "echo"]);
 
@@ -146,7 +147,7 @@ describe("For inside a scrollbox reuses rows correctly (FixedList's rendering co
             await setup.renderOnce();
             expectExactly(setup.captureCharFrame(), ["alpha", "bravo", "charlie", "delta", "echo"]);
 
-            setItems([ALL[4]!]); // only "echo" → the "early" group disappears entirely
+            setItems([present(ALL[4])]); // only "echo" → the "early" group disappears entirely
             await setup.renderOnce();
             const shrunk = setup.captureCharFrame();
             expectExactly(shrunk, ["echo"]);

@@ -7,6 +7,7 @@ import * as harnessRuntime from "../../modules/harness/runtime.ts";
 import * as setup from "../../modules/infra/setup.ts";
 import { createServerBoot, DEFAULT_SERVER_BOOT_OPTS, type BootedRuntime, type BootProgressOpts, type ServerBootOpts } from "../boot.ts";
 import { anyOf } from "../../test_support/matchers.ts";
+import { present } from "../../lib/present.ts";
 
 const STARTED_AT = new Date("2026-10-02T08:00:00.000Z");
 
@@ -149,7 +150,7 @@ describe("createServerBoot", () => {
         const c = controlled();
         const boot = createServerBoot(STARTED_AT, c.opts);
         void boot.start();
-        const progress = c.attempts[0]!;
+        const progress = present(c.attempts[0]);
 
         c.advance(1);
         progress.onStep("container_engine");
@@ -181,7 +182,7 @@ describe("createServerBoot", () => {
         const c = controlled();
         const boot = createServerBoot(STARTED_AT, c.opts);
         void boot.start();
-        const progress = c.attempts[0]!;
+        const progress = present(c.attempts[0]);
 
         progress.onPullProgress({ doneBytes: 1, totalBytes: 2 });
         progress.onStep("proxy");
@@ -203,7 +204,7 @@ describe("createServerBoot", () => {
         const c = controlled();
         const boot = createServerBoot(STARTED_AT, c.opts);
         const attempt = boot.start();
-        const progress = c.attempts[0]!;
+        const progress = present(c.attempts[0]);
         c.advance(1);
         progress.onStep("containers");
         c.advance(5);
@@ -220,7 +221,7 @@ describe("createServerBoot", () => {
         const boot = createServerBoot(STARTED_AT, c.opts);
         const attempt = boot.start();
         c.advance(1);
-        c.attempts[0]!.onStep("embedder");
+        present(c.attempts[0]).onStep("embedder");
         c.advance(2);
         c.reject(new Error("the embedder gate threw"));
         await attempt;
@@ -242,8 +243,8 @@ describe("createServerBoot", () => {
         const c = controlled();
         const boot = createServerBoot(STARTED_AT, c.opts);
         const first = boot.start();
-        c.attempts[0]!.onStep("container_engine");
-        c.attempts[0]!.onStep("images");
+        present(c.attempts[0]).onStep("container_engine");
+        present(c.attempts[0]).onStep("images");
         c.settle({ bootError: { reason: "infra_unready", message: "pull", detailLines: [] } });
         await first;
 
@@ -257,18 +258,18 @@ describe("createServerBoot", () => {
         const c = controlled();
         const boot = createServerBoot(STARTED_AT, c.opts);
         const first = boot.start();
-        c.attempts[0]!.onStep("images");
+        present(c.attempts[0]).onStep("images");
         c.settle({ bootError: { reason: "infra_unready", message: "pull", detailLines: [] } });
         await first;
         const failed = boot.state();
 
-        c.attempts[0]!.onStep("containers");
-        c.attempts[0]!.onPullProgress({ doneBytes: 9, totalBytes: 9 });
+        present(c.attempts[0]).onStep("containers");
+        present(c.attempts[0]).onPullProgress({ doneBytes: 9, totalBytes: 9 });
         expect(boot.state()).toEqual(failed);
 
         // A late call of the old attempt does not touch the next attempt either.
         void boot.start();
-        c.attempts[0]!.onStep("runtime");
+        present(c.attempts[0]).onStep("runtime");
         expect(boot.state()).toMatchObject({ phase: "starting", boot: { step: null, done: [] } });
     });
 });

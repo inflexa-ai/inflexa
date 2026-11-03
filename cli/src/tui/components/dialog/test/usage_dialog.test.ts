@@ -4,6 +4,7 @@ import { ok } from "neverthrow";
 import { readSessionUsage, usageBreakdown, type SessionUsageSnapshot } from "../usage_dialog.tsx";
 import type { UsageGrouping, UsageTotals, UsageView } from "../../../../api/usage.ts";
 import type { ClientOpts } from "../../../../client/api.ts";
+import { present } from "../../../../lib/present.ts";
 
 // The dialog's arithmetic, tested as pure functions. A character frame cannot carry these claims: it
 // shows that two numbers painted, not WHICH two, and "this figure is never the sum of those" is
@@ -146,7 +147,7 @@ describe("usageBreakdown", () => {
 
         const at = breakdown.lines.flatMap((l) => (l.kind === "row" ? [l.text.indexOf("↑")] : []));
         expect(at).toHaveLength(2);
-        expect(at[0]).toBe(at[1]!);
+        expect(at[0]).toBe(present(at[1]));
     });
 });
 

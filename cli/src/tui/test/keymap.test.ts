@@ -19,6 +19,7 @@ import {
     MODE_MODAL,
     type KeyLike,
 } from "../keymap.ts";
+import { present } from "../../lib/present.ts";
 
 // A fake opentui key event for the dispatcher (KeyLike + preventDefault, optional eventType).
 function key(
@@ -185,8 +186,8 @@ describe("dispatchKey sequences (leader / chords)", () => {
 
             const next = reachableKeys();
             expect(next).toHaveLength(1);
-            expect(next[0]!.stroke).toBe("n");
-            expect(next[0]!.desc).toBe("New analysis");
+            expect(present(next[0]).stroke).toBe("n");
+            expect(present(next[0]).desc).toBe("New analysis");
 
             expect(dispatchKey(key("n"))).toBe(true); // completes the sequence
             expect(ran).toBe(1);

@@ -68,9 +68,7 @@ async function changedPaths(
     session: AgentSession,
 ): Promise<{ readonly analysisId: string; readonly paths: readonly string[] } | undefined> {
     if (input.action === "list") return undefined;
-    const scoped = scopeResource(session.scope);
-    if (scoped.resourceType !== "analysis") return undefined;
-    const analysisId = scoped.resourceId;
+    const analysisId = scopeResource(session.scope).resourceId;
     const paths = input.paths ?? [];
     if (paths.length === 0 || !holdsInstanceLock(analysisId)) return undefined;
     const found = findAnalysis(analysisId);
@@ -144,9 +142,7 @@ export function createManageInputsTool(opts: ManageInputsToolOpts = DEFAULT_MANA
             return change === undefined ? undefined : askRequest(input.action, change.analysisId, change.paths);
         },
         execute: async (input, ctx): Promise<Result<ManageInputsResult, ToolError>> => {
-            const scoped = scopeResource(ctx.session.scope);
-            if (scoped.resourceType !== "analysis") return ok({ status: "no_analysis" as const });
-            const analysisId = scoped.resourceId;
+            const analysisId = scopeResource(ctx.session.scope).resourceId;
 
             // Keep the three ways this can miss distinct: a real DB fault is an `error` (not a
             // silently-degraded `no_anchor`); a vanished analysis row is `no_analysis` (nothing to act

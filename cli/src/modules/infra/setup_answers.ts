@@ -531,7 +531,6 @@ const EMPTY_FILE_PROBLEM = "the file is empty — it must be a YAML mapping of s
  */
 function answersNothing(answers: SetupAnswers): boolean {
     return Object.values(answers).every((answer) => {
-        if (answer === undefined) return true;
         if (typeof answer !== "object" || Array.isArray(answer)) return false;
         return Object.values(answer).every((leaf) => leaf === undefined);
     });
@@ -571,14 +570,15 @@ const FLOW_MAPPING = /^\{(.*)\}$/;
 function recordScalar(scalars: Map<string, string>, path: string, raw: string): void {
     const value = raw.replace(TRAILING_COMMENT, "");
     const flow = FLOW_MAPPING.exec(value);
-    if (flow === null) {
+    const inner = flow === null ? undefined : flow[1];
+    if (inner === undefined) {
         if (value !== "") scalars.set(path, value);
         return;
     }
     // The single level is what makes a block written inline (`postgres: {port: 0x1F5B}`) readable to the
     // numeric check below; descending further would be a hand-rolled YAML parser in all but name, and every
     // value this map is consulted for is a scalar leaf sitting directly under a block.
-    for (const field of flow[1]!.split(",")) {
+    for (const field of inner.split(",")) {
         const at = field.indexOf(":");
         if (at === -1) continue;
         scalars.set(`${path}.${field.slice(0, at).trim()}`, field.slice(at + 1).trim());
@@ -647,15 +647,17 @@ function scanAnswersText(text: string): RawAnswerScan {
         // `-1` is below every real indent, so an exhausted stack ends the loop without a separate length test.
         while ((levels[levels.length - 1]?.indent ?? -1) > indent) levels.pop();
         const level = levels[levels.length - 1];
+        let current: MappingLevel;
         if (level === undefined || level.indent < indent) {
-            levels.push({ indent, path: level === undefined ? [] : [...level.path, level.lastKey], keys: new Set([key]), lastKey: key });
+            current = { indent, path: level === undefined ? [] : [...level.path, level.lastKey], keys: new Set([key]), lastKey: key };
+            levels.push(current);
         } else {
             if (level.keys.has(key)) duplicates.push([...level.path, key].join("."));
             level.keys.add(key);
             level.lastKey = key;
+            current = level;
         }
-        // Non-null: the branch above either pushed a level or found one, so the stack is never empty here.
-        const path = [...levels[levels.length - 1]!.path, key].join(".");
+        const path = [...current.path, key].join(".");
         const value = (entry[2] ?? "").trim();
         if (BLOCK_SCALAR_HEADER.test(value)) blockScalarIndent = indent;
         else recordScalar(scalars, path, value);
@@ -1075,11 +1077,7 @@ function mergeAnswers(file: SetupAnswers, flags: SetupAnswers): { readonly answe
     }
     for (const [block, leaves] of blocks) merged[block] = pruned(leaves);
 
-    // SAFETY: the loop writes exactly the keys the table declares, each with the value type its schema leaf owns —
-    // a shape TypeScript cannot follow key-by-key out of a generic walk, but that the table's `satisfies`
-    // link has already proven. Nothing else can reach this object, so the assertion cannot go stale
-    // silently: a table entry naming a leaf the schema dropped is a compile error at the declaration.
-    return { answers: merged as SetupAnswers, notes };
+    return { answers: merged, notes };
 }
 
 function isOAuthAccountKind(value: string): boolean {

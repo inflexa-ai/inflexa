@@ -7,6 +7,7 @@ import type { Command } from "commander";
 import { buildProgram } from "../index.ts";
 import * as setupModule from "../../modules/infra/setup.ts";
 import { loadSetupAnswers, type SetupAnswerFlags, type SetupAnswers, type SetupAnswersContext } from "../../modules/infra/setup_answers.ts";
+import { present } from "../../lib/present.ts";
 
 // THE PIN: the registry hands `setup` a 23-field `flags` literal, one field per Batch-mode option. That
 // literal is pure re-spelling — commander's camelCased option name → the same name on `SetupAnswerFlags` —
@@ -72,7 +73,7 @@ async function forwardedFlags(argv: readonly string[]): Promise<SetupAnswerFlags
     await buildProgram().parseAsync(["setup", ...argv], { from: "user" });
     expect(setupSpy).toHaveBeenCalledTimes(1);
     // Non-null: the assertion above proves the intercepted action ran, and it is the only writer.
-    return captured!;
+    return present(captured);
 }
 
 let setupSpy: ReturnType<typeof spyOn<typeof setupModule, "setup">> | undefined;

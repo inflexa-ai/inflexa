@@ -24,6 +24,7 @@ import { providerKindForSlug } from "../setup.ts";
 import { REFERENCE_PRESETS } from "../../refs/commands.ts";
 import { type ModelAuthConfig } from "../../../lib/config.ts";
 import { reservedPostgresPorts } from "../../../lib/env.ts";
+import { present } from "../../../lib/present.ts";
 
 /**
  * A batch context with the api-key embedding secret reported ABSENT by default. The seam keeps every case
@@ -1009,7 +1010,7 @@ describe("resolveSetupAnswers — reserved Postgres ports", () => {
     });
 
     test("interactive behavior is unchanged — the wizard keeps its warn-and-use-once", () => {
-        const port = reservedPostgresPorts[0]!;
+        const port = present(reservedPostgresPorts[0]);
         expect(resolveSetupAnswers({ postgres: { port } }, undefined, interactive())._unsafeUnwrap().answers.postgres?.port).toBe(port);
     });
 
@@ -1046,7 +1047,7 @@ describe("resolveSetupAnswers — every problem is reported in one pass", () => 
             resolveSetupAnswers(
                 {
                     connection: { mode: "direct" },
-                    postgres: { port: reservedPostgresPorts[0]! },
+                    postgres: { port: present(reservedPostgresPorts[0]) },
                     embedding: { mode: "api-key", gguf: "/models/m.gguf" },
                     refs: ["all"],
                 },

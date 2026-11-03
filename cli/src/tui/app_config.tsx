@@ -62,7 +62,7 @@ const settings: Setting[] = [
  * which left/right moves. A Section carries only its kind.
  */
 type Section =
-    { kind: "toggle"; settingIndex: number } | { kind: "theme" } | { kind: "runtime" } | { kind: "postgres_field"; field: PgField } | { kind: "embedding" };
+    { kind: "toggle"; key: BooleanSettingKey } | { kind: "theme" } | { kind: "runtime" } | { kind: "postgres_field"; field: PgField } | { kind: "embedding" };
 
 const PG_FIELDS = ["host", "port", "database", "user", "password"] as const;
 type PgField = (typeof PG_FIELDS)[number];
@@ -116,7 +116,7 @@ function secretState(entered: string | undefined, stored: boolean): "set" | "not
 }
 
 const sections: Section[] = [
-    ...settings.map((_, i): Section => ({ kind: "toggle", settingIndex: i })),
+    ...settings.map((setting): Section => ({ kind: "toggle", key: setting.key })),
     { kind: "theme" },
     { kind: "runtime" },
     ...PG_FIELDS.map((f): Section => ({ kind: "postgres_field", field: f })),
@@ -216,15 +216,16 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
     // same axis — left → off, right → on (idempotent, unlike a flip). Any value change
     // clears a stale notice and disarms the quit confirmation.
     function step(delta: -1 | 1): void {
-        const s = sections[section()]!;
+        const s = sections[section()];
+        if (s === undefined) return;
         switch (s.kind) {
             case "toggle": {
-                const { key } = settings[s.settingIndex]!;
-                setDraft({ ...draft(), [key]: delta === 1 });
+                setDraft({ ...draft(), [s.key]: delta === 1 });
                 break;
             }
             case "theme": {
-                const id = themeIds[Math.min(themeIds.length - 1, Math.max(0, themeIds.indexOf(draft().theme) + delta))]!;
+                const id = themeIds[Math.min(themeIds.length - 1, Math.max(0, themeIds.indexOf(draft().theme) + delta))];
+                if (id === undefined) break;
                 setTheme(id);
                 setDraft({ ...draft(), theme: id });
                 break;
@@ -234,7 +235,8 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
                 // Unset renders both radios empty; index -1 clamps so the first arrow
                 // press lands on the registry's first entry instead of skipping it.
                 const current = rt === null ? -1 : runtimeIds.indexOf(rt);
-                const id = runtimeIds[Math.min(runtimeIds.length - 1, Math.max(0, current + delta))]!;
+                const id = runtimeIds[Math.min(runtimeIds.length - 1, Math.max(0, current + delta))];
+                if (id === undefined) break;
                 setDraft({ ...draft(), runtime: id });
                 break;
             }
@@ -257,10 +259,9 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
     // Space/enter flip the focused toggle; a no-op on radio sections (whose value is
     // already applied live by step). Mirrors a checkbox's familiar space-to-toggle.
     function toggleFocused(): void {
-        const s = sections[section()]!;
-        if (s.kind !== "toggle") return;
-        const { key } = settings[s.settingIndex]!;
-        setDraft({ ...draft(), [key]: !draft()[key] });
+        const s = sections[section()];
+        if (s === undefined || s.kind !== "toggle") return;
+        setDraft({ ...draft(), [s.key]: !draft()[s.key] });
         setNotice(null);
         setQuitArmed(false);
     }
@@ -270,8 +271,8 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
     // keys; standalone: the DialogOverlay rendered below hosts it) — the form layer's bare keys
     // (`s`, `q`, space) stay suspended while the prompt is open, so they type into the field.
     function editFocusedPgField(): void {
-        const s = sections[section()]!;
-        if (s.kind !== "postgres_field") return;
+        const s = sections[section()];
+        if (s === undefined || s.kind !== "postgres_field") return;
         const field = s.field;
         dialogPush(() => (
             <PromptDialog
@@ -653,7 +654,8 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
             {
                 chord: KEYS.enter,
                 run: () => {
-                    const s = sections[section()]!;
+                    const s = sections[section()];
+                    if (s === undefined) return;
                     if (s.kind === "postgres_field") editFocusedPgField();
                     else if (s.kind === "embedding") openEmbeddingPicker();
                     else toggleFocused();
@@ -714,9 +716,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
                                 </text>
                                 <box paddingLeft={4} flexDirection="column">
                                     <text fg={theme().fgMuted}>{setting.description}</text>
-                                    <Show when={setting.key === "telemetry"}>
-                                        <text fg={theme().fgMuted}>Endpoint: {env.otelEndpoint ?? "not set (OTEL_EXPORTER_OTLP_ENDPOINT)"}</text>
-                                    </Show>
+                                    <text fg={theme().fgMuted}>Endpoint: {env.otelEndpoint ?? "not set (OTEL_EXPORTER_OTLP_ENDPOINT)"}</text>
                                 </box>
                             </box>
                         );
@@ -814,10 +814,12 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
                 </box>
             </ScrollPane>
 
-            <Show when={notice()}>
-                <box paddingLeft={2} paddingTop={1}>
-                    <text fg={noticeColor(notice()!.kind)}>{notice()!.text}</text>
-                </box>
+            <Show when={notice()} keyed>
+                {(shown) => (
+                    <box paddingLeft={2} paddingTop={1}>
+                        <text fg={noticeColor(shown.kind)}>{shown.text}</text>
+                    </box>
+                )}
             </Show>
 
             <box paddingLeft={2} paddingTop={1}>

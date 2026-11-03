@@ -6,6 +6,7 @@ import type { BoxRenderable, TextareaRenderable } from "@opentui/core";
 import { PausePrompt } from "../pause_prompt.tsx";
 import { useKeymapRoot } from "../../keymap.ts";
 import { renderFrame } from "../../../test_support/tui.ts";
+import { present } from "../../../lib/present.ts";
 
 // The frames show what the docked prompt says in each state, and the key tests drive the REAL keyboard bus through
 // useKeymapRoot to prove the focus-target gate: bare r and s act only while the prompt holds focus, the same gate as
@@ -103,8 +104,8 @@ describe("PausePrompt frames", () => {
 
 describe("PausePrompt keys", () => {
     test("unfocused, r types into the editor; focused, r resumes and s stops", async () => {
-        let box: BoxRenderable | null = null;
-        let ta: TextareaRenderable | null = null;
+        let box: BoxRenderable | undefined;
+        let ta: TextareaRenderable | undefined;
         const actions: string[] = [];
         const setup = await testRender(
             () => (
@@ -121,20 +122,20 @@ describe("PausePrompt keys", () => {
         const settle = settleOf(setup);
         try {
             await settle();
-            expect(ta!.focused).toBe(true);
+            expect(present(ta).focused).toBe(true);
             setup.mockInput.pressKey("r");
             await settle();
-            expect(ta!.editBuffer.getText()).toBe("r");
+            expect(present(ta).editBuffer.getText()).toBe("r");
             expect(actions).toEqual([]);
 
-            box!.focus();
+            present(box).focus();
             await settle();
             setup.mockInput.pressKey("r");
             await settle();
             setup.mockInput.pressKey("s");
             await settle();
             expect(actions).toEqual(["resume", "stop"]);
-            expect(ta!.editBuffer.getText()).toBe("r");
+            expect(present(ta).editBuffer.getText()).toBe("r");
         } finally {
             setup.renderer.destroy();
         }
@@ -142,7 +143,7 @@ describe("PausePrompt keys", () => {
 
     test("retrying, h holds the work; paused, h does nothing", async () => {
         for (const state of ["retrying", "paused"] as const) {
-            let box: BoxRenderable | null = null;
+            let box: BoxRenderable | undefined;
             const actions: string[] = [];
             const setup = await testRender(
                 () => <Harness state={state} onBox={(r) => (box = r)} onHold={() => actions.push("hold")} onStop={() => actions.push("stop")} />,
@@ -151,7 +152,7 @@ describe("PausePrompt keys", () => {
             const settle = settleOf(setup);
             try {
                 await settle();
-                box!.focus();
+                present(box).focus();
                 await settle();
                 setup.mockInput.pressKey("h");
                 await settle();
@@ -163,7 +164,7 @@ describe("PausePrompt keys", () => {
     });
 
     test("busy: the keys do nothing, thus a second press cannot send the resume again", async () => {
-        let box: BoxRenderable | null = null;
+        let box: BoxRenderable | undefined;
         const actions: string[] = [];
         const setup = await testRender(
             () => <Harness busy onBox={(r) => (box = r)} onResume={() => actions.push("resume")} onStop={() => actions.push("stop")} />,
@@ -172,7 +173,7 @@ describe("PausePrompt keys", () => {
         const settle = settleOf(setup);
         try {
             await settle();
-            box!.focus();
+            present(box).focus();
             await settle();
             setup.mockInput.pressKey("r");
             setup.mockInput.pressKey("s");

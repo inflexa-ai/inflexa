@@ -41,6 +41,7 @@ import type { ClientError } from "../../client/api.ts";
 import type { DeleteAnalysisResponse, WorkspaceDisposalMode } from "../../api/analyses.ts";
 import type { ApiError } from "../../api/common.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import { present } from "../../lib/present.ts";
 
 // modelStatusLines reads the module-level boot + agentModels stores, so each test seeds them via the
 // test hooks and the reset below keeps one test's seed from bleeding into the next (the same pairing
@@ -205,7 +206,7 @@ describe("session command gating", () => {
             return ok(undefined);
         });
         try {
-            const cmd = commands.find((c) => c.id === "session.copy-id")!;
+            const cmd = present(commands.find((c) => c.id === "session.copy-id"));
             expect(cmd.category).toBe("Session");
             expect(cmd.title).toBe("Copy session id");
 
@@ -224,7 +225,7 @@ describe("session command gating", () => {
     test("a copy that the native clipboard tool did not set shows no confirmation", async () => {
         const restore = __setClipboardWriterForTest(async () => err({ type: "native_copy_failed" }));
         try {
-            await commands.find((c) => c.id === "session.copy-id")!.run(scope(ANALYSIS, "01988cdd-7f00-7abc-8def-0123456789ab"));
+            await present(commands.find((c) => c.id === "session.copy-id")).run(scope(ANALYSIS, "01988cdd-7f00-7abc-8def-0123456789ab"));
             expect(currentNotice()).toBeNull();
         } finally {
             restore();
@@ -235,8 +236,8 @@ describe("session command gating", () => {
     // The two thread verbs sit next to each other under one category and their titles differ by a word,
     // so the palette row is the only thing a user reads before choosing. One of them cannot be undone.
     test("remove and delete are separate entries whose descriptions cannot be confused", () => {
-        const remove = commands.find((c) => c.id === "session.delete")!;
-        const purge = commands.find((c) => c.id === "session.purge")!;
+        const remove = present(commands.find((c) => c.id === "session.delete"));
+        const purge = present(commands.find((c) => c.id === "session.purge"));
 
         expect(remove.title).toBe("Remove session");
         expect(purge.title).toBe("Delete session");
@@ -771,7 +772,7 @@ describe("session flows", () => {
             await flow(w.ws, t.opts);
 
             expect(t.notices).toHaveLength(1);
-            expect(t.notices[0]!.text).toContain("harness is not running");
+            expect(present(t.notices[0]).text).toContain("harness is not running");
             // Nothing was read and nothing was confirmed: the refusal is the whole of what happened.
             expect(w.dialogs()).toBe(0);
         }
@@ -1015,7 +1016,7 @@ describe("session flows", () => {
         const t = makeOpts({
             listThreadsWithArchived: (_analysisId, page) => {
                 asked.push(page);
-                return okAsync(pages[page]!);
+                return okAsync(present(pages[page]));
             },
         });
         const w = sessionScope(ANALYSIS, "thread-1");
@@ -1216,7 +1217,7 @@ describe("session flows", () => {
         const w = recordingScope(ANALYSIS, "thread-current");
         // The sentinel is whatever value the pinned row carries — the test names it the way a pick does.
         // `switchSessionItems` always includes that one pinned row, so this find never misses.
-        const sentinel = switchSessionItems([]).find((i) => i.pinned)!.value;
+        const sentinel = present(switchSessionItems([]).find((i) => i.pinned)).value;
 
         selectSwitchSession(w.ws, sentinel, ANALYSIS, t.opts);
 
@@ -1248,13 +1249,13 @@ describe("activity-panel palette command", () => {
     test("restore is reachable from the palette, in the View category", () => {
         const cmd = commands.find((c) => c.id === "view.activity-panel");
         expect(cmd).toBeDefined();
-        expect(cmd!.category).toBe("View");
+        expect(present(cmd).category).toBe("View");
         // Discoverable by what a user would actually type after losing the panel.
-        expect(`${cmd!.title} ${cmd!.description}`.toLowerCase()).toContain("activity panel");
+        expect(`${present(cmd).title} ${present(cmd).description}`.toLowerCase()).toContain("activity panel");
     });
 
     test("the command is restore-only, not a second toggle", () => {
-        const cmd = commands.find((c) => c.id === "view.activity-panel")!;
+        const cmd = present(commands.find((c) => c.id === "view.activity-panel"));
         // Behaviour is asserted in activity_panel.test.ts, where an active run can be seeded; what matters
         // here is that the palette entry calls the restore, never the toggle — a toggle in the palette
         // could hide the panel a second time and read as the command having done nothing.
@@ -1436,7 +1437,7 @@ describe("analysis delete (client)", () => {
 
         // The boot store is idle in this process, so the command's own gate is what runs — spending the
         // user's name-typing confirmation on a delete the server would refuse is the point of it.
-        await commands.find((c) => c.id === "analysis.delete")!.run(ws);
+        await present(commands.find((c) => c.id === "analysis.delete")).run(ws);
 
         expect(dialogs).toBe(0);
         expect(currentNotice()?.kind).toBe("warn");
@@ -1466,7 +1467,7 @@ describe("view.status", () => {
         });
 
         try {
-            await commands.find((c) => c.id === "view.status")!.run(ws);
+            await present(commands.find((c) => c.id === "view.status")).run(ws);
         } finally {
             discover.mockRestore();
             fetch.mockRestore();
@@ -1502,7 +1503,7 @@ describe("the busy read before a rename or a delete", () => {
             });
 
             try {
-                await commands.find((c) => c.id === id)!.run(ws);
+                await present(commands.find((c) => c.id === id)).run(ws);
             } finally {
                 discover.mockRestore();
                 fetch.mockRestore();

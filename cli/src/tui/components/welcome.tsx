@@ -33,10 +33,12 @@ export function Welcome(props: WelcomeProps) {
                     {props.markerWritten ? GLYPHS.check : GLYPHS.warning} {props.anchorPath}
                 </text>
             </Show>
-            <Show when={props.hints?.length}>
-                <text fg={theme().fgMuted} paddingTop={space.sm}>
-                    {props.hints!.join(`  ${GLYPHS.middot}  `)}
-                </text>
+            <Show when={props.hints?.length ? props.hints : undefined} keyed>
+                {(hints) => (
+                    <text fg={theme().fgMuted} paddingTop={space.sm}>
+                        {hints.join(`  ${GLYPHS.middot}  `)}
+                    </text>
+                )}
             </Show>
         </box>
     );

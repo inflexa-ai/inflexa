@@ -23,6 +23,7 @@ import {
 import { setChatStatus } from "../status.ts";
 import { watchBootRecovery } from "../../app.tsx";
 import { dialogClear, dialogIsOpen, dialogPush } from "../../components/dialog/dialog_host.tsx";
+import { present } from "../../../lib/present.ts";
 
 afterEach(() => __resetBootForTest());
 
@@ -49,7 +50,7 @@ function scripted(answers: (() => ResultAsync<ServerState, ClientError>)[]): { o
     let sleeps = 0;
     return {
         opts: {
-            readState: () => answers[Math.min(reads++, answers.length - 1)]!(),
+            readState: () => present(answers[Math.min(reads++, answers.length - 1)])(),
             sleep: async () => {
                 sleeps += 1;
             },
@@ -461,7 +462,7 @@ describe("agent-models store (watchAgentModels)", () => {
     /** A read that answers with the next of `answers` (the last one repeats), and counts the reads. */
     function scriptedAgents(answers: AgentList[]): { read: () => ResultAsync<AgentList, ClientError>; reads: () => number } {
         let reads = 0;
-        return { read: () => okAsync(answers[Math.min(reads++, answers.length - 1)]!), reads: () => reads };
+        return { read: () => okAsync(present(answers[Math.min(reads++, answers.length - 1)])), reads: () => reads };
     }
 
     test("stays empty before ready, then seeds each agent's current model at the ready edge", async () => {

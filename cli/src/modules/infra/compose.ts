@@ -468,7 +468,7 @@ async function pullMissingImages(
     if (socket === undefined) return composePullInteractive(rt);
 
     const sizes = await Promise.all(missing.map((image) => resolveImageTotalBytes(rt, image)));
-    const totalBytes = sizes.every((size) => size !== null) ? sizes.reduce<number>((sum, size) => sum + (size ?? 0), 0) : null;
+    const totalBytes = sizes.every((size) => size !== null) ? sizes.reduce<number>((sum, size) => sum + size, 0) : null;
     const moved = new Map<string, number>();
     // Every pull settles before the outcome is read, so no pull reports after the gate moved on.
     const results = await Promise.all(

@@ -10,6 +10,7 @@ import { insertAnchor, insertAnalysis, insertAnalysisInput, deleteAnalysisInput 
 import { asStr256 } from "../../../lib/types.ts";
 import type { Analysis, AnalysisInput } from "../../../types/analysis.ts";
 import { stageInputs, enumerateInputPaths, isInputSetMaterialized, mtimesMatch } from "../staging.ts";
+import { present } from "../../../lib/present.ts";
 
 function sha256(content: string): string {
     return createHash("sha256").update(content).digest("hex");
@@ -61,7 +62,7 @@ describe("stageInputs", () => {
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
 
         expect(staged).toHaveLength(1);
-        const s = staged[0]!;
+        const s = present(staged[0]);
         expect(s.mountName).toBe("local");
         expect(s.key).toBe("data.csv");
         expect(s.fileName).toBe("data.csv");
@@ -130,7 +131,7 @@ describe("stageInputs", () => {
         insertAnalysisInput({ path: "link-test.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
 
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        const stagedPath = join(targetDir, staged[0]!.relativePath);
+        const stagedPath = join(targetDir, present(staged[0]).relativePath);
 
         expect(readFileSync(stagedPath, "utf-8")).toBe(content);
     });
@@ -193,7 +194,7 @@ describe("stageInputs", () => {
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
 
         expect(staged).toHaveLength(1);
-        const s = staged[0]!;
+        const s = present(staged[0]);
         const expectedFileId = Bun.hash(`|${loosePath}`).toString(36);
         expect(s.key).toBe(join(expectedFileId, "GSE78220.csv"));
         expect(s.key.includes("Users")).toBe(false);
@@ -365,7 +366,7 @@ describe("stageInputs", () => {
             expect(shared).toHaveLength(1);
             expect(staged).toHaveLength(33);
             expect(readFileSync(join(dirPath, "shared.csv"), "utf-8")).toBe(content);
-            expect(readFileSync(join(targetDir, shared[0]!.relativePath), "utf-8")).toBe(content);
+            expect(readFileSync(join(targetDir, present(shared[0]).relativePath), "utf-8")).toBe(content);
         }
     });
 });
@@ -380,7 +381,7 @@ describe("stageInputs — the staged tree records what it materialized", () => {
         insertAnalysisInput({ path: "linked.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
 
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        const stagedStats = statSync(join(targetDir, staged[0]!.relativePath));
+        const stagedStats = statSync(join(targetDir, present(staged[0]).relativePath));
         const srcStats = statSync(src);
 
         expect(stagedStats.size).toBe(srcStats.size);
@@ -400,7 +401,7 @@ describe("stageInputs — the staged tree records what it materialized", () => {
         insertAnalysisInput({ path: systemFile, isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
 
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        const stagedStats = statSync(join(targetDir, staged[0]!.relativePath));
+        const stagedStats = statSync(join(targetDir, present(staged[0]).relativePath));
         const srcStats = statSync(systemFile);
 
         expect(stagedStats.ino).not.toBe(srcStats.ino);
@@ -624,7 +625,7 @@ describe("enumerateInputPaths", () => {
 
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
         expect(staged).toHaveLength(1);
-        expect(staged[0]!.mtimeMs).toBe(statSync(src).mtimeMs);
+        expect(present(staged[0]).mtimeMs).toBe(statSync(src).mtimeMs);
 
         // The manifest and a fresh stat must agree, or the tree reads as permanently unmaterialized.
         expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);

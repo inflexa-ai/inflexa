@@ -29,8 +29,11 @@ export type FileRouteOpts = {
 /** The production {@link FileRouteOpts}. */
 export const DEFAULT_FILE_ROUTE_OPTS: FileRouteOpts = { open, chunkBytes: 64 * 1024 };
 
-// `?? 0`: a platform that has no such flag (Windows) opens the file without it.
-const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+// A platform that has no such flag (Windows) opens the file without it, which the Node types of `constants` do not show.
+function platformFlag(flag: number | undefined): number {
+    return flag ?? 0;
+}
+const OPEN_FLAGS = constants.O_RDONLY | platformFlag(constants.O_NOFOLLOW) | platformFlag(constants.O_NONBLOCK);
 
 /** The types that a browser runs as a document with script. They get `Content-Security-Policy: sandbox`. */
 const SANDBOXED_TYPES: ReadonlySet<string> = new Set(["text/html", "application/xhtml+xml", "image/svg+xml", "application/xml", "text/xml"]);

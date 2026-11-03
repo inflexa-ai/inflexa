@@ -340,8 +340,9 @@ function locateRuntimeRoot(stageDir: string): Result<string, LlamaRuntimeError> 
     let root = stageDir;
     try {
         const entries = readdirSync(stageDir);
-        if (entries.length === 1) {
-            const only = join(stageDir, entries[0]!);
+        const [first, second] = entries;
+        if (first !== undefined && second === undefined) {
+            const only = join(stageDir, first);
             if (statSync(only).isDirectory()) root = only;
         }
     } catch (cause) {

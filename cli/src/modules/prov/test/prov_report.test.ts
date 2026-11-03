@@ -17,6 +17,7 @@ import type { ProvActor, ProvModelId } from "../../../types/prov.ts";
 import { cliProvDigest, provModel } from "../document.ts";
 import { flushProvenanceAsync, initProvenanceRecording, resetProvenanceRecorderForTests } from "../prov.ts";
 import { resetSigningForTests } from "../signing.ts";
+import { present } from "../../../lib/present.ts";
 
 // The report family walks the same kernel dispatch the core family does, so these assertions read the
 // FLUSHED document — the bytes the column holds after the signed flush — rather than a document the
@@ -70,7 +71,7 @@ function activitiesOfType(json: ProvJson, type: string): Record<string, unknown>
 function oneActivityOfType(json: ProvJson, type: string): Record<string, unknown> {
     const found = activitiesOfType(json, type);
     expect(found.length).toBe(1);
-    return found[0]!;
+    return present(found[0]);
 }
 
 /** Drain the flush and read back the stored bytes — the exact document the signing path wrote. */
@@ -78,7 +79,7 @@ async function flushedDocument(): Promise<ProvDocument> {
     await flushProvenanceAsync();
     const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
     expect(stored).not.toBeNull();
-    return ProvDocument.deserialize(stored!, "json");
+    return ProvDocument.deserialize(present(stored), "json");
 }
 
 async function flushedJson(): Promise<ProvJson> {
@@ -127,9 +128,9 @@ describe("report provenance recorder (report bus members → kernel dispatch →
 
         const report = json.entity?.[reportQn];
         expect(report).toBeDefined();
-        expect(attrValues(report!["prov:type"])).toContain("inflexa:Report");
-        expect(attrValues(report!["inflexa:threadId"])).toEqual([reportThread]);
-        expect(attrValues(report!["inflexa:parentThreadId"])).toEqual([conversationThread]);
+        expect(attrValues(present(report)["prov:type"])).toContain("inflexa:Report");
+        expect(attrValues(present(report)["inflexa:threadId"])).toEqual([reportThread]);
+        expect(attrValues(present(report)["inflexa:parentThreadId"])).toEqual([conversationThread]);
 
         const action = oneActivityOfType(json, "inflexa:CreateSession");
         expect(attrValues(action["inflexa:threadId"])).toEqual([reportThread]);
@@ -145,9 +146,9 @@ describe("report provenance recorder (report bus members → kernel dispatch →
         // The signing path is untouched by the new family: the column, the chain hash, and the
         // signature are written exactly as they are for a core event.
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
-        expect(integrity!.provenance).not.toBeNull();
-        expect(integrity!.chainHash).not.toBeNull();
-        expect(integrity!.signature).not.toBeNull();
+        expect(present(integrity).provenance).not.toBeNull();
+        expect(present(integrity).chainHash).not.toBeNull();
+        expect(present(integrity).signature).not.toBeNull();
     });
 
     test("a re-emitted report session creation leaves one generation edge and one attribution", async () => {
@@ -268,10 +269,10 @@ describe("report provenance recorder (report bus members → kernel dispatch →
 
         const report = json.entity?.[reportQn];
         expect(report).toBeDefined();
-        expect(attrValues(report!["prov:type"])).toContain("inflexa:Report");
-        expect(attrValues(report!["inflexa:threadId"])).toEqual([reportThread]);
+        expect(attrValues(present(report)["prov:type"])).toContain("inflexa:Report");
+        expect(attrValues(present(report)["inflexa:threadId"])).toEqual([reportThread]);
         // Only the creation event knows a parent, so a lazy mint carries none.
-        expect(report!["inflexa:parentThreadId"]).toBeUndefined();
+        expect(present(report)["inflexa:parentThreadId"]).toBeUndefined();
         expect(activitiesOfType(json, "inflexa:AddReportBlock").length).toBe(1);
     });
 
@@ -289,9 +290,9 @@ describe("report provenance recorder (report bus members → kernel dispatch →
 
         const version = json.entity?.[versionQn];
         expect(version).toBeDefined();
-        expect(attrValues(version!["prov:type"])).toContain("inflexa:ReportVersion");
-        expect(attrValues(version!["inflexa:versionId"])).toEqual(["ver-1"]);
-        expect(attrValues(version!["inflexa:threadId"])).toEqual([reportThread]);
+        expect(attrValues(present(version)["prov:type"])).toContain("inflexa:ReportVersion");
+        expect(attrValues(present(version)["inflexa:versionId"])).toEqual(["ver-1"]);
+        expect(attrValues(present(version)["inflexa:threadId"])).toEqual([reportThread]);
 
         const action = oneActivityOfType(json, "inflexa:RecordReportVersion");
         expect(attrValues(action["inflexa:versionId"])).toEqual(["ver-1"]);
@@ -353,9 +354,9 @@ describe("report provenance recorder (report bus members → kernel dispatch →
 
         const agent = json.agent?.[modelQn];
         expect(agent).toBeDefined();
-        expect(attrValues(agent!["prov:type"])).toContain("inflexa:Model");
-        expect(attrValues(agent!["prov:type"])).toContain("prov:SoftwareAgent");
-        expect(attrValues(agent!["inflexa:model"])).toEqual([model]);
+        expect(attrValues(present(agent)["prov:type"])).toContain("inflexa:Model");
+        expect(attrValues(present(agent)["prov:type"])).toContain("prov:SoftwareAgent");
+        expect(attrValues(present(agent)["inflexa:model"])).toEqual([model]);
 
         const provn = await flushedProvN();
         // One delegation across both acts: its identifier is the kernel's, so the report records and

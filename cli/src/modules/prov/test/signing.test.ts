@@ -7,6 +7,7 @@ import { randomUUIDv7 } from "bun";
 import { computeChainHash, signHexDigest, verifyHexDigest } from "@inflexa-ai/prov-kernel";
 
 import { loadOrGenerateKeypair, loadPublicKey, resetSigningForTests } from "../signing.ts";
+import { present } from "../../../lib/present.ts";
 
 let tempDir: string | null = null;
 
@@ -43,7 +44,7 @@ describe("keypair lifecycle", () => {
         useTempKeyDir();
         const r1 = await loadOrGenerateKeypair();
         expect(r1.isOk()).toBe(true);
-        resetSigningForTests(join(tempDir!, "prov_key.json"));
+        resetSigningForTests(join(present(tempDir), "prov_key.json"));
         const r2 = await loadOrGenerateKeypair();
         expect(r2.isOk()).toBe(true);
         const hash = (await computeChainHash(null, "test"))._unsafeUnwrap();

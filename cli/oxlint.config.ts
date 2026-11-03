@@ -261,11 +261,6 @@ export default solid({
             // back on.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #807: remove the non-null assertions and the unnecessary conditions.
-                "typescript/no-non-null-assertion": "off",
-                "typescript/no-unnecessary-type-assertion": "off",
-                "typescript/no-unnecessary-condition": "off",
-
                 // #809: give each async test double the shape of the real function.
                 "typescript/require-await": "off",
 

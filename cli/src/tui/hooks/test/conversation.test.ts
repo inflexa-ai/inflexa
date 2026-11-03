@@ -48,6 +48,7 @@ import { isKnownPart, readFileReference, readPlanCard, readPresentation } from "
 import type { LiveAskPart, LiveTextPart, LiveToolCallPart, Part } from "../../../types/session.ts";
 import { conversationSummary, threadListOf } from "../../../test_support/threads.ts";
 import { __resetOpenThreadForTest, openThread, refreshOpenThread, type ThreadOpts } from "../thread.ts";
+import { present } from "../../../lib/present.ts";
 
 // The conversation state is a module singleton (one chat screen at a time), so reset it between
 // cases. resetHotState() clears messages/stream/error/adapter state and returns status to idle.
@@ -222,7 +223,7 @@ function requirePart<T extends Part>(pred: (p: Part) => p is T): T {
     const part = findPart(pred);
     expect(part).toBeDefined();
     // `expect` above fails the case when no part matched.
-    return part!;
+    return present(part);
 }
 
 const isToolCall = (p: Part): p is LiveToolCallPart => p.type === "tool-call";
@@ -302,7 +303,7 @@ describe("send() drives the adapter over the turn stream", () => {
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
 
-        const chips = messages[1]!.parts.filter(isToolCall);
+        const chips = present(messages[1]).parts.filter(isToolCall);
         expect(chips.map((c) => c.durationMs)).toEqual([480, 3]);
     });
 

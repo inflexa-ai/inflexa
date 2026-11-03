@@ -36,6 +36,7 @@ import {
     type RefreshOpts,
     type RunsSnapshot,
 } from "../sidebar_live.ts";
+import { present } from "../../../lib/present.ts";
 
 afterEach(() => {
     __resetSidebarLiveForTest();
@@ -381,12 +382,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             ...opts(null, runs),
             loadRun: (_analysisId, runId) => {
                 asked.push(runId);
-                return okAsync(
-                    detailOf(
-                        runs.find((r) => r.runId === runId)!,
-                        [stepRow("s", "running")],
-                    ),
-                );
+                return okAsync(detailOf(present(runs.find((r) => r.runId === runId)), [stepRow("s", "running")]));
             },
         };
         await refreshSidebarData("A", o);
@@ -412,7 +408,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             loadRun: () => okAsync(detailOf(run, [stepRow("qc", "running", { name: "quality control" }), stepRow("T1S2", "pending")])),
         };
         await refreshSidebarData("A", o);
-        const p = activeRunProgress().get("run-1")!;
+        const p = present(activeRunProgress().get("run-1"));
         // The plan title replaces "executeAnalysis", which is identical on every ledger row.
         expect(p.name).toBe("GSEA cross-species comparison");
         // And the step's human name replaces its T{track}S{step}-style slug; a step with no name keeps it.
@@ -469,16 +465,16 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         // running run away — but re-stamped `stale`, because freshness is a property of THIS refresh
         // and the panel mutes itself on it.
         const carried = activeRunProgress().get("run-x");
-        expect(carried).toEqual({ ...first.get("run-x")!, stale: true });
-        expect(carried!.stale).toBe(true);
-        expect(first.get("run-x")!.stale).toBe(false);
+        expect(carried).toEqual({ ...present(first.get("run-x")), stale: true });
+        expect(present(carried).stale).toBe(true);
+        expect(present(first.get("run-x")).stale).toBe(false);
 
         // A SECOND consecutive blip carries the same object by IDENTITY, not an equal copy. This is
         // load-bearing, not an optimization detail: the panel's focus memo reads this map, and minting
         // a new object per tick would re-fire each consumer for a value that cannot have changed
         // during an outage.
         await refreshSidebarData("A", o);
-        expect(activeRunProgress().get("run-x")).toBe(carried!);
+        expect(activeRunProgress().get("run-x")).toBe(present(carried));
     });
 
     test("a failed run read for a DIFFERENT run never shows one run's progress under another", async () => {
@@ -487,7 +483,7 @@ describe("refreshSidebarData — sticky run-progress row", () => {
             "A",
             opts(null, [runRow({ runId: "run-a", status: "running" })], () => true, [stepRow("s", "running")]),
         );
-        expect(activeRunProgress().get("run-a")!.tag).toBe(idTail("run-a"));
+        expect(present(activeRunProgress().get("run-a")).tag).toBe(idTail("run-a"));
 
         // A goes terminal and B takes its place, and B's read blips. Keying by run id makes the
         // misattribution unrepresentable: B simply has no entry, and A's is gone because A is terminal.
@@ -621,7 +617,7 @@ describe("refreshSidebarData — the profile's panel-subject entry", () => {
         // displace any of it — the two live surfaces share a refresh, not a data set.
         expect(activeProfileProgress()).not.toBeNull();
         expect([...activeRunProgress().keys()]).toEqual(["run-1"]);
-        expect(activeRunProgress().get("run-1")).toEqual(runsOnly!);
+        expect(activeRunProgress().get("run-1")).toEqual(present(runsOnly));
     });
 });
 
@@ -636,7 +632,7 @@ describe("refreshSidebarData — a failed profile read carries the profile entry
 
     test("a blip keeps the previous entry and marks it stale; a recovered read clears staleness", async () => {
         await refreshSidebarData("A", opts(runningProfile({ workflowId: "wf-7" }), []));
-        const fresh = activeProfileProgress()!;
+        const fresh = present(activeProfileProgress());
         expect(fresh.stale).toBe(false);
 
         await refreshSidebarData("A", blippedProfile());
@@ -655,7 +651,7 @@ describe("refreshSidebarData — a failed profile read carries the profile entry
     test("a second consecutive failure carries the SAME object, not an equal copy", async () => {
         await refreshSidebarData("A", opts(runningProfile(), []));
         await refreshSidebarData("A", blippedProfile());
-        const carried = activeProfileProgress()!;
+        const carried = present(activeProfileProgress());
         expect(carried.stale).toBe(true);
 
         await refreshSidebarData("A", blippedProfile());
@@ -1266,7 +1262,7 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
 
     test("the census omits zero tallies rather than reporting them", () => {
         const partition = {
-            ...groupsResult().partition!,
+            ...present(groupsResult().partition),
             unclassifiedMembers: 0,
             unclassifiedFiles: 0,
             quarantine: { count: 0, totalBytes: 0, reasons: [], sample: [] },
@@ -1549,10 +1545,9 @@ describe("refreshSidebarData — per-entity token figures", () => {
             ...opts(null, runs),
             loadRun: (_analysisId, runId) =>
                 okAsync(
-                    detailOf(
-                        runs.find((r) => r.runId === runId)!,
-                        [stepRow("s", "running", { usage: runId === "run-a" ? { calls: 1, inputTokens: 800_000 } : { calls: 1, inputTokens: 1_200 } })],
-                    ),
+                    detailOf(present(runs.find((r) => r.runId === runId)), [
+                        stepRow("s", "running", { usage: runId === "run-a" ? { calls: 1, inputTokens: 800_000 } : { calls: 1, inputTokens: 1_200 } }),
+                    ]),
                 ),
         };
         await refreshSidebarData("A", o);

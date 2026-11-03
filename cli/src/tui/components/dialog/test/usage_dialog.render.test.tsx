@@ -11,6 +11,7 @@ import { useKeymapRoot } from "../../../keymap.ts";
 import { DialogOverlay, dialogClear, dialogClose, dialogPush } from "../dialog_host.tsx";
 import { UsageDialog, type SessionUsageSnapshot } from "../usage_dialog.tsx";
 import type { ClientError } from "../../../../client/api.ts";
+import { present } from "../../../../lib/present.ts";
 
 // The dialog's PAINTED ladder: the two-armed headline in the LABELLED form, its arms pinned to the
 // panel's opposite EDGES with each breakdown nested under the arm it details, the compact-form
@@ -123,7 +124,7 @@ describe("UsageDialog", () => {
             const arms = lineWith(frame, "42.6k in");
             expect(arms).toBeDefined();
             expect(arms).toContain("3.1k out");
-            expect(arms!.indexOf("42.6k in")).toBeLessThan(arms!.indexOf("3.1k out"));
+            expect(present(arms).indexOf("42.6k in")).toBeLessThan(present(arms).indexOf("3.1k out"));
 
             // ...while a GROUPING row keeps the compact arrows: it is one of many being compared down a
             // column, where words would push the figures apart and make the comparison harder. Same
@@ -136,8 +137,8 @@ describe("UsageDialog", () => {
             const cacheWrite = lineWith(frame, "cache write");
             expect(cacheWrite).toBeDefined();
             expect(cacheWrite).toContain("reasoning");
-            expect(cacheWrite!.indexOf("cache write")).toBeGreaterThan(arms!.indexOf("42.6k in"));
-            expect(cacheWrite!.indexOf("reasoning")).toBeGreaterThan(arms!.indexOf("42.6k in"));
+            expect(present(cacheWrite).indexOf("cache write")).toBeGreaterThan(present(arms).indexOf("42.6k in"));
+            expect(present(cacheWrite).indexOf("reasoning")).toBeGreaterThan(present(arms).indexOf("42.6k in"));
             expect(frame).toContain("cache read");
 
             expect(frame).toContain("By served model");
@@ -316,12 +317,12 @@ describe("UsageDialog", () => {
                 expect({ needle, defined: fg !== undefined }).toEqual({ needle, defined: true });
                 expect({ needle, hex: fg && rgbToHex(fg) }).not.toEqual({ needle, hex: WHITE });
                 // Information-bearing text holds the 4.5:1 floor against the panel it sits on.
-                expect({ needle, ok: contrast(rgbToHex(fg!), colors.bgRaised) >= 4.5 }).toEqual({ needle, ok: true });
+                expect({ needle, ok: contrast(rgbToHex(present(fg)), colors.bgRaised) >= 4.5 }).toEqual({ needle, ok: true });
             }
 
             // The muted breakdown labels are a tier of their own, and they must still be the theme's
             // muted role rather than an accident of the white default.
-            expect(rgbToHex(spanFg(setup, "cache write")!)).toBe(rgbToHex(parseColor(colors.fgMuted)));
+            expect(rgbToHex(present(spanFg(setup, "cache write")))).toBe(rgbToHex(parseColor(colors.fgMuted)));
         } finally {
             setup.renderer.destroy();
         }

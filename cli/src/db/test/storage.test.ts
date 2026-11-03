@@ -32,6 +32,7 @@ import {
 import { asStr256 } from "../../lib/types.ts";
 import type { Anchor } from "../../types/anchor.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import { present } from "../../lib/present.ts";
 
 // freshDb() resets + re-migrates the singleton DB before each test; the mutation/query functions
 // drive that same connection (they call db() internally), so writes are read back through the real
@@ -440,15 +441,15 @@ describe("the recent files of the picker", () => {
         record("/a.csv", null);
         record("/b.csv", null);
         const before = listRecentFiles({ analysisId: null, limit: 10 })._unsafeUnwrap();
-        const firstA = before.find((r) => r.path === "/a.csv")!;
+        const firstA = present(before.find((r) => r.path === "/a.csv"));
 
         record("/a.csv", null);
 
         const after = listRecentFiles({ analysisId: null, limit: 10 })._unsafeUnwrap();
         expect(after.map((r) => r.path)).toEqual(["/a.csv", "/b.csv"]);
-        expect(after[0]!.id).toBe(firstA.id);
-        expect(after[0]!.createdAt).toBe(firstA.createdAt);
-        expect(after[0]!.updatedAt).toBeGreaterThan(firstA.updatedAt);
+        expect(present(after[0]).id).toBe(firstA.id);
+        expect(present(after[0]).createdAt).toBe(firstA.createdAt);
+        expect(present(after[0]).updatedAt).toBeGreaterThan(firstA.updatedAt);
     });
 
     test("a read has an exact scope", () => {

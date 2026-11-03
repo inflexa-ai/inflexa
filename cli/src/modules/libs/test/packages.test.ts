@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { FARM_PARITY_FIXTURE } from "../../../test_support/fixtures.ts";
 import { readPoolInventorySections } from "../packages.ts";
+import { present } from "../../../lib/present.ts";
 
 // The pool-scope inventory: what the conversation agent and the planner
 // answer package presence from. It reads the graph, never a farm, thus an
@@ -37,7 +38,7 @@ describe("readPoolInventorySections", () => {
         // The section carries its track as DATA. A `language` filter of the tool
         // reads that field, thus a reworded title changes no answer.
         expect(sections.map((s) => s.track)).toEqual(["python", "r"]);
-        const python = sections[0]!;
+        const python = present(sections[0]);
         const alpha = python.packages.find((p) => p.name === "alpha");
         // The shelf of `alpha` holds two pins, newest first — the head is the answer.
         expect(alpha).toMatchObject({ name: "alpha", version: "2.0.0", storeDir: "alpha-2.0.0-00000000000a2222" });
@@ -45,7 +46,7 @@ describe("readPoolInventorySections", () => {
         expect(alpha?.hash).toMatch(/^[0-9a-f]{64}$/);
         // The R section renders the DESCRIPTION spelling, because `library()` is
         // case-sensitive and the store directory carries the folded form only.
-        expect(sections[1]!.packages.map((p) => p.name)).toEqual(["Rpkga", "Rpkgb"]);
+        expect(present(sections[1]).packages.map((p) => p.name)).toEqual(["Rpkga", "Rpkgb"]);
     });
 
     test("a hash marker rides into the entry where the store directory records one", async () => {

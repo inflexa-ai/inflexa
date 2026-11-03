@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { localDay, msUntilNextLocalMidnight, rotatedLogFile, scheduleMidnightRoll, type RollableDestination } from "../log.ts";
+import { present } from "../present.ts";
 
 const roots: string[] = [];
 function root(): string {
@@ -118,7 +119,7 @@ describe("scheduleMidnightRoll", () => {
 
         now = midnight;
         // Index 0 exists: the assertion above proves the arming inside scheduleMidnightRoll ran.
-        armed[0]!.fn();
+        present(armed[0]).fn();
 
         expect(calls).toEqual(["flush", `reopen:${join(dir, "inflexa-2026-07-05.log")}`]);
         // Measured from the late fire, not from the boundary it was armed for.
@@ -137,7 +138,7 @@ describe("scheduleMidnightRoll", () => {
             now: () => day,
             setTimer: (fn, ms) => armed.push({ fn, ms }),
         });
-        armed[0]!.fn(); // index 0 exists: scheduleMidnightRoll arms the timer in its own body
+        present(armed[0]).fn(); // index 0 exists: scheduleMidnightRoll arms the timer in its own body
 
         expect(calls).toEqual([]);
         expect(armed.length).toBe(2);
@@ -160,12 +161,12 @@ describe("scheduleMidnightRoll", () => {
             setTimer: (fn, ms) => armed.push({ fn, ms }),
         });
         now = new Date(2026, 6, 5, 0, 0);
-        armed[0]!.fn(); // index 0 exists: scheduleMidnightRoll arms the timer in its own body
+        present(armed[0]).fn(); // index 0 exists: scheduleMidnightRoll arms the timer in its own body
         expect(armed.length).toBe(2);
 
         // The current file did not advance, so the next boundary attempts the same swap again.
         now = new Date(2026, 6, 6, 0, 0);
-        armed[1]!.fn(); // index 1 exists: the assertion above counts it
+        present(armed[1]).fn(); // index 1 exists: the assertion above counts it
         expect(calls).toEqual(["flush", `reopen:${join(dir, "inflexa-2026-07-05.log")}`, "flush", `reopen:${join(dir, "inflexa-2026-07-06.log")}`]);
         expect(armed.length).toBe(3);
     });
@@ -193,7 +194,7 @@ describe("scheduleMidnightRoll", () => {
             setTimer: (fn, ms) => armed.push({ fn, ms }),
         });
         now = new Date(2026, 6, 5, 0, 0);
-        armed[0]!.fn(); // index 0 exists: scheduleMidnightRoll arms the timer in its own body
+        present(armed[0]).fn(); // index 0 exists: scheduleMidnightRoll arms the timer in its own body
 
         expect(calls).toEqual(["flush"]);
         expect(armed.length).toBe(2);

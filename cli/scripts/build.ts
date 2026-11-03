@@ -13,6 +13,7 @@ import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@ope
 import { z } from "zod";
 
 import { unknownRecordSchema } from "../src/lib/json_record.ts";
+import { present } from "../src/lib/present.ts";
 import { audienceInvalidReason } from "../src/modules/auth/auth.ts";
 import { LLAMA_PINS, LLAMA_RUNTIME_TAG, llamaArtifactUrl, type LlamaPin, type LlamaTargetKey } from "../src/modules/embedding/llama_runtime.ts";
 import { MODEL_ARTIFACT, MODEL_SHA256, MODEL_URL } from "../src/modules/embedding/model_pin.ts";
@@ -117,8 +118,11 @@ if (missing.length > 0) {
 // The audience must be the product API's identifier (a URI), not a pasted credential or the Auth0
 // Management API — either would compile fine but break every login at runtime. Catch it here, where the
 // operator can see it, using the SAME predicate the runtime resolver applies (one truth table, two
-// gates). Non-null: the missing-var loop above guarantees both vars are present and non-empty.
-const audienceReason = audienceInvalidReason(process.env.INFLEXA_AUTH0_AUDIENCE!, process.env.INFLEXA_AUTH0_DOMAIN!);
+// gates). The missing-var loop above guarantees both vars are present and non-empty.
+const audienceReason = audienceInvalidReason(
+    present(process.env.INFLEXA_AUTH0_AUDIENCE, "INFLEXA_AUTH0_AUDIENCE"),
+    present(process.env.INFLEXA_AUTH0_DOMAIN, "INFLEXA_AUTH0_DOMAIN"),
+);
 if (audienceReason !== null) {
     console.error(
         `error: INFLEXA_AUTH0_AUDIENCE is not a usable API identifier (${audienceReason}) — it must be the dedicated resource-server URI, not a credential or the Auth0 Management API`,

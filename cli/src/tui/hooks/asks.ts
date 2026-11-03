@@ -24,7 +24,7 @@ const [asks, setAsks] = createStore<PendingAsk[]>([]);
 
 /** The head pending ask (the one the docked prompt answers), or `null` when the queue is empty — read reactively. */
 export function activeAsk(): PendingAsk | null {
-    return asks.length > 0 ? asks[0]! : null;
+    return asks[0] ?? null;
 }
 
 /** How many asks are queued BEHIND the head — drives the prompt's `+N more` hint; read reactively. */
