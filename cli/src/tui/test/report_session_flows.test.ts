@@ -1,0 +1,985 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { err, errAsync, ok, okAsync } from "neverthrow";
+
+import type { ThreadSummary } from "../../api/conversation.ts";
+import type { ClientError } from "../../client/api.ts";
+import { mintReportSessionAccess } from "../../client/conversation.ts";
+import { fakeClient, type FakeResponse } from "../../test_support/fake_client.ts";
+import { conversationSummary, reportSummary, threadListOf, FIXTURE_ANALYSIS_ID } from "../../test_support/threads.ts";
+import { __setBootStateForTest } from "../hooks/boot.ts";
+import {
+    commands,
+    openParentSession,
+    openReportPage,
+    openReportSession,
+    openSwitchReportSession,
+    openSwitchSession,
+    reportSessionItems,
+    selectReportSession,
+    switchSessionItems,
+    type SessionOpts,
+} from "../commands.tsx";
+import { shortSessionId } from "../hooks/sidebar_live.ts";
+import type { Workspace } from "../contexts/workspace.ts";
+import type { Notice } from "../theme.ts";
+import type { Analysis } from "../../types/analysis.ts";
+
+// The three report-session flows reach the server and the toast channel through `SessionOpts`, thus
+// every case here runs offline. Each assertion reads an OUTCOME the user meets: which thread the swap
+// bound, whether a dialog opened, and what the notice says. A call count would pass on a flow that
+// reads correctly and then acts on the wrong row.
+//
+// The filters that each production option sends (the `conversation` type, the parent and `report`
+// type) are not observed here: the production options call the client fetchers over the real server
+// endpoint, which no test of this file reaches. The route test of the server covers what each filter
+// selects.
+
+afterEach(() => {
+    __setBootStateForTest({ phase: "idle" });
+});
+
+describe("report session flows", () => {
+    // Only `id` is load-bearing: the flows pass the row through to `openSession` and compare it by id.
+    // Thus a partial stand-in cast keeps the fixture flat, as `commands.test.ts` does.
+    const ANALYSIS = { id: FIXTURE_ANALYSIS_ID, name: "Alpha", projectId: null } as unknown as Analysis;
+    const OTHER = { id: "a2", name: "Beta", projectId: null } as unknown as Analysis;
+    const serverErr: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "boom" } };
+    const READY = { phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } } as const;
+
+    // The open conversation and the report session it spawned. The back flow reads BOTH rows through the
+    // one `getThread` option, thus a fake that ignores the id could answer the parent read with the child
+    // and still look correct.
+    const PARENT = conversationSummary({ id: "thread-parent", title: "Cohort survival questions" });
+    const CHILD = reportSummary({ id: "thread-report-1", parentThreadId: PARENT.id, parentSeq: 4 });
+
+    /**
+     * A workspace stand-in recording the two writes a flow can make: dialogs and scope swaps.
+     *
+     * `swapTo` moves the open scope the way the analysis-switch keys of the user would. Each flow reads
+     * the scope one time, awaits the server, then acts, and nothing is modal across that await. To drive
+     * the swap from inside a fake read is how a case lands in that window with no timing.
+     */
+    function sessionScope(
+        analysis: Analysis | null,
+        sessionId: string | null,
+    ): {
+        ws: Workspace;
+        dialogs: () => number;
+        closes: () => number;
+        opened: { threadId: string | null; analysisId: string }[];
+        swapTo: (next: { analysis?: Analysis; sessionId?: string | null }) => void;
+    } {
+        const opened: { threadId: string | null; analysisId: string }[] = [];
+        let dialogs = 0;
+        let closes = 0;
+        const scope: { analysis: Analysis | null; sessionId: string | null } = { analysis, sessionId };
+        const ws = {
+            get analysis() {
+                return scope.analysis;
+            },
+            get sessionId() {
+                return scope.sessionId;
+            },
+            workingDir: "/work",
+            project: null,
+            openDialog: () => {
+                dialogs += 1;
+            },
+            closeDialog: () => {
+                closes += 1;
+            },
+            openSession: (threadId: string | null, _workingDir: string, next: Analysis) => {
+                opened.push({ threadId, analysisId: next.id });
+            },
+            quit: async () => {},
+        } as unknown as Workspace;
+        return {
+            ws,
+            dialogs: () => dialogs,
+            closes: () => closes,
+            opened,
+            swapTo: (next) => {
+                if (next.analysis !== undefined) scope.analysis = next.analysis;
+                if (next.sessionId !== undefined) scope.sessionId = next.sessionId;
+            },
+        };
+    }
+
+    /**
+     * A `getThread` read over a fixed set of rows, keyed by thread id as the server keys them. The back
+     * flow reads the open thread and then its parent through this one read, thus an id-blind fake would
+     * hand the parent read the child row and hide a wrong lookup.
+     */
+    function rowsByThreadId(rows: ThreadSummary[]): SessionOpts["getThread"] {
+        const table = new Map(rows.map((r) => [r.id, r]));
+        return (_analysisId, threadId) => okAsync(table.get(threadId) ?? null);
+    }
+
+    /** Session options plus a recorder for the notices raised. */
+    function makeOpts(over: Partial<SessionOpts> = {}): { opts: SessionOpts; notices: Notice[] } {
+        const notices: Notice[] = [];
+        const base: SessionOpts = {
+            ready: () => true,
+            listThreads: () => okAsync(threadListOf([])),
+            listReportChildren: () => okAsync(threadListOf([])),
+            getThread: () => okAsync(null),
+            updateTitle: () => okAsync(null),
+            listThreadsWithArchived: () => okAsync(threadListOf([])),
+            archiveThread: () => okAsync(undefined),
+            unarchiveThread: () => okAsync(undefined),
+            purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
+            chatBusy: () => false,
+            resolveThreadId: async () => "thread-resolved",
+            workingDirFor: () => "/work",
+            refreshThread: () => {},
+            mintReportPageAccess: () => errAsync({ type: "aborted" }),
+            openUrl: () => err({ type: "open_failed", code: null, cause: null }),
+            notify: (n) => {
+                notices.push(n);
+            },
+        };
+        return { opts: { ...base, ...over }, notices };
+    }
+
+    describe("the back chord", () => {
+        test("a report child opens the conversation that spawned it, in place and with no dialog", async () => {
+            __setBootStateForTest(READY);
+            const t = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT]) });
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            await openParentSession(w.ws, t.opts);
+
+            // The thread moves and the analysis does not: the store refuses a parent link across two
+            // analyses, thus the swap has one degree of freedom.
+            expect(w.opened).toEqual([{ threadId: PARENT.id, analysisId: ANALYSIS.id }]);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toEqual([]);
+        });
+
+        test("a conversation, a thread with no row, and a report row with no parent link all say the same thing", async () => {
+            // The spawn writes a report row before that child exists anywhere, thus a bound id with no row
+            // is a conversation whose first turn has not landed. Three inputs, one honest answer.
+            __setBootStateForTest(READY);
+            const orphan = reportSummary({ id: "thread-orphan", parentThreadId: undefined, parentSeq: undefined });
+            const cases: { name: string; getThread: SessionOpts["getThread"]; bound: string }[] = [
+                { name: "a conversation", getThread: rowsByThreadId([PARENT]), bound: PARENT.id },
+                { name: "no row at all", getThread: rowsByThreadId([]), bound: "thread-unwritten" },
+                { name: "a report row with no parent link", getThread: rowsByThreadId([orphan]), bound: orphan.id },
+            ];
+
+            for (const c of cases) {
+                const t = makeOpts({ getThread: c.getThread });
+                const w = sessionScope(ANALYSIS, c.bound);
+
+                await openParentSession(w.ws, t.opts);
+
+                expect(w.opened, c.name).toEqual([]);
+                expect(t.notices, c.name).toHaveLength(1);
+                expect(t.notices[0]?.kind, c.name).toBe("info");
+                expect(t.notices[0]?.text, c.name).toContain("no parent");
+            }
+        });
+
+        test("an unreadable open thread says the read failed, never that the session has no parent", async () => {
+            // A failed read folded into the no-parent arm would tell a user whose server blinked a fact
+            // about the shape of their data that is not true.
+            __setBootStateForTest(READY);
+            const t = makeOpts({ getThread: () => errAsync(serverErr) });
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            await openParentSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("error");
+            expect(t.notices[0]?.text).toContain("read this session");
+            expect(t.notices[0]?.text).not.toContain("no parent");
+        });
+
+        test("a parent that resolves to no row names the absence and leaves the user where they are", async () => {
+            // A normal state and never a fault: the read hides an archived row, and the chat scope can name
+            // a thread that another client moved.
+            __setBootStateForTest(READY);
+            const t = makeOpts({ getThread: rowsByThreadId([CHILD]) });
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            await openParentSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("warn");
+            expect(t.notices[0]?.text).toContain("no longer listed");
+        });
+
+        test("a failed parent read surfaces the error rather than a claim about the parent", async () => {
+            __setBootStateForTest(READY);
+            const t = makeOpts({
+                getThread: (_analysisId, threadId) => (threadId === CHILD.id ? okAsync(CHILD) : errAsync(serverErr)),
+            });
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            await openParentSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("error");
+            expect(t.notices[0]?.text).toContain("the parent conversation");
+            expect(t.notices[0]?.text).not.toContain("no longer listed");
+        });
+
+        test("dispatched before ready it speaks the boot refusal in both of its forms", async () => {
+            // The chord dispatches by id and consults no palette predicate, thus this path IS reachable
+            // while the runtime still boots.
+            __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
+            const failed = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT]) });
+            const wf = sessionScope(ANALYSIS, CHILD.id);
+
+            await openParentSession(wf.ws, failed.opts);
+
+            expect(wf.opened).toEqual([]);
+            expect(failed.notices).toHaveLength(1);
+            expect(failed.notices[0]?.kind).toBe("warn");
+            // `failed` is terminal, thus a wait that never ends must not be promised.
+            expect(failed.notices[0]?.text).toContain("did not start");
+            expect(failed.notices[0]?.text).toContain("report sessions");
+            expect(failed.notices[0]?.text).not.toContain("booting");
+
+            __setBootStateForTest({ phase: "booting" });
+            const booting = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT]) });
+            const wb = sessionScope(ANALYSIS, CHILD.id);
+
+            await openParentSession(wb.ws, booting.opts);
+
+            expect(wb.opened).toEqual([]);
+            expect(booting.notices).toHaveLength(1);
+            expect(booting.notices[0]?.kind).toBe("info");
+            expect(booting.notices[0]?.text).toContain("booting");
+        });
+    });
+
+    describe("the forward chord", () => {
+        test("exactly one report child swaps onto it with NO picker", async () => {
+            // A picker over one row asks the user to confirm what the keystroke already said.
+            __setBootStateForTest(READY);
+            const only = reportSummary({ id: "thread-report-only", parentThreadId: PARENT.id });
+            const t = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([only])) });
+            const w = sessionScope(ANALYSIS, PARENT.id);
+
+            await openReportSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([{ threadId: only.id, analysisId: ANALYSIS.id }]);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toEqual([]);
+        });
+
+        test("more than one report child opens the picker and swaps nothing on its own", async () => {
+            __setBootStateForTest(READY);
+            const first = reportSummary({ id: "thread-report-1", parentThreadId: PARENT.id });
+            const second = reportSummary({ id: "thread-report-2", parentThreadId: PARENT.id });
+            const t = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([first, second])) });
+            const w = sessionScope(ANALYSIS, PARENT.id);
+
+            await openReportSession(w.ws, t.opts);
+
+            expect(w.dialogs()).toBe(1);
+            // The pick is what swaps, thus the chord binds nothing here.
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toEqual([]);
+        });
+
+        test("a conversation with no report child says so, and a thread with no row answers the same way", async () => {
+            // A bound id with no row has no child either, thus the flow answers exactly as an empty set
+            // answers and skips the second read.
+            __setBootStateForTest(READY);
+            const cases: { name: string; getThread: SessionOpts["getThread"]; bound: string }[] = [
+                { name: "an empty listing", getThread: rowsByThreadId([PARENT]), bound: PARENT.id },
+                { name: "no row at all", getThread: rowsByThreadId([]), bound: "thread-unwritten" },
+            ];
+
+            for (const c of cases) {
+                const t = makeOpts({ getThread: c.getThread });
+                const w = sessionScope(ANALYSIS, c.bound);
+
+                await openReportSession(w.ws, t.opts);
+
+                expect(w.opened, c.name).toEqual([]);
+                expect(w.dialogs(), c.name).toBe(0);
+                expect(t.notices, c.name).toHaveLength(1);
+                expect(t.notices[0]?.kind, c.name).toBe("info");
+                expect(t.notices[0]?.text, c.name).toContain("No report session in this conversation");
+            }
+        });
+
+        test("an open report session says the tree is flat, rather than reporting no child", async () => {
+            // Two different facts about the data of the user. A dead key reads as a broken key, thus each
+            // direction speaks its own reason.
+            __setBootStateForTest(READY);
+            const t = makeOpts({ getThread: rowsByThreadId([CHILD]) });
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            await openReportSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([]);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("info");
+            expect(t.notices[0]?.text).toContain("stays flat");
+            expect(t.notices[0]?.text).not.toContain("No report session in this conversation");
+        });
+
+        test("an unreadable open thread says the read failed and lists nothing", async () => {
+            __setBootStateForTest(READY);
+            const t = makeOpts({ getThread: () => errAsync(serverErr), listReportChildren: () => errAsync(serverErr) });
+            const w = sessionScope(ANALYSIS, PARENT.id);
+
+            await openReportSession(w.ws, t.opts);
+
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("error");
+            expect(t.notices[0]?.text).toContain("read this session");
+        });
+
+        test("a failed listing warns and opens NO picker, thus no empty state claims there is no child", async () => {
+            __setBootStateForTest(READY);
+            const t = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => errAsync(serverErr) });
+            const w = sessionScope(ANALYSIS, PARENT.id);
+
+            await openReportSession(w.ws, t.opts);
+
+            expect(w.dialogs()).toBe(0);
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("warn");
+            expect(t.notices[0]?.text).toContain("Could not list the report sessions");
+        });
+
+        test("dispatched before ready it speaks the boot refusal in both of its forms", async () => {
+            __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
+            const child = reportSummary({ parentThreadId: PARENT.id });
+            const failed = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([child])) });
+            const wf = sessionScope(ANALYSIS, PARENT.id);
+
+            await openReportSession(wf.ws, failed.opts);
+
+            expect(wf.opened).toEqual([]);
+            expect(failed.notices).toHaveLength(1);
+            expect(failed.notices[0]?.kind).toBe("warn");
+            expect(failed.notices[0]?.text).toContain("did not start");
+            expect(failed.notices[0]?.text).not.toContain("booting");
+
+            __setBootStateForTest({ phase: "booting" });
+            const booting = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([child])) });
+            const wb = sessionScope(ANALYSIS, PARENT.id);
+
+            await openReportSession(wb.ws, booting.opts);
+
+            expect(wb.opened).toEqual([]);
+            expect(booting.notices).toHaveLength(1);
+            expect(booting.notices[0]?.kind).toBe("info");
+            expect(booting.notices[0]?.text).toContain("booting");
+        });
+    });
+
+    describe("the pickers", () => {
+        test("the report picker lists exactly the report children and holds no creation row", () => {
+            // The agent spawns a report session, thus this picker has no create action that it could
+            // honestly offer. The switch picker keeps its pinned row for the opposite reason.
+            const first = reportSummary({ id: "thread-report-1", title: "Volcano plot report" });
+            const second = reportSummary({ id: "thread-report-2", title: "Pathway report" });
+
+            const items = reportSessionItems([first, second]);
+
+            expect(items).toHaveLength(2);
+            expect(items.map((i) => i.value)).toEqual([first, second]);
+            expect(items[0]?.title).toContain("Volcano plot report");
+            // A listed session is a referenced record, thus its last-activity stamp is an absolute local
+            // time and not a compact age.
+            expect(items[0]?.description).toContain(new Date(first.updatedAt).toLocaleString());
+            expect(items.filter((i) => i.pinned)).toHaveLength(0);
+        });
+
+        test("a report child with no title still gets a readable row", () => {
+            // The title is owned by Postgres and seeded from the first message, thus a fresh child can
+            // carry none. A blank row would list a session that a user cannot name.
+            const items = reportSessionItems([reportSummary({ title: undefined })]);
+            expect(items[0]?.title).toBeTruthy();
+        });
+
+        test("each row carries the short handle, and its detail line the full id", () => {
+            // The handle is the SESSION rail's own, thus a reader matches a row against the rail. It is a
+            // landmark and not a discriminator — a uuid v7 head is shared by every session minted in the
+            // same weeks — so the FULL id on the detail line is what tells two rows of one title apart.
+            const first = reportSummary({ id: "0198aaaa-7f00-7abc-8def-0123456789ab", title: "Volcano plot report" });
+            const second = reportSummary({ id: "0198bbbb-7f00-7abc-8def-0123456789ab", title: "Volcano plot report" });
+
+            const items = reportSessionItems([first, second]);
+
+            expect(items[0]?.title).toContain(shortSessionId(first.id));
+            expect(items[1]?.title).toContain(shortSessionId(second.id));
+            expect(items[0]?.description).toContain(first.id);
+            expect(items[0]?.description).toContain(new Date(first.updatedAt).toLocaleString());
+            expect(items[1]?.description).toContain(second.id);
+            expect(items[0]?.description).not.toBe(items[1]?.description);
+        });
+
+        test("the row of the open session says so, and no other row does", () => {
+            const first = reportSummary({ id: "thread-report-1", title: "Volcano plot report" });
+            const second = reportSummary({ id: "thread-report-2", title: "Pathway report" });
+
+            const items = reportSessionItems([first, second], second.id);
+
+            expect(items[0]?.hint).toBeUndefined();
+            expect(items[1]?.hint).toBe("open");
+        });
+
+        test("the switch picker keeps its pinned creation row, which the report picker does not have", () => {
+            const conversation = conversationSummary({ id: "thread-conversation-1" });
+
+            const switchItems = switchSessionItems([conversation]);
+
+            expect(switchItems).toHaveLength(2);
+            expect(switchItems.at(-1)?.pinned).toBe(true);
+            expect(switchItems.at(-1)?.title).toBe("Start a new session");
+        });
+
+        test("each picker draws from its own listing, thus a failure of one leaves the other whole", async () => {
+            // The switch picker reads the conversation-narrowed listing and the report picker reads the
+            // parent-narrowed one. A flow that consulted both would degrade on a failure that says nothing
+            // about the population it lists.
+            __setBootStateForTest(READY);
+            const child = reportSummary({ parentThreadId: PARENT.id });
+            const reportBroken = makeOpts({ listThreads: () => okAsync(threadListOf([PARENT])), listReportChildren: () => errAsync(serverErr) });
+            const wr = sessionScope(ANALYSIS, PARENT.id);
+
+            await openSwitchSession(wr.ws, reportBroken.opts);
+
+            expect(wr.dialogs()).toBe(1);
+            expect(reportBroken.notices).toEqual([]);
+
+            const switchBroken = makeOpts({ listThreads: () => errAsync(serverErr), listReportChildren: () => okAsync(threadListOf([child])) });
+            const ws = sessionScope(ANALYSIS, PARENT.id);
+
+            await openSwitchReportSession(ws.ws, switchBroken.opts);
+
+            expect(ws.dialogs()).toBe(1);
+            expect(switchBroken.notices).toEqual([]);
+        });
+
+        test("the palette command always opens the picker, at one child and at none", async () => {
+            // This is what makes it different from the forward chord. The chord is a movement, thus one
+            // child is the answer that it acts on. The command is a browse, thus the list IS the answer.
+            __setBootStateForTest(READY);
+            const only = reportSummary({ parentThreadId: PARENT.id });
+            for (const rows of [[only], []]) {
+                const t = makeOpts({ listReportChildren: () => okAsync(threadListOf(rows)) });
+                const w = sessionScope(ANALYSIS, PARENT.id);
+
+                await openSwitchReportSession(w.ws, t.opts);
+
+                expect(w.dialogs()).toBe(1);
+                // Even at one child the pick is what swaps, thus the command binds nothing itself.
+                expect(w.opened).toEqual([]);
+                expect(t.notices).toEqual([]);
+            }
+        });
+
+        test("the palette command is offered with no thread bound, and then names the unbound scope", async () => {
+            // To hide the command would leave a user who searched for it with no answer at all, thus the
+            // gate stays off the bound thread and the flow speaks for itself.
+            __setBootStateForTest(READY);
+            const entry = commands.find((c) => c.id === "session.report-switch");
+            expect(entry).toBeDefined();
+            expect(entry?.enabled?.({ analysis: ANALYSIS, sessionId: null } as unknown as Workspace)).toBe(true);
+
+            const t = makeOpts();
+            const w = sessionScope(ANALYSIS, null);
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("info");
+            expect(t.notices[0]?.text).toContain("No conversation is open");
+        });
+
+        test("a dispatch with no open analysis names the reason and opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const t = makeOpts();
+            const w = sessionScope(null, null);
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(w.dialogs()).toBe(0);
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toEqual([{ kind: "info", text: expect.stringContaining("No analysis is open") }]);
+        });
+
+        test("a report session lists its siblings — the children of its parent", async () => {
+            // The picker inside a report session would otherwise list the children of a report child,
+            // which the flat tree guarantees is nothing at all: an empty picker stating there is no
+            // report session, inside one.
+            __setBootStateForTest(READY);
+            const sibling = reportSummary({ id: "thread-report-2", parentThreadId: PARENT.id });
+            const listedParents: string[] = [];
+            const t = makeOpts({
+                getThread: rowsByThreadId([CHILD, PARENT]),
+                listReportChildren: (_analysisId, parentThreadId) => {
+                    listedParents.push(parentThreadId);
+                    return okAsync(threadListOf([CHILD, sibling]));
+                },
+            });
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(listedParents).toEqual([PARENT.id]);
+            expect(w.dialogs()).toBe(1);
+            // The pick is what swaps, thus the command binds nothing itself.
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toEqual([]);
+        });
+
+        test("a conversation still lists its OWN children", async () => {
+            // The conversation side is unchanged by the sibling rule: the open thread is the parent.
+            __setBootStateForTest(READY);
+            const listedParents: string[] = [];
+            const t = makeOpts({
+                getThread: rowsByThreadId([PARENT]),
+                listReportChildren: (_analysisId, parentThreadId) => {
+                    listedParents.push(parentThreadId);
+                    return okAsync(threadListOf([CHILD]));
+                },
+            });
+            const w = sessionScope(ANALYSIS, PARENT.id);
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(listedParents).toEqual([PARENT.id]);
+            expect(w.dialogs()).toBe(1);
+            expect(t.notices).toEqual([]);
+        });
+
+        test("a report row with no parent link lists under itself, and the picker's empty state answers", async () => {
+            __setBootStateForTest(READY);
+            const orphan = reportSummary({ id: "thread-orphan", parentThreadId: undefined, parentSeq: undefined });
+            const listedParents: string[] = [];
+            const t = makeOpts({
+                getThread: rowsByThreadId([orphan]),
+                listReportChildren: (_analysisId, parentThreadId) => {
+                    listedParents.push(parentThreadId);
+                    return okAsync(threadListOf([]));
+                },
+            });
+            const w = sessionScope(ANALYSIS, orphan.id);
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(listedParents).toEqual([orphan.id]);
+            expect(w.dialogs()).toBe(1);
+        });
+
+        test("an unreadable open thread refuses, rather than listing under a row it could not read", async () => {
+            // Which family to list comes from that row. Falling back to the open thread would open the
+            // empty picker this rule exists to remove, under a claim the flow cannot back up.
+            __setBootStateForTest(READY);
+            let listings = 0;
+            const t = makeOpts({
+                getThread: () => errAsync(serverErr),
+                listReportChildren: () => {
+                    listings += 1;
+                    return okAsync(threadListOf([CHILD]));
+                },
+            });
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(listings).toBe(0);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("error");
+            expect(t.notices[0]?.text).toContain("read this session");
+        });
+
+        test("a pick of the OPEN session closes the dialog and swaps nothing", () => {
+            // A re-open would reset the chat's hot state and reload the transcript the user is already
+            // reading, for a session they never left.
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            selectReportSession(w.ws, CHILD, ANALYSIS);
+
+            expect(w.closes()).toBe(1);
+            expect(w.opened).toEqual([]);
+        });
+
+        test("a pick closes the dialog and swaps the chat onto that report session", () => {
+            // The handler carries the whole behavior of a pick, and nothing reaches it through a mounted
+            // dialog. The analysis is the one captured when the picker opened, thus the swap moves the
+            // thread alone and never the scope.
+            const w = sessionScope(ANALYSIS, PARENT.id);
+
+            selectReportSession(w.ws, CHILD, ANALYSIS);
+
+            expect(w.opened).toEqual([{ threadId: CHILD.id, analysisId: ANALYSIS.id }]);
+            expect(w.dialogs()).toBe(0);
+        });
+    });
+
+    describe("a session that changes across the await", () => {
+        // The session-switch keys stay live across the same window. A swap that landed anyway would open
+        // the parent of a conversation the user moved off, or a report child that hangs off it. Both rows
+        // are real, thus nothing downstream refuses them and the user simply lands somewhere else.
+        test("the back chord refuses the swap", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = makeOpts({
+                getThread: (_analysisId, threadId) => {
+                    if (threadId === CHILD.id) return okAsync(CHILD);
+                    w.swapTo({ sessionId: "thread-elsewhere" });
+                    return okAsync(PARENT);
+                },
+            });
+
+            await openParentSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Session changed");
+        });
+
+        test("the forward chord refuses the swap and opens no dialog", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, PARENT.id);
+            const only = reportSummary({ parentThreadId: PARENT.id });
+            const t = makeOpts({
+                getThread: rowsByThreadId([PARENT]),
+                listReportChildren: () => {
+                    w.swapTo({ sessionId: "thread-elsewhere" });
+                    return okAsync(threadListOf([only]));
+                },
+            });
+
+            await openReportSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([]);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Session changed");
+        });
+
+        test("the palette command refuses the picker it built for the session that was left", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, PARENT.id);
+            const t = makeOpts({
+                listReportChildren: () => {
+                    w.swapTo({ sessionId: "thread-elsewhere" });
+                    return okAsync(threadListOf([reportSummary({ parentThreadId: PARENT.id })]));
+                },
+            });
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Session changed");
+        });
+    });
+
+    describe("an analysis that changes across the await", () => {
+        // Nothing is modal across a thread read, thus the analysis-switch keys stay live. A swap that
+        // landed anyway would bind a thread of the previous analysis beside the working directory of the
+        // analysis that is open now: one scope naming two analyses.
+        test("the back chord refuses the swap and opens no dialog", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = makeOpts({
+                getThread: (_analysisId, threadId) => {
+                    if (threadId === CHILD.id) return okAsync(CHILD);
+                    w.swapTo({ analysis: OTHER });
+                    return okAsync(PARENT);
+                },
+            });
+
+            await openParentSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([]);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Analysis changed");
+        });
+
+        test("the forward chord refuses the swap and opens no dialog", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, PARENT.id);
+            const only = reportSummary({ parentThreadId: PARENT.id });
+            const t = makeOpts({
+                getThread: rowsByThreadId([PARENT]),
+                listReportChildren: () => {
+                    w.swapTo({ analysis: OTHER });
+                    return okAsync(threadListOf([only]));
+                },
+            });
+
+            await openReportSession(w.ws, t.opts);
+
+            expect(w.opened).toEqual([]);
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Analysis changed");
+        });
+
+        test("the palette command refuses the picker it built for the analysis that was left", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, PARENT.id);
+            const only = reportSummary({ parentThreadId: PARENT.id });
+            const t = makeOpts({
+                listReportChildren: () => {
+                    w.swapTo({ analysis: OTHER });
+                    return okAsync(threadListOf([only]));
+                },
+            });
+
+            await openSwitchReportSession(w.ws, t.opts);
+
+            expect(w.dialogs()).toBe(0);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Analysis changed");
+        });
+    });
+
+    describe("the open report page command", () => {
+        const PAGE_URL = "http://127.0.0.1:8436/report-sessions/a1/thread-report-1/index.html?t=abc123";
+        const GRANT: FakeResponse = { status: 200, body: { url: PAGE_URL, expiresAt: "2030-01-01T00:00:00.000Z" } };
+
+        /**
+         * Options whose mint goes through the real fetcher over a fake client, and whose opener records the
+         * URLs it was asked to open. The client fake shows the request the flow sends, and the opener shows
+         * what the person's browser would receive.
+         */
+        function pageOpts(answer: FakeResponse, over: Partial<SessionOpts> = {}, openerFails = false) {
+            const client = fakeClient(() => answer);
+            const urls: string[] = [];
+            const t = makeOpts({
+                getThread: rowsByThreadId([PARENT, CHILD]),
+                mintReportPageAccess: (analysisId, threadId) => mintReportSessionAccess(analysisId, threadId, client.opts),
+                openUrl: (url) => {
+                    urls.push(url);
+                    return openerFails ? err({ type: "open_failed", code: "ENOENT", cause: null }) : ok(undefined);
+                },
+                ...over,
+            });
+            return { ...t, requests: client.requests, urls };
+        }
+
+        test("a report session opens the URL of the server in the browser, and no file path", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([
+                { method: "POST", path: `/api/v1/analyses/${FIXTURE_ANALYSIS_ID}/report-sessions/${CHILD.id}/access`, body: undefined },
+            ]);
+            expect(t.urls).toEqual([PAGE_URL]);
+            expect(t.notices).toEqual([{ kind: "info", text: "Opened the report page in the browser." }]);
+            // The grant token rides the URL, thus the toast must not repeat it.
+            expect(t.notices[0]?.text).not.toContain("abc123");
+            expect(w.dialogs()).toBe(0);
+            expect(w.opened).toEqual([]);
+        });
+
+        test("each open asks the server for a new grant", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toHaveLength(2);
+            expect(t.urls).toHaveLength(2);
+        });
+
+        test("a conversation has no page: a notice names the reason and nothing opens", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, PARENT.id);
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([]);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("info");
+            expect(t.notices[0]?.text).toContain("not a report session");
+        });
+
+        test("a thread with no row is no report session, and it opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, "thread-without-row");
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([]);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("not a report session");
+        });
+
+        test("an unbound scope is no report session, and it reads nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, null);
+            let reads = 0;
+            const t = pageOpts(GRANT, {
+                getThread: () => {
+                    reads += 1;
+                    return okAsync(null);
+                },
+            });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(reads).toBe(0);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("not a report session");
+        });
+
+        test("an unreadable thread raises the error notice and opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT, { getThread: () => errAsync(serverErr) });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([]);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("error");
+            expect(t.notices[0]?.text).toContain("Could not read this session");
+        });
+
+        test("a session with no page yet gets a notice and nothing opens", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts({ status: 404, body: { error: "not_found", message: "no page" } });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("info");
+            expect(t.notices[0]?.text).toContain("no page yet");
+        });
+
+        test("any other failure of the request is a warning that describes it", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts({ status: 409, body: { error: "conflict", message: "workspace folder is lost" } });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("warn");
+            expect(t.notices[0]?.text).toContain("Could not open the report page");
+            expect(t.notices[0]?.text).toContain("workspace folder is lost");
+        });
+
+        test("an opener that fails gives a warning that carries the URL", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT, {}, true);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([PAGE_URL]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.kind).toBe("warn");
+            expect(t.notices[0]?.text).toContain(PAGE_URL);
+        });
+
+        test("a dispatch with no open analysis names the reason and opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(null, null);
+            const t = pageOpts(GRANT);
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.requests).toEqual([]);
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toEqual([{ kind: "info", text: expect.stringContaining("No analysis is open") }]);
+            expect(w.dialogs()).toBe(0);
+            expect(w.opened).toEqual([]);
+        });
+
+        test("a dispatch before the runtime is ready names the state and opens nothing", async () => {
+            const w = sessionScope(ANALYSIS, CHILD.id);
+
+            __setBootStateForTest({ phase: "starting" } as never);
+            const booting = pageOpts(GRANT);
+            await openReportPage(w.ws, booting.opts);
+            expect(booting.requests).toEqual([]);
+            expect(booting.urls).toEqual([]);
+            expect(booting.notices).toEqual([{ kind: "info", text: expect.stringContaining("still booting") }]);
+
+            __setBootStateForTest({ phase: "failed" } as never);
+            const failed = pageOpts(GRANT);
+            await openReportPage(w.ws, failed.opts);
+            expect(failed.urls).toEqual([]);
+            expect(failed.notices).toHaveLength(1);
+            expect(failed.notices[0]?.kind).toBe("warn");
+            expect(failed.notices[0]?.text).toContain("did not start");
+        });
+
+        test("a session that changes across the mint opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT, {
+                mintReportPageAccess: () => {
+                    w.swapTo({ sessionId: "thread-elsewhere" });
+                    return okAsync({ url: PAGE_URL, expiresAt: "2030-01-01T00:00:00.000Z" });
+                },
+            });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Session changed");
+        });
+
+        test("an analysis that changes across the mint opens nothing", async () => {
+            __setBootStateForTest(READY);
+            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = pageOpts(GRANT, {
+                mintReportPageAccess: () => {
+                    w.swapTo({ analysis: OTHER });
+                    return okAsync({ url: PAGE_URL, expiresAt: "2030-01-01T00:00:00.000Z" });
+                },
+            });
+
+            await openReportPage(w.ws, t.opts);
+
+            expect(t.urls).toEqual([]);
+            expect(t.notices).toHaveLength(1);
+            expect(t.notices[0]?.text).toContain("Analysis changed");
+        });
+
+        test("the palette offers the command on an open analysis and a ready boot only", () => {
+            const entry = commands.find((c) => c.id === "session.open-report-page");
+            expect(entry?.title).toBe("Open report page");
+            expect(entry?.category).toBe("Session");
+
+            const open = { analysis: ANALYSIS, sessionId: CHILD.id } as unknown as Workspace;
+            __setBootStateForTest(READY);
+            expect(entry?.enabled?.(open)).toBe(true);
+            expect(entry?.enabled?.({ analysis: null, sessionId: null } as unknown as Workspace)).toBe(false);
+            __setBootStateForTest({ phase: "idle" });
+            expect(entry?.enabled?.(open)).toBe(false);
+        });
+    });
+});

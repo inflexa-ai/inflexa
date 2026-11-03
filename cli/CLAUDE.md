@@ -42,7 +42,7 @@ bun run test         # bun test — the whole suite in one process, exactly what
 
 The suite is plain `bun test`. It runs in one process, each test file shares that
 process, and it takes about 60 seconds and less than 1 GiB. The arguments pass
-straight through, for example `bun run test src/lib/lock.test.ts`, `-t <name>`, and
+straight through, for example `bun run test src/lib/test/lock.test.ts`, `-t <name>`, and
 `--watch`.
 
 **`[test].preload` in `bunfig.toml` must never get
@@ -54,8 +54,8 @@ which `Bun.spawn` silently hands the child `/dev/null` instead of a socketpair.
 The child then runs correctly and exits 0, but the parent reads zero bytes. Thus a
 test that depends on spawn fails with empty captured output, and nothing in its own
 code explains why. The two known sites are `spawnInflexa — process bounds` in
-`src/modules/harness/inflexa_tool.test.ts`, and the `launchWithBinary` readiness
-drain in `src/modules/embedding/local-provider.test.ts`. Without that entry the run
+`src/modules/harness/test/inflexa_tool.test.ts`, and the `launchWithBinary` readiness
+drain in `src/modules/embedding/test/local-provider.test.ts`. Without that entry the run
 peaks at file descriptor 2307, which is 4.4 times of headroom. Nothing needs it,
 and that includes the render tests.
 
@@ -617,7 +617,7 @@ wire types of the two sides. Refer to [The local server](#the-local-server).
 **The client import rule.** Entries of `eslint-js/no-restricted-syntax` in
 `oxlint.config.ts` apply it to each file in `src/tui/` or `src/client/`. The
 entries cover a static import, a re-export, and a dynamic `import()`.
-`src/client/import_boundary.test.ts` pins the rule.
+`src/client/test/import_boundary.test.ts` pins the rule.
 
 - A client must not import `src/db/`, `src/server/`, `lib/bus.ts`, the harness
   runtime, or a module of `src/modules/`. The ban also covers a type-only import.

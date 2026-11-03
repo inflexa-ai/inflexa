@@ -1,0 +1,617 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { createSignal } from "solid-js";
+import { testRender } from "@opentui/solid";
+import { parseColor, rgbToHex } from "@opentui/core";
+import { renderFrame } from "../../../test_support/tui.ts";
+
+import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../../lib/design_system.ts";
+import { setTheme } from "../../theme.ts";
+import { RunBlock, type RunStepView } from "../run_block.tsx";
+
+/**
+ * The rail's window size, taken from the design-system token the sidebar itself passes rather than
+ * repeated here — the arithmetic these cases assert is only meaningful against the cap that ships.
+ */
+const RAIL_WINDOW = size.railStepRows;
+
+/** A run whose first `done` steps are complete, the next is running, and the rest are queued. */
+function steps(total: number, done: number): RunStepView[] {
+    return Array.from({ length: total }, (_, i) => ({
+        label: `S${i + 1}`,
+        state: i < done ? "done" : i === done ? "running" : "queued",
+    }));
+}
+
+/** The rail mount the sidebar RUNS section uses: windowed, no heading. */
+function railBlock(total: number, done: number) {
+    return () => <RunBlock name="cohort-screen" tag="T9S2" done={done} total={total} steps={steps(total, done)} maxSteps={RAIL_WINDOW} heading={false} />;
+}
+
+/** Whether step `n` has a row on screen. Word-bounded, so `S1` never matches the `S10`/`S12` rows. */
+function hasStep(frame: string, n: number): boolean {
+    return new RegExp(`\\bS${n}\\b`).test(frame);
+}
+
+/** Every step the frame accounts for: the rows it shows plus the counts its elision markers admit to hiding. */
+function accountedFor(frame: string, total: number): number {
+    const shown = Array.from({ length: total }, (_, i) => i + 1).filter((n) => hasStep(frame, n)).length;
+    return shown + [...frame.matchAll(/(\d+) (?:earlier|more) steps?/g)].reduce((sum, m) => sum + Number(m[1]), 0);
+}
+
+/** Right-trim + drop trailing blanks, matching `renderFrame` so frame text and coordinates agree. */
+function tidy(frame: string): string {
+    return frame
+        .split("\n")
+        .map((line) => line.trimEnd())
+        .join("\n")
+        .trimEnd();
+}
+
+/**
+ * Render the rail mount live over a mutable run, and hand the caller a click driver, a frame reader and
+ * a props updater. `update` always mints a FRESH props object even when the values are unchanged, which
+ * is what the sidebar's poll does every few seconds — the distinction between "the ledger was re-read"
+ * and "something actually changed" is exactly what the window's pin-and-release rules turn on, and a
+ * harness that reused the object would let a broken release rule pass.
+ */
+async function withRail(
+    initial: RunStepView[],
+    body: (rail: {
+        click: (arrow: "↑" | "↓") => Promise<void>;
+        frame: () => string;
+        update: (next: { steps?: RunStepView[]; tag?: string }) => Promise<void>;
+    }) => Promise<void>,
+) {
+    const [run, setRun] = createSignal({ steps: initial, tag: "T9S2" });
+    const doneCount = (xs: RunStepView[]): number => xs.filter((s) => s.state === "done").length;
+    const setup = await testRender(
+        () => (
+            <RunBlock
+                name="cohort-screen"
+                tag={run().tag}
+                done={doneCount(run().steps)}
+                total={run().steps.length}
+                steps={run().steps}
+                maxSteps={RAIL_WINDOW}
+                heading={false}
+            />
+        ),
+        { width: 40, height: 24 },
+    );
+    try {
+        await setup.renderOnce();
+        const frame = (): string => tidy(setup.captureCharFrame());
+        const click = async (arrow: "↑" | "↓"): Promise<void> => {
+            const lines = setup.captureCharFrame().split("\n");
+            const y = lines.findIndex((line) => line.includes(arrow));
+            if (y < 0) throw new Error(`no ${arrow} marker on screen:\n${frame()}`);
+            await setup.mockMouse.click(lines[y]!.indexOf(arrow), y);
+            await setup.renderOnce();
+        };
+        const update = async (next: { steps?: RunStepView[]; tag?: string }): Promise<void> => {
+            // A fresh object every time, even when nothing changed — the poll's shape.
+            setRun((prev) => ({ steps: next.steps ?? [...prev.steps], tag: next.tag ?? prev.tag }));
+            await setup.renderOnce();
+            await setup.renderOnce();
+        };
+        await body({ click, frame, update });
+    } finally {
+        setup.renderer.destroy();
+    }
+}
+
+describe("RunBlock step window", () => {
+    test("a run one step over the cap renders every step rather than hiding one behind a marker", async () => {
+        // Eliding a single step to spend a row on its marker saves nothing, so the whole list renders.
+        const frame = await renderFrame(railBlock(8, 4), { width: 40, height: 18 });
+        for (let i = 1; i <= 8; i++) expect(hasStep(frame, i)).toBe(true);
+        expect(frame).toContain("4/8");
+        expect(frame).not.toContain("more step");
+        expect(frame).not.toContain("earlier step");
+    });
+
+    test("a long run windows its steps and states both hidden counts", async () => {
+        // 12 steps with the frontier at S8: the window centres on it (S5–S11), leaving 4 elided above
+        // and 1 below — 9 rows for 12 steps, so the markers earn their place.
+        const frame = await renderFrame(railBlock(12, 7), { width: 40, height: 18 });
+        expect(frame).toContain("4 earlier steps");
+        expect(frame).toContain("1 more step");
+        expect(frame).toContain("7/12");
+        expect(hasStep(frame, 8)).toBe(true);
+        expect(hasStep(frame, 1)).toBe(false);
+        expect(hasStep(frame, 12)).toBe(false);
+    });
+
+    test("an odd window puts the frontier on its exact middle row", async () => {
+        // The centring promise: with room on both sides the running step sits at offset floor(7/2)=3,
+        // the 4th of 7 rows, so equal context is visible before and after it.
+        const frame = await renderFrame(railBlock(20, 10), { width: 40, height: 24 });
+        const rows = frame.split("\n").filter((l) => /\bS\d+\b/.test(l));
+        expect(rows).toHaveLength(RAIL_WINDOW);
+        expect(rows[3]).toContain("S11"); // the running step (index 10)
+    });
+
+    test("the visible rows plus both hidden counts always account for every step", async () => {
+        // The invariant the markers exist to uphold: nothing is silently dropped at any run length.
+        for (const total of [7, 8, 9, 10, 12, 20, 31]) {
+            const frame = await renderFrame(railBlock(total, Math.floor(total / 2)), { width: 40, height: 44 });
+            expect({ total, accounted: accountedFor(frame, total) }).toEqual({ total, accounted: total });
+        }
+    });
+
+    test("without maxSteps the whole list renders — the runs dialog's full view", async () => {
+        const frame = await renderFrame(() => <RunBlock name="cohort-screen" tag="T9S2" done={7} total={12} steps={steps(12, 7)} />, {
+            width: 80,
+            height: 24,
+        });
+        for (let i = 1; i <= 12; i++) expect(hasStep(frame, i)).toBe(true);
+        expect(frame).not.toContain("more step");
+    });
+});
+
+describe("RunBlock window scrolling", () => {
+    // 20 steps with the frontier at S11: the window centres at start=7, leaving room to scroll both ways.
+    test("clicking the up marker slides the window one step earlier", async () => {
+        await withRail(steps(20, 10), async ({ click, frame }) => {
+            expect(frame()).toContain("7 earlier steps");
+            expect(hasStep(frame(), 7)).toBe(false);
+
+            await click("↑");
+
+            expect(frame()).toContain("6 earlier steps");
+            expect(frame()).toContain("7 more steps");
+            expect(hasStep(frame(), 7)).toBe(true);
+            expect(hasStep(frame(), 14)).toBe(false);
+        });
+    });
+
+    test("clicking the down marker slides the window one step later", async () => {
+        await withRail(steps(20, 10), async ({ click, frame }) => {
+            await click("↓");
+            expect(frame()).toContain("8 earlier steps");
+            expect(frame()).toContain("5 more steps");
+            expect(hasStep(frame(), 15)).toBe(true);
+            expect(hasStep(frame(), 8)).toBe(false);
+        });
+    });
+
+    test("the window stops at the list ends and the exhausted marker disappears", async () => {
+        await withRail(steps(20, 10), async ({ click, frame }) => {
+            for (let i = 0; i < 7; i++) await click("↑");
+            expect(frame()).not.toContain("earlier step");
+            expect(frame()).toContain("13 more steps");
+            expect(hasStep(frame(), 1)).toBe(true);
+            await expect(click("↑")).rejects.toThrow("no ↑ marker");
+
+            for (let i = 0; i < 13; i++) await click("↓");
+            expect(frame()).not.toContain("more step");
+            expect(frame()).toContain("13 earlier steps");
+            expect(hasStep(frame(), 20)).toBe(true);
+            await expect(click("↓")).rejects.toThrow("no ↓ marker");
+        });
+    });
+
+    test("scrolling never loses a step — the accounting invariant holds at every position", async () => {
+        await withRail(steps(20, 10), async ({ click, frame }) => {
+            for (let i = 0; i < 7; i++) await click("↑");
+            for (let position = 0; position <= 13; position++) {
+                expect({ position, accounted: accountedFor(frame(), 20) }).toEqual({ position, accounted: 20 });
+                if (frame().includes("↓")) await click("↓");
+            }
+        });
+    });
+});
+
+describe("RunBlock window pinning", () => {
+    test("a scrolled window survives a ledger poll that changed nothing", async () => {
+        // The rail re-reads every few seconds and re-renders this block with a freshly-minted props
+        // object. Only a real change may move the window; a bare refresh must leave the reader where
+        // they are, or scrolling back through a long run is impossible on a live rail.
+        await withRail(steps(20, 10), async ({ click, frame, update }) => {
+            await click("↑");
+            await click("↑");
+            expect(frame()).toContain("5 earlier steps");
+
+            await update({});
+            await update({});
+
+            expect(frame()).toContain("5 earlier steps");
+        });
+    });
+
+    test("the window snaps back to the work when the active step advances", async () => {
+        await withRail(steps(20, 10), async ({ click, frame, update }) => {
+            for (let i = 0; i < 5; i++) await click("↑");
+            expect(frame()).toContain("2 earlier steps");
+            expect(hasStep(frame(), 11)).toBe(false); // the running step is scrolled out of view
+
+            await update({ steps: steps(20, 11) });
+
+            // Recentred on the new running step (S12, index 11) — start clamps to 11-3 = 8.
+            expect(frame()).toContain("8 earlier steps");
+            expect(hasStep(frame(), 12)).toBe(true);
+            const rows = frame()
+                .split("\n")
+                .filter((l) => /\bS\d+\b/.test(l));
+            expect(rows[3]).toContain("S12");
+        });
+    });
+
+    test("a different run releases the pin instead of inheriting the previous run's position", async () => {
+        // The sidebar's embed is non-keyed, so a run handover reuses this instance.
+        await withRail(steps(20, 10), async ({ click, frame, update }) => {
+            for (let i = 0; i < 4; i++) await click("↑");
+            expect(frame()).toContain("3 earlier steps");
+
+            await update({ tag: "OTHER1" });
+
+            expect(frame()).toContain("7 earlier steps");
+        });
+    });
+});
+
+describe("RunBlock parallel steps", () => {
+    /** Steps from an explicit state list, so a wave with several in flight can be spelled out. */
+    function wave(states: RunStepView["state"][]): RunStepView[] {
+        return states.map((state, i) => ({ label: `S${i + 1}`, state }));
+    }
+
+    /** A 20-step run with `running` at the given indices, everything before them done, the rest queued. */
+    function parallel(running: number[]): RunStepView[] {
+        const last = Math.max(...running);
+        return wave(Array.from({ length: 20 }, (_, i) => (running.includes(i) ? "running" : i < last ? "done" : "queued")));
+    }
+
+    test("the window anchors on the EARLIEST running step, not the first not-done one", async () => {
+        // Steps 8, 9 and 10 are in flight together. Centring on the earliest puts it on the middle row
+        // with its siblings just below, so the whole wave is on screen at once.
+        const frame = await renderFrame(
+            () => <RunBlock name="r" tag="T1" done={8} total={20} steps={parallel([8, 9, 10])} maxSteps={RAIL_WINDOW} heading={false} />,
+            { width: 40, height: 24 },
+        );
+        const rows = frame.split("\n").filter((l) => /\bS\d+\b/.test(l));
+        expect(rows[3]).toContain("S9"); // index 8, the earliest running step, dead centre
+        for (const n of [9, 10, 11]) expect(hasStep(frame, n)).toBe(true);
+    });
+
+    test("a later parallel step finishing leaves the still-running earlier one on screen", async () => {
+        // The reported shape: [done, running, running, done] → [done, running, done, done]. The step that
+        // is STILL running must not be scrolled away just because its sibling finished — which is exactly
+        // what anchoring on "first not-done" would have done once the sibling's row went done.
+        await withRail(parallel([8, 9]), async ({ frame, update }) => {
+            expect(hasStep(frame(), 9)).toBe(true);
+
+            await update({ steps: parallel([8]) });
+
+            expect(hasStep(frame(), 9)).toBe(true);
+            const rows = frame()
+                .split("\n")
+                .filter((l) => /\bS\d+\b/.test(l));
+            expect(rows[3]).toContain("S9");
+        });
+    });
+
+    test("a change anywhere in the active set snaps a scrolled window back", async () => {
+        // The anchor itself does not move here — only the sibling finishes — so a snap keyed on the
+        // anchor alone would leave the reader stranded. The whole running set is the trigger.
+        await withRail(parallel([8, 9]), async ({ click, frame, update }) => {
+            for (let i = 0; i < 4; i++) await click("↑");
+            expect(frame()).toContain("1 earlier step");
+            expect(hasStep(frame(), 9)).toBe(false);
+
+            await update({ steps: parallel([8]) });
+
+            expect(frame()).toContain("5 earlier steps");
+            expect(hasStep(frame(), 9)).toBe(true);
+        });
+    });
+});
+
+describe("RunBlock marker click containment", () => {
+    test("a plain marker click is swallowed, but a release carrying a selection still bubbles", async () => {
+        // The wrapper stands in for the ancestors that act on mouse-up: the sidebar RUNS section (opens
+        // the runs picker) and the app root (copy-on-select). A marker click must not reach them; a
+        // selection drag that merely ends on a marker must.
+        let bubbled = 0;
+        const setup = await testRender(
+            () => (
+                <box onMouseUp={() => bubbled++}>
+                    <RunBlock name="cohort-screen" tag="T9S2" done={10} total={20} steps={steps(20, 10)} maxSteps={RAIL_WINDOW} heading={false} />
+                </box>
+            ),
+            { width: 40, height: 24 },
+        );
+        try {
+            await setup.renderOnce();
+            const row = (needle: string): { x: number; y: number } => {
+                const lines = setup.captureCharFrame().split("\n");
+                const y = lines.findIndex((l) => l.includes(needle));
+                expect(y).toBeGreaterThanOrEqual(0);
+                return { x: lines[y]!.indexOf(needle), y };
+            };
+
+            const up = row("↑");
+            await setup.mockMouse.click(up.x, up.y);
+            await setup.renderOnce();
+            expect(bubbled).toBe(0);
+
+            // Walk to the top. The final press unmounts the very marker it landed on, so no mouse-up ever
+            // returns to that marker — the gesture that leaves press state remembered on mouse-down
+            // stranded, and with it the next unrelated release wrongly swallowed.
+            while (setup.captureCharFrame().includes("↑")) {
+                const m = row("↑");
+                await setup.mockMouse.click(m.x, m.y);
+                await setup.renderOnce();
+            }
+
+            // A selection drag ending on the surviving marker: the root's copy handler needs this release.
+            const baseline = bubbled;
+            const from = row("S3");
+            const to = row("↓");
+            await setup.mockMouse.drag(from.x, from.y, to.x, to.y);
+            await setup.renderOnce();
+            expect(setup.renderer.getSelection()?.getSelectedText() ?? "").not.toBe("");
+            expect(bubbled).toBe(baseline + 1);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+describe("RunBlock marker selection", () => {
+    /**
+     * Drag across the row holding `needle` and report what the renderer considers selected. The drag
+     * STARTS on the needle's own column, not at x=0: the step list is a bordered, padded box, and a press
+     * on the border or the padding lands on the box rather than the text — no selection begins at all,
+     * which would make every assertion here pass for the wrong reason.
+     */
+    async function dragRow(setup: Awaited<ReturnType<typeof testRender>>, needle: string): Promise<string> {
+        const lines = setup.captureCharFrame().split("\n");
+        const y = lines.findIndex((line) => line.includes(needle));
+        expect(y).toBeGreaterThanOrEqual(0);
+        await setup.mockMouse.drag(lines[y]!.indexOf(needle), y, lines[y]!.trimEnd().length, y);
+        await setup.renderOnce();
+        return setup.renderer.getSelection()?.getSelectedText() ?? "";
+    }
+
+    test("the markers are controls, not prose — dragging over one selects nothing", async () => {
+        const setup = await testRender(railBlock(20, 10), { width: 40, height: 24 });
+        try {
+            await setup.renderOnce();
+            expect(await dragRow(setup, "earlier step")).not.toContain("earlier");
+            expect(await dragRow(setup, "more step")).not.toContain("more");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("step rows stay selectable — the opt-out is scoped to the two controls", async () => {
+        const setup = await testRender(railBlock(20, 10), { width: 40, height: 24 });
+        try {
+            await setup.renderOnce();
+            expect(await dragRow(setup, "S11")).toContain("S11");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+describe("RunBlock running-step elapsed age", () => {
+    afterEach(() => setTheme(DEFAULT_THEME_ID));
+
+    /** A three-row run: one done, one running (with a start time), one queued. */
+    function agedSteps(runningStartedAt: string | null): RunStepView[] {
+        return [
+            { label: "S1", state: "done" },
+            { label: "S2", state: "running", startedAt: runningStartedAt },
+            { label: "S3", state: "queued" },
+        ];
+    }
+
+    function block(steps: RunStepView[]) {
+        return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} heading={false} />;
+    }
+
+    test("a running step with a start time shows a compact age", async () => {
+        // 4m05s ago → the mNNs form; a fixed offset keeps the shape stable while the exact seconds float.
+        const startedAt = new Date(Date.now() - (4 * 60_000 + 5_000)).toISOString();
+        const frame = await renderFrame(block(agedSteps(startedAt)), { width: 40, height: 12 });
+        // The age sits on the running row (`S2`), never the done or queued rows.
+        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
+        expect(s2Row).toMatch(/\d+m\d{2}s/);
+        expect(frame.split("\n").find((l) => /\bS1\b/.test(l))).not.toMatch(/\d+m\d{2}s/);
+        expect(frame.split("\n").find((l) => /\bS3\b/.test(l))).not.toMatch(/\d+m\d{2}s/);
+    });
+
+    test("a running step without a start time shows no age", async () => {
+        const frame = await renderFrame(block(agedSteps(null)), { width: 40, height: 12 });
+        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
+        expect(s2Row).not.toMatch(/\d+m\d{2}s/);
+        expect(s2Row).not.toMatch(/\d+s/);
+    });
+
+    test("an unparseable start time degrades to no age", async () => {
+        const frame = await renderFrame(block(agedSteps("not-a-timestamp")), { width: 40, height: 12 });
+        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
+        expect(s2Row).not.toMatch(/\d+s/);
+    });
+
+    // The age is information, not decoration, so it must clear the 4.5:1 text floor on both a dark and a
+    // light theme (github-light's pure-white bg is where an unresolved white foreground goes invisible).
+    for (const id of ["tokyo-night", "github-light"] as const) {
+        test(`under ${id} the age paints the muted TEXT tier, not an opentui default`, async () => {
+            setTheme(id);
+            const startedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+            const setup = await testRender(block(agedSteps(startedAt)), { width: 40, height: 12 });
+            try {
+                await setup.renderOnce();
+                let ageFg: string | null = null;
+                for (const line of setup.captureSpans().lines) {
+                    for (const span of line.spans) {
+                        if (/\d+m\d{2}s/.test(span.text)) ageFg = rgbToHex(span.fg);
+                    }
+                }
+                expect(ageFg).not.toBeNull();
+                expect(parseColor(themes[id].colors.fgMuted).equals(parseColor(ageFg!))).toBe(true);
+            } finally {
+                setup.renderer.destroy();
+            }
+        });
+    }
+});
+
+// The step figure is handed to the block already written, so these drive it with plain strings and no
+// ledger in sight — which is the property that keeps the block gallery-drivable and testable offline.
+describe("RunBlock step usage figure", () => {
+    afterEach(() => setTheme(DEFAULT_THEME_ID));
+
+    /** A three-row run where only the running step reports a figure. */
+    function figuredSteps(figure: string | undefined): RunStepView[] {
+        return [
+            { label: "S1", state: "done" },
+            { label: "S2", state: "running", usageFigure: figure },
+            { label: "S3", state: "queued" },
+        ];
+    }
+
+    function block(steps: RunStepView[], maxSteps?: number) {
+        return () => <RunBlock name="cohort-screen" tag="T9S2" done={1} total={3} steps={steps} maxSteps={maxSteps} heading={false} />;
+    }
+
+    test("on a WIDE mount the figure joins the row's middot-separated facts", async () => {
+        const figure = `${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`;
+        const frame = await renderFrame(block(figuredSteps(figure)), { width: 80, height: 14 });
+        const lines = frame.split("\n");
+        const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
+        expect(s2).toBeGreaterThanOrEqual(0);
+        expect(lines[s2]).toContain(`${GLYPHS.middot} ${figure}`);
+        // No second row for it, so the step list stays one row per step and reads as a list of steps
+        // rather than as steps interleaved with measurements.
+        expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 1);
+    });
+
+    test("the figure sits directly after the step's other facts, never pushed to an edge", async () => {
+        // Flushing it right was tried and reverted: it aligns a column only while the row's left side is
+        // stable, and a running step gains an age and a retried one a count — so the gap breathed as the
+        // run progressed and the figure read as detached from the step it belongs to. Two steps whose
+        // labels differ in length must therefore put their figures at DIFFERENT columns now.
+        const figure = `${GLYPHS.arrowUp}9.1k`;
+        const frame = await renderFrame(
+            block([
+                { label: "S1", state: "done", usageFigure: figure },
+                { label: "a-much-longer-step-name", state: "done", usageFigure: figure },
+            ]),
+            { width: 80, height: 14 },
+        );
+        const cols = frame
+            .split("\n")
+            .filter((l) => l.includes(GLYPHS.arrowUp))
+            .map((l) => l.indexOf(GLYPHS.arrowUp));
+        expect(cols).toHaveLength(2);
+        expect(cols[1]! - cols[0]!).toBe("a-much-longer-step-name".length - "S1".length);
+    });
+
+    test("the RAIL reads the same sequence — no narrow-mount exception for the figure", async () => {
+        const figure = `${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`;
+        const frame = await renderFrame(block(figuredSteps(figure), size.railStepRows), { width: size.railWidth, height: 14 });
+        const lines = frame.split("\n");
+        const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
+        expect(s2).toBeGreaterThanOrEqual(0);
+        // The figure used to take its own line here, on the measurement that a trailing figure wraps the
+        // rail. That measurement assumed short identifier-shaped labels; real plan steps are sentences,
+        // so the row wraps either way and the extra line bought nothing — see the wrapping case below.
+        expect(lines[s2]).toContain(`${GLYPHS.middot} ${figure}`);
+        // ...so the step list is one entry per step again, with no row spent on the figure.
+        expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 1);
+    });
+
+    test("a sentence-shaped label wraps with or without the figure, and the figure costs no extra line", async () => {
+        // The case the rail actually renders: plan step labels are sentences, not identifiers. Both
+        // shapes wrap the label; what the figure must not do is add a THIRD line to a row already
+        // taking two, which is exactly what the old own-line placement did.
+        const label = "Clean and parse clinical metadata";
+        const rows = async (usageFigure: string | undefined): Promise<number> => {
+            const frame = await renderFrame(
+                block([{ label, state: "running", startedAt: new Date(Date.now() - 15_000).toISOString(), usageFigure }], size.railStepRows),
+                {
+                    width: size.railWidth,
+                    height: 14,
+                },
+            );
+            // The progress bar carries the only `/` on screen; every other kept line is a step's.
+            return frame.split("\n").filter((l) => l.trim() !== "" && !l.includes("/")).length;
+        };
+        const withFigure = await rows(`${GLYPHS.arrowUp}12.2k ${GLYPHS.arrowDown}233`);
+        // Guards the comparison below from passing on two empty counts, and states the shape being
+        // asserted: the label wraps, so this step is TWO rows either way.
+        expect(withFigure).toBe(2);
+        expect(withFigure).toBe(await rows(undefined));
+    });
+
+    test("the separators keep their own decoration tone, whatever the facts around them are painted", async () => {
+        // The reason `Sep` is its own span: a retry count is `warning` and an age is muted, so a
+        // separator glued to either neighbour would make the row's punctuation change colour as a step
+        // retried. `fgSubtle` is the decoration tier the contrast floor exempts from 4.5:1 — punctuation
+        // must not carry the weight of the measurements it separates.
+        setTheme("github-light");
+        const started = new Date(Date.now() - 90_000).toISOString();
+        const setup = await testRender(block([{ label: "S1", state: "running", startedAt: started, attempts: 3, usageFigure: `${GLYPHS.arrowUp}9.1k` }]), {
+            width: 80,
+            height: 10,
+        });
+        try {
+            await setup.renderOnce();
+            const seps = setup
+                .captureSpans()
+                .lines.flatMap((l) => l.spans)
+                .filter((sp) => sp.text.includes(GLYPHS.middot));
+            // One before the age, one before the retry count, one before the figure.
+            expect(seps).toHaveLength(3);
+            for (const sp of seps) expect(rgbToHex(sp.fg)).toBe(rgbToHex(parseColor(themes["github-light"].colors.fgSubtle)));
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a step handed no figure renders none — the block invents nothing", async () => {
+        const frame = await renderFrame(block(figuredSteps(undefined)), { width: 40, height: 14 });
+        expect(frame).not.toContain(GLYPHS.arrowUp);
+        expect(frame).not.toContain(GLYPHS.arrowDown);
+        // ...and every step still renders.
+        for (const n of [1, 2, 3]) expect(new RegExp(`\\bS${n}\\b`).test(frame)).toBe(true);
+    });
+
+    test("the figure fits the rail mount without wrapping, which is why it is not a row suffix", async () => {
+        // The narrow mount: the sidebar passes `maxSteps`, and the rail leaves the step list roughly
+        // `railWidth − border − paddings − the block's own indent + rule` cells.
+        const figure = `${GLYPHS.arrowUp}820.3k ${GLYPHS.arrowDown}43.3k`;
+        const frame = await renderFrame(block(figuredSteps(figure), size.railStepRows), { width: size.railWidth, height: 14 });
+        const lines = frame.split("\n");
+        const row = lines.find((l) => l.includes(GLYPHS.arrowUp)) ?? "";
+        // The WHOLE figure landed on one row — a wrap would leave the down arm on the next line.
+        expect(row).toContain(figure);
+    });
+
+    // The figure is information, not decoration, so it must clear the 4.5:1 text floor on both a dark
+    // and a light theme (github-light's pure-white bg is where an unresolved foreground goes invisible).
+    for (const id of ["tokyo-night", "github-light"] as const) {
+        test(`under ${id} the figure paints the muted TEXT tier, not an opentui default`, async () => {
+            setTheme(id);
+            const setup = await testRender(block(figuredSteps(`${GLYPHS.arrowUp}42.6k`)), { width: 40, height: 14 });
+            try {
+                await setup.renderOnce();
+                let fg: string | null = null;
+                for (const line of setup.captureSpans().lines) {
+                    for (const span of line.spans) {
+                        if (span.text.includes(`${GLYPHS.arrowUp}42.6k`)) fg = rgbToHex(span.fg);
+                    }
+                }
+                expect(fg).not.toBeNull();
+                expect(fg).not.toBe("#ffffff");
+                expect(fg).toBe(rgbToHex(parseColor(themes[id].colors.fgMuted)));
+            } finally {
+                setup.renderer.destroy();
+            }
+        });
+    }
+});

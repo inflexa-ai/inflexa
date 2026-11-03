@@ -183,11 +183,11 @@ export default solid({
             files: ["src/**"],
             excludeFiles: [
                 "src/lib/env.ts",
-                "src/lib/env.test.ts",
-                "src/lib/credential.test.ts",
+                "src/lib/test/env.test.ts",
+                "src/lib/test/credential.test.ts",
                 "src/test_support/preload.ts",
                 "src/test_support/sandbox.ts",
-                "src/test_support/harness.test.ts",
+                "src/test_support/test/harness.test.ts",
             ],
             rules: {
                 "no-restricted-properties": [
@@ -261,9 +261,6 @@ export default solid({
             // back on.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #804: move each test into the test folder of its directory.
-                "@inflexa-ai/test-placement": "off",
-
                 // #805: decide on exactOptionalPropertyTypes, then turn on the no-unsafe family
                 // and the conditional-spread rule.
                 "typescript/no-unsafe-argument": "off",

@@ -48,7 +48,7 @@ export function idleBoot(): ServerBoot {
 
 /**
  * A lifecycle that never stops the process: the test process must outlive each request. It accepts a stop
- * request and records nothing. A test of the stop builds its own lifecycle (server/lifecycle.test.ts).
+ * request and records nothing. A test of the stop builds its own lifecycle (server/test/lifecycle.test.ts).
  */
 export function idleLifecycle(): ServerLifecycle {
     return { requestShutdown: (mode) => ({ mode, activeTurns: 0 }), stopping: () => null, stopForSignal: () => undefined, stoppedBySignal: () => false };
