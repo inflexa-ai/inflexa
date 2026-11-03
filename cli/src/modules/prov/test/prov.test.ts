@@ -27,7 +27,15 @@ import type {
     ProvCallRef,
     ProvCommandRef,
 } from "../../../types/prov.ts";
-import { applyProvEvent, computeChainHash, computePayloadDigest, verifyHexDigest, verifyProvenance, verifyPayload } from "@inflexa-ai/prov-kernel";
+import {
+    applyProvEvent,
+    attestationSchema,
+    computeChainHash,
+    computePayloadDigest,
+    verifyHexDigest,
+    verifyProvenance,
+    verifyPayload,
+} from "@inflexa-ai/prov-kernel";
 import { provModel, provSubject, serializeProvenance } from "../document.ts";
 import { updateAnalysisProvenance } from "../../../db/primary_mutation.ts";
 import { currentUserActor, initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests, resolveAnalysisForProv } from "../prov.ts";
@@ -85,8 +93,8 @@ function appendFileWritten(
         model,
         file,
         generation,
-        ...(call !== undefined ? { call } : {}),
-        ...(step !== undefined ? { step } : {}),
+        call,
+        step,
     });
 }
 function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
@@ -923,7 +931,7 @@ describe("export attestation (writeAttestation via the full export path)", () =>
         wf(sigDest, JSON.stringify(attestation, null, 2));
 
         expect(existsSync(sigDest)).toBe(true);
-        const parsed = JSON.parse(readFileSync(sigDest, "utf-8"));
+        const parsed = attestationSchema.parse(JSON.parse(readFileSync(sigDest, "utf-8")));
         // Self-describing envelope fields.
         expect(parsed.payloadType).toBe("application/json; profile=prov-json");
         expect(parsed.payloadDigestAlgorithm).toBe("SHA-256");

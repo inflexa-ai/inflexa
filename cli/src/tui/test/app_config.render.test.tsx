@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { testRender } from "@opentui/solid";
 
 import type { ServerSettings } from "../../api/machine.ts";
+import type { ClientOpts } from "../../client/api.ts";
 import { fetchSettings } from "../../client/machine.ts";
 import { env } from "../../lib/env.ts";
 import { startTestServer, type TestServer } from "../../test_support/server.ts";
@@ -40,9 +41,22 @@ afterEach(async () => {
 });
 
 /** The settings screen over the settings of the test server, as `inflexa config` opens it. */
-async function configNode(): Promise<() => ReturnType<typeof ConfigApp>> {
+async function configNode(clientOpts: ClientOpts = server.clientOpts): Promise<() => ReturnType<typeof ConfigApp>> {
     const settings: ServerSettings = (await fetchSettings(server.clientOpts))._unsafeUnwrap();
-    return () => <ConfigApp settings={settings} clientOpts={server.clientOpts} />;
+    return () => <ConfigApp settings={settings} clientOpts={clientOpts} />;
+}
+
+/** The test server's client options, with the body of each `PATCH` request recorded as it was sent. */
+function recordingClientOpts(): { readonly clientOpts: ClientOpts; readonly patchBodies: string[] } {
+    const patchBodies: string[] = [];
+    const clientOpts: ClientOpts = {
+        discover: server.clientOpts.discover,
+        fetch: (url, init) => {
+            if (init.method === "PATCH") patchBodies.push(String(init.body));
+            return server.clientOpts.fetch(url, init);
+        },
+    };
+    return { clientOpts, patchBodies };
 }
 
 /**
@@ -413,6 +427,117 @@ describe("ConfigApp secrets (rendered, real keyboard bus)", () => {
                 apiKey: "sk-secret-1",
                 baseURL: "https://api.openai.com/v1",
                 model: "text-embedding-3-large",
+            });
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+describe("ConfigApp save (rendered, real keyboard bus)", () => {
+    test("a change to the theme alone sends no settings patch", async () => {
+        const { clientOpts, patchBodies } = recordingClientOpts();
+        const setup = await testRender(await configNode(clientOpts), { width: 100, height: 44 });
+        try {
+            await settle(setup);
+            setup.mockInput.pressArrow("down"); // telemetry → theme
+            setup.mockInput.pressArrow("right"); // the next theme
+            await settle(setup);
+            setup.mockInput.pressKey("s");
+            await settle(setup);
+
+            expect(frame(setup)).toContain("Saved.");
+            expect(patchBodies).toEqual([]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a change to one server setting sends a patch with that key alone", async () => {
+        const { clientOpts, patchBodies } = recordingClientOpts();
+        const setup = await testRender(await configNode(clientOpts), { width: 100, height: 44 });
+        try {
+            await settle(setup);
+            setup.mockInput.pressArrow("right"); // telemetry on
+            await settle(setup);
+            setup.mockInput.pressKey("s");
+            await settle(setup);
+
+            expect(patchBodies).toHaveLength(1);
+            const sent: unknown = JSON.parse(patchBodies[0] ?? "");
+            expect(sent).toStrictEqual({ telemetry: true });
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a change to the container runtime alone sends a patch with the runtime key alone", async () => {
+        const { clientOpts, patchBodies } = recordingClientOpts();
+        const setup = await testRender(await configNode(clientOpts), { width: 100, height: 44 });
+        try {
+            await settle(setup);
+            setup.mockInput.pressArrow("down"); // telemetry → theme
+            setup.mockInput.pressArrow("down"); // theme → container runtime
+            setup.mockInput.pressArrow("right"); // the next runtime
+            await settle(setup);
+            setup.mockInput.pressKey("s");
+            await settle(setup);
+
+            expect(patchBodies).toHaveLength(1);
+            const sent: unknown = JSON.parse(patchBodies[0] ?? "");
+            expect(sent).toStrictEqual({ runtime: "docker" });
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a change to one postgres field alone sends a patch with the postgres key alone", async () => {
+        const { clientOpts, patchBodies } = recordingClientOpts();
+        const setup = await testRender(await configNode(clientOpts), { width: 100, height: 44 });
+        try {
+            await settle(setup);
+            // The password is the last of the five postgres fields: seven arrow-downs from the top.
+            for (let i = 0; i < 7; i++) setup.mockInput.pressArrow("down");
+            await settle(setup);
+            setup.mockInput.pressEnter();
+            await settle(setup);
+            await setup.mockInput.typeText("pg-new");
+            setup.mockInput.pressEnter();
+            await settle(setup);
+            setup.mockInput.pressKey("s");
+            await settle(setup);
+
+            expect(patchBodies).toHaveLength(1);
+            const sent: unknown = JSON.parse(patchBodies[0] ?? "");
+            expect(sent).toHaveProperty("postgres.password", "pg-new");
+            expect(sent).not.toHaveProperty("telemetry");
+            expect(sent).not.toHaveProperty("runtime");
+            expect(sent).not.toHaveProperty("embedding");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a change to the embedding backend alone sends a patch with the embedding key alone", async () => {
+        stubOutsideServer(resolvingFetch({ data: [{ id: "text-embedding-3-small" }] }));
+        const { clientOpts, patchBodies } = recordingClientOpts();
+        const setup = await testRender(await configNode(clientOpts), { width: 100, height: 44 });
+        try {
+            await settle(setup);
+            await focusEmbeddingSection(setup);
+            await chooseBackend(setup, API_KEY_CHOICE);
+            await submitKeyAndDefaultBaseUrl(setup, "sk-patch");
+            setup.mockInput.pressEnter(); // the sole embedding id
+            await settle(setup);
+            setup.mockInput.pressEnter(); // accept the seeded 1536 default
+            await settle(setup);
+            setup.mockInput.pressKey("s");
+            await settle(setup);
+
+            expect(patchBodies).toHaveLength(1);
+            const sent: unknown = JSON.parse(patchBodies[0] ?? "");
+            expect(sent).toStrictEqual({
+                embedding: { mode: "api-key", apiKey: "sk-patch", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
             });
         } finally {
             setup.renderer.destroy();

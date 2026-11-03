@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { err, ok } from "neverthrow";
+import { z } from "zod";
 
 import { env } from "../../../lib/env.ts";
 import * as lockModule from "../../../lib/lock.ts";
@@ -23,11 +24,14 @@ import {
     describeStoreFlightSpec,
     enqueueStoreAdd,
     flushPendingStoreAdds,
+    packageQuery,
     readStoreFlights,
     storeFlightKey,
 } from "../store_flight.ts";
 import { flushAndPrint } from "../store.ts";
 import type { LoadCheckRunner, ProvisionerRunner } from "../provisioner.ts";
+
+const graphNodesSchema = z.object({ nodes: z.record(z.string(), z.unknown()) });
 
 // The flush is the two-phase flight over the pending set: one provisioner
 // `acquire` run for the whole batch, the load check inside the sandbox image,
@@ -510,7 +514,7 @@ describe("the graph commit", () => {
         expect(newer.message).toContain("version 3");
         expect(newer.message).toContain("Upgrade `inflexa`");
         // The refused commit left the graph exactly as it found it.
-        expect(JSON.parse(readFileSync(graphPath, "utf8")).nodes["newpkg-1.0-000000000new0001"]).toBeUndefined();
+        expect(graphNodesSchema.parse(JSON.parse(readFileSync(graphPath, "utf8"))).nodes["newpkg-1.0-000000000new0001"]).toBeUndefined();
     });
 });
 
@@ -677,5 +681,31 @@ describe("the spelling of a request", () => {
 
         const pending = listPendingStoreAdds()._unsafeUnwrap();
         expect(pending.map((entry) => entry.spelling).sort()).toEqual(["GO.db", "go.db"]);
+    });
+});
+
+describe("packageQuery", () => {
+    test("a query with no track and no version has neither key", () => {
+        const query = packageQuery("igraph", undefined, undefined);
+
+        expect(query.spelling).toBe("igraph");
+        expect(Object.hasOwn(query, "track")).toBe(false);
+        expect(Object.hasOwn(query, "version")).toBe(false);
+    });
+
+    test("a track and a version keep their keys and values", () => {
+        const query = packageQuery("igraph", "r", "2.0");
+
+        expect(query).toStrictEqual({ spelling: "igraph", track: "r", version: "2.0" });
+    });
+
+    test("each key stands on its own", () => {
+        const trackOnly = packageQuery("igraph", "python", undefined);
+        const versionOnly = packageQuery("igraph", undefined, "0.11");
+
+        expect(Object.hasOwn(trackOnly, "track")).toBe(true);
+        expect(Object.hasOwn(trackOnly, "version")).toBe(false);
+        expect(Object.hasOwn(versionOnly, "track")).toBe(false);
+        expect(Object.hasOwn(versionOnly, "version")).toBe(true);
     });
 });

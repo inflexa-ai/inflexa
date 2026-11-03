@@ -370,7 +370,9 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     // `[...cmd]` copies the readonly argv into the mutable array `Bun.spawn` expects. No `env`: Bun
     // then inherits the parent's startup snapshot, which is what every other child of this process
     // gets. An absent `cwd` likewise inherits, so the key is omitted rather than passed as undefined.
-    const proc = Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined, ...(cwd === undefined ? {} : { cwd }) });
+    const cwdOption: { cwd?: string } = {};
+    if (cwd !== undefined) cwdOption.cwd = cwd;
+    const proc = Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined, ...cwdOption });
 
     // Armed only once the child exists. A launch that throws (ENOENT on the binary) propagates out of
     // this function, so a timer armed before it would never be cleared — and a pending `setTimeout`

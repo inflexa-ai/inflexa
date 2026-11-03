@@ -157,7 +157,7 @@ export function terminalUiRegisterOpts(surface: string): RegisterOpts {
  */
 function hydrateFromAncestors(command: Command): void {
     const own = command.opts();
-    const inherited = command.optsWithGlobals();
+    const inherited = command.optsWithGlobals<Record<string, unknown>>();
     for (const option of command.options) {
         const key = option.attributeName();
         const value = inherited[key];

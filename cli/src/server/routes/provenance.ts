@@ -38,8 +38,7 @@ export function provenanceRoutes(): Hono<ServerEnv> {
         const format = body.value.format === "prov-json" ? "json" : "provn";
         const exported = await exportAnalysisProvenance(analysis.value, format, body.value.output);
         return exported.match(
-            (v) =>
-                c.json({ path: v.path, ...(v.attestationPath === undefined ? {} : { attestationPath: v.attestationPath }) } satisfies ExportProvenanceResult),
+            (v) => c.json({ path: v.path, attestationPath: v.attestationPath } satisfies ExportProvenanceResult),
             (e) => {
                 switch (e.type) {
                     case "output_dir":
@@ -92,7 +91,7 @@ export function provenanceRoutes(): Hono<ServerEnv> {
         const analysis = analysisOf(c);
         if (analysis.isErr()) return analysis.error;
         await flushRecorder();
-        return walkAnalysisLineage(analysis.value, ref, { forward, format, ...(depth === undefined ? {} : { depth }) }).match(
+        return walkAnalysisLineage(analysis.value, ref, { forward, format, depth }).match(
             (view) => c.json(view),
             (e) => {
                 switch (e.type) {

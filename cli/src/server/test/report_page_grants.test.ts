@@ -62,7 +62,7 @@ describe("the page grant store", () => {
         let stored: string[];
         try {
             token = store.mint("a1", "t1").token;
-            keys = set.mock.calls.map((call) => call[0]);
+            keys = set.mock.calls.map((call): unknown => call[0]);
             stored = set.mock.calls.map((call) => JSON.stringify(call[1]));
         } finally {
             set.mockRestore();

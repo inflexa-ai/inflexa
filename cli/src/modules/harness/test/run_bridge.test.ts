@@ -62,6 +62,21 @@ describe("run observation bridge", () => {
         expect("error" in running).toBe(false);
         const done = event.snapshot.steps.find((s) => s.id === "T1S1")!;
         expect(done.durationMs).toBe(4200);
+        expect("durationMs" in done).toBe(true);
+        expect("error" in done).toBe(false);
+    });
+
+    test("keeps the error key of a step that failed with a reason", () => {
+        emitRunObservation(
+            observation({ steps: [{ id: "T1S1", name: "quality control", agent: "bio-analyst", status: "failed", error: "the sandbox ran out of memory" }] }),
+        );
+
+        const event = captured[0];
+        if (event?.type !== "run.observed") throw new Error("expected run.observed");
+        const failed = event.snapshot.steps[0];
+        if (failed === undefined) throw new Error("expected a step");
+        expect("error" in failed).toBe(true);
+        expect(failed.error).toBe("the sandbox ran out of memory");
     });
 
     test("restates the snapshot rather than forwarding the harness object", () => {

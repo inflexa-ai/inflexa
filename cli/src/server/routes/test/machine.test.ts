@@ -275,6 +275,41 @@ describe("the settings", () => {
         expect(config["embedding"]).toEqual({ mode: "api-key", apiKey: "sk-1" });
     });
 
+    test("PATCH keeps each of `telemetry`, `runtime`, and `embedding` that it does not name, and writes each one that it names", async () => {
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: true, runtime: "docker", embedding: { mode: "local", modelPath: "/models/m.gguf" } }));
+
+        const unnamed = await routesWith().request("/settings", json("PATCH", {}));
+        expect(unnamed.status).toBe(200);
+        const kept = persistedConfig();
+        expect(Object.hasOwn(kept, "telemetry")).toBe(true);
+        expect(kept["telemetry"]).toBe(true);
+        expect(Object.hasOwn(kept, "runtime")).toBe(true);
+        expect(kept["runtime"]).toBe("docker");
+        expect(Object.hasOwn(kept, "embedding")).toBe(true);
+        expect(kept["embedding"]).toEqual({ mode: "local", modelPath: "/models/m.gguf" });
+
+        const named = await routesWith().request("/settings", json("PATCH", { telemetry: false, runtime: "podman", embedding: { mode: "off" } }));
+        expect(named.status).toBe(200);
+        const written = persistedConfig();
+        expect(Object.hasOwn(written, "telemetry")).toBe(true);
+        expect(written["telemetry"]).toBe(false);
+        expect(Object.hasOwn(written, "runtime")).toBe(true);
+        expect(written["runtime"]).toBe("podman");
+        expect(Object.hasOwn(written, "embedding")).toBe(true);
+        expect(written["embedding"]).toEqual({ mode: "off" });
+    });
+
+    test("PATCH with `runtime: null` clears the stored runtime and keeps the other keys", async () => {
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: true, runtime: "docker" }));
+
+        const response = await routesWith().request("/settings", json("PATCH", { runtime: null }));
+        expect(response.status).toBe(200);
+        const config = persistedConfig();
+        expect(Object.hasOwn(config, "runtime")).toBe(false);
+        expect(Object.hasOwn(config, "telemetry")).toBe(true);
+        expect(config["telemetry"]).toBe(true);
+    });
+
     test("GET sends no secret: the embedding API key and the Postgres password stay on the server", async () => {
         writeFileSync(
             env.configPath,

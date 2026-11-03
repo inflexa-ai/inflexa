@@ -347,10 +347,10 @@ const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = { mode: "cliproxy", pr
  * result into their provider config, thus the two sites share one rule.
  */
 export function pickRequestBounds(connection: { requestTimeoutMs?: number; maxRetries?: number }): { requestTimeoutMs?: number; maxRetries?: number } {
-    return {
-        ...(connection.requestTimeoutMs !== undefined && { requestTimeoutMs: connection.requestTimeoutMs }),
-        ...(connection.maxRetries !== undefined && { maxRetries: connection.maxRetries }),
-    };
+    const bounds: { requestTimeoutMs?: number; maxRetries?: number } = {};
+    if (connection.requestTimeoutMs !== undefined) bounds.requestTimeoutMs = connection.requestTimeoutMs;
+    if (connection.maxRetries !== undefined) bounds.maxRetries = connection.maxRetries;
+    return bounds;
 }
 
 /**
@@ -387,15 +387,17 @@ export function resolveModelConnection(): ResolvedModelConnection {
     }
     const protocol: ModelWireProtocol = connection.protocol ?? impliedWireProtocol(connection.provider, connection.baseURL);
     // Carry the optional token-free `auth` source verbatim (present only on a well-formed direct block).
+    const directOptions: { auth?: ModelAuthConfig; contextWindow?: number; supportsMultiPartToolContent?: boolean } = {};
+    if (connection.auth !== undefined) directOptions.auth = connection.auth;
+    if (connection.contextWindow !== undefined) directOptions.contextWindow = connection.contextWindow;
+    if (connection.supportsMultiPartToolContent !== undefined) directOptions.supportsMultiPartToolContent = connection.supportsMultiPartToolContent;
     return {
         mode: "direct",
         provider: connection.provider,
         baseURL: connection.baseURL,
         protocol,
         agents,
-        ...(connection.auth !== undefined && { auth: connection.auth }),
-        ...(connection.contextWindow !== undefined && { contextWindow: connection.contextWindow }),
-        ...(connection.supportsMultiPartToolContent !== undefined && { supportsMultiPartToolContent: connection.supportsMultiPartToolContent }),
+        ...directOptions,
         ...requestBounds,
     };
 }

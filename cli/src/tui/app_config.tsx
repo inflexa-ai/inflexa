@@ -414,7 +414,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
                             mode: "local",
                             modelPath: path,
                             apiKeySet: false,
-                            ...(dimensions === defaults.localDimensions ? {} : { dimensions }),
+                            dimensions: dimensions === defaults.localDimensions ? undefined : dimensions,
                         }),
                     );
                 }}
@@ -498,10 +498,10 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
             applyEmbedding({
                 mode: "api-key",
                 apiKeySet: true,
-                ...(apiKey === null ? {} : { apiKey }),
+                apiKey: apiKey === null ? undefined : apiKey,
                 baseURL,
-                ...(model === "" ? {} : { model }),
-                ...(dimensions === defaults.apiDimensions ? {} : { dimensions }),
+                model: model === "" ? undefined : model,
+                dimensions: dimensions === defaults.apiDimensions ? undefined : dimensions,
             }),
         );
     }
@@ -584,12 +584,12 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
         // A secret that the user did not enter is absent from the patch, and the server keeps the stored one.
         const { passwordSet: _passwordSet, ...postgres } = next.postgres;
         const { apiKeySet: _apiKeySet, ...embedding } = next.embedding;
-        const patch: SettingsPatch = {
-            ...(next.telemetry === saved().telemetry ? {} : { telemetry: next.telemetry }),
-            ...(next.runtime === saved().runtime ? {} : { runtime: next.runtime }),
-            ...(PG_FIELDS.some((f) => next.postgres[f] !== saved().postgres[f]) ? { postgres } : {}),
-            ...(embeddingChanged() ? { embedding } : {}),
-        };
+        // Built key by key: the gate below counts the keys, and the server keeps each stored value whose key is absent.
+        const patch: SettingsPatch = {};
+        if (next.telemetry !== saved().telemetry) patch.telemetry = next.telemetry;
+        if (next.runtime !== saved().runtime) patch.runtime = next.runtime;
+        if (PG_FIELDS.some((f) => next.postgres[f] !== saved().postgres[f])) patch.postgres = postgres;
+        if (embeddingChanged()) patch.embedding = embedding;
         if (Object.keys(patch).length > 0) {
             const updated = await updateSettings(patch, clientOpts);
             if (updated.isErr()) {

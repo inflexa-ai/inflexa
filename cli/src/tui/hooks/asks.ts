@@ -39,7 +39,7 @@ export function queuedCount(): number {
 export function pushAsk(ask: PendingAsk): void {
     setAsks(
         produce((queue) => {
-            queue.push({ askId: ask.askId, title: ask.title, command: ask.command, ...(ask.detail !== undefined ? { detail: ask.detail } : {}) });
+            queue.push({ askId: ask.askId, title: ask.title, command: ask.command, detail: ask.detail });
         }),
     );
 }

@@ -79,7 +79,7 @@ function analysisUsage(c: Context, analysisId: string, by: UsageGrouping | undef
     };
     return Result.combine([getAnalysisUsageTotals(analysisId), getAnalysisDataProfileUsageTotals(analysisId), getAnalysisUnattributedUsageTotals(analysisId)])
         .andThen(([totals, dataProfile, unattributed]) =>
-            groups().map((gs): UsageView => ({ scope: { kind: "analysis" }, totals, grains: { dataProfile, unattributed }, ...(gs ? { groups: gs } : {}) })),
+            groups().map((gs): UsageView => ({ scope: { kind: "analysis" }, totals, grains: { dataProfile, unattributed }, groups: gs })),
         )
         .match(
             (view) => c.json(view),
@@ -95,7 +95,7 @@ function threadUsage(c: Context, analysisId: string, threadId: string, by: Usage
         return ok(undefined);
     };
     return getSessionUsageTotalsIncludingRuns(analysisId, threadId)
-        .andThen((totals) => groups().map((gs): UsageView => ({ scope: { kind: "thread", threadId }, totals, ...(gs ? { groups: gs } : {}) })))
+        .andThen((totals) => groups().map((gs): UsageView => ({ scope: { kind: "thread", threadId }, totals, groups: gs })))
         .match(
             (view) => c.json(view),
             (e) => internalError(c, e, "read the usage of a conversation"),

@@ -9,6 +9,7 @@ import { readConfig, writeConfig } from "../../../lib/config.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     DEFAULT_AGENT_EFFORTS,
+    pickRequestBounds,
     resolveAgentEfforts,
     resolveHarnessConfig,
     resolveKnowledgeConfig,
@@ -35,7 +36,7 @@ afterEach(() => {
 // what these tests vary.
 function writeConfigWithModels(models: unknown): void {
     mkdirSync(dirname(env.configPath), { recursive: true });
-    writeFileSync(env.configPath, JSON.stringify({ telemetry: false, ...(models === undefined ? {} : { models }) }));
+    writeFileSync(env.configPath, JSON.stringify({ telemetry: false, models }));
 }
 
 describe("resolveHarnessConfig — retired ephemeral resources", () => {
@@ -225,6 +226,38 @@ describe("resolveModelConnection — direct-mode auth (credential source) round-
         expect(resolved).not.toHaveProperty("auth");
     });
 
+    test("a direct connection that sets each optional field carries each key with its value", () => {
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+                auth: { kind: "env", var: "DEEPSEEK_TOKEN", scheme: "bearer" },
+                contextWindow: 64_000,
+                supportsMultiPartToolContent: false,
+            },
+        });
+        const resolved = resolveModelConnection();
+
+        for (const key of ["auth", "contextWindow", "supportsMultiPartToolContent"]) {
+            expect(Object.hasOwn(resolved, key)).toBe(true);
+        }
+        expect(resolved).toMatchObject({
+            auth: { kind: "env", var: "DEEPSEEK_TOKEN", scheme: "bearer" },
+            contextWindow: 64_000,
+            supportsMultiPartToolContent: false,
+        });
+    });
+
+    test("a direct connection that sets none of the optional fields carries none of the keys", () => {
+        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" } });
+        const resolved = resolveModelConnection();
+
+        for (const key of ["auth", "contextWindow", "supportsMultiPartToolContent"]) {
+            expect(Object.hasOwn(resolved, key)).toBe(false);
+        }
+    });
+
     test("an invalid auth scheme fails the whole models parse closed, naming the offending field", () => {
         writeConfigWithModels({
             connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1", auth: { kind: "env", var: "X", scheme: "basic" } },
@@ -295,6 +328,45 @@ describe("resolveModelConnection — request timeout and retry count", () => {
         expect(resolved.requestTimeoutMs).toBeUndefined();
         expect(resolved.maxRetries).toBeUndefined();
         expect(resolved.configError).toBeUndefined();
+    });
+
+    test("a set requestTimeoutMs and maxRetries are keys of each arm, and a zero maxRetries stays a key", () => {
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", requestTimeoutMs: 1_800_000, maxRetries: 0 } });
+        const cliproxy = resolveModelConnection();
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", requestTimeoutMs: 1_800_000, maxRetries: 0 },
+        });
+        const direct = resolveModelConnection();
+
+        for (const resolved of [cliproxy, direct]) {
+            expect(Object.hasOwn(resolved, "requestTimeoutMs")).toBe(true);
+            expect(resolved.requestTimeoutMs).toBe(1_800_000);
+            expect(Object.hasOwn(resolved, "maxRetries")).toBe(true);
+            expect(resolved.maxRetries).toBe(0);
+        }
+    });
+
+    test("an absent requestTimeoutMs and maxRetries leave no key on either arm", () => {
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic" } });
+        const cliproxy = resolveModelConnection();
+        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" } });
+        const direct = resolveModelConnection();
+
+        for (const resolved of [cliproxy, direct]) {
+            expect(Object.hasOwn(resolved, "requestTimeoutMs")).toBe(false);
+            expect(Object.hasOwn(resolved, "maxRetries")).toBe(false);
+        }
+    });
+
+    test("pickRequestBounds gives a key only for a field that is set", () => {
+        const none = pickRequestBounds({});
+        const both = pickRequestBounds({ requestTimeoutMs: 5, maxRetries: 0 });
+
+        expect(Object.hasOwn(none, "requestTimeoutMs")).toBe(false);
+        expect(Object.hasOwn(none, "maxRetries")).toBe(false);
+        expect(Object.hasOwn(both, "requestTimeoutMs")).toBe(true);
+        expect(Object.hasOwn(both, "maxRetries")).toBe(true);
+        expect(both).toEqual({ requestTimeoutMs: 5, maxRetries: 0 });
     });
 
     test("a zero requestTimeoutMs fails closed to the default connection, carrying a configError", () => {
@@ -432,7 +504,7 @@ describe("resolveKnowledgeConfig", () => {
 
     function writeConfigWithKnowledge(knowledge: unknown): void {
         mkdirSync(dirname(env.configPath), { recursive: true });
-        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, ...(knowledge === undefined ? {} : { knowledge }) }));
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, knowledge }));
     }
 
     // `Bun.env` is the sanctioned way for a test to set an ambient variable (see setup.test.ts); the

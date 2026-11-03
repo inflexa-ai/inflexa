@@ -146,9 +146,9 @@ export function machineRoutes(opts: MachineRouteOpts = DEFAULT_MACHINE_ROUTE_OPT
                     const claims = decodeIdTokenClaims(auth.idToken);
                     return {
                         signedIn: true,
-                        ...(claims?.name ? { name: claims.name } : {}),
-                        ...(claims?.email ? { email: claims.email } : {}),
-                        ...(claims?.sub ? { subject: claims.sub } : {}),
+                        name: claims?.name || undefined,
+                        email: claims?.email || undefined,
+                        subject: claims?.sub || undefined,
                         claimsDecoded: claims !== null,
                         expiresAt: new Date(auth.expiresAt).toISOString(),
                     };
@@ -348,11 +348,7 @@ async function workspaceFolder(c: Context<ServerEnv>, analysisId: string, path: 
  * is refused from the record alone, before any disk probe; a stale record that names a folder falls
  * through to the disk guard.
  */
-async function inputFolder(
-    c: Context<ServerEnv>,
-    analysisId: string,
-    reference: { path: string; anchorId: string | null },
-): Promise<Result<string, Response>> {
+async function inputFolder(c: Context<ServerEnv>, analysisId: string, reference: { path: string; anchorId: string | null }): Promise<Result<string, Response>> {
     const inputs = listAnalysisInputs(analysisId);
     if (inputs.isErr()) return err(internalError(c, inputs.error, "read the inputs of the analysis"));
     const match = inputs.value.find((input) => input.path === reference.path && input.anchorId === reference.anchorId);
@@ -416,12 +412,12 @@ function serverSettings(): ServerSettings {
 function saveSettings(patch: SettingsPatch): Result<void, ConfigError> {
     const config = readConfig();
     const embedding = patch.embedding?.mode === "api-key" ? { ...patch.embedding, apiKey: patch.embedding.apiKey ?? config.embedding.apiKey } : patch.embedding;
-    const next: Config = {
-        ...config,
-        ...(patch.telemetry === undefined ? {} : { telemetry: patch.telemetry }),
-        ...(patch.runtime === undefined ? {} : { runtime: patch.runtime ?? undefined }),
-        ...(embedding === undefined ? {} : { embedding }),
-    };
+    // A key that the patch omits keeps its stored value, thus it stays absent from the patch layer: an `undefined`
+    // value would overwrite the stored one. `runtime: null` is the one explicit clear.
+    const next: Config = { ...config };
+    if (patch.telemetry !== undefined) next.telemetry = patch.telemetry;
+    if (patch.runtime !== undefined) next.runtime = patch.runtime ?? undefined;
+    if (embedding !== undefined) next.embedding = embedding;
     if (patch.postgres !== undefined) {
         const explicit = explicitPostgresFields({ ...patch.postgres, password: patch.postgres.password ?? resolvePostgresConfig().password });
         next.postgres = Object.keys(explicit).length === 0 ? undefined : explicit;

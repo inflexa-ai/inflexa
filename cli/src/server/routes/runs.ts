@@ -495,7 +495,7 @@ function approvalRefusal(c: Context<ServerEnv>, planId: string, refusal: Approve
                 reason: "packages_missing",
                 missing: refusal.missing,
                 collisions: refusal.collisions,
-                ...(refusal.unavailable === undefined ? {} : { unavailable: refusal.unavailable }),
+                unavailable: refusal.unavailable,
             });
         // The harness names the datasets and no command: the remedy is this host's to give. The
         // command goes in the MESSAGE, because that is what a caller shows a user and what the
@@ -508,7 +508,7 @@ function approvalRefusal(c: Context<ServerEnv>, planId: string, refusal: Approve
                 {
                     reason: "references_missing",
                     missing: refusal.missing,
-                    ...(refusal.unavailable === undefined ? {} : { unavailable: refusal.unavailable }),
+                    unavailable: refusal.unavailable,
                 },
             );
         case "not_authorized":
@@ -574,7 +574,7 @@ function loadProfileView(pool: Pool, analysisId: string, opts: RunRoutesOpts): R
             result: row.result,
             workflowId: row.workflowId,
             seedInputFileIds: row.seedInputFileIds,
-            ...(usage === null ? {} : { usage }),
+            usage: usage ?? undefined,
             ...work,
         };
     });
@@ -729,18 +729,18 @@ function toRunSummary(
         startedAt: row.startedAt,
         completedAt: row.completedAt,
         error: row.error,
-        ...(planTitle === null ? {} : { planTitle }),
+        planTitle: planTitle ?? undefined,
         // A run with no ledger call has a zero count: no figure, the same as a run with no ledger row.
-        ...(usage === null || usage.calls === 0 ? {} : { usage }),
-        ...(artifactCount === null ? {} : { artifactCount }),
-        ...(stepCounts === null ? {} : stepCounts),
+        usage: usage === null || usage.calls === 0 ? undefined : usage,
+        artifactCount: artifactCount ?? undefined,
+        ...stepCounts,
     };
 }
 
 function toStepSummary(step: StepExecutionRow, name: string | undefined, usage: UsageTotals | undefined): RunStepSummary {
     return {
         stepId: step.stepId,
-        ...(name === undefined ? {} : { name }),
+        name,
         agentId: step.agentId,
         status: step.status,
         startedAt: step.startedAt,
@@ -749,7 +749,7 @@ function toStepSummary(step: StepExecutionRow, name: string | undefined, usage: 
         error: step.error,
         attempts: step.attempts,
         blockedReason: step.blockedReason,
-        ...(usage === undefined ? {} : { usage }),
+        usage,
     };
 }
 
@@ -783,9 +783,10 @@ function trimmedTitle(title: unknown): string | null {
 export function planStepNames(plan: unknown): ReadonlyMap<string, string> {
     const names = new Map<string, string>();
     if (typeof plan !== "object" || plan === null || !("steps" in plan)) return names;
-    const steps = plan.steps;
+    const steps: unknown = plan.steps;
     if (!Array.isArray(steps)) return names;
-    for (const step of steps) {
+    const list: unknown[] = steps;
+    for (const step of list) {
         if (typeof step !== "object" || step === null) continue;
         const id = "id" in step ? step.id : undefined;
         const name = "name" in step ? step.name : undefined;

@@ -11,6 +11,7 @@ import {
     type ReferenceDataCatalog,
 } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
+import { z } from "zod";
 
 // Side-effect import: the command actions render byte counts through Number.prototype.formatBytes,
 // which only exists once the extension loader has run.
@@ -45,6 +46,16 @@ import {
     type ReferenceProvisionError,
     type ReferenceStoreInspection,
 } from "../store.ts";
+
+// Loose objects keep each key that the schema does not name, so `not.toHaveProperty` still sees an absent key as absent.
+const listedDatasetSchema = z.looseObject({
+    id: z.string(),
+    state: z.string(),
+    artifacts: z.array(z.unknown()),
+    installedVersion: z.string().optional(),
+    installedAt: z.string().optional(),
+});
+const refsListSchema = z.looseObject({ datasets: z.tuple([listedDatasetSchema, listedDatasetSchema]) });
 
 function sha(bytes: string): string {
     return createHash("sha256").update(bytes).digest("hex");
@@ -406,8 +417,8 @@ describe("reference json output", () => {
         const { stdout, stderr, exitCode } = await capture(() => runRefsList({ json: true, source: twoDatasetSource }));
         expect(stderr).toBe("");
         expect(exitCode ?? 0).toBe(0);
-        const document = JSON.parse(stdout);
-        expect(document.datasets.map((entry: { id: string }) => entry.id)).toEqual(["extra", "demo"]);
+        const document = refsListSchema.parse(JSON.parse(stdout));
+        expect(document.datasets.map((entry) => entry.id)).toEqual(["extra", "demo"]);
         const [extra, demo] = document.datasets;
         expect(extra.state).toBe("missing");
         expect(extra).not.toHaveProperty("installedVersion");
@@ -472,7 +483,7 @@ describe("reference json output", () => {
         const second = await capture(() => runRefsList({ json: true, source: singleFileSource }));
         expect(first.stdout).toBe(second.stdout);
         expect(first.stderr).toBe("");
-        expect(JSON.parse(first.stdout).exists).toBe(false);
+        expect(JSON.parse(first.stdout)).toMatchObject({ exists: false });
         // Passive inspection must never materialize the store.
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
     });

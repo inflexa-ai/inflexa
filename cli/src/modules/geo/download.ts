@@ -88,7 +88,7 @@ export async function runGeoDownload(rawGse: string, maxSize: string | undefined
 
     const destDir = join(folder, accession);
     console.log(`Downloading ${accession} to ${destDir}`);
-    const downloaded = await downloadGeoSeries(accession, destDir, { onProgress: reportProgress, ...(maxBytes === undefined ? {} : { maxBytes }) });
+    const downloaded = await downloadGeoSeries(accession, destDir, { onProgress: reportProgress, maxBytes });
     if (downloaded.isErr()) fail(describeGeoDownloadError(downloaded.error, accession));
 
     console.log(`\nDownloaded ${accession} — ${downloaded.value.length} file(s) in ${destDir}.`);

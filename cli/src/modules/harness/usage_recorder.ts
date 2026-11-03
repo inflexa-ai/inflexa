@@ -47,12 +47,11 @@ type ScopeColumns = Pick<LlmUsageEntry, "scopeKind" | "scopeId" | "threadId">;
  */
 function scopeColumns(scope: Scope): ScopeColumns | null {
     switch (scope.kind) {
-        case "analysis":
-            return {
-                scopeKind: scope.kind,
-                scopeId: scope.analysisId,
-                ...(scope.threadId === undefined ? {} : { threadId: scope.threadId }),
-            };
+        case "analysis": {
+            const columns: ScopeColumns = { scopeKind: scope.kind, scopeId: scope.analysisId };
+            if (scope.threadId !== undefined) columns.threadId = scope.threadId;
+            return columns;
+        }
         default:
             // A NEW `Scope` variant fails to compile at this line rather than silently reaching the
             // runtime report below — a forgotten mapping is a build error, not a lost record.
@@ -73,18 +72,19 @@ function scopeColumns(scope: Scope): ScopeColumns | null {
  * where that distinction is easiest to lose.
  */
 function toEntry(call: LlmUsageRecord, recordedAt: number, scope: ScopeColumns): LlmUsageEntry {
-    return {
+    const entry: LlmUsageEntry = {
         recordKey: call.recordKey,
         recordedAt,
         agentId: call.agentId,
         callPath: call.callPath.join(CALL_PATH_SEPARATOR),
         ...scope,
-        ...(call.runId === undefined ? {} : { runId: call.runId }),
-        ...(call.stepId === undefined ? {} : { stepId: call.stepId }),
-        ...(call.requestedModelId === undefined ? {} : { requestedModelId: call.requestedModelId }),
-        ...(call.servedModelId === undefined ? {} : { servedModelId: call.servedModelId }),
         usage: call.usage,
     };
+    if (call.runId !== undefined) entry.runId = call.runId;
+    if (call.stepId !== undefined) entry.stepId = call.stepId;
+    if (call.requestedModelId !== undefined) entry.requestedModelId = call.requestedModelId;
+    if (call.servedModelId !== undefined) entry.servedModelId = call.servedModelId;
+    return entry;
 }
 
 /** What {@link createUsageRecorder} needs from the world around it. */

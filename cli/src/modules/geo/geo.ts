@@ -519,7 +519,7 @@ export async function downloadGeoSeries(
                             fileName: artifact.fileName,
                             index,
                             total: artifacts.length,
-                            ...(declaredBytes === undefined ? {} : { declaredBytes }),
+                            declaredBytes,
                         });
                         return;
                     }
@@ -532,7 +532,7 @@ export async function downloadGeoSeries(
                         type: "file_progress",
                         fileName: artifact.fileName,
                         bytes: transferred,
-                        ...(declaredBytes === undefined ? {} : { declaredBytes }),
+                        declaredBytes,
                     });
                 },
             });

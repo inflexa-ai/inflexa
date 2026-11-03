@@ -15,6 +15,7 @@ import { freshDb } from "../../../test_support/db.ts";
 import { FARM_PARITY_FIXTURE } from "../../../test_support/fixtures.ts";
 import type { ServerEnv } from "../../http.ts";
 import { DEFAULT_STORE_ROUTE_OPTS, farmLinkRoutes, storeRoutes, type StoreRouteOpts } from "../store.ts";
+import { stringContaining } from "../../../test_support/matchers.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. Each start of a detached
 // child is a stub, thus no test spawns a transfer, a flush, or a container. Each `as` cast of a body reads
@@ -211,7 +212,7 @@ describe("POST {A}/farm/link", () => {
         const analysisId = seedAnalysis("liver");
         const refused = await linkRequest(root, analysisId, { packages: ["nothing-here"] });
         expect(refused.status).toBe(409);
-        expect(await refused.json()).toMatchObject({ error: "conflict", message: expect.stringContaining("inflexa store add nothing-here") });
+        expect(await refused.json()).toMatchObject({ error: "conflict", message: stringContaining("inflexa store add nothing-here") });
         expect((await linkRequest(root, randomUUIDv7(), { packages: ["alpha"] })).status).toBe(404);
     });
 });

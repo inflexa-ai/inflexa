@@ -193,7 +193,7 @@ function download(storeRoot: string, registry: FakeRegistry, force?: boolean): R
         arch: "arm64",
         fetch: registry.fetch,
         retry: FAST_RETRY,
-        ...(force === undefined ? {} : { force }),
+        force,
     });
 }
 

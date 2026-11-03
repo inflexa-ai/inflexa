@@ -18,8 +18,8 @@ import { getLogger } from "../../lib/log.ts";
 
 const log = getLogger("prov:signing");
 
-// oxlint-disable-next-line typescript/no-explicit-any -- WebCrypto's JsonWebKey is a loose object; we serialize it as-is without inspecting fields.
-type JWK = any;
+/** A JWK is a loose object: the module serializes it as-is, and the kernel import primitives take this shape. */
+type JWK = Record<string, unknown>;
 
 /** The on-disk JWK keypair shape. */
 type StoredKeypair = { publicKey: JWK; privateKey: JWK };
@@ -47,7 +47,7 @@ async function generateKeypair(): Promise<CryptoKeyPair> {
 
 async function exportKeypair(kp: CryptoKeyPair): Promise<StoredKeypair> {
     const [publicKey, privateKey] = await Promise.all([crypto.subtle.exportKey("jwk", kp.publicKey), crypto.subtle.exportKey("jwk", kp.privateKey)]);
-    return { publicKey, privateKey };
+    return { publicKey: { ...publicKey }, privateKey: { ...privateKey } };
 }
 
 /** Import a stored JWK pair through the kernel's import primitives; a failed import is a corrupt keypair. */

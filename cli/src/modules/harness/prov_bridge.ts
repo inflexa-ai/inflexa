@@ -14,7 +14,19 @@ import type {
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
 import { Bus } from "../../lib/bus.ts";
 import { getLogger } from "../../lib/log.ts";
-import type { ProvCommandInputRef, ProvCommandRef, ProvFileKey, ProvFileRef, ProvModelId, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
+import type {
+    ProvCallRef,
+    ProvCommandInputRef,
+    ProvCommandRef,
+    ProvFileKey,
+    ProvFileRef,
+    ProvModelId,
+    ProvScriptRunRef,
+    ProvSessionRef,
+    ProvStepOutcome,
+    ProvStepRef,
+    ProvUsedInputRef,
+} from "../../types/prov.ts";
 import { provModel } from "../prov/document.ts";
 import { currentUserActor, flushProvenanceAsync, systemActor } from "../prov/prov.ts";
 import { buildAttestation } from "../prov/verify.ts";
@@ -91,6 +103,19 @@ function scopeScriptPath(scriptPath: string, resourceId: string, runId: string, 
     return analysisRooted ? stripped : `runs/${runId}/${stepId}/${stripped}`;
 }
 
+type InputRef<S extends ProvCommandInputRef["source"]> = { path: string; hash: string; source: S; fileId?: string };
+
+/**
+ * One attested-input reference of the shared file-QName space, for the command-scoped reads and for the step-level
+ * `prov.input_used` event. The `fileId` key is absent until a staged-input file id resolved, because the reference
+ * becomes a record of the signed document and an `undefined` key must not enter it.
+ */
+function inputRef<S extends ProvCommandInputRef["source"]>(path: string, hash: string, source: S, fileId: string | undefined): InputRef<S> {
+    const ref: InputRef<S> = { path, hash, source };
+    if (fileId !== undefined) ref.fileId = fileId;
+    return ref;
+}
+
 /**
  * Map one command's per-command reads to command-scoped {@link ProvCommandInputRef}s in the shared
  * file-QName space. `data`/`upstream`/`prior` reads pass through with their `/{resourceId}/`
@@ -120,13 +145,13 @@ function toCommandInputs(reads: readonly CollectorInputRef[], resourceId: string
             const dedupKey = `${path}|${producedHash}`;
             if (seen.has(dedupKey)) continue;
             seen.add(dedupKey);
-            inputs.push({ path, hash: producedHash, source: "step", ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) });
+            inputs.push(inputRef(path, producedHash, "step", ref.fileId));
             continue;
         }
         const dedupKey = `${path}|${ref.hash}`;
         if (!ref.hash || seen.has(dedupKey)) continue;
         seen.add(dedupKey);
-        inputs.push({ path, hash: ref.hash, source: ref.source, ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) });
+        inputs.push(inputRef(path, ref.hash, ref.source, ref.fileId));
     }
     return inputs;
 }
@@ -149,16 +174,17 @@ function toCommandRef(
     producedHashByPath: ReadonlyMap<string, string>,
 ): ProvCommandRef {
     const scriptPath = record.scriptPath !== null ? scopeScriptPath(record.scriptPath, resourceId, runId, stepId) : undefined;
-    return {
+    const ref: ProvCommandRef = {
         kind: "command",
         command: producer.command,
-        ...(producer.args !== undefined ? { args: producer.args } : {}),
         exitCode: producer.exitCode,
-        ...(producer.durationMs !== undefined ? { durationMs: producer.durationMs } : {}),
-        ...(scriptPath !== undefined ? { scriptPath } : {}),
         outputs,
         inputs: toCommandInputs(record.inputs, resourceId, producedHashByPath),
     };
+    if (producer.args !== undefined) ref.args = producer.args;
+    if (producer.durationMs !== undefined) ref.durationMs = producer.durationMs;
+    if (scriptPath !== undefined) ref.scriptPath = scriptPath;
+    return ref;
 }
 
 /**
@@ -319,7 +345,7 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
                 continue;
             }
 
-            const usedInput: ProvUsedInputRef = { path, hash: ref.hash, source, ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) };
+            const usedInput: ProvUsedInputRef = inputRef(path, ref.hash, source, ref.fileId);
             Bus.emit("inflexa", { type: "prov.input_used", analysisId: input.resourceId, actor, step, input: usedInput });
         }
 
@@ -369,21 +395,12 @@ export function createRunProvenanceEmitter(model: ProvModelId): (event: RunProve
                     run: { runId: event.runId, planSummary: event.planSummary, startedAtMs: event.atMs },
                 });
                 return;
-            case "step_completed":
-                Bus.emit("inflexa", {
-                    type: "prov.step_completed",
-                    analysisId: event.analysisId,
-                    actor: systemActor(),
-                    model,
-                    outcome: {
-                        runId: event.runId,
-                        stepId: event.stepId,
-                        status: event.status,
-                        completedAtMs: event.atMs,
-                        ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
-                    },
-                });
+            case "step_completed": {
+                const outcome: ProvStepOutcome = { runId: event.runId, stepId: event.stepId, status: event.status, completedAtMs: event.atMs };
+                if (event.durationMs !== undefined) outcome.durationMs = event.durationMs;
+                Bus.emit("inflexa", { type: "prov.step_completed", analysisId: event.analysisId, actor: systemActor(), model, outcome });
                 return;
+            }
             case "run_completed":
                 Bus.emit("inflexa", {
                     type: "prov.run_completed",
@@ -491,21 +508,14 @@ export function createSessionEmit(sessionModel: ReportSessionModel): (event: Ses
         }
 
         switch (event.type) {
-            case "create-session":
-                Bus.emit("inflexa", {
-                    type: "prov.session_created",
-                    analysisId,
-                    actor,
-                    model,
-                    session: {
-                        threadId: event.threadId,
-                        kind: event.sessionKind,
-                        // A root session has no parent, thus the key stays absent rather than carrying
-                        // `undefined` into the record.
-                        ...(event.parentThreadId !== undefined ? { parentThreadId: event.parentThreadId } : {}),
-                    },
-                });
+            case "create-session": {
+                const session: ProvSessionRef = { threadId: event.threadId, kind: event.sessionKind };
+                // A root session has no parent, thus the key stays absent rather than carrying
+                // `undefined` into the record.
+                if (event.parentThreadId !== undefined) session.parentThreadId = event.parentThreadId;
+                Bus.emit("inflexa", { type: "prov.session_created", analysisId, actor, model, session });
                 return;
+            }
             case "add-block":
                 emitBlockAct("prov.report_block_added", event.threadId, event.blockId, event.blockKind);
                 return;
@@ -561,7 +571,11 @@ export function createSessionEmit(sessionModel: ReportSessionModel): (event: Ses
                     version: { threadId: event.threadId, versionId: event.versionId, replaced: event.replaced },
                 });
                 return;
-            case "write-file":
+            case "write-file": {
+                const call: ProvCallRef = { invocationId: event.invocationId, tool: event.tool };
+                // A chat scope can carry no thread; the key then stays absent rather than
+                // carrying `undefined` into the record.
+                if (event.threadId !== undefined) call.threadId = event.threadId;
                 // The flattened form of a session write: `generation: "call"` with no step ref, so
                 // the kernel scopes the call QName by the thread instead of a step key.
                 Bus.emit("inflexa", {
@@ -571,35 +585,26 @@ export function createSessionEmit(sessionModel: ReportSessionModel): (event: Ses
                     model,
                     file: { path: event.path, hash: event.hash, size: event.size, producer: "file_tool" },
                     generation: "call",
-                    call: {
-                        invocationId: event.invocationId,
-                        tool: event.tool,
-                        // A chat scope can carry no thread; the key then stays absent rather than
-                        // carrying `undefined` into the record.
-                        ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
-                    },
+                    call,
                 });
                 return;
-            case "run-script":
-                Bus.emit("inflexa", {
-                    type: "prov.script_run",
-                    analysisId,
-                    actor,
-                    model,
-                    script: {
-                        invocationId: event.invocationId,
-                        // A chat scope can carry no thread; the key then stays absent rather than carrying
-                        // `undefined` into the record.
-                        ...(event.threadId !== undefined ? { threadId: event.threadId } : {}),
-                        ...(event.script !== undefined ? { script: { path: event.script.path, hash: event.script.hash, size: event.script.size } } : {}),
-                        // Copied pair by pair, so nothing that the tool still holds reaches a subscriber.
-                        reads: event.reads.map((read) => ({ path: read.path, hash: read.hash })),
-                        writes: event.writes.map((write) => ({ path: write.path, hash: write.hash, size: write.size })),
-                        tools: [...event.tools],
-                        ok: event.ok,
-                    },
-                });
+            }
+            case "run-script": {
+                const script: ProvScriptRunRef = {
+                    invocationId: event.invocationId,
+                    // Copied pair by pair, so nothing that the tool still holds reaches a subscriber.
+                    reads: event.reads.map((read) => ({ path: read.path, hash: read.hash })),
+                    writes: event.writes.map((write) => ({ path: write.path, hash: write.hash, size: write.size })),
+                    tools: [...event.tools],
+                    ok: event.ok,
+                };
+                // A chat scope can carry no thread; the key then stays absent rather than carrying
+                // `undefined` into the record. The same holds for a session that kept no copy of the script.
+                if (event.threadId !== undefined) script.threadId = event.threadId;
+                if (event.script !== undefined) script.script = { path: event.script.path, hash: event.script.hash, size: event.script.size };
+                Bus.emit("inflexa", { type: "prov.script_run", analysisId, actor, model, script });
                 return;
+            }
             case "approve-plan":
                 // A person approves, and no model drives the act, thus the member carries the user
                 // actor and no model. The kernel writes the approval at `atMs` and not at the clock

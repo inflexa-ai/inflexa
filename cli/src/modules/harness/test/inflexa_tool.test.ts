@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { normalizeDetail, type AgentSession, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import type { AgentPolicy } from "../../../cli/agent_policy.ts";
 import { reportAgentPolicies } from "../../../test_support/agent_policy_report.ts";
@@ -506,6 +506,22 @@ describe("spawnInflexa — process bounds", () => {
         }
     });
 
+    test("the spawn options carry a cwd key only when a cwd is handed down", async () => {
+        const spawn = spyOn(Bun, "spawn");
+        try {
+            const bounds = { timeoutMs: 10_000, flushGraceMs: FLUSH_GRACE };
+            await spawnInflexa([bun, "-e", ""], live(), bounds);
+            await spawnInflexa([bun, "-e", ""], live(), bounds, tmpdir());
+
+            const [inherited, handed] = spawn.mock.calls.map((call) => call[0]);
+            expect(Object.hasOwn(inherited ?? {}, "cwd")).toBe(false);
+            expect(Object.hasOwn(handed ?? {}, "cwd")).toBe(true);
+            expect(handed).toMatchObject({ cwd: tmpdir() });
+        } finally {
+            spawn.mockRestore();
+        }
+    });
+
     test("a silent child is abandoned once the idle bound elapses, well before the absolute one", async () => {
         const started = performance.now();
         // Says nothing and would run for 30s; only the idle bound can end this.
@@ -643,19 +659,17 @@ describe("spawnInflexa — the idle bound leaves nothing armed behind it", () =>
         const realClear = globalThis.clearTimeout;
         // Counting timers is the only way to observe this: a leaked timer changes nothing about the
         // returned result, which is exactly why it survived review of the result-shape assertions.
-        // oxlint-disable-next-line typescript/no-explicit-any -- a probe must accept whatever overload the caller used; the ids flow straight back to the real timer functions.
-        globalThis.setTimeout = ((fn: any, ms?: any, ...rest: any[]) => {
+        // `Object.assign` keeps the other members of the real timer functions on the probe, so the probe
+        // has the type of the function that it replaces.
+        globalThis.setTimeout = Object.assign((fn: Parameters<typeof realSet>[0], ms?: number, ...rest: unknown[]) => {
             const id = realSet(fn, ms, ...rest);
             armed.add(id);
             return id;
-            // oxlint-disable-next-line typescript/no-explicit-any -- as above.
-        }) as any;
-        // oxlint-disable-next-line typescript/no-explicit-any -- as above.
-        globalThis.clearTimeout = ((id: any) => {
+        }, realSet);
+        globalThis.clearTimeout = Object.assign((id: Parameters<typeof realClear>[0]) => {
             armed.delete(id);
             return realClear(id);
-            // oxlint-disable-next-line typescript/no-explicit-any -- as above.
-        }) as any;
+        }, realClear);
 
         try {
             const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 30_000, idleTimeoutMs: 20_000, flushGraceMs: 1_500 });

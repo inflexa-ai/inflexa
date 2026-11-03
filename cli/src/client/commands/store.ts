@@ -13,7 +13,7 @@ export async function storeLink(
     lang: StoreEcosystem | undefined,
     opts: ClientOpts = DEFAULT_CLIENT_OPTS,
 ): Promise<void> {
-    const outcome = (await createFarmLink(analysis.id, { packages, ...(lang === undefined ? {} : { lang }) }, opts)).match(
+    const outcome = (await createFarmLink(analysis.id, { packages, lang }, opts)).match(
         (v) => v,
         (e) => fail(describeClientError(e)),
     );

@@ -172,26 +172,28 @@ export function buildReferenceListDocument(inspection: ReferenceStoreInspection,
         exists: inspection.exists,
         datasets: inspection.datasets.map((item): ReferenceListDataset => {
             const dataset = item.dataset;
+            const license: { identifier: string; url?: string } = { identifier: dataset.license.identifier };
+            if (dataset.license.url !== undefined) license.url = dataset.license.url;
+            // Surface install facts only for a usable install. A `partial` dataset also carries a
+            // receipt, but its files are incomplete/damaged, so emitting a version there would let a
+            // consumer that reads key presence as "usable" contradict `state`. The `receipt` guard
+            // stays so TypeScript narrows the optional receipt without an assertion.
+            const installFacts: { installedVersion?: string; installedAt?: string } = {};
+            if (item.receipt !== undefined && (item.state === "installed" || item.state === "update_available")) {
+                installFacts.installedVersion = item.receipt.datasetVersion;
+                installFacts.installedAt = item.receipt.activatedAt;
+            }
             return {
                 id: dataset.id,
                 version: dataset.version,
                 title: dataset.title,
                 description: dataset.description,
                 sourceUrl: dataset.sourceUrl,
-                license: {
-                    identifier: dataset.license.identifier,
-                    ...(dataset.license.url === undefined ? {} : { url: dataset.license.url }),
-                },
+                license,
                 group: dataset.recommendation.group,
                 recommended: dataset.recommendation.recommended,
                 state: item.state,
-                // Surface install facts only for a usable install. A `partial` dataset also carries a
-                // receipt, but its files are incomplete/damaged, so emitting a version there would let a
-                // consumer that reads key presence as "usable" contradict `state`. The `receipt` guard
-                // stays so TypeScript narrows the optional receipt without an assertion.
-                ...(item.receipt !== undefined && (item.state === "installed" || item.state === "update_available")
-                    ? { installedVersion: item.receipt.datasetVersion, installedAt: item.receipt.activatedAt }
-                    : {}),
+                ...installFacts,
                 artifacts: dataset.artifacts.map((artifact) => ({ path: artifact.path, url: artifact.url })),
             };
         }),
@@ -236,12 +238,16 @@ export type ReferenceVerifyDocument = {
  */
 export function buildReferenceVerifyDocument(verifications: readonly ReferenceVerification[]): ReferenceVerifyDocument {
     return {
-        datasets: verifications.map((verification): ReferenceVerifyDataset => ({
-            datasetId: verification.datasetId,
-            ...(verification.version === undefined ? {} : { version: verification.version }),
-            state: verification.state,
-            files: verification.files.map((file) => ({ path: file.path, state: file.state })),
-        })),
+        datasets: verifications.map((verification): ReferenceVerifyDataset => {
+            const versionFact: { version?: string } = {};
+            if (verification.version !== undefined) versionFact.version = verification.version;
+            return {
+                datasetId: verification.datasetId,
+                ...versionFact,
+                state: verification.state,
+                files: verification.files.map((file) => ({ path: file.path, state: file.state })),
+            };
+        }),
     };
 }
 
@@ -849,19 +855,21 @@ async function downloadArtifact(
     if (owned.isErr()) return err(owned.error);
 
     const downloaded = await downloadToFile(artifact.url, cachePath, {
-        ...(deps.fetch ? { fetch: deps.fetch } : {}),
+        fetch: deps.fetch,
         onProgress: (event) => {
             switch (event.type) {
-                case "started":
+                case "started": {
                     // Emitted only once the response is accepted, so a started event always corresponds
                     // to a transfer about to move bytes — never to one already rejected.
-                    reportProgress(deps, {
+                    const started: { type: "artifact_started"; datasetId: string; path: string; declaredBytes?: number } = {
                         type: "artifact_started",
                         datasetId: dataset.id,
                         path: artifact.path,
-                        ...(event.declaredBytes === undefined ? {} : { declaredBytes: event.declaredBytes }),
-                    });
+                    };
+                    if (event.declaredBytes !== undefined) started.declaredBytes = event.declaredBytes;
+                    reportProgress(deps, started);
                     return;
+                }
                 case "bytes":
                     reportProgress(deps, { type: "artifact_bytes", datasetId: dataset.id, path: artifact.path, bytes: event.bytes });
                     return;
@@ -1065,7 +1073,9 @@ export async function installReferenceDatasets(
     const requested = deps.concurrency ?? DEFAULT_INSTALL_CONCURRENCY;
     const concurrency = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : DEFAULT_INSTALL_CONCURRENCY;
     const queue = new PQueue({ concurrency });
-    const results: (Result<InstalledReferenceDataset, ReferenceProvisionError> | undefined)[] = new Array(plan.value.datasets.length);
+    const results: (Result<InstalledReferenceDataset, ReferenceProvisionError> | undefined)[] = new Array<
+        Result<InstalledReferenceDataset, ReferenceProvisionError> | undefined
+    >(plan.value.datasets.length);
     let failed = false;
     await Promise.all(
         plan.value.datasets.map((dataset, index) =>

@@ -25,7 +25,8 @@ function serverOf(routes: Record<string, unknown | unknown[]>): { opts: ClientOp
             if (answer === undefined) return Promise.resolve(new Response(JSON.stringify({ error: "not_found", message: key }), { status: 404 }));
             const index = served.get(key) ?? 0;
             served.set(key, index + 1);
-            const body = Array.isArray(answer) ? answer[Math.min(index, answer.length - 1)] : answer;
+            const answers: unknown[] = Array.isArray(answer) ? answer : [answer];
+            const body = answers[Math.min(index, answers.length - 1)];
             return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
         },
     };

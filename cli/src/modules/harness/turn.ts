@@ -123,11 +123,8 @@ const realTurnSeams: ChatTurnSeams = { readAuthor: currentUserEmail };
  * lineage. The resume of paused work names no thread, because the work can be a run or a profile.
  */
 export function buildChatSession(analysisId: string, threadId?: string): ChatTurnSession {
-    return {
-        identity: { user: "local" },
-        scope: { kind: "analysis", analysisId, ...(threadId === undefined ? {} : { threadId }) },
-        auth: makeLocalAuth(),
-    };
+    const scope: ChatTurnSession["scope"] = threadId === undefined ? { kind: "analysis", analysisId } : { kind: "analysis", analysisId, threadId };
+    return { identity: { user: "local" }, scope, auth: makeLocalAuth() };
 }
 
 /**
@@ -146,13 +143,15 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         // Read at the top, because the author is who sent the message: a sign-out during the turn
         // must not erase that person. Inside the `try`, thus a throw cannot strand the turn token.
         const author = seams.readAuthor();
+        // An empty email is no sender, thus it never reaches the store as a name.
+        const authorOption: { author?: string } = {};
+        if (author) authorOption.author = author;
         const started = await chatTurns.open(session, {
             analysisId,
             threadId,
             userInput,
             startedAtMs: turnStartedAt,
-            // An empty email is no sender, thus it never reaches the store as a name.
-            ...(author ? { author } : {}),
+            ...authorOption,
         });
         switch (started.kind) {
             case "prepare_failed":
@@ -196,15 +195,24 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
     }
 }
 
+/**
+ * The usage rollup and the store fault of an ended turn, as the outcome and the summary of the server
+ * carry them. The rollup is a copy, because the value travels into the turn registry. Each key is absent
+ * until it has a value: an absent rollup leaves no key, and a store fault that is not `true` leaves no key.
+ * Thus a consumer that reads the key set sees only what the turn reported.
+ */
+export function turnSpend(end: { readonly turnUsage?: TurnUsage; readonly storeFailed?: boolean }): { turnUsage?: TurnUsage; storeFailed?: true } {
+    const spend: { turnUsage?: TurnUsage; storeFailed?: true } = {};
+    if (end.turnUsage !== undefined) spend.turnUsage = { ...end.turnUsage };
+    if (end.storeFailed === true) spend.storeFailed = true;
+    return spend;
+}
+
 function outcomeOfEnd(end: ChatTurnEnd | null): TurnOutcome {
     // A turn workflow that ended with no result was canceled, or its body threw past the turn.
     if (end === null) return { kind: "failed", opened: true, reason: "The turn ended with no outcome." };
     if (end.storeFailed === true) getLogger("harness").warn({ storeFailed: true }, "chat turn append failed");
-    // A copy, because the value travels into the turn registry. An absent rollup leaves no key.
-    const spend = {
-        ...(end.turnUsage === undefined ? {} : { turnUsage: { ...end.turnUsage } }),
-        ...(end.storeFailed === true ? { storeFailed: true } : {}),
-    };
+    const spend = turnSpend(end);
     const opened = end.opened;
     const fallbackText = end.fallbackText ?? "";
     switch (end.status) {
@@ -214,7 +222,7 @@ function outcomeOfEnd(end: ChatTurnEnd | null): TurnOutcome {
             if (end.finishReason !== "content-filter") return { kind: "ok", opened, fallbackText, finishReason: end.finishReason, ...spend };
             // The one place the endpoint's own word survives — the banner shows only the generic line.
             getLogger("harness").warn({ rawFinishReason: end.rawFinishReason }, "chat turn stopped by the model content filter");
-            return { kind: "filtered", opened, fallbackText, ...(end.rawFinishReason === undefined ? {} : { rawFinishReason: end.rawFinishReason }), ...spend };
+            return { kind: "filtered", opened, fallbackText, rawFinishReason: end.rawFinishReason, ...spend };
         }
         case "aborted":
             return { kind: "aborted", opened, ...spend };
@@ -224,7 +232,7 @@ function outcomeOfEnd(end: ChatTurnEnd | null): TurnOutcome {
                 kind: "failed",
                 opened,
                 reason: end.reason ?? "The turn failed.",
-                ...(end.code === undefined ? {} : { code: end.code }),
+                code: end.code,
                 ...spend,
             };
         default: {

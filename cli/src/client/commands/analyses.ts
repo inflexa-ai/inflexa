@@ -97,12 +97,10 @@ export async function resolveNewTarget(
                   (e) => fail(e === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer."),
               );
     const cwd = process.cwd();
-    const created = (
-        await createAnalysis(
-            { name, folder: cwd, inputs: flags.paths.map((p) => expandAndResolve(cwd, p)), ...(flags.project === undefined ? {} : { project: flags.project }) },
-            opts,
-        )
-    ).match((v) => v, failClient);
+    const created = (await createAnalysis({ name, folder: cwd, inputs: flags.paths.map((p) => expandAndResolve(cwd, p)), project: flags.project }, opts)).match(
+        (v) => v,
+        failClient,
+    );
     console.log(`\n  Created analysis "${created.name}"`);
     if (created.outputDir !== null) console.log(`  Workspace: ${created.outputDir}\n`);
     return openTarget(created.id, opts);
@@ -185,12 +183,10 @@ export async function resolveSingleAnalysisOrFail(
     resolve: { touch?: boolean } = {},
     opts: ClientOpts = DEFAULT_CLIENT_OPTS,
 ): Promise<AnalysisView> {
-    const ctx = (
-        await resolveAnalysisContext(
-            { cwd: process.cwd(), ref: flags.analysis, project: flags.project, ...(resolve.touch === undefined ? {} : { touch: resolve.touch }) },
-            opts,
-        )
-    ).match((v) => v, failClient);
+    const ctx = (await resolveAnalysisContext({ cwd: process.cwd(), ref: flags.analysis, project: flags.project, touch: resolve.touch }, opts)).match(
+        (v) => v,
+        failClient,
+    );
     const listCandidates = (analyses: AnalysisView[]): string => analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n");
     switch (ctx.kind) {
         case "analysis":
@@ -221,10 +217,7 @@ export async function resolveSingleAnalysisOrFail(
  * prompt, because the callers (the `prov` commands) are headless-first.
  */
 export async function requireAnalysisByRef(ref: IdOrName, resolve: { touch?: boolean } = {}, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<AnalysisView> {
-    const ctx = (await resolveAnalysisContext({ cwd: process.cwd(), ref, ...(resolve.touch === undefined ? {} : { touch: resolve.touch }) }, opts)).match(
-        (v) => v,
-        failClient,
-    );
+    const ctx = (await resolveAnalysisContext({ cwd: process.cwd(), ref, touch: resolve.touch }, opts)).match((v) => v, failClient);
     if (ctx.kind !== "analysis") fail(`No analysis found matching "${ref}".`);
     if (ctx.others.length > 0) {
         const list = [{ ...ctx.analysis, anchorPath: ctx.anchorPath }, ...ctx.others]
@@ -249,10 +242,7 @@ export async function analysisLs(flags: { project?: string }, opts: ClientOpts =
     // One request for each page of the largest size: each request is bounded, and the loop ends at the
     // first page with no more.
     for (let page = 0; ; page++) {
-        const list = (await fetchAnalyses({ page, perPage: MAX_PER_PAGE, ...(flags.project === undefined ? {} : { project: flags.project }) }, opts)).match(
-            (v) => v,
-            failClient,
-        );
+        const list = (await fetchAnalyses({ page, perPage: MAX_PER_PAGE, project: flags.project }, opts)).match((v) => v, failClient);
         analyses.push(...list.analyses);
         if (!list.hasMore) break;
     }

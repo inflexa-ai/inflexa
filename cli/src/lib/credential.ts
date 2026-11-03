@@ -134,7 +134,7 @@ function parseCommandCredential(
         const expiresAt = ts !== undefined ? Date.parse(ts) : NaN;
         // An unparseable timestamp degrades to "no expiry" rather than an error: the token is valid, and the
         // 401 forceRefresh path still covers a rotation we didn't foresee.
-        return ok({ token: parsed.data.status.token, scheme, ...(Number.isNaN(expiresAt) ? {} : { expiresAt }) });
+        return ok({ token: parsed.data.status.token, scheme, expiresAt: Number.isNaN(expiresAt) ? undefined : expiresAt });
     }
     const token = stdout.trim(); // raw: the whole stdout IS the token, minus the trailing newline — apiKeyHelper parity
     if (token === "") return err({ type: "command_empty_output", command });

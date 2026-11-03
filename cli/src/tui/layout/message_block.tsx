@@ -143,9 +143,9 @@ function nestedCallOf(entry: SubAgentActivityEntry): NestedCallView {
     const durationMs = entry.endedAt === undefined ? undefined : Date.parse(entry.endedAt) - Date.parse(entry.startedAt);
     return {
         tool: entry.tool,
-        ...(entry.label === undefined ? {} : { label: entry.label }),
+        label: entry.label,
         status: toolStatus(entry.outcome),
-        ...(durationMs === undefined || Number.isNaN(durationMs) ? {} : { durationMs }),
+        durationMs: durationMs === undefined || Number.isNaN(durationMs) ? undefined : durationMs,
     };
 }
 
@@ -500,7 +500,7 @@ function OpenableCard(props: { title?: string; entries: OpenableEntry[]; folderP
             const r = resolved()?.[i];
             return {
                 name: entry.name,
-                ...(entry.caption !== undefined ? { caption: entry.caption } : {}),
+                caption: entry.caption,
                 path: r?.path ?? null,
                 degraded: r?.degraded ?? entry.target.kind === "unavailable",
             };

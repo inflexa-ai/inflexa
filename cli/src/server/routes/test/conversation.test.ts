@@ -35,13 +35,14 @@ import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
 import { listAnalysisPage } from "../../../db/primary_query.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { freshDb } from "../../../test_support/db.ts";
-import type { RunChatTurnArgs } from "../../../modules/harness/turn.ts";
+import type { RunChatTurnArgs, TurnOutcome } from "../../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../../modules/harness/runtime.ts";
 import { conversationThread, FIXTURE_ANALYSIS_ID, reportThread } from "../../../test_support/threads.ts";
 import { idleBoot } from "../../../test_support/server.ts";
 import type { ServerBoot } from "../../boot.ts";
-import { __resetTurnsForTest, hasRunningTurn, refuseNewTurns, startTurn } from "../../turns.ts";
+import { __resetTurnsForTest, findTurn, hasRunningTurn, refuseNewTurns, startTurn } from "../../turns.ts";
 import { conversationRoutes, DEFAULT_CONVERSATION_ROUTE_OPTS, type ConversationRouteOpts } from "../conversation.ts";
+import { anyOf } from "../../../test_support/matchers.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. No cli test reaches Postgres
 // or a model, thus each store and the chat turn are fakes that the options inject. Each `as` cast of a body
@@ -257,7 +258,7 @@ describe("the thread routes", () => {
     test("GET {A}/threads refuses a type outside the closed set with 400 `validation_error`", async () => {
         const response = await routesWith().request(`/${A}/threads?type=draft`);
         expect(response.status).toBe(400);
-        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { type: expect.any(Array) } } });
+        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { type: anyOf(Array) } } });
     });
 
     test("GET {T} gives the live thread, and 404 for a thread of a different analysis or with no row", async () => {
@@ -646,6 +647,37 @@ describe("POST {A}/chat", () => {
         expect(summary.durationMs).toBeGreaterThanOrEqual(0);
         expect(flushed).toBe(1);
         expect(hasRunningTurn(A)).toBe(false);
+    });
+
+    test("the summary of a turn holds the usage and the store fault only when the turn reported them", async () => {
+        const turnUsage = { inputTokens: 10, outputTokens: 2 };
+        const outcomes: TurnOutcome[] = [
+            { kind: "ok", opened: true, finishReason: "stop", fallbackText: "Hello", storeFailed: false },
+            { kind: "ok", opened: true, finishReason: "stop", fallbackText: "Hello", turnUsage, storeFailed: true },
+        ];
+        const routes = routesWith({
+            runTurn: (args) => {
+                args.onOpened?.(crypto.randomUUID());
+                return Promise.resolve(outcomes.shift() ?? { kind: "failed", opened: true, reason: "no outcome left" });
+            },
+        });
+        const summaries: (TurnSummary | null)[] = [];
+        for (let turn = 0; turn < 2; turn++) {
+            const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
+            const turnId = response.headers.get(TURN_ID_HEADER);
+            await framesOf(response);
+            summaries.push(turnId === null ? null : findTurn(turnId));
+        }
+
+        const [bare, spent] = summaries;
+        expect(bare).not.toBeNull();
+        expect(Object.hasOwn(bare ?? {}, "turnUsage")).toBe(false);
+        expect(Object.hasOwn(bare ?? {}, "storeFailed")).toBe(false);
+        expect(spent).not.toBeNull();
+        expect(Object.hasOwn(spent ?? {}, "turnUsage")).toBe(true);
+        expect(spent?.turnUsage).toEqual(turnUsage);
+        expect(Object.hasOwn(spent ?? {}, "storeFailed")).toBe(true);
+        expect(spent?.storeFailed).toBe(true);
     });
 
     test("gives the turn the chat turns of the runtime and the session of the thread", async () => {

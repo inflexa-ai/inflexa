@@ -20,6 +20,7 @@ import type { OpenTarget } from "../../../types/session.ts";
 import type { ServerEnv } from "../../http.ts";
 import { artifactRoutes, type ArtifactRoutesOpts } from "../artifacts.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes } from "../fs.ts";
+import { anyOf } from "../../../test_support/matchers.ts";
 
 // The route alone, mounted at its path with no bearer check and no analysis guard: `app.test.ts` covers
 // those. Each `as` cast of a body below reads JSON that the route under test builds from the same
@@ -373,6 +374,7 @@ describe("GET {A}/artifacts", () => {
         await routes.request("/api/v1/analyses/a1/artifacts?runId=r1&extension=png,%20SVG,");
 
         expect(reads).toEqual([{ analysisId: "a1", query: { runId: "r1", extensions: ["png", "svg"], sort: "path", limit: 100, offset: 0 } }]);
+        expect(Object.hasOwn(reads[0]?.query ?? {}, "extensions")).toBe(true);
     });
 
     test.each(["", ",", "%20,%20%20,"])("an `extension` value %p with no member gives no `extensions`", async (value) => {
@@ -404,7 +406,7 @@ describe("GET {A}/artifacts", () => {
         const response = await appWith(UNEXPECTED).request("/api/v1/analyses/a1/artifacts?sort=size");
 
         expect(response.status).toBe(400);
-        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { sort: expect.any(Array) } } });
+        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { sort: anyOf(Array) } } });
     });
 
     test.each(["input", "step_output"] as const)("`role=%s` reaches the read, and the filter rides with the other filters", async (role) => {
@@ -450,7 +452,7 @@ describe("GET {A}/artifacts", () => {
         const response = await appWith(UNEXPECTED).request(`/api/v1/analyses/a1/artifacts?role=${role}`);
 
         expect(response.status).toBe(400);
-        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { role: expect.any(Array) } } });
+        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { role: anyOf(Array) } } });
     });
 
     test("503 `unavailable` before the runtime is ready", async () => {

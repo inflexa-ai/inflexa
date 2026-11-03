@@ -138,8 +138,8 @@ export function readPresentation(part: PresentationPart): PresentationReadout {
                 body: { kind: "table", headers: [...content.headers], rows: content.rows.map((row) => [...row]), caption: content.caption },
             };
         case "echart":
-            // `dataPath` is resolved to `dataset.source` at open time. It is omitted from the target when
-            // absent, thus a self-contained spec carries no empty key.
+            // `dataPath` is resolved to `dataset.source` at open time. It stays `undefined` when absent, thus
+            // a self-contained spec carries no path.
             return {
                 shape: "card",
                 title,
@@ -149,7 +149,7 @@ export function readPresentation(part: PresentationPart): PresentationReadout {
                         kind: "echart",
                         presId: part.id,
                         spec: cloneSpec(content.spec),
-                        ...(content.dataPath !== undefined ? { dataPath: content.dataPath } : {}),
+                        dataPath: content.dataPath,
                     },
                 },
             };
@@ -178,11 +178,11 @@ export type FileReferenceReadout = { title?: string; entries: OpenableEntry[]; f
 export function readFileReference(part: FileReferencePart): FileReferenceReadout {
     const entries: OpenableEntry[] = part.files.map((file) => ({
         name: basename(file.path) || file.path,
-        ...(file.caption !== undefined ? { caption: file.caption } : {}),
+        caption: file.caption,
         target: { kind: "workspace-file", path: file.path },
     }));
     const firstPath = part.files[0]?.path ?? "";
     const dir = firstPath ? dirname(firstPath) : "";
     const folderPath = entries.length > 1 && dir && dir !== "." ? dir : undefined;
-    return { title: part.title, entries, ...(folderPath !== undefined ? { folderPath } : {}) };
+    return { title: part.title, entries, folderPath };
 }

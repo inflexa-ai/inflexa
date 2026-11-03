@@ -124,6 +124,7 @@ describe("kernel adoption — continuity against the pre-kernel fixture", () => 
         // omits the attribute. Existing documents keep the old value (previous test); new ones
         // never carry it.
         expect(cmd["inflexa:args"]).toBeUndefined();
-        expect(JSON.parse(fixture.document).activity[fixture.qnames.command]["inflexa:args"]).toBe("");
+        const original: unknown = JSON.parse(fixture.document);
+        expect(original).toMatchObject({ activity: { [fixture.qnames.command]: { "inflexa:args": "" } } });
     });
 });

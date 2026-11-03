@@ -35,14 +35,12 @@ export function emitRunObservation(observation: RunObservation): void {
     const snapshot: RunObservedSnapshot = {
         runId: observation.runId,
         status: observation.status,
-        steps: observation.steps.map((s) => ({
-            id: s.id,
-            name: s.name,
-            agent: s.agent,
-            status: s.status,
-            ...(s.durationMs !== undefined ? { durationMs: s.durationMs } : {}),
-            ...(s.error !== undefined ? { error: s.error } : {}),
-        })),
+        steps: observation.steps.map((s) => {
+            const step: RunObservedSnapshot["steps"][number] = { id: s.id, name: s.name, agent: s.agent, status: s.status };
+            if (s.durationMs !== undefined) step.durationMs = s.durationMs;
+            if (s.error !== undefined) step.error = s.error;
+            return step;
+        }),
     };
     Bus.emit("inflexa", { type: "run.observed", analysisId: observation.analysisId, snapshot });
 }

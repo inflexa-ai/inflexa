@@ -14,7 +14,7 @@ import {
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
-import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type TurnOutcome } from "../turn.ts";
+import { buildChatSession, healTailOrphan, runChatTurn, turnSpend, type ChatTurnSeams, type TurnOutcome } from "../turn.ts";
 
 // The engine is exercised offline: the chat turns of the harness are one injected fake, thus no Postgres, no
 // model, and no credits. The harness suite pins what the turn itself stores.
@@ -100,7 +100,7 @@ function runWith(
             analysisId: ANALYSIS_ID,
             threadId: THREAD_ID,
             userInput: USER_INPUT,
-            ...(opts.onOpened === undefined ? {} : { onOpened: opts.onOpened }),
+            onOpened: opts.onOpened,
         },
         { readAuthor: opts.readAuthor ?? (() => null) },
     );
@@ -112,6 +112,50 @@ describe("buildChatSession", () => {
         expect("provenance" in s).toBe(false);
         expect(s.scope).toEqual({ kind: "analysis", analysisId: "an-9", threadId: "t-9" });
         expect(s.identity).toEqual({ user: "local" });
+    });
+
+    test("the scope carries the thread key when a thread is named", () => {
+        expect(Object.hasOwn(buildChatSession("an-9", "t-9").scope, "threadId")).toBe(true);
+    });
+
+    test("the scope carries no thread key when no thread is named", () => {
+        const scope = buildChatSession("an-9").scope;
+
+        expect(Object.hasOwn(scope, "threadId")).toBe(false);
+        expect(scope).toEqual({ kind: "analysis", analysisId: "an-9" });
+    });
+});
+
+describe("turnSpend", () => {
+    test("copies the rollup under its own key and gives a store fault under its own key", () => {
+        const live = { inputTokens: 100, outputTokens: 10 };
+
+        const spend = turnSpend({ turnUsage: live, storeFailed: true });
+        live.inputTokens = 999_999;
+
+        expect(Object.hasOwn(spend, "turnUsage")).toBe(true);
+        expect(spend.turnUsage).toEqual({ inputTokens: 100, outputTokens: 10 });
+        expect(Object.hasOwn(spend, "storeFailed")).toBe(true);
+        expect(spend.storeFailed).toBe(true);
+    });
+
+    test("leaves each key out when the turn reported nothing", () => {
+        const spend = turnSpend({});
+
+        expect(Object.hasOwn(spend, "turnUsage")).toBe(false);
+        expect(Object.hasOwn(spend, "storeFailed")).toBe(false);
+    });
+
+    test("a store fault that is false gives no key, never `false`", () => {
+        const spend = turnSpend({ storeFailed: false });
+
+        expect(Object.hasOwn(spend, "storeFailed")).toBe(false);
+    });
+
+    test("an outcome that ended without a store fault carries no storeFailed key", async () => {
+        const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", storeFailed: false }) }));
+
+        expect(Object.hasOwn(outcome, "storeFailed")).toBe(false);
     });
 });
 
@@ -167,6 +211,7 @@ describe("runChatTurn maps the outcome of the turn workflow", () => {
     test("a store fault rides as storeFailed, orthogonal to the outcome", async () => {
         const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", storeFailed: true, fallbackText: "the answer" }) }));
 
+        expect(Object.hasOwn(outcome, "storeFailed")).toBe(true);
         expect(outcome).toEqual({ kind: "ok", opened: true, finishReason: "stop", fallbackText: "the answer", storeFailed: true });
     });
 });
@@ -203,6 +248,7 @@ describe("runChatTurn carries the turn's usage rollup", () => {
     test("a turn carries the rollup of the harness whole, per quantity", async () => {
         const outcome = await runWith(fakeChatTurns({ end: ended({ status: "done", finishReason: "stop", turnUsage: { ...TURN_USAGE } }) }));
 
+        expect(Object.hasOwn(outcome, "turnUsage")).toBe(true);
         expect(outcome.kind === "ok" ? outcome.turnUsage : undefined).toEqual(TURN_USAGE);
     });
 

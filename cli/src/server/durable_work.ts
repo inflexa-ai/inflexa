@@ -69,7 +69,7 @@ export function countLiveDurableWork(pool: Pool, analysisId?: string): ResultAsy
  * of it is live. An empty list sends no query.
  */
 export function countLiveDurableWorkByAnalysis(pool: Pool, analysisIds: readonly string[]): ResultAsync<Map<string, LiveDurableWork>, unknown> {
-    if (analysisIds.length === 0) return okAsync(new Map());
+    if (analysisIds.length === 0) return okAsync(new Map<string, LiveDurableWork>());
     return ResultAsync.fromPromise(
         pool.query<{ analysis_id: string; runs: string; profiles: string; turns: string }>({
             text: `SELECT ids.analysis_id,

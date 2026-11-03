@@ -15,10 +15,12 @@ class BusEmitter extends EventEmitter<{
               : // oxlint-disable-next-line typescript/no-explicit-any -- stdlib signature we are overriding
                 any[]
     ): boolean {
-        if (eventName === "inflexa" && args && args[0] && typeof args[0] === "object") {
-            args[0].__infId = args[0].__infId ?? randomUUIDv7();
+        const event: unknown = args[0];
+        if (eventName === "inflexa" && event && typeof event === "object") {
+            const stamped = "__infId" in event ? event.__infId : undefined;
+            Object.assign(event, { __infId: stamped ?? randomUUIDv7() });
         }
-        // oxlint-disable-next-line typescript/no-explicit-any -- args is BusEvent on input but StampedEvent after __infId mutation
+        // oxlint-disable-next-line typescript/no-explicit-any, typescript/no-unsafe-argument -- args is BusEvent on input but StampedEvent after __infId mutation, and the base `emit` overloads cannot express the wide signature of this override
         return super.emit(eventName, ...(args as any));
     }
 }
@@ -80,7 +82,7 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 filePath: event.file.path,
                 producer: event.file.producer,
                 generation: event.generation,
-                ...(event.call !== undefined ? { tool: event.call.tool } : {}),
+                tool: event.call?.tool,
                 model: event.model,
             };
         case "prov.script_run":

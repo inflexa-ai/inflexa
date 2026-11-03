@@ -46,7 +46,7 @@ type StubHandle = {
 /** 384-dim unit vector (all components equal → L2 norm 1). */
 function fixedVector(): number[] {
     const c = 1 / Math.sqrt(384);
-    return new Array(384).fill(c);
+    return new Array<number>(384).fill(c);
 }
 
 /** Uniform stub tokenizer: ~4 code units per token. */

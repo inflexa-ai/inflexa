@@ -21,6 +21,7 @@ import {
     type SandboxGateOpts,
     type SandboxReadinessOpts,
 } from "../sandbox_gate.ts";
+import { anyOf } from "../../test_support/matchers.ts";
 
 /** One transfer report as `readTransferReports` gives it, with everything else quiet. */
 function report(kind: TransferKind, state: TransferStatus | null, live: boolean, message: string | null = null): TransferReport {
@@ -169,8 +170,8 @@ describe("readMachineSandboxReadiness", () => {
 
     test("gives the image, the store, and the catalog farm of the machine from the replaced reads", async () => {
         const machineRead = await readMachineSandboxReadiness(readOpts);
-        expect(machineRead).toEqual({
-            image: { state: "absent", image: expect.any(String) },
+        expect<unknown>(machineRead).toEqual({
+            image: { state: "absent", image: anyOf(String) },
             store: "incomplete",
             catalogFarmPresent: false,
         });

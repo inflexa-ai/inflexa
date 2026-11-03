@@ -5,6 +5,7 @@ import { signIn } from "../../../test_support/browser_session.ts";
 import { idleBoot, idleLifecycle } from "../../../test_support/server.ts";
 import { buildApp } from "../../app.ts";
 import { createPageGrantStore } from "../../report_page_grants.ts";
+import { stringContaining } from "../../../test_support/matchers.ts";
 
 const TOKEN = "a".repeat(64);
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
@@ -191,7 +192,7 @@ describe("the sessions after sign-in", () => {
         const restarted = appWithClock().app;
         const response = await restarted.request("/api/v1/server", { headers: { Cookie: cookie } });
         expect(response.status).toBe(401);
-        expect(await response.json()).toMatchObject({ error: "unauthorized", message: expect.stringContaining("`inflexa gui`") });
+        expect(await response.json()).toMatchObject({ error: "unauthorized", message: stringContaining("`inflexa gui`") });
     });
 
     test("a request of a page of a different local port gets the message for a missing token", async () => {
@@ -199,6 +200,6 @@ describe("the sessions after sign-in", () => {
         const cookie = await signIn(app, TOKEN);
         const response = await app.request("/api/v1/server", { headers: { Cookie: cookie, "Sec-Fetch-Site": "same-site" } });
         expect(response.status).toBe(401);
-        expect(await response.json()).toMatchObject({ error: "unauthorized", message: expect.stringContaining("Authorization: Bearer") });
+        expect(await response.json()).toMatchObject({ error: "unauthorized", message: stringContaining("Authorization: Bearer") });
     });
 });

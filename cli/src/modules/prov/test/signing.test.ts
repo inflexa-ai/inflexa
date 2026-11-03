@@ -34,9 +34,9 @@ describe("keypair lifecycle", () => {
         expect(result.isOk()).toBe(true);
         const raw = Bun.file(join(dir, "prov_key.json"));
         expect(await raw.exists()).toBe(true);
-        const stored = await raw.json();
-        expect(stored.publicKey.kty).toBe("OKP");
-        expect(stored.publicKey.crv).toBe("Ed25519");
+        const stored: unknown = await raw.json();
+        expect(stored).toMatchObject({ publicKey: { kty: "OKP" } });
+        expect(stored).toMatchObject({ publicKey: { crv: "Ed25519" } });
     });
 
     test("loads an existing keypair from disk", async () => {
@@ -57,8 +57,8 @@ describe("keypair lifecycle", () => {
         writeFileSync(join(dir, "prov_key.json"), "not json");
         const result = await loadOrGenerateKeypair();
         expect(result.isOk()).toBe(true);
-        const stored = await Bun.file(join(dir, "prov_key.json")).json();
-        expect(stored.publicKey.kty).toBe("OKP");
+        const stored: unknown = await Bun.file(join(dir, "prov_key.json")).json();
+        expect(stored).toMatchObject({ publicKey: { kty: "OKP" } });
     });
 
     test("structurally valid but wrong JWK returns keypair_corrupt error", async () => {

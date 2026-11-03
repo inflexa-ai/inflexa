@@ -59,7 +59,7 @@ function appendFileWritten(
     generation: "command" | "step" | "call",
     call?: ProvCallRef,
 ): void {
-    applyProvEvent(provModel, doc, { type: "file_written", analysisId, actor, model, file, generation, ...(call !== undefined ? { call } : {}), step });
+    applyProvEvent(provModel, doc, { type: "file_written", analysisId, actor, model, file, generation, call, step });
 }
 function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
     applyProvEvent(provModel, doc, { type: "input_used", analysisId, actor, step, input });

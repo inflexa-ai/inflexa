@@ -506,7 +506,7 @@ export async function setup(options: SetupOptions): Promise<void> {
                 direct = {
                     provider: answered.provider,
                     baseURL: answered.baseURL,
-                    ...(answered.protocol !== undefined && { protocol: answered.protocol }),
+                    protocol: answered.protocol,
                 };
             } else {
                 // Detected BEFORE the endpoint prompt (a cheap read-only probe): a credential-helper setup
@@ -761,7 +761,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             // A selection is its own consent, so the only thing left to decide is whether the step may
             // ask: a terminal that neither batch mode nor the checkpoint has withdrawn.
             interactive: asks("refs"),
-            ...(selection === undefined ? {} : { selection }),
+            selection,
         });
         if (refsResult.isErr()) {
             log.error(`Reference-data setup: ${refsResult.error.message}`);
@@ -1238,9 +1238,7 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
     if (canPrompt) log.message("Configure Postgres (press Enter to accept defaults)");
 
     const ask = async (label: string, current: string, validateInput?: (v: string) => string | undefined): Promise<string> =>
-        canPrompt
-            ? promptText(label, { defaultValue: current, placeholder: current, ...(validateInput && { validate: validateInput }) }).catch(() => current)
-            : current;
+        canPrompt ? promptText(label, { defaultValue: current, placeholder: current, validate: validateInput }).catch(() => current) : current;
 
     const user = answered?.user ?? (await ask("Username", existing.user));
     const password = answered?.password ?? (await ask("Password", existing.password));
@@ -1725,7 +1723,7 @@ async function promptManualDirectConnection(answered: ConnectionAnswers): Promis
     return {
         provider,
         baseURL,
-        ...(protocol !== "infer" && { protocol }),
+        protocol: protocol === "infer" ? undefined : protocol,
     };
 }
 
@@ -1753,10 +1751,10 @@ export function writeDirectConnection(input: DirectConnectionInput): Result<void
         mode: "direct",
         provider: input.provider,
         baseURL: input.baseURL,
-        // Omit `protocol` when absent so the resolver implies it from the provider.
-        ...(input.protocol !== undefined && { protocol: input.protocol }),
+        // An absent `protocol` has no JSON form, thus the file omits it and the resolver implies it from the provider.
+        protocol: input.protocol,
         // The credential source is token-free by construction (setup only ever attaches a {kind, var|command, scheme}).
-        ...(input.auth !== undefined && { auth: input.auth }),
+        auth: input.auth,
     };
     return writeConfig({ ...config, models: { ...models, connection } });
 }
@@ -2176,7 +2174,8 @@ async function offerCredentialSource(
                   : "";
         const command = (
             await promptText("Credential command (its stdout is the token — Claude Code apiKeyHelper compatible)", {
-                ...(prefill !== "" && { defaultValue: prefill, placeholder: prefill }),
+                defaultValue: prefill !== "" ? prefill : undefined,
+                placeholder: prefill !== "" ? prefill : undefined,
                 validate: (v) => (v.trim() === "" ? "Enter a command." : undefined),
             })
         ).trim();
@@ -2331,7 +2330,8 @@ async function collectDirectModelAtSetup(direct: DirectConnectionInput, probe: C
         promptModel: async (pf, retryDetail) => {
             if (retryDetail !== null) log.error(`The endpoint rejected the model:\n  ${retryDetail}`);
             const entered = await promptText("Model id the endpoint serves (required for chat)", {
-                ...(pf !== "" && { defaultValue: pf, placeholder: pf }),
+                defaultValue: pf !== "" ? pf : undefined,
+                placeholder: pf !== "" ? pf : undefined,
                 validate: (v) => (v.trim() === "" && pf === "" ? "Enter a model id." : undefined),
             });
             // Empty submit keeps the pre-filled default (the offerGatewayAdoption convention).

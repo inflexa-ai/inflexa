@@ -96,7 +96,9 @@ export async function confirm(question: string): Promise<boolean> {
     // readline's question(), which hangs on an already-closed stream under Bun; an empty read
     // (EOF / </dev/null) declines, so a destructive op never proceeds on silence.
     const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+    // Node types the stdin iterator as `any`. Without `setEncoding`, which nothing here calls, it yields Buffers.
+    const input: AsyncIterable<Buffer> = process.stdin;
+    for await (const chunk of input) chunks.push(Buffer.from(chunk));
     const answer = Buffer.concat(chunks).toString().trim().toLowerCase();
     return answer === "y" || answer === "yes";
 }
