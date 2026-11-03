@@ -42,13 +42,11 @@ export type TurnPause = TurnScope & { readonly waits: readonly TurnWait[] };
 
 /**
  * The waits of a turn after one `data-pause` frame. The part reconciles by its id, the workflow id: `retrying` and
- * `paused` put the wait of that workflow in place, and `running` removes it. A part in a waiting state with no cause
- * is not a wait that the prompt can explain, thus it changes nothing.
+ * `paused` put the wait of that workflow in place, and `running` removes it.
  */
 export function applyPausePart(waits: readonly TurnWait[], part: PausePart): TurnWait[] {
     const others = waits.filter((wait) => wait.workflowId !== part.id);
     if (part.state === "running") return others;
-    if (part.cause === undefined) return [...waits];
     const wait: TurnWait = {
         workflowId: part.id,
         state: part.state,
