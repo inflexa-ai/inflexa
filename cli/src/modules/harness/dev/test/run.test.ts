@@ -129,11 +129,12 @@ function makeSeams(
             suspend: () => okAsync(undefined),
             renew: () => okAsync(undefined),
         },
-        launch: async (input, runId) => {
-            rec.launch++;
-            if (behavior.launchThrows !== undefined) throw behavior.launchThrows;
-            rec.launched = { input, runId };
-        },
+        launch: (input, runId) =>
+            Promise.try(() => {
+                rec.launch++;
+                if (behavior.launchThrows !== undefined) throw behavior.launchThrows;
+                rec.launched = { input, runId };
+            }),
         newRunId: () => "run-fixed",
     };
     return { seams, rec };

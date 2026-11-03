@@ -420,17 +420,19 @@ describe("entry-point compose regeneration wiring", () => {
 
         // mockImplementation (not mockResolvedValue) so each `ok(...)`/`err(...)` is a RETURNED Result the
         // neverthrow lint counts as handled, rather than an unconsumed Result passed as an argument.
-        spies.push(spyOn(config, "ensureRuntime").mockImplementation(async () => ok(runtimes.docker)));
+        spies.push(spyOn(config, "ensureRuntime").mockImplementation(() => Promise.resolve(ok(runtimes.docker))));
         spies.push(spyOn(compose, "composeAvailable").mockResolvedValue(true));
-        spies.push(spyOn(compose, "composePullIfMissing").mockImplementation(async () => ok(undefined)));
-        spies.push(spyOn(compose, "composeProxyRunning").mockImplementation(async () => ok(false)));
+        spies.push(spyOn(compose, "composePullIfMissing").mockImplementation(() => Promise.resolve(ok(undefined))));
+        spies.push(spyOn(compose, "composeProxyRunning").mockImplementation(() => Promise.resolve(ok(false))));
         let composeAtHandoff = "";
         spies.push(
-            spyOn(compose, "composeUp").mockImplementation(async () => {
-                composeAtHandoff = readFileSync(composeFilePath, "utf8");
-                // An error ends the gate before the credential probe, which would wait on a proxy that no test runs.
-                return err({ type: "container_start_failed", message: "stub: short-circuit after compose file capture" });
-            }),
+            spyOn(compose, "composeUp").mockImplementation(() =>
+                Promise.try(() => {
+                    composeAtHandoff = readFileSync(composeFilePath, "utf8");
+                    // An error ends the gate before the credential probe, which would wait on a proxy that no test runs.
+                    return err({ type: "container_start_failed", message: "stub: short-circuit after compose file capture" });
+                }),
+            ),
         );
 
         try {
@@ -448,15 +450,17 @@ describe("entry-point compose regeneration wiring", () => {
     test("`ensurePostgresReady` regenerates the compose file for the current mode before composeUp", async () => {
         const { currentMode } = seedStaleComposeFile();
 
-        spies.push(spyOn(config, "ensureRuntime").mockImplementation(async () => ok(runtimes.docker)));
+        spies.push(spyOn(config, "ensureRuntime").mockImplementation(() => Promise.resolve(ok(runtimes.docker))));
         let composeAtHandoff = "";
         spies.push(
-            spyOn(compose, "composeUp").mockImplementation(async () => {
-                composeAtHandoff = readFileSync(composeFilePath, "utf8");
-                // Error return short-circuits the gate before waitForReady/ensureVectorExtension (which
-                // would spawn real docker); ensurePostgresReady sets no process.exitCode of its own.
-                return err({ type: "container_start_failed", message: "stub: short-circuit after compose file capture" });
-            }),
+            spyOn(compose, "composeUp").mockImplementation(() =>
+                Promise.try(() => {
+                    composeAtHandoff = readFileSync(composeFilePath, "utf8");
+                    // Error return short-circuits the gate before waitForReady/ensureVectorExtension (which
+                    // would spawn real docker); ensurePostgresReady sets no process.exitCode of its own.
+                    return err({ type: "container_start_failed", message: "stub: short-circuit after compose file capture" });
+                }),
+            ),
         );
 
         (await ensurePostgresReady())._unsafeUnwrapErr();
@@ -475,7 +479,7 @@ describe("composeProxyRunning", () => {
     });
 
     function stubPs(result: { code: number; stdout: string; stderr: string }): void {
-        spies.push(spyOn(container, "capture").mockImplementation(async () => result));
+        spies.push(spyOn(container, "capture").mockImplementation(() => Promise.resolve(result)));
     }
 
     test("an exact name line reads as running", async () => {
@@ -511,9 +515,11 @@ describe("removePostgresVolume", () => {
     function stubVolume(exits: { inspect: number; rm: number; rmStderr?: string }): string[][] {
         const calls: string[][] = [];
         spies.push(
-            spyOn(container, "capture").mockImplementation(async (_rt, args) => {
+            spyOn(container, "capture").mockImplementation((_rt, args) => {
                 calls.push(args);
-                return args[1] === "inspect" ? { code: exits.inspect, stdout: "", stderr: "" } : { code: exits.rm, stdout: "", stderr: exits.rmStderr ?? "" };
+                return Promise.resolve(
+                    args[1] === "inspect" ? { code: exits.inspect, stdout: "", stderr: "" } : { code: exits.rm, stdout: "", stderr: exits.rmStderr ?? "" },
+                );
             }),
         );
         return calls;
@@ -561,21 +567,23 @@ describe("composePullIfMissing", () => {
         const pulled: Array<{ socket: string; image: string }> = [];
         const logs: string[] = [];
         spies.push(
-            spyOn(container, "capture").mockImplementation(async (_rt, args) => ({ code: held.has(args[2] ?? "") ? 0 : 1, stdout: "", stderr: "" })),
-            spyOn(container, "inherit").mockImplementation(async (_rt, args) => {
+            spyOn(container, "capture").mockImplementation((_rt, args) => Promise.resolve({ code: held.has(args[2] ?? "") ? 0 : 1, stdout: "", stderr: "" })),
+            spyOn(container, "inherit").mockImplementation((_rt, args) => {
                 inherited.push(args);
-                return 0;
+                return Promise.resolve(0);
             }),
-            spyOn(container, "resolveEngineApiSocket").mockImplementation(async () => opts.socket),
-            spyOn(container, "resolveImageTotalBytes").mockImplementation(async (_rt, image) => opts.sizes?.[image] ?? null),
-            spyOn(container, "pullImageThroughEngine").mockImplementation(async (socket, image, onProgress) => {
-                pulled.push({ socket, image });
-                const pull = opts.pulls?.[image] ?? {};
-                for (const doneBytes of pull.reports ?? []) onProgress({ doneBytes, layersCompleted: 0 } satisfies EnginePullProgress);
-                const outcome = pull.outcome ?? { kind: "completed" };
-                if (outcome.kind === "completed" && opts.holdsAfterPull !== false) held.add(image);
-                return outcome;
-            }),
+            spyOn(container, "resolveEngineApiSocket").mockImplementation(() => Promise.resolve(opts.socket)),
+            spyOn(container, "resolveImageTotalBytes").mockImplementation((_rt, image) => Promise.resolve(opts.sizes?.[image] ?? null)),
+            spyOn(container, "pullImageThroughEngine").mockImplementation((socket, image, onProgress) =>
+                Promise.try(() => {
+                    pulled.push({ socket, image });
+                    const pull = opts.pulls?.[image] ?? {};
+                    for (const doneBytes of pull.reports ?? []) onProgress({ doneBytes, layersCompleted: 0 } satisfies EnginePullProgress);
+                    const outcome = pull.outcome ?? { kind: "completed" };
+                    if (outcome.kind === "completed" && opts.holdsAfterPull !== false) held.add(image);
+                    return outcome;
+                }),
+            ),
             spyOn(console, "log").mockImplementation((line: unknown) => {
                 logs.push(String(line));
             }),

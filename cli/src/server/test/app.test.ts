@@ -39,8 +39,9 @@ function fakeBoot(state: ServerBootState): { boot: ServerBoot; starts: () => num
         boot: {
             state: () => state,
             runtime: () => null,
-            start: async () => {
+            start: () => {
                 starts += 1;
+                return Promise.resolve();
             },
         },
         starts: () => starts,
@@ -553,7 +554,7 @@ describe("GET /api/v1/server/activity", () => {
     });
     // The route passes the pool of the runtime to the ledger read and reads nothing else of it.
     const runtime: PoolRuntime = { pool: { query: () => Promise.reject(new Error("the route must not query the pool")) } };
-    const readyBoot: ServerBoot<PoolRuntime> = { state: () => STARTING, runtime: () => runtime, start: async () => undefined };
+    const readyBoot: ServerBoot<PoolRuntime> = { state: () => STARTING, runtime: () => runtime, start: () => Promise.resolve() };
 
     async function activity(boot: ServerBoot<PoolRuntime>, opts: ServerRouteOpts, lifecycle: ServerLifecycle = idleLifecycle()): Promise<unknown> {
         const response = await serverRoutes(boot, lifecycle, opts).request("/activity");

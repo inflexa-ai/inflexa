@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import pkg from "../../../../package.json";
 import type { FetchLike } from "../../../lib/download.ts";
+import { respondWith } from "../../../test_support/fake_fetch.ts";
 import { fetchLatestVersion, isNewerVersion, readNewerVersion, updateReadAllowed } from "../latest.ts";
 
 /** A stub of the `releases/latest` redirect: answers 302 to the tag of `version`. */
 function redirectTo(version: string): FetchLike {
-    return async () => new Response(null, { status: 302, headers: { location: `https://github.com/inflexa-ai/inflexa/releases/tag/v${version}` } });
+    return respondWith(null, { status: 302, headers: { location: `https://github.com/inflexa-ai/inflexa/releases/tag/v${version}` } });
 }
 
 describe("isNewerVersion", () => {
@@ -37,13 +38,13 @@ describe("fetchLatestVersion", () => {
     });
 
     test("a redirect with no location header is an unexpected status", async () => {
-        const result = await fetchLatestVersion(async () => new Response("", { status: 500 }));
+        const result = await fetchLatestVersion(respondWith("", { status: 500 }));
         expect(result._unsafeUnwrapErr()).toEqual({ type: "unexpected_status", status: 500 });
     });
 
     test("a location that names no version reports what it saw", async () => {
         const location = "https://github.com/inflexa-ai/inflexa/releases";
-        const result = await fetchLatestVersion(async () => new Response(null, { status: 302, headers: { location } }));
+        const result = await fetchLatestVersion(respondWith(null, { status: 302, headers: { location } }));
         expect(result._unsafeUnwrapErr()).toEqual({ type: "no_version", location });
     });
 
@@ -74,7 +75,7 @@ describe("readNewerVersion", () => {
     });
 
     test("a failed read is nothing to say, never a failure", async () => {
-        expect(await readNewerVersion(async () => new Response("", { status: 503 }))).toBeNull();
+        expect(await readNewerVersion(respondWith("", { status: 503 }))).toBeNull();
     });
 
     test("the network is read at each call, so a same-day release is seen", async () => {

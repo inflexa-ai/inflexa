@@ -1012,7 +1012,7 @@ export function buildProgram(): Command {
                 return;
             }
             const { sandboxPull } = await import("../modules/libs/pull.ts");
-            await sandboxPull();
+            sandboxPull();
         },
     );
 

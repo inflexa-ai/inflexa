@@ -57,8 +57,9 @@ function recordedSeams(over: Partial<FarmHealSeams> & { outcome?: FarmHealOutcom
         confirmDownload: (onAnswer) => {
             prompts.push(onAnswer);
         },
-        startDownload: async () => {
+        startDownload: () => {
             started += 1;
+            return Promise.resolve();
         },
         notify: (notice) => notices.push(notice),
         ...over,

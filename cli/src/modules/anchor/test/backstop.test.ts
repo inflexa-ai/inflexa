@@ -111,7 +111,7 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
     }
 
     /** The busy gate of an analysis that no work holds. */
-    const idle = async (): Promise<BusyReason[]> => [];
+    const idle = (): Promise<BusyReason[]> => Promise.resolve([]);
 
     /** Ids still homed at the dead anchor, newest-first as the query returns them. */
     function survivingAnalysisIds(): string[] {

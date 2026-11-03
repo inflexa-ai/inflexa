@@ -2119,7 +2119,7 @@ export async function confirmSessionDelete(ctx: Workspace, analysis: Analysis, t
         },
         // The thread is still bound and still lists, so nothing is re-landed — leaving the user
         // exactly where they were is the truthful outcome of a removal that did not happen.
-        async (e) => opts.notify({ kind: "error", text: `Failed: ${describeClientError(e)}` }),
+        (e) => opts.notify({ kind: "error", text: `Failed: ${describeClientError(e)}` }),
     );
 }
 

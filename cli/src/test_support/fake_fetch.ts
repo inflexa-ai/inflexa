@@ -7,3 +7,12 @@
 export function fakeFetch(fake: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
     return Object.assign(fake, { preconnect: globalThis.fetch.preconnect });
 }
+
+/**
+ * A fetch double that answers each call with a new `Response` of `body` and `init`, so a body reads one
+ * time for each call. A `Response` that its constructor refuses (a status out of range) comes back as a
+ * rejection, as a rejecting `fetch` does.
+ */
+export function respondWith(body?: BodyInit | null, init?: ResponseInit): () => Promise<Response> {
+    return () => Promise.try(() => new Response(body, init));
+}

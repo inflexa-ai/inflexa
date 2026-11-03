@@ -301,8 +301,9 @@ describe("the walk", () => {
         touch("a.csv", "b.csv");
         const chunks: Uint8Array[] = [];
         (
-            await walkToRecords(root, { hidden: false, maxDepth: 64, width: 4 }, readFolderEntries, async (bytes) => {
+            await walkToRecords(root, { hidden: false, maxDepth: 64, width: 4 }, readFolderEntries, (bytes) => {
                 chunks.push(bytes);
+                return Promise.resolve();
             })
         )._unsafeUnwrap();
         const all = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));

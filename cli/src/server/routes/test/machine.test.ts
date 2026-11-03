@@ -88,9 +88,9 @@ describe("the agents", () => {
     test("PUT /api/v1/agents/:role saves the model and the effort in one config write", async () => {
         const checked: string[] = [];
         const routes = routesWith({
-            validateModel: async (model) => {
+            validateModel: (model) => {
                 checked.push(model);
-                return "served";
+                return Promise.resolve("served");
             },
         });
 
@@ -104,10 +104,10 @@ describe("the agents", () => {
     });
 
     test("a model that the account cannot serve is 400 `validation_error` that names it, and nothing is written", async () => {
-        const response = await routesWith({ validateModel: async () => "not_found", probeContextWindow: async () => ({ type: "not_probed" }) }).request(
-            "/agents/conversation",
-            json("PUT", { model: "claude-nope", effort: "high" }),
-        );
+        const response = await routesWith({
+            validateModel: () => Promise.resolve("not_found"),
+            probeContextWindow: () => Promise.resolve({ type: "not_probed" }),
+        }).request("/agents/conversation", json("PUT", { model: "claude-nope", effort: "high" }));
 
         expect(response.status).toBe(400);
         expect(await jsonBody(response)).toMatchObject({
@@ -118,7 +118,7 @@ describe("the agents", () => {
     });
 
     test("an inconclusive check accepts the pick", async () => {
-        const response = await routesWith({ validateModel: async () => "inconclusive" }).request(
+        const response = await routesWith({ validateModel: () => Promise.resolve("inconclusive") }).request(
             "/agents/utility",
             json("PUT", { model: "m", effort: "medium" }),
         );
@@ -127,8 +127,8 @@ describe("the agents", () => {
 
     test("a chat model with a small window saves, and the response carries the warning", async () => {
         const response = await routesWith({
-            validateModel: async () => "inconclusive",
-            probeContextWindow: async () => ({ type: "known", tokens: 40960 }),
+            validateModel: () => Promise.resolve("inconclusive"),
+            probeContextWindow: () => Promise.resolve({ type: "known", tokens: 40960 }),
         }).request("/agents/conversation", json("PUT", { model: "qwen3:8b", effort: "medium" }));
 
         expect(response.status).toBe(200);
@@ -140,7 +140,7 @@ describe("the agents", () => {
 
     test("a model for a role other than the chat is not probed", async () => {
         const response = await routesWith({
-            validateModel: async () => "inconclusive",
+            validateModel: () => Promise.resolve("inconclusive"),
             probeContextWindow: () => {
                 throw new Error("probeContextWindow must not be called");
             },
@@ -151,7 +151,7 @@ describe("the agents", () => {
     });
 
     test("an unknown role is 404, and an effort off the ladder is 400", async () => {
-        const routes = routesWith({ validateModel: async () => "served" });
+        const routes = routesWith({ validateModel: () => Promise.resolve("served") });
         expect((await routes.request("/agents/planner", json("PUT", { model: "m", effort: "high" }))).status).toBe(404);
         const bad = await routes.request("/agents/sandbox", json("PUT", { model: "m", effort: "max" }));
         expect(bad.status).toBe(400);
@@ -162,11 +162,13 @@ describe("the agents", () => {
 describe("GET /api/v1/models", () => {
     test("gives the models of the connection with their efforts and their release date", async () => {
         const routes = routesWith({
-            listModels: async () =>
-                ok([
-                    { id: "claude-opus-5-5", efforts: ["low", "high"], releasedAt: "2026-09-21T00:00:00.000Z" },
-                    { id: "claude-opus-4-8", efforts: ["low"], releasedAt: null },
-                ]),
+            listModels: () =>
+                Promise.resolve(
+                    ok([
+                        { id: "claude-opus-5-5", efforts: ["low", "high"], releasedAt: "2026-09-21T00:00:00.000Z" },
+                        { id: "claude-opus-4-8", efforts: ["low"], releasedAt: null },
+                    ]),
+                ),
         });
         expect(await jsonBody(routes.request("/models"))).toEqual({
             models: [
@@ -177,7 +179,7 @@ describe("GET /api/v1/models", () => {
     });
 
     test("a listing that failed is `models: null` with the reason for a person, not an error", async () => {
-        const routes = routesWith({ listModels: async () => err({ type: "timed_out", afterMs: 10_000 }) });
+        const routes = routesWith({ listModels: () => Promise.resolve(err({ type: "timed_out", afterMs: 10_000 })) });
         const response = await routes.request("/models");
         expect(response.status).toBe(200);
         expect(await jsonBody(response)).toEqual({ models: null, reason: "the model endpoint gave no answer within 10 s" });
@@ -365,9 +367,9 @@ describe("GET /api/v1/embedding-models", () => {
     test("lists the models of the endpoint with the key of the header", async () => {
         const seen: string[] = [];
         const routes = routesWith({
-            listEmbeddingModels: async (baseUrl, apiKey) => {
+            listEmbeddingModels: (baseUrl, apiKey) => {
                 seen.push(`${baseUrl} ${apiKey}`);
-                return ok(["text-embedding-3-small"]);
+                return Promise.resolve(ok(["text-embedding-3-small"]));
             },
         });
         const response = await routes.request(`/embedding-models?baseUrl=${encodeURIComponent("https://e.example/v1")}`, {
@@ -378,7 +380,7 @@ describe("GET /api/v1/embedding-models", () => {
     });
 
     test("a listing failure is `models: null` with the reason, and a request with no key is 400", async () => {
-        const routes = routesWith({ listEmbeddingModels: async () => err({ type: "http_error", status: 401 }) });
+        const routes = routesWith({ listEmbeddingModels: () => Promise.resolve(err({ type: "http_error", status: 401 })) });
         const failed = await routes.request("/embedding-models", { headers: { [EMBEDDING_API_KEY_HEADER]: "sk-1" } });
         expect(await jsonBody(failed)).toEqual({ models: null, reason: "http_error" });
         expect((await routes.request("/embedding-models")).status).toBe(400);

@@ -70,20 +70,22 @@ function fakePausedWork(
         resumed,
         held,
         listed,
-        list: async (analysisId) => {
+        list: (analysisId) => {
             listed.push(analysisId);
-            return analysisId === undefined ? items : items.filter((work) => work.analysisId === analysisId);
+            return Promise.resolve(analysisId === undefined ? items : items.filter((work) => work.analysisId === analysisId));
         },
-        stop: async () => ({ kind: "not_found" }),
-        resume: async (session, workId) => {
+        stop: () => Promise.resolve({ kind: "not_found" }),
+        resume: (session, workId) => {
             resumed.push({ session, workId });
             const work = items.find((item) => item.workId === workId && item.analysisId === session.scope.analysisId);
-            return work === undefined ? { kind: "not_found" } : { kind: "resumed", workflows: work.waiting.length };
+            return Promise.resolve(work === undefined ? { kind: "not_found" } : { kind: "resumed", workflows: work.waiting.length });
         },
-        hold: async (session, workId) => {
+        hold: (session, workId) => {
             held.push(workId);
             const work = items.find((item) => item.workId === workId && item.analysisId === session.scope.analysisId);
-            return work === undefined ? { kind: "not_found" } : { kind: "held", workflows: work.waiting.filter((wait) => wait.state === "retrying").length };
+            return Promise.resolve(
+                work === undefined ? { kind: "not_found" } : { kind: "held", workflows: work.waiting.filter((wait) => wait.state === "retrying").length },
+            );
         },
     };
 }
@@ -100,7 +102,7 @@ function readyBoot(work: WorkSurface): ServerBoot<Handle> {
         phase: "ready",
         connection: { provider: "anthropic", mode: "cliproxy", model: "m" },
     };
-    return { state: () => state, runtime: () => runtime, start: async () => undefined };
+    return { state: () => state, runtime: () => runtime, start: () => Promise.resolve() };
 }
 
 /** The routes under the mount path of the app, thus the `analysisId` parameter resolves as it does in the app. */
@@ -198,9 +200,9 @@ describe("GET {A}/paused-work", () => {
     test("a failed list gives 500 `internal_error`", async () => {
         const failing: WorkSurface = {
             list: () => Promise.reject(new Error("relation cortex_paused_work does not exist")),
-            stop: async () => ({ kind: "not_found" }),
-            resume: async () => ({ kind: "not_found" }),
-            hold: async () => ({ kind: "not_found" }),
+            stop: () => Promise.resolve({ kind: "not_found" }),
+            resume: () => Promise.resolve({ kind: "not_found" }),
+            hold: () => Promise.resolve({ kind: "not_found" }),
         };
         const response = await appWith(readyBoot(failing)).request("");
         expect(response.status).toBe(500);
@@ -296,9 +298,9 @@ describe("GET /api/v1/paused-work", () => {
     test("a failed list gives 500 `internal_error`", async () => {
         const failing: WorkSurface = {
             list: () => Promise.reject(new Error("relation cortex_paused_work does not exist")),
-            stop: async () => ({ kind: "not_found" }),
-            resume: async () => ({ kind: "not_found" }),
-            hold: async () => ({ kind: "not_found" }),
+            stop: () => Promise.resolve({ kind: "not_found" }),
+            resume: () => Promise.resolve({ kind: "not_found" }),
+            hold: () => Promise.resolve({ kind: "not_found" }),
         };
         const response = await collectionWith(readyBoot(failing), { analysisNames: namesOf([]) }).request();
         expect(response.status).toBe(500);
@@ -333,10 +335,10 @@ describe("POST {A}/paused-work/:workId/resume", () => {
 
     test("a renewal that the host refuses gives 403 `forbidden` with its reason", async () => {
         const refusing: WorkSurface = {
-            list: async () => [PAUSED_RUN],
-            stop: async () => ({ kind: "not_found" }),
-            resume: async () => ({ kind: "refused", reason: "only the subject can renew" }),
-            hold: async () => ({ kind: "not_found" }),
+            list: () => Promise.resolve([PAUSED_RUN]),
+            stop: () => Promise.resolve({ kind: "not_found" }),
+            resume: () => Promise.resolve({ kind: "refused", reason: "only the subject can renew" }),
+            hold: () => Promise.resolve({ kind: "not_found" }),
         };
         const response = await appWith(readyBoot(refusing)).request("/run-1/resume", { method: "POST" });
         expect(response.status).toBe(403);

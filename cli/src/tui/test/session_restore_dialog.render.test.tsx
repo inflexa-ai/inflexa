@@ -51,7 +51,7 @@ function sessionOpts(page: ThreadList, notices: Notice[], restored: string[]): S
         },
         purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
         chatBusy: () => false,
-        resolveThreadId: async () => null,
+        resolveThreadId: () => Promise.resolve(null),
         workingDirFor: () => "/work",
         refreshThread: () => {},
         mintReportPageAccess: () => errAsync({ type: "aborted" }),

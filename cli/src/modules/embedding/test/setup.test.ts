@@ -304,7 +304,7 @@ describe("ensureEmbedderReady", () => {
         __setLlamaPinForTest(pinWith(fixture.sha256));
         // The offline source-checkout case: the download is the only byte source
         // from source, and it is unreachable.
-        __setLlamaAcquireForTest(async () => err({ type: "download_failed", message: "network unreachable" }));
+        __setLlamaAcquireForTest(() => Promise.resolve(err({ type: "download_failed", message: "network unreachable" })));
 
         const result = await ensureEmbedderReady();
 
@@ -388,7 +388,7 @@ describe("runEmbeddingSetup (answers)", () => {
         __setEmbeddingApiKeyForTest(() => "sk-from-env");
         // Mocked rather than left real: on a TTY the genuine masked prompt would HANG this test instead of
         // failing it, and the sentinel return makes "the prompt won anyway" visible in the persisted key.
-        const secretPrompt = spyOn(prompts, "promptSecret").mockImplementation(async () => "sk-typed-at-the-prompt");
+        const secretPrompt = spyOn(prompts, "promptSecret").mockImplementation(() => Promise.resolve("sk-typed-at-the-prompt"));
         try {
             const { value: result, output } = await captureStdout(() =>
                 withTTY(true, () => runEmbeddingSetup(true, { mode: "api-key", baseURL: `${stub.origin}/v1`, model: "my-embed" })),
@@ -766,7 +766,7 @@ describe("runEmbeddingSetup (picker)", () => {
         writeConfigWith({ mode: "off" });
         const stub = startEmbeddingStub(768);
         __setEmbeddingApiKeyForTest(() => "sk-from-env");
-        const picker = spyOn(prompts, "select").mockImplementation(async () => "api-key");
+        const picker = spyOn(prompts, "select").mockImplementation(() => Promise.resolve("api-key"));
         try {
             const result = await withTTY(true, () => runEmbeddingSetup(true, { baseURL: `${stub.origin}/v1`, model: "my-embed" }));
 
@@ -793,7 +793,7 @@ describe("runEmbeddingSetup (picker)", () => {
         placeMaterializedRuntime();
         const stub = startEmbeddingStub(512);
         useStubSidecar(stub.origin);
-        const picker = spyOn(prompts, "select").mockImplementation(async () => "custom");
+        const picker = spyOn(prompts, "select").mockImplementation(() => Promise.resolve("custom"));
         try {
             const result = await withTTY(true, () => runEmbeddingSetup(true, { gguf: customPath }));
 
@@ -814,7 +814,7 @@ describe("runEmbeddingSetup (picker)", () => {
         // `off` REWRITES the embedding block; declining at the picker must leave the file byte-identical.
         writeConfigWith({ mode: "off", apiKey: "sk-recorded" });
         const before = readFileSync(env.configPath, "utf8");
-        const picker = spyOn(prompts, "select").mockImplementation(async () => "off");
+        const picker = spyOn(prompts, "select").mockImplementation(() => Promise.resolve("off"));
         try {
             const result = await withTTY(true, () => runEmbeddingSetup(true));
 

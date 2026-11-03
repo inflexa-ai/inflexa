@@ -121,7 +121,7 @@ function opts(profile: DataProfileState | null, runs: RunSummary[], ready: () =>
 
 /** The reads of a tick beside the ledger, for a case about the ledger: a server that answers, and an open thread and paused work that the case does not read. */
 const LEDGER_ONLY: Pick<WatchOpts, "checkServer" | "pollThread" | "pollPaused"> = {
-    checkServer: async () => true,
+    checkServer: () => Promise.resolve(true),
     pollThread: async () => {},
     pollPaused: async () => {},
 };
@@ -750,7 +750,13 @@ describe("hasActiveWork — poll arming predicate", () => {
 describe("watchSidebarData — triggers and bounded poll", () => {
     test("reaching ready with an open analysis refreshes", () => {
         const refreshed: string[] = [];
-        const dispose = mountWatch(wsFor("A"), { refresh: async (id) => void refreshed.push(id), arm: () => () => {} });
+        const dispose = mountWatch(wsFor("A"), {
+            refresh: (id) => {
+                refreshed.push(id);
+                return Promise.resolve();
+            },
+            arm: () => () => {},
+        });
         try {
             expect(refreshed).toHaveLength(0); // boot idle at mount → no refresh
             bootReady();
@@ -763,7 +769,13 @@ describe("watchSidebarData — triggers and bounded poll", () => {
     test("a busy→idle transition refreshes; the up-edge does not", () => {
         const refreshed: string[] = [];
         setChatStatus("idle");
-        const dispose = mountWatch(wsFor("A"), { refresh: async (id) => void refreshed.push(id), arm: () => () => {} });
+        const dispose = mountWatch(wsFor("A"), {
+            refresh: (id) => {
+                refreshed.push(id);
+                return Promise.resolve();
+            },
+            arm: () => () => {},
+        });
         try {
             expect(refreshed).toHaveLength(0);
             setChatStatus("busy");
@@ -780,7 +792,10 @@ describe("watchSidebarData — triggers and bounded poll", () => {
         const arms: Array<{ fn: () => void; ms: number }> = [];
         let disarms = 0;
         const watchOpts: LedgerWatchOpts = {
-            refresh: async (id) => void refreshed.push(id),
+            refresh: (id) => {
+                refreshed.push(id);
+                return Promise.resolve();
+            },
             arm: (fn, ms) => {
                 arms.push({ fn, ms });
                 return () => {
@@ -912,7 +927,7 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         let inputCount = 2;
         const ws = createWorkspace(
             { analysis: toAnalysis(view), sessionId: null, workingDir: "/work", openDialog: () => {}, closeDialog: () => {}, quit: async () => {} },
-            { abortTurn: () => {}, fetchDetail: async () => ({ ...view, project: null, anchor: null, outputDir: null, inputCount, busy: [] }) },
+            { abortTurn: () => {}, fetchDetail: () => Promise.resolve({ ...view, project: null, anchor: null, outputDir: null, inputCount, busy: [] }) },
         );
         const poll = mountPoll(ws);
         try {
@@ -934,7 +949,12 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
     test("a tick reads the open thread of the open analysis", async () => {
         const reads: [string, string][] = [];
         const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T" });
-        const poll = mountPoll(ws, { pollThread: async (analysisId, threadId) => void reads.push([analysisId, threadId]) });
+        const poll = mountPoll(ws, {
+            pollThread: (analysisId, threadId) => {
+                reads.push([analysisId, threadId]);
+                return Promise.resolve();
+            },
+        });
         try {
             await poll.tick();
             expect(reads).toEqual([["A", "T"]]);
@@ -949,9 +969,15 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         let pausedReads = 0;
         const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T", refreshScope: () => void (scopeReads += 1) });
         const poll = mountPoll(ws, {
-            checkServer: async () => false,
-            pollThread: async () => void (threadReads += 1),
-            pollPaused: async () => void (pausedReads += 1),
+            checkServer: () => Promise.resolve(false),
+            pollThread: () => {
+                threadReads += 1;
+                return Promise.resolve();
+            },
+            pollPaused: () => {
+                pausedReads += 1;
+                return Promise.resolve();
+            },
         });
         try {
             await poll.tick();
@@ -964,7 +990,12 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
     test("a tick reads the paused work of the analysis with the open thread", async () => {
         const reads: [string, string | null][] = [];
         const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T" });
-        const poll = mountPoll(ws, { pollPaused: async (analysisId, threadId) => void reads.push([analysisId, threadId]) });
+        const poll = mountPoll(ws, {
+            pollPaused: (analysisId, threadId) => {
+                reads.push([analysisId, threadId]);
+                return Promise.resolve();
+            },
+        });
         try {
             await poll.tick();
             expect(reads).toEqual([["A", "T"]]);
@@ -980,7 +1011,10 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         const dispose = mountWatch(ws, {
             refresh: async () => {},
             arm: () => () => {},
-            pollPaused: async (analysisId, threadId) => void reads.push([analysisId, threadId]),
+            pollPaused: (analysisId, threadId) => {
+                reads.push([analysisId, threadId]);
+                return Promise.resolve();
+            },
         });
         try {
             expect(reads).toEqual([["A", "T"]]);
@@ -1034,9 +1068,9 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         const probes: string[] = [];
         const ws = wsFor("A");
         const poll = mountPoll(ws, {
-            checkServer: async () => {
+            checkServer: () => {
                 probes.push("probe");
-                return false;
+                return Promise.resolve(false);
             },
         });
         try {

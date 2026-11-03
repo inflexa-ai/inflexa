@@ -46,6 +46,7 @@ import { __resetNoticesForTest, currentNotice } from "../notice.ts";
 import { chatStatus, modelRetry, type ModelRetryStatus } from "../status.ts";
 import { isKnownPart, readFileReference, readPlanCard, readPresentation } from "../../../modules/harness/chat_printer.ts";
 import type { LiveAskPart, LiveTextPart, LiveToolCallPart, Part } from "../../../types/session.ts";
+import { streamOf } from "../../../test_support/stream.ts";
 import { conversationSummary, threadListOf } from "../../../test_support/threads.ts";
 import { __resetOpenThreadForTest, openThread, refreshOpenThread, type ThreadOpts } from "../thread.ts";
 import { present } from "../../../lib/present.ts";
@@ -184,7 +185,7 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
         fetchTurn: (analysisId, threadId, turnId) => okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", ...end }),
         // The server forgot the turn, thus a broken stream reads nothing again unless a case replaces it.
         rereadTurn: () => errAsync({ type: "http", status: 404, body: { error: "not_found", message: "Turn not found." } }),
-        reloadTranscript: async () => undefined,
+        reloadTranscript: () => Promise.resolve(),
         healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
         transcript: { fetchThread: () => okAsync(null), fetchMessages: () => okAsync(messageList([])) },
     };
@@ -777,11 +778,15 @@ describe("send() reads the end of a turn from its stream when the summary is gon
 
     test("a stream that breaks with no terminal frame and no summary raises the broken-stream banner", async () => {
         const broken: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("reset") };
-        async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-            yield ok({ type: "text-delta", text: "partial", source: ROUTE_SOURCE });
-            yield err(broken);
-        }
-        const server: SendOpts = { ...fakeServer(done()), startTurn: () => okAsync({ turnId: "turn-x", frames: frames() }), fetchTurn: () => errAsync(broken) };
+        const server: SendOpts = {
+            ...fakeServer(done()),
+            startTurn: () =>
+                okAsync({
+                    turnId: "turn-x",
+                    frames: streamOf<Result<ChatFrame, ClientError>>([ok({ type: "text-delta", text: "partial", source: ROUTE_SOURCE }), err(broken)]),
+                }),
+            fetchTurn: () => errAsync(broken),
+        };
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
         expect(errorMsg()).toContain("The connection to the turn was lost");
         expect(chatStatus()).toBe("error");
@@ -792,15 +797,14 @@ describe("send() reads the end of a turn from its stream when the summary is gon
 
     test("a stream that breaks reads the turn again from its start, and each frame applies one time", async () => {
         const broken: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("reset") };
-        async function* first(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-            yield ok({ type: "text-delta", text: "Hello ", source: ROUTE_SOURCE });
-            yield err(broken);
-        }
-        async function* again(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-            yield ok({ type: "text-delta", text: "Hello ", source: ROUTE_SOURCE });
-            yield ok({ type: "text-delta", text: "world.", source: ROUTE_SOURCE });
-            yield ok({ type: "finish", source: ROUTE_SOURCE, finishReason: "stop" });
-        }
+        const first = (): AsyncGenerator<Result<ChatFrame, ClientError>> =>
+            streamOf<Result<ChatFrame, ClientError>>([ok({ type: "text-delta", text: "Hello ", source: ROUTE_SOURCE }), err(broken)]);
+        const again = (): AsyncGenerator<Result<ChatFrame, ClientError>> =>
+            streamOf<Result<ChatFrame, ClientError>>([
+                ok({ type: "text-delta", text: "Hello ", source: ROUTE_SOURCE }),
+                ok({ type: "text-delta", text: "world.", source: ROUTE_SOURCE }),
+                ok({ type: "finish", source: ROUTE_SOURCE, finishReason: "stop" }),
+            ]);
         const rereads: string[] = [];
         const server: SendOpts = {
             ...fakeServer(done()),
@@ -2012,8 +2016,9 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         let reloadFired = false;
         const server: SendOpts = {
             ...fakeServer(done({ fallbackText: "done" })),
-            reloadTranscript: async () => {
+            reloadTranscript: () => {
                 reloadFired = true;
+                return Promise.resolve();
             },
         };
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, server);
@@ -2327,10 +2332,8 @@ describe("the open thread that a different client changes", () => {
         const thread = sharedThread();
         await loadMessages(AID, SID, thread.opts);
         const broken: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:1", cause: new Error("reset") };
-        async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-            yield ok({ type: "tool-started", toolUseId: "t1", name: "read_file", source: ROOT });
-            yield err(broken);
-        }
+        const frames = (): AsyncGenerator<Result<ChatFrame, ClientError>> =>
+            streamOf<Result<ChatFrame, ClientError>>([ok({ type: "tool-started", toolUseId: "t1", name: "read_file", source: ROOT }), err(broken)]);
         await send(
             { sessionId: SID, analysisId: AID, userText: "my question" },
             {

@@ -27,5 +27,5 @@ export function fakePool(answer: (query: FakeQuery) => readonly unknown[] | Prom
 /** A {@link fakePool} that also lends a client for a transaction. The client answers each query with the same `answer`. */
 export function fakeTransactionalPool(answer: (query: FakeQuery) => readonly unknown[] | Promise<readonly unknown[]>): Querier & Connectable {
     const pool = fakePool(answer);
-    return { ...pool, connect: async () => ({ ...pool, release: () => {} }) };
+    return { ...pool, connect: () => Promise.resolve({ ...pool, release: () => {} }) };
 }

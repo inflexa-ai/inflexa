@@ -36,7 +36,7 @@ export async function writeSearxngSettings(): Promise<Result<void, InfraStateErr
 
     return ensureFileMountSource(
         settingsPath,
-        async () => ok(undefined),
+        () => Promise.resolve(ok(undefined)),
         () => writeFreshSettings(settingsPath),
     );
 }

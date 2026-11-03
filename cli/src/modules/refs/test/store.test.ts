@@ -32,6 +32,7 @@ import {
     type ReferenceStoreInspection,
     type ReferenceVerification,
 } from "../store.ts";
+import { respondWith } from "../../../test_support/fake_fetch.ts";
 import { objectContaining } from "../../../test_support/matchers.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 
@@ -96,12 +97,13 @@ function catalog(files: readonly Fixture[] = ARTIFACTS): ReferenceDataCatalog {
 /** An upstream that answers from a different, downgraded location — what a redirect hop looks like. */
 function serveRedirectedTo(finalUrl: string, files: readonly Fixture[]): (input: string | URL | Request) => Promise<Response> {
     const bodies = new Map(files.map((file) => [url(file.path), file.body]));
-    return async (input) => {
-        const response = new Response(bodies.get(String(input)) ?? "");
-        // fetch reports the post-redirect location here; Response leaves it "" unless it redirected.
-        Object.defineProperty(response, "url", { value: finalUrl });
-        return response;
-    };
+    return (input) =>
+        Promise.try(() => {
+            const response = new Response(bodies.get(String(input)) ?? "");
+            // fetch reports the post-redirect location here; Response leaves it "" unless it redirected.
+            Object.defineProperty(response, "url", { value: finalUrl });
+            return response;
+        });
 }
 
 function source(value: ReferenceDataCatalog): ReferenceCatalogSource {
@@ -130,23 +132,25 @@ type Asked = { readonly url: string; readonly range: string | null };
  * test can prove the installer refetches whole rather than resuming from a partial. */
 function serve(files: readonly Fixture[], asked: Asked[] = []): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
     const bodies = new Map(files.map((file) => [url(file.path), file.body]));
-    return async (input, init) => {
-        const target = String(input);
-        asked.push({ url: target, range: new Headers(init?.headers).get("range") });
-        const body = bodies.get(target);
-        if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
-        return new Response(body);
-    };
+    return (input, init) =>
+        Promise.try(() => {
+            const target = String(input);
+            asked.push({ url: target, range: new Headers(init?.headers).get("range") });
+            const body = bodies.get(target);
+            if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
+            return new Response(body);
+        });
 }
 
 /** An upstream that declares each body's length, as a well-behaved one does for a fixed-size file. */
 function serveWithContentLength(files: readonly Fixture[]): (input: string | URL | Request) => Promise<Response> {
     const bodies = new Map(files.map((file) => [url(file.path), file.body]));
-    return async (input) => {
-        const body = bodies.get(String(input));
-        if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
-        return new Response(body, { headers: { "content-length": String(Buffer.byteLength(body)) } });
-    };
+    return (input) =>
+        Promise.try(() => {
+            const body = bodies.get(String(input));
+            if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
+            return new Response(body, { headers: { "content-length": String(Buffer.byteLength(body)) } });
+        });
 }
 
 afterEach(() => {
@@ -992,11 +996,12 @@ describe("reference download sizing", () => {
     test("sums what the publishers declare and counts what they do not", async () => {
         const sizes: Record<string, string | undefined> = { "a0.txt": "1024", "a1.txt": "2048", "a2.txt": undefined };
         const measured = await measureReferenceDownload(artifacts(3), {
-            fetch: async (input) => {
-                const path = String(input).replace("https://upstream.test/", "");
-                const length = sizes[path];
-                return new Response(null, { headers: length === undefined ? {} : { "content-length": length } });
-            },
+            fetch: (input) =>
+                Promise.try(() => {
+                    const path = String(input).replace("https://upstream.test/", "");
+                    const length = sizes[path];
+                    return new Response(null, { headers: length === undefined ? {} : { "content-length": length } });
+                }),
         });
         expect(measured).toEqual({ bytes: 3072, sized: 2, unsized: 1 });
     });
@@ -1004,9 +1009,9 @@ describe("reference download sizing", () => {
     test("probes with HEAD, so a size sweep never pulls a body", async () => {
         const methods: (string | undefined)[] = [];
         await measureReferenceDownload(artifacts(2), {
-            fetch: async (_input, init) => {
+            fetch: (_input, init) => {
                 methods.push(init?.method);
-                return new Response(null, { headers: { "content-length": "10" } });
+                return Promise.resolve(new Response(null, { headers: { "content-length": "10" } }));
             },
         });
         expect(methods).toEqual(["HEAD", "HEAD"]);
@@ -1017,13 +1022,13 @@ describe("reference download sizing", () => {
         // the body before it reaches the stream this code counts, so accepting the header would make
         // the readout show more received than declared. Reproduced against data.broadinstitute.org.
         const measured = await measureReferenceDownload(artifacts(1), {
-            fetch: async () => new Response(null, { headers: { "content-length": "20551", "content-encoding": "gzip" } }),
+            fetch: respondWith(null, { headers: { "content-length": "20551", "content-encoding": "gzip" } }),
         });
         expect(measured).toEqual({ bytes: 0, sized: 0, unsized: 1 });
 
         // An explicit `identity` coding is the absence of one, so its length still counts.
         const identity = await measureReferenceDownload(artifacts(1), {
-            fetch: async () => new Response(null, { headers: { "content-length": "20551", "content-encoding": "identity" } }),
+            fetch: respondWith(null, { headers: { "content-length": "20551", "content-encoding": "identity" } }),
         });
         expect(identity).toEqual({ bytes: 20551, sized: 1, unsized: 0 });
     });
@@ -1031,10 +1036,10 @@ describe("reference download sizing", () => {
     test("no probe outcome is a failure: errors, refusals, and nonsense all mean unsized", async () => {
         const behaviours: Record<string, () => Promise<Response>> = {
             "a0.txt": () => Promise.reject(new Error("connection reset")),
-            "a1.txt": async () => new Response("no", { status: 405, statusText: "Method Not Allowed" }),
-            "a2.txt": async () => new Response(null, { headers: { "content-length": "-5" } }),
-            "a3.txt": async () => new Response(null, { headers: { "content-length": "not a number" } }),
-            "a4.txt": async () => new Response(null, { headers: { "content-length": "512" } }),
+            "a1.txt": respondWith("no", { status: 405, statusText: "Method Not Allowed" }),
+            "a2.txt": respondWith(null, { headers: { "content-length": "-5" } }),
+            "a3.txt": respondWith(null, { headers: { "content-length": "not a number" } }),
+            "a4.txt": respondWith(null, { headers: { "content-length": "512" } }),
         };
         const measured = await measureReferenceDownload(artifacts(5), {
             fetch: (input) => {
@@ -1051,9 +1056,9 @@ describe("reference download sizing", () => {
     test("an empty plan is measured without asking anyone", async () => {
         let asked = 0;
         const measured = await measureReferenceDownload([], {
-            fetch: async () => {
+            fetch: () => {
                 asked += 1;
-                return new Response(null);
+                return Promise.resolve(new Response(null));
             },
         });
         expect(measured).toEqual({ bytes: 0, sized: 0, unsized: 0 });
@@ -1083,7 +1088,7 @@ describe("reference download sizing", () => {
         for (const concurrency of [Number.NaN, 0, -3, 0.5]) {
             const measured = await measureReferenceDownload(artifacts(2), {
                 concurrency,
-                fetch: async () => new Response(null, { headers: { "content-length": "8" } }),
+                fetch: respondWith(null, { headers: { "content-length": "8" } }),
             });
             expect(measured).toEqual({ bytes: 16, sized: 2, unsized: 0 });
         }
@@ -1092,9 +1097,9 @@ describe("reference download sizing", () => {
     test("every probe shares one signal, so the budget bounds the sweep and not each request", async () => {
         const signals = new Set<AbortSignal | null | undefined>();
         await measureReferenceDownload(artifacts(6), {
-            fetch: async (_input, init) => {
+            fetch: (_input, init) => {
                 signals.add(init?.signal);
-                return new Response(null, { headers: { "content-length": "4" } });
+                return Promise.resolve(new Response(null, { headers: { "content-length": "4" } }));
             },
         });
         expect(signals.size).toBe(1);

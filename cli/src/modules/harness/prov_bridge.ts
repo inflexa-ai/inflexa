@@ -231,7 +231,7 @@ function toCommandRef(
  *     lineage across runs for free.
  */
 export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry {
-    const registerOnBus = async (input: ArtifactRegistrationInput): Promise<ExternalRegistrationResult> => {
+    const registerOnBus = (input: ArtifactRegistrationInput): ExternalRegistrationResult => {
         // One actor stamp for the whole step — `systemActor()` is pure over pkg version + build
         // commit, so a single value across the step's events is identical to re-reading per event.
         const actor = systemActor();
@@ -361,7 +361,7 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
         // never as a throw into the harness step. No suspend flag: a provenance fault fails the step, and
         // it is no reason to pause the analysis.
         register: (input: ArtifactRegistrationInput): ResultAsync<ExternalRegistrationResult, GateFailure> =>
-            ResultAsync.fromPromise(registerOnBus(input), (cause): GateFailure => ({
+            ResultAsync.fromPromise(Promise.try(registerOnBus, input), (cause): GateFailure => ({
                 reason: `provenance registration threw: ${cause instanceof Error ? cause.message : "a non-Error value"}`,
                 suspend: false,
             })),

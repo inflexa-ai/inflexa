@@ -48,7 +48,7 @@ function gatewayOf(pending: () => Promise<PendingAsk[]>): AskGateway {
 function readyBoot(gateway: AskGateway): ServerBoot<Handle> {
     const runtime: Handle = { pool: standInPool, askGateway: gateway };
     const state: ServerBootState = { ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } };
-    return { state: () => state, runtime: () => runtime, start: async () => undefined };
+    return { state: () => state, runtime: () => runtime, start: () => Promise.resolve() };
 }
 
 /** A new analysis row with the given name in the test database. */
@@ -456,7 +456,7 @@ describe("GET /api/v1/attention", () => {
         const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: startedAt, step: null, done: [] } };
         const app = new Hono<ServerEnv>().route(
             "/api/v1/attention",
-            attentionRoutes<Pool>({ state: () => starting, runtime: () => null, start: async () => undefined }, DEFAULT_ATTENTION_ROUTE_OPTS),
+            attentionRoutes<Pool>({ state: () => starting, runtime: () => null, start: () => Promise.resolve() }, DEFAULT_ATTENTION_ROUTE_OPTS),
         );
 
         const response = await app.request("/api/v1/attention");

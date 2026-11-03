@@ -89,7 +89,7 @@ describe("requireRuntime", () => {
     }
 
     function bootIn(state: ServerBootState, rt: Handle | null): ServerBoot<Handle> {
-        return { state: () => state, runtime: () => rt, start: async () => undefined };
+        return { state: () => state, runtime: () => rt, start: () => Promise.resolve() };
     }
 
     function appFor(boot: ServerBoot<Handle>): Hono<ServerEnv<Handle>> {
@@ -187,10 +187,12 @@ async function readAll(response: Response): Promise<string> {
 
 describe("sseResponse", () => {
     test("the stream opens with the `: open` comment, each frame is one `data:` line of JSON and a blank line, and the stream closes when the producer settles", async () => {
-        const response = sseResponse(async (writer) => {
-            writer.send({ type: "a", n: 1 });
-            writer.send({ type: "b" });
-        });
+        const response = sseResponse((writer) =>
+            Promise.try(() => {
+                writer.send({ type: "a", n: 1 });
+                writer.send({ type: "b" });
+            }),
+        );
         expect(response.headers.get("Content-Type")).toBe("text/event-stream");
         expect(response.headers.get("Cache-Control")).toBe("no-cache");
         expect(await readAll(response)).toBe(': open\n\ndata: {"type":"a","n":1}\n\ndata: {"type":"b"}\n\n');
@@ -211,10 +213,12 @@ describe("sseResponse", () => {
     });
 
     test("a rejected producer closes the stream after the frames it sent", async () => {
-        const response = sseResponse(async (writer) => {
-            writer.send({ type: "first" });
-            throw new Error("producer broke");
-        });
+        const response = sseResponse((writer) =>
+            Promise.try(() => {
+                writer.send({ type: "first" });
+                throw new Error("producer broke");
+            }),
+        );
         expect(await readAll(response)).toBe(': open\n\ndata: {"type":"first"}\n\n');
     });
 

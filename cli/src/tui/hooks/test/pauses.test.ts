@@ -148,15 +148,26 @@ describe("pollPausedWork — a paused turn of the open thread is read again", ()
     test("the turn of the open thread is read, and a turn of a different thread is not", async () => {
         const watched: string[] = [];
         const items = [work(), work({ workId: "turn-x", kind: "turn", threadId: "other" }), work({ workId: "turn-1", kind: "turn", threadId: "T" })];
-        await pollPausedWork("A", "T", { refresh: async () => items, watchTurn: async (_a, _t, turnId) => void watched.push(turnId) });
+        await pollPausedWork("A", "T", {
+            refresh: () => Promise.resolve(items),
+            watchTurn: (_a, _t, turnId) => {
+                watched.push(turnId);
+                return Promise.resolve();
+            },
+        });
         expect(watched).toEqual(["turn-1"]);
     });
 
     test("no bound thread, or a failed read, reads no turn", async () => {
         const watched: string[] = [];
-        const opts = { watchTurn: async (_a: string, _t: string, turnId: string) => void watched.push(turnId) };
-        await pollPausedWork("A", null, { ...opts, refresh: async () => [work({ workId: "turn-1", kind: "turn", threadId: "T" })] });
-        await pollPausedWork("A", "T", { ...opts, refresh: async () => null });
+        const opts = {
+            watchTurn: (_a: string, _t: string, turnId: string) => {
+                watched.push(turnId);
+                return Promise.resolve();
+            },
+        };
+        await pollPausedWork("A", null, { ...opts, refresh: () => Promise.resolve([work({ workId: "turn-1", kind: "turn", threadId: "T" })]) });
+        await pollPausedWork("A", "T", { ...opts, refresh: () => Promise.resolve(null) });
         expect(watched).toEqual([]);
     });
 });

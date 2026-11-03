@@ -18,13 +18,13 @@ function harness(overrides: Partial<EphemeralEyesDeps> & { startCode?: number; r
     const { startCode = 0, removeCode = 0, startErr = "", ...deps } = overrides;
     const eyes = createEphemeralEyes({
         runtime: runtimes.podman,
-        run: async (rt, args): Promise<CaptureResult> => {
+        run: (rt, args): Promise<CaptureResult> => {
             calls.push({ rt, args });
-            if (args[0] === "run") return { code: startCode, stdout: "container-abc\n", stderr: startErr };
-            return { code: removeCode, stdout: "", stderr: removeCode === 0 ? "" : "device busy" };
+            if (args[0] === "run") return Promise.resolve({ code: startCode, stdout: "container-abc\n", stderr: startErr });
+            return Promise.resolve({ code: removeCode, stdout: "", stderr: removeCode === 0 ? "" : "device busy" });
         },
-        freePort: async () => 45678,
-        ready: async () => true,
+        freePort: () => Promise.resolve(45678),
+        ready: () => Promise.resolve(true),
         wait: async () => {},
         ...deps,
     });
@@ -114,7 +114,7 @@ describe("createEphemeralEyes", () => {
         // The started container holds a port and a slot. The failed acquire hands over no lease, thus nothing
         // else can end it.
         let clock = 0;
-        const t = harness({ ready: async () => false, now: () => (clock += 10_000) });
+        const t = harness({ ready: () => Promise.resolve(false), now: () => (clock += 10_000) });
 
         await expect(t.eyes(SCOPE)).rejects.toThrow("did not answer");
         expect(t.argsOf("rm")).toEqual(["rm", "-f", "container-abc"]);

@@ -152,7 +152,7 @@ export async function ensureSandboxImage(image: string): Promise<void> {
 }
 
 /** `inflexa sandbox pull` — start the two detached image transfers and return at once. */
-export async function sandboxPull(): Promise<void> {
+export function sandboxPull(): void {
     const migrated = migrateRetiredSandboxImageOverride();
     if (migrated !== null) {
         console.log(`The config named the retired image ${migrated}. The override is removed, and the default sandbox-base pair serves.`);

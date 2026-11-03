@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { respondWith } from "../../../test_support/fake_fetch.ts";
 import { applyErrorMessage, applyUpdate, releaseAsset } from "../apply.ts";
 
 const roots: string[] = [];
@@ -28,11 +29,12 @@ function sha(body: string): string {
  * is how the checksum-mismatch path is exercised without a corrupt body.
  */
 function serveRelease(asset: string, body: string, sums?: string): FetchStub {
-    return async (input) => {
-        const url = String(input);
-        if (url.endsWith("/SHA256SUMS")) return new Response(sums ?? `${sha(body)}  ${asset}\n`);
-        return new Response(body);
-    };
+    return (input) =>
+        Promise.try(() => {
+            const url = String(input);
+            if (url.endsWith("/SHA256SUMS")) return new Response(sums ?? `${sha(body)}  ${asset}\n`);
+            return new Response(body);
+        });
 }
 
 type FetchStub = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -123,7 +125,7 @@ describe("applyUpdate", () => {
         const result = await applyUpdate("0.17.0", {
             targetPath: target,
             platformKey: "linux-x64",
-            fetch: async () => new Response("", { status: 404 }),
+            fetch: respondWith("", { status: 404 }),
         });
 
         expect(result._unsafeUnwrapErr()).toEqual({ type: "manifest_failed", status: 404 });

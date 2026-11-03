@@ -164,14 +164,15 @@ describe("usageBreakdown", () => {
 function serverWith(views: Partial<Record<UsageGrouping, UsageView>>, seen: string[]): ClientOpts {
     return {
         discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
-        fetch: async (url) => {
-            seen.push(url);
-            const by = new URL(url).searchParams.get("by");
-            const view = Object.entries(views).find(([grouping]) => grouping === by)?.[1];
-            return view === undefined
-                ? new Response(JSON.stringify({ error: "internal_error", message: "no view" }), { status: 500 })
-                : new Response(JSON.stringify(view), { headers: { "Content-Type": "application/json" } });
-        },
+        fetch: (url) =>
+            Promise.try(() => {
+                seen.push(url);
+                const by = new URL(url).searchParams.get("by");
+                const view = Object.entries(views).find(([grouping]) => grouping === by)?.[1];
+                return view === undefined
+                    ? new Response(JSON.stringify({ error: "internal_error", message: "no view" }), { status: 500 })
+                    : new Response(JSON.stringify(view), { headers: { "Content-Type": "application/json" } });
+            }),
     };
 }
 

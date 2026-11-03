@@ -53,8 +53,9 @@ function driverOpts(outcome: ProfileOutcome): { opts: ParityDriverOpts; refreshe
             checks.push(analysisId);
             return okAsync(chatContext(outcome));
         },
-        refreshSidebar: async (analysisId) => {
+        refreshSidebar: (analysisId) => {
             refreshedWith.push(analysisId);
+            return Promise.resolve();
         },
         notify: (notice) => {
             notices.push(notice);
@@ -69,8 +70,9 @@ function forceOpts(outcome: ProfileOutcome): { opts: ForceDriverOpts; refreshedW
     const notices: Notice[] = [];
     const opts: ForceDriverOpts = {
         force: () => okAsync({ outcome }),
-        refreshSidebar: async (analysisId) => {
+        refreshSidebar: (analysisId) => {
             refreshedWith.push(analysisId);
+            return Promise.resolve();
         },
         notify: (notice) => {
             notices.push(notice);

@@ -37,7 +37,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
     const pool = createPool({ host: "localhost", port: "5", database: "d", user: "u", password: "p", sslMode: "disable" });
     // A `<base>/<analysisId>` resolver keeps the byte layout the old fixed base
     // produced, so every expected path below stays literal and readable.
-    const resolveWorkspaceRoot = async (analysisId: string): Promise<string> => join("/tmp/sessions", analysisId);
+    const resolveWorkspaceRoot = (analysisId: string): Promise<string> => Promise.resolve(join("/tmp/sessions", analysisId));
     const makeProvider = (model: string): ChatProvider =>
         createConfiguredAiSdkProvider({ config: { kind: "anthropic", baseURL: "http://proxy.test", apiKey: "t", model } });
     const sandboxModel = overrides.sandbox ?? "claude-test";
@@ -357,10 +357,10 @@ describe("buildSandboxStepDeps", () => {
 describe("run-engine knowledge wiring", () => {
     const unavailable = { match: "unavailable" as const, reason: "test double" };
     const knowledge: KnowledgeClient = {
-        recommend: async () => unavailable,
-        check: async () => unavailable,
-        render: async () => unavailable,
-        contract: async () => unavailable,
+        recommend: () => Promise.resolve(unavailable),
+        check: () => Promise.resolve(unavailable),
+        render: () => Promise.resolve(unavailable),
+        contract: () => Promise.resolve(unavailable),
     };
 
     test("buildExecuteAnalysisDeps passes the knowledge client when the composition holds one", () => {

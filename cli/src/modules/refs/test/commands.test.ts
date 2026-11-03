@@ -18,7 +18,7 @@ import { z } from "zod";
 import "../../../extensions/index.ts";
 import { env } from "../../../lib/env.ts";
 import { collapseWhitespace } from "../../../lib/text.ts";
-import { fakeFetch } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, respondWith } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     ON_DEMAND_REFERENCE_NOTE,
@@ -106,7 +106,7 @@ const singleFileSource = source(catalog([FILE_ARTIFACT]));
 
 /** A publisher that declares `bytes` for every artifact, or nothing at all when given `undefined`. */
 function declaring(bytes: number | undefined): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
-    return async () => new Response(null, { headers: bytes === undefined ? {} : { "content-length": String(bytes) } });
+    return respondWith(null, { headers: bytes === undefined ? {} : { "content-length": String(bytes) } });
 }
 
 /** A publisher no probe can reach — the sweep must treat it as unsized, never as a failure. */
@@ -201,9 +201,9 @@ describe("reference command policy", () => {
             interactive: true,
             source: singleFileSource,
             fetch: declaring(4_194_304),
-            confirmDownload: async (question) => {
+            confirmDownload: (question) => {
                 questions.push(question);
-                return false;
+                return Promise.resolve(false);
             },
         });
         expect(result._unsafeUnwrap()).toMatchObject({ declined: true, installed: [] });
@@ -219,9 +219,9 @@ describe("reference command policy", () => {
             interactive: true,
             source: singleFileSource,
             fetch: unreachable,
-            confirmDownload: async (question) => {
+            confirmDownload: (question) => {
                 questions.push(question);
-                return false;
+                return Promise.resolve(false);
             },
         });
         // An unreachable publisher is not an error — the plan degrades to exactly what it said before
@@ -236,9 +236,9 @@ describe("reference command policy", () => {
             interactive: true,
             source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])),
             fetch: async (input) => (String(input).endsWith("/file") ? new Response(null, { headers: { "content-length": "1048576" } }) : unreachable()),
-            confirmDownload: async (question) => {
+            confirmDownload: (question) => {
                 questions.push(question);
-                return false;
+                return Promise.resolve(false);
             },
         });
         // The caveat is its own sentence on the plan line above; wedging it between the quantity and
@@ -255,9 +255,9 @@ describe("reference command policy", () => {
             ids: ["demo"],
             interactive: false,
             source: singleFileSource,
-            fetch: async () => {
+            fetch: () => {
                 asked += 1;
-                return new Response(null);
+                return Promise.resolve(new Response(null));
             },
         });
         expect(result._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
@@ -299,7 +299,7 @@ describe("reference command policy", () => {
                 source: singleFileSource,
                 // Nothing else is supplied: no consent flag, and no confirmation seam — a prompt on
                 // either path would hang this test, which is the assertion.
-                fetch: async () => new Response("alpha", { headers: { "content-length": "5" } }),
+                fetch: respondWith("alpha", { headers: { "content-length": "5" } }),
             });
             expect(result.isOk()).toBe(true);
             const inspection = (await inspectReferenceStore(env.refsDir, singleFileSource.catalog))._unsafeUnwrap();
@@ -323,9 +323,9 @@ describe("reference selection presets", () => {
         expect(inspection.datasets.find((item) => item.dataset.id === "demo")?.state).toBe("installed");
 
         let inspections = 0;
-        const inspect = async (): Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>> => {
+        const inspect = (): Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>> => {
             inspections += 1;
-            return ok(inspection);
+            return Promise.resolve(ok(inspection));
         };
 
         expect((await resolveReferenceSelection({ preset: "recommended" }, fixture, inspect))._unsafeUnwrap()).toEqual(["beta"]);
@@ -341,7 +341,7 @@ describe("reference selection presets", () => {
     test("a catalog id spelled like a preset word is a loud authoring error on every resolve", async () => {
         const fixture = pickerCatalog([], ["all", "beta"]);
         const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
-        const inspect = async (): Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>> => ok(inspection);
+        const inspect = (): Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>> => Promise.resolve(ok(inspection));
 
         const collided = (await resolveReferenceSelection({ preset: "all" }, fixture, inspect))._unsafeUnwrapErr();
         expect(collided.type).toBe("preset_collision");
@@ -359,7 +359,7 @@ describe("reference selection presets", () => {
             interactive: false,
             selection: { preset: "recommended" },
             source: singleFileSource,
-            fetch: async () => new Response("alpha", { headers: { "content-length": "5" } }),
+            fetch: respondWith("alpha", { headers: { "content-length": "5" } }),
         });
         expect(result.isOk()).toBe(true);
         const inspection = (await inspectReferenceStore(env.refsDir, singleFileSource.catalog))._unsafeUnwrap();
@@ -892,18 +892,20 @@ describe("progress readout teardown", () => {
 
 describe("progress readout without a terminal", () => {
     test("paints one line per completed artifact and never an escape sequence", async () => {
-        const { stdout } = await capture(async () => {
-            const readout = createReferenceDownloadProgress(2, { sink: plainProgressSink() });
-            if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
-            readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 2048 });
-            readout.report({ type: "artifact_bytes", datasetId: "demo", path: "a.txt", bytes: 1024 });
-            readout.report({ type: "artifact_bytes", datasetId: "demo", path: "a.txt", bytes: 1024 });
-            readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 2048 });
-            readout.report({ type: "artifact_started", datasetId: "demo", path: "b.txt" });
-            readout.report({ type: "artifact_bytes", datasetId: "demo", path: "b.txt", bytes: 512 });
-            readout.report({ type: "artifact_completed", datasetId: "demo", path: "b.txt", bytes: 512 });
-            readout.finish();
-        });
+        const { stdout } = await capture(() =>
+            Promise.try(() => {
+                const readout = createReferenceDownloadProgress(2, { sink: plainProgressSink() });
+                if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
+                readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 2048 });
+                readout.report({ type: "artifact_bytes", datasetId: "demo", path: "a.txt", bytes: 1024 });
+                readout.report({ type: "artifact_bytes", datasetId: "demo", path: "a.txt", bytes: 1024 });
+                readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 2048 });
+                readout.report({ type: "artifact_started", datasetId: "demo", path: "b.txt" });
+                readout.report({ type: "artifact_bytes", datasetId: "demo", path: "b.txt", bytes: 512 });
+                readout.report({ type: "artifact_completed", datasetId: "demo", path: "b.txt", bytes: 512 });
+                readout.finish();
+            }),
+        );
 
         // A byte delta paints nothing: an opening line, one line per completed artifact, one closing
         // line. Anything more would be a line per chunk in a captured log.
@@ -1025,9 +1027,9 @@ describe("transfer rate", () => {
  */
 function sealGlobalFetch(escaped: string[]): () => void {
     const real = globalThis.fetch;
-    globalThis.fetch = fakeFetch(async (input, init) => {
+    globalThis.fetch = fakeFetch((input, init) => {
         escaped.push(`${init?.method ?? "GET"} ${String(input)}`);
-        throw new Error("a sealed setup must never reach the global fetch");
+        return Promise.reject(new Error("a sealed setup must never reach the global fetch"));
     });
     return () => {
         globalThis.fetch = real;
@@ -1047,9 +1049,9 @@ describe("reference setup seams", () => {
                 interactive: false,
                 selection: { ids: ["demo"] },
                 source: singleFileSource,
-                fetch: async (input, init) => {
+                fetch: (input, init) => {
                     seen.push(`${init?.method ?? "GET"} ${String(input)}`);
-                    return new Response("alpha", { headers: { "content-length": "5" } });
+                    return Promise.resolve(new Response("alpha", { headers: { "content-length": "5" } }));
                 },
             });
         } finally {
@@ -1071,7 +1073,7 @@ describe("reference setup seams", () => {
                 interactive: true,
                 selection: { ids: ["demo"] },
                 source: singleFileSource,
-                fetch: async () => new Response("alpha", { headers: { "content-length": "5" } }),
+                fetch: respondWith("alpha", { headers: { "content-length": "5" } }),
             });
         } finally {
             restore();

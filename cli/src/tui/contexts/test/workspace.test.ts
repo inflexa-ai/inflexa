@@ -89,7 +89,7 @@ describe("openSession — analysis swap", () => {
         expect(ws.inputCount).toBe(2);
     });
 
-    test("only an open of an analysis records a sighting of its folder: a read again does not", async () => {
+    test("only an open of an analysis records a sighting of its folder: a read again does not", () => {
         // The poll reads the scope at each tick, and a sighting is a write of the anchor row.
         const t = makeOpts();
         const ws = createWorkspace(initFor(A), t.opts);

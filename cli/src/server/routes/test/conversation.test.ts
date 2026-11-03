@@ -29,6 +29,7 @@ import { listAnalysisPage } from "../../../db/primary_query.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { jsonBody } from "../../../test_support/response_body.ts";
+import { streamOf } from "../../../test_support/stream.ts";
 import type { RunChatTurnArgs, TurnOutcome } from "../../../modules/harness/turn.ts";
 import { conversationThread, FIXTURE_ANALYSIS_ID, reportThread } from "../../../test_support/threads.ts";
 import { idleBoot } from "../../../test_support/server.ts";
@@ -139,9 +140,7 @@ function readyBoot(
     const chatTurns: ChatTurns = {
         open: () => Promise.reject(new Error("the routes open a turn through `runTurn`")),
         answer: (id, reply) => gateway.answer(id, reply),
-        async *read() {
-            for (const frame of frames) yield frame;
-        },
+        read: () => streamOf(frames),
         stop,
         outcome: () => Promise.resolve(null),
     };
@@ -153,7 +152,7 @@ function readyBoot(
         phase: "ready",
         connection: { provider: "anthropic", mode: "cliproxy", model: "m" },
     };
-    return { state: () => state, runtime: () => runtime, start: async () => undefined };
+    return { state: () => state, runtime: () => runtime, start: () => Promise.resolve() };
 }
 
 /** One stored user row that opens turn `index`: its display projection replays as one `user` chat message that reads `turn <index>`. */
@@ -214,7 +213,7 @@ function routesWith(o: Options = {}): ReturnType<typeof conversationRoutes<Queri
         connection: () => ({ provider: "anthropic", mode: "direct" }),
         readCredentialVerdict: () => Promise.resolve(err({ type: "no_key" })),
         flushPendingAdds: () => undefined,
-        workspaceRoot: async () => ({ kind: "absent" }),
+        workspaceRoot: () => Promise.resolve({ kind: "absent" }),
         removeDir: () => okAsync(undefined),
         sse: { pingMs: 60_000, headers: {} },
         ...o,
@@ -476,7 +475,7 @@ describe("the thread routes", () => {
         const store = memoryStore([conversationThread(), reportThread()]);
         const routes = routesWith({
             store,
-            workspaceRoot: async () => ({ kind: "root", root: "/ws" }),
+            workspaceRoot: () => Promise.resolve({ kind: "root", root: "/ws" }),
             removeDir: (dir) => (dir.endsWith("thread-report") ? errAsync({ type: "io_failed", op: "test", cause: "EACCES" }) : okAsync(undefined)),
         });
         const body = await jsonBody(routes.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" })));
@@ -491,7 +490,7 @@ describe("the thread routes", () => {
         });
         const routes = routesWith({
             store,
-            workspaceRoot: async () => ({ kind: "root", root: "/ws" }),
+            workspaceRoot: () => Promise.resolve({ kind: "root", root: "/ws" }),
             removeDir: () => ResultAsync.fromSafePromise(removing),
         });
         let purged = false;
@@ -509,7 +508,7 @@ describe("the thread routes", () => {
     });
 
     test("POST {T}/purge reports a workspace that does not resolve, and refuses a body with no `files`", async () => {
-        const unlocatable = routesWith({ workspaceRoot: async () => ({ kind: "unlocatable" }) });
+        const unlocatable = routesWith({ workspaceRoot: () => Promise.resolve({ kind: "unlocatable" }) });
         const body = await jsonBody(unlocatable.request(`/${A}/threads/${T}/purge`, json("POST", { files: "remove" })));
         expect(body).toHaveProperty("pages", { kind: "unlocatable" });
         expect((await routesWith().request(`/${A}/threads/${T}/purge`, json("POST", {}))).status).toBe(400);
@@ -640,12 +639,13 @@ describe("POST {A}/chat", () => {
         let flushed = 0;
         const routes = routesWith({
             flushPendingAdds: () => void flushed++,
-            runTurn: async (args) => {
-                args.onOpened?.(crypto.randomUUID());
-                args.emit({ type: "text-delta", text: "Hello", source: { agentId: "chat", callPath: ["chat"] } });
-                args.emit({ type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] } });
-                return { kind: "ok", opened: true, finishReason: "stop", fallbackText: "Hello", turnUsage: { inputTokens: 10, outputTokens: 2 } };
-            },
+            runTurn: (args) =>
+                Promise.try(() => {
+                    args.onOpened?.(crypto.randomUUID());
+                    args.emit({ type: "text-delta", text: "Hello", source: { agentId: "chat", callPath: ["chat"] } });
+                    args.emit({ type: "iteration", source: { agentId: "planner", callPath: ["chat", "planner"] } });
+                    return { kind: "ok", opened: true, finishReason: "stop", fallbackText: "Hello", turnUsage: { inputTokens: 10, outputTokens: 2 } };
+                }),
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
         expect(response.status).toBe(200);
@@ -719,11 +719,12 @@ describe("POST {A}/chat", () => {
 
     test("keeps the frames of a sub-agent, with their source", async () => {
         const routes = routesWith({
-            runTurn: async (args) => {
-                args.onOpened?.(crypto.randomUUID());
-                args.emit({ type: "tool-started", source: { agentId: "planner", callPath: ["chat", "planner"] }, toolUseId: "u1", name: "bash" });
-                return { kind: "ok", opened: true, finishReason: "stop", fallbackText: "" };
-            },
+            runTurn: (args) =>
+                Promise.try(() => {
+                    args.onOpened?.(crypto.randomUUID());
+                    args.emit({ type: "tool-started", source: { agentId: "planner", callPath: ["chat", "planner"] }, toolUseId: "u1", name: "bash" });
+                    return { kind: "ok", opened: true, finishReason: "stop", fallbackText: "" };
+                }),
         });
         const frames = await framesOf(await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" })));
         expect(frames[0]).toEqual({ type: "tool-started", toolUseId: "u1", name: "bash", source: { agentId: "planner", callPath: ["chat", "planner"] } });
@@ -955,7 +956,10 @@ describe("the turn registry routes", () => {
     test("POST {T}/turns/:turnId/abort stops a turn that holds the thread and that the registry does not hold, through the harness", async () => {
         const stopped: string[] = [];
         const routes = routesWith({
-            boot: readyBoot(fakeGateway([]), [], async (turnId) => void stopped.push(turnId)),
+            boot: readyBoot(fakeGateway([]), [], (turnId) => {
+                stopped.push(turnId);
+                return Promise.resolve();
+            }),
             activeTurnId: () => okAsync("turn-recovered"),
         });
 

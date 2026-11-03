@@ -78,32 +78,34 @@ function reportPathOf(storeRoot: string, args: readonly string[]): string {
 
 /** A runner that acquires one fake distribution: it writes the pool directory, the markers, and the report. */
 function acquiringRunner(outcomesBySpec: Record<string, Record<string, unknown>>, nodes: Record<string, unknown>): ProvisionerRunner {
-    return async (invocation, onLine) => {
-        onLine("[provision] fake acquire");
-        for (const dir of Object.keys(nodes)) {
-            const home = join(invocation.storeRoot, "store", dir);
-            mkdirSync(join(home, dir.split("-")[0] ?? "pkg"), { recursive: true });
-            writeFileSync(join(home, ".inflexa-pin"), "x==1\n");
-            writeFileSync(join(home, ".inflexa-hash"), `${"a".repeat(64)}\n`);
-        }
-        const report = {
-            schema: 1,
-            arch: "arm64",
-            outcomes: Object.entries(outcomesBySpec).map(([spec, outcome]) => ({ spec, ...outcome })),
-            nodes,
-        };
-        writeFileSync(reportPathOf(invocation.storeRoot, invocation.args), `${JSON.stringify(report, null, 2)}\n`);
-        return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
-    };
+    return (invocation, onLine) =>
+        Promise.try(() => {
+            onLine("[provision] fake acquire");
+            for (const dir of Object.keys(nodes)) {
+                const home = join(invocation.storeRoot, "store", dir);
+                mkdirSync(join(home, dir.split("-")[0] ?? "pkg"), { recursive: true });
+                writeFileSync(join(home, ".inflexa-pin"), "x==1\n");
+                writeFileSync(join(home, ".inflexa-hash"), `${"a".repeat(64)}\n`);
+            }
+            const report = {
+                schema: 1,
+                arch: "arm64",
+                outcomes: Object.entries(outcomesBySpec).map(([spec, outcome]) => ({ spec, ...outcome })),
+                nodes,
+            };
+            writeFileSync(reportPathOf(invocation.storeRoot, invocation.args), `${JSON.stringify(report, null, 2)}\n`);
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        });
 }
 
 /** A load check with a fixed verdict per staged directory. */
 function loadCheck(failing: readonly string[]): LoadCheckRunner {
-    return async (params) => {
-        const raw = parsedJson(readFileSync(join(params.storeRoot, params.reportName), "utf8"), graphNodesSchema);
-        const results = Object.keys(raw.nodes).map((dir) => ({ package: dir, track: "python", ok: !failing.includes(dir) }));
-        return ok<CaptureResult, never>({ code: results.every((r) => r.ok) ? 0 : 1, stdout: JSON.stringify({ results }), stderr: "" });
-    };
+    return (params) =>
+        Promise.try(() => {
+            const raw = parsedJson(readFileSync(join(params.storeRoot, params.reportName), "utf8"), graphNodesSchema);
+            const results = Object.keys(raw.nodes).map((dir) => ({ package: dir, track: "python", ok: !failing.includes(dir) }));
+            return ok<CaptureResult, never>({ code: results.every((r) => r.ok) ? 0 : 1, stdout: JSON.stringify({ results }), stderr: "" });
+        });
 }
 
 beforeEach(() => {
@@ -188,9 +190,9 @@ describe("the pending set", () => {
 describe("flushPendingStoreAdds", () => {
     test("an empty pending set flushes to nothing, and no runner starts", async () => {
         let ran = 0;
-        const run: ProvisionerRunner = async () => {
+        const run: ProvisionerRunner = () => {
             ran += 1;
-            return ok({ code: 0, stdout: "", stderr: "" });
+            return Promise.resolve(ok({ code: 0, stdout: "", stderr: "" }));
         };
 
         const result = (await flushPendingStoreAdds(tempStore(), { run }))._unsafeUnwrap();
@@ -331,9 +333,9 @@ describe("flushPendingStoreAdds", () => {
         const root = tempStore();
         enqueueStoreAdd({ query: { spelling: "alpha", track: "python" }, analysisId: null })._unsafeUnwrap();
         let ran = 0;
-        const run: ProvisionerRunner = async () => {
+        const run: ProvisionerRunner = () => {
             ran += 1;
-            return ok({ code: 0, stdout: "", stderr: "" });
+            return Promise.resolve(ok({ code: 0, stdout: "", stderr: "" }));
         };
         const conn = db()._unsafeUnwrap();
         conn.run("ALTER TABLE package_store_flights RENAME TO package_store_flights_broken");
@@ -360,9 +362,9 @@ describe("flushPendingStoreAdds", () => {
         mkdirSync(env.locksDir, { recursive: true });
         writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), String(holder.pid));
         let ran = 0;
-        const run: ProvisionerRunner = async () => {
+        const run: ProvisionerRunner = () => {
             ran += 1;
-            return ok({ code: 0, stdout: "", stderr: "" });
+            return Promise.resolve(ok({ code: 0, stdout: "", stderr: "" }));
         };
 
         try {
@@ -423,9 +425,9 @@ describe("flushPendingStoreAdds", () => {
         const root = tempStore();
         enqueueStoreAdd({ query: { spelling: "alpha", track: "python" }, analysisId: null })._unsafeUnwrap();
         let ran = 0;
-        const run: ProvisionerRunner = async () => {
+        const run: ProvisionerRunner = () => {
             ran += 1;
-            return ok({ code: 0, stdout: "", stderr: "" });
+            return Promise.resolve(ok({ code: 0, stdout: "", stderr: "" }));
         };
         // The ledger refuses every promote — the SQLITE_BUSY shape past the
         // busy timeout. The loop must fail the batch, not spin on it.
@@ -532,9 +534,9 @@ describe("the flush tail", () => {
             { [BAD_DIR]: { track: "python", name: "badpkg", version: "1.0", order: "0a", edges: [] } },
         );
         const debrisInvocations: (readonly string[])[] = [];
-        const debrisRun: ProvisionerRunner = async (invocation) => {
+        const debrisRun: ProvisionerRunner = (invocation) => {
             debrisInvocations.push([...invocation.args]);
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+            return Promise.resolve(ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" }));
         };
 
         try {
@@ -558,9 +560,9 @@ describe("the flush tail", () => {
             { [GOOD_DIR]: { track: "python", name: "goodpkg", version: "1.0", order: "0a", edges: [] } },
         );
         const debrisInvocations: (readonly string[])[] = [];
-        const debrisRun: ProvisionerRunner = async (invocation) => {
+        const debrisRun: ProvisionerRunner = (invocation) => {
             debrisInvocations.push([...invocation.args]);
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+            return Promise.resolve(ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" }));
         };
 
         await flushAndPrint(root, { flush: { run, loadCheck: loadCheck([]) }, debris: { run: debrisRun } });

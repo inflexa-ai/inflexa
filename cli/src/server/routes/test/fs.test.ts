@@ -533,7 +533,7 @@ describe("GET /api/v1/fs/list isInput and origin", () => {
     const readyBoot: ServerBoot<PoolRuntime> = {
         state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
         runtime: () => runtime,
-        start: async () => undefined,
+        start: () => Promise.resolve(),
     };
 
     type OriginCall = { analysisId: string; paths: readonly string[] };
@@ -1984,7 +1984,7 @@ describe("GET /api/v1/fs/recents isInput and origin", () => {
     const readyBoot: ServerBoot<PoolRuntime> = {
         state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
         runtime: () => runtime,
-        start: async () => undefined,
+        start: () => Promise.resolve(),
     };
 
     let home = "";
@@ -2044,7 +2044,7 @@ describe("GET /api/v1/fs/places", () => {
     const readyBoot: ServerBoot<PoolRuntime> = {
         state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
         runtime: () => runtime,
-        start: async () => undefined,
+        start: () => Promise.resolve(),
     };
 
     let home = "";

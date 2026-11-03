@@ -36,11 +36,13 @@ describe("serializeProfileWork", () => {
             await first.promise;
             order.push("a1:end");
         });
-        const a2 = serializeProfileWork("a", async () => {
+        const a2 = serializeProfileWork("a", () => {
             order.push("a2");
+            return Promise.resolve();
         });
-        const b1 = serializeProfileWork("b", async () => {
+        const b1 = serializeProfileWork("b", () => {
             order.push("b1");
+            return Promise.resolve();
         });
         await b1;
         // The depth falls on the tail, one microtask after the work settles.
@@ -59,8 +61,9 @@ describe("serializeProfileWork", () => {
     test("a rejected drive gives its rejection to its caller, and its successor still runs", async () => {
         const failed = serializeProfileWork("a", () => Promise.reject(new Error("staging failed")));
         let ran = false;
-        const next = serializeProfileWork("a", async () => {
+        const next = serializeProfileWork("a", () => {
             ran = true;
+            return Promise.resolve();
         });
         expect(
             await failed.then(

@@ -45,7 +45,7 @@ export function idleBoot<R = HarnessRuntime>(): ServerBoot<R> {
         phase: "starting",
         boot: { attemptStartedAt: startedAt, step: null, done: [] },
     };
-    return { state: () => state, runtime: () => null, start: async () => undefined };
+    return { state: () => state, runtime: () => null, start: () => Promise.resolve() };
 }
 
 /**
