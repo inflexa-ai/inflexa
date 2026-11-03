@@ -46,7 +46,7 @@ import { __resetNoticesForTest, currentNotice } from "../notice.ts";
 import { chatStatus, modelRetry, type ModelRetryStatus } from "../status.ts";
 import { isKnownPart, readFileReference, readPlanCard, readPresentation } from "../../../modules/harness/chat_printer.ts";
 import type { LiveAskPart, LiveTextPart, LiveToolCallPart, Part } from "../../../types/session.ts";
-import { streamOf } from "../../../test_support/stream.ts";
+import { frameChannel, streamOf } from "../../../test_support/stream.ts";
 import { conversationSummary, threadListOf } from "../../../test_support/threads.ts";
 import { __resetOpenThreadForTest, openThread, refreshOpenThread, type ThreadOpts } from "../thread.ts";
 import { present } from "../../../lib/present.ts";
@@ -90,49 +90,6 @@ function done(over: Partial<End> = {}): End {
 // The failure of an assertion inside the drive of a fake turn. The drive runs apart from the case, thus
 // the failure reaches the case here, and `afterEach` asserts that none happened.
 const driveFailures: unknown[] = [];
-
-/**
- * The frame stream of one turn. Each frame is serialized and parsed again, as the wire does, thus the hook
- * never holds a reference that the case still owns. A frame resolves its `send` when the reader asks for
- * the next one, which is after the hook applied it.
- */
-function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () => void; frames: AsyncGenerator<Result<ChatFrame, ClientError>> } {
-    const waiting: { frame: ChatFrame; applied: () => void }[] = [];
-    let closed = false;
-    let wake: (() => void) | null = null;
-    const notify = (): void => {
-        const resume = wake;
-        wake = null;
-        resume?.();
-    };
-    async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
-        for (;;) {
-            const item = waiting.shift();
-            if (item !== undefined) {
-                yield ok(item.frame);
-                item.applied();
-                continue;
-            }
-            if (closed) return;
-            await new Promise<void>((resolve) => {
-                wake = resolve;
-            });
-        }
-    }
-    return {
-        send: (frame) =>
-            new Promise<void>((applied) => {
-                // A copy, thus a later change of the frame by the sender cannot reach the queued one.
-                waiting.push({ frame: structuredClone(frame), applied });
-                notify();
-            }),
-        close: () => {
-            closed = true;
-            notify();
-        },
-        frames: frames(),
-    };
-}
 
 /** The frame that ends the stream of a turn: `error` for a failed turn, else `finish`, as the route sends them. */
 function terminalFrame(end: End): ChatFrame {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { respondWith } from "../../test_support/fake_fetch.ts";
 import { declaredContentLength, downloadToFile, type DownloadProgress } from "../download.ts";
+import { awaitOk } from "../../test_support/result.ts";
 
 const roots: string[] = [];
 function root(): string {
@@ -67,7 +68,7 @@ describe("downloadToFile", () => {
         const dest = join(root(), "out.bin");
         const body = "abcdefgh";
         const events: DownloadProgress[] = [];
-        await downloadToFile(URL_OK, dest, { fetch: serve(body, { contentLength: true }), onProgress: (e) => events.push(e) });
+        await awaitOk(downloadToFile(URL_OK, dest, { fetch: serve(body, { contentLength: true }), onProgress: (e) => events.push(e) }));
         expect(events[0]).toEqual({ type: "started", declaredBytes: Buffer.byteLength(body) });
         const bytes = events.filter((e) => e.type === "bytes").reduce((n, e) => n + e.bytes, 0);
         expect(bytes).toBe(Buffer.byteLength(body));

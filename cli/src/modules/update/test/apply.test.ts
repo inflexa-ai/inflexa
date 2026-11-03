@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { respondWith } from "../../../test_support/fake_fetch.ts";
 import { applyErrorMessage, applyUpdate, releaseAsset } from "../apply.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 const roots: string[] = [];
 function root(): string {
@@ -72,7 +73,7 @@ describe("applyUpdate", () => {
         const target = join(dir, "inflexa");
         writeFileSync(target, "the old inflexa");
 
-        await applyUpdate("0.17.0", { targetPath: target, platformKey: "linux-x64", fetch: serveRelease("inflexa-linux-x64", NEW_BINARY) });
+        await awaitOk(applyUpdate("0.17.0", { targetPath: target, platformKey: "linux-x64", fetch: serveRelease("inflexa-linux-x64", NEW_BINARY) }));
 
         expect(readdirSync(dir)).toEqual(["inflexa"]);
     });
@@ -139,7 +140,7 @@ describe("applyUpdate", () => {
         // reclaim it either. The next update is the first moment that file is removable.
         writeFileSync(`${target}.old`, "an older inflexa");
 
-        await applyUpdate("0.17.0", { targetPath: target, platformKey: "linux-x64", fetch: serveRelease("inflexa-linux-x64", NEW_BINARY) });
+        await awaitOk(applyUpdate("0.17.0", { targetPath: target, platformKey: "linux-x64", fetch: serveRelease("inflexa-linux-x64", NEW_BINARY) }));
 
         expect(existsSync(`${target}.old`)).toBe(false);
     });

@@ -12,6 +12,7 @@ import { freshDb } from "../../../test_support/db.ts";
 import { listAnalysisInputs } from "../../../db/primary_query.ts";
 import { addInputs, createAnalysis } from "../../analysis/analysis.ts";
 import { createLaunchDirTool } from "../launch_dir_tool.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 function ctxFor(analysisId: string): ToolContext {
     return {
@@ -64,8 +65,8 @@ describe("list_launch_dir tool", () => {
 
     test("is read-only — listing writes no inputs", async () => {
         writeFileSync(join(dir, "a.csv"), "x");
-        await tool.execute({}, ctxFor(analysisId));
-        await tool.execute({}, ctxFor(analysisId));
+        await awaitOk(tool.execute({}, ctxFor(analysisId)));
+        await awaitOk(tool.execute({}, ctxFor(analysisId)));
         expect(listAnalysisInputs(analysisId)._unsafeUnwrap()).toHaveLength(0);
     });
 

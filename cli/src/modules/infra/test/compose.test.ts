@@ -32,6 +32,7 @@ import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf, isAsciiDigi
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { isLowerHex } from "../../../test_support/text_shapes.ts";
 import type { BootPullProgress } from "../../../api/server.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 /** Undoes the two escapes of `escapeYaml` (`\\"` and `\\\\`) in one left-to-right pass, as a YAML parser does. */
 function unescapeYaml(text: string): string {
@@ -709,7 +710,7 @@ describe("composePullIfMissing", () => {
     test("writes a start line and an outcome line", async () => {
         const run = script({ socket: "/engine.sock" });
 
-        await compose.composePullIfMissing(runtimes.podman, "direct", () => undefined);
+        await awaitOk(compose.composePullIfMissing(runtimes.podman, "direct", () => undefined));
 
         expect(run.logs).toEqual(["  Pulling container images (this may take a moment)…", "  Container images are ready."]);
     });
@@ -717,7 +718,10 @@ describe("composePullIfMissing", () => {
     test("writes a failure line when the pull fails", async () => {
         const run = script({ socket: "/engine.sock", pulls: { [DEFAULT_IMAGE]: { outcome: { kind: "failed", message: "denied" } } } });
 
-        await compose.composePullIfMissing(runtimes.podman, "direct", () => undefined);
+        expect((await compose.composePullIfMissing(runtimes.podman, "direct", () => undefined))._unsafeUnwrapErr()).toMatchObject({
+            type: "image_pull_failed",
+            image: DEFAULT_IMAGE,
+        });
 
         expect(run.logs).toEqual(["  Pulling container images (this may take a moment)…", "  The pull of the container images failed."]);
     });

@@ -49,6 +49,7 @@ import {
     type ReferenceStoreInspection,
 } from "../store.ts";
 import { parsedJson } from "../../../test_support/json.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 // Loose objects keep each key that the schema does not name, so `not.toHaveProperty` still sees an absent key as absent.
 const listedDatasetSchema = z.looseObject({
@@ -214,16 +215,18 @@ describe("reference command policy", () => {
 
     test("consent falls back to the file count when no publisher will state a size", async () => {
         const questions: string[] = [];
-        await downloadReferences({
-            ids: ["demo"],
-            interactive: true,
-            source: singleFileSource,
-            fetch: unreachable,
-            confirmDownload: (question) => {
-                questions.push(question);
-                return Promise.resolve(false);
-            },
-        });
+        await awaitOk(
+            downloadReferences({
+                ids: ["demo"],
+                interactive: true,
+                source: singleFileSource,
+                fetch: unreachable,
+                confirmDownload: (question) => {
+                    questions.push(question);
+                    return Promise.resolve(false);
+                },
+            }),
+        );
         // An unreachable publisher is not an error — the plan degrades to exactly what it said before
         // any sweep existed, and the download would still have been allowed to proceed.
         expect(questions).toEqual([`Download 1 file of upstream-determined size of reference data into ${env.refsDir}?`]);
@@ -231,16 +234,18 @@ describe("reference command policy", () => {
 
     test("a partly sized plan is quoted as a floor, never as a total", async () => {
         const questions: string[] = [];
-        await downloadReferences({
-            ids: ["demo"],
-            interactive: true,
-            source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])),
-            fetch: async (input) => (String(input).endsWith("/file") ? new Response(null, { headers: { "content-length": "1048576" } }) : unreachable()),
-            confirmDownload: (question) => {
-                questions.push(question);
-                return Promise.resolve(false);
-            },
-        });
+        await awaitOk(
+            downloadReferences({
+                ids: ["demo"],
+                interactive: true,
+                source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])),
+                fetch: async (input) => (String(input).endsWith("/file") ? new Response(null, { headers: { "content-length": "1048576" } }) : unreachable()),
+                confirmDownload: (question) => {
+                    questions.push(question);
+                    return Promise.resolve(false);
+                },
+            }),
+        );
         // The caveat is its own sentence on the plan line above; wedging it between the quantity and
         // "of reference data" made the question unreadable.
         expect(questions).toEqual([`Download 2 files, at least 1.0 MB of reference data into ${env.refsDir}?`]);
@@ -877,7 +882,7 @@ describe("progress readout teardown", () => {
         let thrown: unknown;
         const { stdout } = await capture(async () => {
             try {
-                await downloadReferences({ ids: ["demo"], yes: true, interactive: false, source: explodingSource, fetch: declaring(64) });
+                await awaitOk(downloadReferences({ ids: ["demo"], yes: true, interactive: false, source: explodingSource, fetch: declaring(64) }));
             } catch (cause) {
                 thrown = cause;
             }
@@ -1045,15 +1050,17 @@ describe("reference setup seams", () => {
         const restore = sealGlobalFetch(escaped);
         const seen: string[] = [];
         try {
-            await runReferenceSetup({
-                interactive: false,
-                selection: { ids: ["demo"] },
-                source: singleFileSource,
-                fetch: (input, init) => {
-                    seen.push(`${init?.method ?? "GET"} ${String(input)}`);
-                    return Promise.resolve(new Response("alpha", { headers: { "content-length": "5" } }));
-                },
-            });
+            await awaitOk(
+                runReferenceSetup({
+                    interactive: false,
+                    selection: { ids: ["demo"] },
+                    source: singleFileSource,
+                    fetch: (input, init) => {
+                        seen.push(`${init?.method ?? "GET"} ${String(input)}`);
+                        return Promise.resolve(new Response("alpha", { headers: { "content-length": "5" } }));
+                    },
+                }),
+            );
         } finally {
             restore();
         }
@@ -1069,12 +1076,14 @@ describe("reference setup seams", () => {
         try {
             // `--refs` supplied, so no picker opens; the answer is the consent, so the sweep runs and
             // the transfer follows — the interactive shape of the same two calls.
-            await runReferenceSetup({
-                interactive: true,
-                selection: { ids: ["demo"] },
-                source: singleFileSource,
-                fetch: respondWith("alpha", { headers: { "content-length": "5" } }),
-            });
+            await awaitOk(
+                runReferenceSetup({
+                    interactive: true,
+                    selection: { ids: ["demo"] },
+                    source: singleFileSource,
+                    fetch: respondWith("alpha", { headers: { "content-length": "5" } }),
+                }),
+            );
         } finally {
             restore();
         }

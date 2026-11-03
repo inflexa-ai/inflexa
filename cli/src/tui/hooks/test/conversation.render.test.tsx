@@ -52,8 +52,10 @@ describe("streamed assistant text survives finalization (rendered)", () => {
             });
             // A fake server: its stream sends one delta, parks until released, then ends the turn.
             async function* frames(): AsyncGenerator<Result<ChatFrame, ClientError>> {
+                // typecheck-disable-next-line must-use-result -- a yielded Result is consumed by the `for await` of the caller, which the rule cannot follow
                 yield ok({ type: "text-delta", text: "streamed reply", source: ROUTE_SOURCE });
                 await gate;
+                // typecheck-disable-next-line must-use-result -- a yielded Result is consumed by the `for await` of the caller, which the rule cannot follow
                 yield ok({ type: "finish", source: ROUTE_SOURCE, finishReason: "stop" });
             }
             const server: SendOpts = {

@@ -40,6 +40,7 @@ import {
 import { agentProviderInner } from "../agent_switch.ts";
 import type { AgentEffort, AgentName, ResolvedHarnessConfig, ResolvedModelConnection } from "../config.ts";
 import { present } from "../../../lib/present.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 /** A direct connection to a stubbed OpenAI-compatible endpoint — used by the direct-mode boot tests. */
 function directConnection(overrides: Partial<Extract<ResolvedModelConnection, { mode: "direct" }>> = {}): ResolvedModelConnection {
@@ -324,7 +325,7 @@ describe("bootHarnessRuntime", () => {
 
     test("delegates the boot tail to bootHarness once, and its beforeLaunch hook runs the legacy sweep before registering crons", async () => {
         const calls: string[] = [];
-        await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }));
 
         const boot = calls.indexOf("boot");
         const sweep = calls.indexOf("sweepEphemeral");
@@ -344,7 +345,7 @@ describe("bootHarnessRuntime", () => {
 
     test("its beforeLaunch hook registers the notification sweep", async () => {
         const calls: string[] = [];
-        await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }));
 
         // The cron registers inside `beforeLaunch`, which `bootHarness` runs before
         // it launches DBOS — so it records after `boot` is entered. The sandbox
@@ -849,14 +850,14 @@ describe("bootHarnessRuntime — the session-page publisher", () => {
     const publisher: MakeSessionPagePublisher = () => ({ mintSessionPageAccess: () => errAsync({ error: { message: "unused" } }) });
 
     test("puts the given factory on core, and binds no page-URL resolver", async () => {
-        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig(), makeSessionPagePublisher: publisher });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig(), makeSessionPagePublisher: publisher }));
 
         expect(lastCore?.makeSessionPagePublisher).toBe(publisher);
         expect(lastCore?.resolveReportPageUrl).toBeUndefined();
     });
 
     test("leaves the factory off core when the option is absent", async () => {
-        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() }));
 
         expect(lastCore).not.toBeNull();
         expect(Object.hasOwn(lastCore ?? {}, "makeSessionPagePublisher")).toBe(false);
@@ -889,7 +890,7 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
 
     test("supplies exactly one recorder on core, reaching the conversation, workflow, and data-profile loops through it", async () => {
         const calls: string[] = [];
-        await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }));
 
         const core = lastCore;
         expect(core?.usageRecorder?.record).toBeInstanceOf(Function);
@@ -906,7 +907,7 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
 
     test("the supplied recorder is the ledger realization, and absorbs a record without throwing", async () => {
         const calls: string[] = [];
-        await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }));
 
         // Not the harness's `createNoopUsageRecorder` fallback: this one writes, and it is total — the
         // loop delivers bare, so a throw here would fail the turn that made the call.
@@ -924,7 +925,7 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
     });
 
     test("a turn that a recovery runs after a restart gets the local credential", async () => {
-        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() }));
 
         expect(lastCore?.credentialFor?.("turn-after-a-restart")).toEqual(makeLocalAuth());
     });
@@ -933,12 +934,12 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
         const calls: string[] = [];
         const seams = recordingSeams(calls);
         const cfg = testConfig();
-        await bootHarnessRuntime({ seams, config: cfg });
+        await awaitOk(bootHarnessRuntime({ seams, config: cfg }));
         const first = lastCore?.usageRecorder;
 
         // The second call rides the memoized runtime, so `boot` — and with it the recorder
         // construction — never runs again. One runtime reports to one ledger through one instance.
-        await bootHarnessRuntime({ seams, config: cfg });
+        await awaitOk(bootHarnessRuntime({ seams, config: cfg }));
         expect(lastCore?.usageRecorder).toBe(first);
         expect(calls.filter((c) => c === "boot")).toHaveLength(1);
     });
@@ -951,7 +952,7 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
 // boot — an engine that is down is a normal `web_search` error result.
 describe("bootHarnessRuntime — the web-search engine", () => {
     test("injects an engine built from the loopback URL derived from the channel port", async () => {
-        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() }));
 
         const engine = lastCore?.conversation.webSearch;
         expect(typeof engine?.search).toBe("function");

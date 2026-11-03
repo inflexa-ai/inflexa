@@ -15,6 +15,7 @@ import {
     resolveGeoArtifacts,
     type GeoProgress,
 } from "../geo.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 /** Test pacing: no real backoff, no inter-request spacing. Production defaults are exercised in prod. */
 const FAST = { retryBaseMs: 0, spacingMs: 0 } as const;
@@ -371,7 +372,7 @@ describe("downloadGeoSeries", () => {
         const dest = join(geoRoot(), "GSE12345");
         const stub = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"] }, { sizes: { "GSE12345_family.soft.gz": 2048 } });
         const events: string[] = [];
-        await downloadGeoSeries("GSE12345", dest, { fetch: stub, ...FAST, onProgress: (e) => events.push(e.type) });
+        await awaitOk(downloadGeoSeries("GSE12345", dest, { fetch: stub, ...FAST, onProgress: (e) => events.push(e.type) }));
         expect(events).toEqual(["resolved", "file_started", "file_completed"]);
     });
 
@@ -631,7 +632,7 @@ describe("downloadGeoSeries progress heartbeat", () => {
             });
         const events: GeoProgress[] = [];
         // A gap no test run can outlast: every chunk lands inside it, so none reports.
-        await downloadGeoSeries("GSE12345", join(root, "GSE12345"), { fetch: stub, ...FAST, heartbeatMs: 600_000, onProgress: (e) => events.push(e) });
+        await awaitOk(downloadGeoSeries("GSE12345", join(root, "GSE12345"), { fetch: stub, ...FAST, heartbeatMs: 600_000, onProgress: (e) => events.push(e) }));
         expect(events.filter((e) => e.type === "file_progress")).toEqual([]);
     });
 });

@@ -18,6 +18,7 @@ import {
 } from "../model_listing.ts";
 import { present } from "../../../lib/present.ts";
 import { respondWith } from "../../../test_support/fake_fetch.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 
 // Drives `listConnectionModels` through injected seams so the per-mode request shaping (cliproxy vs.
 // direct OpenAI-compatible vs. direct Anthropic) and the Result-channel degradations are exercised with
@@ -495,11 +496,11 @@ describe("listConnectionModels — the pages of the direct Anthropic listing", (
 
     test("the read ends at has_more false, and it ends when has_more is absent", async () => {
         const stops = pagedFetch([datedResponse([{ id: "claude-a" }], { has_more: false, last_id: "claude-a" })]);
-        await listWith(DIRECT_ANTHROPIC, stops);
+        await awaitOk(listWith(DIRECT_ANTHROPIC, stops));
         expect(stops.calls).toHaveLength(1);
 
         const absent = pagedFetch([datedResponse([{ id: "claude-a" }], { last_id: "claude-a" })]);
-        await listWith(DIRECT_ANTHROPIC, absent);
+        await awaitOk(listWith(DIRECT_ANTHROPIC, absent));
         expect(absent.calls).toHaveLength(1);
     });
 
@@ -573,17 +574,19 @@ describe("listConnectionModels — the pages of the direct Anthropic listing", (
 
     test("the cliproxy mode and the OpenAI-compatible protocol send no limit and read one page", async () => {
         const proxy = recordingFetch(() => Promise.resolve(datedResponse([{ id: "claude-a" }], { has_more: true, last_id: "claude-a" })));
-        await listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: proxy.fetch }));
+        await awaitOk(listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: proxy.fetch })));
         expect(proxy.calls).toHaveLength(1);
         expect(proxy.calls[0]?.url).not.toContain("limit");
 
         const openai = recordingFetch(() => Promise.resolve(datedResponse([{ id: "gpt-4o" }], { has_more: true, last_id: "gpt-4o" })));
-        await listConnectionModels(
-            seamsFor({
-                connection: { mode: "direct", provider: "openai", baseURL: "https://api.example.com/v1", protocol: "openai-compatible", agents: {} },
-                modelApiKey: "sk-direct",
-                fetch: openai.fetch,
-            }),
+        await awaitOk(
+            listConnectionModels(
+                seamsFor({
+                    connection: { mode: "direct", provider: "openai", baseURL: "https://api.example.com/v1", protocol: "openai-compatible", agents: {} },
+                    modelApiKey: "sk-direct",
+                    fetch: openai.fetch,
+                }),
+            ),
         );
         expect(openai.calls.map((c) => c.url)).toEqual(["https://api.example.com/v1/models"]);
     });

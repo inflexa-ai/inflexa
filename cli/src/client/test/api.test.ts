@@ -3,6 +3,7 @@ import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { describeClientError, readSseFrames, request, setClientSurface, streamRequest, type ClientError, type ClientOpts } from "../api.ts";
+import { awaitOk } from "../../test_support/result.ts";
 
 const BASE = "http://127.0.0.1:8436";
 
@@ -59,7 +60,7 @@ describe("request", () => {
 
     test("a request with no body and no signal sends neither key, and adds no Content-Type", async () => {
         const { opts, calls } = withFetch(() => json({}));
-        await request("GET", "/api/v1/server", {}, opts);
+        await awaitOk(request("GET", "/api/v1/server", {}, opts));
         expect(calls).toHaveLength(1);
         expect(Object.hasOwn(calls[0]?.init ?? {}, "body")).toBe(false);
         expect(Object.hasOwn(calls[0]?.init ?? {}, "signal")).toBe(false);
@@ -69,7 +70,7 @@ describe("request", () => {
 
     test("a Content-Type of the caller reaches a request with no body as it is", async () => {
         const { opts, calls } = withFetch(() => json({}));
-        await request("GET", "/api/v1/server", { headers: { "Content-Type": "text/plain" } }, opts);
+        await awaitOk(request("GET", "/api/v1/server", { headers: { "Content-Type": "text/plain" } }, opts));
         expect(calls).toHaveLength(1);
         expect(headersOf(calls[0])["Content-Type"]).toBe("text/plain");
         expect(Object.hasOwn(calls[0]?.init ?? {}, "body")).toBe(false);
@@ -78,7 +79,7 @@ describe("request", () => {
     test("a request with a body and a signal sends both keys with their values, and the JSON Content-Type", async () => {
         const controller = new AbortController();
         const { opts, calls } = withFetch(() => json({}));
-        await request("POST", "/api/v1/projects", { body: { name: "p" }, signal: controller.signal }, opts);
+        await awaitOk(request("POST", "/api/v1/projects", { body: { name: "p" }, signal: controller.signal }, opts));
         expect(calls).toHaveLength(1);
         expect(Object.hasOwn(calls[0]?.init ?? {}, "body")).toBe(true);
         expect(calls[0]?.init.body).toBe('{"name":"p"}');
