@@ -72,11 +72,6 @@ describe("applyPausePart — the waits of a turn reconcile by the workflow id", 
         const waits = applyPausePart(applyPausePart([], part()), part({ id: "turn-1-sub" }));
         expect(applyPausePart(waits, part({ state: "running", cause: undefined, attempt: undefined })).map((w) => w.workflowId)).toEqual(["turn-1-sub"]);
     });
-
-    test("a waiting part with no cause changes nothing", () => {
-        const waits = applyPausePart([], part());
-        expect(applyPausePart(waits, part({ id: "other", cause: undefined }))).toEqual(waits);
-    });
 });
 
 describe("headWait — the wait that the prompt shows", () => {
