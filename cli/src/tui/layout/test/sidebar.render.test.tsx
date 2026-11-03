@@ -43,6 +43,7 @@ import { entityFigureOf, Sidebar, usageSectionOf } from "../sidebar.tsx";
 import { tokenFigureDetail } from "../../../lib/usage_format.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type { ThreadSummary } from "../../../api/conversation.ts";
+import { present } from "../../../lib/present.ts";
 
 // The sidebar reads the anchor and the input count of the workspace store, which reads `GET {A}` of the
 // server. Each case seeds the store directly: a plain analysis row and the scope that the read would give.
@@ -597,7 +598,7 @@ describe("Sidebar SESSION section", () => {
             const y = lines.findIndex((l) => l.includes(handle));
             expect(y).toBeGreaterThanOrEqual(0);
 
-            await setup.mockMouse.click(lines[y]!.indexOf(handle), y);
+            await setup.mockMouse.click(present(lines[y]).indexOf(handle), y);
             await setup.renderOnce();
 
             expect(copied).toEqual([THREAD_ID]);
@@ -748,7 +749,7 @@ describe("Sidebar TRANSFERS unpacking phase", () => {
             let filled = 0;
             for (const line of setup.captureSpans().lines) {
                 for (const span of line.spans) {
-                    if (span.fg && parseColor(themes[DEFAULT_THEME_ID].colors.success).equals(span.fg)) filled += span.text.length;
+                    if (parseColor(themes[DEFAULT_THEME_ID].colors.success).equals(span.fg)) filled += span.text.length;
                 }
             }
             expect(filled).toBe(FULL_BAR_CELLS);
@@ -951,7 +952,7 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
             const lines = setup.captureCharFrame().split("\n");
             const y = lines.findIndex((l) => l.includes(GLYPHS.arrowUp));
             expect(y).toBeGreaterThanOrEqual(0);
-            await setup.mockMouse.click(lines[y]!.indexOf(GLYPHS.arrowUp), y);
+            await setup.mockMouse.click(present(lines[y]).indexOf(GLYPHS.arrowUp), y);
             await setup.renderOnce();
 
             // The window moved one step earlier...
@@ -975,7 +976,7 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
             const lines = setup.captureCharFrame().split("\n");
             const y = lines.findIndex((l) => l.includes("RUNS"));
             expect(y).toBeGreaterThanOrEqual(0);
-            await setup.mockMouse.click(lines[y]!.indexOf("RUNS"), y);
+            await setup.mockMouse.click(present(lines[y]).indexOf("RUNS"), y);
             await setup.renderOnce();
             expect(opened).toBe(1);
         } finally {
@@ -1308,14 +1309,18 @@ describe("Sidebar USAGE section", () => {
         expect(lines[inputRow]).toContain("3.1k out");
         // Trailing rail chrome (the border and the scroll thumb) stripped, so the assertion is about
         // where the FIGURE lands rather than about what the rail paints around it.
-        expect(lines[inputRow]!.replace(/[^\p{L}\p{N}]+$/u, "").endsWith("3.1k out")).toBe(true);
+        expect(
+            present(lines[inputRow])
+                .replace(/[^\p{L}\p{N}]+$/u, "")
+                .endsWith("3.1k out"),
+        ).toBe(true);
         // Both cache quantities sit BELOW that row, indented — the nesting is the only thing that says
         // they are parts of input rather than a third and fourth headline...
         expect(cacheWriteRow).toBe(inputRow + 1);
         expect(cacheReadRow).toBe(inputRow + 2);
         // Indented relative to the arm they hang under — the indent is what carries "part of", so a
         // part starting in the arm's own column would read as a third headline.
-        expect(lines[cacheWriteRow]!.indexOf("cache write")).toBeGreaterThan(lines[inputRow]!.indexOf("12.4k in"));
+        expect(present(lines[cacheWriteRow]).indexOf("cache write")).toBeGreaterThan(present(lines[inputRow]).indexOf("12.4k in"));
         // ...and never beside the arm, which is the layout that invites adding a cached prefix to the
         // total it is already inside.
         expect(lines[inputRow]).not.toContain("cache");
@@ -1626,7 +1631,7 @@ describe("Sidebar USAGE section", () => {
             const y = lines.findIndex((l) => l.includes("USAGE"));
             expect(y).toBeGreaterThanOrEqual(0);
 
-            await setup.mockMouse.click(lines[y]!.indexOf("USAGE"), y);
+            await setup.mockMouse.click(present(lines[y]).indexOf("USAGE"), y);
             await setup.renderOnce();
             expect(opened).toBe(1);
         } finally {
@@ -1849,7 +1854,7 @@ describe("a click on a rail section that opens a dialog", () => {
 
             const rows = setup.captureCharFrame().split("\n");
             const y = rows.findIndex((row) => row.includes("USAGE"));
-            const x = rows[y]!.indexOf("USAGE");
+            const x = present(rows[y]).indexOf("USAGE");
             const mouse = createMockMouse(setup.renderer);
             await mouse.pressDown(x, y);
             await mouse.release(x, y);

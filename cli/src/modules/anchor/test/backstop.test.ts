@@ -17,6 +17,7 @@ import { asStr256 } from "../../../lib/types.ts";
 import { canonicalPathAsync } from "../../../lib/paths.ts";
 import { reclaimDeadAnchors, type PurgeAnalysisFn } from "../backstop.ts";
 import { writeMarker } from "../marker.ts";
+import { present } from "../../../lib/present.ts";
 
 const created: string[] = [];
 
@@ -139,7 +140,7 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
         const seeded = seedDeadAnchor(2);
         const t = recordingPurge();
 
-        const outcome = await reclaimDeadAnchors([deadAnchor()!], t.purge, idle);
+        const outcome = await reclaimDeadAnchors([present(deadAnchor())], t.purge, idle);
 
         expect(outcome.isOk()).toBe(true);
         expect(t.purged.toSorted()).toEqual(seeded.map((a) => a.id).toSorted());
@@ -156,7 +157,7 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
         insertAnchor({ id: DEAD_ANCHOR, createdAt: 1, updatedAt: 1, cachedPath: "/gone/forever", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         const t = recordingPurge();
 
-        const outcome = await reclaimDeadAnchors([deadAnchor()!], t.purge, idle);
+        const outcome = await reclaimDeadAnchors([present(deadAnchor())], t.purge, idle);
 
         // Nothing to reclaim ⇒ the purge, and with it the need for a booted runtime, never comes.
         expect(t.purged).toEqual([]);
@@ -171,7 +172,7 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
         // ahead of the purges for every analysis but that one.
         const failing = recordingPurge((attempt) => attempt === 2);
 
-        const aborted = await reclaimDeadAnchors([deadAnchor()!], failing.purge, idle);
+        const aborted = await reclaimDeadAnchors([present(deadAnchor())], failing.purge, idle);
 
         expect(aborted._unsafeUnwrapErr()).toMatchObject({ type: "purge_failed", cause: pgErr });
         // Including the analysis whose purge DID succeed: the anchor is deleted as a unit, so keeping
@@ -182,7 +183,7 @@ describe("prune reclaims Postgres before it touches SQLite", () => {
         // The recovery the abort promises: the anchor is still dead, the analyses are still listed, and
         // the purge is idempotent — so running it again is all it takes.
         const retry = recordingPurge();
-        const outcome = await reclaimDeadAnchors([deadAnchor()!], retry.purge, idle);
+        const outcome = await reclaimDeadAnchors([present(deadAnchor())], retry.purge, idle);
 
         expect(outcome.isOk()).toBe(true);
         expect(retry.purged.toSorted()).toEqual(seeded.map((a) => a.id).toSorted());

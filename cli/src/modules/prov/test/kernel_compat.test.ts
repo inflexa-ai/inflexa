@@ -5,6 +5,7 @@ import { z } from "zod";
 import { applyProvEvent, importPublicKeyJwk, verifyProvenance, PROV_UNIFY_OPTIONS, type ProvEvent } from "@inflexa-ai/prov-kernel";
 import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { cliProvDigest, provModel } from "../document.ts";
+import { present } from "../../../lib/present.ts";
 
 // The kernel-adoption continuity suite. The fixture was generated ONCE by the pre-kernel
 // implementation (the cli's own dialect code, deleted in the same change): a small document driven
@@ -105,8 +106,8 @@ describe("kernel adoption — continuity against the pre-kernel fixture", () => 
         const doc = provModel.loadDocument(subject, fixture.document);
         expect(doc.isOk()).toBe(true);
         const json = sectionsSchema.parse(JSON.parse(doc._unsafeUnwrap().serialize("json")));
-        expect(Object.keys(json.entity!)).toContain("inflexa:analysis-compat-a1");
-        expect(Object.keys(json.agent!)).toContain("inflexa:agent-user-alice_example_org");
+        expect(Object.keys(present(json.entity))).toContain("inflexa:analysis-compat-a1");
+        expect(Object.keys(present(json.agent))).toContain("inflexa:agent-user-alice_example_org");
     });
 
     test("re-applying the same execution events dedupes into the document", () => {
@@ -130,14 +131,14 @@ describe("kernel adoption — continuity against the pre-kernel fixture", () => 
             actor: { kind: "user", id: "alice@example.org", email: "alice@example.org" },
         });
         const json = sectionsSchema.parse(JSON.parse(doc.serialize("json")));
-        expect(Object.keys(json.agent!)).toContain("inflexa:agent-user-alice_example_org");
+        expect(Object.keys(present(json.agent))).toContain("inflexa:agent-user-alice_example_org");
     });
 
     test("accepted forward delta: a fresh kernel document omits inflexa:args when args is empty", () => {
         const doc = provModel.freshDocument(subject);
         for (const event of executionEvents) applyProvEvent(provModel, doc, event);
         const json = activitiesSchema.parse(JSON.parse(doc.unified(PROV_UNIFY_OPTIONS).serialize("json")));
-        const cmd = json.activity[fixture.qnames.command]!;
+        const cmd = present(json.activity[fixture.qnames.command]);
         // The pre-kernel code wrote `inflexa:args: ""` for an empty argument vector; the kernel
         // omits the attribute. Existing documents keep the old value (previous test); new ones
         // never carry it.

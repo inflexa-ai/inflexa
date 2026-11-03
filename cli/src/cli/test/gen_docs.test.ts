@@ -9,6 +9,7 @@ import pkg from "../../../package.json";
 // env.ts under `bun test` is safe: bunfig's [test].preload sandboxes XDG_* before any of it evaluates.
 import * as envModule from "../../lib/env.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
+import { present } from "../../lib/present.ts";
 
 // The docs generator refuses to run in-process under `bun test` (src/lib/env.ts's data-loss guard,
 // and the script's own NODE_ENV check) — the ONLY supported invocation is a plain `bun` process. So
@@ -187,7 +188,7 @@ describe("gen_docs (subprocess)", () => {
             const prefix = `| \`${varName}\` | `;
             const row = section.split("\n").find((line) => line.startsWith(prefix));
             expect(row, `${varName} has no row in the Variables table`).toBeDefined();
-            const description = row!.slice(prefix.length, row!.lastIndexOf("|")).trim();
+            const description = present(row).slice(prefix.length, present(row).lastIndexOf("|")).trim();
             expect(description, `${varName} is listed without a description`).not.toBe("");
         }
     });
@@ -198,6 +199,6 @@ describe("gen_docs (subprocess)", () => {
         expect(generate().exitCode).toBe(0);
         const after = new Map([...before.keys()].map((f) => [f, readFileSync(join(OUT_DIR, f))]));
         expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
-        for (const [file, bytes] of before) expect(after.get(file)!.equals(bytes)).toBe(true);
+        for (const [file, bytes] of before) expect(present(after.get(file)).equals(bytes)).toBe(true);
     });
 });

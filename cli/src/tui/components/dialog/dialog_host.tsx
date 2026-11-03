@@ -119,8 +119,8 @@ export function dialogPush(render: () => JSX.Element, onClose?: (reason: CloseRe
  */
 export function dialogClose(reason: CloseReason = "commit"): boolean {
     if (dispatching) return true;
-    if (stack.length === 0) return true;
-    const top = stack[stack.length - 1]!;
+    const top = stack[stack.length - 1];
+    if (top === undefined) return true;
     if (top.onRequestClose && !top.onRequestClose(reason)) return false;
     setStack(produce((s) => s.pop()));
     dispatching = true;
@@ -143,9 +143,9 @@ export function dialogClear(): void {
     setStack([]);
     dispatching = true;
     try {
-        for (let i = current.length - 1; i >= 0; i--) {
-            current[i]!.contentOnClose?.("dismiss");
-            current[i]!.onClose?.("dismiss");
+        for (const entry of current.reverse()) {
+            entry.contentOnClose?.("dismiss");
+            entry.onClose?.("dismiss");
         }
     } finally {
         dispatching = false;
@@ -169,7 +169,8 @@ export function dialogIsOpen(): boolean {
 
 /** The top dialog's render thunk, or `null` when the stack is empty. Reactive. */
 export function dialogTop(): (() => JSX.Element) | null {
-    return stack.length > 0 ? stack[stack.length - 1]!.render : null;
+    const top = stack[stack.length - 1];
+    return top === undefined ? null : top.render;
 }
 
 // ── entry context ─────────────────────────────────────────────────────────────
@@ -259,7 +260,10 @@ export function useDialogCloseGuard(fn: (reason: CloseReason) => boolean): void 
 
 function makeHandle(id: string): DialogEntryHandle {
     const index = (): number => stack.findIndex((e) => e.id === id);
-    const isTop = (): boolean => stack.length > 0 && stack[stack.length - 1]!.id === id;
+    const isTop = (): boolean => {
+        const top = stack[stack.length - 1];
+        return top !== undefined && top.id === id;
+    };
     return {
         isTop,
         inert: false,

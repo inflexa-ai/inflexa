@@ -22,6 +22,7 @@ import { resetHotState } from "../hooks/conversation.ts";
 import { dispatchKey, leaderKeybind, reachableKeys, resolveKeybind, type KeyLike } from "../keymap.ts";
 import { theme } from "../theme.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import { present } from "../../lib/present.ts";
 
 // Every piece of the run-observability work is unit-tested in isolation; what nothing covered is
 // `App`'s own COMPOSITION — that it mounts the panel between the stream and the input, that it calls
@@ -231,7 +232,7 @@ describe("App composes the run-activity panel", () => {
             for (let i = 0; i < 6; i++) await Promise.resolve();
 
             expect(currentNotice()).not.toBeNull();
-            expect(currentNotice()!.text).toContain("completed");
+            expect(present(currentNotice()).text).toContain("completed");
         } finally {
             app.destroy();
         }
@@ -319,7 +320,7 @@ describe("App binds the abort of the focused run", () => {
             const spans = app.spans();
             const corner = spans.find((span) => span.text.includes("\u2554"));
             expect(corner).toBeDefined();
-            expect(parseColor(colors.error).equals(corner!.fg)).toBe(true);
+            expect(parseColor(colors.error).equals(present(corner).fg)).toBe(true);
             const title = spans.find((span) => span.text.includes("Abort run"));
             expect(title && parseColor(colors.error).equals(title.fg)).toBe(true);
 
@@ -447,7 +448,7 @@ describe("App binds the abort of the focused run", () => {
     test("the which-key overlay lists the binding only while a run shows", async () => {
         const app = await mountApp();
         try {
-            const abortKey = leaderKeybind("app.activity-panel-abort")[1]!.key;
+            const abortKey = present(leaderKeybind("app.activity-panel-abort")[1]).key;
             const listed = () => reachableKeys().some((next) => next.stroke === abortKey && next.desc === ABORT_DESC);
 
             await app.seed([runRow({ runId: "run-a" })]);

@@ -33,6 +33,7 @@ import {
     provenanceSeam,
     readProvenanceExport,
 } from "../prov_bridge.ts";
+import { present } from "../../../lib/present.ts";
 
 // Bus-spy harness: capture every `inflexa` event the adapter emits, always detaching in cleanup so
 // the listener never leaks across tests (a lingering spy would double-count later files' events).
@@ -95,8 +96,7 @@ describe("createBusArtifactRegistry — register", () => {
 
         const cmds = commandEvents();
         expect(cmds).toHaveLength(1);
-        const ref = cmds[0]!.command;
-        if (ref.kind !== "command") throw new Error("expected a command-kind ref");
+        const ref = present(cmds[0]).command;
         expect(ref.command).toBe("python3 de.py");
         expect(ref.args).toEqual(["--threshold", "0.05"]);
         expect(ref.exitCode).toBe(0);
@@ -108,11 +108,11 @@ describe("createBusArtifactRegistry — register", () => {
             { path: "runs/run-001/de-analysis/figures/heatmap.png", hash: "sha256:bbb" },
         ]);
         // The producer's replay-unstable observation timestamp NEVER crosses the bus.
-        expect(JSON.stringify(cmds[0]!)).not.toContain("timestamp");
-        expect(cmds[0]!.step).toEqual({ runId: "run-001", stepId: "de-analysis" });
-        expect(cmds[0]!.actor.kind).toBe("system");
+        expect(JSON.stringify(present(cmds[0]))).not.toContain("timestamp");
+        expect(present(cmds[0]).step).toEqual({ runId: "run-001", stepId: "de-analysis" });
+        expect(present(cmds[0]).actor.kind).toBe("system");
         // The construction-time model id rides the event — which model drove the producing step.
-        expect(cmds[0]!.model).toBe(modelId);
+        expect(present(cmds[0]).model).toBe(modelId);
 
         // Every produced file rides generation "command" — the command activity owns the generation edge.
         const files = fileEvents();
@@ -146,7 +146,7 @@ describe("createBusArtifactRegistry — register", () => {
         // No pseudo-command exists for a file-tool write — the call ref rides the file event and the
         // kernel mints the deterministic call activity from it.
         expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
-        const file = fileEvents()[0]!;
+        const file = present(fileEvents()[0]);
         expect(file.generation).toBe("call");
         expect(file.call).toEqual({ invocationId: "call-9", tool: "write_file" });
         expect(file.step).toEqual({ runId: "run-001", stepId: "de-analysis" });
@@ -171,7 +171,7 @@ describe("createBusArtifactRegistry — register", () => {
 
         // No command activity references a leaf; only the file event fires.
         expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
-        const file = fileEvents()[0]!;
+        const file = present(fileEvents()[0]);
         // Its generation falls to the step activity; the inotify-only fallback producer is "command".
         expect(file.generation).toBe("step");
         expect(file.file.producer).toBe("command");
@@ -208,13 +208,12 @@ describe("createBusArtifactRegistry — register", () => {
         // cmdA's group first (command then its file), then cmdB's group (command then its file).
         expect(captured.map((e) => e.type)).toEqual(["prov.command_executed", "prov.file_written", "prov.command_executed", "prov.file_written"]);
 
-        const cmdBRef = commandEvents()[1]!.command;
-        if (cmdBRef.kind !== "command") throw new Error("expected a command-kind ref");
+        const cmdBRef = present(commandEvents()[1]).command;
         // The self-read of the produced de_results.csv resolves to its analysis-scoped path as source
         // "step"; the phantom tmp.csv (absent from the manifest) appears nowhere — no dangling edge.
         expect(cmdBRef.inputs).toEqual([{ path: "runs/run-001/de-analysis/output/de_results.csv", hash: "sha256:aaa", source: "step" }]);
         // And it keys onto the very entity cmdA's output registered.
-        expect(fileQName(cmdBRef.inputs[0]!)).toBe(fileQName({ path: "runs/run-001/de-analysis/output/de_results.csv", hash: "sha256:aaa" }));
+        expect(fileQName(present(cmdBRef.inputs[0]))).toBe(fileQName({ path: "runs/run-001/de-analysis/output/de_results.csv", hash: "sha256:aaa" }));
     });
 
     test("a command input carries the fileId key only when a file id resolved, for a read and for a self-read", async () => {
@@ -296,8 +295,7 @@ describe("createBusArtifactRegistry — register", () => {
 
         (await registry.register(input, noSession))._unsafeUnwrap();
 
-        const ref = commandEvents()[0]!.command;
-        if (ref.kind !== "command") throw new Error("expected a command-kind ref");
+        const ref = present(commandEvents()[0]).command;
         // Step-relative `scripts/de.py` is scoped into the analysis path space the outputs live in.
         expect(ref.scriptPath).toBe("runs/run-001/de-analysis/scripts/de.py");
     });
@@ -380,14 +378,14 @@ describe("createBusArtifactRegistry — register", () => {
 
         // Two files (the hash-less one is skipped, not emitted); no step event.
         expect(captured.map((e) => e.type)).toEqual(["prov.file_written", "prov.file_written"]);
-        const emittedPaths = captured.filter((e) => e.type === "prov.file_written").map((e) => (e.type === "prov.file_written" ? e.file.path : ""));
+        const emittedPaths = captured.filter((e) => e.type === "prov.file_written").map((e) => e.file.path);
         expect(emittedPaths).toEqual(["runs/run-001/de-analysis/output/ok1.csv", "runs/run-001/de-analysis/output/ok2.csv"]);
 
         expect(result.registered.map((r) => r.path)).toEqual(["runs/run-001/de-analysis/output/ok1.csv", "runs/run-001/de-analysis/output/ok2.csv"]);
         expect(result.failedCount).toBe(1);
         expect(result.failed).toHaveLength(1);
-        expect(result.failed[0]!.path).toBe("runs/run-001/de-analysis/output/bad.csv");
-        expect(result.failed[0]!.error).toContain("content hash");
+        expect(present(result.failed[0]).path).toBe("runs/run-001/de-analysis/output/bad.csv");
+        expect(present(result.failed[0]).error).toContain("content hash");
     });
 
     test("a hash-less tracked input fails registration without emitting, while its siblings still emit", async () => {
@@ -411,14 +409,14 @@ describe("createBusArtifactRegistry — register", () => {
         const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
         expect(captured.map((e) => e.type)).toEqual(["prov.input_used", "prov.input_used"]);
-        const emittedPaths = captured.filter((e) => e.type === "prov.input_used").map((e) => (e.type === "prov.input_used" ? e.input.path : ""));
+        const emittedPaths = captured.filter((e) => e.type === "prov.input_used").map((e) => e.input.path);
         expect(emittedPaths).toEqual(["data/inputs/ok.csv", "runs/run-000/step-x/output/prior.csv"]);
 
         // The hash-less input fails registration (analysis-relative path), incrementing failedCount.
         expect(result.failedCount).toBe(1);
         expect(result.failed).toHaveLength(1);
-        expect(result.failed[0]!.path).toBe("data/inputs/bad.csv");
-        expect(result.failed[0]!.error).toContain("content hash");
+        expect(present(result.failed[0]).path).toBe("data/inputs/bad.csv");
+        expect(present(result.failed[0]).error).toContain("content hash");
         expect(result.registered).toEqual([]);
     });
 
@@ -454,7 +452,7 @@ describe("createRunProvenanceEmitter", () => {
         emit(event);
 
         expect(captured).toHaveLength(1);
-        const busEvent = captured[0]!;
+        const busEvent = present(captured[0]);
         if (busEvent.type !== "prov.run_started") throw new Error("expected prov.run_started");
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
@@ -477,7 +475,7 @@ describe("createRunProvenanceEmitter", () => {
         emit(event);
 
         expect(captured).toHaveLength(1);
-        const busEvent = captured[0]!;
+        const busEvent = present(captured[0]);
         if (busEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
@@ -501,7 +499,7 @@ describe("createRunProvenanceEmitter", () => {
 
         emit(event);
 
-        const busEvent = captured[0]!;
+        const busEvent = present(captured[0]);
         if (busEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(busEvent.outcome).toEqual({ runId: "run-001", stepId: "step-err", status: "failed", completedAtMs: 1_700_000_200_000 });
         expect(busEvent.outcome.durationMs).toBeUndefined();
@@ -524,7 +522,7 @@ describe("createRunProvenanceEmitter", () => {
 
         emit(event);
 
-        const busEvent = captured[0]!;
+        const busEvent = present(captured[0]);
         if (busEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(busEvent.model).toBe("deepseek/some-alias-v2");
     });
@@ -543,7 +541,7 @@ describe("createRunProvenanceEmitter", () => {
         emit(event);
 
         expect(captured).toHaveLength(1);
-        const busEvent = captured[0]!;
+        const busEvent = present(captured[0]);
         if (busEvent.type !== "prov.run_completed") throw new Error("expected prov.run_completed");
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
@@ -615,7 +613,7 @@ const reportThreadId = "thread-report-1";
 /** The single captured event, or a test failure when the bridge emitted none or more than one. */
 function onlyEvent(): StampedEvent {
     expect(captured.length).toBe(1);
-    return captured[0]!;
+    return present(captured[0]);
 }
 
 // The emit over a fixed model name — the shape every mapping test drives, except the live-switch one
@@ -662,7 +660,7 @@ describe("createSessionEmit", () => {
         ]);
         const kinds = captured.map((e) => (e.type.startsWith("prov.report_block_") && "block" in e ? e.block.blockKind : null));
         expect(kinds).toEqual(["text", "chart", "table", "figure"]);
-        const moved = captured[3]!;
+        const moved = present(captured[3]);
         if (moved.type !== "prov.report_block_moved") throw new Error("expected prov.report_block_moved");
         expect(moved.block).toEqual({ threadId: reportThreadId, blockId: "b4", blockKind: "figure" });
     });
@@ -724,9 +722,9 @@ describe("createSessionEmit", () => {
         const event = onlyEvent();
         if (event.type !== "prov.file_written") throw new Error("expected prov.file_written");
         expect(event.call).toBeDefined();
-        expect("threadId" in event.call!).toBe(false);
-        expect(event.call!.tool).toBe("edit_file");
-        expect(event.call!.invocationId).toBe("call-2");
+        expect("threadId" in present(event.call)).toBe(false);
+        expect(present(event.call).tool).toBe("edit_file");
+        expect(present(event.call).invocationId).toBe("call-2");
     });
 
     test("a script run maps onto prov.script_run with its script, its reads, and its writes", () => {
@@ -908,9 +906,9 @@ describe("readProvenanceExport", () => {
         const provenance = await readProvenanceExport("a1");
         expect(provenance).toBeDefined();
         // The exact bytes of the column, which are the bytes the chain hash covers.
-        expect(provenance!.document).toBe(getAnalysisProvenance("a1")._unsafeUnwrap()!);
-        const attestation = attestationSchema.parse(JSON.parse(provenance!.attestation!));
-        expect((await verifyAttestation(provenance!.document, attestation)).status).toBe("valid");
+        expect(present(provenance).document).toBe(present(getAnalysisProvenance("a1")._unsafeUnwrap()));
+        const attestation = attestationSchema.parse(JSON.parse(present(present(provenance).attestation)));
+        expect((await verifyAttestation(present(provenance).document, attestation)).status).toBe("valid");
     });
 
     test("the drain runs first, so a read gives the bytes that include the act", async () => {
@@ -919,7 +917,7 @@ describe("readProvenanceExport", () => {
 
         const provenance = await readProvenanceExport("a1");
         expect(provenance).toBeDefined();
-        expect(provenance!.document).toContain("v-drain");
+        expect(present(provenance).document).toContain("v-drain");
     });
 
     test("an unknown analysis gives absence", async () => {
@@ -962,7 +960,7 @@ describe("createProvenanceSeam", () => {
 
         // The session emit is bound over the source that the constructor took, thus a record of an act
         // names the model of THIS seam and of no other.
-        seam.emitSessionEvent!({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
+        present(seam.emitSessionEvent)({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b1", blockKind: "text" });
         const event = onlyEvent();
         if (event.type !== "prov.report_block_added") throw new Error("expected prov.report_block_added");
         expect(event.model).toBe("openai/gpt-5");

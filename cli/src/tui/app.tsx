@@ -1203,14 +1203,14 @@ export function App(props: AppProps) {
     const QUIT_ALIASES = new Set(["quit", "exit", "q", "bye", "ciao"]);
 
     async function handleSubmit() {
-        const text = textareaRef?.editBuffer.getText().trim();
-        if (!text) return;
+        const composer = textareaRef;
+        const text = composer?.editBuffer.getText().trim();
+        if (composer === null || !text) return;
 
         if (text.startsWith("/")) {
             const name = text.slice(1).split(/\s+/)[0]?.toLowerCase();
             if (name && QUIT_ALIASES.has(name)) {
-                // A non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
-                textareaRef!.setText("");
+                composer.setText("");
                 if (chatStatus() === "busy") {
                     conversation.abort();
                     notify({ kind: "info", text: "Stream aborted — /quit again to exit" });
@@ -1236,12 +1236,13 @@ export function App(props: AppProps) {
                 return;
             case "answer": {
                 // `answer` is reachable only when an ask is docked, so `head` is non-null here.
+                if (head === null) return;
                 // NO focus move here on purpose: the settle/drain choreography (the head-identity effect
                 // above) owns every post-answer transition. Duplicating a focus move at submit time would
                 // race that effect and re-create the double-focus-owner bug the identity gate prevents.
                 // The buffer clear is deferred to settle time (onSettled): a failed gateway write keeps
                 // the typed token so this submit can be retried instead of vanishing.
-                answerAsk(head!.askId, action.reply, () => textareaRef?.setText(""));
+                answerAsk(head.askId, action.reply, () => textareaRef?.setText(""));
                 return;
             }
             case "refuse":
@@ -1292,8 +1293,7 @@ export function App(props: AppProps) {
                 throw new Error(`unhandled turn-submit action: ${JSON.stringify(_exhaustive)}`);
             }
         }
-        // A non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
-        textareaRef!.setText("");
+        composer.setText("");
         // Only an accepted submit reaches here — every refusal above returned with focus and text intact.
         // The resting state of a running turn is NORMAL on the pane: the composer cannot submit again
         // mid-turn, while esc-esc interrupt, up-arrow retract, and the scroll keys all live on the pane. Move

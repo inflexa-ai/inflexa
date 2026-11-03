@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Records the compiler strictness and the lint rules that keep the values of cli typed: the decision that `exactOptionalPropertyTypes` stays off, the rules that keep each `any` and each conditional spread out of the source, and the rules that keep each type assertion behind a stated invariant.
+Records the compiler strictness and the lint rules that keep the values of cli typed: the decision that `exactOptionalPropertyTypes` stays off, the rules that keep each `any` and each conditional spread out of the source, the rules that keep each type assertion behind a stated invariant, and the rules that make each read of a value that can be absent state where its presence comes from.
 
 ## Requirements
 
@@ -55,6 +55,25 @@ The oxlint configuration of cli MUST NOT turn off `@inflexa-ai/require-assertion
 
 - **WHEN** a reader searches the TypeScript source under `cli/src/` and `cli/scripts/`
 - **THEN** no `as unknown as` and no `as any as` expression remains
+
+### Requirement: The non-null and unnecessary-condition rules report nothing
+
+The oxlint configuration of cli MUST NOT turn off `typescript/no-non-null-assertion`, `typescript/no-unnecessary-type-assertion`, or `typescript/no-unnecessary-condition`. A non-null assertion (`x!`) MUST NOT remain in the TypeScript source of cli. A directive that turns off `typescript/no-unnecessary-condition` MUST apply to one line only, and it MUST state why the guard is live. The fix shapes for a reported site are design rules of the change `adopt-non-null-narrowing` (design D1 to D6), not spec obligations.
+
+#### Scenario: The lint run reports nothing for the rules
+
+- **WHEN** `bun run lint` runs in `cli/`
+- **THEN** each of the three rules reports no site, and the lint run passes
+
+#### Scenario: No off entry for the rules
+
+- **WHEN** a reader reads the oxlint configuration of cli
+- **THEN** no override turns any of the three rules off
+
+#### Scenario: No directive turns off the non-null rule
+
+- **WHEN** a reader searches the TypeScript source under `cli/src/` and `cli/scripts/`
+- **THEN** no directive names `no-non-null-assertion`, and each directive that names `no-unnecessary-condition` is an `oxlint-disable-next-line` with a reason
 
 ### Requirement: A conditional key stays absent where a consumer observes presence
 

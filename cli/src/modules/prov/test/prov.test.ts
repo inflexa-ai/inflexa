@@ -43,6 +43,7 @@ import { updateAnalysisProvenance } from "../../../db/primary_mutation.ts";
 import { currentUserActor, initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests, resolveAnalysisForProv } from "../prov.ts";
 import { getAnalysisIntegrity } from "../../../db/primary_query.ts";
 import { resetSigningForTests, loadOrGenerateKeypair } from "../signing.ts";
+import { present } from "../../../lib/present.ts";
 
 /** The parts of a serialized PROV-JSON document that these tests read. A read of any other part is a type error. */
 const provJsonSchema = z.object({
@@ -324,11 +325,11 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         const run = json.activity?.["inflexa:run-run-001"];
         // tsprov normalizes the ISO offset (`+00:00` vs `Z`), so compare on the second-precision prefix
         // Date.parse round-trips identically — the point is the VALUE is the payload's, not `Date.now()`.
-        expect(Date.parse(run!["prov:startTime"]!)).toBe(runRef.startedAtMs);
-        expect(Date.parse(run!["prov:endTime"]!)).toBe(runOutcome.completedAtMs);
+        expect(Date.parse(present(present(run)["prov:startTime"]))).toBe(runRef.startedAtMs);
+        expect(Date.parse(present(present(run)["prov:endTime"]))).toBe(runOutcome.completedAtMs);
         const step = json.activity?.["inflexa:step-run-001-step-de"];
-        expect(Date.parse(step!["prov:endTime"]!)).toBe(stepOutcome.completedAtMs);
-        expect(step!["inflexa:status"]).toBe("completed");
+        expect(Date.parse(present(present(step)["prov:endTime"]))).toBe(stepOutcome.completedAtMs);
+        expect(present(step)["inflexa:status"]).toBe("completed");
     });
 
     // A prior-run read keyed by `(path, hash)` resolves to the SAME entity the producing file
@@ -479,7 +480,7 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         const aQn = commandQName(stepRef, cmdRunDe.outputs);
         const bQn = commandQName(stepRef, cmdPlotHeatmap.outputs);
         // The read's QName equals the produced file's QName — the shared entity the chain walks through.
-        expect(fileQName({ path: cmdPlotHeatmap.inputs[0]!.path, hash: cmdPlotHeatmap.inputs[0]!.hash })).toBe(deQn);
+        expect(fileQName({ path: present(cmdPlotHeatmap.inputs[0]).path, hash: present(cmdPlotHeatmap.inputs[0]).hash })).toBe(deQn);
         // Exactly ONE entity under that QName after unify.
         expect(unified.getRecords().filter((r) => (r.identifier?.toString() ?? "") === deQn).length).toBe(1);
 
@@ -752,7 +753,7 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
 
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        const doc = ProvDocument.deserialize(stored!, "json");
+        const doc = ProvDocument.deserialize(present(stored), "json");
         const provn = doc.serialize("provn");
         expect(provn).toContain("entity(inflexa:analysis-a1");
         expect(provn).toContain("agent(inflexa:agent-system");
@@ -820,19 +821,19 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
 
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
         expect(integrity).not.toBeNull();
-        expect(integrity!.provenance).not.toBeNull();
-        expect(integrity!.chainHash).not.toBeNull();
-        expect(integrity!.signature).not.toBeNull();
+        expect(present(integrity).provenance).not.toBeNull();
+        expect(present(integrity).chainHash).not.toBeNull();
+        expect(present(integrity).signature).not.toBeNull();
 
         // First flush: prevChainHash is null, so recompute seeds from SHA-256("").
-        expect(integrity!.prevChainHash).toBeNull();
-        const recomputed = (await computeChainHash(null, integrity!.provenance!))._unsafeUnwrap();
+        expect(present(integrity).prevChainHash).toBeNull();
+        const recomputed = (await computeChainHash(null, present(present(integrity).provenance)))._unsafeUnwrap();
         // Non-null assertions safe: the three `.not.toBeNull()` checks above guard them.
-        expect(recomputed).toBe(integrity!.chainHash!);
+        expect(recomputed).toBe(present(present(integrity).chainHash));
 
         // Verify the Ed25519 signature.
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
-        const sigOk = (await verifyHexDigest(kp.publicKey, integrity!.signature!, integrity!.chainHash!))._unsafeUnwrap();
+        const sigOk = (await verifyHexDigest(kp.publicKey, present(present(integrity).signature), present(present(integrity).chainHash)))._unsafeUnwrap();
         expect(sigOk).toBe(true);
 
         resetSigningForTests(null);
@@ -856,7 +857,7 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
         Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
         await flushProvenanceAsync();
         const first = getAnalysisIntegrity("a1")._unsafeUnwrap();
-        expect(first!.chainHash).not.toBeNull();
+        expect(present(first).chainHash).not.toBeNull();
 
         // Second flush: an input-added event appends to the same document.
         Bus.emit("inflexa", {
@@ -868,25 +869,31 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
         });
         await flushProvenanceAsync();
         const second = getAnalysisIntegrity("a1")._unsafeUnwrap();
-        expect(second!.chainHash).not.toBeNull();
+        expect(present(second).chainHash).not.toBeNull();
 
         // The second chain hash must differ from the first (the PROV-JSON grew).
-        expect(second!.chainHash).not.toBe(first!.chainHash);
+        expect(present(second).chainHash).not.toBe(present(first).chainHash);
         // The stored prevChainHash must be the first flush's chain hash.
-        expect(second!.prevChainHash).toBe(first!.chainHash);
+        expect(present(second).prevChainHash).toBe(present(first).chainHash);
 
         // The second chain hash must chain from the first: H2 = SHA-256(H1 || json2).
-        const recomputed = (await computeChainHash(first!.chainHash!, second!.provenance!))._unsafeUnwrap();
-        expect(recomputed).toBe(second!.chainHash!);
+        const recomputed = (await computeChainHash(present(present(first).chainHash), present(present(second).provenance)))._unsafeUnwrap();
+        expect(recomputed).toBe(present(present(second).chainHash));
 
         // The signature still verifies against the new chain hash.
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
-        const sigOk = (await verifyHexDigest(kp.publicKey, second!.signature!, second!.chainHash!))._unsafeUnwrap();
+        const sigOk = (await verifyHexDigest(kp.publicKey, present(present(second).signature), present(present(second).chainHash)))._unsafeUnwrap();
         expect(sigOk).toBe(true);
 
         // verifyProvenance must report "valid" after multi-flush — this was the #CRT-1 bug:
         // the verifier needs prevChainHash to recompute the rolling hash correctly.
-        const result = await verifyProvenance(second!.provenance, second!.prevChainHash, second!.chainHash, second!.signature, kp.publicKey);
+        const result = await verifyProvenance(
+            present(second).provenance,
+            present(second).prevChainHash,
+            present(second).chainHash,
+            present(second).signature,
+            kp.publicKey,
+        );
         expect(result.status).toBe("valid");
 
         resetSigningForTests(null);
@@ -923,8 +930,8 @@ describe("export attestation (writeAttestation via the full export path)", () =>
 
         // The flush should have written integrity columns.
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
-        expect(integrity!.chainHash).not.toBeNull();
-        expect(integrity!.signature).not.toBeNull();
+        expect(present(integrity).chainHash).not.toBeNull();
+        expect(present(integrity).signature).not.toBeNull();
 
         // Build the attestation via the shared builder (mirrors the export path).
         const { buildAttestation } = await import("../verify.ts");
@@ -948,7 +955,7 @@ describe("export attestation (writeAttestation via the full export path)", () =>
         // The attestation's payloadDigest is a simple SHA-256(provJson), not the chain hash.
         const contentDigest = (await computePayloadDigest(provJson))._unsafeUnwrap();
         expect(parsed.payloadDigest).toBe(contentDigest);
-        expect(parsed.payloadDigest).not.toBe(integrity!.chainHash);
+        expect(parsed.payloadDigest).not.toBe(present(integrity).chainHash);
 
         // Third-party verification: recompute digest from the file, verify the signature.
         const importedPub = await crypto.subtle.importKey("jwk", parsed.publicKey, "Ed25519", true, ["verify"]);
@@ -984,7 +991,13 @@ describe("verifyProvenance end-to-end (bus → flush → verify)", () => {
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
         const { loadPublicKey } = await import("../signing.ts");
         const pubKey = await loadPublicKey();
-        const result = await verifyProvenance(integrity!.provenance, integrity!.prevChainHash, integrity!.chainHash, integrity!.signature, pubKey);
+        const result = await verifyProvenance(
+            present(integrity).provenance,
+            present(integrity).prevChainHash,
+            present(integrity).chainHash,
+            present(integrity).signature,
+            pubKey,
+        );
         expect(result.status).toBe("valid");
 
         resetSigningForTests(null);
@@ -1029,7 +1042,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        const provn = ProvDocument.deserialize(stored!, "json").serialize("provn");
+        const provn = ProvDocument.deserialize(present(stored), "json").serialize("provn");
         expect(provn).toContain("inflexa:Run");
         expect(provn).toContain("inflexa:Step");
         expect(provn).toContain("inflexa:File");
@@ -1047,8 +1060,8 @@ describe("provenance recorder handles execution events (bus → flush → signed
         expect(provn).toMatch(/actedOnBehalfOf\(inflexa:delegation-[\w-]+; inflexa:agent-model-\w+, inflexa:agent-system/);
 
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
-        expect(integrity!.chainHash).not.toBeNull();
-        expect(integrity!.signature).not.toBeNull();
+        expect(present(integrity).chainHash).not.toBeNull();
+        expect(present(integrity).signature).not.toBeNull();
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
@@ -1083,10 +1096,10 @@ describe("provenance recorder handles execution events (bus → flush → signed
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
         const section = z.record(z.string(), z.record(z.string(), z.unknown())).optional();
-        const records = z.object({ activity: section, wasAssociatedWith: section, wasInformedBy: section }).parse(JSON.parse(stored!));
+        const records = z.object({ activity: section, wasAssociatedWith: section, wasInformedBy: section }).parse(JSON.parse(present(stored)));
         const approvalEntry = Object.entries(records.activity ?? {}).find(([, activity]) => activity["prov:type"] === "inflexa:ApprovePlan");
         expect(approvalEntry).toBeDefined();
-        const [approvalQn, approval] = approvalEntry!;
+        const [approvalQn, approval] = present(approvalEntry);
         expect(approval).toMatchObject({ "inflexa:threadId": "thread-1", "inflexa:planId": "pln-0000000a", "inflexa:runId": runRef.runId });
         const approvedAt = Date.parse(String(approval["prov:startTime"]));
         const startedAt = Date.parse(String(records.activity?.["inflexa:run-run-001"]?.["prov:startTime"]));
@@ -1164,7 +1177,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        const provn = ProvDocument.deserialize(stored!, "json").serialize("provn");
+        const provn = ProvDocument.deserialize(present(stored), "json").serialize("provn");
 
         // Both activity kinds are present, with their identifying facts.
         expect(provn).toContain("inflexa:Command");
@@ -1187,8 +1200,8 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         // The integrity columns rotated — the flush actually signed and persisted.
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
-        expect(integrity!.chainHash).not.toBeNull();
-        expect(integrity!.signature).not.toBeNull();
+        expect(present(integrity).chainHash).not.toBeNull();
+        expect(present(integrity).signature).not.toBeNull();
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
@@ -1234,13 +1247,13 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        const json = provJsonSchema.parse(JSON.parse(stored!));
+        const json = provJsonSchema.parse(JSON.parse(present(stored)));
         // The last-recorded start time survives the merge (parsed to epoch-ms to normalize the offset).
-        expect(Date.parse(json.activity!["inflexa:run-run-001"]!["prov:startTime"]!)).toBe(Date.parse("2000-01-01T00:00:00.000Z"));
+        expect(Date.parse(present(present(present(json.activity)["inflexa:run-run-001"])["prov:startTime"]))).toBe(Date.parse("2000-01-01T00:00:00.000Z"));
         // The flush actually persisted — the integrity chain rotated off the seed, so it did not skip.
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
-        expect(integrity!.chainHash).not.toBe("seedhash");
-        expect(integrity!.signature).not.toBe("seedsig");
+        expect(present(integrity).chainHash).not.toBe("seedhash");
+        expect(present(integrity).signature).not.toBe("seedsig");
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
@@ -1284,15 +1297,15 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        const provn = ProvDocument.deserialize(stored!, "json").serialize("provn");
+        const provn = ProvDocument.deserialize(present(stored), "json").serialize("provn");
         // The latest outcome wins and the earlier one is GONE — no multi-valued status/duration.
         expect(provn).toContain("completed");
         expect(provn).not.toContain("canceled");
         expect(provn).toContain("9000");
         expect(provn).not.toContain("2000");
         // The end time is superseded too (last-write-wins on the formal attribute).
-        const json = provJsonSchema.parse(JSON.parse(stored!));
-        expect(Date.parse(json.activity!["inflexa:run-run-001"]!["prov:endTime"]!)).toBe(1_700_000_009_000);
+        const json = provJsonSchema.parse(JSON.parse(present(stored)));
+        expect(Date.parse(present(present(present(json.activity)["inflexa:run-run-001"])["prov:endTime"]))).toBe(1_700_000_009_000);
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });

@@ -13,6 +13,7 @@ import { PromptDialog } from "../prompt_dialog.tsx";
 import { SelectDialog } from "../select_dialog.tsx";
 import { ConfigApp } from "../../../app_config.tsx";
 import type { ServerSettings } from "../../../../api/machine.ts";
+import { present } from "../../../../lib/present.ts";
 
 // End-to-end verification of the dialog host STATE MACHINE through the real keyboard bus: close
 // reasons per gesture, the busy veto, stacked-entry state survival + key inertness, the
@@ -365,13 +366,13 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
                 </box>
             );
         }
-        let ta: TextareaRenderable | null = null;
-        let probeInput: InputRenderable | null = null;
+        let ta: TextareaRenderable | undefined;
+        let probeInput: InputRenderable | undefined;
         const setup = await testRender(() => <Harness onTa={(r) => (ta = r)} />, { width: 60, height: 20 });
         const settle = makeSettle(setup);
         try {
             await settle();
-            expect(setup.renderer.currentFocusedRenderable?.id).toBe(ta!.id); // app focus = chat textarea
+            expect(setup.renderer.currentFocusedRenderable?.id).toBe(present(ta).id); // app focus = chat textarea
 
             dialogPush(() => (
                 <box>
@@ -386,12 +387,12 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
             await settle(); // > the 1ms restore timer
 
             const focusedId = setup.renderer.currentFocusedRenderable?.id;
-            expect(focusedId).toBe(probeInput!.id); // the dialog keeps its focus
-            expect(focusedId).not.toBe(ta!.id);
+            expect(focusedId).toBe(present(probeInput).id); // the dialog keeps its focus
+            expect(focusedId).not.toBe(present(ta).id);
 
             dialogClose(); // real N→0: the app focus restore chain must still work
             await settle();
-            expect(setup.renderer.currentFocusedRenderable?.id).toBe(ta!.id);
+            expect(setup.renderer.currentFocusedRenderable?.id).toBe(present(ta).id);
         } finally {
             setup.renderer.destroy();
         }
@@ -454,7 +455,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
             setup.mockInput.pressEnter();
             await settle();
             expect(confirmed.length).toBe(1);
-            expect([...confirmed[0]!].sort()).toEqual(["a", "c"]);
+            expect([...present(confirmed[0])].sort()).toEqual(["a", "c"]);
         } finally {
             setup.renderer.destroy();
         }

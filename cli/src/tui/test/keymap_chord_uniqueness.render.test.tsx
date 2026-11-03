@@ -17,6 +17,7 @@ import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from 
 import { resetHotState } from "../hooks/conversation.ts";
 import { dispatchKey, leaderKeybind, reachableKeys, resolveKeybind, type KeyLike } from "../keymap.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import { present } from "../../lib/present.ts";
 
 // The keymap dispatches the FIRST full match of a chord, and `reachableKeys`
 // dedupes on stroke plus desc. Thus two bindings on one chord ship silently:
@@ -108,7 +109,7 @@ describe("the chord table of App", () => {
             expect(byStroke.get("f")).toBe("Retry failed transfers");
 
             // The abort layer is enabled by the seeded run, thus its stroke takes part in the sweep.
-            const abortStroke = leaderKeybind("app.activity-panel-abort")[1]!.key;
+            const abortStroke = present(leaderKeybind("app.activity-panel-abort")[1]).key;
             expect(byStroke.get(abortStroke)).toBe("Abort the active run");
         } finally {
             dispatchKey(key("escape"));

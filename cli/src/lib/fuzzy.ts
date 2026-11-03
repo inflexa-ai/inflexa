@@ -4,6 +4,8 @@
 // `SelectItem`-aware field weighting stays in `list_core.tsx` — moving it here would make `lib/`
 // import a `tui/` type, inverting the infra→presentation dependency direction.
 
+import { present } from "./present.ts";
+
 /**
  * Score a subsequence match of `query` against `target`: `-1` when `query` is not a
  * subsequence of `target` (case-insensitively), otherwise a non-negative score where higher is
@@ -48,9 +50,9 @@ export function subsequenceScoreBytes(query: Uint8Array, bytes: Uint8Array, star
     let last = -2;
     for (let ti = start; ti < end && qi < queryLength; ti++) {
         // Both indexes are inside their arrays: `ti` is below `end`, which the caller bounds by the array, and `qi` is below `queryLength`.
-        let byte = bytes[ti]!;
+        let byte = present(bytes[ti], "a byte of a name");
         if (byte >= 0x41 && byte <= 0x5a) byte |= 0x20;
-        if (byte === query[qi]!) {
+        if (byte === present(query[qi], "a byte of the query")) {
             streak = ti === last + 1 ? streak + 1 : 1;
             score += streak + (ti === start ? 5 : 0);
             last = ti;
@@ -79,8 +81,7 @@ export function rankBy<T>(items: readonly T[], query: string, fields: RankField<
     const q = query.trim();
     if (q === "") return items;
     const scored: Array<{ item: T; score: number; i: number }> = [];
-    for (let i = 0; i < items.length; i++) {
-        const item = items[i]!; // bounded by items.length, never undefined
+    for (const [i, item] of items.entries()) {
         let score = 0;
         let matched = false;
         for (const field of fields) {

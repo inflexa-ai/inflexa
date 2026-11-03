@@ -17,6 +17,7 @@ import {
     startTurn,
     whenNoRunningTurns,
 } from "../turns.ts";
+import { present } from "../../lib/present.ts";
 
 const T0 = new Date("2026-10-02T10:00:00.000Z");
 
@@ -83,7 +84,7 @@ describe("the turn registry", () => {
     test("a summary that a caller holds is a copy: a change to it does not reach the registry", () => {
         start("k1");
         // The turn started on the line above, thus the registry holds it.
-        const held = findTurn("k1")!;
+        const held = present(findTurn("k1"));
         held.status = "failed";
         expect(findTurn("k1")?.status).toBe("running");
     });

@@ -215,22 +215,26 @@ function indentFrom(lines: string[], start: number, emit: () => void): void {
  * no exit hook to un-see a node on the way back up.
  */
 function safeStringify(value: unknown, space?: number): string {
-    const seen = new WeakSet<object>();
     try {
-        // `val` is every nested value the serializer visits — genuinely `unknown`.
-        const json = JSON.stringify(
-            value,
-            (_key, val: unknown): unknown => {
-                if (typeof val === "object" && val !== null) {
-                    if (seen.has(val)) return "[Circular]";
-                    seen.add(val);
-                }
-                return val;
-            },
-            space,
-        );
-        return json ?? String(value);
+        return stringifyOnce(value, space) ?? String(value);
     } catch {
         return String(value);
     }
+}
+
+/** `JSON.stringify` gives `undefined` for a function, a symbol, or `undefined`, which its declared type does not show. */
+function stringifyOnce(value: unknown, space: number | undefined): string | undefined {
+    const seen = new WeakSet<object>();
+    // `val` is every nested value the serializer visits — genuinely `unknown`.
+    return JSON.stringify(
+        value,
+        (_key, val: unknown): unknown => {
+            if (typeof val === "object" && val !== null) {
+                if (seen.has(val)) return "[Circular]";
+                seen.add(val);
+            }
+            return val;
+        },
+        space,
+    );
 }

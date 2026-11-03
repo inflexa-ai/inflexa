@@ -1,4 +1,4 @@
-import { err, Result, ResultAsync } from "neverthrow";
+import { Result, ResultAsync } from "neverthrow";
 import type { LlmUsageRecord, NoticeFailure, Scope, UsageRecorder } from "@inflexa-ai/harness";
 
 import type { DbError } from "../../db/errors.ts";
@@ -39,25 +39,14 @@ type ScopeColumns = Pick<LlmUsageEntry, "scopeKind" | "scopeId" | "threadId">;
  * Flatten a harness {@link Scope} to the ledger's `(scope_kind, scope_id)` pair plus the thread.
  *
  * Total by construction. Storing the discriminant, rather than collapsing the scope into a bare
- * `analysis_id`, is what keeps a per-analysis read (`scope_kind = 'analysis'`) honest.
- *
- * Returns `null` only for a variant this code does not know — unreachable while the harness has one
- * (the `satisfies never` makes a second a compile error here), and reported by the caller rather
- * than dropped quietly if it ever happens at runtime against a newer harness.
+ * `analysis_id`, is what keeps a per-analysis read (`scope_kind = 'analysis'`) honest. The function
+ * reads the one member of `Scope` directly, thus a NEW `Scope` variant fails to compile at this read
+ * rather than reaching the runtime.
  */
-function scopeColumns(scope: Scope): ScopeColumns | null {
-    switch (scope.kind) {
-        case "analysis": {
-            const columns: ScopeColumns = { scopeKind: scope.kind, scopeId: scope.analysisId };
-            if (scope.threadId !== undefined) columns.threadId = scope.threadId;
-            return columns;
-        }
-        default:
-            // A NEW `Scope` variant fails to compile at this line rather than silently reaching the
-            // runtime report below — a forgotten mapping is a build error, not a lost record.
-            scope.kind satisfies never;
-            return null;
-    }
+function scopeColumns(scope: Scope): ScopeColumns {
+    const columns: ScopeColumns = { scopeKind: scope.kind, scopeId: scope.analysisId };
+    if (scope.threadId !== undefined) columns.threadId = scope.threadId;
+    return columns;
 }
 
 /**
@@ -102,7 +91,7 @@ export type UsageRecorderDeps = {
  * Constructed ONCE per booted runtime at the composition root and stamped by `assembleCoreRuntime`
  * onto the conversation agent and every registered workflow, so one runtime reports to one ledger.
  *
- * `record` is total: an unknown scope variant, a failed write, and a throw from below each come back
+ * `record` is total: a failed write and a throw from below each come back
  * as the `err` of the notice, with a reason, and never as a throw. The recorder logs nothing itself —
  * the harness logs the reason of a failed notice, which is where "a usage-ledger fault must never fail
  * a turn" is realized.
@@ -116,13 +105,7 @@ export function createUsageRecorder(deps: UsageRecorderDeps = {}): UsageRecorder
     // agent loop. The mapper reads nothing off the record, so it cannot itself throw.
     const write = Result.fromThrowable(
         (call: LlmUsageRecord): Result<void, NoticeFailure> => {
-            const scope = scopeColumns(call.scope);
-            if (scope === null) {
-                // The type has no variant that reaches here, so this names what actually arrived at
-                // runtime — the whole point of the report is to say which unknown variant was dropped.
-                return err({ reason: `usage record dropped: unhandled scope variant ${call.scope.kind}` });
-            }
-            return upsert(toEntry(call, Date.now(), scope)).mapErr((error): NoticeFailure => ({
+            return upsert(toEntry(call, Date.now(), scopeColumns(call.scope))).mapErr((error): NoticeFailure => ({
                 reason: `usage ledger write failed for ${call.recordKey}: ${error.type}`,
             }));
         },

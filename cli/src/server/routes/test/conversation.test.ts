@@ -36,6 +36,7 @@ import type { ServerBoot } from "../../boot.ts";
 import { __resetTurnsForTest, findTurn, hasRunningTurn, refuseNewTurns, startTurn } from "../../turns.ts";
 import { conversationRoutes, DEFAULT_CONVERSATION_ROUTE_OPTS, type ConversationRouteOpts, type ConversationRuntime } from "../conversation.ts";
 import { anyOf } from "../../../test_support/matchers.ts";
+import { present } from "../../../lib/present.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. No cli test reaches Postgres
 // or a model, thus each store and the chat turn are fakes that the options inject. A test that computes on a body
@@ -228,7 +229,7 @@ function json(method: string, body: unknown): RequestInit {
 async function framesOf(response: Response): Promise<ChatFrame[]> {
     const frames: ChatFrame[] = [];
     // `sseResponse` always gives a stream body.
-    for await (const item of readSseFrames<ChatFrame>(response.body!, "http://test")) frames.push(item._unsafeUnwrap());
+    for await (const item of readSseFrames<ChatFrame>(present(response.body), "http://test")) frames.push(item._unsafeUnwrap());
     return frames;
 }
 
@@ -711,7 +712,7 @@ describe("POST {A}/chat", () => {
         // The chat turns of the runtime carry its recorder and its gateway. Without them, the calls of the
         // conversation agent never reach the ledger, and its asks never reach the surface.
         const args = seen[0];
-        expect(args?.chatTurns).toBe(boot.runtime()!.chatTurns);
+        expect(args?.chatTurns).toBe(present(boot.runtime()).chatTurns);
         expect(args?.session.scope).toEqual({ kind: "analysis", analysisId: A, threadId: T });
         expect(args).toMatchObject({ analysisId: A, threadId: T, userInput: "hello" });
     });
@@ -835,7 +836,7 @@ describe("the turn registry routes", () => {
             },
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
-        const turnId = response.headers.get(TURN_ID_HEADER)!;
+        const turnId = present(response.headers.get(TURN_ID_HEADER));
 
         const running = turnList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns`)));
         expect(running.turns.map((t) => [t.turnId, t.status])).toEqual([[turnId, "running"]]);
@@ -852,12 +853,17 @@ describe("the turn registry routes", () => {
     });
 
     test("a turn id that the registry does not hold, or of a different thread, gives 404", async () => {
-        const routes = routesWith();
+        const routes = routesWith({
+            runTurn: (args) => {
+                args.onOpened?.(crypto.randomUUID());
+                return Promise.resolve({ kind: "ok", opened: true, finishReason: "stop", fallbackText: "" });
+            },
+        });
         expect((await routes.request(`/${A}/threads/${T}/turns/nope`)).status).toBe(404);
         expect((await routes.request(`/${A}/threads/${T}/turns/nope/abort`, { method: "POST" })).status).toBe(404);
 
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
-        const turnId = response.headers.get(TURN_ID_HEADER)!;
+        const turnId = present(response.headers.get(TURN_ID_HEADER));
         await framesOf(response);
         expect((await routes.request(`/${A}/threads/other/turns/${turnId}`)).status).toBe(404);
     });
@@ -878,9 +884,9 @@ describe("the turn registry routes", () => {
             },
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
-        const turnId = response.headers.get(TURN_ID_HEADER)!;
+        const turnId = present(response.headers.get(TURN_ID_HEADER));
         // The client reads the first frame, then leaves.
-        const reader = response.body!.getReader();
+        const reader = present(response.body).getReader();
         await reader.read();
         await reader.cancel();
 
@@ -1058,9 +1064,11 @@ describe("the activity time of the analysis", () => {
     });
 
     function activityAt(): number {
-        return listAnalysisPage({ projectId: null, sort: "created", limit: 10, offset: 0 })
-            ._unsafeUnwrap()
-            .items.find((item) => item.analysis.id === A)!.lastActivityAt;
+        return present(
+            listAnalysisPage({ projectId: null, sort: "created", limit: 10, offset: 0 })
+                ._unsafeUnwrap()
+                .items.find((item) => item.analysis.id === A),
+        ).lastActivityAt;
     }
 
     const pendingAsk: PendingAsk = {

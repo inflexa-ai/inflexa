@@ -13,6 +13,7 @@ import type { ServerLifecycle } from "../server/lifecycle.ts";
 import { createPageGrantStore } from "../server/report_page_grants.ts";
 import { listen, writeServerDiscovery } from "../server/serve.ts";
 import { assertTestSandbox } from "./sandbox.ts";
+import { present } from "../lib/present.ts";
 
 /** A local server for a test, in this process, on a free port, with its own discovery file. */
 export type TestServer = {
@@ -86,7 +87,7 @@ export function startTestServer(opts: { boot?: ServerBoot } = {}): TestServer {
         },
     );
     // A TCP listener always has a port; `undefined` is the unix-socket form, which `listen` never makes.
-    const port = server.port!;
+    const port = present(server.port);
     const state = boot.state();
     const discovery: ServerDiscovery = {
         pid: process.pid,

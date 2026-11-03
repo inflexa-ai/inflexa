@@ -11,6 +11,7 @@ import type { Workspace } from "../../contexts/workspace.ts";
 import type { Notice } from "../../theme.ts";
 import { __resetSandboxGateForTest, __setTransferReportsForTest } from "../sandbox_gate.tsx";
 import { __resetFarmHealForTest, watchFarmHeal, type FarmHealSeams } from "../farm_heal.tsx";
+import { present } from "../../../lib/present.ts";
 
 // The two heal triggers of the open session, driven offline: the seams carry
 // the filesystem answers and the effects as spies, and the transfer signal is
@@ -133,7 +134,7 @@ describe("watchFarmHeal — the open trigger", () => {
         await settle();
 
         expect(prompts).toHaveLength(1);
-        prompts[0]!(true);
+        present(prompts[0])(true);
         await settle();
         expect(started()).toBe(1);
 
@@ -150,7 +151,7 @@ describe("watchFarmHeal — the open trigger", () => {
         const dispose = mount(wsWith(ANALYSIS), seams);
         await settle();
 
-        prompts[0]!(false);
+        present(prompts[0])(false);
         await settle();
         expect(started()).toBe(0);
         dispose();

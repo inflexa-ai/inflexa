@@ -389,6 +389,21 @@ export const mockLongRun: Run = {
     ],
 };
 
+/** MOCK: the running run, the first row of {@link mockCortexRuns} and the run that {@link mockRunDetail} describes. */
+export const mockRunningRun: RunSummary = {
+    runId: "mock-run-9a3f4c21",
+    threadId: null,
+    planId: null,
+    workflowName: "executeAnalysis",
+    workflowId: "mock-run-9a3f4c21",
+    status: "running",
+    startedAt: Date.ago(4 * 60_000),
+    completedAt: null,
+    error: null,
+    planTitle: "Differential expression across conditions",
+    usage: { calls: 47, inputTokens: 809_200, outputTokens: 40_400 },
+};
+
 /**
  * MOCK sample: the runs of an analysis for the RUNS details view (newest-first, mixed statuses), in the
  * wire shape of `GET {A}/runs`.
@@ -398,19 +413,7 @@ export const mockLongRun: Run = {
  * a run with no ledger rows contributes no figure segment at all rather than a zeroed one.
  */
 export const mockCortexRuns: RunSummary[] = [
-    {
-        runId: "mock-run-9a3f4c21",
-        threadId: null,
-        planId: null,
-        workflowName: "executeAnalysis",
-        workflowId: "mock-run-9a3f4c21",
-        status: "running",
-        startedAt: Date.ago(4 * 60_000),
-        completedAt: null,
-        error: null,
-        planTitle: "Differential expression across conditions",
-        usage: { calls: 47, inputTokens: 809_200, outputTokens: 40_400 },
-    },
+    mockRunningRun,
     {
         runId: "mock-run-71bd0e55",
         threadId: null,
@@ -633,7 +636,7 @@ export const mockRunUsage: ReadonlyMap<string, UsageTotals> = new Map(mockCortex
  * has found what looks like a broken ledger.
  */
 export const mockRunDetail: RunDetail = {
-    ...mockCortexRuns[0]!,
+    ...mockRunningRun,
     steps: [
         mockStep({
             stepId: "qc-normalize",

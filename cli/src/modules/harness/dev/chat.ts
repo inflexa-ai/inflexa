@@ -178,9 +178,9 @@ async function runRepl(analysisId: string, threadId: string): Promise<void> {
  */
 async function runTurn(printer: ChatPrinter, sink: ChatSink, analysisId: string, threadId: string, userInput: string): Promise<"continue" | "stop"> {
     let turnId: string | null = null;
-    let aborting = false;
+    let aborting: boolean | undefined;
     // Set by a SECOND SIGINT (see doc): request a deterministic stop AFTER this turn finishes unwinding.
-    let forceStop = false;
+    let forceStop: boolean | undefined;
     const sendAbort = (id: string): void => {
         void abortTurn(analysisId, threadId, id).match(
             () => undefined,
@@ -370,7 +370,7 @@ function hyperlink(uri: string, text: string): string {
 /** Render a text-shaped presentation table as aligned monospace columns (the REPL's plain-text table form). */
 function formatTable(headers: string[], rows: string[][]): string {
     const widths = headers.map((h, ci) => Math.max(h.length, ...rows.map((r) => (r[ci] ?? "").length)));
-    const line = (cells: string[]): string => `    ${cells.map((c, ci) => (c ?? "").padEnd(widths[ci] ?? 0)).join("  ")}`.trimEnd();
+    const line = (cells: string[]): string => `    ${cells.map((c, ci) => c.padEnd(widths[ci] ?? 0)).join("  ")}`.trimEnd();
     return [line(headers), line(widths.map((w) => "-".repeat(w))), ...rows.map((r) => line(headers.map((_, ci) => r[ci] ?? "")))].join("\n");
 }
 

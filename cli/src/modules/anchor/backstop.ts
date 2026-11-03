@@ -158,7 +158,7 @@ export function findDeadAnchors(searchRoots?: string[]): ResultAsync<Anchor[], D
  */
 export type PruneError =
     | { type: "purge_failed"; analysisId: string; cause: PgError }
-    | { type: "busy"; analysisId: string; reasons: BusyReason[] }
+    | { type: "busy"; analysisId: string; reasons: [BusyReason, ...BusyReason[]] }
     | { type: "sqlite_failed"; cause: DbError };
 
 /** What a completed prune did in Postgres: the count of the purged analyses. */
@@ -204,8 +204,8 @@ export async function reclaimDeadAnchors(
     // Sequential, and it stops at the first failure: a purge that cannot complete means the rest of this
     // prune must not proceed, and naming the analysis it stopped on makes the abort actionable.
     for (const analysisId of analysisIds) {
-        const reasons = await busyReasons(analysisId);
-        if (reasons.length > 0) return err({ type: "busy", analysisId, reasons });
+        const [firstReason, ...otherReasons] = await busyReasons(analysisId);
+        if (firstReason !== undefined) return err({ type: "busy", analysisId, reasons: [firstReason, ...otherReasons] });
         const purged = await purge(analysisId);
         if (purged.isErr()) return err({ type: "purge_failed", analysisId, cause: purged.error });
     }

@@ -6,6 +6,7 @@ import { generateApiKey, managementKeyPath, proxyConfig, writeProxyConfig } from
 import { formatInfraStateError } from "../mount_source.ts";
 import { env } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
+import { present } from "../../../lib/present.ts";
 
 describe("generateApiKey", () => {
     test("returns an sk- prefixed key of 45 alphanumeric characters", () => {
@@ -156,9 +157,9 @@ describe("writeProxyConfig damaged-state matrix", () => {
         // exactly one outcome reports a key, and that key is the key the file holds.
         const created = outcomes.filter((outcome) => outcome.created);
         expect(created).toHaveLength(1);
-        if (created.length !== 1 || !created[0]!.created) throw new Error("unreachable — asserted one created outcome above");
+        if (created.length !== 1) throw new Error("unreachable — asserted one created outcome above");
         const config = readFileSync(configPath, "utf8");
-        expect(config).toContain(created[0]!.apiKey);
+        expect(config).toContain(present(created[0]).apiKey);
 
         // The plaintext management key names the secret-key of the config that landed, and no temp file survives.
         const management = readFileSync(managementKeyPath(), "utf8").trim();

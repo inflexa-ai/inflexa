@@ -45,6 +45,7 @@ import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, 
 import { __resetTurnsForTest, refuseNewTurns, startTurn } from "../../turns.ts";
 import { DEFAULT_RUN_ROUTES_OPTS, runRoutes, type RunRoutesOpts } from "../runs.ts";
 import { anything, objectContaining } from "../../../test_support/matchers.ts";
+import { present } from "../../../lib/present.ts";
 
 // The routes under the mount path of the app, with no bearer check and no analysis guard: `app.test.ts` covers
 // those. Each harness read is a fake, because each needs Postgres or DBOS. A test reads a body as `unknown`.
@@ -1533,17 +1534,17 @@ describe("POST {A}/plans/:planId/approve", () => {
         expect(await jsonBody(response)).toEqual(startedApproval);
         expect(inputs).toHaveLength(1);
         expect(inputs[0]).toMatchObject({ analysisId, threadId: "t1", planId, newestRunId: null, identity: { user: "local" } });
-        expect(inputs[0]!.auth).toBeDefined();
+        expect(present(inputs[0]).auth).toBeDefined();
     });
 
     test("an approval that started the run raises the activity of the analysis", async () => {
         const analysisId = seedAnalysis();
-        const before = activityOf(analysisId)!;
+        const before = present(activityOf(analysisId));
         await Bun.sleep(5);
 
         expect((await approve(approvalApp(() => okAsync(startedApproval)).app, analysisId)).status).toBe(201);
 
-        expect(activityOf(analysisId)!).toBeGreaterThan(before);
+        expect(present(activityOf(analysisId))).toBeGreaterThan(before);
     });
 
     test("a second click names the active run with started false and message null, and changes no activity", async () => {

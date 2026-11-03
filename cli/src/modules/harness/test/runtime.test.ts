@@ -39,6 +39,7 @@ import {
 } from "../runtime.ts";
 import { agentProviderInner } from "../agent_switch.ts";
 import type { AgentEffort, AgentName, ResolvedHarnessConfig, ResolvedModelConnection } from "../config.ts";
+import { present } from "../../../lib/present.ts";
 
 /** A direct connection to a stubbed OpenAI-compatible endpoint — used by the direct-mode boot tests. */
 function directConnection(overrides: Partial<Extract<ResolvedModelConnection, { mode: "direct" }>> = {}): ResolvedModelConnection {
@@ -140,7 +141,7 @@ function recordingSeams(calls: string[]): BootSeams {
             const child = async () => ({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
             const executeAnalysisDeps = workflows.buildExecuteAnalysis(child);
             expect(executeAnalysisDeps.sandboxStepCallable).toBe(child);
-            expect(executeAnalysisDeps.provenance!.emitRunEvent).toBeInstanceOf(Function);
+            expect(present(executeAnalysisDeps.provenance).emitRunEvent).toBeInstanceOf(Function);
             // The data-profile bundle carries the workspace-root seam every consumer
             // shares plus the RESOLVED provider instance advertising its
             // index width. The ONE resolver instance built at boot threads to every
@@ -1032,8 +1033,8 @@ describe("buildAuthInjectingFetch", () => {
         const f = buildAuthInjectingFetch(fixedSource("btok", "bearer"), underlying);
         // The AI SDK's anthropic provider sets x-api-key from the placeholder apiKey — the bearer path must remove it.
         await f("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": "placeholder" } });
-        expect(seen[0]!.get("authorization")).toBe("Bearer btok");
-        expect(seen[0]!.get("x-api-key")).toBeNull();
+        expect(present(seen[0]).get("authorization")).toBe("Bearer btok");
+        expect(present(seen[0]).get("x-api-key")).toBeNull();
     });
 
     test("x-api-key scheme sets x-api-key and strips the SDK's placeholder Authorization", async () => {
@@ -1042,8 +1043,8 @@ describe("buildAuthInjectingFetch", () => {
         // An openai-compatible endpoint derives `Authorization: Bearer <placeholder>` from the placeholder
         // apiKey; the x-api-key branch must remove it so the stale placeholder never rides along.
         await f("https://gw.corp/v1/messages", { method: "POST", headers: { authorization: "Bearer placeholder" } });
-        expect(seen[0]!.get("x-api-key")).toBe("xtok");
-        expect(seen[0]!.get("authorization")).toBeNull();
+        expect(present(seen[0]).get("x-api-key")).toBe("xtok");
+        expect(present(seen[0]).get("authorization")).toBeNull();
     });
 
     test("an HTTP 401 forces exactly one refresh + retry with the new token", async () => {
@@ -1063,8 +1064,8 @@ describe("buildAuthInjectingFetch", () => {
         expect(response.status).toBe(200);
         expect(refreshCount).toBe(1); // exactly one forced refresh
         expect(seen).toHaveLength(2); // one retry only
-        expect(seen[0]!.get("authorization")).toBe("Bearer tok-1");
-        expect(seen[1]!.get("authorization")).toBe("Bearer tok-2");
+        expect(present(seen[0]).get("authorization")).toBe("Bearer tok-1");
+        expect(present(seen[1]).get("authorization")).toBe("Bearer tok-2");
     });
 
     test("a persistent 401 retries only once, then surfaces the 401", async () => {
@@ -1103,7 +1104,7 @@ describe("makeReportPageAssetLookup", () => {
 
     test("gives the path of the staged file of a manifest specifier, under the bound assets directory", () => {
         // The manifest is a non-empty constant of the harness, thus the first entry is present.
-        const asset = PAGE_ASSETS[0]!;
+        const asset = present(PAGE_ASSETS[0]);
 
         expect(makeReportPageAssetLookup(assetsDir)(asset.specifier)).toBe(join(assetsDir, asset.file));
     });

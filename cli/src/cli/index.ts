@@ -3,6 +3,7 @@ import { Command, Option } from "commander";
 import pkg from "../../package.json";
 import { CATALOG_TRANSFER_FLAG, CLIENT_START_FLAG, IMAGE_TRANSFER_FLAG, SERVE_DETACHED_CHILD_FLAG, STORE_FLUSH_FLAG } from "../lib/child_flags.ts";
 import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc } from "../lib/env.ts";
+import { present } from "../lib/present.ts";
 import { keysOf } from "../lib/types.ts";
 // Type-only, so the registry keeps its lazy-import discipline: nothing of the setup module loads until
 // the action runs. It is the shape of `setup`'s answer flags — see the batch options declared below.
@@ -44,8 +45,13 @@ function renderEnvHelp(): string {
     }
 
     const table = (rows: string[][]): string => {
-        const widths = rows[0]!.map((_, i) => Math.max(...rows.map((row) => row[i]!.length)));
-        return rows.map((row) => "  " + row.map((cell, i) => (i < row.length - 1 ? cell.padEnd(widths[i]!) : cell)).join("  ")).join("\n");
+        const widths: number[] = [];
+        for (const row of rows) {
+            for (const [i, cell] of row.entries()) widths[i] = Math.max(widths[i] ?? 0, cell.length);
+        }
+        return rows
+            .map((row) => "  " + row.map((cell, i) => (i < row.length - 1 ? cell.padEnd(present(widths[i], "the width of a help column")) : cell)).join("  "))
+            .join("\n");
     };
 
     return `\nPaths:\n${table(pathRows)}\n\nEnvironment:\n${table(varRows)}`;

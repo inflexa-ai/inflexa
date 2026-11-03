@@ -14,6 +14,7 @@ import { fakeFetch } from "../../test_support/fake_fetch.ts";
 import { startTestServer, type TestServer } from "../../test_support/server.ts";
 import { ConfigApp } from "../app_config.tsx";
 import { dialogClear, dialogIsOpen } from "../components/dialog/dialog_host.tsx";
+import { present } from "../../lib/present.ts";
 
 // The embedding-backend wiring drives the REAL ConfigApp (standalone: it installs its own keymap root
 // and DialogOverlay) through the keyboard bus, against a local server in this process (the settings and the
@@ -340,14 +341,14 @@ describe("ConfigApp embedding backend wiring (rendered, real keyboard bus)", () 
 
             // The stale probe resolves LATE. Its continuation sees the controller mismatch and runs nothing —
             // no SelectDialog, no notice change.
-            calls[0]!.resolve({ data: [{ id: "text-embedding-3-small" }] });
+            present(calls[0]).resolve({ data: [{ id: "text-embedding-3-small" }] });
             await settle(setup);
             expect(dialogIsOpen()).toBe(false);
             expect(frame(setup)).not.toContain("Embedding model");
             expect(frame(setup)).toContain("Fetching models");
 
             // The live probe still completes normally — the guard did not break the happy path.
-            calls[1]!.resolve({ data: [{ id: "text-embedding-3-large" }] });
+            present(calls[1]).resolve({ data: [{ id: "text-embedding-3-large" }] });
             await settle(setup);
             expect(dialogIsOpen()).toBe(true);
             expect(frame(setup)).toContain("Embedding model");

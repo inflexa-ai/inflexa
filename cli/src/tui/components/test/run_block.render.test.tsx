@@ -7,6 +7,7 @@ import { renderFrame } from "../../../test_support/tui.ts";
 import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../../lib/design_system.ts";
 import { setTheme } from "../../theme.ts";
 import { RunBlock, type RunStepView } from "../run_block.tsx";
+import { present } from "../../../lib/present.ts";
 
 /**
  * The rail's window size, taken from the design-system token the sidebar itself passes rather than
@@ -85,7 +86,7 @@ async function withRail(
             const lines = setup.captureCharFrame().split("\n");
             const y = lines.findIndex((line) => line.includes(arrow));
             if (y < 0) throw new Error(`no ${arrow} marker on screen:\n${frame()}`);
-            await setup.mockMouse.click(lines[y]!.indexOf(arrow), y);
+            await setup.mockMouse.click(present(lines[y]).indexOf(arrow), y);
             await setup.renderOnce();
         };
         const update = async (next: { steps?: RunStepView[]; tag?: string }): Promise<void> => {
@@ -327,7 +328,7 @@ describe("RunBlock marker click containment", () => {
                 const lines = setup.captureCharFrame().split("\n");
                 const y = lines.findIndex((l) => l.includes(needle));
                 expect(y).toBeGreaterThanOrEqual(0);
-                return { x: lines[y]!.indexOf(needle), y };
+                return { x: present(lines[y]).indexOf(needle), y };
             };
 
             const up = row("↑");
@@ -369,7 +370,7 @@ describe("RunBlock marker selection", () => {
         const lines = setup.captureCharFrame().split("\n");
         const y = lines.findIndex((line) => line.includes(needle));
         expect(y).toBeGreaterThanOrEqual(0);
-        await setup.mockMouse.drag(lines[y]!.indexOf(needle), y, lines[y]!.trimEnd().length, y);
+        await setup.mockMouse.drag(present(lines[y]).indexOf(needle), y, present(lines[y]).trimEnd().length, y);
         await setup.renderOnce();
         return setup.renderer.getSelection()?.getSelectedText() ?? "";
     }
@@ -452,7 +453,7 @@ describe("RunBlock running-step elapsed age", () => {
                     }
                 }
                 expect(ageFg).not.toBeNull();
-                expect(parseColor(themes[id].colors.fgMuted).equals(parseColor(ageFg!))).toBe(true);
+                expect(parseColor(themes[id].colors.fgMuted).equals(parseColor(present(ageFg)))).toBe(true);
             } finally {
                 setup.renderer.destroy();
             }
@@ -508,7 +509,7 @@ describe("RunBlock step usage figure", () => {
             .filter((l) => l.includes(GLYPHS.arrowUp))
             .map((l) => l.indexOf(GLYPHS.arrowUp));
         expect(cols).toHaveLength(2);
-        expect(cols[1]! - cols[0]!).toBe("a-much-longer-step-name".length - "S1".length);
+        expect(present(cols[1]) - present(cols[0])).toBe("a-much-longer-step-name".length - "S1".length);
     });
 
     test("the RAIL reads the same sequence — no narrow-mount exception for the figure", async () => {

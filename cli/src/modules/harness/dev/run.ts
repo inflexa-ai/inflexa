@@ -169,7 +169,7 @@ function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, runSession:
         planId,
         planSummary,
         threadId: null,
-        steps: plan.steps.map((s) => ({ id: s.id, depends_on: s.depends_on ?? [] })),
+        steps: plan.steps.map((s) => ({ id: s.id, depends_on: s.depends_on })),
         planStepById: Object.fromEntries(plan.steps.map((s) => [s.id, s])),
         agentByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, s.agent ?? "unknown"])),
         runSession,

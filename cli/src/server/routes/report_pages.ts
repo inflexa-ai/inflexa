@@ -227,7 +227,7 @@ export function reportSessionAccessRoutes(grants: PageGrantStore): Hono<ServerEn
 
     routes.post("/:threadId/access", async (c) => {
         const analysisId = c.req.param("analysisId") ?? "";
-        const threadId = c.req.param("threadId") ?? "";
+        const threadId = c.req.param("threadId");
         if (!isSafeId(threadId)) {
             return apiError(c, "validation_error", "`threadId` must be one name of a thread.", {
                 formErrors: [],

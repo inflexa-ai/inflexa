@@ -14,6 +14,7 @@ import { err } from "neverthrow";
 
 import { insertAnalysisInput } from "../../../db/primary_mutation.ts";
 import { listAnalysisInputs } from "../../../db/primary_query.ts";
+import { present } from "../../../lib/present.ts";
 import { buildAgentSession } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { createAnalysis, removeInput } from "../../analysis/analysis.ts";
@@ -200,7 +201,7 @@ describe("manage_inputs — describeCall", () => {
     /** Read the hook the way the harness emit site reads it. */
     function describeCall(input: { action: "add" | "remove" | "list"; paths?: string[] }): string | undefined {
         expect(tool.describeCall).toBeDefined();
-        return tool.describeCall!(input);
+        return present(tool.describeCall).call(tool, input);
     }
 
     test("a single-path add names the file", () => {

@@ -23,6 +23,7 @@ import {
     type SwappableChatProvider,
 } from "../agent_switch.ts";
 import type { AgentEffort } from "../config.ts";
+import { present } from "../../../lib/present.ts";
 
 // A provider stub tagged (in `TAGS`) with its bound model and effort so a swap is observable by identity. The switch
 // only rebuilds and swaps handles, and never binds a model, thus `bind` refuses and names the inner that
@@ -135,7 +136,7 @@ function spy(event: StampedEvent): void {
 
 function lastStepModel(): string {
     const step = [...captured].reverse().find((e) => e.type === "prov.step_completed");
-    if (step === undefined || step.type !== "prov.step_completed") throw new Error("no prov.step_completed captured");
+    if (step === undefined) throw new Error("no prov.step_completed captured");
     return step.model;
 }
 
@@ -337,8 +338,8 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
             async *read() {
                 for (let i = 0; i < chunks.length; i++) {
                     await Promise.resolve();
-                    yield { type: "text-delta", text: chunks[i]!, source };
-                    emitted.push(chunks[i]!);
+                    yield { type: "text-delta", text: present(chunks[i]), source };
+                    emitted.push(present(chunks[i]));
                     if (i === 2) {
                         const result = requestAgentModelChange("conversation", sel("claude-mid-stream"));
                         midStream.push({ status: result.status, idle: isAgentWorkIdle(), innerModel: agentModel(h.swappable.conversation) });

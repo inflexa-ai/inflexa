@@ -9,6 +9,7 @@ import { useKeymapRoot } from "../keymap.ts";
 import { DialogOverlay, DialogShowcase, dialogClear, dialogIsOpen, dialogPush } from "../components/dialog/dialog_host.tsx";
 import { commands, effortFor, ModelPickerDialog, modelPickerItems, runModelCommit } from "../commands.tsx";
 import type { AgentEffort, AgentSelection, ListedModelView as ListedModel } from "../../api/machine.ts";
+import { present } from "../../lib/present.ts";
 
 // The picker's whole job is to present the RIGHT surface for the listing outcome: a SelectDialog over the
 // live models with the agent's current one marked, OR — when listing failed (`models === null`) — a
@@ -272,7 +273,7 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
                 <ModelPickerDialog
                     agent="conversation"
                     models={many}
-                    current={many[0]!.id}
+                    current={present(many[0]).id}
                     currentEffort="high"
                     save={saveNoop}
                     onSaved={() => {}}
@@ -280,7 +281,7 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
                 />
             ));
             await settle();
-            expect(setup.captureCharFrame()).toContain(`${GLYPHS.chevronRight} ${many[0]!.id}`);
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.chevronRight} ${present(many[0]).id}`);
 
             setup.mockInput.pressArrow("up");
             await settle();

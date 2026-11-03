@@ -1373,7 +1373,7 @@ export async function runCatalogTransfer(params: {
     if (!lock.acquired) return;
     startTransferRun("catalog", { state: "running", holderPid: process.pid }).unwrapOr(undefined);
 
-    let totalBytes: number | null = null;
+    let totalBytes: number | undefined;
     let completedBytes = 0;
     let inFlightBytes = 0;
     let layersCompleted = 0;
@@ -1435,7 +1435,7 @@ export async function runCatalogTransfer(params: {
             // stays: a layer that completed is worth keeping, and the next run verifies each cached blob
             // by digest.
             await rm(storeDownloadPaths(params.storeRoot).staging, { recursive: true, force: true }).catch(() => undefined);
-            const remaining = totalBytes === null ? null : Math.max(0, totalBytes - completedBytes - inFlightBytes);
+            const remaining = totalBytes === undefined ? null : Math.max(0, totalBytes - completedBytes - inFlightBytes);
             const message = await describeTransferFailure(result.error, params.storeRoot, remaining);
             settleTransfer("catalog", { state: "failed", message }).unwrapOr(undefined);
             return;

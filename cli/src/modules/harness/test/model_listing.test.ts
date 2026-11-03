@@ -15,6 +15,7 @@ import {
     type ListModelsSeams,
     type ValidateSelectionSeams,
 } from "../model_listing.ts";
+import { present } from "../../../lib/present.ts";
 
 // Drives `listConnectionModels` through injected seams so the per-mode request shaping (cliproxy vs.
 // direct OpenAI-compatible vs. direct Anthropic) and the Result-channel degradations are exercised with
@@ -515,7 +516,7 @@ describe("listConnectionModels — the pages of the direct Anthropic listing", (
 
         expect(rec.calls).toHaveLength(2);
         expect(listing.map((m) => m.id)).toEqual(["claude-a", "claude-b"]);
-        expect(listing[0]!.releasedAt).toBe(new Date(100_000).toISOString());
+        expect(present(listing[0]).releasedAt).toBe(new Date(100_000).toISOString());
     });
 
     test("a page with no last_id, and an empty later page, end the read", async () => {

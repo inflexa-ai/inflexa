@@ -24,6 +24,7 @@ import { refuse, refusingRunAuthorizer } from "../../../test_support/harness_stu
 import type { StampedEvent } from "../../../types/events.ts";
 import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "../prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "../run_deps.ts";
+import { present } from "../../../lib/present.ts";
 
 // All factories below construct lazily (pg pools connect on first query; the
 // SDK clients open no socket at construction), so the whole module builds
@@ -146,7 +147,7 @@ describe("run-engine provenance wiring", () => {
         // No step event from the registry — the scheduler settlement owns step lifecycle now.
         expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
         expect(result.registered).toHaveLength(1);
-        expect(result.registered[0]!.path).toBe("runs/run-1/step-1/output/r.csv");
+        expect(present(result.registered[0]).path).toBe("runs/run-1/step-1/output/r.csv");
     });
 
     test("buildExecuteAnalysisDeps carries the provenance seam, whose run emit lands run events on the bus", () => {
@@ -155,25 +156,25 @@ describe("run-engine provenance wiring", () => {
         installSeamFor(comp);
         const deps = buildExecuteAnalysisDeps(comp, unusedCallable, refusingRunAuthorizer);
 
-        expect(deps.provenance!.emitRunEvent).toBeInstanceOf(Function);
+        expect(present(deps.provenance).emitRunEvent).toBeInstanceOf(Function);
 
         captured = [];
         Bus.on("inflexa", spy);
-        deps.provenance!.emitRunEvent!(
+        present(present(deps.provenance).emitRunEvent)(
             { type: "run_started", analysisId: "an-1", runId: "run-1", planSummary: "plan", stepCount: 1, atMs: 1_700_000_000_000 },
             runSession,
         );
 
         expect(captured).toHaveLength(1);
-        expect(captured[0]!.type).toBe("prov.run_started");
+        expect(present(captured[0]).type).toBe("prov.run_started");
 
         // The emitter closed over the composition's model id — a settled step records which model
         // drove it (the wiring half of the model-agent record; the mapping itself is prov_bridge's).
-        deps.provenance!.emitRunEvent!(
+        present(present(deps.provenance).emitRunEvent)(
             { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 },
             runSession,
         );
-        const stepEvent = captured[1]!;
+        const stepEvent = present(captured[1]);
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("anthropic/claude-test");
     });
@@ -188,12 +189,12 @@ describe("run-engine provenance wiring", () => {
 
         captured = [];
         Bus.on("inflexa", spy);
-        deps.provenance!.emitRunEvent!(
+        present(present(deps.provenance).emitRunEvent)(
             { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_002_000 },
             runSession,
         );
 
-        const stepEvent = captured[0]!;
+        const stepEvent = present(captured[0]);
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("deepseek/some-alias-v2");
     });
@@ -223,7 +224,7 @@ describe("snapshot-safety — a captured deps field observes a live swap through
         const deps = buildExecuteAnalysisDeps(comp, unusedCallable, refusingRunAuthorizer);
         // The worst case: a consumer snapshots the field ONCE, before any switch. A field mutation on a
         // consumer-held object would leave this stale; a stable delegating handle does not.
-        const capturedEmit = deps.provenance!.emitRunEvent!;
+        const capturedEmit = present(present(deps.provenance).emitRunEvent);
 
         comp.sandboxEmitters.swap("anthropic/claude-swapped");
 
@@ -234,7 +235,7 @@ describe("snapshot-safety — a captured deps field observes a live swap through
             runSession,
         );
 
-        const stepEvent = captured[0]!;
+        const stepEvent = present(captured[0]);
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("anthropic/claude-swapped");
     });

@@ -771,7 +771,7 @@ describe("the interrupted marker survives a transcript reload", () => {
         await loadMessages(AID, SID, { fetchThread: () => okAsync(null), fetchMessages: () => okAsync(messageList(replay)) });
 
         const calls = messages[0]?.parts.filter((p) => p.type === "tool-call") ?? [];
-        expect(calls.map((p) => (p.type === "tool-call" ? p.outcome : null))).toEqual(["incomplete", "denied"]);
+        expect(calls.map((p) => p.outcome)).toEqual(["incomplete", "denied"]);
         // The detail recorded live rides the stored projection — nothing re-derives it on reload.
         expect(calls[0]?.type === "tool-call" ? calls[0].detail : undefined).toBe("scripts/run.py");
         expect(messages[0]?.interrupted).toBe(true);

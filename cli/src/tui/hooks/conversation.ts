@@ -1513,10 +1513,8 @@ function spliceRetractedTurn(userId: string, assistantId: string): void {
     setStreamText("");
     setMessages(
         produce((msgs) => {
-            for (let i = msgs.length - 1; i >= 0; i--) {
-                const id = msgs[i]!.id;
-                if (id === assistantId || id === userId) msgs.splice(i, 1);
-            }
+            const retracted = msgs.flatMap((msg, i) => (msg.id === assistantId || msg.id === userId ? [i] : []));
+            for (const i of retracted.reverse()) msgs.splice(i, 1);
         }),
     );
 }

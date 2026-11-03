@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { Config } from "../../../lib/config.ts";
 import { resolveEmbedder } from "../resolve.ts";
+import { present } from "../../../lib/present.ts";
 
 // A minimal Config base — only `embedding` varies per test; the rest are
 // defaulted to satisfy the type without exercising unrelated schema fields.
@@ -38,8 +39,8 @@ describe("resolveEmbedder", () => {
             () => null,
         );
         expect(provider).not.toBeNull();
-        expect(typeof provider!.embed).toBe("function");
-        expect(provider!.dimensions).toBe(384);
+        expect(typeof present(provider).embed).toBe("function");
+        expect(present(provider).dimensions).toBe(384);
     });
 
     test("local mode passes a configured dimensions through to the provider (a user's own GGUF width)", () => {
@@ -47,7 +48,7 @@ describe("resolveEmbedder", () => {
             (p) => p,
             () => null,
         );
-        expect(provider!.dimensions).toBe(768);
+        expect(present(provider).dimensions).toBe(768);
     });
 
     test("local mode without modelPath → err local_model_missing", () => {
@@ -64,8 +65,8 @@ describe("resolveEmbedder", () => {
             () => null,
         );
         expect(provider).not.toBeNull();
-        expect(typeof provider!.embed).toBe("function");
-        expect(provider!.dimensions).toBe(1536);
+        expect(typeof present(provider).embed).toBe("function");
+        expect(present(provider).dimensions).toBe(1536);
     });
 
     test("api-key mode passes a configured dimensions through to the provider", () => {
@@ -73,7 +74,7 @@ describe("resolveEmbedder", () => {
             (p) => p,
             () => null,
         );
-        expect(provider!.dimensions).toBe(768);
+        expect(present(provider).dimensions).toBe(768);
     });
 
     test("api-key mode without apiKey → err api_key_missing", () => {

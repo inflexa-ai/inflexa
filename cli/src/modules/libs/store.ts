@@ -418,7 +418,8 @@ async function collectReferences(dir: string, into: Set<string>): Promise<void> 
         if (entry.isSymbolicLink()) {
             const target = await readlink(full);
             const marker = target.indexOf("/store/");
-            if (marker !== -1) into.add(target.slice(marker + "/store/".length).split("/")[0]!);
+            const [storeDir] = target.slice(marker + "/store/".length).split("/");
+            if (marker !== -1 && storeDir !== undefined) into.add(storeDir);
         } else if (entry.isDirectory()) {
             // A promoted namespace directory holds more links; recurse into it.
             await collectReferences(full, into);

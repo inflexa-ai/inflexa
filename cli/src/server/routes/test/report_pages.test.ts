@@ -23,11 +23,12 @@ import { idleBoot, idleLifecycle } from "../../../test_support/server.ts";
 import { buildApp } from "../../app.ts";
 import type { ServerEnv } from "../../http.ts";
 import { createPageGrantStore, createSessionPagePublisherFactory, type PageGrantStore } from "../../report_page_grants.ts";
+import { present } from "../../../lib/present.ts";
 
 const TOKEN = "b".repeat(64);
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
 const UNAUTHORIZED_MESSAGE = "The link of this report page is not valid, or it expired. Open the report page again from Inflexa.";
-const FONT = PAGE_ASSETS.find((asset) => asset.file.endsWith(".woff2"))!.file;
+const FONT = present(PAGE_ASSETS.find((asset) => asset.file.endsWith(".woff2"))).file;
 const SANDBOX = "sandbox allow-scripts allow-downloads";
 
 const accessBody = z.object({ url: z.string(), expiresAt: z.string() });
@@ -213,14 +214,14 @@ describe("the headers", () => {
         const first = await page("assets/fig.png", { headers: { Cookie: cookie } });
         const etag = first.headers.get("ETag");
         expect(etag).not.toBeNull();
-        const response = await page("assets/fig.png", { headers: { Cookie: cookie, "If-None-Match": etag! } });
+        const response = await page("assets/fig.png", { headers: { Cookie: cookie, "If-None-Match": present(etag) } });
         expect(response.status).toBe(304);
         expectSandbox(response);
     });
 
     test("a 304 of a public file keeps the CORS header", async () => {
         const first = await page(`assets/${FONT}`);
-        const response = await page(`assets/${FONT}`, { headers: { "If-None-Match": first.headers.get("ETag")! } });
+        const response = await page(`assets/${FONT}`, { headers: { "If-None-Match": present(first.headers.get("ETag")) } });
         expect(response.status).toBe(304);
         expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
         expectSandbox(response);
@@ -409,7 +410,7 @@ describe("POST /api/v1/analyses/:analysisId/report-sessions/:threadId/access", (
         expect(await entry.text()).toBe("<html>page t1</html>");
         const cookie = entry.headers.get("Set-Cookie")?.split(";")[0];
         expect(cookie).toStartWith("__ic=");
-        const asset = await page("assets/fig.png", { headers: { Cookie: cookie! } });
+        const asset = await page("assets/fig.png", { headers: { Cookie: present(cookie) } });
         expect(asset.status).toBe(200);
         expect(await asset.text()).toBe("png-bytes");
     });

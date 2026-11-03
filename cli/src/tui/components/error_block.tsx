@@ -46,8 +46,8 @@ export function ErrorBlock(props: ErrorBlockProps) {
                 <Show when={props.note}>
                     <text fg={theme().fgMuted}>{props.note}</text>
                 </Show>
-                <Show when={props.hints?.length}>
-                    <text fg={theme().accent}>{props.hints!.join(`  ${GLYPHS.middot}  `)}</text>
+                <Show when={props.hints?.length ? props.hints : undefined} keyed>
+                    {(hints) => <text fg={theme().accent}>{hints.join(`  ${GLYPHS.middot}  `)}</text>}
                 </Show>
             </box>
         </box>

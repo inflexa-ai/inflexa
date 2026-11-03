@@ -12,6 +12,7 @@ import { setTheme, themeId } from "../theme.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { ThemePicker } from "../commands.tsx";
+import { present } from "../../lib/present.ts";
 
 // The preview contract, driven through the REAL picker, dialog host and keyboard bus — the only place
 // it is observable, because preview/revert live entirely in the gap between the active theme signal and
@@ -31,7 +32,7 @@ const PERSISTED: ThemeId = "nord";
  */
 // `!` is sound while PERSISTED is mid-list, which the choice above already requires for its own
 // reasons: `themeIds` is five dark then five light, and `nord` is the fourth of the dark five.
-const NEXT_DOWN: ThemeId = themeIds[themeIds.indexOf(PERSISTED) + 1]!;
+const NEXT_DOWN: ThemeId = present(themeIds[themeIds.indexOf(PERSISTED) + 1]);
 
 const persistedConfigSchema = z.looseObject({ theme: z.string().optional() });
 

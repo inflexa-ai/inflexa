@@ -21,6 +21,7 @@ import type {
 import { cliProvDigest, provModel, provSubject } from "../document.ts";
 import { computeLineage, formatDot, formatJson, formatMermaid, formatTree, resolveLineageRef, type LineageFileInfo, type LineageRoots } from "../lineage.ts";
 import type { LineageJson } from "../../../api/provenance.ts";
+import { present } from "../../../lib/present.ts";
 
 // The traversal is tested against documents built with the REAL builders — the exact record shapes
 // production writes (deterministic QNames, identified relations, shared (path, hash) entity space)
@@ -165,8 +166,8 @@ describe("resolveLineageRef", () => {
     test("an exact path resolves to its entity", () => {
         const infos = fileInfos(resolveLineageRef(graph, heatmapKey.path)._unsafeUnwrap());
         expect(infos).toHaveLength(1);
-        expect(infos[0]!.qn).toBe(fileQName(heatmapKey));
-        expect(infos[0]!.hash).toBe(heatmapKey.hash);
+        expect(present(infos[0]).qn).toBe(fileQName(heatmapKey));
+        expect(present(infos[0]).hash).toBe(heatmapKey.hash);
     });
 
     test("a path written twice (two hashes) resolves to BOTH entities — surfaced, not hidden", () => {
@@ -182,8 +183,8 @@ describe("resolveLineageRef", () => {
     });
 
     test("an exact hash and a unique prefix both resolve; a short prefix does not", () => {
-        expect(fileInfos(resolveLineageRef(graph, "hashHeat01")._unsafeUnwrap())[0]!.qn).toBe(fileQName(heatmapKey));
-        expect(fileInfos(resolveLineageRef(graph, "hashHe")._unsafeUnwrap())[0]!.qn).toBe(fileQName(heatmapKey));
+        expect(present(fileInfos(resolveLineageRef(graph, "hashHeat01")._unsafeUnwrap())[0]).qn).toBe(fileQName(heatmapKey));
+        expect(present(fileInfos(resolveLineageRef(graph, "hashHe")._unsafeUnwrap())[0]).qn).toBe(fileQName(heatmapKey));
         // Below MIN_HASH_PREFIX: prefix matching is not attempted at all, and hashes are never
         // substring-searched, so a short hash fragment falls through to not-found.
         expect(resolveLineageRef(graph, "hashH").isErr()).toBe(true);
@@ -249,10 +250,10 @@ describe("resolveLineageRef search tier", () => {
         if (err.type === "ambiguous_search") {
             expect(err.total).toBe(2);
             expect(err.candidates.map((c) => c.kind).sort()).toEqual(["activity", "file"]);
-            const file = err.candidates.find((c) => c.kind === "file")!;
-            if (file.kind === "file") expect(file.path).toBe(scriptKey.path);
-            const activity = err.candidates.find((c) => c.kind === "activity")!;
-            if (activity.kind === "activity") expect(activity.line).toBe("Rscript scripts/de.R (exit 0) — step step-de, run run-001");
+            const file = present(err.candidates.find((c) => c.kind === "file"));
+            expect(file.path).toBe(scriptKey.path);
+            const activity = present(err.candidates.find((c) => c.kind === "activity"));
+            expect(activity.line).toBe("Rscript scripts/de.R (exit 0) — step step-de, run run-001");
         }
     });
 
@@ -308,7 +309,7 @@ describe("resolveLineageRef search tier", () => {
 
         const infos = fileInfos(resolveLineageRef(g, key.path)._unsafeUnwrap());
         expect(infos).toHaveLength(1);
-        expect(infos[0]!.qn).toBe(fileQName(key));
+        expect(present(infos[0]).qn).toBe(fileQName(key));
     });
 });
 
@@ -324,7 +325,7 @@ describe("activity-rooted walks", () => {
         // JSON carries the activity among roots with its usual command facts.
         const bQn = commandQName(stepRef, cmdB.outputs);
         expect(json.roots).toEqual([bQn]);
-        const node = json.nodes[bQn]!;
+        const node = present(json.nodes[bQn]);
         expect(node.kind).toBe("command");
         if (node.kind === "command") expect(node.command).toBe("python plot.py");
     });
@@ -364,7 +365,7 @@ describe("backward lineage", () => {
         const aQn = commandQName(stepRef, cmdA.outputs);
         const writeQn = writeCallQn;
 
-        const b = json.nodes[bQn]!;
+        const b = present(json.nodes[bQn]);
         expect(b.kind).toBe("command");
         if (b.kind === "command") {
             expect(b.command).toBe("python plot.py");
@@ -378,19 +379,19 @@ describe("backward lineage", () => {
 
         // de_results wasGeneratedBy A, whose inputs are counts + the script.
         expect(json.edges).toContainEqual({ from: fileQName(deResultsKey), to: aQn, kind: "wasGeneratedBy" });
-        const a = json.nodes[aQn]!;
+        const a = present(json.nodes[aQn]);
         if (a.kind === "command") expect(a.command).toBe("Rscript scripts/de.R");
         expect(usedFiles(json, aQn).sort()).toEqual([fileQName(countsKey), fileQName(scriptKey)].sort());
 
         // The staged input is a terminal: no recorded generation, carrying its source classification.
-        const counts = json.nodes[fileQName(countsKey)]!;
+        const counts = present(json.nodes[fileQName(countsKey)]);
         expect(counts.kind).toBe("file");
         if (counts.kind === "file") expect(counts.source).toBe("data");
         expect(generators(json, fileQName(countsKey))).toEqual([]);
 
         // The script chains on into its file-tool writer, which reads nothing (agent-authored content).
         expect(json.edges).toContainEqual({ from: fileQName(scriptKey), to: writeQn, kind: "wasGeneratedBy" });
-        const writer = json.nodes[writeQn]!;
+        const writer = present(json.nodes[writeQn]);
         expect(writer.kind).toBe("file_tool");
         if (writer.kind === "file_tool") expect(writer.tool).toBe("write_file");
         expect(usedFiles(json, writeQn)).toEqual([]);
@@ -401,7 +402,7 @@ describe("backward lineage", () => {
         // The leaf's only generator is its step activity.
         const stepQns = generators(json, fileQName(leafFileRef));
         expect(stepQns).toHaveLength(1);
-        const step = json.nodes[stepQns[0]!]!;
+        const step = present(json.nodes[present(stepQns[0])]);
         expect(step.kind).toBe("step");
         if (step.kind === "step") {
             expect(step.runId).toBe("run-001");
@@ -409,7 +410,7 @@ describe("backward lineage", () => {
         }
         // The step's step-level read (counts.csv) attaches through step membership — an honest
         // upper bound the tree labels (step-grain), never presented as a per-file fact.
-        expect(usedFiles(json, stepQns[0]!)).toEqual([fileQName(countsKey)]);
+        expect(usedFiles(json, present(stepQns[0]))).toEqual([fileQName(countsKey)]);
         expect(tree).toContain("generated by: step (step-grain) — step step-de, run run-001");
     });
 
@@ -432,13 +433,13 @@ describe("backward lineage", () => {
 
         const { json } = lineageOf(g, modelKey.path, { forward: false });
         const fitQn = commandQName(readerStep, fit.outputs);
-        const fitNode = json.nodes[fitQn]!;
+        const fitNode = present(json.nodes[fitQn]);
         if (fitNode.kind === "command") expect(fitNode.runId).toBe("run-002");
         // The prior read IS run-001's entity: recursing shows run-001's producing command.
         expect(usedFiles(json, fitQn)).toContain(fileQName(deResultsKey));
         const producerQns = generators(json, fileQName(deResultsKey));
         expect(producerQns).toEqual([commandQName(stepRef, cmdA.outputs)]);
-        const producer = json.nodes[producerQns[0]!]!;
+        const producer = present(json.nodes[present(producerQns[0])]);
         if (producer.kind === "command") {
             expect(producer.command).toBe("Rscript scripts/de.R");
             expect(producer.runId).toBe("run-001");
@@ -468,7 +469,7 @@ describe("backward lineage", () => {
     test("--depth bounds the walk with an explicit marker, never a clean leaf", () => {
         const { json, tree } = lineageOf(graph, heatmapKey.path, { forward: false, depth: 1 });
         // de_results is one full file-hop from heatmap: shown, then truncated (its producer is beyond).
-        const de = json.nodes[fileQName(deResultsKey)]!;
+        const de = present(json.nodes[fileQName(deResultsKey)]);
         expect(de.kind).toBe("file");
         if (de.kind === "file") expect(de.truncated).toBe(true);
         expect(tree).toContain("[depth limit]");
@@ -498,8 +499,8 @@ describe("forward lineage", () => {
         expect(stepQn).toBeDefined();
         // The step's own (leaf) generations are its step-grain outputs; command-generated files are
         // attributed to their commands and appear under them, not here.
-        expect(generators(json, fileQName(leafFileRef))).toEqual([stepQn!]);
-        expect(usedFiles(json, stepQn!)).toEqual([fileQName(countsKey)]);
+        expect(generators(json, fileQName(leafFileRef))).toEqual([present(stepQn)]);
+        expect(usedFiles(json, present(stepQn))).toEqual([fileQName(countsKey)]);
         expect(tree).toContain("used by: step (step-grain) — step step-de, run run-001");
     });
 
@@ -587,8 +588,8 @@ describe("formatTree", () => {
         expect(tree).toContain("no recorded generation — terminal input");
         expect(tree).toContain("source data");
         // Indentation: A's line is deeper than B's.
-        const bLine = tree.split("\n").find((l) => l.includes("python plot.py"))!;
-        const aLine = tree.split("\n").find((l) => l.includes("Rscript"))!;
+        const bLine = present(tree.split("\n").find((l) => l.includes("python plot.py")));
+        const aLine = present(tree.split("\n").find((l) => l.includes("Rscript")));
         expect(aLine.indexOf("generated by")).toBeGreaterThan(bLine.indexOf("generated by"));
     });
 
@@ -617,7 +618,7 @@ describe("formatJson", () => {
         expect(backward.roots).toEqual([fileQName(heatmapKey)]);
         expect(backward.edges).toContainEqual({ from: fileQName(heatmapKey), to: bQn, kind: "wasGeneratedBy" });
         expect(backward.edges).toContainEqual({ from: bQn, to: fileQName(deResultsKey), kind: "used" });
-        const bNode = backward.nodes[bQn]!;
+        const bNode = present(backward.nodes[bQn]);
         expect(bNode.kind).toBe("command");
         if (bNode.kind === "command") expect(bNode.command).toBe("python plot.py");
 
@@ -629,10 +630,10 @@ describe("formatJson", () => {
 
     test("marks depth-truncated nodes, and only those", () => {
         const bounded = lineageOf(graph, heatmapKey.path, { forward: false, depth: 1 }).json;
-        const de = bounded.nodes[fileQName(deResultsKey)]!;
+        const de = present(bounded.nodes[fileQName(deResultsKey)]);
         expect(de.kind).toBe("file");
         if (de.kind === "file") expect(de.truncated).toBe(true);
-        const heat = bounded.nodes[fileQName(heatmapKey)]!;
+        const heat = present(bounded.nodes[fileQName(heatmapKey)]);
         if (heat.kind === "file") expect(heat.truncated).toBeUndefined();
     });
 });
@@ -654,7 +655,7 @@ describe("formatDot", () => {
         const parsed = edgeLines.map((l) => {
             const m = /^\s*"((?:[^"\\]|\\.)*)" -> "((?:[^"\\]|\\.)*)" \[label="(wasGeneratedBy|used)"\];$/.exec(l);
             expect(m).not.toBeNull();
-            return { from: m![1]!, to: m![2]!, kind: m![3]! };
+            return { from: present(present(m)[1]), to: present(present(m)[2]), kind: present(present(m)[3]) };
         });
         expect(parsed.map(edgeKey).sort()).toEqual(json.edges.map(edgeKey).sort());
 
@@ -670,12 +671,12 @@ describe("formatDot", () => {
 
         const bounded = formatDot(computeLineage(graph, roots, { forward: false, depth: 1 }));
         // The path appears only in the node statement's label — edge lines carry QNames.
-        const deBounded = bounded.split("\n").find((l) => l.includes("de_results.csv"))!;
+        const deBounded = present(bounded.split("\n").find((l) => l.includes("de_results.csv")));
         expect(deBounded).toContain("style=dashed");
         expect(deBounded).toContain("[truncated]");
 
         const unbounded = formatDot(computeLineage(graph, roots, { forward: false }));
-        const deFull = unbounded.split("\n").find((l) => l.includes("de_results.csv"))!;
+        const deFull = present(unbounded.split("\n").find((l) => l.includes("de_results.csv")));
         expect(deFull).not.toContain("style=dashed");
         expect(deFull).not.toContain("[truncated]");
     });
@@ -703,7 +704,7 @@ describe("identifier resolution tier", () => {
         const g = lineageModelOf(doc);
         // The identifier is discovered from the document itself — the token a user copies out of
         // the exported PROV, not a re-derivation of the QName hash.
-        const inputQn = g.nodes.map((n) => n.qn).find((q) => q.startsWith("inflexa:input-"))!;
+        const inputQn = present(g.nodes.map((n) => n.qn).find((q) => q.startsWith("inflexa:input-")));
 
         const byLocalpart = resolveLineageRef(g, inputQn.slice("inflexa:".length))._unsafeUnwrap();
         expect(byLocalpart.kind).toBe("files");
@@ -736,7 +737,7 @@ describe("identifier resolution tier", () => {
         if (roots.kind === "files") {
             expect(roots.infos).toHaveLength(1);
             // The exact-path tier wins; the identifier tier (which names the FIRST file) is never reached.
-            expect(roots.infos[0]!.qn).toBe(fileQName(secondKey));
+            expect(present(roots.infos[0]).qn).toBe(fileQName(secondKey));
         }
     });
 });
@@ -768,8 +769,8 @@ describe("formatMermaid", () => {
         const parsed = edgeLines.map((l) => {
             const m = /^\s+([A-Za-z0-9_]+) (-->|-\.->)\|(wasGeneratedBy|used)\| ([A-Za-z0-9_]+)$/.exec(l);
             expect(m).not.toBeNull();
-            expect(m![2]).toBe(m![3] === "wasGeneratedBy" ? "-->" : "-.->");
-            return `${m![1]}|${m![3]}|${m![4]}`;
+            expect(present(m)[2]).toBe(present(m)[3] === "wasGeneratedBy" ? "-->" : "-.->");
+            return `${present(m)[1]}|${present(m)[3]}|${present(m)[4]}`;
         });
         expect(parsed.sort()).toEqual(expected);
     });
@@ -809,7 +810,7 @@ describe("formatMermaid", () => {
         // inside the quoted label untouched.
         expect(mermaid).toContain("grep #quot;x#quot; (a) #tag (exit 0)");
         // No label body carries a raw double quote — only the wrapping quotes remain.
-        const labels = [...mermaid.matchAll(/(\(\[|\[)"(.*)"(\]\)|\])/g)].map((m) => m[2]!);
+        const labels = [...mermaid.matchAll(/(\(\[|\[)"(.*)"(\]\)|\])/g)].map((m) => present(m[2]));
         expect(labels.length).toBeGreaterThan(0);
         for (const label of labels) expect(label.includes('"')).toBe(false);
     });
@@ -839,7 +840,7 @@ describe("attribution gaps and per-kind absence wording", () => {
     test("an unresolved script renders inline, marked unattributable, and is counted in a footer", () => {
         const { tree, json } = lineageOf(gapGraph(), gapOutKey.path, { forward: false });
         // The script prints beneath its command, visually distinct from an input file (no `(hash …)`).
-        const gapLine = tree.split("\n").find((l) => l.includes("scripts/de.R"))!;
+        const gapLine = present(tree.split("\n").find((l) => l.includes("scripts/de.R")));
         expect(gapLine).toContain("script scripts/de.R — not attributable to a recorded file");
         expect(gapLine).not.toContain("(hash");
         // The real input still renders as a file with its source classification.
@@ -849,7 +850,7 @@ describe("attribution gaps and per-kind absence wording", () => {
         expect(tree).toContain("1 attribution gap: script paths that resolved to no recorded file");
         // JSON exposes the same fact on the command node (tree/JSON parity).
         const cmdQn = commandQName(stepRef, gapCmd.outputs);
-        const node = json.nodes[cmdQn]!;
+        const node = present(json.nodes[cmdQn]);
         expect(node.kind).toBe("command");
         if (node.kind === "command") expect(node.unresolvedScript).toBe("scripts/de.R");
     });
@@ -938,7 +939,7 @@ describe("attribution gaps and per-kind absence wording", () => {
         expect(tree).not.toContain("attribution gap");
 
         const json = formatJson(result);
-        const cmdNode = json.nodes[commandQName(stepRef, gapCmd.outputs)]!;
+        const cmdNode = present(json.nodes[commandQName(stepRef, gapCmd.outputs)]);
         expect(cmdNode.kind).toBe("command");
         if (cmdNode.kind === "command") expect(cmdNode.unresolvedScript).toBe("scripts/de.R");
         expect(formatDot(result)).toContain("[unresolved script scripts/de.R]");

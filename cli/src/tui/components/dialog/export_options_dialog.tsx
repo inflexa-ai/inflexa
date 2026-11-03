@@ -93,7 +93,8 @@ export function ExportOptionsDialog(props: {
     function cycleNext(): void {
         const keys = allKeys();
         const idx = keys.indexOf(activeKey());
-        setActiveKey(keys[(idx + 1) % keys.length]!);
+        const next = keys[(idx + 1) % keys.length];
+        if (next !== undefined) setActiveKey(next);
     }
 
     function toggleCurrent(): void {

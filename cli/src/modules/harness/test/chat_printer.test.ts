@@ -3,6 +3,7 @@ import type { PlanPart } from "@inflexa-ai/harness";
 import type { ChatFrame, EventSource } from "@inflexa-ai/harness/contracts/index.js";
 
 import { isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../chat_printer.ts";
+import { present } from "../../../lib/present.ts";
 
 /** Top-level provenance (callPath length 1) — passes the sub-agent depth filter. */
 const TOP: EventSource = { agentId: "cli-chat", callPath: ["cli-chat"] };
@@ -139,13 +140,13 @@ describe("readPlanCard", () => {
             ],
         };
         const card = readPlanCard(part);
-        const step = part.steps![0]!;
+        const step = present(present(part.steps)[0]);
         step.name = "MUTATED";
         step.depends_on[0] = "MUTATED";
-        step.constraints![0] = "MUTATED";
-        expect(card.steps[0]!.name).toBe("one");
-        expect(card.steps[0]!.depends_on).toEqual(["S0"]);
-        expect(card.steps[0]!.constraints).toEqual(["fast"]);
+        present(step.constraints)[0] = "MUTATED";
+        expect(present(card.steps[0]).name).toBe("one");
+        expect(present(card.steps[0]).depends_on).toEqual(["S0"]);
+        expect(present(card.steps[0]).constraints).toEqual(["fast"]);
     });
 });
 
@@ -181,7 +182,7 @@ describe("readPresentation", () => {
             expect(out.entry.target.presId).toBe("pres-chart");
             expect(out.entry.target.dataPath).toBe("runs/r/out.csv");
             // Deep copy: mutating the source spec does not reach the readout (copy-on-receive).
-            spec.series[0]!.type = "MUTATED";
+            present(spec.series[0]).type = "MUTATED";
             expect(out.entry.target.spec).toEqual({ series: [{ type: "scatter" }] });
         }
     });

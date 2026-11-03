@@ -4,6 +4,7 @@ import { toChatFrame, type EmitFn, type EventSource, type PlanPart, type RunCard
 import type { ClientOpts } from "../../../../client/api.ts";
 import { fakeClient } from "../../../../test_support/fake_client.ts";
 import { createChatPrinter, type ChatSink, type PrinterOptions } from "../chat.ts";
+import { present } from "../../../../lib/present.ts";
 
 /**
  * A recording sink + printer. `out()` accumulates conversation output; `errs`
@@ -268,7 +269,7 @@ describe("createChatPrinter", () => {
         // Mutate the exact object handed to emit — the in-process emit hazard.
         data.title = "MUTATED";
         data.steps.push({ id: "S2", name: "two", agent: "a2", question: "q", depends_on: [], maxSteps: 30 });
-        data.steps[0]!.name = "CHANGED";
+        present(data.steps[0]).name = "CHANGED";
         expect(h.out()).toBe(snapshot);
         expect(snapshot).toContain("[plan] Original");
         expect(snapshot).not.toContain("MUTATED");

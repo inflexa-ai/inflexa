@@ -5,6 +5,7 @@ import { parseColor, type RGBA } from "@opentui/core";
 import { TokenFigure, type TokenFigureProps } from "../token_figure.tsx";
 import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../../lib/design_system.ts";
 import { setTheme } from "../../theme.ts";
+import { present } from "../../../lib/present.ts";
 
 // The component that turns recorded quantities into pixels, in both written forms. What needs a FRAME
 // rather than a unit test on `lib/usage_format.ts` is everything the writing cannot state: where the
@@ -60,8 +61,8 @@ describe("TokenFigure — the long form", () => {
         // its figure ends at (or one cell short of) the last column rather than floating mid-width.
         expect(lines[0]).toContain("820.3k in");
         expect(lines[0]).toContain("43.3k out");
-        expect(lines[0]!.indexOf("820.3k in")).toBe(0);
-        expect(lines[0]!.trimEnd().endsWith("43.3k out")).toBe(true);
+        expect(present(lines[0]).indexOf("820.3k in")).toBe(0);
+        expect(present(lines[0]).trimEnd().endsWith("43.3k out")).toBe(true);
 
         // The cache counts are parts OF the input total. Indented under it and BELOW the arms' row —
         // level them onto the arm row and the reader is invited to add a cached prefix to the total it

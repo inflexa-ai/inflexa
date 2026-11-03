@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { WALK_COMMAND } from "../../../lib/child_flags.ts";
+import { present } from "../../../lib/present.ts";
 import { selfInvocation } from "../../../lib/self_invocation.ts";
 import { NameIndex } from "../search_index.ts";
 import {
@@ -169,6 +170,27 @@ describe("walkToRecords and decodeRecords", () => {
         const pieces: Uint8Array[] = [];
         for (let at = 0; at < all.length; at += 3) pieces.push(all.slice(at, at + 3));
         expect(decode(root, pieces).events).toEqual(decode(root, [all]).events);
+    });
+
+    test("a chunk that is a view into a larger buffer decodes from its own offset", async () => {
+        touch("alpha/été.csv", "beta.txt");
+        const all = concat(await walkBytes(root));
+        const whole = decode(root, [all]);
+        const padding = 13;
+        const backing = new Uint8Array(padding + all.length + padding).fill(0xff);
+        backing.set(all, padding);
+        const view = backing.subarray(padding, padding + all.length);
+        expect(view.byteOffset).toBe(padding);
+        const decoded = decode(root, [view]);
+        expect(rows(decoded.index)).toEqual(rows(whole.index));
+        expect(decoded.events).toEqual(["scope read", "end"]);
+        // Pieces of the same view cut records, thus the carry joins them from two offsets.
+        const pieces: Uint8Array[] = [];
+        for (let at = 0; at < view.length; at += 5) pieces.push(view.subarray(at, Math.min(at + 5, view.length)));
+        expect(present(pieces[1]).byteOffset).toBe(padding + 5);
+        const split = decode(root, pieces);
+        expect(rows(split.index)).toEqual(rows(whole.index));
+        expect(split.events).toEqual(["scope read", "end"]);
     });
 
     test("an unknown tag is a decode error", () => {

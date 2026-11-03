@@ -8,6 +8,7 @@ import { computeChainHash, computePayloadDigest, signHexDigest, verifyProvenance
 
 import { runVerifyFile } from "../verify.ts";
 import { loadOrGenerateKeypair, resetSigningForTests } from "../signing.ts";
+import { present } from "../../../lib/present.ts";
 
 let tempDir: string | null = null;
 
@@ -179,7 +180,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
 
     test("valid: provenance file + attestation verify successfully", async () => {
         useTempKeyDir();
-        const { provPath } = await writeSignedProvFile(tempDir!);
+        const { provPath } = await writeSignedProvFile(present(tempDir));
 
         const { output } = await captureConsole(() => runVerifyFile(provPath));
         expect(output).toContain("verified");
@@ -187,7 +188,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
 
     test("tampered: modified provenance file is detected", async () => {
         useTempKeyDir();
-        const { provPath } = await writeSignedProvFile(tempDir!);
+        const { provPath } = await writeSignedProvFile(present(tempDir));
 
         writeFileSync(provPath, '{"entity":{"inflexa:analysis-file-test":{"tampered":true}}}');
 
@@ -198,7 +199,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
 
     test("missing attestation: reports that verification is not possible", async () => {
         useTempKeyDir();
-        const provPath = join(tempDir!, "no-attestation.json");
+        const provPath = join(present(tempDir), "no-attestation.json");
         writeFileSync(provPath, '{"entity":{}}');
 
         const { output } = await captureConsole(() => runVerifyFile(provPath));

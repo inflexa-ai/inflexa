@@ -12,6 +12,7 @@ import { Chat } from "../chat.tsx";
 import { WorkspaceContext } from "../../contexts/workspace.ts";
 import { loadMessages, type LoadOpts, resetHotState, setError } from "../../hooks/conversation.ts";
 import { __resetReportChildrenForTest, refreshReportChildren, type ReportChildrenOpts } from "../../hooks/report_children.ts";
+import { present } from "../../../lib/present.ts";
 
 // Where a report entry SITS is the whole rule, and a position exists only as painted rows. A props
 // assertion proves that a mapping ran, not that the entry landed where the reader expects it. Thus this
@@ -105,7 +106,7 @@ function rowOf(frame: string, needle: string): number {
 /** The cell that `needle` starts at, as the mouse addresses it. */
 function cellOf(frame: string, needle: string): { x: number; y: number } {
     const y = rowOf(frame, needle);
-    return { x: frame.split("\n")[y]!.indexOf(needle), y };
+    return { x: present(frame.split("\n")[y]).indexOf(needle), y };
 }
 
 /**

@@ -127,7 +127,7 @@ export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
         // — would undo the positioning the rule exists to allow. readline holds both at history-top; so does
         // this. Gated on `inRecall` so a STALE position (one abandoned by an edit, kept deliberately — see
         // above) can never suppress a fresh entry that happens to address the same place.
-        if (inRecall && position !== null && to === position.index && text === position.text) return;
+        if (inRecall && to === position.index && text === position.text) return;
         deps.setPosition({ index: to, text });
         seedTextareaText(target, text);
     }
@@ -156,9 +156,9 @@ export function historyRecallLayer(deps: HistoryRecallLayerDeps): LayerConfig {
 
     // Newer, and past the newest back to the empty composer the recall was entered from. Bound only while a
     // recall is in progress with the caret on the last row, so outside one — and on any earlier row — `down`
-    // stays ordinary caret movement. The `position`/`target` re-checks are for narrowing: `inRecall` already
-    // implies both, but only through a chain tsc does not follow. Leaving recall needs no entry list.
-    if (inRecall && onLastRow && position !== null && target) {
+    // stays ordinary caret movement. The `target` re-check is for narrowing: `inRecall` already
+    // implies it, but only through a chain tsc does not follow. Leaving recall needs no entry list.
+    if (inRecall && onLastRow && target) {
         const at = position.index;
         bindings.push({
             chord: KEYS.down,

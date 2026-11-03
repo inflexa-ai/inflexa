@@ -80,6 +80,7 @@ import {
     mockAskCards,
     mockPausedWaits,
     mockCortexRuns,
+    mockRunningRun,
     mockRunDetail,
     mockDataProfile,
     mockUsageSnapshot,
@@ -627,7 +628,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         queued), each step carrying its own compact figure:
                     </text>
                     <DialogShowcase>
-                        <RunDetailDialog run={mockCortexRuns[0]!} loadDetail={() => okAsync(mockRunDetail)} onClose={noop} />
+                        <RunDetailDialog run={mockRunningRun} loadDetail={() => okAsync(mockRunDetail)} onClose={noop} />
                     </DialogShowcase>
                     {/* The USAGE section's dialog, narrowed to the two cuts with no entity of their own —
                         the model that answered and the agent that spent it. Every other grain now reports

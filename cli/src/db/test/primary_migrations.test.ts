@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { objectContaining } from "../../test_support/matchers.ts";
 import { migrations, runMigrations } from "../primary_migrations.ts";
+import { present } from "../../lib/present.ts";
 
 // The migration runner takes an explicit Database, so these run against a throwaway in-memory DB
 // with no env/singleton plumbing — the cleanest way to pin schema + idempotency.
@@ -413,9 +414,9 @@ describe("migration 12 — the seen marks of the runs", () => {
 
         const rows = db.query<{ since: number }, []>("SELECT since FROM run_seen_baseline").all();
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.since).toBeGreaterThanOrEqual(before - 1);
-        expect(rows[0]!.since).toBeLessThanOrEqual(after + 1);
-        expect(Number.isInteger(rows[0]!.since)).toBe(true);
+        expect(present(rows[0]).since).toBeGreaterThanOrEqual(before - 1);
+        expect(present(rows[0]).since).toBeLessThanOrEqual(after + 1);
+        expect(Number.isInteger(present(rows[0]).since)).toBe(true);
     });
 
     test("the marks table has the run id as its key and a cascading foreign key to the analyses", () => {

@@ -91,7 +91,7 @@ type RowMeta = { mode: number | null; readable: boolean | null; sizeLabel: strin
 type Listing = { rows: Row[]; withMetadata: boolean };
 
 /** One entry after its reads: its facts when the listing wanted them, and the value of its row. */
-type EntryRead = { details: EntryDetails | undefined; abs: string };
+type EntryRead = { entry: FolderEntry; details: EntryDetails | undefined; abs: string };
 
 /**
  * What an unreadable directory reads as: no rows, and no claim that a ceiling suppressed anything.
@@ -163,9 +163,7 @@ function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | n
             // A link to a folder browses as a folder (node_modules/* is often a symlink), so a link needs its
             // `stat` even above the ceiling. Any other entry takes its `stat` only below it.
             const reads = await readEntries(entries, (entry) => withMetadata || entry.kind === "symlink", identity);
-            const rows = entries.map((entry, i): Row => {
-                // The queue gives one read for each entry, index-aligned.
-                const { details, abs } = reads[i]!;
+            const rows = reads.map(({ entry, details, abs }): Row => {
                 const isDir = entry.kind === "folder" || details?.link?.targetKind === "folder";
                 return { name: entry.name, isDir, abs, meta: withMetadata ? rowMeta(details) : undefined };
             });
@@ -190,18 +188,15 @@ const READ_WIDTH = 16;
  */
 async function readEntries(entries: readonly FolderEntry[], wanted: (entry: FolderEntry) => boolean, identity: ProcessIdentity | null): Promise<EntryRead[]> {
     const out: EntryRead[] = new Array<EntryRead>(entries.length);
-    let next = 0;
+    // One iterator that the workers share: each pull gives an entry to one worker only.
+    const queue = entries.entries();
     async function worker(): Promise<void> {
-        // `next` is shared, but each read and increment runs between two awaits, thus no index goes to two workers.
-        while (next < entries.length) {
-            const i = next++;
-            // The loop test keeps `i` below `entries.length`, thus the index holds an entry.
-            const entry = entries[i]!;
+        for (const [i, entry] of queue) {
             const [details, abs] = await Promise.all([
                 wanted(entry) ? entryDetails(entry, identity) : undefined,
                 entry.kind === "symlink" ? canonicalPathAsync(entry.path) : entry.path,
             ]);
-            out[i] = { details, abs };
+            out[i] = { entry, details, abs };
         }
     }
     await Promise.all(Array.from({ length: READ_WIDTH }, worker));
@@ -274,8 +269,9 @@ function entryHint(row: Row, sizeWidth: number): string | undefined {
 function breadcrumbSegments(dir: string): string[] {
     if (!isAbsolute(dir)) return [dir];
     const parts = dir.split(sep).filter(Boolean);
-    if (parts.length <= 4) return parts;
-    return [parts[0]!, parts[1]!, GLYPHS.ellipsis, ...parts.slice(-2)];
+    const [first, second] = parts;
+    if (first === undefined || second === undefined || parts.length <= 4) return parts;
+    return [first, second, GLYPHS.ellipsis, ...parts.slice(-2)];
 }
 
 export function FilePicker(props: FilePickerProps): JSX.Element {

@@ -230,7 +230,7 @@ export async function setup(options: SetupOptions): Promise<void> {
     // silently dropping them is the defect the whole answer surface exists to prevent.
     // Entries — not keys: an answer block carries every field, unanswered ones as `undefined`, so keying
     // off presence alone would name fields the operator never typed.
-    const strandedByNoPostgres = options.postgres ? [] : Object.entries(answers.postgres ?? {}).filter(([, value]) => value !== undefined);
+    const strandedByNoPostgres = options.postgres ? [] : answeredFields(answers.postgres);
     if (strandedByNoPostgres.length > 0) {
         console.error(
             `\n  --no-postgres skips the step that would consume ${strandedByNoPostgres.map(([field]) => `\`postgres.${field}\``).join(", ")}.\n` +
@@ -961,10 +961,11 @@ const SETUP_SWEEP_CONCURRENCY = 4;
  */
 async function sweepAccessibleModels(check: (modelId: string) => Promise<ModelAccess>, ranked: string[]): Promise<string[]> {
     const verdicts = new Array<ModelAccess>(ranked.length);
-    let next = 0;
+    // One iterator that the workers share: each pull gives a model id to one worker only.
+    const queue = ranked.entries();
     async function worker(): Promise<void> {
-        for (let i = next++; i < ranked.length; i = next++) {
-            verdicts[i] = await check(ranked[i]!);
+        for (const [i, modelId] of queue) {
+            verdicts[i] = await check(modelId);
         }
     }
     await Promise.all(Array.from({ length: Math.min(SETUP_SWEEP_CONCURRENCY, ranked.length) }, worker));
@@ -1026,7 +1027,8 @@ export async function selectDefaultModel(deps: DefaultModelDeps): Promise<void> 
     if (!deps.isInteractive()) return;
     const ranked = await deps.candidates();
     const models = ranked.length === 0 ? [] : await sweepAccessibleModels(deps.check, ranked);
-    if (models.length === 0) {
+    const [electedId] = models;
+    if (electedId === undefined) {
         // No offerable list. Rather than silently skip (stranding a user who wants to pin an id the listing
         // can't enumerate), offer free-text manual entry with Auto (blank) as the default. The step stays
         // optional: declining keeps the adaptive `model: null` default, so this never becomes a new way for
@@ -1048,7 +1050,6 @@ export async function selectDefaultModel(deps: DefaultModelDeps): Promise<void> 
         );
         return;
     }
-    const electedId = models[0]!;
     const choice = await deps.prompt(electedId, models);
     if (choice.auto) return;
     deps.writeBoth(choice.modelId).match(
@@ -1212,6 +1213,11 @@ export function explicitPostgresFields(conn: PostgresConnection): Partial<Postgr
     return explicit;
 }
 
+/** The fields of an answer block that hold a value. A block carries each field, an unanswered one as `undefined`, which the type of `Object.entries` hides. */
+function answeredFields(block: Readonly<Record<string, unknown>> | undefined): [string, unknown][] {
+    return Object.entries(block ?? {}).filter(([, value]) => value !== undefined);
+}
+
 /**
  * Resolve the Postgres connection for this run: every field is either ANSWERED (skipping its prompt,
  * exactly as a typed value would), prompted via @clack/prompts, or left at the current resolution.
@@ -1235,7 +1241,7 @@ export function explicitPostgresFields(conn: PostgresConnection): Partial<Postgr
  */
 async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPrompt: boolean): Promise<Result<PostgresConnection, ConfigError>> {
     const existing = resolvePostgresConfig();
-    const anyAnswered = answered !== undefined && Object.values(answered).some((value) => value !== undefined);
+    const anyAnswered = answeredFields(answered).length > 0;
 
     if (!canPrompt && !anyAnswered) return ok(existing);
 
@@ -1636,6 +1642,8 @@ async function offerGatewayAdoption(gatewayURL: string): Promise<DirectConnectio
  * a silent 404 (design D4). Returns the confirmed connection, or `null` when the user chooses manual entry.
  */
 async function offerAdoption(snap: ProviderEnvSnapshot, adoptable: AdoptableProvider[]): Promise<DirectConnectionInput | null> {
+    const [firstAdoptable] = adoptable;
+    if (firstAdoptable === undefined) return null;
     let which: AdoptableProvider;
     if (adoptable.length > 1) {
         const chosen = await select("Detected both ANTHROPIC_* and OPENAI_* — adopt which provider environment?", [
@@ -1646,7 +1654,7 @@ async function offerAdoption(snap: ProviderEnvSnapshot, adoptable: AdoptableProv
         if (chosen === "_manual") return null;
         which = chosen === "anthropic" ? "anthropic" : "openai";
     } else {
-        which = adoptable[0]!;
+        which = firstAdoptable;
         const keyVar = which === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
         const chosen = await select(`Detected ${keyVar} — adopt this provider environment?`, [
             { value: "adopt", label: "Adopt the detected environment (recommended)" },
@@ -2660,7 +2668,7 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
         const reader = stream.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        while (true) {
+        for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
@@ -2708,7 +2716,7 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
     const code = await proc.exited;
     await scanPromise;
 
-    if (code !== 0 && code !== null) {
+    if (code !== 0) {
         s.error(`${PROVIDER_LABEL[provider]} login failed (exit code ${code})`);
         log.warn("You can retry with `inflexa setup`.");
         return false;

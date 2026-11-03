@@ -25,6 +25,7 @@ import {
     type LlmUsageTotals,
 } from "../primary_query.ts";
 import { asStr256 } from "../../lib/types.ts";
+import { present } from "../../lib/present.ts";
 
 // freshDb() hands back the same singleton connection the mutation/query functions drive internally, so
 // writes go through the real storage layer and the raw column reads below observe exactly what landed.
@@ -265,7 +266,7 @@ describe("the where-it-ran grains", () => {
             // Two calls happened and are counted; every figure is an unknown, not a zero.
             { runId: "run-silent", totals: { calls: 2 } },
         ]);
-        expect("inputTokens" in groups[1]!.totals).toBe(false);
+        expect("inputTokens" in present(groups[1]).totals).toBe(false);
     });
 
     test("a run's step grain excludes another run's steps", () => {
@@ -531,9 +532,9 @@ describe("absent means not reported, at every new read", () => {
             ["data profile", getAnalysisDataProfileUsageTotals("ana-1")._unsafeUnwrap()],
             ["run totals", getRunUsageTotals("ana-1", RUN)._unsafeUnwrap()],
             ["session inclusive", getSessionUsageTotalsIncludingRuns("ana-1", THREAD)._unsafeUnwrap()],
-            ["session by model", listSessionUsageByModel("ana-1", THREAD)._unsafeUnwrap()[0]!.totals],
-            ["session by agent", listSessionUsageByAgent("ana-1", THREAD)._unsafeUnwrap()[0]!.totals],
-            ["batched analysis totals", listUsageTotalsByAnalysis(["ana-1"])._unsafeUnwrap().get("ana-1")!],
+            ["session by model", present(listSessionUsageByModel("ana-1", THREAD)._unsafeUnwrap()[0]).totals],
+            ["session by agent", present(listSessionUsageByAgent("ana-1", THREAD)._unsafeUnwrap()[0]).totals],
+            ["batched analysis totals", present(listUsageTotalsByAnalysis(["ana-1"])._unsafeUnwrap().get("ana-1"))],
         ];
 
         for (const [name, totals] of reads) {

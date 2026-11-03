@@ -7,6 +7,7 @@ import { AskPrompt } from "../ask_prompt.tsx";
 import { GLYPHS, size, space } from "../../../lib/design_system.ts";
 import { useKeymapRoot } from "../../keymap.ts";
 import { renderFrame } from "../../../test_support/tui.ts";
+import { present } from "../../../lib/present.ts";
 
 // Two proofs live here. The static frames (width sweep + short height) show that the docked prompt
 // paints its title, exact command, detail, key hints, and the queued-count hint at every terminal
@@ -144,7 +145,7 @@ describe("AskPrompt choice-mode frame", () => {
 
 describe("AskPrompt feedback mode", () => {
     test("pressing n reveals the feedback input", async () => {
-        let box: BoxRenderable | null = null;
+        let box: BoxRenderable | undefined;
         const setup = await testRender(() => <Harness onBox={(r) => (box = r)} />, { width: 80, height: 12 });
         const settle = makeSettle(setup);
         const frame = () =>
@@ -156,7 +157,7 @@ describe("AskPrompt feedback mode", () => {
         try {
             await settle();
             // Focus the prompt (the host's job in production) so its choice keys are live.
-            box!.focus();
+            present(box).focus();
             await settle();
             expect(frame()).toContain("n reject");
             expect(frame().split("\n")[0]).toBe(markerRow("Run shell command"));
@@ -219,7 +220,7 @@ describe("AskPrompt mouse activation", () => {
         const lines = setup.captureCharFrame().split("\n");
         const y = lines.findIndex((l) => l.includes(needle));
         expect(y).toBeGreaterThanOrEqual(0);
-        return { x: lines[y]!.indexOf(needle), y };
+        return { x: present(lines[y]).indexOf(needle), y };
     }
 
     test("clicking each option runs its handler with no prior focus; n enters feedback like the key", async () => {
@@ -263,7 +264,7 @@ describe("AskPrompt mouse activation", () => {
             // of the selection gesture — not a click.
             const cmdY = lines.findIndex((l) => l.includes("rm -rf build"));
             const optY = lines.findIndex((l) => l.includes("approve"));
-            await setup.mockMouse.drag(lines[cmdY]!.indexOf("rm -rf build"), cmdY, lines[optY]!.indexOf("approve"), optY);
+            await setup.mockMouse.drag(present(lines[cmdY]).indexOf("rm -rf build"), cmdY, present(lines[optY]).indexOf("approve"), optY);
             await setup.renderOnce();
 
             expect(setup.renderer.getSelection()?.getSelectedText() ?? "").not.toBe("");
@@ -294,7 +295,7 @@ describe("AskPrompt mouse activation", () => {
     test("clicks are inert when inert is set — no answer, no mode flip", async () => {
         const approvals: Array<"once" | "always"> = [];
         let rejected = 0;
-        let box: BoxRenderable | null = null;
+        let box: BoxRenderable | undefined;
         const setup = await testRender(() => <Harness inert onBox={(r) => (box = r)} onApprove={(k) => approvals.push(k)} onReject={() => rejected++} />, {
             width: 80,
             height: 10,
@@ -304,7 +305,7 @@ describe("AskPrompt mouse activation", () => {
 
             // Focus hardening: an inert exhibit's box is non-focusable, so opentui's mousedown-autofocus
             // walk finds no focusable ancestor and cannot yank focus off the gallery pane.
-            expect(box!.focusable).toBe(false);
+            expect(present(box).focusable).toBe(false);
 
             const yCell = optionCell(setup, "approve");
             await setup.mockMouse.click(yCell.x, yCell.y);
@@ -353,7 +354,7 @@ describe("AskPrompt mouse activation", () => {
                 const hit = texts.find((t) => t.plainText.includes(needle));
                 expect(hit).toBeDefined();
                 // Non-null: toBeDefined above throws when the row is absent, so hit is set on this line.
-                return hit!.selectable;
+                return present(hit).selectable;
             };
 
             expect(selectableOf("approve")).toBe(false);
@@ -370,8 +371,8 @@ describe("AskPrompt mouse activation", () => {
 
 describe("AskPrompt key gating (bare-printable rule)", () => {
     test("unfocused prompt keys go to the editor; focused prompt keys fire onApprove", async () => {
-        let box: BoxRenderable | null = null;
-        let ta: TextareaRenderable | null = null;
+        let box: BoxRenderable | undefined;
+        let ta: TextareaRenderable | undefined;
         const approvals: Array<"once" | "always"> = [];
         const setup = await testRender(() => <Harness withEditor onBox={(r) => (box = r)} onTa={(r) => (ta = r)} onApprove={(k) => approvals.push(k)} />, {
             width: 80,
@@ -381,25 +382,25 @@ describe("AskPrompt key gating (bare-printable rule)", () => {
         try {
             await settle();
             // The editor grabbed focus on mount; the prompt is mounted but unfocused.
-            expect(ta!.focused).toBe(true);
+            expect(present(ta).focused).toBe(true);
             // Positive control for the inert-gating of focusability: a live (non-inert) prompt's box IS
             // focusable, which is what lets the host focus it to engage the bare-key layer below.
-            expect(box!.focusable).toBe(true);
+            expect(present(box).focusable).toBe(true);
 
             // With the editor focused, y is NOT a prompt key — it types into the editor and never approves.
             setup.mockInput.pressKey("y");
             await settle();
-            expect(ta!.editBuffer.getText()).toBe("y");
+            expect(present(ta).editBuffer.getText()).toBe("y");
             expect(approvals).toEqual([]);
 
             // Focus the prompt: now the same y is captured by the target-gated layer and approves once.
-            box!.focus();
+            present(box).focus();
             await settle();
             setup.mockInput.pressKey("y");
             await settle();
             expect(approvals).toEqual(["once"]);
             // The editor is blurred and the key was swallowed by the binding — its buffer is untouched.
-            expect(ta!.editBuffer.getText()).toBe("y");
+            expect(present(ta).editBuffer.getText()).toBe("y");
         } finally {
             setup.renderer.destroy();
         }

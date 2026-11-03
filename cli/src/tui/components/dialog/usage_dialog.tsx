@@ -170,8 +170,8 @@ export function usageBreakdown(snapshot: SessionUsageSnapshot): UsageBreakdown {
     // than restarting per section — the comparison this dialog exists for is between a model and the
     // agent that drove it as much as within either list.
     const header = ["", "calls", "tokens"];
-    const cells = groups.map((g) => [ROW_INDENT + g.label, String(g.totals.calls), figureOf(g.totals)]);
-    const widths = header.map((_, i) => Math.max(...[header, ...cells].map((row) => (row[i] ?? "").length)));
+    const rows = groups.map((g) => ({ category: g.category, cells: [ROW_INDENT + g.label, String(g.totals.calls), figureOf(g.totals)] }));
+    const widths = header.map((_, i) => Math.max(...[header, ...rows.map((row) => row.cells)].map((row) => (row[i] ?? "").length)));
     // The count is right-aligned (a column of numbers) and the figure left-aligned, which is what puts
     // every row's up-arm in one column — the arms vary in width, so aligning the cell's right edge
     // would scatter them.
@@ -183,12 +183,12 @@ export function usageBreakdown(snapshot: SessionUsageSnapshot): UsageBreakdown {
 
     const lines: UsageBreakdownLine[] = [];
     let heading: string | null = null;
-    for (const [i, g] of groups.entries()) {
-        if (g.category !== heading) {
-            heading = g.category;
-            lines.push({ kind: "heading", text: g.category });
+    for (const row of rows) {
+        if (row.category !== heading) {
+            heading = row.category;
+            lines.push({ kind: "heading", text: row.category });
         }
-        lines.push({ kind: "row", text: line(cells[i]!) });
+        lines.push({ kind: "row", text: line(row.cells) });
     }
     return { header: line(header), lines };
 }

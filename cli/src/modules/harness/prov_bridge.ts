@@ -156,6 +156,11 @@ function toCommandInputs(reads: readonly CollectorInputRef[], resourceId: string
     return inputs;
 }
 
+// A record without a duration leaves the key out of the ref, which the harness type (a required field) does not show.
+function setDuration(ref: ProvCommandRef, producer: { readonly durationMs?: number }): void {
+    if (producer.durationMs !== undefined) ref.durationMs = producer.durationMs;
+}
+
 /**
  * Build the {@link ProvCommandRef} for one COMMAND producer group: the full execution facts
  * (`command`/`args`/`exitCode`/`durationMs`), the scoped `scriptPath`, the group's analysis-scoped
@@ -182,7 +187,7 @@ function toCommandRef(
         inputs: toCommandInputs(record.inputs, resourceId, producedHashByPath),
     };
     if (producer.args !== undefined) ref.args = producer.args;
-    if (producer.durationMs !== undefined) ref.durationMs = producer.durationMs;
+    setDuration(ref, producer);
     if (scriptPath !== undefined) ref.scriptPath = scriptPath;
     return ref;
 }

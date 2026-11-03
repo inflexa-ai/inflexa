@@ -69,6 +69,11 @@ const revision = new Map<string, number>();
 let flushInProgress = false;
 let flushRequested = false;
 let pending: Promise<void> = Promise.resolve();
+// A read through a function: `scheduleFlush` sets the flag while a pass awaits, which the narrowing of the
+// reset at the top of the pass cannot see.
+function flushWasRequested(): boolean {
+    return flushRequested;
+}
 let flushScheduled = false;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let subscribed = false;
@@ -281,7 +286,7 @@ async function runFlush(): Promise<void> {
                 wg.go(persistSnapshot(analysisId, json, snapshotRevision));
             }
             await wg.wait();
-        } while (flushRequested);
+        } while (flushWasRequested());
     } finally {
         flushInProgress = false;
     }

@@ -6,6 +6,7 @@ import type { StampedEvent } from "../../../types/events.ts";
 import type { ProvModelId } from "../../../types/prov.ts";
 import { createRunProvenanceEmitter } from "../prov_bridge.ts";
 import { emitRunObservation } from "../run_bridge.ts";
+import { present } from "../../../lib/present.ts";
 
 // Bus-spy harness, matching `prov_bridge.test.ts`: capture every `inflexa` event and always detach
 // in cleanup so a lingering listener never double-counts a later test's events.
@@ -40,7 +41,7 @@ describe("run observation bridge", () => {
         emitRunObservation(observation());
 
         expect(captured.length).toBe(1);
-        const event = captured[0]!;
+        const event = present(captured[0]);
         if (event.type !== "run.observed") throw new Error(`expected run.observed, got ${event.type}`);
         expect(event.analysisId).toBe("analysis-1");
         expect(event.snapshot.runId).toBe("run-1");
@@ -48,19 +49,19 @@ describe("run observation bridge", () => {
         // The snapshot carries every step, including one that has not started.
         expect(event.snapshot.steps.map((s) => s.id)).toEqual(["T1S1", "T1S2", "T1S3"]);
         // Names and agents survive the mapping — they are the point of the seam.
-        expect(event.snapshot.steps[1]!.name).toBe("differential expression");
-        expect(event.snapshot.steps[1]!.agent).toBe("bio-analyst");
+        expect(present(event.snapshot.steps[1]).name).toBe("differential expression");
+        expect(present(event.snapshot.steps[1]).agent).toBe("bio-analyst");
     });
 
     test("omits absent optional step fields rather than emitting undefined keys", () => {
         emitRunObservation(observation());
 
-        const event = captured[0]!;
+        const event = present(captured[0]);
         if (event.type !== "run.observed") throw new Error("expected run.observed");
-        const running = event.snapshot.steps.find((s) => s.id === "T1S2")!;
+        const running = present(event.snapshot.steps.find((s) => s.id === "T1S2"));
         expect("durationMs" in running).toBe(false);
         expect("error" in running).toBe(false);
-        const done = event.snapshot.steps.find((s) => s.id === "T1S1")!;
+        const done = present(event.snapshot.steps.find((s) => s.id === "T1S1"));
         expect(done.durationMs).toBe(4200);
         expect("durationMs" in done).toBe(true);
         expect("error" in done).toBe(false);
@@ -83,7 +84,7 @@ describe("run observation bridge", () => {
         const source = observation();
         emitRunObservation(source);
 
-        const event = captured[0]!;
+        const event = present(captured[0]);
         if (event.type !== "run.observed") throw new Error("expected run.observed");
         // Nothing mutable from the runtime reaches a subscriber: mutating the source afterwards
         // must not be visible on the emitted snapshot.

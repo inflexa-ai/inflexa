@@ -5,6 +5,7 @@ import type { BootStepRunning, ServerBootState } from "../../api/server.ts";
 import { errorBody } from "../../test_support/response_body.ts";
 import type { ServerBoot } from "../boot.ts";
 import { apiError, listEnvelope, parseCount, parsePage, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
+import { present } from "../../lib/present.ts";
 
 describe("apiError", () => {
     test("each code gets its status, and `details` only when given", async () => {
@@ -234,7 +235,7 @@ describe("sseResponse", () => {
             await laterSend;
         });
         // `sseResponse` always gives a stream body.
-        const reader = response.body!.getReader();
+        const reader = present(response.body).getReader();
         await reader.read();
         await reader.cancel();
         expect(await laterSend).toBe("sent");

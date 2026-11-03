@@ -209,7 +209,8 @@ export function resolveLineageRef(model: LineageModel, ref: string): Result<Line
 
     if (refHash.digest.length >= MIN_HASH_PREFIX) {
         const byPrefix = hashesMatching((digest) => digest.startsWith(refHash.digest));
-        if (byPrefix.length === 1) return ok({ kind: "files", infos: [toFileInfo(byPrefix[0]!)] });
+        const [onlyPrefix, otherPrefix] = byPrefix;
+        if (onlyPrefix !== undefined && otherPrefix === undefined) return ok({ kind: "files", infos: [toFileInfo(onlyPrefix)] });
         if (byPrefix.length > 1) {
             return err({
                 type: "ambiguous_hash",
@@ -254,10 +255,11 @@ export function resolveLineageRef(model: LineageModel, ref: string): Result<Line
             const paths = new Set(entities.map((node) => toFileInfo(node).path));
             if (paths.size === 1) return ok({ kind: "files", infos: entities.map(toFileInfo) });
         }
-        if (matches.length === 1) {
+        const [loneMatch, otherMatch] = matches;
+        if (loneMatch !== undefined && otherMatch === undefined) {
             // A lone match here is always an activity — a lone entity already resolved through the
-            // one-path collapse above. The `!` is sound: length was just checked.
-            return ok({ kind: "activity", qn: matches[0]!.qn });
+            // one-path collapse above.
+            return ok({ kind: "activity", qn: loneMatch.qn });
         }
         return err({ type: "ambiguous_search", candidates: toCandidates(matches), total: matches.length });
     }
@@ -271,13 +273,13 @@ export function resolveLineageRef(model: LineageModel, ref: string): Result<Line
     const addressable = model.nodes.filter((n) => n.kind !== "agent");
     const byQName = addressable.filter((n) => n.qn === ref);
     const byIdentifier = byQName.length > 0 ? byQName : addressable.filter((n) => localpart(n.qn) === ref);
-    if (byIdentifier.length > 0) {
+    const [node, otherNode] = byIdentifier;
+    if (node !== undefined) {
         // Identifiers are unique after unification, so several hits are a malformed edge case
         // (e.g. two prefixes sharing a localpart) — list rather than guess.
-        if (byIdentifier.length > 1) {
+        if (otherNode !== undefined) {
             return err({ type: "ambiguous_search", candidates: toCandidates(byIdentifier), total: byIdentifier.length });
         }
-        const node = byIdentifier[0]!; // length checked: exactly one
         return isEntity(node) ? ok({ kind: "files", infos: [toFileInfo(node)] }) : ok({ kind: "activity", qn: node.qn });
     }
 
@@ -554,11 +556,7 @@ function fileJsonNode(node: LineageNode, truncated: boolean): LineageJsonNode {
 /** The JSON node for an activity — its rendering facts minus the QName key and the tree-only `files`. */
 function activityJsonNode(node: LineageNode): LineageJsonNode {
     const { qn: _qn, ...facts } = activityMeta(node.kind === "activity" ? node : undefined, node.qn);
-    // SAFETY: `facts` is the kind plus only the fields that kind carries a value for (a command never has a
-    // `tool`, a file tool never has a `command`), because `activityMeta` projects them off the model
-    // node's own attributes — so the shape already satisfies the kind-discriminated union the assertion
-    // names. A field with no value is `undefined`, which the JSON text of the view leaves out.
-    return facts as LineageJsonNode;
+    return facts;
 }
 
 /**
