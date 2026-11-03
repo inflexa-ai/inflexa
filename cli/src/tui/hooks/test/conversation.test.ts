@@ -120,8 +120,8 @@ function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () 
     return {
         send: (frame) =>
             new Promise<void>((applied) => {
-                // The parse gives back the frame that went in: it is JSON by the wire contract.
-                waiting.push({ frame: JSON.parse(JSON.stringify(frame)) as ChatFrame, applied });
+                // A copy, thus a later change of the frame by the sender cannot reach the queued one.
+                waiting.push({ frame: structuredClone(frame), applied });
                 notify();
             }),
         close: () => {
@@ -457,7 +457,7 @@ describe("send() drives the adapter over the turn stream", () => {
             const tools = messages[1]?.parts.filter((p) => p.type === "tool-call") ?? [];
             // Exactly ONE tool block: the top-level call. The sub-agent's own tool never became one.
             expect(tools.length).toBe(1);
-            expect((tools[0] as LiveToolCallPart).toolName).toBe("plan_analysis");
+            expect(tools[0]).toHaveProperty("toolName", "plan_analysis");
         });
 
         // A sub-agent spends most of a long call in a model request, before its first tool call too, and
@@ -1004,10 +1004,10 @@ describe("watchPausedTurn reads a paused turn that this client does not stream",
 
     test("a session swap stops the read and removes the prompt", async () => {
         const channel = frameChannel();
-        let signal: AbortSignal | null = null;
+        const read: { signal: AbortSignal | null } = { signal: null };
         const watching = watchPausedTurn(AID, SID, "turn-9", {
             readTurn: (_analysisId, _threadId, _turnId, abortSignal) => {
-                signal = abortSignal;
+                read.signal = abortSignal;
                 return okAsync(channel.frames);
             },
             abortTurn: () => okAsync(undefined),
@@ -1016,7 +1016,7 @@ describe("watchPausedTurn reads a paused turn that this client does not stream",
 
         resetHotState();
         expect(dockedPause()).toBeNull();
-        expect((signal as AbortSignal | null)?.aborted).toBe(true);
+        expect(read.signal?.aborted).toBe(true);
         channel.close();
         await watching;
     });
@@ -2100,9 +2100,9 @@ describe("display-card parts map identically live and on reload", () => {
     });
 
     test("an unknown replayed part still lands in the transcript on reload", async () => {
-        // The renderer shows it as a tagged mention (`message_block.test.tsx`). The cast names a part of a
-        // type that the vocabulary of this build does not hold, which is the case under test.
-        await mountReplay([{ id: "m1", role: "assistant", parts: [{ type: "data-widget" } as unknown as MessagePart] }]);
+        // The renderer shows it as a tagged mention (`message_block.test.tsx`). A `data-*` part of a type that
+        // the vocabulary of this build does not name is the case under test.
+        await mountReplay([{ id: "m1", role: "assistant", parts: [{ type: "data-widget" }] }]);
         expect(messages[0]?.parts.map((p): string => p.type)).toEqual(["data-widget"]);
     });
 });

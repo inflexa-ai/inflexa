@@ -4,6 +4,7 @@ import { createStore } from "solid-js/store";
 import { errAsync, okAsync } from "neverthrow";
 
 import type { ThreadSummary } from "../../../api/conversation.ts";
+import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
 import { reportSummary, threadListOf, FIXTURE_ANALYSIS_ID } from "../../../test_support/threads.ts";
 import { __setBootStateForTest, type BootState } from "../boot.ts";
 import { __resetReportChildrenForTest, reportChildren, watchReportChildren, type ReportChildrenOpts } from "../report_children.ts";
@@ -15,7 +16,7 @@ import type { Analysis } from "../../../types/analysis.ts";
 // a read at the render: a turn is what spawns a report session, and the open scope does not move when it
 // does. Each case here drives one of the two edges and reads the listing that landed.
 
-const ANALYSIS = { id: FIXTURE_ANALYSIS_ID, name: "Alpha", projectId: null } as unknown as Analysis;
+const ANALYSIS = buildAnalysis({ id: FIXTURE_ANALYSIS_ID });
 
 /** A NEW object each call, thus re-seeding the phase is an observable signal edge. */
 function ready(): BootState {
@@ -24,9 +25,8 @@ function ready(): BootState {
 
 /** The scope fields the watch tracks, as a store so a swap is an observable edge. */
 function scope(analysis: Analysis | null, sessionId: string | null): { ws: Workspace; bindTo: (next: string | null) => void } {
-    const [store, setStore] = createStore({ analysis, sessionId, workingDir: "/work" });
-    // The watch reads `analysis` and `sessionId` alone, thus a partial stand-in cast is sound.
-    return { ws: store as unknown as Workspace, bindTo: (next) => setStore({ sessionId: next }) };
+    const [store, setStore] = createStore(buildWorkspace({ analysis, sessionId }));
+    return { ws: store, bindTo: (next) => setStore({ sessionId: next }) };
 }
 
 /** Mount the watch in a disposable root, and hand back the dispose. */

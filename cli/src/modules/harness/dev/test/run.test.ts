@@ -1,21 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { okAsync, errAsync } from "neverthrow";
-import {
-    AnalysisPlanSchema,
-    makeLocalAuth,
-    RunDedupCollisionError,
-    type CortexRunRow,
-    type ExecuteAnalysisInput,
-    type RunSession,
-    type RunStatus,
-} from "@inflexa-ai/harness";
+import { AnalysisPlanSchema, makeLocalAuth, RunDedupCollisionError, type CortexRunRow, type ExecuteAnalysisInput, type RunStatus } from "@inflexa-ai/harness";
 
+import { buildRunSession } from "../../../../test_support/builders.ts";
 import { renderRunProgress, triggerAnalysisRun, type RunTriggerSeams, type TriggerAnalysisRunParams } from "../run.ts";
 
 // The run session the fake authorizer hands back — asserted by identity in the
-// happy-path input check. Cast because the cli cannot construct a real one
-// barrel-only, and `triggerAnalysisRun` only forwards it into the workflow input.
-const RUN_SESSION = { marker: "run-session" } as unknown as RunSession;
+// happy-path input check. `triggerAnalysisRun` only forwards it into the workflow input.
+const RUN_SESSION = buildRunSession({ provenance: { agentId: "run-session", callPath: ["run-session"] } });
 
 // A DbError-shaped value for the non-collision reserve-failure path. Same literal
 // shape the harness's `tryMutation` produces and that `plan_intake.test.ts` uses.

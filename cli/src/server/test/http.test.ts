@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
 import type { BootStepRunning, ServerBootState } from "../../api/server.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import { errorBody } from "../../test_support/response_body.ts";
 import type { ServerBoot } from "../boot.ts";
 import { apiError, listEnvelope, parseCount, parsePage, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
 
@@ -80,18 +80,19 @@ describe("listEnvelope", () => {
 describe("requireRuntime", () => {
     const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
     // The middleware only passes the handle on, so a stand-in object is enough to prove that it arrives.
-    const runtime = { tag: "runtime" } as unknown as HarnessRuntime;
+    type Handle = { readonly tag: string };
+    const runtime: Handle = { tag: "runtime" };
 
     function startingState(step: BootStepRunning | null): ServerBootState {
         return { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step, done: [] } };
     }
 
-    function bootIn(state: ServerBootState, rt: HarnessRuntime | null): ServerBoot {
+    function bootIn(state: ServerBootState, rt: Handle | null): ServerBoot<Handle> {
         return { state: () => state, runtime: () => rt, start: async () => undefined };
     }
 
-    function appFor(boot: ServerBoot): Hono<ServerEnv> {
-        const app = new Hono<ServerEnv>();
+    function appFor(boot: ServerBoot<Handle>): Hono<ServerEnv<Handle>> {
+        const app = new Hono<ServerEnv<Handle>>();
         app.get("/needs", requireRuntime(boot), (c) => c.json({ same: c.get("runtime") === runtime }));
         return app;
     }
@@ -140,7 +141,7 @@ describe("requireRuntime", () => {
     });
 
     test("the 503 message gives a person the phase and the command to run, not an API route", async () => {
-        const starting = (await (await appFor(bootIn(startingState(null), null)).request("/needs")).json()) as { message: string };
+        const starting = await errorBody(appFor(bootIn(startingState(null), null)).request("/needs"));
         expect(starting.message).toContain("phase `starting`");
 
         const signIn: ServerBootState = {
@@ -151,7 +152,7 @@ describe("requireRuntime", () => {
             failedAt: identity.startedAt,
             failedStep: null,
         };
-        const signInMessage = ((await (await appFor(bootIn(signIn, null)).request("/needs")).json()) as { message: string }).message;
+        const signInMessage = (await errorBody(appFor(bootIn(signIn, null)).request("/needs"))).message;
         expect(signInMessage).toContain("phase `failed`");
         expect(signInMessage).toContain("No provider login.");
         expect(signInMessage).toContain("boots again after the sign-in");
@@ -164,7 +165,7 @@ describe("requireRuntime", () => {
             failedAt: identity.startedAt,
             failedStep: null,
         };
-        const otherMessage = ((await (await appFor(bootIn(other, null)).request("/needs")).json()) as { message: string }).message;
+        const otherMessage = (await errorBody(appFor(bootIn(other, null)).request("/needs"))).message;
         expect(otherMessage).toContain("Docker is not running.");
         expect(otherMessage).toContain("Then run `inflexa up`");
         for (const message of [starting.message, signInMessage, otherMessage]) expect(message).not.toContain("/api/v1/");

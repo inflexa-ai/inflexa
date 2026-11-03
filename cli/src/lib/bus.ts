@@ -20,7 +20,8 @@ class BusEmitter extends EventEmitter<{
             const stamped = "__infId" in event ? event.__infId : undefined;
             Object.assign(event, { __infId: stamped ?? randomUUIDv7() });
         }
-        // oxlint-disable-next-line typescript/no-explicit-any, typescript/no-unsafe-argument -- args is BusEvent on input but StampedEvent after __infId mutation, and the base `emit` overloads cannot express the wide signature of this override
+        // SAFETY: `args` is the tuple that the signature above gives for `eventName`, and the base `emit` takes the same values. The widening only picks an overload that accepts them: the base overloads cannot express the conditional tuple of this override.
+        // oxlint-disable-next-line typescript/no-explicit-any, typescript/no-unsafe-argument, typescript/no-unsafe-type-assertion -- args is BusEvent on input but StampedEvent after __infId mutation, and the base `emit` overloads cannot express the wide signature of this override
         return super.emit(eventName, ...(args as any));
     }
 }

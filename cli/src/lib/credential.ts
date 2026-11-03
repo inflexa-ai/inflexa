@@ -2,6 +2,7 @@ import { ok, err, type Result } from "neverthrow";
 import { z } from "zod";
 import type { ModelAuthConfig } from "./config.ts";
 import { readEnvCredentialVar } from "./env.ts";
+import { unknownRecordSchema } from "./json_record.ts";
 
 // A `direct` connection's wire credential, generalized from "a static key read once at boot" to a cached,
 // refreshing SOURCE — so direct mode can consume a short-lived token from a credential helper (the pattern
@@ -102,9 +103,9 @@ function jwtExpiryMs(token: string): number | null {
     if (segments.length !== 3) return null;
     try {
         // Sound: length checked === 3 above, so segments[1] exists.
-        const payload: unknown = JSON.parse(Buffer.from(segments[1]!, "base64url").toString("utf8")); // decoded claim set — shape-narrowed below
-        if (typeof payload !== "object" || payload === null) return null;
-        const exp = (payload as Record<string, unknown>).exp;
+        const payload = JSON.parseWith(Buffer.from(segments[1]!, "base64url").toString("utf8"), unknownRecordSchema);
+        if (payload === null) return null;
+        const exp = payload.exp;
         return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : null;
     } catch {
         return null;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { testRender } from "@opentui/solid";
 import type { JSX } from "solid-js";
+import { z } from "zod";
 
 import type { InputList, InputsChange, InputView } from "../../api/analyses.ts";
 import type { ClientOpts } from "../../client/api.ts";
@@ -47,9 +48,12 @@ afterEach(() => {
     for (const dir of [anchorDir, outsideDir]) rmSync(dir, { recursive: true, force: true });
 });
 
-/** The paths of a removal request. The cast reads the body that the flow under test built from `InputPathsRequest`. */
+const removalBodySchema = z.object({ paths: z.array(z.string()) });
+
+/** The paths of a removal request, read from the body that the flow under test built. */
 function pathsOf(req: FakeRequest | undefined): string[] {
-    return (req?.body as { paths: string[] } | undefined)?.paths ?? [];
+    const body = removalBodySchema.safeParse(req?.body);
+    return body.success ? body.data.paths : [];
 }
 
 /** A fake server that lists `inputs` and removes the inputs at the paths of a removal. */

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { fakeFetch } from "../../../test_support/fake_fetch.ts";
 import { listEmbeddingModels } from "../api_models.ts";
 
 // The listing is a fetch + filter with no other state, so these stub globalThis.fetch and assert on the
@@ -16,13 +17,12 @@ describe("listEmbeddingModels", () => {
 
     /** Stub fetch to serve `body` as JSON with `status`, recording the URL and auth header it saw. */
     function stubFetch(body: unknown, status = 200): { calls: { url: string; auth: string | null }[] } {
-        const spy = { calls: [] as { url: string; auth: string | null }[] };
-        // Test-only replacement of the global fetch: the cast is required because a bare recorder is
-        // narrower than fetch's overloaded signature; it is sound because afterEach restores realFetch.
-        globalThis.fetch = ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const spy: { calls: { url: string; auth: string | null }[] } = { calls: [] };
+        // Test-only replacement of the global fetch; afterEach restores realFetch.
+        globalThis.fetch = fakeFetch((input, init) => {
             spy.calls.push({ url: String(input), auth: new Headers(init?.headers).get("Authorization") });
             return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
-        }) as unknown as typeof globalThis.fetch;
+        });
         return spy;
     }
 
@@ -86,7 +86,7 @@ describe("listEmbeddingModels", () => {
 
     test("a dead endpoint is unreachable, never a throw", async () => {
         // A rejecting fetch is the dead-host/aborted-signal path; it must bridge into the Result channel.
-        globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof globalThis.fetch;
+        globalThis.fetch = fakeFetch(() => Promise.reject(new Error("ECONNREFUSED")));
         const e = (await listEmbeddingModels("https://x/v1", "k"))._unsafeUnwrapErr();
         expect(e.type).toBe("unreachable");
         expect(e).toMatchObject({ detail: "ECONNREFUSED" });

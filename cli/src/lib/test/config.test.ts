@@ -8,6 +8,7 @@ import { ensureRuntime, readConfig, resolveRuntime, writeConfig, type Config } f
 import { ContainerRuntimeError, runtimes, type ContainerRuntime } from "../container.ts";
 import { DEFAULT_THEME_ID } from "../design_system.ts";
 import { env } from "../env.ts";
+import { unknownRecordSchema } from "../json_record.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
 // Drives config through the public readConfig/writeConfig surface against the sandboxed
@@ -145,17 +146,18 @@ describe("writeConfig — canonical key order", () => {
     test("declared keys land in schema order; undeclared ones follow, sorted", () => {
         // Pins WHICH order is canonical — a stable-but-arbitrary order would satisfy the test above just as
         // well, and the schema order is what makes a hand-edited config readable.
-        const document = JSON.parse(writeAndRead(values)) as Record<string, Record<string, unknown>>;
+        const document = unknownRecordSchema.parse(JSON.parse(writeAndRead(values)));
+        const keysOf = (key: string): string[] => Object.keys(unknownRecordSchema.parse(document[key]));
 
         expect(Object.keys(document)).toEqual(["telemetry", "theme", "runtime", "keybinds", "leaderTimeout", "postgres", "harness", "models", "embedding"]);
-        expect(Object.keys(document.postgres!)).toEqual(["host", "port", "database", "user", "password"]);
+        expect(keysOf("postgres")).toEqual(["host", "port", "database", "user", "password"]);
         // `modelPath` is declared between `mode` and `apiKey` but unset here — an absent key is skipped, never emitted as null.
-        expect(Object.keys(document.embedding!)).toEqual(["mode", "apiKey", "baseURL", "model", "dimensions"]);
+        expect(keysOf("embedding")).toEqual(["mode", "apiKey", "baseURL", "model", "dimensions"]);
         // `keybinds` is a record and `harness`/`models` cross the schema as `unknown`: no declaration to
         // follow, so their keys are sorted — the only order derivable from the value itself.
-        expect(Object.keys(document.keybinds!)).toEqual(["app.abort", "app.command-palette"]);
-        expect(Object.keys(document.harness!)).toEqual(["resourceLimits", "sandboxImage", "skillsDir"]);
-        expect(Object.keys(document.models!)).toEqual(["agents", "connection"]);
+        expect(keysOf("keybinds")).toEqual(["app.abort", "app.command-palette"]);
+        expect(keysOf("harness")).toEqual(["resourceLimits", "sandboxImage", "skillsDir"]);
+        expect(keysOf("models")).toEqual(["agents", "connection"]);
     });
 
     test("a key appended by a spread lands in schema position, not at the end", () => {
@@ -163,7 +165,7 @@ describe("writeConfig — canonical key order", () => {
         writeConfig({ telemetry: true, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } })._unsafeUnwrap();
         const appended = writeAndRead({ ...readConfig(), harness: { skillsDir: "/skills" } });
 
-        expect(Object.keys(JSON.parse(appended) as Record<string, unknown>)).toEqual(["telemetry", "theme", "leaderTimeout", "harness", "embedding"]);
+        expect(Object.keys(unknownRecordSchema.parse(JSON.parse(appended)))).toEqual(["telemetry", "theme", "leaderTimeout", "harness", "embedding"]);
     });
 });
 

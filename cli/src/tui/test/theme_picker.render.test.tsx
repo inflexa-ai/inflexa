@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
 import type { JSX } from "solid-js";
+import { z } from "zod";
 import { testRender } from "@opentui/solid";
 
 import { env } from "../../lib/env.ts";
@@ -32,10 +33,11 @@ const PERSISTED: ThemeId = "nord";
 // reasons: `themeIds` is five dark then five light, and `nord` is the fourth of the dark five.
 const NEXT_DOWN: ThemeId = themeIds[themeIds.indexOf(PERSISTED) + 1]!;
 
+const persistedConfigSchema = z.looseObject({ theme: z.string().optional() });
+
 /** The theme id as it was actually written to disk — the ground truth for "persisted". */
 function persistedTheme(): string | undefined {
-    const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { theme?: string };
-    return parsed.theme;
+    return persistedConfigSchema.parse(JSON.parse(readFileSync(env.configPath, "utf8"))).theme;
 }
 
 /** A workspace stub: the picker only ever reaches for `closeDialog`, and records it. */

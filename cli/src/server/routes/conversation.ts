@@ -10,6 +10,7 @@ import {
     storedMessagesToChat,
     type ChatFrame,
     type AskGateway,
+    type ChatTurns,
     type DbError,
     type LoadPageOptions,
     type PendingAsk,
@@ -81,24 +82,34 @@ import { abortTurn, endTurn, findTurn, holdOpening, listThreadTurns, newTurnsRef
  */
 export type WorkspaceRootLookup = { readonly kind: "root"; readonly root: string } | { readonly kind: "absent" } | { readonly kind: "unlocatable" };
 
+/**
+ * The part of the runtime handle that the conversation routes read. `P` is the type of the pool: the routes only give
+ * it to the reads of {@link ConversationRouteOpts}, thus a test gives a small value for `P`.
+ */
+export type ConversationRuntime<P = Pool> = {
+    readonly pool: P;
+    readonly chatTurns: ChatTurns;
+    readonly askGateway: AskGateway;
+};
+
 /** What the conversation routes are built from. Tests replace each one, because no cli test reaches Postgres or a model. */
-export type ConversationRouteOpts = {
+export type ConversationRouteOpts<P = Pool> = {
     /** The thread store over the pool. Real: `createThreadStore`. */
-    readonly threads: (pool: Pool) => ThreadStore;
+    readonly threads: (pool: P) => ThreadStore;
     /** One page of the turns of a thread, newest page first, for the transcript. Real: `createThreadHistory(pool).loadPage`. */
-    readonly loadPage: (pool: Pool, threadId: string, options: LoadPageOptions) => ResultAsync<TurnPage, DbError>;
+    readonly loadPage: (pool: P, threadId: string, options: LoadPageOptions) => ResultAsync<TurnPage, DbError>;
     /** Remove the tail turn. With `ifOrphan`, only a tail turn with no assistant row. Real: `retractTailTurn`, `healTailOrphan`. */
-    readonly retract: (pool: Pool, threadId: string, ifOrphan: boolean) => ResultAsync<RetractResponse, DbError>;
+    readonly retract: (pool: P, threadId: string, ifOrphan: boolean) => ResultAsync<RetractResponse, DbError>;
     /** The analysis of a thread, archived or live, or `null` when no row has the id. Real: one primary-key read. */
-    readonly threadAnalysisId: (pool: Pool, threadId: string) => ResultAsync<string | null, DbError>;
+    readonly threadAnalysisId: (pool: P, threadId: string) => ResultAsync<string | null, DbError>;
     /**
      * The turn that holds the thread of the analysis, or `null` when no turn holds it. The open of a turn claims its
      * thread, and the end of the turn releases it. Thus the holder is a turn of the thread that runs or waits in a
      * pause, also a turn that a recovery runs and the registry does not hold. Real: one primary-key read.
      */
-    readonly activeTurnId: (pool: Pool, analysisId: string, threadId: string) => ResultAsync<string | null, DbError>;
+    readonly activeTurnId: (pool: P, analysisId: string, threadId: string) => ResultAsync<string | null, DbError>;
     /** The turn of each thread of the list whose durable workflow is live. Real: `listLiveTurns`. */
-    readonly liveTurns: (pool: Pool, threadIds: readonly string[]) => ResultAsync<LiveTurn[], unknown>;
+    readonly liveTurns: (pool: P, threadIds: readonly string[]) => ResultAsync<LiveTurn[], unknown>;
     /** One chat turn. Real: `runChatTurn` of `modules/harness/turn.ts`. */
     readonly runTurn: (args: RunChatTurnArgs) => Promise<TurnOutcome>;
     /** The model connection, for the remedy of a failed turn. Real: `resolveModelConnection`. */
@@ -113,6 +124,9 @@ export type ConversationRouteOpts = {
     readonly removeDir: (dir: string) => ResultAsync<void, FsError>;
     readonly sse: SseOpts;
 };
+
+/** The members of {@link ConversationRouteOpts} that read no pool. */
+type TurnOpts = Pick<ConversationRouteOpts, "runTurn" | "connection" | "readCredentialVerdict" | "flushPendingAdds" | "workspaceRoot" | "removeDir" | "sse">;
 
 /** The production {@link ConversationRouteOpts}. */
 export const DEFAULT_CONVERSATION_ROUTE_OPTS: ConversationRouteOpts = {
@@ -176,8 +190,8 @@ const askReplyBody = z.discriminatedUnion("kind", [
  * turns, and the stream and the abort of a turn also read the claim of the thread in Postgres, thus they reach a
  * turn that a recovery runs after a restart.
  */
-export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts = DEFAULT_CONVERSATION_ROUTE_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function conversationRoutes<P>(boot: ServerBoot<ConversationRuntime<P>>, opts: ConversationRouteOpts<P>): Hono<ServerEnv<ConversationRuntime<P>>> {
+    const routes = new Hono<ServerEnv<ConversationRuntime<P>>>();
     const runtime = requireRuntime(boot);
 
     routes.get("/:analysisId/threads", runtime, async (c) => {
@@ -491,7 +505,13 @@ export function conversationRoutes(boot: ServerBoot, opts: ConversationRouteOpts
  * id, and a silent wait longer than 10 s meets the idle timeout of `Bun.serve`. After the headers, the `: ping`
  * of the stream covers a silent model.
  */
-async function startChatTurn(c: Context<ServerEnv>, analysisId: string, threadId: string, message: string, opts: ConversationRouteOpts): Promise<Response> {
+async function startChatTurn<R extends Pick<ConversationRuntime, "chatTurns">>(
+    c: Context<ServerEnv<R>>,
+    analysisId: string,
+    threadId: string,
+    message: string,
+    opts: TurnOpts,
+): Promise<Response> {
     // No `await` between this test and the hold, thus a stop that starts after the test waits for this turn.
     if (newTurnsRefused())
         return apiError(c, "draining", "The Inflexa server is stopping and starts no new chat turn. Send the message again after it starts again.");
@@ -543,7 +563,7 @@ async function startChatTurn(c: Context<ServerEnv>, analysisId: string, threadId
 }
 
 /** The JSON refusal of a turn that ended before it opened. */
-function refusalOf(c: Context<ServerEnv>, outcome: TurnOutcome): Response {
+function refusalOf(c: Context, outcome: TurnOutcome): Response {
     switch (outcome.kind) {
         case "prepare_failed":
             return internalError(c, outcome.cause, "prepare the chat turn");
@@ -571,7 +591,7 @@ function refusalOf(c: Context<ServerEnv>, outcome: TurnOutcome): Response {
  * and start the sweep of the package adds that the turn queued. A failure of this tail goes to the log only,
  * because no client waits on a reply from it.
  */
-async function closeTurn(turnId: string, analysisId: string, outcome: TurnOutcome, queue: FrameQueue, opts: ConversationRouteOpts): Promise<void> {
+async function closeTurn(turnId: string, analysisId: string, outcome: TurnOutcome, queue: FrameQueue, opts: TurnOpts): Promise<void> {
     const end = await ResultAsync.fromPromise(endingOf(outcome, opts), (cause) => cause);
     end.match(
         ({ ending, frame }) => {
@@ -592,7 +612,7 @@ async function closeTurn(turnId: string, analysisId: string, outcome: TurnOutcom
 }
 
 /** The summary fields and the terminal frame of a turn that ran. Cortex sends `finish` for `done` and `aborted`, and `error` for `failed`. */
-async function endingOf(outcome: TurnOutcome, opts: ConversationRouteOpts): Promise<{ ending: TurnEnding; frame: ChatFrame }> {
+async function endingOf(outcome: TurnOutcome, opts: TurnOpts): Promise<{ ending: TurnEnding; frame: ChatFrame }> {
     switch (outcome.kind) {
         case "ok":
             return {
@@ -659,7 +679,7 @@ function finishFrame(outcome: Extract<TurnOutcome, { kind: "ok" | "filtered" | "
  * and a rate limit both reach the harness as a retryable provider error, and only the proxy can tell them
  * apart. The read has its own timeout, thus it delays the end of the turn for a bounded time.
  */
-async function failureOf(failed: { readonly reason: string; readonly code?: string }, opts: ConversationRouteOpts): Promise<TurnFailure> {
+async function failureOf(failed: { readonly reason: string; readonly code?: string }, opts: TurnOpts): Promise<TurnFailure> {
     const connection = opts.connection();
     // The turn workflow gives the scrubbed text of the failure and its code, and keeps the cause in its own log.
     const detailLines = [failed.reason];
@@ -766,11 +786,11 @@ function liveThreadOf(store: ThreadStore, analysisId: string, threadId: string):
     return store.getThread(threadId).map((thread) => (thread !== null && thread.analysisId === analysisId ? thread : null));
 }
 
-function threadNotFound(c: Context<ServerEnv>): Response {
+function threadNotFound(c: Context): Response {
     return apiError(c, "not_found", "Thread not found.");
 }
 
-function turnNotFound(c: Context<ServerEnv>): Response {
+function turnNotFound(c: Context): Response {
     return apiError(c, "not_found", "Turn not found. The server keeps the newest ended turns only.");
 }
 
@@ -856,12 +876,7 @@ export async function workspaceRoot(analysisId: string): Promise<WorkspaceRootLo
  * Remove the report page folder of each erased thread, and report what is still on disk. The removal is
  * forced, thus a thread that owns no page costs one call and reports success.
  */
-async function reclaimReportPages(
-    analysisId: string,
-    erased: readonly string[],
-    files: "keep" | "remove",
-    opts: ConversationRouteOpts,
-): Promise<ReportPageFate> {
+async function reclaimReportPages(analysisId: string, erased: readonly string[], files: "keep" | "remove", opts: TurnOpts): Promise<ReportPageFate> {
     if (files === "keep") return { kind: "kept" };
     const lookup = await opts.workspaceRoot(analysisId);
     if (lookup.kind === "absent") return { kind: "removed" };

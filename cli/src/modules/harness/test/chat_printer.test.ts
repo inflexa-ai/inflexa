@@ -20,18 +20,17 @@ describe("isSubAgentEvent", () => {
     });
 
     test("a part frame with no source is never sub-agent", () => {
-        expect(isSubAgentEvent({ type: "data-run-card", runId: "r1", title: "t", stepCount: 1 } as ChatFrame)).toBe(false);
+        const partFrame: ChatFrame = { type: "data-run-card", id: "p1", runId: "r1", planId: "pln-1", title: "t", stepCount: 1 };
+        expect(isSubAgentEvent(partFrame)).toBe(false);
     });
 
     test("a malformed source lacking a callPath array falls through as top-level", () => {
         // `callPath` arrives over the wire; a non-array must be treated as top-level rather than
         // throwing (the Array.isArray guard).
-        const malformed = {
-            type: "tool-started",
-            source: { agentId: "x", callPath: undefined },
-            toolUseId: "t1",
-            name: "grep",
-        } as unknown as ChatFrame;
+        const source: EventSource = { agentId: "x", callPath: ["x"] };
+        // The type forbids a source with no `callPath`, thus the value is forced at runtime.
+        Object.assign(source, { callPath: undefined });
+        const malformed: ChatFrame = { type: "tool-started", source, toolUseId: "t1", name: "grep" };
         expect(isSubAgentEvent(malformed)).toBe(false);
     });
 });

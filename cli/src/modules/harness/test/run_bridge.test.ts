@@ -94,7 +94,8 @@ describe("run observation bridge", () => {
 
     test("the run and provenance families are independent", () => {
         const provEvents: RunProvenanceEvent[] = [];
-        const emitProv = createRunProvenanceEmitter("anthropic/claude" as ProvModelId);
+        const model: ProvModelId = "anthropic/claude";
+        const emitProv = createRunProvenanceEmitter(model);
 
         emitRunObservation(observation({ status: "completed" }));
         // Only `run.observed` — observing a run emits no provenance whatsoever.

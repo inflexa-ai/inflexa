@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { makeLocalAuth } from "@inflexa-ai/harness";
 import { PAGE_ASSETS } from "@inflexa-ai/harness/report-render/assets.js";
 import type { Hono } from "hono";
+import { z } from "zod";
 
 import type { ApiError } from "../../../api/common.ts";
 import type { ReportSessionAccess } from "../../../api/conversation.ts";
@@ -17,6 +18,7 @@ import { writeMarker } from "../../../modules/anchor/marker.ts";
 import { signIn } from "../../../test_support/browser_session.ts";
 import { fakeClient } from "../../../test_support/fake_client.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { idleBoot, idleLifecycle } from "../../../test_support/server.ts";
 import { buildApp } from "../../app.ts";
 import type { ServerEnv } from "../../http.ts";
@@ -27,6 +29,8 @@ const AUTH = { Authorization: `Bearer ${TOKEN}` };
 const UNAUTHORIZED_MESSAGE = "The link of this report page is not valid, or it expired. Open the report page again from Inflexa.";
 const FONT = PAGE_ASSETS.find((asset) => asset.file.endsWith(".woff2"))!.file;
 const SANDBOX = "sandbox allow-scripts allow-downloads";
+
+const accessBody = z.object({ url: z.string(), expiresAt: z.string() });
 
 let now = 1_000_000;
 let grants: PageGrantStore;
@@ -83,8 +87,7 @@ function page(path: string, init?: RequestInit): Promise<Response> | Response {
 
 async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
     expect(response.status).toBe(status);
-    // The error body of the app is an `ApiError`.
-    const body = (await response.json()) as ApiError;
+    const body = await errorBody(response);
     expect(body.error).toBe(code);
     return body;
 }
@@ -382,7 +385,7 @@ describe("POST /api/v1/analyses/:analysisId/report-sessions/:threadId/access", (
     test("a client gets the URL of the page and the expiry", async () => {
         const response = await access();
         expect(response.status).toBe(200);
-        const body = (await response.json()) as ReportSessionAccess;
+        const body = accessBody.parse(await jsonBody(response));
         expect(body.url).toStartWith("http://127.0.0.1:");
         expect(new URL(body.url).pathname).toBe("/report-sessions/a1/t1/index.html");
         expect(new URL(body.url).searchParams.get("t")).toMatch(/^[0-9a-f]{64}$/);
@@ -395,11 +398,11 @@ describe("POST /api/v1/analyses/:analysisId/report-sessions/:threadId/access", (
             { method: "POST", headers: { ...AUTH, Host: "127.0.0.1:9123" } },
             { port: 9123 },
         );
-        expect(((await response.json()) as ReportSessionAccess).url).toStartWith("http://127.0.0.1:9123/report-sessions/a1/t1/index.html?t=");
+        expect(accessBody.parse(await jsonBody(response)).url).toStartWith("http://127.0.0.1:9123/report-sessions/a1/t1/index.html?t=");
     });
 
     test("the URL of the answer opens the page through the page route, and the cookie opens an asset", async () => {
-        const body = (await (await access()).json()) as ReportSessionAccess;
+        const body = accessBody.parse(await jsonBody(access()));
         const url = new URL(body.url);
         const entry = await app.request(`${url.pathname}${url.search}`);
         expect(entry.status).toBe(200);

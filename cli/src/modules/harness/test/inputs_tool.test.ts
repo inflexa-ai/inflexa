@@ -4,7 +4,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { DETAIL_MAX_LENGTH, type AgentSession, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
+import { DETAIL_MAX_LENGTH, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 
 import { Bus } from "../../../lib/bus.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../../lib/lock.ts";
@@ -14,6 +14,7 @@ import { err } from "neverthrow";
 
 import { insertAnalysisInput } from "../../../db/primary_mutation.ts";
 import { listAnalysisInputs } from "../../../db/primary_query.ts";
+import { buildAgentSession } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { createAnalysis, removeInput } from "../../analysis/analysis.ts";
 import { createManageInputsTool } from "../inputs_tool.ts";
@@ -21,8 +22,7 @@ import { createManageInputsTool } from "../inputs_tool.ts";
 /** A minimal `ToolContext` carrying the analysis scope the tool reads. */
 function ctxFor(analysisId: string): ToolContext {
     return {
-        // The tool reads only `session.scope`; a cast avoids constructing the full value object.
-        session: { scope: { kind: "analysis", analysisId } } as unknown as AgentSession,
+        session: buildAgentSession({ scope: { kind: "analysis", analysisId } }),
         invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},

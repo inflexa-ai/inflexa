@@ -3,8 +3,6 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Subprocess } from "bun";
-
 import type { ServerDiscovery } from "../../api/server.ts";
 import { buildProgram } from "../../cli/index.ts";
 import { readServerDiscovery } from "../../client/api.ts";
@@ -112,7 +110,7 @@ describe("spawnDetachedServer", () => {
     test("the detached child gets the file pool of the server in its environment, and the child flag", () => {
         const calls: DetachedServerSpawnOptions[] = [];
         // The spawn reads only `unref` of the child, thus a stub with that one method stands in for the process.
-        const child = { unref: () => undefined } as unknown as Subprocess;
+        const child = { unref: () => undefined };
         const spawned = spawnDetachedServer(join(tempDir(), "logs", "server.dev.log"), {
             spawn: (options) => {
                 calls.push(options);

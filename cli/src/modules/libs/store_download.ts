@@ -37,6 +37,7 @@ import { createZstdDecompress } from "node:zlib";
 
 import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
+import { z } from "zod";
 
 import { recordTransferProgress, recordTransferResolve, settleTransfer, startTransferRun } from "../../db/primary_mutation.ts";
 import {
@@ -51,6 +52,7 @@ import {
 } from "../../lib/download.ts";
 import { CATALOG_TRANSFER_FLAG } from "../../lib/child_flags.ts";
 import { sha256File } from "../../lib/hash.ts";
+import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { acquireInstanceLock, releaseInstanceLock, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
 import type { TransferPhase } from "../../types/store.ts";
 /**
@@ -127,6 +129,16 @@ export type StoreLayer = {
     readonly digest: string;
     readonly size: number;
 };
+
+/**
+ * One layer descriptor, as a manifest or a receipt carries it. The size accepts every `number` that JSON
+ * can read, and `1e999` reads as `Infinity`, which `z.number()` alone would reject.
+ */
+const storeLayerSchema = z.object({
+    mediaType: z.string(),
+    digest: z.string(),
+    size: z.union([z.number(), z.literal(Infinity), z.literal(-Infinity)]),
+});
 
 /** The receipt the store download writes last, pinning the manifest it activated. */
 export type StoreReceipt = {
@@ -347,7 +359,8 @@ async function fetchAnonymousToken(doFetch: FetchLike): Promise<Result<string, S
         return err({ type: "token_failed", message: `The ${STORE_REGISTRY} token response was not valid JSON.`, cause });
     }
     // GHCR answers with `{ token }` for an anonymous pull; some registries name it `access_token`.
-    const record = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+    const parsedBody = unknownRecordSchema.safeParse(body);
+    const record = parsedBody.success ? parsedBody.data : {};
     const token = typeof record.token === "string" ? record.token : typeof record.access_token === "string" ? record.access_token : undefined;
     if (token === undefined || token === "") return err({ type: "token_failed", message: `The ${STORE_REGISTRY} token response carried no token.` });
     return ok(token);
@@ -362,19 +375,21 @@ type ResolvedStoreManifest = {
 /** Read the layer descriptors from a parsed manifest, refusing any unexpected shape or media type. */
 function readManifestLayers(manifest: unknown): Result<readonly StoreLayer[], StoreDownloadError> {
     if (typeof manifest !== "object" || manifest === null) return err({ type: "manifest_failed", message: "The manifest was not an object." });
-    const layersRaw = (manifest as Record<string, unknown>).layers;
+    const manifestRecord = unknownRecordSchema.safeParse(manifest);
+    const layersRaw = manifestRecord.success ? manifestRecord.data.layers : undefined;
     if (!Array.isArray(layersRaw) || layersRaw.length === 0) return err({ type: "manifest_failed", message: "The manifest declared no layers." });
     const layers: StoreLayer[] = [];
     for (const entry of layersRaw) {
         if (typeof entry !== "object" || entry === null) return err({ type: "manifest_failed", message: "A manifest layer was not an object." });
-        const layer = entry as Record<string, unknown>;
-        if (typeof layer.mediaType !== "string" || typeof layer.digest !== "string" || typeof layer.size !== "number") {
+        const parsed = storeLayerSchema.safeParse(entry);
+        if (!parsed.success) {
             return err({ type: "manifest_failed", message: "A manifest layer lacked a media type, a digest, or a size." });
         }
+        const layer = parsed.data;
         if (layer.mediaType !== TRACK_MEDIA_TYPE && layer.mediaType !== BASE_MEDIA_TYPE) {
             return err({ type: "manifest_failed", message: `A manifest layer carried an unexpected media type: ${layer.mediaType}.` });
         }
-        layers.push({ mediaType: layer.mediaType, digest: layer.digest, size: layer.size });
+        layers.push(layer);
     }
     return ok(layers);
 }
@@ -1011,30 +1026,19 @@ async function stageAndMerge(
     }
 }
 
+const storeReceiptSchema = z.object({
+    version: z.literal(RECEIPT_VERSION),
+    manifestDigest: z.string(),
+    reference: z.string(),
+    arch: z.enum(["amd64", "arm64"]),
+    activatedAt: z.string(),
+    layers: z.array(storeLayerSchema),
+});
+
 /** Validate a parsed receipt, returning `undefined` for any shape the reader cannot trust. */
 function parseStoreReceipt(raw: unknown): StoreReceipt | undefined {
-    if (typeof raw !== "object" || raw === null) return undefined;
-    const record = raw as Record<string, unknown>;
-    if (record.version !== RECEIPT_VERSION) return undefined;
-    if (typeof record.manifestDigest !== "string" || typeof record.reference !== "string") return undefined;
-    if (record.arch !== "amd64" && record.arch !== "arm64") return undefined;
-    if (typeof record.activatedAt !== "string") return undefined;
-    if (!Array.isArray(record.layers)) return undefined;
-    const layers: StoreLayer[] = [];
-    for (const entry of record.layers) {
-        if (typeof entry !== "object" || entry === null) return undefined;
-        const layer = entry as Record<string, unknown>;
-        if (typeof layer.mediaType !== "string" || typeof layer.digest !== "string" || typeof layer.size !== "number") return undefined;
-        layers.push({ mediaType: layer.mediaType, digest: layer.digest, size: layer.size });
-    }
-    return {
-        version: RECEIPT_VERSION,
-        manifestDigest: record.manifestDigest,
-        reference: record.reference,
-        arch: record.arch,
-        activatedAt: record.activatedAt,
-        layers,
-    };
+    const parsed = storeReceiptSchema.safeParse(raw);
+    return parsed.success ? parsed.data : undefined;
 }
 
 /** Read the active receipt. `exists` without a `receipt` marks a present-but-invalid file. */
@@ -1296,8 +1300,8 @@ const PROGRESS_WRITE_INTERVAL_MS = 500;
 function isDiskFull(cause: unknown): boolean {
     let current = cause;
     for (let depth = 0; depth < 5 && current !== null && current !== undefined; depth += 1) {
-        if (typeof current === "object" && "code" in current && (current as { code?: unknown }).code === "ENOSPC") return true;
-        current = typeof current === "object" && "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+        if (typeof current === "object" && "code" in current && current.code === "ENOSPC") return true;
+        current = typeof current === "object" && "cause" in current ? current.cause : undefined;
     }
     return false;
 }

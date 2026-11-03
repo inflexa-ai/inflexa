@@ -1,19 +1,40 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { err, ok } from "neverthrow";
+import { z } from "zod";
 import type { ChatTurnSession, Work, WorkSurface } from "@inflexa-ai/harness";
 
-import type { HeldWork, PausedWorkList, ResumedWork } from "../../../api/paused_work.ts";
 import type { ServerBootState } from "../../../api/server.ts";
 import type { DbError } from "../../../db/errors.ts";
-import type { HarnessRuntime } from "../../../modules/harness/runtime.ts";
+import { jsonBody } from "../../../test_support/response_body.ts";
 import { idleBoot } from "../../../test_support/server.ts";
 import type { ServerBoot } from "../../boot.ts";
 import { DEFAULT_PAUSED_WORK_ROUTE_OPTS, pausedWorkCollectionRoutes, pausedWorkRoutes, type PausedWorkRouteOpts } from "../paused_work.ts";
 
 // The routes alone, mounted under the path of the app, with no bearer check: `app.test.ts` covers that. No cli test
-// reaches Postgres, thus the paused work of the runtime is a fake over items in memory. Each `as` cast of a body
-// below reads JSON that the route under test builds from the same `src/api/` type.
+// reaches Postgres, thus the paused work of the runtime is a fake over items in memory. A test that computes on a
+// body parses the fields that it reads. A key beyond them stays on the parsed value.
+
+const pausedWorkBody = z.looseObject({
+    total: z.number(),
+    hasMore: z.boolean(),
+    pausedWork: z.array(
+        z.looseObject({
+            workId: z.string(),
+            analysisId: z.string(),
+            remedy: z.string().optional(),
+            waiting: z.array(
+                z.looseObject({
+                    state: z.string(),
+                    cause: z.looseObject({ kind: z.string() }),
+                    attempt: z.number(),
+                    pausedAt: z.string(),
+                    waiter: z.looseObject({ kind: z.string() }).optional(),
+                }),
+            ),
+        }),
+    ),
+});
 
 const A = "analysis-1";
 const PAUSED_AT = "2026-10-27T10:00:00.000Z";
@@ -67,10 +88,11 @@ function fakePausedWork(
     };
 }
 
+type Handle = { readonly work: WorkSurface };
+
 /** A boot whose runtime is ready. The routes read only the paused work of the runtime. */
-function readyBoot(work: WorkSurface): ServerBoot {
-    // The cast is sound for the reason above: no route under test reads another field of the runtime.
-    const runtime = { work } as unknown as HarnessRuntime;
+function readyBoot(work: WorkSurface): ServerBoot<Handle> {
+    const runtime: Handle = { work };
     const state: ServerBootState = {
         version: "0.0.0-test",
         apiVersion: 1,
@@ -82,7 +104,7 @@ function readyBoot(work: WorkSurface): ServerBoot {
 }
 
 /** The routes under the mount path of the app, thus the `analysisId` parameter resolves as it does in the app. */
-function appWith(boot: ServerBoot, over: Partial<PausedWorkRouteOpts> = {}): { request: (path: string, init?: RequestInit) => Promise<Response> } {
+function appWith(boot: ServerBoot<Handle>, over: Partial<PausedWorkRouteOpts> = {}): { request: (path: string, init?: RequestInit) => Promise<Response> } {
     const app = new Hono();
     app.route(
         "/api/v1/analyses/:analysisId/paused-work",
@@ -92,7 +114,7 @@ function appWith(boot: ServerBoot, over: Partial<PausedWorkRouteOpts> = {}): { r
 }
 
 /** The routes of the paused work of each analysis, under their mount path of the app. */
-function collectionWith(boot: ServerBoot, over: Partial<PausedWorkRouteOpts> = {}): { request: (path?: string) => Promise<Response> } {
+function collectionWith(boot: ServerBoot<Handle>, over: Partial<PausedWorkRouteOpts> = {}): { request: (path?: string) => Promise<Response> } {
     const app = new Hono();
     app.route(
         "/api/v1/paused-work",
@@ -113,7 +135,7 @@ describe("GET {A}/paused-work", () => {
         const response = await appWith(readyBoot(paused)).request("");
 
         expect(response.status).toBe(200);
-        const body = (await response.json()) as PausedWorkList;
+        const body = pausedWorkBody.parse(await jsonBody(response));
         expect(paused.listed).toEqual([A]);
         expect(body.total).toBe(2);
         expect(body.pausedWork.map((work) => work.workId)).toEqual(["turn-1", "run-1"]);
@@ -130,7 +152,7 @@ describe("GET {A}/paused-work", () => {
         const response = await appWith(readyBoot(fakePausedWork([CREDENTIAL_TURN])), { connection: () => ({ provider: "openai", mode: "direct" }) }).request(
             "",
         );
-        const body = (await response.json()) as PausedWorkList;
+        const body = pausedWorkBody.parse(await jsonBody(response));
         expect(body.pausedWork[0]?.remedy).toContain("INFLEXA_MODEL_API_KEY");
     });
 
@@ -159,7 +181,7 @@ describe("GET {A}/paused-work", () => {
             ],
         };
         const response = await appWith(readyBoot(fakePausedWork([run]))).request("");
-        const body = (await response.json()) as PausedWorkList;
+        const body = pausedWorkBody.parse(await jsonBody(response));
         expect(body.pausedWork[0]?.waiting.map((wait) => [wait.waiter, wait.pausedAt])).toEqual([
             [{ kind: "step", stepId: "s1" }, "2026-10-27T10:00:00.000Z"],
             [{ kind: "step", stepId: "s2" }, "2026-10-27T10:02:00.000Z"],
@@ -168,7 +190,7 @@ describe("GET {A}/paused-work", () => {
 
     test("a waiting workflow from before the harness recorded the waiter has no `waiter` field, and its item stays in the list", async () => {
         const response = await appWith(readyBoot(fakePausedWork([CREDENTIAL_TURN]))).request("");
-        const body = (await response.json()) as PausedWorkList;
+        const body = pausedWorkBody.parse(await jsonBody(response));
         expect(body.total).toBe(1);
         expect(body.pausedWork[0]?.waiting[0]).not.toHaveProperty("waiter");
     });
@@ -209,7 +231,7 @@ describe("GET /api/v1/paused-work", () => {
         const response = await collectionWith(readyBoot(paused), { analysisNames: namesOf([A, "analysis-2"]) }).request();
 
         expect(response.status).toBe(200);
-        const body = (await response.json()) as PausedWorkList;
+        const body = pausedWorkBody.parse(await jsonBody(response));
         expect(paused.listed).toEqual([undefined]);
         expect(body.total).toBe(2);
         expect(body.pausedWork.map((work) => [work.workId, work.analysisId])).toEqual([
@@ -239,19 +261,19 @@ describe("GET /api/v1/paused-work", () => {
         const paused = fakePausedWork([orphan, CREDENTIAL_TURN, STEP_RUN]);
         const routes = collectionWith(readyBoot(paused), { analysisNames: namesOf([A, "analysis-2"]) });
 
-        const first = (await (await routes.request("?perPage=1")).json()) as PausedWorkList;
+        const first = pausedWorkBody.parse(await jsonBody(routes.request("?perPage=1")));
         expect(first.pausedWork.map((work) => work.workId)).toEqual(["turn-1"]);
         expect(first.total).toBe(2);
         expect(first.hasMore).toBe(true);
 
-        const second = (await (await routes.request("?perPage=1&page=1")).json()) as PausedWorkList;
+        const second = pausedWorkBody.parse(await jsonBody(routes.request("?perPage=1&page=1")));
         expect(second.pausedWork.map((work) => work.workId)).toEqual(["run-2"]);
         expect(second.hasMore).toBe(false);
     });
 
     test("adds the remedy to an item with the cause `credential` and to no other", async () => {
         const response = await collectionWith(readyBoot(fakePausedWork([CREDENTIAL_TURN, STEP_RUN])), { analysisNames: namesOf([A, "analysis-2"]) }).request();
-        const body = (await response.json()) as PausedWorkList;
+        const body = pausedWorkBody.parse(await jsonBody(response));
         expect(body.pausedWork[0]?.remedy).toContain("run `inflexa up` in a terminal to sign in again");
         expect(body.pausedWork[1]?.remedy).toBeUndefined();
     });
@@ -303,7 +325,7 @@ describe("POST {A}/paused-work/:workId/resume", () => {
         const response = await appWith(readyBoot(paused)).request("/run-1/resume", { method: "POST" });
 
         expect(response.status).toBe(200);
-        expect((await response.json()) as ResumedWork).toEqual({ workId: "run-1", workflows: 2 });
+        expect(await jsonBody(response)).toEqual({ workId: "run-1", workflows: 2 });
         expect(paused.resumed).toHaveLength(1);
         expect(paused.resumed[0]?.workId).toBe("run-1");
         expect(paused.resumed[0]?.session.scope).toEqual({ kind: "analysis", analysisId: A });
@@ -334,7 +356,7 @@ describe("POST {A}/paused-work/:workId/hold", () => {
         const response = await appWith(readyBoot(paused)).request("/run-1/hold", { method: "POST" });
 
         expect(response.status).toBe(200);
-        expect((await response.json()) as HeldWork).toEqual({ workId: "run-1", workflows: 1 });
+        expect(await jsonBody(response)).toEqual({ workId: "run-1", workflows: 1 });
         expect(paused.held).toEqual(["run-1"]);
     });
 

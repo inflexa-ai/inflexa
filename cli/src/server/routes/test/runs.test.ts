@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { z } from "zod";
 import {
     createRunEventStream,
     UnknownRunError,
@@ -13,8 +14,9 @@ import {
     type ApprovePlanRefusal,
     type CortexRunRow,
     type DataProfileStatus,
-    type Pool,
+    type DbError,
     type PlanApproval,
+    type Pool,
     type PlanPage,
     type PlanPageEntry,
     type PlanRecord,
@@ -22,23 +24,11 @@ import {
     type RunStepCounts,
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 
-import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/index.js";
+import { DATA_PROFILE_RUN_LITERAL, type ChatPart } from "@inflexa-ai/harness/contracts/index.js";
 
-import type {
-    CancelRunResult,
-    ChatContext,
-    DataProfileView,
-    FarmHealResult,
-    PlanApprovalResult,
-    PlanList,
-    PlanView,
-    ProfileRerunResult,
-    RunDetail,
-    RunList,
-    RunSynthesisView,
-    SandboxReadiness,
-} from "../../../api/runs.ts";
+import type { CancelRunResult, SandboxReadiness } from "../../../api/runs.ts";
 import type { ServerBootState } from "../../../api/server.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor, upsertLlmUsage } from "../../../db/primary_mutation.ts";
 import { db } from "../../../db/primary.ts";
@@ -46,9 +36,9 @@ import { listAnalysisPage, listSeenRunIds } from "../../../db/primary_query.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../../modules/analysis/output.ts";
 import { writeMarker } from "../../../modules/anchor/marker.ts";
-import type { HarnessRuntime } from "../../../modules/harness/runtime.ts";
 import type { StampedEvent } from "../../../types/events.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { jsonBody } from "../../../test_support/response_body.ts";
 import type { ServerBoot } from "../../boot.ts";
 import type { ServerEnv } from "../../http.ts";
 import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, watchInputDrift } from "../../profile_queue.ts";
@@ -57,16 +47,50 @@ import { DEFAULT_RUN_ROUTES_OPTS, runRoutes, type RunRoutesOpts } from "../runs.
 import { anything, objectContaining } from "../../../test_support/matchers.ts";
 
 // The routes under the mount path of the app, with no bearer check and no analysis guard: `app.test.ts` covers
-// those. Each harness read is a fake, because each needs Postgres or DBOS. Each `as` cast of a body below reads
-// JSON that the route under test builds from the same `src/api/` type.
+// those. Each harness read is a fake, because each needs Postgres or DBOS. A test reads a body as `unknown`.
+// It asserts the body with `toEqual` or `toHaveProperty`, or it parses a schema below that names only the
+// fields that the test computes on. The schemas are loose, thus each other field stays on the parsed value.
+
+const maybe = z.unknown().optional();
+const runListBody = z.looseObject({
+    runs: z.array(
+        z.looseObject({
+            runId: z.string(),
+            planId: maybe,
+            planTitle: maybe,
+            usage: maybe,
+            artifactCount: maybe,
+            doneSteps: maybe,
+            runningSteps: maybe,
+            totalSteps: maybe,
+        }),
+    ),
+});
+const runDetailBody = z.looseObject({
+    steps: z.array(z.looseObject({ stepId: z.string(), status: z.string() })),
+    planId: maybe,
+    plan: maybe,
+    artifactCount: maybe,
+    doneSteps: maybe,
+    runningSteps: maybe,
+    totalSteps: maybe,
+});
+const planViewBody = z.looseObject({
+    plan: z.looseObject({ parentPlanId: maybe }).nullable(),
+    parentPlanId: maybe,
+    runIds: z.array(z.string()),
+    hasMoreRuns: maybe,
+});
+const planListBody = z.looseObject({ plans: z.array(z.looseObject({ newestRunId: maybe, title: maybe })) });
 
 const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
 // The routes only pass the pool to the injected reads, and the stream test passes it to the harness reader,
 // whose ledger reads find no rows in this pool. Thus a stand-in object is enough.
-const pool = { query: () => Promise.resolve({ rows: [], rowCount: 0 }) } as unknown as Pool;
-const runtime = { pool } as unknown as HarnessRuntime;
+const pool: Querier = { query: () => Promise.resolve({ rows: [], rowCount: 0 }) };
+const runtime = { pool };
+type Runtime = typeof runtime;
 
-const readyBoot: ServerBoot = {
+const readyBoot: ServerBoot<Runtime> = {
     state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
     runtime: () => runtime,
     start: async () => undefined,
@@ -78,7 +102,7 @@ function failing(name: string): () => never {
     };
 }
 
-const UNEXPECTED: RunRoutesOpts = {
+const UNEXPECTED: RunRoutesOpts<Runtime> = {
     listRuns: failing("listRuns"),
     listThreadRuns: failing("listThreadRuns"),
     listActiveRuns: failing("listActiveRuns"),
@@ -103,8 +127,8 @@ const UNEXPECTED: RunRoutesOpts = {
 };
 
 /** The routes over a sandbox that can start, unless `opts` gives a refusal. */
-function appWith(opts: Partial<RunRoutesOpts>, boot: ServerBoot = readyBoot): Hono<ServerEnv> {
-    return new Hono<ServerEnv>().route(
+function appWith(opts: Partial<RunRoutesOpts<Runtime>>, boot: ServerBoot<Runtime> = readyBoot): Hono<ServerEnv<Runtime>> {
+    return new Hono<ServerEnv<Runtime>>().route(
         "/api/v1/analyses/:analysisId",
         runRoutes(boot, {
             ...UNEXPECTED,
@@ -249,7 +273,7 @@ describe("GET {A}/runs", () => {
                 return okAsync({ title: "  Liver DE  " });
             },
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs`)));
 
         expect(planLoads).toEqual(["p1"]);
         expect(list).toMatchObject({ total: 3, page: 0, perPage: 100, hasMore: false });
@@ -265,7 +289,7 @@ describe("GET {A}/runs", () => {
         const analysisId = seedAnalysis();
         const rows = [runRow({ runId: "r1", analysisId, planId: "p1" }), runRow({ runId: "r2", analysisId })];
         const app = appWith({ listRuns: () => okAsync({ rows, total: 2 }), loadPlan: () => okAsync(null) });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs`)));
 
         expect(list.runs.map((run) => [run.runId, run.planId])).toEqual([
             ["r1", "p1"],
@@ -283,7 +307,7 @@ describe("GET {A}/runs", () => {
                 return okAsync([{ runId: "r1", count: 3 }]);
             },
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs`)));
 
         expect(list.runs.map((run) => [run.runId, run.artifactCount])).toEqual([
             ["r1", 3],
@@ -303,7 +327,7 @@ describe("GET {A}/runs", () => {
                 return okAsync<RunArtifactCount[], never>([]);
             },
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?perPage=${perPage}`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?perPage=${perPage}`)));
 
         expect(list.runs).toHaveLength(perPage);
         expect(reads).toBe(1);
@@ -316,7 +340,7 @@ describe("GET {A}/runs", () => {
             countArtifacts: () => errAsync({ type: "query_failed", op: "test", cause: "down" }),
         });
         const response = await app.request(`/api/v1/analyses/${analysisId}/runs`);
-        const list = (await response.json()) as RunList;
+        const list = runListBody.parse(await jsonBody(response));
 
         expect(response.status).toBe(200);
         expect(list.runs).toHaveLength(1);
@@ -334,7 +358,7 @@ describe("GET {A}/runs", () => {
                 return okAsync([{ runId: "r1", doneSteps: 2, runningSteps: 1, totalSteps: 5 }]);
             },
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs`)));
 
         expect(list.runs.map((run) => [run.runId, run.doneSteps, run.runningSteps, run.totalSteps])).toEqual([
             ["r1", 2, 1, 5],
@@ -354,7 +378,7 @@ describe("GET {A}/runs", () => {
                 return okAsync<RunStepCounts[], never>([]);
             },
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?perPage=${perPage}`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?perPage=${perPage}`)));
 
         expect(list.runs).toHaveLength(perPage);
         expect(reads).toBe(1);
@@ -367,7 +391,7 @@ describe("GET {A}/runs", () => {
             countSteps: () => errAsync({ type: "query_failed", op: "test", cause: "down" }),
         });
         const response = await app.request(`/api/v1/analyses/${analysisId}/runs`);
-        const list = (await response.json()) as RunList;
+        const list = runListBody.parse(await jsonBody(response));
 
         expect(response.status).toBe(200);
         expect(list.runs).toHaveLength(1);
@@ -378,9 +402,9 @@ describe("GET {A}/runs", () => {
         const analysisId = seedAnalysis();
         const app = appWith({
             listRuns: () => okAsync({ rows: [runRow({ runId: "r1", analysisId, planId: "p1" })], total: 1 }),
-            loadPlan: () => errAsync({ type: "query_failed", cause: new Error("down") } as never),
+            loadPlan: () => errAsync({ type: "query_failed", op: "test", cause: new Error("down") }),
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs`)));
         expect(list.runs.map((run) => run.runId)).toEqual(["r1"]);
         expect(list.runs[0]?.planTitle).toBeUndefined();
     });
@@ -389,7 +413,7 @@ describe("GET {A}/runs", () => {
         const analysisId = seedAnalysis();
         const active = [runRow({ runId: "a1", analysisId, status: "running" }), runRow({ runId: "a2", analysisId, status: "running" })];
         const app = appWith({ listActiveRuns: () => okAsync(active), loadPlan: () => okAsync(null) });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?active=true&perPage=1&page=1`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?active=true&perPage=1&page=1`)));
         expect(list.runs.map((run) => run.runId)).toEqual(["a2"]);
         expect(list).toMatchObject({ total: 2, page: 1, perPage: 1, hasMore: false });
     });
@@ -405,7 +429,7 @@ describe("GET {A}/runs", () => {
             },
             loadPlan: () => okAsync(null),
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?q=Volcano%2050%25_&perPage=100`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?q=Volcano%2050%25_&perPage=100`)));
 
         expect(reads).toEqual([{ q: "Volcano 50%_", limit: 100, offset: 0 }]);
         expect(list.runs).toHaveLength(100);
@@ -422,11 +446,11 @@ describe("GET {A}/runs", () => {
             },
             loadPlan: () => okAsync(null),
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?active=true&q=volcano`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?active=true&q=volcano`)));
 
         expect(reads).toEqual([{ q: "volcano" }]);
         expect(list.runs.map((run) => run.runId)).toEqual(["a1"]);
-        expect(list.total).toBe(1);
+        expect(list).toHaveProperty("total", 1);
     });
 
     test("`q` with `threadId` reaches the thread read, and `total` stays a lower bound", async () => {
@@ -439,7 +463,7 @@ describe("GET {A}/runs", () => {
             },
             loadPlan: () => okAsync(null),
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?threadId=th&q=volcano&perPage=1`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?threadId=th&q=volcano&perPage=1`)));
 
         expect(reads).toEqual([{ threadId: "th", q: "volcano", limit: 2, offset: 0 }]);
         expect(list.runs.map((run) => run.runId)).toEqual(["t1"]);
@@ -456,11 +480,11 @@ describe("GET {A}/runs", () => {
             },
             loadPlan: () => okAsync(null),
         });
-        const list = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?active=true&threadId=t1&q=volcano`)).json()) as RunList;
+        const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?active=true&threadId=t1&q=volcano`)));
 
         expect(reads).toEqual([{ q: "volcano" }]);
         expect(list.runs.map((run) => run.runId)).toEqual(["r1"]);
-        expect(list.total).toBe(1);
+        expect(list).toHaveProperty("total", 1);
     });
 
     test("an empty `q` gives no `q` to the read of any branch", async () => {
@@ -502,21 +526,21 @@ describe("GET {A}/runs", () => {
                 return okAsync(threadRuns.slice(page.offset, page.offset + page.limit));
             },
         });
-        const first = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?threadId=th&perPage=2`)).json()) as RunList;
+        const first = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?threadId=th&perPage=2`)));
         expect(reads).toEqual([{ threadId: "th", limit: 3, offset: 0 }]);
         expect(first.runs.map((run) => run.runId)).toEqual(["t1", "t2"]);
         expect(first.hasMore).toBe(true);
 
-        const last = (await (await app.request(`/api/v1/analyses/${analysisId}/runs?threadId=th&perPage=2&page=1`)).json()) as RunList;
+        const last = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?threadId=th&perPage=2&page=1`)));
         expect(last.runs.map((run) => run.runId)).toEqual(["t3"]);
         expect(last).toMatchObject({ total: 3, hasMore: false });
     });
 
     test("500 `internal_error` when the ledger read fails", async () => {
-        const app = appWith({ listRuns: () => errAsync({ type: "query_failed", cause: new Error("down") } as never) });
+        const app = appWith({ listRuns: () => errAsync({ type: "query_failed", op: "test", cause: new Error("down") }) });
         const response = await app.request("/api/v1/analyses/x/runs");
         expect(response.status).toBe(500);
-        expect(await response.json()).toMatchObject({ error: "internal_error" });
+        expect(await jsonBody(response)).toMatchObject({ error: "internal_error" });
     });
 
     test("503 `unavailable` while the runtime boots", async () => {
@@ -524,7 +548,7 @@ describe("GET {A}/runs", () => {
         const app = appWith({}, { state: () => starting, runtime: () => null, start: async () => undefined });
         const response = await app.request("/api/v1/analyses/x/runs");
         expect(response.status).toBe(503);
-        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+        expect(await jsonBody(response)).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
     });
 });
 
@@ -539,7 +563,7 @@ describe("GET {A}/run/:runId", () => {
                 okAsync([stepRow({ runId: "r1", stepId: "T1S1" }), stepRow({ runId: "r1", stepId: "T1S2", status: "blocked", blockedReason: "no data" })]),
             loadPlan: () => okAsync({ title: "Plan", steps: [{ id: "T1S1", name: "Align reads" }, { id: "T1S2" }] }),
         });
-        const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+        const detail = runDetailBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/run/r1`)));
 
         expect(detail).toMatchObject({ runId: "r1", planTitle: "Plan", usage: { calls: 2, inputTokens: 10 }, unattributedUsage: { calls: 1, inputTokens: 3 } });
         expect<unknown>(detail.steps).toEqual([
@@ -561,7 +585,7 @@ describe("GET {A}/run/:runId", () => {
                 return okAsync([{ runId: "r1", count: 4 }]);
             },
         });
-        const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+        const detail = runDetailBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/run/r1`)));
 
         expect(detail.artifactCount).toBe(4);
         expect(reads).toEqual([["r1"]]);
@@ -580,14 +604,14 @@ describe("GET {A}/run/:runId", () => {
                 ]),
             countSteps: failing("countSteps"),
         });
-        const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+        const detail = runDetailBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/run/r1`)));
 
         expect([detail.doneSteps, detail.runningSteps, detail.totalSteps]).toEqual([1, 1, 4]);
         expect(detail.steps.map((step) => step.status)).toEqual(["completed", "running", "pending", "pending"]);
     });
 
     describe("the plan graph", () => {
-        function detailApp(analysisId: string, plan: () => ReturnType<RunRoutesOpts["loadPlan"]>, planLoads: string[] = []): Hono<ServerEnv> {
+        function detailApp(analysisId: string, plan: () => ReturnType<RunRoutesOpts<Runtime>["loadPlan"]>, planLoads: string[] = []): Hono<ServerEnv<Runtime>> {
             return appWith({
                 getRun: () => okAsync(runRow({ runId: "r1", analysisId, planId: "p1" })),
                 listSteps: () => okAsync([stepRow({ runId: "r1", stepId: "T1S1" }), stepRow({ runId: "r1", stepId: "T1S2" })]),
@@ -607,7 +631,7 @@ describe("GET {A}/run/:runId", () => {
                 ["T1S3", ["T1S2"]],
             ]);
             const app = detailApp(analysisId, () => okAsync(document), planLoads);
-            const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+            const detail = runDetailBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/run/r1`)));
 
             expect(detail.planId).toBe("p1");
             expect(detail.plan).toEqual({
@@ -633,7 +657,7 @@ describe("GET {A}/run/:runId", () => {
                     return okAsync(null);
                 },
             });
-            const detail = (await (await app.request(`/api/v1/analyses/${analysisId}/run/r1`)).json()) as RunDetail;
+            const detail = runDetailBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/run/r1`)));
 
             expect(detail.planId).toBeNull();
             expect(detail.plan).toBeNull();
@@ -645,17 +669,17 @@ describe("GET {A}/run/:runId", () => {
             const response = await detailApp(analysisId, () => okAsync(null)).request(`/api/v1/analyses/${analysisId}/run/r1`);
 
             expect(response.status).toBe(200);
-            expect(await response.json()).toMatchObject({ planId: "p1", plan: null });
+            expect(await jsonBody(response)).toMatchObject({ planId: "p1", plan: null });
         });
 
         test("is null with a 200 when the plan read fails", async () => {
             const analysisId = seedAnalysis();
-            const response = await detailApp(analysisId, () => errAsync({ type: "query_failed", cause: new Error("down") } as never)).request(
+            const response = await detailApp(analysisId, () => errAsync({ type: "query_failed", op: "test", cause: new Error("down") })).request(
                 `/api/v1/analyses/${analysisId}/run/r1`,
             );
 
             expect(response.status).toBe(200);
-            expect(await response.json()).toMatchObject({ planId: "p1", plan: null });
+            expect(await jsonBody(response)).toMatchObject({ planId: "p1", plan: null });
         });
 
         test("is null for a plan with a cycle, and for a document that is not a plan", async () => {
@@ -665,9 +689,9 @@ describe("GET {A}/run/:runId", () => {
                 ["T1S2", ["T1S1"]],
             ]);
             for (const document of [cycle, { title: "no steps" }]) {
-                const detail = (await (
-                    await detailApp(analysisId, () => okAsync(document)).request(`/api/v1/analyses/${analysisId}/run/r1`)
-                ).json()) as RunDetail;
+                const detail = runDetailBody.parse(
+                    await jsonBody(detailApp(analysisId, () => okAsync(document)).request(`/api/v1/analyses/${analysisId}/run/r1`)),
+                );
                 expect(detail.plan).toBeNull();
             }
         });
@@ -677,7 +701,7 @@ describe("GET {A}/run/:runId", () => {
         const foreign = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "other" })) });
         const response = await foreign.request("/api/v1/analyses/mine/run/r1");
         expect(response.status).toBe(404);
-        expect(await response.json()).toEqual({ error: "not_found", message: "This analysis has no run r1." });
+        expect(await jsonBody(response)).toEqual({ error: "not_found", message: "This analysis has no run r1." });
 
         const unknown = appWith({ getRun: () => okAsync(null) });
         expect((await unknown.request("/api/v1/analyses/mine/run/r1")).status).toBe(404);
@@ -687,7 +711,7 @@ describe("GET {A}/run/:runId", () => {
 describe("GET {A}/plans/:planId", () => {
     type Reads = { record: Array<[string, string]>; runIds: Array<[string, string, number]> };
 
-    function planApp(record: PlanRecord | null, runIds: string[], boot: ServerBoot = readyBoot): { app: Hono<ServerEnv>; reads: Reads } {
+    function planApp(record: PlanRecord | null, runIds: string[], boot: ServerBoot<Runtime> = readyBoot): { app: Hono<ServerEnv<Runtime>>; reads: Reads } {
         const reads: Reads = { record: [], runIds: [] };
         const app = appWith(
             {
@@ -705,8 +729,8 @@ describe("GET {A}/plans/:planId", () => {
         return { app, reads };
     }
 
-    async function planOf(app: Hono<ServerEnv>, planId = "pln-0000000a"): Promise<PlanView> {
-        return (await (await app.request(`/api/v1/analyses/a1/plans/${planId}`)).json()) as PlanView;
+    async function planOf(app: Hono<ServerEnv<Runtime>>, planId = "pln-0000000a"): Promise<z.infer<typeof planViewBody>> {
+        return planViewBody.parse(await jsonBody(app.request(`/api/v1/analyses/a1/plans/${planId}`)));
     }
 
     test("a revised plan names the newer plan, with the card and the runs, in two reads", async () => {
@@ -746,7 +770,13 @@ describe("GET {A}/plans/:planId", () => {
         const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
 
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ plan: null, parentPlanId: "pln-0000000z", supersededBy: "pln-0000000b", runIds: ["r1"], hasMoreRuns: false });
+        expect(await jsonBody(response)).toEqual({
+            plan: null,
+            parentPlanId: "pln-0000000z",
+            supersededBy: "pln-0000000b",
+            runIds: ["r1"],
+            hasMoreRuns: false,
+        });
     });
 
     test("404 `not_found` for an unknown plan and for a plan of a different analysis", async () => {
@@ -754,18 +784,18 @@ describe("GET {A}/plans/:planId", () => {
         const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
 
         expect(response.status).toBe(404);
-        expect(await response.json()).toEqual({ error: "not_found", message: "This analysis has no plan pln-0000000a." });
+        expect(await jsonBody(response)).toEqual({ error: "not_found", message: "This analysis has no plan pln-0000000a." });
     });
 
     test("500 `internal_error` when either read fails", async () => {
-        const down = errAsync({ type: "query_failed", cause: new Error("down") } as never);
+        const down = errAsync<never, DbError>({ type: "query_failed", op: "test", cause: new Error("down") });
         const recordFails = appWith({ loadPlanRecord: () => down, listPlanRunIds: () => okAsync([]) });
         const runsFail = appWith({ loadPlanRecord: () => okAsync(planRecord()), listPlanRunIds: () => down });
 
         for (const app of [recordFails, runsFail]) {
             const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
             expect(response.status).toBe(500);
-            expect(await response.json()).toMatchObject({ error: "internal_error" });
+            expect(await jsonBody(response)).toMatchObject({ error: "internal_error" });
         }
     });
 
@@ -775,7 +805,7 @@ describe("GET {A}/plans/:planId", () => {
         const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
 
         expect(response.status).toBe(503);
-        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+        expect(await jsonBody(response)).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
         expect(reads).toEqual({ record: [], runIds: [] });
     });
 });
@@ -796,7 +826,7 @@ describe("GET {A}/plans", () => {
     }
 
     /** The routes over a plan read that records its arguments and gives `page`. */
-    function planList(page: PlanPage, boot: ServerBoot = readyBoot): { app: Hono<ServerEnv>; reads: Read[] } {
+    function planList(page: PlanPage, boot: ServerBoot<Runtime> = readyBoot): { app: Hono<ServerEnv<Runtime>>; reads: Read[] } {
         const reads: Read[] = [];
         const app = appWith(
             {
@@ -810,8 +840,8 @@ describe("GET {A}/plans", () => {
         return { app, reads };
     }
 
-    async function listOf(app: Hono<ServerEnv>, query = ""): Promise<PlanList> {
-        return (await (await app.request(`/api/v1/analyses/a1/plans${query}`)).json()) as PlanList;
+    async function listOf(app: Hono<ServerEnv<Runtime>>, query = ""): Promise<z.infer<typeof planListBody>> {
+        return planListBody.parse(await jsonBody(app.request(`/api/v1/analyses/a1/plans${query}`)));
     }
 
     const newer = entry({ planId: "pln-0000000b", createdAt: "2026-10-02T00:00:00.000Z", parentPlanId: "pln-0000000a", newestRunId: "r2" });
@@ -877,11 +907,11 @@ describe("GET {A}/plans", () => {
     });
 
     test("500 `internal_error` when the read fails", async () => {
-        const app = appWith({ listPlans: () => errAsync({ type: "query_failed", cause: new Error("down") } as never) });
+        const app = appWith({ listPlans: () => errAsync({ type: "query_failed", op: "test", cause: new Error("down") }) });
         const response = await app.request("/api/v1/analyses/a1/plans");
 
         expect(response.status).toBe(500);
-        expect(await response.json()).toMatchObject({ error: "internal_error" });
+        expect(await jsonBody(response)).toMatchObject({ error: "internal_error" });
     });
 
     test("503 `unavailable` while the runtime boots, with no read", async () => {
@@ -890,7 +920,7 @@ describe("GET {A}/plans", () => {
         const response = await app.request("/api/v1/analyses/a1/plans");
 
         expect(response.status).toBe(503);
-        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+        expect(await jsonBody(response)).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
         expect(reads).toEqual([]);
     });
 });
@@ -927,11 +957,11 @@ describe("GET {A}/run/:runId/synthesis", () => {
             },
         });
         const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/synthesis`);
-        const view = (await response.json()) as RunSynthesisView;
+        const view = await jsonBody(response);
 
         expect(response.status).toBe(200);
         expect(view).toEqual({ status: "produced", reason: null, synthesis: part });
-        expect(view.synthesis?.findings[0]?.references).toHaveLength(1);
+        expect(view).toHaveProperty(["synthesis", "findings", 0, "references", "length"], 1);
         expect(reads).toEqual([[analysisId, "r1"]]);
     });
 
@@ -949,7 +979,7 @@ describe("GET {A}/run/:runId/synthesis", () => {
         const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/synthesis`);
 
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ status, reason, synthesis: null });
+        expect(await jsonBody(response)).toEqual({ status, reason, synthesis: null });
     });
 
     test("a produced outcome whose record is gone gives 200 with a null synthesis", async () => {
@@ -961,14 +991,14 @@ describe("GET {A}/run/:runId/synthesis", () => {
         const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/synthesis`);
 
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ status: "produced", reason: null, synthesis: null });
+        expect(await jsonBody(response)).toEqual({ status: "produced", reason: null, synthesis: null });
     });
 
     test("404 `not_found` for a run of a different analysis, and for an unknown run", async () => {
         const foreign = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "a2" })) });
         const response = await foreign.request("/api/v1/analyses/a1/run/r1/synthesis");
         expect(response.status).toBe(404);
-        expect(await response.json()).toEqual({ error: "not_found", message: "This analysis has no run r1." });
+        expect(await jsonBody(response)).toEqual({ error: "not_found", message: "This analysis has no run r1." });
 
         const unknown = appWith({ getRun: () => okAsync(null) });
         expect((await unknown.request("/api/v1/analyses/a1/run/r1/synthesis")).status).toBe(404);
@@ -978,7 +1008,7 @@ describe("GET {A}/run/:runId/synthesis", () => {
         const app = appWith({ getRun: () => errAsync({ type: "query_failed", op: "test", cause: "down" }) });
         const response = await app.request("/api/v1/analyses/a1/run/r1/synthesis");
         expect(response.status).toBe(500);
-        expect(await response.json()).toMatchObject({ error: "internal_error" });
+        expect(await jsonBody(response)).toMatchObject({ error: "internal_error" });
     });
 
     test("503 `unavailable` while the runtime boots", async () => {
@@ -986,7 +1016,7 @@ describe("GET {A}/run/:runId/synthesis", () => {
         const app = appWith({}, { state: () => starting, runtime: () => null, start: async () => undefined });
         const response = await app.request("/api/v1/analyses/x/run/r1/synthesis");
         expect(response.status).toBe(503);
-        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+        expect(await jsonBody(response)).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
     });
 
     describe("the default record read", () => {
@@ -1052,6 +1082,10 @@ describe("GET {A}/run/:runId/synthesis", () => {
     });
 });
 
+// SAFETY: the stand-in answers `query`, which is the only member that the reader calls on the pool, and only for the step ledger.
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `createRunEventStream` types its pool `Pool`, and the harness is not part of this change.
+const asHarnessPool = (standIn: Querier): Pool => standIn as Pool;
+
 describe("GET {A}/run/:runId/stream", () => {
     test("a canceled run ends with the `data-run-failed` part of reason `canceled`, then the stream closes", async () => {
         const analysisId = seedAnalysis();
@@ -1060,7 +1094,11 @@ describe("GET {A}/run/:runId/stream", () => {
             // The harness reader itself. With no DBOS in this process its stream read fails and is contained,
             // thus the parent stream drains with no terminal part, and the row read decides the end.
             subscribeRun: (p, options) =>
-                createRunEventStream({ pool: p, readRun: () => okAsync({ status: "canceled", error: null }), sleep: async () => undefined }).subscribe(options),
+                createRunEventStream({
+                    pool: asHarnessPool(p),
+                    readRun: () => okAsync({ status: "canceled", error: null }),
+                    sleep: async () => undefined,
+                }).subscribe(options),
         });
         const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/stream`);
         expect(response.status).toBe(200);
@@ -1070,14 +1108,14 @@ describe("GET {A}/run/:runId/stream", () => {
 
     test("the parts of the run go out as frames, in order", async () => {
         const analysisId = seedAnalysis();
-        const parts = [
+        const parts: ChatPart[] = [
             { type: "data-step-activity", id: "a", runId: "r1", stepId: "s1", phase: "executing", activity: "Running deseq2.R" },
             { type: "data-run-completed", runId: "r1" },
         ];
         const app = appWith({
             getRun: () => okAsync(runRow({ runId: "r1", analysisId })),
             subscribeRun: async (_pool, options) => {
-                for (const part of parts) await options.onPart(part as never);
+                for (const part of parts) await options.onPart(part);
             },
         });
         expect(await sseFrames(await app.request(`/api/v1/analyses/${analysisId}/run/r1/stream`))).toEqual(parts);
@@ -1101,7 +1139,7 @@ describe("GET {A}/run/:runId/stream", () => {
         const app = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "other" })) });
         const response = await app.request("/api/v1/analyses/mine/run/r1/stream");
         expect(response.status).toBe(404);
-        expect(await response.json()).toMatchObject({ error: "not_found" });
+        expect(await jsonBody(response)).toMatchObject({ error: "not_found" });
     });
 });
 
@@ -1122,12 +1160,12 @@ describe("POST {A}/run/:runId/seen", () => {
 
         const first = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
         expect(first.status).toBe(200);
-        expect(await first.json()).toEqual({ seen: true });
+        expect(await jsonBody(first)).toEqual({ seen: true });
         const seenAt = seenAtOf("r1");
 
         const second = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
         expect(second.status).toBe(200);
-        expect(await second.json()).toEqual({ seen: true });
+        expect(await jsonBody(second)).toEqual({ seen: true });
         expect(listSeenRunIds(["r1"])._unsafeUnwrap()).toEqual(new Set(["r1"]));
         expect(seenAtOf("r1")).toBe(seenAt);
         expect(activityOf(analysisId)).toBe(activityBefore);
@@ -1148,7 +1186,7 @@ describe("POST {A}/run/:runId/seen", () => {
         const app = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId, status: "running", completedAt: null })) });
         const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
         expect(response.status).toBe(409);
-        expect(await response.json()).toEqual({ error: "conflict", message: "The run has not ended." });
+        expect(await jsonBody(response)).toEqual({ error: "conflict", message: "The run has not ended." });
         expect(listSeenRunIds(["r1"])._unsafeUnwrap()).toEqual(new Set());
     });
 
@@ -1157,12 +1195,12 @@ describe("POST {A}/run/:runId/seen", () => {
         const other = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "elsewhere" })) });
         const foreign = await other.request(`/api/v1/analyses/${analysisId}/run/r1/seen`, { method: "POST" });
         expect(foreign.status).toBe(404);
-        expect(await foreign.json()).toMatchObject({ error: "not_found" });
+        expect(await jsonBody(foreign)).toMatchObject({ error: "not_found" });
 
         const unknown = appWith({ getRun: () => okAsync(null) });
         const missing = await unknown.request(`/api/v1/analyses/${analysisId}/run/gone/seen`, { method: "POST" });
         expect(missing.status).toBe(404);
-        expect(await missing.json()).toMatchObject({ error: "not_found" });
+        expect(await jsonBody(missing)).toMatchObject({ error: "not_found" });
         expect(listSeenRunIds(["r1", "gone"])._unsafeUnwrap()).toEqual(new Set());
     });
 
@@ -1170,7 +1208,7 @@ describe("POST {A}/run/:runId/seen", () => {
         const app = appWith({ getRun: () => errAsync({ type: "query_failed", op: "test", cause: "down" }) });
         const response = await app.request("/api/v1/analyses/a/run/r1/seen", { method: "POST" });
         expect(response.status).toBe(500);
-        expect(await response.json()).toMatchObject({ error: "internal_error" });
+        expect(await jsonBody(response)).toMatchObject({ error: "internal_error" });
     });
 
     test("the route waits for the runtime: 503 `unavailable` while the server boots", async () => {
@@ -1182,7 +1220,7 @@ describe("POST {A}/run/:runId/seen", () => {
             },
         );
         expect(response.status).toBe(503);
-        expect(await response.json()).toMatchObject({ error: "unavailable" });
+        expect(await jsonBody(response)).toMatchObject({ error: "unavailable" });
     });
 });
 
@@ -1206,7 +1244,7 @@ describe("POST {A}/run/:runId/cancel", () => {
         });
         const response = await app.request("/api/v1/analyses/mine/run/r1/cancel", { method: "POST" });
         expect(response.status).toBe(200);
-        expect((await response.json()) as CancelRunResult).toEqual(result);
+        expect(await jsonBody(response)).toEqual(result);
         expect<unknown>(sessions).toEqual([
             {
                 identity: { user: "local" },
@@ -1223,14 +1261,14 @@ describe("POST {A}/run/:runId/cancel", () => {
     });
 
     test("404 for a run that the canceler does not know, and 500 when the engine cancel fails", async () => {
-        const getRun = (): ReturnType<RunRoutesOpts["getRun"]> => okAsync(runRow({ runId: "r1", analysisId: "mine", status: "running" }));
+        const getRun = (): ReturnType<RunRoutesOpts<Runtime>["getRun"]> => okAsync(runRow({ runId: "r1", analysisId: "mine", status: "running" }));
         const unknown = appWith({ getRun, cancelRun: () => Promise.reject(new UnknownRunError("r1")) });
         expect((await unknown.request("/api/v1/analyses/mine/run/r1/cancel", { method: "POST" })).status).toBe(404);
 
         const engine = appWith({ getRun, cancelRun: () => Promise.reject(new Error("engine down")) });
         const response = await engine.request("/api/v1/analyses/mine/run/r1/cancel", { method: "POST" });
         expect(response.status).toBe(500);
-        expect(await response.json()).toEqual({ error: "internal_error", message: "The server failed to handle the request." });
+        expect(await jsonBody(response)).toEqual({ error: "internal_error", message: "The server failed to handle the request." });
     });
 });
 
@@ -1245,7 +1283,7 @@ describe("GET {A}/chat-context", () => {
             },
             loadProfile: () => okAsync(profileRow({ status: "running", startedAt: "2026-10-01T10:00:00.000Z", workflowId: "wf" })),
         });
-        const body = (await (await app.request(`/api/v1/analyses/${analysisId}/chat-context`)).json()) as ChatContext;
+        const body = await jsonBody(app.request(`/api/v1/analyses/${analysisId}/chat-context`));
         expect(inFlight).toEqual([true]);
         expect(profileWorkInFlight(analysisId)).toBe(false);
         expect(body).toMatchObject({
@@ -1259,7 +1297,7 @@ describe("GET {A}/chat-context", () => {
     test("404 `not_found` for an analysis that does not exist, with no drive", async () => {
         const response = await appWith({}).request("/api/v1/analyses/gone/chat-context");
         expect(response.status).toBe(404);
-        expect(await response.json()).toEqual({ error: "not_found", message: "No analysis gone." });
+        expect(await jsonBody(response)).toEqual({ error: "not_found", message: "No analysis gone." });
     });
 
     test("500 `internal_error` when the drive throws", async () => {
@@ -1273,21 +1311,21 @@ describe("GET {A}/chat-context", () => {
         const app = appWith({ sandboxRefusal: () => Promise.resolve(IMAGE_REFUSAL), loadProfile: () => okAsync(null) });
         const response = await app.request(`/api/v1/analyses/${analysisId}/chat-context`);
         expect(response.status).toBe(200);
-        expect(((await response.json()) as ChatContext).parity).toEqual({ kind: "failed", reason: IMAGE_REFUSAL, materialized: false });
+        expect(await jsonBody(response)).toHaveProperty("parity", { kind: "failed", reason: IMAGE_REFUSAL, materialized: false });
     });
 });
 
 describe("GET {A}/data-profile", () => {
     test("`status: null` for an analysis that was never profiled", async () => {
         const app = appWith({ loadProfile: () => okAsync(null) });
-        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null });
+        expect(await jsonBody(app.request("/api/v1/analyses/x/data-profile"))).toEqual({ status: null });
     });
 
     test("the ledger row, with the usage of the profile calls", async () => {
         const analysisId = seedAnalysis();
         seedUsage(analysisId, { runId: DATA_PROFILE_RUN_LITERAL }, 42);
         const app = appWith({ loadProfile: () => okAsync(profileRow({ status: "failed", error: "no files", seedInputFileIds: ["f1"] })) });
-        const view = (await (await app.request(`/api/v1/analyses/${analysisId}/data-profile`)).json()) as DataProfileView;
+        const view = await jsonBody(app.request(`/api/v1/analyses/${analysisId}/data-profile`));
         expect(view).toEqual({
             status: "failed",
             error: "no files",
@@ -1304,12 +1342,12 @@ describe("GET {A}/data-profile", () => {
         const app = appWith({ loadProfile: () => okAsync(null) });
         let release: () => void = () => undefined;
         const drive = serializeProfileWork("x", () => new Promise<void>((resolve) => (release = resolve)));
-        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null, workPending: true });
+        expect(await jsonBody(app.request("/api/v1/analyses/x/data-profile"))).toEqual({ status: null, workPending: true });
 
         release();
         await drive;
         await Promise.sleep(0);
-        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null });
+        expect(await jsonBody(app.request("/api/v1/analyses/x/data-profile"))).toEqual({ status: null });
     });
 
     test("an input change that waits for its re-profile shows as work, until the watch stops", async () => {
@@ -1326,12 +1364,18 @@ describe("GET {A}/data-profile", () => {
                 return () => undefined;
             },
         });
-        // The cast gives the two fields that the watch reads. The bus stamps the others.
-        handler({ type: "prov.input_added", analysisId: "x" } as unknown as StampedEvent);
-        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null, workPending: true });
+        handler({
+            __infId: "test",
+            type: "prov.input_added",
+            analysisId: "x",
+            actor: { kind: "anonymous" },
+            input: { path: "/data/a.csv", isDir: false, anchorId: null },
+            derivedFromAnalysisId: null,
+        });
+        expect(await jsonBody(app.request("/api/v1/analyses/x/data-profile"))).toEqual({ status: null, workPending: true });
 
         stop();
-        expect((await (await app.request("/api/v1/analyses/x/data-profile")).json()) as DataProfileView).toEqual({ status: null });
+        expect(await jsonBody(app.request("/api/v1/analyses/x/data-profile"))).toEqual({ status: null });
     });
 });
 
@@ -1341,7 +1385,7 @@ describe("POST {A}/data-profile/rerun", () => {
         const app = appWith({ forceReprofile: () => Promise.resolve({ kind: "already_running", materialized: false }) });
         const response = await app.request(`/api/v1/analyses/${analysisId}/data-profile/rerun`, { method: "POST" });
         expect(response.status).toBe(202);
-        expect((await response.json()) as ProfileRerunResult).toEqual({ outcome: { kind: "already_running", materialized: false } });
+        expect(await jsonBody(response)).toEqual({ outcome: { kind: "already_running", materialized: false } });
     });
 
     test("409 `conflict` with the refusal when the sandbox cannot start, with no drive", async () => {
@@ -1349,7 +1393,7 @@ describe("POST {A}/data-profile/rerun", () => {
         const app = appWith({ sandboxRefusal: () => Promise.resolve(IMAGE_REFUSAL) });
         const response = await app.request(`/api/v1/analyses/${analysisId}/data-profile/rerun`, { method: "POST" });
         expect(response.status).toBe(409);
-        expect(await response.json()).toEqual({ error: "conflict", message: IMAGE_REFUSAL });
+        expect(await jsonBody(response)).toEqual({ error: "conflict", message: IMAGE_REFUSAL });
     });
 
     test("the drives of one analysis run one at a time, in arrival order", async () => {
@@ -1400,7 +1444,7 @@ describe("GET {A}/sandbox-readiness", () => {
         });
         const response = await app.request(`/api/v1/analyses/${analysisId}/sandbox-readiness`);
         expect(requested).toEqual([analysisId]);
-        expect((await response.json()) as SandboxReadiness).toEqual({ ...verdict, inputCount: 1 });
+        expect(await jsonBody(response)).toEqual({ ...verdict, inputCount: 1 });
     });
 
     test("needs no runtime", async () => {
@@ -1424,7 +1468,7 @@ describe("POST {A}/farm/heal", () => {
         const app = appWith({ healFarm: (id) => Promise.resolve(id === "mine" ? { kind: "composed", packages: 12 } : { kind: "no_catalog" }) });
         const response = await app.request("/api/v1/analyses/mine/farm/heal", { method: "POST" });
         expect(response.status).toBe(202);
-        expect((await response.json()) as FarmHealResult).toEqual({ outcome: { kind: "composed", packages: 12 } });
+        expect(await jsonBody(response)).toEqual({ outcome: { kind: "composed", packages: 12 } });
     });
 });
 
@@ -1451,8 +1495,8 @@ describe("POST {A}/plans/:planId/approve", () => {
     /** The route over a fake approval that records its inputs and gives `outcome`. */
     function approvalApp(
         outcome: () => ResultAsync<PlanApproval, ApprovePlanRefusal>,
-        boot: ServerBoot = readyBoot,
-    ): { app: Hono<ServerEnv>; inputs: ApprovePlanInput[] } {
+        boot: ServerBoot<Runtime> = readyBoot,
+    ): { app: Hono<ServerEnv<Runtime>>; inputs: ApprovePlanInput[] } {
         const inputs: ApprovePlanInput[] = [];
         const app = appWith(
             {
@@ -1466,7 +1510,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         return { app, inputs };
     }
 
-    function approve(app: Hono<ServerEnv>, analysisId: string, body: unknown = { threadId: "t1", newestRunId: null }): Response | Promise<Response> {
+    function approve(app: Hono<ServerEnv<Runtime>>, analysisId: string, body: unknown = { threadId: "t1", newestRunId: null }): Response | Promise<Response> {
         return app.request(`/api/v1/analyses/${analysisId}/plans/${planId}/approve`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -1486,7 +1530,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         const response = await approve(app, analysisId);
 
         expect(response.status).toBe(201);
-        expect((await response.json()) as PlanApprovalResult).toEqual(startedApproval);
+        expect(await jsonBody(response)).toEqual(startedApproval);
         expect(inputs).toHaveLength(1);
         expect(inputs[0]).toMatchObject({ analysisId, threadId: "t1", planId, newestRunId: null, identity: { user: "local" } });
         expect(inputs[0]!.auth).toBeDefined();
@@ -1511,7 +1555,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         const response = await approve(app, analysisId, { threadId: "t1", newestRunId: "r1" });
 
         expect(response.status).toBe(201);
-        expect(await response.json()).toEqual(active);
+        expect(await jsonBody(response)).toEqual(active);
         expect(inputs.map((input) => input.newestRunId)).toEqual(["r1"]);
         expect(activityOf(analysisId)).toBe(before);
     });
@@ -1534,7 +1578,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         const response = await approve(approvalApp(() => okAsync(stale)).app, analysisId, { threadId: "t1", newestRunId: null });
 
         expect(response.status).toBe(201);
-        expect(await response.json()).toEqual(stale);
+        expect(await jsonBody(response)).toEqual(stale);
         expect(activityOf(analysisId)).toBe(before);
     });
 
@@ -1546,7 +1590,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         const response = await approve(app, analysisId);
 
         expect(response.status).toBe(409);
-        expect(await response.json()).toEqual({
+        expect(await jsonBody(response)).toEqual({
             error: "busy",
             message: "Cannot approve a plan while a chat turn is running or paused.",
             details: { reasons: ["chat_turn"] },
@@ -1569,11 +1613,11 @@ describe("POST {A}/plans/:planId/approve", () => {
         const run = await approve(approvalApp(() => errAsync({ type: "run_not_found", runId: "r9" })).app, analysisId, { threadId: "t1", newestRunId: "r9" });
 
         expect(thread.status).toBe(404);
-        expect(await thread.json()).toEqual({ error: "not_found", message: "Thread not found." });
+        expect(await jsonBody(thread)).toEqual({ error: "not_found", message: "Thread not found." });
         expect(plan.status).toBe(404);
-        expect(await plan.json()).toEqual({ error: "not_found", message: `This analysis has no plan ${planId}.` });
+        expect(await jsonBody(plan)).toEqual({ error: "not_found", message: `This analysis has no plan ${planId}.` });
         expect(run.status).toBe(404);
-        expect(await run.json()).toEqual({ error: "not_found", message: `Plan ${planId} has no run r9.` });
+        expect(await jsonBody(run)).toEqual({ error: "not_found", message: `Plan ${planId} has no run r9.` });
     });
 
     test("each refusal of the plan and of the launch gives 409 `conflict` with its reason and data", async () => {
@@ -1619,7 +1663,7 @@ describe("POST {A}/plans/:planId/approve", () => {
             const response = await approve(approvalApp(() => errAsync(refusal)).app, analysisId);
 
             expect(response.status).toBe(409);
-            expect(await response.json()).toEqual({ error: "conflict", message, details });
+            expect(await jsonBody(response)).toEqual({ error: "conflict", message, details });
         }
     });
 
@@ -1654,11 +1698,11 @@ describe("POST {A}/plans/:planId/approve", () => {
         ]) {
             const response = await approve(app, analysisId, body);
             expect(response.status).toBe(400);
-            expect(await response.json()).toMatchObject({ error: "validation_error" });
+            expect(await jsonBody(response)).toMatchObject({ error: "validation_error" });
         }
         const notJson = await app.request(`/api/v1/analyses/${analysisId}/plans/${planId}/approve`, { method: "POST", body: "not json" });
         expect(notJson.status).toBe(400);
-        expect(await notJson.json()).toMatchObject({ error: "invalid_json" });
+        expect(await jsonBody(notJson)).toMatchObject({ error: "invalid_json" });
         expect(inputs).toEqual([]);
     });
 
@@ -1670,7 +1714,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         const response = await app.request(`/api/v1/analyses/${analysisId}/plans/${planId}/approve`, { method: "POST" });
 
         expect(response.status).toBe(503);
-        expect(await response.json()).toMatchObject({ error: "draining" });
+        expect(await jsonBody(response)).toMatchObject({ error: "draining" });
         expect(inputs).toEqual([]);
     });
 
@@ -1681,7 +1725,7 @@ describe("POST {A}/plans/:planId/approve", () => {
         const response = await approve(app, "a1");
 
         expect(response.status).toBe(503);
-        expect(await response.json()).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
+        expect(await jsonBody(response)).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
         expect(inputs).toEqual([]);
     });
 
@@ -1689,12 +1733,11 @@ describe("POST {A}/plans/:planId/approve", () => {
         const analysisId = seedAnalysis();
         const calls: ApprovePlanInput[] = [];
         const bound = {
-            pool,
             approvePlan: (input: ApprovePlanInput) => {
                 calls.push(input);
                 return okAsync(startedApproval);
             },
-        } as unknown as HarnessRuntime;
+        };
 
         const result = await DEFAULT_RUN_ROUTES_OPTS.approvePlan(bound, {
             analysisId,

@@ -85,14 +85,17 @@ const INPUT_DRIFT_DEBOUNCE_MS = 500;
  */
 const SANDBOX_RETRY_MS = 30_000;
 
-/** What {@link watchInputDrift} reads and starts. Tests replace each one. */
-export type InputDriftOpts = {
+/**
+ * What {@link watchInputDrift} reads and starts. Tests replace each one. The watch only gives the runtime handle `R`
+ * to `reprofile` and never reads it, thus a test gives any small value for `R`.
+ */
+export type InputDriftOpts<R = HarnessRuntime> = {
     /** The booted runtime, or `null` while the boot is not ready. An input change before `ready` waits for it. */
-    readonly runtime: () => HarnessRuntime | null;
+    readonly runtime: () => R | null;
     /** The analysis row, or `null` when it is gone. */
     readonly analysis: (analysisId: string) => Analysis | null;
     /** The re-profile after an input change. Real: {@link reprofileForInputChange}. */
-    readonly reprofile: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    readonly reprofile: (runtime: R, analysis: Analysis) => Promise<ProfileParityOutcome>;
     /** Why a sandbox cannot start for the analysis now, or `null`. Real: {@link sandboxRefusal}. */
     readonly sandboxRefusal: (analysisId: string) => Promise<string | null>;
     /** Arm a one-shot timer, and give its cancel. */
@@ -132,7 +135,7 @@ export function defaultInputDriftOpts(runtime: () => HarnessRuntime | null): Inp
  * first fire after the ready edge. A timer whose sandbox gate refuses arms again after 30 s, thus the change
  * waits until a sandbox can start. Gives the unsubscribe.
  */
-export function watchInputDrift(opts: InputDriftOpts): () => void {
+export function watchInputDrift<R>(opts: InputDriftOpts<R>): () => void {
     const timers = new Map<string, () => void>();
     let stopped = false;
     function arm(analysisId: string, ms: number = INPUT_DRIFT_DEBOUNCE_MS): void {

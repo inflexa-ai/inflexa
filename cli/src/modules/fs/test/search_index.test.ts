@@ -515,8 +515,8 @@ describe("the cache", () => {
         expect(recorder.reads).toEqual([root, root]);
     });
 
-    function threeScopes(): string[] {
-        const scopes = ["s1", "s2", "s3"].map((name) => join(root, name));
+    function threeScopes(): [string, string, string] {
+        const scopes: [string, string, string] = [join(root, "s1"), join(root, "s2"), join(root, "s3")];
         for (const scope of scopes) {
             mkdirSync(scope);
             for (let k = 0; k < 7; k++) writeFileSync(join(scope, `f${k}.csv`), "x");
@@ -525,7 +525,7 @@ describe("the cache", () => {
     }
 
     test("the total cap evicts the least recently used index", async () => {
-        const [first, second, third] = threeScopes() as [string, string, string];
+        const [first, second, third] = threeScopes();
         const recorder = recordingRead();
         // Each scope has 8 entries. One index fits beside a new index of `maxEntries`, and two do not.
         const cache = cacheWith({ maxEntries: 10, maxTotalEntries: 25 }, inProcessSpawner(recorder.read).spawn);
@@ -538,7 +538,7 @@ describe("the cache", () => {
     });
 
     test("the index count cap evicts the least recently used index", async () => {
-        const [first, second, third] = threeScopes() as [string, string, string];
+        const [first, second, third] = threeScopes();
         const recorder = recordingRead();
         const cache = cacheWith({ maxIndexes: 2 }, inProcessSpawner(recorder.read).spawn);
         for (const scope of [first, second, third]) await searchOk(cache, scope, "f");

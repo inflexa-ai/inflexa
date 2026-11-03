@@ -14,6 +14,7 @@ import { isCancel, multiselect } from "@clack/prompts";
 import { env, installedBinPath } from "../src/lib/env.ts";
 import { confirm } from "../src/lib/cli.ts";
 import { selectedRuntime } from "../src/lib/config.ts";
+import { keysOf } from "../src/lib/types.ts";
 import { capture, firstReadyRuntime, runtimeIds, runtimes } from "../src/lib/container.ts";
 
 // lstat (not existsSync) so a dangling symlink — e.g. the installed `inflexa` after
@@ -76,7 +77,7 @@ const TARGETS = {
 
 type Target = keyof typeof TARGETS;
 
-const KEYS = Object.keys(TARGETS) as Target[];
+const KEYS = keysOf(TARGETS);
 
 function isTarget(token: string): token is Target {
     return Object.prototype.hasOwnProperty.call(TARGETS, token);

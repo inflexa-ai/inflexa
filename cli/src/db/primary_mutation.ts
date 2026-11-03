@@ -1,6 +1,6 @@
 import { randomUUIDv7 } from "bun";
 import { sep } from "node:path";
-import type { Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { tryMutation, withTransaction } from "./util.ts";
 import type { TransferKind, TransferPhase } from "../types/store.ts";
 import type { DbError } from "./errors.ts";
@@ -197,10 +197,15 @@ export function updateProject(id: string, opts: { name: Str256; description: str
  */
 export function relocateRawInputPrefix(fromPrefix: string, toPrefix: string): Result<number, DbError> {
     return tryMutation("relocateRawInputPrefix", (conn) => {
-        const rows = conn.query("SELECT rowid, path FROM analysis_inputs WHERE anchor_id IS NULL AND path LIKE ?").all(`${fromPrefix}%`) as {
-            rowid: number;
-            path: string;
-        }[];
+        const rows = conn
+            .query<
+                {
+                    rowid: number;
+                    path: string;
+                },
+                [string]
+            >("SELECT rowid, path FROM analysis_inputs WHERE anchor_id IS NULL AND path LIKE ?")
+            .all(`${fromPrefix}%`);
         let rewritten = 0;
         for (const r of rows) {
             // `LIKE 'prefix%'` can match a sibling (`/a/bc` under `/a/b`); only rewrite a true
@@ -655,15 +660,18 @@ export function claimPendingStoreAdds(): Result<
     return tryMutation("claimPendingStoreAdds", (conn) => {
         const take = conn.transaction(() => {
             const rows = conn
-                .query("SELECT id, created_at, spelling, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id")
-                .all() as {
-                id: string;
-                created_at: number;
-                spelling: string;
-                specifier: string;
-                ecosystem: "python" | "r" | null;
-                analysis_id: string | null;
-            }[];
+                .query<
+                    {
+                        id: string;
+                        created_at: number;
+                        spelling: string;
+                        specifier: string;
+                        ecosystem: "python" | "r" | null;
+                        analysis_id: string | null;
+                    },
+                    []
+                >("SELECT id, created_at, spelling, specifier, ecosystem, analysis_id FROM pending_store_adds ORDER BY created_at, id")
+                .all();
             conn.query("DELETE FROM pending_store_adds").run();
             return rows;
         });
@@ -725,22 +733,20 @@ export function recordRunSeen(runId: string, analysisId: string, atMs: number): 
 export function addPin(input: { path: string; label: string | null; isDir: boolean }): Result<{ pin: PickerPin; created: boolean }, DbError> {
     const id = randomUUIDv7();
     const now = Date.now();
-    return tryMutation("addPin", (conn) => {
-        // The statement returns the columns that the cast names, in this order, and the conflict branch always returns a row.
-        const row = conn
-            .query(
+    return tryMutation("addPin", (conn) =>
+        // The conflict branch updates the existing row, and `RETURNING` gives it, thus the statement always returns a row.
+        conn
+            .query<
+                { id: string; created_at: number; updated_at: number; path: string; label: string | null; is_dir: number },
+                [string, number, number, string, string | null, number]
+            >(
                 `INSERT INTO picker_pins (id, created_at, updated_at, path, label, is_dir) VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(path) DO UPDATE SET path = excluded.path
                  RETURNING id, created_at, updated_at, path, label, is_dir`,
             )
-            .get(id, now, now, input.path, input.label, input.isDir ? 1 : 0) as {
-            id: string;
-            created_at: number;
-            updated_at: number;
-            path: string;
-            label: string | null;
-            is_dir: number;
-        };
+            .get(id, now, now, input.path, input.label, input.isDir ? 1 : 0),
+    ).andThen((row): Result<{ pin: PickerPin; created: boolean }, DbError> => {
+        if (row === null) return err({ type: "mutation_failed", op: "addPin", cause: new Error("the pin upsert returned no row") });
         const pin: PickerPin = {
             id: row.id,
             createdAt: row.created_at,
@@ -749,7 +755,7 @@ export function addPin(input: { path: string; label: string | null; isDir: boole
             label: row.label,
             isDir: row.is_dir === 1,
         };
-        return { pin, created: row.id === id };
+        return ok({ pin, created: row.id === id });
     });
 }
 

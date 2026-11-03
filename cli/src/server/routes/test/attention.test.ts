@@ -3,25 +3,38 @@ import { randomUUIDv7 } from "bun";
 import { Hono } from "hono";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 import type { AskGateway, EndedRunSummary, PendingAsk, Pool, RunProgressSummary, Thread } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
+import { z } from "zod";
 
-import type { Attention } from "../../../api/attention.ts";
 import type { ServerBootState } from "../../../api/server.ts";
 import type { DbError } from "../../../db/errors.ts";
 import { db } from "../../../db/primary.ts";
 import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
 import { asStr256 } from "../../../lib/types.ts";
-import type { HarnessRuntime } from "../../../modules/harness/runtime.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { jsonBody } from "../../../test_support/response_body.ts";
 import { conversationThread } from "../../../test_support/threads.ts";
 import type { ServerBoot } from "../../boot.ts";
 import type { ServerEnv } from "../../http.ts";
 import { __resetTurnsForTest, startTurn } from "../../turns.ts";
-import { attentionRoutes, DEFAULT_ATTENTION_ROUTE_OPTS, type AttentionRouteOpts } from "../attention.ts";
+import { attentionRoutes, DEFAULT_ATTENTION_ROUTE_OPTS, type AttentionRouteOpts, type AttentionRuntime } from "../attention.ts";
 import { runRoutes, type RunRoutesOpts } from "../runs.ts";
 
 // The routes under their mount paths, with no bearer check and no guard: `app.test.ts` covers those. Each read
-// of Postgres is a fake that records its calls, and the SQLite reads run on the test database. Each `as` cast of
-// a body below reads JSON that the route under test builds from the same `src/api/` type.
+// of Postgres is a fake that records its calls, and the SQLite reads run on the test database. A body parses the
+// fields that the tests read. A key beyond them stays on the parsed value.
+
+const attentionBody = z.looseObject({
+    asks: z.array(z.looseObject({ askId: z.string(), stale: z.boolean(), threadId: z.string().nullable() })),
+    activeRuns: z.array(z.looseObject({ runId: z.string() })),
+    unseenRuns: z.array(z.looseObject({ runId: z.string() })),
+    recentThreads: z.array(z.looseObject({ id: z.string(), analysisName: z.string(), runningTurnId: z.string().nullable(), pendingAsks: z.number() })),
+});
+
+/** The pool of the booted runtime of a route test. The reads are fakes that ignore it, thus a stand-in that rejects each query is enough. */
+const standInPool: Querier = { query: () => Promise.reject(new Error("the route must not query the pool")) };
+
+type Handle = AttentionRuntime<Querier>;
 
 const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
 const BASELINE = "2026-10-05T00:00:00.000Z";
@@ -32,9 +45,8 @@ function gatewayOf(pending: () => Promise<PendingAsk[]>): AskGateway {
     return { raise: never, expire: never, abort: never, answer: never, pending, sweepExpired: () => Promise.resolve(0) };
 }
 
-function readyBoot(gateway: AskGateway): ServerBoot {
-    // The cast is sound: the routes under test read the pool and the gateway of the runtime, and nothing else.
-    const runtime = { pool: {} as unknown as Pool, askGateway: gateway } as unknown as HarnessRuntime;
+function readyBoot(gateway: AskGateway): ServerBoot<Handle> {
+    const runtime: Handle = { pool: standInPool, askGateway: gateway };
     const state: ServerBootState = { ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } };
     return { state: () => state, runtime: () => runtime, start: async () => undefined };
 }
@@ -101,13 +113,17 @@ function emptyFixture(): Fixture {
 }
 
 /** The route over fakes of the Postgres reads. The fake ledger of ended runs applies `since` and the limit, as the read does. */
-function appOver(fixture: Fixture, over: Partial<AttentionRouteOpts> = {}, runOpts?: Partial<RunRoutesOpts>): { app: Hono<ServerEnv>; calls: Calls } {
+function appOver(
+    fixture: Fixture,
+    over: Partial<AttentionRouteOpts<Querier>> = {},
+    runOpts?: Partial<RunRoutesOpts<Handle>>,
+): { app: Hono<ServerEnv>; calls: Calls } {
     const calls: Calls = { asks: 0, live: 0, progress: [], ended: [], threads: [] };
     const gateway = gatewayOf(() => {
         calls.asks += 1;
         return Promise.resolve(fixture.pending);
     });
-    const opts: AttentionRouteOpts = {
+    const opts: AttentionRouteOpts<Querier> = {
         ...DEFAULT_ATTENTION_ROUTE_OPTS,
         pendingAsks: (runtime) => runtime.askGateway.pending(),
         liveRunIds: () => {
@@ -167,10 +183,10 @@ function appOver(fixture: Fixture, over: Partial<AttentionRouteOpts> = {}, runOp
     return { app, calls };
 }
 
-async function attentionOf(app: Hono<ServerEnv>, query = ""): Promise<Attention> {
+async function attentionOf(app: Hono<ServerEnv>, query = ""): Promise<z.infer<typeof attentionBody>> {
     const response = await app.request(`/api/v1/attention${query}`);
     expect(response.status).toBe(200);
-    return (await response.json()) as Attention;
+    return attentionBody.parse(await jsonBody(response));
 }
 
 beforeEach(() => {
@@ -440,7 +456,7 @@ describe("GET /api/v1/attention", () => {
         const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: startedAt, step: null, done: [] } };
         const app = new Hono<ServerEnv>().route(
             "/api/v1/attention",
-            attentionRoutes({ state: () => starting, runtime: () => null, start: async () => undefined }),
+            attentionRoutes<Pool>({ state: () => starting, runtime: () => null, start: async () => undefined }, DEFAULT_ATTENTION_ROUTE_OPTS),
         );
 
         const response = await app.request("/api/v1/attention");
@@ -451,7 +467,7 @@ describe("GET /api/v1/attention", () => {
 
     test("a failed read gives 500 `internal_error`, whichever read fails", async () => {
         const failure = { type: "query_failed", op: "test", cause: "down" } as const;
-        const failing: Partial<AttentionRouteOpts>[] = [
+        const failing: Partial<AttentionRouteOpts<Querier>>[] = [
             { pendingAsks: () => Promise.reject(new Error("ledger down")) },
             { liveRunIds: () => errAsync(new Error("workflow table down")) },
             { runProgress: () => errAsync(failure) },
@@ -484,7 +500,7 @@ describe("GET /api/v1/attention", () => {
 
     test("the count of each read is the same for 1 analysis and for 20 analyses", async () => {
         const reads = { names: 0, baseline: 0, seenIds: 0 };
-        const countedOver: Partial<AttentionRouteOpts> = {
+        const countedOver: Partial<AttentionRouteOpts<Querier>> = {
             analysisNames: (ids) => {
                 reads.names += 1;
                 return DEFAULT_ATTENTION_ROUTE_OPTS.analysisNames(ids);

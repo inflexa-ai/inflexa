@@ -26,6 +26,7 @@ import { env } from "../../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../../lib/credential.ts";
 import { instanceLockPath } from "../../../lib/lock.ts";
 import { claimStoreFlight, deleteStoreFlight } from "../../../db/primary_mutation.ts";
+import { fakeFetch } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     bootHarnessRuntime,
@@ -989,10 +990,10 @@ describe("bootHarnessRuntime — the web-search engine", () => {
         // site fails here: the stub answers the request and records where it went.
         const realFetch = globalThis.fetch;
         let requested: string | undefined;
-        globalThis.fetch = (async (url: string) => {
+        globalThis.fetch = fakeFetch(async (url) => {
             requested = String(url);
             return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-        }) as unknown as typeof fetch;
+        });
         try {
             const page = await engine?.search({ query: "q" });
             expect(page?._unsafeUnwrap()).toEqual({ answers: [], results: [] });

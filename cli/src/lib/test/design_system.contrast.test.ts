@@ -190,20 +190,20 @@ const SYNTAX_SURFACES: Surface[] = SYNTAX_SCOPES.map((scope) => ({
 // native per-token inversion instead, which swaps fg/bg and preserves the ratio — nothing new to check.
 const SELECTION_TOKENS: (keyof ThemeColors)[] = ["info", "user", "assistant", "thinking", "tool", "warning", "error"];
 const SELECTION_SURFACES: Surface[] = [
-    ...SELECTION_TOKENS.map((role) => ({
+    ...SELECTION_TOKENS.map((role): Surface => ({
         token: role,
         fg: (t: Theme): string => t.colors[role],
-        on: ["bgActive"] as (keyof ThemeColors)[],
+        on: ["bgActive"],
         threshold: TEXT,
-        variants: ["light"] as Theme["variant"][],
+        variants: ["light"],
         ref: "stream markers/labels/status under a light-theme selection highlight (app.tsx applySelectionColors)",
     })),
-    ...SYNTAX_SCOPES.map((scope) => ({
+    ...SYNTAX_SCOPES.map((scope): Surface => ({
         token: `syntax.${scope}`,
         fg: (t: Theme): string => t.syntax[scope].fg,
-        on: ["bgActive"] as (keyof ThemeColors)[],
+        on: ["bgActive"],
         threshold: TEXT,
-        variants: ["light"] as Theme["variant"][],
+        variants: ["light"],
         ref: "selected code in the chat stream under a light theme (app.tsx applySelectionColors)",
     })),
 ];

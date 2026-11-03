@@ -1,4 +1,5 @@
-import { StatusString, type Pool } from "@inflexa-ai/harness";
+import { StatusString } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import { okAsync, ResultAsync } from "neverthrow";
 
 /** The count of the runs, of the data profiles, and of the chat turns whose durable workflow is live. */
@@ -40,7 +41,7 @@ const TURN_IS_LIVE = `t.active_turn_id IS NOT NULL
  * `queryActiveRunsByAnalysis` of the harness, and a run counts with its `<runId>-N` children. A profile row
  * whose workflow id is not recorded yet does not count: its profile drive counts instead.
  */
-export function countLiveDurableWork(pool: Pool, analysisId?: string): ResultAsync<LiveDurableWork, unknown> {
+export function countLiveDurableWork(pool: Querier, analysisId?: string): ResultAsync<LiveDurableWork, unknown> {
     return ResultAsync.fromPromise(
         pool.query<{ runs: string; profiles: string; turns: string }>({
             text: `SELECT
@@ -68,7 +69,7 @@ export function countLiveDurableWork(pool: Pool, analysisId?: string): ResultAsy
  * liveness rule of the one-analysis form. Each id of `analysisIds` has an entry, with each count `0` when nothing
  * of it is live. An empty list sends no query.
  */
-export function countLiveDurableWorkByAnalysis(pool: Pool, analysisIds: readonly string[]): ResultAsync<Map<string, LiveDurableWork>, unknown> {
+export function countLiveDurableWorkByAnalysis(pool: Querier, analysisIds: readonly string[]): ResultAsync<Map<string, LiveDurableWork>, unknown> {
     if (analysisIds.length === 0) return okAsync(new Map<string, LiveDurableWork>());
     return ResultAsync.fromPromise(
         pool.query<{ analysis_id: string; runs: string; profiles: string; turns: string }>({
@@ -96,7 +97,7 @@ export function countLiveDurableWorkByAnalysis(pool: Pool, analysisIds: readonly
  * `limit` ids. It reads {@link RUN_IS_LIVE} as it stands: `$1` is the limit and `$2` stays the live workflow
  * statuses.
  */
-export function listLiveRunIds(pool: Pool, limit: number): ResultAsync<string[], unknown> {
+export function listLiveRunIds(pool: Querier, limit: number): ResultAsync<string[], unknown> {
     return ResultAsync.fromPromise(
         pool.query<{ run_id: string }>({
             text: `SELECT r.run_id FROM cortex_runs r
@@ -117,7 +118,7 @@ export type LiveTurn = { turnId: string; threadId: string; analysisId: string; s
  * waits in a pause, also a turn that a recovery runs and the turn registry does not hold. `$1` is the thread ids. An
  * empty list sends no query.
  */
-export function listLiveTurns(pool: Pool, threadIds: readonly string[]): ResultAsync<LiveTurn[], unknown> {
+export function listLiveTurns(pool: Querier, threadIds: readonly string[]): ResultAsync<LiveTurn[], unknown> {
     if (threadIds.length === 0) return okAsync([]);
     return ResultAsync.fromPromise(
         pool.query<{ thread_id: string; analysis_id: string; active_turn_id: string; created_at: string }>({

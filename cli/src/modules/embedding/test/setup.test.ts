@@ -12,6 +12,8 @@ import * as prompts from "../../../lib/cli.ts";
 import { readConfig, writeConfig, type Config } from "../../../lib/config.ts";
 import { EMBEDDING_API_KEY_VAR, env } from "../../../lib/env.ts";
 import { __setCompiledBinaryForTest } from "../../../lib/install_context.ts";
+import { embeddingsRequestSchema, tokenizeRequestSchema } from "../../../test_support/embedding_requests.ts";
+import { fakeFetch } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import type { SetupAnswers } from "../../infra/setup_answers.ts";
 import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, materializedLlamaServer, type ResolvedPin } from "../llama_runtime.ts";
@@ -184,7 +186,7 @@ function startEmbeddingStub(
 } {
     const requests: { path: string; authorization: string | null }[] = [];
     // Unit vector (all components equal → L2 norm 1), mirroring local-provider.test.ts's fixture.
-    const vector = new Array(dimensions).fill(1 / Math.sqrt(dimensions)) as number[];
+    const vector = Array.from({ length: dimensions }, () => 1 / Math.sqrt(dimensions));
     const server = Bun.serve({
         port: 0,
         fetch: async (req: Request): Promise<Response> => {
@@ -195,12 +197,12 @@ function startEmbeddingStub(
             if (url.pathname === "/tokenize") {
                 // The token-exact fit measures with the sidecar's own tokenizer; ~4 chars per token is
                 // enough for a one-sentence probe that fits under any budget.
-                const body = (await req.json()) as { content: string };
+                const body = tokenizeRequestSchema.parse(await req.json());
                 return Response.json({ tokens: new Array(Math.ceil(body.content.length / 4)).fill(0) });
             }
             if (url.pathname === "/v1/embeddings") {
                 if (rejectWith !== undefined) return Response.json({ error: { message: "invalid api key" } }, { status: rejectWith });
-                const body = (await req.json()) as { input: string[] };
+                const body = embeddingsRequestSchema.parse(await req.json());
                 const data = body.input.map((_, index) => ({ object: "embedding", index, embedding: vector }));
                 return Response.json({ object: "list", data, model: "stub-embed", usage: { prompt_tokens: 0, total_tokens: 0 } });
             }
@@ -857,15 +859,14 @@ describe("acquireModel", () => {
 
     /** Stub globalThis.fetch to record each call's URL and serve `bytes`, standing in for the HuggingFace download. */
     function stubFetch(bytes: Uint8Array<ArrayBuffer>): { calls: string[] } {
-        const spy = { calls: [] as string[] };
+        const spy: { calls: string[] } = { calls: [] };
         // Test-only replacement of the global fetch: it records call URLs (so a wrongly-taken download
-        // branch is caught, not silently exercised) and serves fixture bytes for the source path. The
-        // cast is required because a bare recorder is narrower than fetch's overloaded signature; it is
-        // sound because this is a test-only substitution restored to realFetch in this describe's afterEach.
-        globalThis.fetch = ((input: string | URL | Request): Promise<Response> => {
+        // branch is caught, not silently exercised) and serves fixture bytes for the source path. It is
+        // restored to realFetch in this describe's afterEach.
+        globalThis.fetch = fakeFetch((input) => {
             spy.calls.push(String(input));
             return Promise.resolve(new Response(bytes));
-        }) as unknown as typeof globalThis.fetch;
+        });
         return spy;
     }
 

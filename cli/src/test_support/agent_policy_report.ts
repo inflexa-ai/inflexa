@@ -37,9 +37,10 @@ export type PolicyRow = {
  * oracle for the antecedent. Confined to this test-support module; shipped code never reaches for it.
  */
 function hasActionHandler(command: Command): boolean {
-    // Cast to reach the private slot: sound because commander initializes it to `null` and only ever
+    // `Reflect.get` reaches the private slot. Commander initializes it to `null` and only ever
     // assigns the action listener there, so `!= null` is exactly "has an action handler".
-    return (command as unknown as { _actionHandler: unknown })._actionHandler != null;
+    const handler: unknown = Reflect.get(command, "_actionHandler");
+    return handler != null;
 }
 
 function walk(command: Command, path: readonly string[], rows: PolicyRow[]): void {

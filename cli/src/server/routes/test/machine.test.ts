@@ -4,32 +4,27 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { err, ok } from "neverthrow";
+import { z } from "zod";
 
-import {
-    EMBEDDING_API_KEY_HEADER,
-    type AgentList,
-    type EmbeddingModelList,
-    type MachineSandboxReadiness,
-    type MeView,
-    type ModelList,
-    type OpenFolderResult,
-    type PutAgentResponse,
-    type ServerSettings,
-} from "../../../api/machine.ts";
-import type { ApiError } from "../../../api/common.ts";
+import { EMBEDDING_API_KEY_HEADER, type MachineSandboxReadiness } from "../../../api/machine.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor } from "../../../db/primary_mutation.ts";
 import { env } from "../../../lib/env.ts";
+import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { defaultOutputSubdir } from "../../../modules/analysis/output.ts";
 import type { OpenExternalError } from "../../../lib/open_external.ts";
 import { writeMarker } from "../../../modules/anchor/marker.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { DEFAULT_MACHINE_ROUTE_OPTS, machineRoutes, type MachineRouteOpts } from "../machine.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. The connection reads are
-// stubs, thus no route here reaches a proxy or an endpoint. Each `as` cast of a body reads JSON that the
-// route under test builds from the same `src/api/` type.
+// stubs, thus no route here reaches a proxy or an endpoint. A test reads a body as `unknown` and asserts it
+// with `toEqual` or `toHaveProperty`.
+
+/** The two path fields that a settings test computes on. */
+const settingsPaths = z.looseObject({ dataDir: z.string(), serverLogPath: z.string() });
 
 function routesWith(over: Partial<MachineRouteOpts> = {}): ReturnType<typeof machineRoutes> {
     return machineRoutes({ ...DEFAULT_MACHINE_ROUTE_OPTS, ...over });
@@ -41,8 +36,7 @@ function json(method: string, body: unknown): RequestInit {
 
 /** The config file as written, read raw so the assertion names each key that is present. */
 function persistedConfig(): Record<string, unknown> {
-    // The route writes validated JSON; the cast reads it back for the assertion.
-    return JSON.parse(readFileSync(env.configPath, "utf8")) as Record<string, unknown>;
+    return unknownRecordSchema.parse(JSON.parse(readFileSync(env.configPath, "utf8")));
 }
 
 beforeEach(() => {
@@ -58,7 +52,7 @@ afterEach(() => {
 
 describe("GET /api/v1/me", () => {
     test("a machine with no stored session is signed out, with the remedy", async () => {
-        const me = (await (await routesWith().request("/me")).json()) as MeView;
+        const me = await jsonBody(routesWith().request("/me"));
         expect(me).toEqual({ signedIn: false, error: "Not logged in — run `inflexa auth login`." });
     });
 
@@ -68,7 +62,7 @@ describe("GET /api/v1/me", () => {
         mkdirSync(dirname(env.authPath), { recursive: true });
         writeFileSync(env.authPath, JSON.stringify({ accessToken: "a", refreshToken: "r", idToken: `h.${claims}.s`, expiresAt: "2030-01-01T00:00:00.000Z" }));
 
-        const me = (await (await routesWith().request("/me")).json()) as MeView;
+        const me = await jsonBody(routesWith().request("/me"));
         expect(me).toEqual({
             signedIn: true,
             name: "Ada",
@@ -82,8 +76,8 @@ describe("GET /api/v1/me", () => {
 
 describe("the agents", () => {
     test("GET /api/v1/agents: no runtime gives each role with no current selection", async () => {
-        const list = (await (await routesWith().request("/agents")).json()) as AgentList;
-        expect(list.agents).toEqual([
+        const list = await jsonBody(routesWith().request("/agents"));
+        expect(list).toHaveProperty("agents", [
             { role: "conversation", current: null, pending: null },
             { role: "sandbox", current: null, pending: null },
             { role: "utility", current: null, pending: null },
@@ -103,7 +97,7 @@ describe("the agents", () => {
 
         expect(response.status).toBe(200);
         // With no runtime the switch waits: the next boot reads the config.
-        expect(((await response.json()) as PutAgentResponse).status).toBe("scheduled");
+        expect(await jsonBody(response)).toHaveProperty("status", "scheduled");
         expect(checked).toEqual(["claude-haiku-4-5"]);
         expect(persistedConfig()["models"]).toEqual({ agents: { sandbox: "claude-haiku-4-5" }, efforts: { sandbox: "low" } });
     });
@@ -115,7 +109,7 @@ describe("the agents", () => {
         );
 
         expect(response.status).toBe(400);
-        expect(await response.json()).toMatchObject({
+        expect(await jsonBody(response)).toMatchObject({
             error: "validation_error",
             message: "This account cannot serve claude-nope. Pick another model, or check your credential.",
         });
@@ -137,7 +131,8 @@ describe("the agents", () => {
         }).request("/agents/conversation", json("PUT", { model: "qwen3:8b", effort: "medium" }));
 
         expect(response.status).toBe(200);
-        expect(((await response.json()) as PutAgentResponse).contextWarning).toBe(
+        expect(await jsonBody(response)).toHaveProperty(
+            "contextWarning",
             "qwen3:8b has a 40,960-token context window. Inflexa needs at least 200,000 tokens and a model with good tool calling.",
         );
     });
@@ -151,7 +146,7 @@ describe("the agents", () => {
         }).request("/agents/sandbox", json("PUT", { model: "qwen3:8b", effort: "medium" }));
 
         expect(response.status).toBe(200);
-        expect(((await response.json()) as PutAgentResponse).contextWarning).toBeNull();
+        expect(await jsonBody(response)).toHaveProperty("contextWarning", null);
     });
 
     test("an unknown role is 404, and an effort off the ladder is 400", async () => {
@@ -159,7 +154,7 @@ describe("the agents", () => {
         expect((await routes.request("/agents/planner", json("PUT", { model: "m", effort: "high" }))).status).toBe(404);
         const bad = await routes.request("/agents/sandbox", json("PUT", { model: "m", effort: "max" }));
         expect(bad.status).toBe(400);
-        expect(await bad.json()).toMatchObject({ error: "validation_error" });
+        expect(await jsonBody(bad)).toMatchObject({ error: "validation_error" });
     });
 });
 
@@ -172,7 +167,7 @@ describe("GET /api/v1/models", () => {
                     { id: "claude-opus-4-8", efforts: ["low"], releasedAt: null },
                 ]),
         });
-        expect((await (await routes.request("/models")).json()) as ModelList).toEqual({
+        expect(await jsonBody(routes.request("/models"))).toEqual({
             models: [
                 { id: "claude-opus-5-5", efforts: ["low", "high"], releasedAt: "2026-09-21T00:00:00.000Z" },
                 { id: "claude-opus-4-8", efforts: ["low"], releasedAt: null },
@@ -184,7 +179,7 @@ describe("GET /api/v1/models", () => {
         const routes = routesWith({ listModels: async () => err({ type: "timed_out", afterMs: 10_000 }) });
         const response = await routes.request("/models");
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ models: null, reason: "the model endpoint gave no answer within 10 s" });
+        expect(await jsonBody(response)).toEqual({ models: null, reason: "the model endpoint gave no answer within 10 s" });
     });
 
     // Bun 1.4.0 checks the idle timeout on a tick of about 4 s, thus a 1 s timeout closes a quiet request within
@@ -226,7 +221,7 @@ describe("GET /api/v1/models", () => {
 
 describe("the settings", () => {
     test("GET gives the server keys with the Postgres connection resolved and the embedding defaults", async () => {
-        const settings = (await (await routesWith().request("/settings")).json()) as ServerSettings;
+        const settings = await jsonBody(routesWith().request("/settings"));
         expect(settings).toMatchObject({
             telemetry: false,
             runtime: null,
@@ -237,7 +232,7 @@ describe("the settings", () => {
     });
 
     test("GET gives the data folder and the server log as absolute paths", async () => {
-        const settings = (await (await routesWith().request("/settings")).json()) as ServerSettings;
+        const settings = settingsPaths.parse(await jsonBody(routesWith().request("/settings")));
         // The database file sits directly in the data folder, and the server log sits in the log folder.
         expect(settings.dataDir).toBe(dirname(env.dbPath));
         expect(settings.serverLogPath).toBe(env.serverLogPath);
@@ -250,7 +245,7 @@ describe("the settings", () => {
     test("PATCH with a `dataDir` key saves the other keys and keeps the same `dataDir`", async () => {
         const response = await routesWith().request("/settings", json("PATCH", { telemetry: true, dataDir: "/tmp/x", serverLogPath: "/tmp/x/log" }));
         expect(response.status).toBe(200);
-        const settings = (await response.json()) as ServerSettings;
+        const settings = await jsonBody(response);
         expect(settings).toMatchObject({ telemetry: true, dataDir: env.dataDir, serverLogPath: env.serverLogPath });
         expect(persistedConfig()).toMatchObject({ telemetry: true });
         expect(persistedConfig()).not.toHaveProperty("dataDir");
@@ -268,7 +263,7 @@ describe("the settings", () => {
         );
 
         expect(response.status).toBe(200);
-        expect(((await response.json()) as ServerSettings).telemetry).toBe(true);
+        expect(await jsonBody(response)).toHaveProperty("telemetry", true);
         const config = persistedConfig();
         expect(config["theme"]).toBe("github-light");
         expect(config["postgres"]).toEqual({ port: 9999, user: "me" });
@@ -342,7 +337,7 @@ describe("the settings", () => {
     test("PATCH refuses an `api-key` block with no key when the config holds none, with 400", async () => {
         const response = await routesWith().request("/settings", json("PATCH", { embedding: { mode: "api-key" } }));
         expect(response.status).toBe(400);
-        expect(await response.json()).toMatchObject({ error: "validation_error", details: { fieldErrors: { embedding: [expect.any(String)] } } });
+        expect(await jsonBody(response)).toMatchObject({ error: "validation_error", details: { fieldErrors: { embedding: [expect.any(String)] } } });
         expect(persistedConfig()["embedding"]).toBeUndefined();
     });
 
@@ -361,7 +356,7 @@ describe("the settings", () => {
             json("PATCH", { postgres: { host: "localhost", port: 8432, database: "inflexa", user: "inflexa", password: "inflexa" } }),
         );
         expect(response.status).toBe(400);
-        expect(await response.json()).toMatchObject({ error: "validation_error" });
+        expect(await jsonBody(response)).toMatchObject({ error: "validation_error" });
     });
 });
 
@@ -377,14 +372,14 @@ describe("GET /api/v1/embedding-models", () => {
         const response = await routes.request(`/embedding-models?baseUrl=${encodeURIComponent("https://e.example/v1")}`, {
             headers: { [EMBEDDING_API_KEY_HEADER]: "sk-1" },
         });
-        expect((await response.json()) as EmbeddingModelList).toEqual({ models: ["text-embedding-3-small"] });
+        expect(await jsonBody(response)).toEqual({ models: ["text-embedding-3-small"] });
         expect(seen).toEqual(["https://e.example/v1 sk-1"]);
     });
 
     test("a listing failure is `models: null` with the reason, and a request with no key is 400", async () => {
         const routes = routesWith({ listEmbeddingModels: async () => err({ type: "http_error", status: 401 }) });
         const failed = await routes.request("/embedding-models", { headers: { [EMBEDDING_API_KEY_HEADER]: "sk-1" } });
-        expect(await failed.json()).toEqual({ models: null, reason: "http_error" });
+        expect(await jsonBody(failed)).toEqual({ models: null, reason: "http_error" });
         expect((await routes.request("/embedding-models")).status).toBe(400);
     });
 });
@@ -398,7 +393,7 @@ describe("GET /api/v1/sandbox", () => {
         };
         const response = await routesWith({ sandboxReadiness: () => Promise.resolve(machine) }).request("/sandbox");
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual(machine);
+        expect(await jsonBody(response)).toEqual(machine);
     });
 
     test("an engine that does not answer is a 200 body with `image.state` `engine_error`", async () => {
@@ -409,7 +404,7 @@ describe("GET /api/v1/sandbox", () => {
         };
         const response = await routesWith({ sandboxReadiness: () => Promise.resolve(machine) }).request("/sandbox");
         expect(response.status).toBe(200);
-        expect(((await response.json()) as MachineSandboxReadiness).image).toEqual(machine.image);
+        expect(await jsonBody(response)).toHaveProperty("image", machine.image);
     });
 });
 
@@ -476,7 +471,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "data_dir" }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(opened).toEqual([env.dataDir]);
     });
 
@@ -488,7 +483,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: id }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(existsSync(folder)).toBe(true);
         expect(opened).toEqual([folder]);
     });
@@ -502,7 +497,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: id }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -510,7 +505,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "output_dir" }));
         expect(response.status).toBe(400);
-        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+        expect(await errorBody(response)).toHaveProperty("error", "validation_error");
         expect(opened).toEqual([]);
     });
 
@@ -518,7 +513,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "/etc" }));
         expect(response.status).toBe(400);
-        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+        expect(await errorBody(response)).toHaveProperty("error", "validation_error");
         expect(opened).toEqual([]);
     });
 
@@ -527,7 +522,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: "nope" }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -536,7 +531,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: "Alpha" }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -546,7 +541,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: id }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -557,7 +552,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "output_dir", analysisId: id }));
         expect(response.status).toBe(500);
-        expect(((await response.json()) as ApiError).error).toBe("internal_error");
+        expect(await errorBody(response)).toHaveProperty("error", "internal_error");
         expect(opened).toEqual([]);
     });
 
@@ -574,7 +569,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener({ type: "open_failed", code: "ENOENT", cause: new Error("no opener") });
         const response = await routes.request("/open-directory", json("POST", { target: "data_dir" }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: false });
+        expect(await jsonBody(response)).toEqual({ opened: false });
         expect(opened).toEqual([env.dataDir]);
     });
 
@@ -582,7 +577,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" });
         expect(response.status).toBe(400);
-        expect(((await response.json()) as ApiError).error).toBe("invalid_json");
+        expect(await errorBody(response)).toHaveProperty("error", "invalid_json");
         expect(opened).toEqual([]);
     });
 
@@ -593,7 +588,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r1" }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(opened).toEqual([join(wsRoot, "runs", "r1")]);
     });
 
@@ -604,7 +599,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "." }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(opened).toEqual([wsRoot]);
     });
 
@@ -615,7 +610,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r1/s1/output" }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(opened).toEqual([stepOutput]);
     });
 
@@ -624,7 +619,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "../elsewhere" }));
         expect(response.status).toBe(400);
-        expect(((await response.json()) as ApiError).error).toBe("validation_error");
+        expect(await errorBody(response)).toHaveProperty("error", "validation_error");
         expect(opened).toEqual([]);
     });
 
@@ -636,7 +631,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "escape" }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -648,7 +643,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "loop" }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -659,7 +654,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r9" }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -671,7 +666,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r1/synthesis.json" }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -682,7 +677,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: id, path: "runs/r1" }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -692,7 +687,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "workspace", analysisId: "Alpha", path: "runs/r1" }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -706,7 +701,7 @@ describe("POST /api/v1/open-directory", () => {
         ]) {
             const response = await routes.request("/open-directory", json("POST", body));
             expect(response.status).toBe(404);
-            expect(((await response.json()) as ApiError).error).toBe("not_found");
+            expect(await errorBody(response)).toHaveProperty("error", "not_found");
         }
         expect(opened).toEqual([]);
     });
@@ -719,7 +714,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: input.anchorId }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(opened).toEqual([join(input.home, "data")]);
     });
 
@@ -731,7 +726,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: dataset, anchorId: null }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(opened).toEqual([dataset]);
     });
 
@@ -743,7 +738,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: ref, anchorId: null }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -755,7 +750,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: input.anchorId }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -767,7 +762,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: randomUUIDv7() }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -776,7 +771,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "/not/registered", anchorId: null }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -789,7 +784,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: input.anchorId }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -800,7 +795,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "input", analysisId: id, path: "data", anchorId: input.anchorId }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -809,7 +804,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "logs_dir" }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(opened).toEqual([env.logDir]);
     });
 
@@ -818,7 +813,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "logs_dir" }));
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(opened).toEqual([]);
     });
 
@@ -828,7 +823,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "logs_dir" }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -838,7 +833,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "reference_store" }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(existsSync(env.refsDir)).toBe(true);
         expect(opened).toEqual([env.refsDir]);
     });
@@ -848,7 +843,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "package_store" }));
         expect(response.status).toBe(200);
-        expect((await response.json()) as OpenFolderResult).toEqual({ opened: true });
+        expect(await jsonBody(response)).toEqual({ opened: true });
         expect(opened).toEqual([env.packageStoreDir]);
     });
 
@@ -857,7 +852,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "package_store" }));
         expect(response.status).toBe(409);
-        expect(((await response.json()) as ApiError).error).toBe("conflict");
+        expect(await errorBody(response)).toHaveProperty("error", "conflict");
         expect(opened).toEqual([]);
     });
 
@@ -867,7 +862,7 @@ describe("POST /api/v1/open-directory", () => {
         const { routes, opened } = opener();
         const response = await routes.request("/open-directory", json("POST", { target: "reference_store" }));
         expect(response.status).toBe(500);
-        expect(((await response.json()) as ApiError).error).toBe("internal_error");
+        expect(await errorBody(response)).toHaveProperty("error", "internal_error");
         expect(opened).toEqual([]);
     });
 
@@ -885,7 +880,7 @@ describe("POST /api/v1/open-directory", () => {
                 json("POST", { target: "input", analysisId: id, path: join(sealed, "dataset"), anchorId: null }),
             );
             expect(response.status).toBe(500);
-            expect(((await response.json()) as ApiError).error).toBe("internal_error");
+            expect(await errorBody(response)).toHaveProperty("error", "internal_error");
         } finally {
             chmodSync(sealed, 0o755);
         }

@@ -69,6 +69,29 @@ describe("keypair lifecycle", () => {
         expect(result._unsafeUnwrapErr().type).toBe("keypair_corrupt");
     });
 
+    test.each([
+        ["an empty object", {}],
+        ["a key that is not an object", { publicKey: "x", privateKey: 5 }],
+        ["an array", []],
+        ["a number", 5],
+        ["a string", "x"],
+    ])("a parseable keypair file with %s returns keypair_corrupt and keeps the file", async (_label, body) => {
+        const dir = useTempKeyDir();
+        const file = join(dir, "prov_key.json");
+        writeFileSync(file, JSON.stringify(body));
+        const result = await loadOrGenerateKeypair();
+        expect(result._unsafeUnwrapErr().type).toBe("keypair_corrupt");
+        expect(await Bun.file(file).json()).toEqual(body);
+    });
+
+    test("a keypair file that is JSON null is replaced with a fresh keypair", async () => {
+        const dir = useTempKeyDir();
+        writeFileSync(join(dir, "prov_key.json"), "null");
+        const result = await loadOrGenerateKeypair();
+        expect(result.isOk()).toBe(true);
+        expect(await Bun.file(join(dir, "prov_key.json")).json()).toMatchObject({ publicKey: { kty: "OKP" } });
+    });
+
     test("loadPublicKey returns null when no file exists", async () => {
         useTempKeyDir();
         expect(await loadPublicKey()).toBeNull();

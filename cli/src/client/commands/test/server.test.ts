@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ok } from "neverthrow";
+import { z } from "zod";
 
 import pkg from "../../../../package.json";
 import { API_VERSION, type ServerActivity, type ServerDiscovery, type ServerState, type ShutdownMode } from "../../../api/server.ts";
-import { bootServerAfterUp, serverLogs, serverStatus, serverStop, stopServerAfterUpgrade, type ServerCommandOpts, type ServerStatusView } from "../server.ts";
+import { bootServerAfterUp, serverLogs, serverStatus, serverStop, stopServerAfterUpgrade, type ServerCommandOpts } from "../server.ts";
 
 const DISCOVERY: ServerDiscovery = {
     pid: 7001,
@@ -34,41 +35,39 @@ const BUSY: ServerActivity = { stopping: null, turns: 2, profileDrives: 0, durab
 /** A failure of a command: the fake `fail` throws it, as the real one ends the process. */
 class CommandFailed extends Error {}
 
+type MachineWorld = {
+    file: ServerDiscovery | null;
+    answering: boolean;
+    live: boolean;
+    activity: ServerActivity | null;
+    stops: ShutdownMode[];
+    exitAfterPolls: number | null;
+    shutdownReply: "accepted" | "connection_lost";
+    removed: number[];
+    tty: boolean;
+    answer: boolean;
+    questions: string[];
+    state: ServerState;
+    boots: number;
+};
+
 /**
  * A server in memory. `exitAfterPolls` is how many liveness reads the process survives after a stop request;
  * `null` keeps it alive for ever. `shutdownReply` replaces the 202 of the stop request.
  */
-function machine(): {
-    opts: ServerCommandOpts;
-    out: () => string;
-    world: {
-        file: ServerDiscovery | null;
-        answering: boolean;
-        live: boolean;
-        activity: ServerActivity | null;
-        stops: ShutdownMode[];
-        exitAfterPolls: number | null;
-        shutdownReply: "accepted" | "connection_lost";
-        removed: number[];
-        tty: boolean;
-        answer: boolean;
-        questions: string[];
-        state: ServerState;
-        boots: number;
-    };
-} {
-    const world = {
-        file: null as ServerDiscovery | null,
+function machine(): { opts: ServerCommandOpts; out: () => string; world: MachineWorld } {
+    const world: MachineWorld = {
+        file: null,
         answering: false,
         live: false,
-        activity: IDLE as ServerActivity | null,
-        stops: [] as ShutdownMode[],
-        exitAfterPolls: 2 as number | null,
-        shutdownReply: "accepted" as "accepted" | "connection_lost",
-        removed: [] as number[],
+        activity: IDLE,
+        stops: [],
+        exitAfterPolls: 2,
+        shutdownReply: "accepted",
+        removed: [],
         tty: false,
         answer: false,
-        questions: [] as string[],
+        questions: [],
         state: READY,
         boots: 0,
     };
@@ -88,7 +87,14 @@ function machine(): {
             if (path === "/api/v1/server") return Response.json(world.state);
             if (path === "/api/v1/server/boot") {
                 world.boots += 1;
-                world.state = { ...world.state, phase: "starting" } as ServerState;
+                world.state = {
+                    version: world.state.version,
+                    apiVersion: world.state.apiVersion,
+                    startedAt: world.state.startedAt,
+                    phase: "starting",
+                    boot: { attemptStartedAt: world.state.startedAt, step: null, done: [] },
+                    stopping: world.state.stopping,
+                };
                 return Response.json(world.state, { status: 202 });
             }
             if (path === "/api/v1/server/activity") {
@@ -96,7 +102,8 @@ function machine(): {
             }
             if (path === "/api/v1/server/shutdown") {
                 // The route reads the JSON body that `request` serializes.
-                const mode = (JSON.parse(String(init.body)) as { mode: ShutdownMode }).mode;
+                const mode = JSON.parseWith(String(init.body), z.looseObject({ mode: z.enum(["now", "drain"]) }))?.mode;
+                if (mode === undefined) throw new Error("the shutdown body has no mode");
                 world.stops.push(mode);
                 if (world.shutdownReply === "connection_lost") throw new Error("socket closed");
                 return Response.json({ mode, activeTurns: world.activity?.turns ?? 0 }, { status: 202 });
@@ -178,7 +185,7 @@ describe("inflexa server status", () => {
         running(world);
         await serverStatus({ json: true }, opts);
         // The command writes `JSON.stringify` of a `ServerStatusView`.
-        const view = JSON.parse(out()) as ServerStatusView;
+        const view: unknown = JSON.parse(out());
         expect(view).toMatchObject({
             state: "running",
             pid: DISCOVERY.pid,
@@ -203,7 +210,8 @@ describe("inflexa server status", () => {
         silent.world.live = true;
         await serverStatus({ json: true }, silent.opts);
         // The command writes `JSON.stringify` of a `ServerStatusView`.
-        expect((JSON.parse(silent.out()) as ServerStatusView).state).toBe("not_answering");
+        const view: unknown = JSON.parse(silent.out());
+        expect(view).toHaveProperty("state", "not_answering");
     });
 });
 

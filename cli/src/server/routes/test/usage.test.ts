@@ -4,18 +4,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/data-profile.js";
 import { Hono } from "hono";
 import { ok } from "neverthrow";
+import { z } from "zod";
 
-import type { UsageView } from "../../../api/usage.ts";
 import type { ClientOpts } from "../../../client/api.ts";
 import { usageReport, usageRuns, usageSessions, usageSteps } from "../../../client/commands/usage.ts";
 import { upsertLlmUsage, type LlmUsageEntry } from "../../../db/primary_mutation.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { jsonBody } from "../../../test_support/response_body.ts";
 import type { ServerEnv } from "../../http.ts";
 import { usageRoutes } from "../usage.ts";
 
 // The route alone, mounted at its path with no bearer check and no analysis guard: `app.test.ts` covers
-// those. The ledger matches rows by scope id alone, thus no analysis row is necessary. Each `as` cast of a
-// body below reads JSON that the route under test builds from the same `src/api/` type.
+// those. The ledger matches rows by scope id alone, thus no analysis row is necessary.
 const ANALYSIS = { id: "ana-1", name: "usage" };
 const app = new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId/usage", usageRoutes());
 
@@ -29,10 +29,17 @@ async function get(query: string): Promise<Response> {
     return app.request(`/api/v1/analyses/${ANALYSIS.id}/usage${query}`);
 }
 
-async function view(query: string): Promise<UsageView> {
+async function view(query: string): Promise<unknown> {
     const response = await get(query);
     expect(response.status).toBe(200);
-    return (await response.json()) as UsageView;
+    return await jsonBody(response);
+}
+
+const groupsBody = z.looseObject({ groups: z.array(z.looseObject({ key: z.string().nullable() })) });
+
+/** The keys of the groups of a usage body. A body with no `groups` fails the parse. */
+function groupKeys(body: unknown): (string | null)[] {
+    return groupsBody.parse(body).groups.map((group) => group.key);
 }
 
 // Only the fields a given case cares about; everything else takes a plausible constant. Every token
@@ -99,13 +106,13 @@ describe("GET {A}/usage", () => {
 
         const v = await view("");
 
-        expect(v.scope).toEqual({ kind: "analysis" });
-        expect(v.totals.calls).toBe(10);
-        expect(v.grains).toEqual({
+        expect(v).toHaveProperty("scope", { kind: "analysis" });
+        expect(v).toHaveProperty(["totals", "calls"], 10);
+        expect(v).toHaveProperty("grains", {
             dataProfile: { calls: 2, inputTokens: 60_534, outputTokens: 3_695 },
             unattributed: { calls: 1, inputTokens: 800, outputTokens: 80 },
         });
-        expect(v.groups).toBeUndefined();
+        expect(v).not.toHaveProperty("groups");
     });
 
     test("a conversation folds in the runs it launched, and nothing of another thread, the profile, or the background", async () => {
@@ -126,18 +133,18 @@ describe("GET {A}/usage", () => {
         const byModel = await view("?threadId=thr-a&by=model");
         const byAgent = await view("?threadId=thr-a&by=agent");
 
-        expect(byModel.scope).toEqual({ kind: "thread", threadId: "thr-a" });
-        expect(byModel.totals).toEqual({ calls: 2, inputTokens: 820_300, outputTokens: 43_300 });
-        expect(byModel.grains).toBeUndefined();
-        expect(byModel.groups?.map((g) => g.key).sort()).toEqual(["claude-opus-4-8", "claude-sonnet-4-5"]);
-        expect(byAgent.groups?.map((g) => g.key).sort()).toEqual(["conversation", "step-executor"]);
+        expect(byModel).toHaveProperty("scope", { kind: "thread", threadId: "thr-a" });
+        expect(byModel).toHaveProperty("totals", { calls: 2, inputTokens: 820_300, outputTokens: 43_300 });
+        expect(byModel).not.toHaveProperty("grains");
+        expect(groupKeys(byModel).sort()).toEqual(["claude-opus-4-8", "claude-sonnet-4-5"]);
+        expect(groupKeys(byAgent).sort()).toEqual(["conversation", "step-executor"]);
     });
 
     test("a quantity that no call reported stays absent, and a conversation with no rows is zero calls", async () => {
         record("silent", { threadId: "thr-a", usage: { inputTokens: 10 } });
 
-        expect((await view("?threadId=thr-a")).totals).toEqual({ calls: 1, inputTokens: 10 });
-        expect((await view("?threadId=never-seen")).totals).toEqual({ calls: 0 });
+        expect(await view("?threadId=thr-a")).toHaveProperty("totals", { calls: 1, inputTokens: 10 });
+        expect(await view("?threadId=never-seen")).toHaveProperty("totals", { calls: 0 });
     });
 
     test("a run matches by its full id or by a trailing part, and names its full id", async () => {
@@ -145,9 +152,9 @@ describe("GET {A}/usage", () => {
 
         for (const ref of [RUN_A, "bbccdd", "5555aabbccdd"]) {
             const v = await view(`?runId=${ref}&by=step`);
-            expect(v.scope).toEqual({ kind: "run", runId: RUN_A });
-            expect(v.totals).toEqual({ calls: 3, inputTokens: 30_300, outputTokens: 1_930 });
-            expect(v.groups?.map((g) => g.key)).toEqual(["qc_normalize", "differential_expression", null]);
+            expect(v).toHaveProperty("scope", { kind: "run", runId: RUN_A });
+            expect(v).toHaveProperty("totals", { calls: 3, inputTokens: 30_300, outputTokens: 1_930 });
+            expect(groupKeys(v)).toEqual(["qc_normalize", "differential_expression", null]);
         }
     });
 

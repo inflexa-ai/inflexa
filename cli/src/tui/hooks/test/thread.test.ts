@@ -8,6 +8,8 @@ import type { ClientError } from "../../../client/api.ts";
 import type { Workspace } from "../../contexts/workspace.ts";
 import type { Notice } from "../../theme.ts";
 import type { Analysis } from "../../../types/analysis.ts";
+import { asStr256 } from "../../../lib/types.ts";
+import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
 import { conversationSummary, reportSummary } from "../../../test_support/threads.ts";
 import { __resetBootForTest, __setBootStateForTest, type BootState } from "../boot.ts";
 import { setChatStatus } from "../status.ts";
@@ -26,11 +28,10 @@ afterEach(() => {
 // A failed request to the server: the client error the listing and the row read give instead of a row.
 const serverGone: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://test", cause: new Error("boom") };
 
-// The watch reads only `analysis.id`, so a partial stand-in cast is sound and keeps the fixture flat.
-const ANALYSIS = { id: "analysis-alpha", name: "Alpha", projectId: null } as unknown as Analysis;
+const ANALYSIS = buildAnalysis({ id: "analysis-alpha" });
 // A second analysis, so a case that swaps the open scope can tell "resolved the new one" apart from
 // "resolved again".
-const OTHER_ANALYSIS = { id: "analysis-beta", name: "Beta", projectId: null } as unknown as Analysis;
+const OTHER_ANALYSIS = buildAnalysis({ id: "analysis-beta", name: asStr256("Beta") });
 
 // UUIDv7 by construction: version nibble 7 and the RFC 4122 variant bits. `resolveThreadId` mints an
 // identity whose VALUE is random, so a fresh mint can only be asserted by SHAPE — and the shape is
@@ -477,15 +478,9 @@ describe("refreshOpenThread — the snapshot ladder", () => {
     });
 });
 
-// The thread id the workspace scope carries, plus the analysis it belongs to — the only fields
-// `watchOpenThread` reads or writes. A real `createStore` (not a plain object) so the bind effect
-// re-runs when the scope changes, exactly as the live workspace store drives it.
-type ScopeStore = {
-    analysis: Analysis | null;
-    sessionId: string | null;
-    workingDir: string;
-    openSession: Workspace["openSession"];
-};
+// `watchOpenThread` reads and writes only the analysis and the thread id of the workspace scope. A real
+// `createStore` (not a plain object) so the bind effect re-runs when the scope changes, exactly as the
+// live workspace store drives it.
 
 /**
  * A reactive workspace stand-in whose `openSession` writes the scope and records the bound ids.
@@ -501,18 +496,17 @@ function reactiveWorkspace(
     const bound: (string | null)[] = [];
     // The method references `setStore` from this destructuring — created now, invoked only later, the
     // same shape `createWorkspace` uses for its sole scope writer.
-    const [store, setStore] = createStore<ScopeStore>({
-        analysis,
-        sessionId,
-        workingDir: "/work",
-        openSession(threadId, workingDir, next) {
-            bound.push(threadId);
-            setStore({ analysis: next, sessionId: threadId, workingDir });
-        },
-    });
-    // The watch reads `analysis`/`sessionId` and calls `openSession`; the rest of `Workspace` is
-    // dialog/quit capability it never touches, so a partial stand-in cast is sound.
-    return { ws: store as unknown as Workspace, bound, setAnalysis: (next) => setStore({ analysis: next }) };
+    const [store, setStore] = createStore(
+        buildWorkspace({
+            analysis,
+            sessionId,
+            openSession(threadId, workingDir, next) {
+                bound.push(threadId);
+                setStore({ analysis: next, sessionId: threadId, workingDir });
+            },
+        }),
+    );
+    return { ws: store, bound, setAnalysis: (next) => setStore({ analysis: next }) };
 }
 
 /** Mount `watchOpenThread` in a disposable reactive root; returns the dispose so the test tears it down. */

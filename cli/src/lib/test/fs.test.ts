@@ -3,10 +3,10 @@ import type { Stats } from "node:fs";
 
 import { isReadableBy, isWritableBy, type ProcessIdentity } from "../fs.ts";
 
-// Only the four fields `isReadableBy` reads. A cast is the pragmatic shape here: constructing a real
-// `Stats` means touching the filesystem, which would test the OS rather than the class resolution.
-function statLike(mode: number, uid: number, gid: number): Stats {
-    return { mode, uid, gid } as Stats;
+// Only the three fields that `isReadableBy` and `isWritableBy` read: constructing a real `Stats`
+// means touching the filesystem, which would test the OS rather than the class resolution.
+function statLike(mode: number, uid: number, gid: number): Pick<Stats, "mode" | "uid" | "gid"> {
+    return { mode, uid, gid };
 }
 
 const ME: ProcessIdentity = { uid: 501, gid: 20, groups: [20, 12] };

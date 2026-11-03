@@ -31,7 +31,9 @@ import {
 } from "../commands.tsx";
 import type { ThreadList, ThreadSummary } from "../../api/conversation.ts";
 import type { PausedWork, ResumedWork } from "../../api/paused_work.ts";
+import { buildAnalysis, buildWorkspace } from "../../test_support/builders.ts";
 import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
+import { asStr256 } from "../../lib/types.ts";
 import { DEFAULT_CLIENT_OPTS, type ClientOpts } from "../../client/api.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { Notice } from "../theme.ts";
@@ -106,13 +108,12 @@ describe("modelStatusLines", () => {
 // drive the registry's own `enabled` predicates rather than a hand-rolled copy, so a re-wired gate
 // fails here.
 describe("session command gating", () => {
-    // Only `id`/`name` are load-bearing (the predicates read the scope, not the row), so a partial
-    // stand-in cast keeps the fixture flat — the same shape `workspace.test.ts` uses.
-    const ANALYSIS = { id: "a1", name: "Alpha", projectId: null } as unknown as Analysis;
+    // Only `id`/`name` are load-bearing (the predicates read the scope, not the row).
+    const ANALYSIS = buildAnalysis();
 
-    /** A scope stand-in carrying only the two fields the session predicates read. */
+    /** A scope carrying the two fields the session predicates read. */
     function scope(analysis: Analysis | null, sessionId: string | null): Workspace {
-        return { analysis, sessionId } as unknown as Workspace;
+        return buildWorkspace({ analysis, sessionId });
     }
 
     /**
@@ -252,9 +253,8 @@ describe("session command gating", () => {
 // schedule, which is what makes the refusals, the degrades, and the interleaving of two rapid opens
 // assertable at all.
 describe("session flows", () => {
-    // Only `id`/`name` are load-bearing (the flows pass the row through to `openSession`), so a partial
-    // stand-in cast keeps the fixture flat.
-    const ANALYSIS = { id: "a1", name: "Alpha", projectId: null } as unknown as Analysis;
+    // Only `id`/`name` are load-bearing (the flows pass the row through to `openSession`).
+    const ANALYSIS = buildAnalysis();
     const serverErr: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "boom" } };
     const READY = { phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } } as const;
 
@@ -285,7 +285,8 @@ describe("session flows", () => {
         const opened: { threadId: string | null; analysisId: string }[] = [];
         let dialogs = 0;
         const scope: { analysis: Analysis | null; sessionId: string | null } = { analysis, sessionId };
-        const ws = {
+        // The getters read the scope at each access, which a spread of `buildWorkspace` would freeze.
+        const ws: Workspace = {
             get analysis() {
                 return scope.analysis;
             },
@@ -294,6 +295,8 @@ describe("session flows", () => {
             },
             workingDir: "/work",
             project: null,
+            anchor: null,
+            inputCount: null,
             openDialog: () => {
                 dialogs += 1;
             },
@@ -301,8 +304,9 @@ describe("session flows", () => {
             openSession: (threadId: string | null, _workingDir: string, next: Analysis) => {
                 opened.push({ threadId, analysisId: next.id });
             },
+            refreshScope: () => {},
             quit: async () => {},
-        } as unknown as Workspace;
+        };
         return {
             ws,
             dialogs: () => dialogs,
@@ -415,7 +419,7 @@ describe("session flows", () => {
         // opened anyway lists the previous analysis's conversations, and selecting one binds that thread
         // beside the CURRENT analysis's working directory — one scope naming two analyses.
         __setBootStateForTest(READY);
-        const OTHER = { id: "a2", name: "Beta", projectId: null } as unknown as Analysis;
+        const OTHER = buildAnalysis({ id: "a2", name: asStr256("Beta") });
         const w = sessionScope(ANALYSIS, "thread-1");
         const t = makeOpts({
             listThreads: () => {
@@ -968,7 +972,7 @@ describe("session flows", () => {
         // claiming to be about the current one, and restoring from it would return a conversation to an
         // analysis the user is no longer looking at.
         __setBootStateForTest(READY);
-        const OTHER = { id: "a2", name: "Beta", projectId: null } as unknown as Analysis;
+        const OTHER = buildAnalysis({ id: "a2", name: asStr256("Beta") });
         const w = sessionScope(ANALYSIS, "thread-1");
         const t = makeOpts({
             listThreadsWithArchived: () => {
@@ -1076,7 +1080,7 @@ describe("session flows", () => {
     test("two rapid opens: the one STARTED last wins, even when the older listing resolves last", async () => {
         // Both resolutions are server round-trips; without the generation token the slower (older) one
         // would land last and drop the user back on the analysis they just moved off.
-        const OTHER = { id: "a2", name: "Bravo", projectId: null } as unknown as Analysis;
+        const OTHER = buildAnalysis({ id: "a2", name: asStr256("Bravo") });
         let releaseSlow!: () => void;
         const gate = new Promise<void>((r) => {
             releaseSlow = r;
@@ -1104,20 +1108,16 @@ describe("session flows", () => {
     ): { ws: Workspace; opened: { threadId: string | null; workingDir: string; analysisId: string }[]; closes: () => number } {
         const opened: { threadId: string | null; workingDir: string; analysisId: string }[] = [];
         let closes = 0;
-        const ws = {
+        const ws = buildWorkspace({
             analysis,
             sessionId,
-            workingDir: "/work",
-            project: null,
-            openDialog: () => {},
             closeDialog: () => {
                 closes += 1;
             },
             openSession: (threadId: string | null, workingDir: string, next: Analysis) => {
                 opened.push({ threadId, workingDir, analysisId: next.id });
             },
-            quit: async () => {},
-        } as unknown as Workspace;
+        });
         return { ws, opened, closes: () => closes };
     }
 
@@ -1265,7 +1265,7 @@ describe("activity-panel palette command", () => {
 // The export runs in the server (its on-disk ordering is pinned by `modules/prov/test/export.test.ts`). The
 // palette maps the answer of the route to its notice, and to the boolean that the delete ladder reads.
 describe("palette provenance export", () => {
-    const ANALYSIS = { id: "a1", name: "Alpha", slug: "alpha", anchorId: "anchor-1", projectId: null } as unknown as Analysis;
+    const ANALYSIS = buildAnalysis();
 
     beforeEach(() => __resetNoticesForTest());
     afterEach(() => __resetNoticesForTest());
@@ -1303,8 +1303,8 @@ describe("palette provenance export", () => {
 // The ordered delete runs in the server (`DELETE {A}`), and `server/routes/test/analyses.test.ts` asserts its
 // order. The client half is the request, the outcome notice, and the landing, and these cases assert that.
 describe("analysis delete (client)", () => {
-    const ANALYSIS = { id: "a1", name: "Alpha", slug: "alpha", anchorId: "anchor-1", projectId: null } as unknown as Analysis;
-    const SURVIVOR = { id: "a2", name: "Beta", slug: "beta", anchorId: "anchor-1", projectId: null } as unknown as Analysis;
+    const ANALYSIS = buildAnalysis();
+    const SURVIVOR = buildAnalysis({ id: "a2", name: asStr256("Beta"), slug: "beta" });
     const ARCHIVE_PATH = "/work/.inflexa/analyses_archived/alpha";
 
     /** A server error body, as the client gives it. */
@@ -1342,18 +1342,12 @@ describe("analysis delete (client)", () => {
     /** A scope stand-in recording only the quit the landing falls back to. */
     function scope(): { ws: Workspace; quits: () => number } {
         let quits = 0;
-        const ws = {
+        const ws = buildWorkspace({
             analysis: ANALYSIS,
-            sessionId: null,
-            workingDir: "/work",
-            project: null,
-            openDialog: () => {},
-            closeDialog: () => {},
-            openSession: () => {},
             quit: async () => {
                 quits += 1;
             },
-        } as unknown as Workspace;
+        });
         return { ws, quits: () => quits };
     }
 
@@ -1433,15 +1427,12 @@ describe("analysis delete (client)", () => {
     test("the palette refuses before any confirmation when the harness is not booted", async () => {
         __resetNoticesForTest();
         let dialogs = 0;
-        const ws = {
+        const ws = buildWorkspace({
             analysis: ANALYSIS,
-            sessionId: null,
             openDialog: () => {
                 dialogs += 1;
             },
-            closeDialog: () => {},
-            quit: async () => {},
-        } as unknown as Workspace;
+        });
 
         // The boot store is idle in this process, so the command's own gate is what runs — spending the
         // user's name-typing confirmation on a delete the server would refuse is the point of it.
@@ -1468,12 +1459,11 @@ describe("view.status", () => {
             });
         });
         let dialogs = 0;
-        const ws = {
-            workingDir: "/work",
+        const ws = buildWorkspace({
             openDialog: () => {
                 dialogs += 1;
             },
-        } as unknown as Workspace;
+        });
 
         try {
             await commands.find((c) => c.id === "view.status")!.run(ws);
@@ -1504,12 +1494,12 @@ describe("the busy read before a rename or a delete", () => {
             __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
             __resetNoticesForTest();
             let dialogs = 0;
-            const ws = {
-                analysis: { id: "a1", name: "Alpha" },
+            const ws = buildWorkspace({
+                analysis: buildAnalysis(),
                 openDialog: () => {
                     dialogs += 1;
                 },
-            } as unknown as Workspace;
+            });
 
             try {
                 await commands.find((c) => c.id === id)!.run(ws);

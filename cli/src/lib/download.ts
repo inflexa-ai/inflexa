@@ -2,7 +2,6 @@ import { createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Readable, Transform } from "node:stream";
-import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
 
 import { err, ok, type Result } from "neverthrow";
@@ -270,8 +269,10 @@ async function transferToFile(url: string, dest: string, options: DownloadToFile
         // once it is loaded), and `Readable.fromWeb` names the `node:stream/web` declaration of
         // the same WHATWG interface, whose reader members differ only in their own declarations.
         // The runtime value is the one stream both describe, which fromWeb accepts.
+        // SAFETY: Bun builds `response.body` as its native stream, which carries the Bun members (`blob`, `text`, `bytes`, `json`) that the `node:stream/web` declaration names and the lib.dom declaration omits. The cast names the same value by its other declaration, and `never` is the one target that TypeScript accepts for two declarations that differ in members.
         await pipeline(
-            Readable.fromWeb(response.body as unknown as NodeWebReadableStream<Uint8Array<ArrayBuffer>>),
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- no annotation or guard can state that the lib.dom declaration and the Bun-native stream are one value
+            Readable.fromWeb(response.body as never),
             counter,
             createWriteStream(partPath, { flags: "w" }),
             { signal: watch.signal },

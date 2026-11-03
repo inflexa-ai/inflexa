@@ -3,9 +3,11 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { readFileSync } from "node:fs";
+import { z } from "zod";
 
 import { env } from "../../../lib/env.ts";
 import { readConfig, writeConfig } from "../../../lib/config.ts";
+import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     DEFAULT_AGENT_EFFORTS,
@@ -37,6 +39,17 @@ afterEach(() => {
 function writeConfigWithModels(models: unknown): void {
     mkdirSync(dirname(env.configPath), { recursive: true });
     writeFileSync(env.configPath, JSON.stringify({ telemetry: false, models }));
+}
+
+const onDiskConfigSchema = z.looseObject({ telemetry: z.boolean().optional(), models: unknownRecordSchema.optional() });
+
+/** The config file as written to disk, read back without the config reader, thus the test sees the exact bytes. */
+function readOnDiskConfig(): z.infer<typeof onDiskConfigSchema> {
+    return onDiskConfigSchema.parse(JSON.parse(readFileSync(env.configPath, "utf8")));
+}
+
+function readModelsBlock(): Record<string, unknown> {
+    return readOnDiskConfig().models ?? {};
 }
 
 describe("resolveHarnessConfig — retired ephemeral resources", () => {
@@ -398,11 +411,6 @@ describe("resolveModelConnection — request timeout and retry count", () => {
 // immediately, spread-preserving. Read back through the real config file so the test asserts the exact
 // on-disk shape resolveModelConnection then consumes.
 describe("writeAgentModel — persists models.agents spread-preserving", () => {
-    function readModelsBlock(): Record<string, unknown> {
-        const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { models?: Record<string, unknown> };
-        return parsed.models ?? {};
-    }
-
     test("writes the agent's model into models.agents and round-trips through resolveModelConnection", () => {
         writeConfigWithModels(undefined); // a config with no models block at all
         expect(writeAgentModel("sandbox", "claude-sonnet-4-5").isOk()).toBe(true);
@@ -435,11 +443,24 @@ describe("writeAgentModel — persists models.agents spread-preserving", () => {
         expect(readModelsBlock()).toEqual({ agents: { conversation: "claude-sonnet-4-5" } });
     });
 
+    test.each([
+        ["a models block that is not an object", "oops", { agents: { conversation: "claude-opus-4-8" } }],
+        ["an agents block that is not an object", { agents: ["oops"] }, { agents: { conversation: "claude-opus-4-8" } }],
+        [
+            "an agents block that is null",
+            { connection: { mode: "cliproxy" }, agents: null },
+            { connection: { mode: "cliproxy" }, agents: { conversation: "claude-opus-4-8" } },
+        ],
+    ])("starts that block clean for %s", (_label, models, expected) => {
+        writeConfigWithModels(models);
+        expect(writeAgentModel("conversation", "claude-opus-4-8").isOk()).toBe(true);
+        expect(readModelsBlock()).toEqual(expected);
+    });
+
     test("preserves unrelated top-level config keys (telemetry)", () => {
         writeConfigWithModels(undefined);
         expect(writeAgentModel("conversation", "claude-opus-4-8").isOk()).toBe(true);
-        const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { telemetry: boolean };
-        expect(parsed.telemetry).toBe(false);
+        expect(readOnDiskConfig().telemetry).toBe(false);
     });
 });
 
@@ -464,11 +485,6 @@ describe("resolveAgentEfforts — defaults and overrides", () => {
 });
 
 describe("writeAgentSelection — persists the model and the effort in one write, spread-preserving", () => {
-    function readModelsBlock(): Record<string, unknown> {
-        const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { models?: Record<string, unknown> };
-        return parsed.models ?? {};
-    }
-
     test("writes the agent's model and effort and round-trips through the resolvers", () => {
         writeConfigWithModels(undefined);
         expect(writeAgentSelection("utility", { model: "claude-haiku-4-5", effort: "low" }).isOk()).toBe(true);
@@ -489,8 +505,7 @@ describe("writeAgentSelection — persists the model and the effort in one write
             agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
             efforts: { conversation: "xhigh", sandbox: "high" },
         });
-        const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { telemetry: boolean };
-        expect(parsed.telemetry).toBe(false);
+        expect(readOnDiskConfig().telemetry).toBe(false);
     });
 });
 

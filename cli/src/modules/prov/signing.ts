@@ -1,8 +1,11 @@
 import { readFileSync, writeFileSync, mkdirSync, linkSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { type Result, ResultAsync, ok, err } from "neverthrow";
+import { z } from "zod";
 import { importPrivateKeyJwk, importPublicKeyJwk, type ProvSigningError } from "@inflexa-ai/prov-kernel";
 import { env } from "../../lib/env.ts";
+import { errnoCode } from "../../lib/fs.ts";
+import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { getLogger } from "../../lib/log.ts";
 
 /**
@@ -18,11 +21,16 @@ import { getLogger } from "../../lib/log.ts";
 
 const log = getLogger("prov:signing");
 
-/** A JWK is a loose object: the module serializes it as-is, and the kernel import primitives take this shape. */
-type JWK = Record<string, unknown>;
+/**
+ * The on-disk JWK keypair shape: a JWK is a loose object that the module serializes as-is. A member that is not an object becomes an empty JWK, which the kernel import
+ * rejects as `keypair_corrupt`. A parseable file of another shape (an array, a number, a string, a boolean) reads as a keypair of two empty JWKs for the same
+ * reason: it is reported and never replaced, because only an unparseable file or a JSON `null` is treated as debris.
+ */
+const storedKeypairObjectSchema = z.object({ publicKey: unknownRecordSchema.catch({}), privateKey: unknownRecordSchema.catch({}) });
 
-/** The on-disk JWK keypair shape. */
-type StoredKeypair = { publicKey: JWK; privateKey: JWK };
+type StoredKeypair = z.infer<typeof storedKeypairObjectSchema>;
+
+const storedKeypairFileSchema = storedKeypairObjectSchema.nullable().catch({ publicKey: {}, privateKey: {} });
 
 /** In-memory imported keypair — cached for the process lifetime to avoid re-importing on every flush. */
 export type ImportedKeypair = { publicKey: CryptoKey; privateKey: CryptoKey };
@@ -42,7 +50,7 @@ function keyPath(): string {
 // --- Keypair lifecycle ---
 
 async function generateKeypair(): Promise<CryptoKeyPair> {
-    return crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]) as Promise<CryptoKeyPair>;
+    return crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
 }
 
 async function exportKeypair(kp: CryptoKeyPair): Promise<StoredKeypair> {
@@ -59,7 +67,7 @@ function importKeypair(stored: StoredKeypair): ResultAsync<ImportedKeypair, Prov
 
 function readKeypairFile(): StoredKeypair | null {
     try {
-        return JSON.parse(readFileSync(keyPath(), "utf-8")) as StoredKeypair;
+        return JSON.parseWith(readFileSync(keyPath(), "utf-8"), storedKeypairFileSchema);
     } catch {
         return null;
     }
@@ -85,7 +93,7 @@ function writeKeypairFileExclusive(stored: StoredKeypair): "created" | "exists" 
             linkSync(tmp, target);
             return "created";
         } catch (e: unknown) {
-            if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+            if (errnoCode(e) !== "EEXIST") throw e;
             // Target exists — check if it's a valid keypair from a concurrent winner, or
             // corrupt debris (e.g. a crash left partial JSON). If corrupt, remove and retry
             // the link once; a concurrent process that wins the retry will have a valid file.
@@ -95,7 +103,7 @@ function writeKeypairFileExclusive(stored: StoredKeypair): "created" | "exists" 
                 linkSync(tmp, target);
                 return "created";
             } catch (retryErr: unknown) {
-                if ((retryErr as NodeJS.ErrnoException).code === "EEXIST") return "exists";
+                if (errnoCode(retryErr) === "EEXIST") return "exists";
                 throw retryErr;
             }
         }

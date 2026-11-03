@@ -2,11 +2,12 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { normalizeDetail, type AgentSession, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
+import { normalizeDetail, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 import { describe, expect, spyOn, test } from "bun:test";
 
 import type { AgentPolicy } from "../../../cli/agent_policy.ts";
 import { reportAgentPolicies } from "../../../test_support/agent_policy_report.ts";
+import { buildAgentSession } from "../../../test_support/builders.ts";
 import {
     createRunInflexaTool,
     decideAction,
@@ -54,10 +55,12 @@ class DeniedError extends Error {}
 
 /** A minimal `ToolContext`; the tool reads `signal` and `session.scope` (to pick the child's working directory). */
 function makeCtx(analysisId: string | null = "an-test"): ToolContext {
-    const scope = analysisId === null ? { kind: "target-assessment" } : { kind: "analysis", analysisId };
+    const session = buildAgentSession({ scope: { kind: "analysis", analysisId: analysisId ?? "an-test" } });
+    // The harness `Scope` has the analysis kind only, but the tool branches on any other kind, thus the
+    // value is forced at runtime for the case that the test names.
+    if (analysisId === null) Object.assign(session, { scope: { kind: "target-assessment" } });
     return {
-        // Only `scope` is read; a cast avoids constructing the full session value object.
-        session: { scope } as unknown as AgentSession,
+        session,
         invocationId: "test-tool-call",
         signal: new AbortController().signal,
         emit: () => {},
@@ -263,8 +266,8 @@ describe("run_inflexa — execute", () => {
     // returns `blocked` BEFORE the tool ever reaches ctx.ask. So the `ask.calls.length === 0`
     // assertion below IS the guarantee: the grant-lookup path is provably unreachable for a blocked
     // command, which is exactly why a stale grant keyed on its grantKey can never revive it.
-    test.each([
-        ["bare inflexa", [] as string[]],
+    test.each<[string, string[]]>([
+        ["bare inflexa", []],
         ["flag-only root inflexa", ["--analysis", "x"]],
         ["inflexa config", ["config"]],
         ["inflexa new", ["new", "myanalysis"]],
@@ -654,9 +657,9 @@ describe("spawnInflexa — the idle bound leaves nothing armed behind it", () =>
             `Bun.spawn({ cmd: [${JSON.stringify(bun)}, "-e", "await Bun.sleep(150); console.log('late')"], stdout: "inherit", stderr: "inherit" }); ` +
             `console.log("early"); process.exit(0);`;
 
-        const armed = new Set<unknown>();
         const realSet = globalThis.setTimeout;
         const realClear = globalThis.clearTimeout;
+        const armed = new Set<Parameters<typeof realClear>[0]>();
         // Counting timers is the only way to observe this: a leaked timer changes nothing about the
         // returned result, which is exactly why it survived review of the result-shape assertions.
         // `Object.assign` keeps the other members of the real timer functions on the probe, so the probe
@@ -687,7 +690,7 @@ describe("spawnInflexa — the idle bound leaves nothing armed behind it", () =>
         } finally {
             globalThis.setTimeout = realSet;
             globalThis.clearTimeout = realClear;
-            for (const id of armed) realClear(id as Parameters<typeof realClear>[0]);
+            for (const id of armed) realClear(id);
         }
     });
 });

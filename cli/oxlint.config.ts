@@ -261,11 +261,6 @@ export default solid({
             // back on.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #806: make each type assertion safe.
-                "@inflexa-ai/require-assertion-safety": "off",
-                "typescript/no-unsafe-type-assertion": "off",
-                "@inflexa-ai/no-double-cast": "off",
-
                 // #807: remove the non-null assertions and the unnecessary conditions.
                 "typescript/no-non-null-assertion": "off",
                 "typescript/no-unnecessary-type-assertion": "off",

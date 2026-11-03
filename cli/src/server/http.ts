@@ -1,6 +1,7 @@
-import type { Context, MiddlewareHandler } from "hono";
+import type { Context, Env, MiddlewareHandler } from "hono";
 import { err, ok, ResultAsync, type Result } from "neverthrow";
 import { z, type ZodType } from "zod";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 
 import { API_ERROR_STATUS, DEFAULT_PER_PAGE, MAX_PER_PAGE, type ApiError, type ApiErrorCode, type ListEnvelope, type PageQuery } from "../api/common.ts";
 import { SIGN_IN_REQUIRED, type RuntimeUnavailableDetails, type ServerBootState } from "../api/server.ts";
@@ -8,23 +9,46 @@ import { getLogger } from "../lib/log.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { ServerBoot } from "./boot.ts";
 
-/** The Hono environment of each route: `runtime` is set by {@link requireRuntime}, for the routes behind it. */
-export type ServerEnv = {
+/**
+ * The part of the runtime handle that a route reads to query Postgres. The harness reads take a {@link Querier},
+ * which a real `Pool` and a test stand-in that answers `query` both satisfy.
+ */
+export type PoolRuntime = { readonly pool: Querier };
+
+/**
+ * The Hono environment of each route: `runtime` is set by {@link requireRuntime}, for the routes behind it.
+ * A route that only reads the pool, or passes the handle to an injected read, is generic over `R`, and a test
+ * gives a small handle for `R`.
+ */
+export type ServerEnv<R = HarnessRuntime> = {
     Variables: {
-        runtime: HarnessRuntime;
+        runtime: R;
         /** Set by the credential check of `/api/*`: what the request proved. Unset on the sign-in route, which a nonce guards. */
         credential: "bearer" | "cookie";
     };
 };
 
 /**
+ * The members of the `Bun.serve` server that a route reads. `Bun.serve` passes its server as the second argument of
+ * `fetch`, which Hono gives as `c.env`. A request that no socket carries, an in-process `app.request()` of a test,
+ * has no `c.env`, thus each read tolerates its absence. Hono types `c.env` as `any` for a bare `Context`, so the
+ * listener functions take the environment as a type parameter that names these members.
+ */
+type ListenerBindings = {
+    readonly port?: number;
+    readonly timeout?: (request: Request, seconds: number) => void;
+};
+
+type ListenerEnv = Env & { Bindings?: ListenerBindings };
+
+/**
  * The port that the listener bound, or `undefined` for a request that no socket carried, an in-process
  * `app.request()` of a test. `listen` in serve.ts gives `app.fetch` to `Bun.serve`, which passes its server as the
  * second argument of `fetch`. Hono gives that argument as `c.env`.
  */
-export function listenerPort(c: Context): number | undefined {
-    // `c.env` is the Bun server or `undefined`. The cast names the one field that is read, and the read tolerates its absence.
-    return (c.env as { port?: number } | undefined)?.port;
+export function listenerPort<E extends ListenerEnv>(c: Context<E>): number | undefined {
+    const server: ListenerBindings | undefined = c.env;
+    return server?.port;
 }
 
 /** An error response: the {@link ApiError} body, with the HTTP status of its code. */
@@ -83,8 +107,9 @@ export function filterValue(value: string | undefined): string | undefined {
 
 /** A list response: `items` (one page) under `key`, with the paging fields over `total` items. */
 export function listEnvelope<K extends string, T>(key: K, items: T[], total: number, page: PageQuery): ListEnvelope<K, T> {
-    // A computed key widens to `string` in TypeScript, so the literal key `K` is restored by the cast. The
-    // object carries exactly one items key, which is `key`.
+    // SAFETY: a computed key widens to `string` in TypeScript, and no annotation carries a mapped type over the generic `K`.
+    // The object carries exactly one items key, which is `key`, and the paging fields of `ListPage`.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the literal key `K` cannot be restored by an annotation (see SAFETY)
     return { [key]: items, total, page: page.page, perPage: page.perPage, hasMore: (page.page + 1) * page.perPage < total } as ListEnvelope<K, T>;
 }
 
@@ -92,7 +117,7 @@ export function listEnvelope<K extends string, T>(key: K, items: T[], total: num
  * A middleware for each route that needs the harness runtime. Until the boot is ready it gives 503
  * `unavailable`, with the boot phase in `details.phase` and the step in `details.step`. After that it sets `runtime` for the handler.
  */
-export function requireRuntime(boot: ServerBoot): MiddlewareHandler<ServerEnv> {
+export function requireRuntime<R>(boot: ServerBoot<R>): MiddlewareHandler<ServerEnv<R>> {
     return async (c, next) => {
         const runtime = boot.runtime();
         if (runtime === null) {
@@ -143,10 +168,9 @@ function unavailableMessage(state: ServerBootState): string {
  * Bun 1.4.0 closes only a request with no body, for example a GET or a POST that a client sends with no body.
  * A route that reads a JSON body has no need of the call. `machine.test.ts` pins both sides over a real listener.
  */
-export function holdConnection(c: Context): void {
-    // `Bun.serve` passes its server as the second argument of `fetch`, which Hono gives as `c.env`.
-    // `app.request()` in a test passes none, thus the call is a no-op there.
-    const server = c.env as { timeout?: (request: Request, seconds: number) => void } | undefined;
+export function holdConnection<E extends ListenerEnv>(c: Context<E>): void {
+    // `app.request()` in a test passes no server, thus the call is a no-op there.
+    const server: ListenerBindings | undefined = c.env;
     server?.timeout?.(c.req.raw, 0);
 }
 

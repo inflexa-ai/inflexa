@@ -4,11 +4,11 @@ import { err, errAsync, okAsync } from "neverthrow";
 
 import { useKeymapRoot, __resetKeybindCache } from "../keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
-import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
+import { WorkspaceContext } from "../contexts/workspace.ts";
 import { deleteSessionFlow, type SessionOpts } from "../commands.tsx";
 import { __setBootStateForTest, __resetBootForTest } from "../hooks/boot.ts";
 import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
-import type { Analysis } from "../../types/analysis.ts";
+import { buildAnalysis, buildWorkspace } from "../../test_support/builders.ts";
 import type { Notice } from "../theme.ts";
 
 // The removal confirmation is the one surface in the session flows whose CORRECTNESS IS ITS WORDING.
@@ -28,7 +28,7 @@ afterEach(() => {
     dialogClear();
 });
 
-const ANALYSIS = { id: "a1", name: "Alpha", projectId: null } as unknown as Analysis;
+const ANALYSIS = buildAnalysis();
 
 /** The flow only ever confirms against a LIVE conversation, so the row it reads carries no tombstone. */
 const THREAD = conversationSummary({ id: "thread-1", resourceId: ANALYSIS.id });
@@ -61,18 +61,13 @@ function sessionOpts(notices: Notice[]): SessionOpts {
  */
 async function openRemoveDialog() {
     const notices: Notice[] = [];
-    const ws = {
+    const ws = buildWorkspace({
         analysis: ANALYSIS,
         sessionId: "thread-1",
-        workingDir: "/work",
-        project: null,
         // The flow's `openDialog` is the workspace capability App wires to `dialogPush`; the test
         // supplies that same wiring, so the dialog under assertion is the one production mounts.
         openDialog: dialogPush,
-        closeDialog: () => {},
-        openSession: () => {},
-        quit: async () => {},
-    } as unknown as Workspace;
+    });
 
     const setup = await testRender(
         () => {

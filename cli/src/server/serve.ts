@@ -15,7 +15,7 @@ import { fail } from "../lib/cli.ts";
 import { selfInvocation } from "../lib/self_invocation.ts";
 import { SERVE_DETACHED_CHILD_FLAG } from "../lib/child_flags.ts";
 import { env, fsPoolSize, serverChildEnv } from "../lib/env.ts";
-import { mkdirResult, renameResult, rmResult, writeFileResult, type FsError } from "../lib/fs.ts";
+import { errnoCode, mkdirResult, renameResult, rmResult, writeFileResult, type FsError } from "../lib/fs.ts";
 import { isPidAlive } from "../lib/lock.ts";
 import { getLogger } from "../lib/log.ts";
 import { onShutdown, setSignalStop, shutdown } from "../lib/shutdown.ts";
@@ -58,10 +58,13 @@ export type DetachedServerSpawnOptions = {
     readonly stderr: number;
 };
 
-/** What `inflexa serve --detach` starts its child with. Tests replace it. */
-export type ServeDetachedOpts = {
+/**
+ * What `inflexa serve --detach` starts its child with. Tests replace it. The spawn starts a process of type `C`:
+ * {@link spawnDetachedServer} reads only `unref` of it, thus a test gives a small stand-in for `C`.
+ */
+export type ServeDetachedOpts<C extends Pick<Subprocess, "unref"> = Subprocess> = {
     /** Start the detached child. It can throw, as `Bun.spawn` does. */
-    readonly spawn: (options: DetachedServerSpawnOptions) => Subprocess;
+    readonly spawn: (options: DetachedServerSpawnOptions) => C;
 };
 
 /** The production {@link ServeDetachedOpts}. */
@@ -286,7 +289,7 @@ export function rotateServerLog(path: string, maxBytes: number): Result<boolean,
         return ok(true);
     } catch (cause) {
         // `statSync` throws a Node errno error. No log file yet is no rotation.
-        if ((cause as NodeJS.ErrnoException).code === "ENOENT") return ok(false);
+        if (errnoCode(cause) === "ENOENT") return ok(false);
         return err({ type: "io_failed", op: "rotate the server log", cause });
     }
 }
@@ -309,8 +312,8 @@ function boundServerLog(path: string): () => void {
  * working folder is the home folder, so that a long-lived server holds no folder of the person open. Its environment
  * requests the file pool of the server, which the runtime of the child reads at its first file call.
  */
-export function spawnDetachedServer(logPath: string, serveOpts: ServeDetachedOpts): Result<Subprocess, FsError> {
-    return mkdirResult(dirname(logPath), "make the server log folder").andThen((): Result<Subprocess, FsError> => {
+export function spawnDetachedServer<C extends Pick<Subprocess, "unref">>(logPath: string, serveOpts: ServeDetachedOpts<C>): Result<C, FsError> {
+    return mkdirResult(dirname(logPath), "make the server log folder").andThen((): Result<C, FsError> => {
         let fd: number | undefined;
         try {
             fd = openSync(logPath, "a", 0o600);

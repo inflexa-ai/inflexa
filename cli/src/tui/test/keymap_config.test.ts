@@ -18,6 +18,7 @@ import { withRoot } from "../../test_support/solid.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { writeConfig } from "../../lib/config.ts";
 import { DEFAULT_THEME_ID } from "../../lib/design_system.ts";
+import { keysOf } from "../../lib/types.ts";
 import { env } from "../../lib/env.ts";
 
 // A fake opentui key event for the dispatcher (mirrors keymap.test.ts's helper).
@@ -151,7 +152,7 @@ describe("activity panel bindings", () => {
     test("the panel's chords collide with no other app binding", () => {
         // A collision would be silently arbitrated by layer priority rather than reported, so the
         // absence of one is worth pinning: every default app chord must be distinct.
-        const labels = (Object.keys(KEYBIND_DEFAULTS) as (keyof typeof KEYBIND_DEFAULTS)[]).map((id) => keybindLabel(id));
+        const labels = keysOf(KEYBIND_DEFAULTS).map((id) => keybindLabel(id));
         expect(new Set(labels).size).toBe(labels.length);
     });
 

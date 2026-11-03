@@ -10,7 +10,9 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
 import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@opentui/solid/bun-plugin";
+import { z } from "zod";
 
+import { unknownRecordSchema } from "../src/lib/json_record.ts";
 import { audienceInvalidReason } from "../src/modules/auth/auth.ts";
 import { LLAMA_PINS, LLAMA_RUNTIME_TAG, llamaArtifactUrl, type LlamaPin, type LlamaTargetKey } from "../src/modules/embedding/llama_runtime.ts";
 import { MODEL_ARTIFACT, MODEL_SHA256, MODEL_URL } from "../src/modules/embedding/model_pin.ts";
@@ -38,7 +40,7 @@ function bakedVarNames(source: string): string[] {
         console.error(`error: could not find the bakedEnv Object.freeze block in ${ENV_TS}`);
         process.exit(1);
     }
-    const names = [...new Set([...block[1].matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)].map((match) => match[1] as string))];
+    const names = [...new Set([...block[1].matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)].flatMap((match) => (match[1] === undefined ? [] : [match[1]])))];
     if (names.length === 0) {
         console.error(`error: no process.env.<NAME> dot accesses found in the bakedEnv block of ${ENV_TS}`);
         process.exit(1);
@@ -194,6 +196,30 @@ console.log(`packed ${contentEntries.length} content files → content.pack (has
 // define never runs — sees it as undeclared and resolves to not-compiled. Baked for every target.
 define["__INFLEXA_COMPILED__"] = "true";
 
+// The `version` of a package.json that the build runs from or reads off disk (the cli, and @opentui/core).
+const versionManifestSchema = z.looseObject({ version: z.string() });
+
+// The fields of a package.json that the license walk reads. `license`, `homepage`, and the npm platform fields
+// are `unknown` because a legacy or hand-written package.json can hold anything there (a license is sometimes a
+// {type} object or an array), and the walk narrows them. A `name`, a `version`, or a dependency table of another
+// kind counts as absent. Only the keys of a dependency table are read, thus its values are `unknown`.
+const dependencyTableSchema = z.record(z.string(), z.unknown()).optional().catch(undefined);
+const manifestSchema = z.looseObject({
+    name: z.string().optional().catch(undefined),
+    version: z.string().optional().catch(undefined),
+    license: z.unknown().optional(),
+    homepage: z.unknown().optional(),
+    dependencies: dependencyTableSchema,
+    optionalDependencies: dependencyTableSchema,
+    os: z.unknown().optional(),
+    cpu: z.unknown().optional(),
+    libc: z.unknown().optional(),
+});
+
+// A third-party package.json whose top level is not an object reads as an empty manifest, thus one malformed
+// package does not stop the walk: the name falls back to the queued name, and the version to 0.0.0.
+const thirdPartyManifestSchema = unknownRecordSchema.catch({}).pipe(manifestSchema);
+
 // Release target matrix, built by `bun run build:all` (passes --all). The
 // default `bun run build` compiles only the host target for quick local
 // iteration. To ship a new platform, add it here — Bun cross-compiles by
@@ -220,7 +246,7 @@ if (targets.length === 0) {
 if (targets.some((target) => target.os !== hostOs || target.arch !== process.arch)) {
     // Read via the filesystem: the package's exports map does not expose its
     // package.json for import.
-    const opentuiVersion = (JSON.parse(await Bun.file("node_modules/@opentui/core/package.json").text()) as { version: string }).version;
+    const opentuiVersion = versionManifestSchema.parse(JSON.parse(await Bun.file("node_modules/@opentui/core/package.json").text())).version;
     await $`bun install --os="*" --cpu="*" @opentui/core@${opentuiVersion}`.quiet();
 }
 
@@ -270,7 +296,8 @@ const LLAMA_CACHE_DIR = join(process.cwd(), ".llama-cache");
 // LlamaTargetKey to bake into the per-target define. Shares ONE hash source with the runtime by importing
 // LLAMA_PINS, so the build-time and first-run verifications can never disagree.
 async function ensureLlamaArchiveCached(targetKey: string): Promise<LlamaTargetKey> {
-    const pin: LlamaPin | undefined = (LLAMA_PINS as Record<string, LlamaPin>)[targetKey];
+    const pins: Record<string, LlamaPin> = LLAMA_PINS;
+    const pin: LlamaPin | undefined = pins[targetKey];
     if (!pin) {
         console.error(`error: no vendored llama-server pin for build target ${targetKey} (add it to LLAMA_PINS in src/modules/embedding/llama_runtime.ts)`);
         process.exit(1);
@@ -462,9 +489,7 @@ function cliSbom(
     grammars: CdxComponent[],
 ): Record<string, unknown> {
     const npmOs = target.os === "windows" ? "win32" : target.os;
-    // An unchecked cast of the cli's own package.json, which the build runs from: `version` is a required field
-    // there, and `bun run build` already refused to start without the file.
-    const cliPkg = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
+    const cliPkg = versionManifestSchema.parse(JSON.parse(readFileSync("package.json", "utf8")));
     const components: CdxComponent[] = packages
         .filter((pkg) => admitsTarget(pkg, npmOs, target.arch))
         .map((pkg) => ({
@@ -751,7 +776,7 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
     const collected = new Map<string, ThirdPartyPackage>();
     const queue: Array<{ name: string; fromDir: string }> = [];
 
-    function enqueue(deps: Record<string, string> | undefined, fromDir: string): void {
+    function enqueue(deps: Record<string, unknown> | undefined, fromDir: string): void {
         if (!deps) return;
         for (const name of Object.keys(deps)) queue.push({ name, fromDir });
     }
@@ -798,10 +823,7 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
         return texts.length > 0 ? texts.join("\n\n") : null;
     }
 
-    const rootPkg = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")) as {
-        dependencies?: Record<string, string>;
-        optionalDependencies?: Record<string, string>;
-    };
+    const rootPkg = manifestSchema.parse(JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")));
     enqueue(rootPkg.dependencies, rootDir);
     enqueue(rootPkg.optionalDependencies, rootDir);
 
@@ -812,21 +834,7 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
         if (!pkgDir || seenDirs.has(pkgDir)) continue;
         seenDirs.add(pkgDir);
 
-        const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as {
-            name?: string;
-            version?: string;
-            // legacy packages express license as a {type} object or an array;
-            // we only surface a string id and otherwise rely on the file text.
-            license?: unknown;
-            homepage?: string;
-            dependencies?: Record<string, string>;
-            optionalDependencies?: Record<string, string>;
-            // The npm platform fields are lists of strings by the npm schema, but a hand-written package.json can
-            // hold anything, thus `unknown` and the narrowing of `stringList`.
-            os?: unknown;
-            cpu?: unknown;
-            libc?: unknown;
-        };
+        const pkg = thirdPartyManifestSchema.parse(JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")));
         const pkgName = pkg.name ?? item.name;
         const version = pkg.version ?? "0.0.0";
         const key = `${pkgName}@${version}`;

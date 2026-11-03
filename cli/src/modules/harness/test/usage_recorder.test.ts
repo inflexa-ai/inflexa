@@ -128,7 +128,8 @@ describe("createUsageRecorder — the row it builds", () => {
 
         expect(written.isOk()).toBe(true);
 
-        const entry = entries[0] ?? ({} as LlmUsageEntry);
+        const entry = entries[0];
+        if (entry === undefined) throw new Error("expected the recorder to write one entry");
         for (const key of ["threadId", "runId", "stepId", "requestedModelId", "servedModelId"]) {
             expect(Object.hasOwn(entry, key)).toBe(false);
         }
@@ -141,7 +142,8 @@ describe("createUsageRecorder — the row it builds", () => {
 
         expect(written.isOk()).toBe(true);
 
-        const entry = entries[0] ?? ({} as LlmUsageEntry);
+        const entry = entries[0];
+        if (entry === undefined) throw new Error("expected the recorder to write one entry");
         for (const key of ["threadId", "runId", "stepId", "requestedModelId", "servedModelId"]) {
             expect(Object.hasOwn(entry, key)).toBe(true);
         }

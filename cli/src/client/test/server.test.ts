@@ -41,34 +41,33 @@ const FAILED: ServerState = {
     stopping: null,
 };
 
+type MachineWorld = {
+    file: ServerDiscovery | null;
+    listening: Map<number, { state: ServerState; status?: number }>;
+    live: Set<number>;
+    lockHeldBy: number | null;
+    starts: number;
+    removed: number[];
+    notices: string[];
+    lockTaken: number;
+    lockReleased: number;
+    onStart: () => Result<void, string>;
+    onSleep: (sleeps: number) => void;
+};
+
 /**
  * A machine in memory: one discovery file, the listeners by port, the live pids, the spawn lock, and a clock
  * that each sleep advances. `startServer` runs `onStart`, which the test sets to make a server appear or fail.
  */
-function machine(): {
-    opts: EnsureServerOpts;
-    world: {
-        file: ServerDiscovery | null;
-        listening: Map<number, { state: ServerState; status?: number }>;
-        live: Set<number>;
-        lockHeldBy: number | null;
-        starts: number;
-        removed: number[];
-        notices: string[];
-        lockTaken: number;
-        lockReleased: number;
-        onStart: () => Result<void, string>;
-        onSleep: (sleeps: number) => void;
-    };
-} {
-    const world = {
-        file: null as ServerDiscovery | null,
+function machine(): { opts: EnsureServerOpts; world: MachineWorld } {
+    const world: MachineWorld = {
+        file: null,
         listening: new Map<number, { state: ServerState; status?: number }>(),
         live: new Set<number>(),
-        lockHeldBy: null as number | null,
+        lockHeldBy: null,
         starts: 0,
-        removed: [] as number[],
-        notices: [] as string[],
+        removed: [],
+        notices: [],
         lockTaken: 0,
         lockReleased: 0,
         onStart: (): Result<void, string> => ok(undefined),

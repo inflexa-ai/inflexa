@@ -8,11 +8,12 @@ import {
     type ChatTurns,
     type ChatTurnSession,
     type DbError,
-    type Pool,
     type RetractOutcome,
     type ThreadHistory,
     type ThreadType,
 } from "@inflexa-ai/harness";
+import type { Connectable } from "@inflexa-ai/harness/lib/db-result.js";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 
 import { getLogger } from "../../lib/log.ts";
 import { currentUserEmail } from "../auth/whoami.ts";
@@ -242,6 +243,9 @@ function outcomeOfEnd(end: ChatTurnEnd | null): TurnOutcome {
     }
 }
 
+/** What the thread store reads of the pool: the direct `query` and the transactional `connect`. A `pg.Pool` satisfies it. */
+export type ThreadPool = Querier & Connectable;
+
 /**
  * Remove a thread's most recent turn durably — the tail-turn half of a TUI retract. Built over
  * `createThreadHistory(pool)` of the pool that the turn wrote through (the factory is a stateless
@@ -249,7 +253,7 @@ function outcomeOfEnd(end: ChatTurnEnd | null): TurnOutcome {
  * (or a `DbError`) verbatim for the caller to reduce: `retracted` removed the orphan, while
  * `empty-thread`/`no-user-turn` removed nothing.
  */
-export function retractTailTurn(pool: Pool, threadId: string): ResultAsync<RetractOutcome, DbError> {
+export function retractTailTurn(pool: ThreadPool, threadId: string): ResultAsync<RetractOutcome, DbError> {
     return createThreadHistory(pool).retractLastTurn(threadId);
 }
 
@@ -266,7 +270,7 @@ export type HealOutcome = RetractOutcome | { readonly kind: "not-orphaned" };
  */
 export type HealSeams = {
     /** Build the thread store over the pool. Real: `createThreadHistory`. */
-    readonly history: (pool: Pool) => ThreadHistory;
+    readonly history: (pool: ThreadPool) => ThreadHistory;
 };
 
 const realHealSeams: HealSeams = { history: createThreadHistory };
@@ -287,7 +291,7 @@ const realHealSeams: HealSeams = { history: createThreadHistory };
  * is affordable precisely because this path is reached only after a database fault, never on a
  * healthy retract.
  */
-export function healTailOrphan(pool: Pool, threadId: string, seams: HealSeams = realHealSeams): ResultAsync<HealOutcome, DbError> {
+export function healTailOrphan(pool: ThreadPool, threadId: string, seams: HealSeams = realHealSeams): ResultAsync<HealOutcome, DbError> {
     const history = seams.history(pool);
     return history.loadAll(threadId).andThen((turns) => {
         const tail = turns.at(-1);

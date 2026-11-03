@@ -43,6 +43,7 @@ import { createServer } from "node:net";
 
 import type { Subprocess } from "bun";
 import { err, errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
+import { z } from "zod";
 
 import { createEmbeddingProvider } from "@inflexa-ai/harness";
 import type { AgentSession, EmbeddingProvider, ProviderError } from "@inflexa-ai/harness";
@@ -335,6 +336,9 @@ function providerFault(message: string, retryable: boolean): ProviderError {
     return { type: "provider", retryable, message };
 }
 
+/** Only the length of `tokens` is read from the `/tokenize` body, so each element stays unchecked. */
+const tokenizeBodySchema = z.object({ tokens: z.array(z.unknown()) });
+
 /**
  * Measure `text`'s content-token count with the ready sidecar's own tokenizer via
  * `POST {origin}/tokenize` — the exact tokenizer of the loaded model, in the same
@@ -360,13 +364,11 @@ async function tokenizeCount(origin: string, key: string, text: string, timeoutM
             signal: AbortSignal.timeout(timeoutMs),
         });
         if (res.status !== 200) return err(providerFault(`The local embedding runtime's /tokenize endpoint answered ${res.status}.`, true));
-        // External JSON: the Array.isArray guard below validates the shape before the
-        // count is trusted, so this cast only names the one field we probe.
-        const body = (await res.json()) as { tokens?: unknown };
-        if (!Array.isArray(body.tokens)) {
+        const body = tokenizeBodySchema.safeParse(await res.json());
+        if (!body.success) {
             return err(providerFault("The local embedding runtime's /tokenize endpoint returned an unexpected body (no tokens array).", true));
         }
-        return ok(body.tokens.length);
+        return ok(body.data.tokens.length);
     } catch (cause) {
         return err(providerFault(`Measuring token length via /tokenize failed: ${cause instanceof Error ? cause.message : String(cause)}`, true));
     }

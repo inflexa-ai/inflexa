@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
+import { z } from "zod";
+
 import { Bus, initBusLogging } from "../bus.ts";
 import { addLogStream, flushLogs } from "../log.ts";
 
-type LogRecord = { event?: string; [field: string]: unknown };
+const logRecordSchema = z.looseObject({ event: z.string().optional() });
+type LogRecord = z.infer<typeof logRecordSchema>;
 
 /**
  * Capture the records of one bus event while `run` executes. `addLogStream` has no remover and the suite
@@ -16,9 +19,9 @@ async function captureBusRecords(event: string, run: () => void): Promise<LogRec
     addLogStream({
         write(chunk: string): void {
             if (!open) return;
-            // The logger writes one JSON object per record, and the test reads only the `event` field and the projected fields, so the cast cannot admit a wrong shape.
-            const record = JSON.parse(chunk) as LogRecord;
-            if (record.event === event) records.push(record);
+            // The logger writes one JSON object per record, and the test reads only the `event` field and the projected fields.
+            const record = JSON.parseWith(chunk, logRecordSchema);
+            if (record?.event === event) records.push(record);
         },
     });
     initBusLogging();

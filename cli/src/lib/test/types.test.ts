@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { asStr256, str256 } from "../types.ts";
+import { asStr256, keysOf, str256 } from "../types.ts";
 
 describe("str256", () => {
     test("trims surrounding whitespace from the accepted value", () => {
@@ -54,5 +54,18 @@ describe("asStr256", () => {
         // Assign through `string` so the matcher compares plain strings, not the opaque brand.
         const branded: string = asStr256(input);
         expect(branded).toBe(input);
+    });
+});
+
+describe("keysOf", () => {
+    test("gives the own keys in the order of the table, as `Object.keys` does", () => {
+        const table = { b: 1, a: 2, "c.d": 3 } as const;
+        expect<string[]>(keysOf(table)).toEqual(Object.keys(table));
+        expect(keysOf(table)).toEqual(["b", "a", "c.d"]);
+    });
+
+    test("skips a key that the table inherits", () => {
+        const table = { __proto__: { inherited: true }, own: 1 };
+        expect(keysOf(table)).toEqual(["own"]);
     });
 });

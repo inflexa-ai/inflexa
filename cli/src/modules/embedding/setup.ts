@@ -23,12 +23,13 @@ import { dirname } from "node:path";
 import { log, spinner as clackSpinner } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 
-import { createEmbeddingProvider, type AgentSession } from "@inflexa-ai/harness";
+import { createEmbeddingProvider, makeLocalAuth, type AgentSession } from "@inflexa-ai/harness";
 
 import { readConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
 import { promptSecret, promptText, select } from "../../lib/cli.ts";
 import { EMBEDDING_API_KEY_VAR, env, resolveEmbeddingApiKey } from "../../lib/env.ts";
 import { isCompiledBinary } from "../../lib/install_context.ts";
+import { isMember } from "../../lib/types.ts";
 import { ensureLlamaServer, materializedLlamaServer } from "./llama_runtime.ts";
 import { createLocalEmbeddingProvider, LOCAL_EMBEDDING_DIMENSIONS, stopLocalSidecar } from "./local-provider.ts";
 import { MODEL_SHA256, MODEL_URL } from "./model_pin.ts";
@@ -241,6 +242,16 @@ export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>>
     }
 }
 
+/** The identity-less session of a one-shot setup probe: the embed call requires a complete session, and no request headers hook reads it. */
+function buildProbeSession(): AgentSession {
+    return {
+        identity: { user: "local" },
+        scope: { kind: "analysis", analysisId: "embedding-setup-verify" },
+        provenance: { agentId: "embedding-setup-verify", callPath: ["embedding-setup-verify"] },
+        auth: makeLocalAuth(),
+    };
+}
+
 /**
  * Verify the model end-to-end through the sidecar: spawn `llama-server` against the GGUF, embed a probe
  * text, and MEASURE the vector width it emits (llama-server returns the model's native width — it ignores
@@ -262,11 +273,7 @@ export async function verifyModel(modelPath: string, expectedDim?: number): Prom
     s.start("Verifying model (spawn runtime + embed probe)");
 
     const provider = createLocalEmbeddingProvider({ modelPath });
-    // The local provider wires no request headers hook and reads only `scope` (for a
-    // log label), so a structural stand-in satisfies the seam. The `as unknown as` is
-    // required because we do not build a full RunSession for a one-shot probe, and
-    // nothing downstream reads the omitted fields.
-    const probeSession = { scope: { kind: "analysis", analysisId: "embedding-setup-verify" } } as unknown as AgentSession;
+    const probeSession = buildProbeSession();
     const outcome = await provider.embed(["inflexa embedding verification probe"], probeSession).match(
         (vectors): { readonly ok: true; readonly dim: number } => ({ ok: true, dim: vectors[0]?.length ?? 0 }),
         (e): { readonly ok: false; readonly message: string } => ({ ok: false, message: e.message }),
@@ -585,9 +592,7 @@ async function probeApiEmbedding(candidate: { baseURL: string; apiKey: string; m
         token: candidate.apiKey,
         model: candidate.model,
     });
-    // Same structural stand-in as verifyModel's probe: with no request headers hook nothing reads
-    // the session, and nothing downstream touches the omitted RunSession fields — hence the `as unknown as`.
-    const probeSession = { scope: { kind: "analysis", analysisId: "embedding-setup-verify" } } as unknown as AgentSession;
+    const probeSession = buildProbeSession();
     const outcome = await provider.embed(["inflexa embedding verification probe"], probeSession).match(
         (vectors): { readonly ok: true; readonly dim: number } => ({ ok: true, dim: vectors[0]?.length ?? 0 }),
         (e): { readonly ok: false; readonly message: string } => ({ ok: false, message: e.message }),
@@ -738,6 +743,10 @@ async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: Api
         });
 }
 
+const EMBEDDING_MODES = ["builtin", "custom", "api-key", "off"] as const;
+
+type EmbeddingMode = (typeof EMBEDDING_MODES)[number];
+
 /**
  * Embedding backend picker via clack `select`. Local embeddings are TWO distinct choices — the built-in
  * bundled model and the user's own GGUF — rather than one "local": that is what lets the built-in be framed
@@ -746,7 +755,7 @@ async function runApiKeySetup(config: ReturnType<typeof readConfig>, inputs: Api
  * (Ctrl-C / Esc) by aborting. All choices work in every install context (both the runtime and the built-in
  * model are embedded/downloaded assets, not native addons), so nothing gates the offering.
  */
-async function promptEmbeddingMode(): Promise<"builtin" | "custom" | "api-key" | "off"> {
+async function promptEmbeddingMode(): Promise<EmbeddingMode> {
     const chosen = await select("Embedding backend", [
         {
             value: "builtin",
@@ -758,7 +767,8 @@ async function promptEmbeddingMode(): Promise<"builtin" | "custom" | "api-key" |
         { value: "api-key", label: "API key — a remote OpenAI-compatible embeddings endpoint" },
         { value: "off", label: "Off / skip" },
     ]);
-    return chosen as "builtin" | "custom" | "api-key" | "off";
+    // `select` gives back the `value` of an option above, so a value outside the set is impossible; "off" is the safe skip.
+    return isMember(EMBEDDING_MODES, chosen) ? chosen : "off";
 }
 
 /**

@@ -5,21 +5,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { ok } from "neverthrow";
+import { z } from "zod";
 
-import type { FarmLinkView, StartTransfersResponse, StoreAddAccepted, StoreState } from "../../../api/store.ts";
 import { claimStoreFlight, insertAnalysis, insertAnchor, settleStoreFlightFailure } from "../../../db/primary_mutation.ts";
 import { listPendingStoreAdds } from "../../../db/primary_query.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { enqueueStoreAdd } from "../../../modules/libs/store_flight.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { FARM_PARITY_FIXTURE } from "../../../test_support/fixtures.ts";
+import { jsonBody } from "../../../test_support/response_body.ts";
 import type { ServerEnv } from "../../http.ts";
 import { DEFAULT_STORE_ROUTE_OPTS, farmLinkRoutes, storeRoutes, type StoreRouteOpts } from "../store.ts";
 import { stringContaining } from "../../../test_support/matchers.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. Each start of a detached
-// child is a stub, thus no test spawns a transfer, a flush, or a container. Each `as` cast of a body reads
-// JSON that the route under test builds from the same `src/api/` type.
+// child is a stub, thus no test spawns a transfer, a flush, or a container. A test that computes on a body
+// parses the fields that it reads.
+
+const storeBody = z.looseObject({
+    transfers: z.array(z.looseObject({ kind: z.string() })),
+    flights: z.array(z.unknown()),
+    pendingAdds: z.array(z.unknown()),
+});
+const startsBody = z.looseObject({ starts: z.array(z.looseObject({ kind: z.string() })) });
+const linkBody = z.looseObject({ linked: z.array(z.string()), storeDirs: z.number() });
 
 const roots: string[] = [];
 
@@ -92,7 +101,7 @@ describe("GET /api/v1/store", () => {
         seedFailedFlight("polars");
         enqueueStoreAdd({ query: { spelling: "rpy2" }, analysisId: null })._unsafeUnwrap();
 
-        const store = (await (await storeRoutes(opts).request("/store")).json()) as StoreState;
+        const store = storeBody.parse(await jsonBody(storeRoutes(opts).request("/store")));
 
         expect(store.transfers.map((report) => report.kind)).toEqual(["runtime_image", "provisioner_image", "catalog"]);
         expect(store.flights).toMatchObject([
@@ -122,7 +131,7 @@ describe("POST /api/v1/store/transfers", () => {
 
         const images = await routes.request("/store/transfers", post({ kind: "images" }));
         expect(images.status).toBe(202);
-        expect((await images.json()) as StartTransfersResponse).toEqual({
+        expect(await jsonBody(images)).toEqual({
             migratedImage: null,
             starts: [
                 { kind: "runtime_image", outcome: "started", pid: 7 },
@@ -131,11 +140,11 @@ describe("POST /api/v1/store/transfers", () => {
         });
         expect(started).toEqual(["runtime_image", "provisioner_image"]);
 
-        const one = (await (await routes.request("/store/transfers", post({ kind: "provisioner_image" }))).json()) as StartTransfersResponse;
+        const one = startsBody.parse(await jsonBody(routes.request("/store/transfers", post({ kind: "provisioner_image" }))));
         expect(one.starts.map((start) => start.kind)).toEqual(["provisioner_image"]);
 
-        const catalog = (await (await routes.request("/store/transfers", post({ kind: "catalog" }))).json()) as StartTransfersResponse;
-        expect(catalog.starts).toEqual([{ kind: "catalog", outcome: "up_to_date" }]);
+        const catalog = await jsonBody(routes.request("/store/transfers", post({ kind: "catalog" })));
+        expect(catalog).toHaveProperty("starts", [{ kind: "catalog", outcome: "up_to_date" }]);
     });
 
     test("an unknown kind is 400", async () => {
@@ -151,7 +160,7 @@ describe("the failed flights", () => {
         const response = await storeRoutes(stub.opts).request(`/store/flights/${encodeURIComponent(id)}/retry`, post());
 
         expect(response.status).toBe(202);
-        expect((await response.json()) as StoreAddAccepted).toEqual({ flightKey: id, spec: "polars (python)", flushStarted: true });
+        expect(await jsonBody(response)).toEqual({ flightKey: id, spec: "polars (python)", flushStarted: true });
         expect(stub.flushes()).toBe(1);
         expect(listPendingStoreAdds()._unsafeUnwrap()).toMatchObject([{ spelling: "polars", ecosystem: "python", specifier: "" }]);
     });
@@ -166,7 +175,7 @@ describe("the failed flights", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ deleted: true });
         expect(stub.debris()).toBe(1);
-        expect(((await (await routes.request("/store")).json()) as StoreState).flights).toEqual([]);
+        expect(storeBody.parse(await jsonBody(routes.request("/store"))).flights).toEqual([]);
     });
 
     test("an unknown flight and a live flight are 404 for both", async () => {
@@ -202,7 +211,7 @@ describe("POST {A}/farm/link", () => {
         const analysisId = seedAnalysis("liver");
         const response = await linkRequest(root, analysisId, { packages: ["alpha==1.2.0"], lang: "python" });
         expect(response.status).toBe(200);
-        const view = (await response.json()) as FarmLinkView;
+        const view = linkBody.parse(await jsonBody(response));
         expect(view.linked).toEqual(["alpha==1.2.0"]);
         expect(view.storeDirs).toBeGreaterThan(0);
     });

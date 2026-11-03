@@ -435,7 +435,7 @@ export type DownloadGeoSeriesOptions = GeoResolveOptions & {
 async function sweepStaleStaging(destDir: string): Promise<void> {
     const parent = dirname(destDir);
     const prefix = basename(destDir);
-    const entries = await readdir(parent).catch(() => [] as string[]);
+    const entries = await readdir(parent).catch((): string[] => []);
     // Descending, so the first `.replaced-` seen is the newest: the suffix is a v7 uuid, which sorts
     // lexicographically by mint time.
     for (const entry of entries.sort().reverse()) {

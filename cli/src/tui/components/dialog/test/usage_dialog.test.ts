@@ -159,7 +159,8 @@ function serverWith(views: Partial<Record<UsageGrouping, UsageView>>, seen: stri
         discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
         fetch: async (url) => {
             seen.push(url);
-            const view = views[new URL(url).searchParams.get("by") as UsageGrouping];
+            const by = new URL(url).searchParams.get("by");
+            const view = Object.entries(views).find(([grouping]) => grouping === by)?.[1];
             return view === undefined
                 ? new Response(JSON.stringify({ error: "internal_error", message: "no view" }), { status: 500 })
                 : new Response(JSON.stringify(view), { headers: { "Content-Type": "application/json" } });

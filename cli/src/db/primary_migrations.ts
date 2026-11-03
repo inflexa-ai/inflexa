@@ -552,8 +552,8 @@ export function runMigrations(db: Database, migrations: Migration[]): Result<voi
             )
         `);
 
-        const applied = db.query("SELECT MAX(version) as v FROM _migrations").get() as { v: number | null };
-        const currentVersion = applied.v ?? 0;
+        const applied = db.query<{ v: number | null }, []>("SELECT MAX(version) as v FROM _migrations").get();
+        const currentVersion = applied?.v ?? 0;
 
         for (const m of migrations) {
             if (m.version <= currentVersion) continue;

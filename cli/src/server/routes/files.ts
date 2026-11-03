@@ -1,5 +1,5 @@
-import { constants } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
+import { constants, type BigIntStats } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename } from "node:path";
 
 import type { Context } from "hono";
@@ -11,10 +11,17 @@ import { getLogger } from "../../lib/log.ts";
 import { classifyRealPath, type ReadRoots } from "../../modules/analysis/boundary.ts";
 import { apiError, type ServerEnv } from "../http.ts";
 
+/** The members of an open file that the routes call. A `FileHandle` of `node:fs/promises` satisfies it, and a test gives a small stand-in. */
+export type OpenFile = {
+    stat(options: { bigint: true }): Promise<BigIntStats>;
+    read(buffer: Uint8Array, offset: number, length: number, position: number): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+};
+
 /** The disk reads of {@link serveFile}. A test replaces one to make a read fail or to count the closes. */
 export type FileRouteOpts = {
     /** Opens the real path that passed the test. The route gives the flags that refuse a final symbolic link and never wait on a FIFO. */
-    readonly open: (path: string, flags: number) => Promise<FileHandle>;
+    readonly open: (path: string, flags: number) => Promise<OpenFile>;
     /** The largest count of bytes that one read of the body takes, thus the bound on the memory of one request. */
     readonly chunkBytes: number;
 };
@@ -90,7 +97,7 @@ export async function serveFile(
 /** An open file or folder from {@link openRealPath}. */
 export type OpenedPath = {
     /** The caller owns the handle and must close it. */
-    readonly handle: FileHandle;
+    readonly handle: OpenFile;
     /** The path with each symbolic link resolved, the path that the handle opened. */
     readonly realPath: string;
 };
@@ -157,7 +164,7 @@ function openFailure(c: Context<ServerEnv>, cause: unknown, notAFile: (c: Contex
  * The response for an open file. This function owns `handle`: it closes the handle for each response that has no
  * body, and the body stream closes it for a response that has one.
  */
-async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: FileHandle, path: string, response: FileResponseOpts): Promise<Response> {
+async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: OpenFile, path: string, response: FileResponseOpts): Promise<Response> {
     const stats = await ResultAsync.fromPromise(handle.stat({ bigint: true }), (cause) => cause);
     if (stats.isErr()) {
         await closeHandle(handle);
@@ -213,7 +220,7 @@ async function serveHandle(c: Context<ServerEnv>, opts: FileRouteOpts, handle: F
 }
 
 /** Close a handle, and log a failure of the close. Each failure after the response has no one to tell. */
-export async function closeHandle(handle: FileHandle): Promise<void> {
+export async function closeHandle(handle: OpenFile): Promise<void> {
     await handle.close().catch((cause: unknown) => getLogger("server").warn({ err: cause }, "could not close a served file"));
 }
 
@@ -222,7 +229,7 @@ export async function closeHandle(handle: FileHandle): Promise<void> {
  * close the handle, and it closes one time. The status is sent before the first read, thus a failed read ends the body
  * with an error, and the client sees fewer bytes than `Content-Length`.
  */
-function fileBody(handle: FileHandle, start: number, length: number, chunkBytes: number): ReadableStream<Uint8Array> {
+function fileBody(handle: OpenFile, start: number, length: number, chunkBytes: number): ReadableStream<Uint8Array> {
     let position = start;
     let remaining = length;
     let closed = false;

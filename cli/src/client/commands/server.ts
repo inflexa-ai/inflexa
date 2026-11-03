@@ -16,7 +16,7 @@ import {
 import { describeCause } from "../../lib/cause.ts";
 import { confirm, fail } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
-import { statResult, type FsError } from "../../lib/fs.ts";
+import { errnoCode, statResult, type FsError } from "../../lib/fs.ts";
 import { describeClientError } from "../api.ts";
 import {
     DEFAULT_SERVER_LOOKUP_OPTS,
@@ -319,7 +319,7 @@ export function readLogTail(path: string, lines: number): Result<{ text: string;
         return ok({ text: kept === "" ? "" : ended ? `${kept}\n` : kept, end });
     } catch (cause) {
         // `openSync` throws a Node errno error. No file yet is no tail.
-        if ((cause as NodeJS.ErrnoException).code === "ENOENT") return ok(null);
+        if (errnoCode(cause) === "ENOENT") return ok(null);
         return err({ type: "io_failed", op: "read the server log", cause });
     } finally {
         if (fd !== undefined) closeSync(fd);

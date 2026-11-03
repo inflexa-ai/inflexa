@@ -81,8 +81,8 @@ function frameChannel(): { send: (frame: ChatFrame) => Promise<void>; close: () 
     return {
         send: (frame) =>
             new Promise<void>((applied) => {
-                // The parse gives back the frame that went in: it is JSON by the wire contract.
-                waiting.push({ frame: JSON.parse(JSON.stringify(frame)) as ChatFrame, applied });
+                // A copy, thus a later change of the frame by the sender cannot reach the queued one.
+                waiting.push({ frame: structuredClone(frame), applied });
                 notify();
             }),
         close: () => {

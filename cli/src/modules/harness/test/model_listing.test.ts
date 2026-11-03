@@ -656,7 +656,7 @@ describe("validateModelSelection — per-mode commit validation", () => {
         expect(result).toBe("served");
         const headers = calls[0]?.init.headers;
         expect(headers).toMatchObject({ Authorization: "Bearer gw-jwt", "anthropic-version": "2023-06-01" });
-        expect((headers as Record<string, string>)["x-api-key"]).toBeUndefined();
+        expect(headers).not.toHaveProperty("x-api-key");
     });
 
     test("an unresolvable auth source is inconclusive — the switch commits, no request is issued", async () => {

@@ -17,6 +17,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 
+import { z } from "zod";
+
 import { recordTransferProgress, startTransferRun } from "../../../db/primary_mutation.ts";
 import { getTransfer } from "../../../db/primary_query.ts";
 import type { DownloadRetry, FetchLike } from "../../../lib/download.ts";
@@ -25,7 +27,7 @@ import { instanceLockPath, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../../lib/
 import { freshDb } from "../../../test_support/db.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import type { TransferRow } from "../../../types/store.ts";
-import { downloadPackageStore, runCatalogTransfer, storeDownloadPaths, type StoreDownloadOutcome } from "../store_download.ts";
+import { downloadPackageStore, inspectStoreContent, runCatalogTransfer, storeDownloadPaths, type StoreDownloadOutcome } from "../store_download.ts";
 import { transferLockKey } from "../transfers.ts";
 
 // The scenarios of the `package-store-download` spec, against a fake registry on
@@ -81,7 +83,7 @@ async function makeLayerBlob(mediaType: string, build: (root: string) => void): 
  * record an update moves: the pool gains a directory, and the graph and the
  * image record change.
  */
-async function catalogLayers(version: 1 | 2): Promise<readonly FakeLayer[]> {
+async function catalogLayers(version: 1 | 2): Promise<readonly [FakeLayer, FakeLayer]> {
     const track = await makeLayerBlob(TRACK_MEDIA_TYPE, (root) => {
         mkdirSync(join(root, "store", ALPHA), { recursive: true });
         writeFileSync(join(root, "store", ALPHA, "content.txt"), "alpha\n");
@@ -148,6 +150,8 @@ function pipeBlob(path: string): number {
 function closeWriter(fd: number): void {
     if (writers.delete(fd)) closeSync(fd);
 }
+
+const receiptDigestSchema = z.object({ manifestDigest: z.string() });
 
 type FakeRegistry = {
     readonly fetch: FetchLike;
@@ -238,7 +242,7 @@ describe("downloadPackageStore", () => {
         // catalog was proven beside from the store root.
         expect(readFileSync(join(storeRoot, "image-packages.json"), "utf8")).toBe(JSON.stringify({ image: 1 }));
         const paths = storeDownloadPaths(storeRoot);
-        const receipt = JSON.parse(readFileSync(paths.receipt, "utf8")) as { manifestDigest: string };
+        const receipt = receiptDigestSchema.parse(JSON.parse(readFileSync(paths.receipt, "utf8")));
         expect(receipt.manifestDigest).toBe(registry.manifestDigest);
         // The receipt is durable, thus the second copy of the store in the blob cache is dropped.
         expect(existsSync(paths.blobs)).toBe(false);
@@ -314,7 +318,7 @@ describe("downloadPackageStore", () => {
         expect(existsSync(join(storeRoot, "farms", "catalog", "user-note.txt"))).toBe(false);
         // The farm of the analysis is untouched.
         expect(readFileSync(join(storeRoot, "farms", "my-analysis", "marker.txt"), "utf8")).toBe("mine\n");
-        const receipt = JSON.parse(readFileSync(storeDownloadPaths(storeRoot).receipt, "utf8")) as { manifestDigest: string };
+        const receipt = receiptDigestSchema.parse(JSON.parse(readFileSync(storeDownloadPaths(storeRoot).receipt, "utf8")));
         expect(receipt.manifestDigest).toBe(registryV2.manifestDigest);
     });
 
@@ -353,7 +357,7 @@ describe("downloadPackageStore", () => {
         const storeRoot = tempDir("inflexa-store-dl-");
         const layers = await catalogLayers(1);
         const registry = makeRegistry(layers);
-        const [track, base] = layers as [FakeLayer, FakeLayer];
+        const [track, base] = layers;
         registry.failing.add(base.digest);
 
         const failed = await download(storeRoot, registry);
@@ -376,6 +380,109 @@ describe("downloadPackageStore", () => {
 // The scenarios of the unpacking watch, against the same fake registry. Each one drives the child
 // body in this process: it takes the transfer lock, writes the row, and settles it on every exit.
 
+/** The fetch of `base`, with the token body and the manifest body replaced. The blob routes stay. */
+function withBodies(base: FakeRegistry, bodies: { readonly token?: unknown; readonly manifest?: unknown }): FetchLike {
+    return (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.includes("/token") && bodies.token !== undefined) return Promise.resolve(Response.json(bodies.token));
+        if (url.includes("/manifests/") && bodies.manifest !== undefined) return Promise.resolve(Response.json(bodies.manifest));
+        return base.fetch(input, init);
+    };
+}
+
+describe("the tolerant readers of a registry answer", () => {
+    const LAYER = { mediaType: TRACK_MEDIA_TYPE, digest: "sha256:abc", size: 7 };
+
+    test.each([
+        ["a manifest that is null", null, "The manifest was not an object."],
+        ["a manifest that is an array", [], "The manifest declared no layers."],
+        ["a manifest with an empty layer list", { layers: [] }, "The manifest declared no layers."],
+        ["a layer that is null between valid layers", { layers: [LAYER, null, LAYER] }, "A manifest layer was not an object."],
+        ["a layer that is an array", { layers: [LAYER, []] }, "A manifest layer lacked a media type, a digest, or a size."],
+        ["a layer with a size that is a string", { layers: [LAYER, { ...LAYER, size: "7" }] }, "A manifest layer lacked a media type, a digest, or a size."],
+        [
+            "a layer with a digest that is missing",
+            { layers: [{ mediaType: TRACK_MEDIA_TYPE, size: 7 }] },
+            "A manifest layer lacked a media type, a digest, or a size.",
+        ],
+        [
+            "a layer of an unexpected media type",
+            { layers: [LAYER, { ...LAYER, mediaType: "text/plain" }] },
+            "A manifest layer carried an unexpected media type: text/plain.",
+        ],
+    ])("%s gives manifest_failed with the same message", async (_name, manifest, message) => {
+        const storeRoot = tempDir("inflexa-store-dl-");
+        const registry = makeRegistry(await catalogLayers(1));
+
+        const result = await downloadPackageStore({ storeRoot, arch: "arm64", fetch: withBodies(registry, { manifest }), retry: FAST_RETRY });
+
+        expect(result._unsafeUnwrapErr()).toEqual({ type: "manifest_failed", message });
+    });
+
+    test("a token answer reads from `access_token`, and an answer of another kind carries no token", async () => {
+        const registry = makeRegistry(await catalogLayers(1));
+
+        const named = await downloadPackageStore({
+            storeRoot: tempDir("inflexa-store-dl-"),
+            arch: "arm64",
+            fetch: withBodies(registry, { token: { access_token: "t" } }),
+            retry: FAST_RETRY,
+        });
+        expectDownloaded(named._unsafeUnwrap());
+
+        for (const token of [[], "text", null, {}, { token: "" }]) {
+            const refused = await downloadPackageStore({
+                storeRoot: tempDir("inflexa-store-dl-"),
+                arch: "arm64",
+                fetch: withBodies(registry, { token }),
+                retry: FAST_RETRY,
+            });
+            expect(refused._unsafeUnwrapErr().type).toBe("token_failed");
+        }
+    });
+
+    describe("the receipt", () => {
+        /** Land a real receipt, then give the text of the next one. */
+        async function installedRoot(): Promise<{ readonly storeRoot: string; readonly receiptPath: string; readonly receipt: Record<string, unknown> }> {
+            const storeRoot = tempDir("inflexa-store-dl-");
+            expectDownloaded((await download(storeRoot, makeRegistry(await catalogLayers(1))))._unsafeUnwrap());
+            const receiptPath = storeDownloadPaths(storeRoot).receipt;
+            return { storeRoot, receiptPath, receipt: z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(receiptPath, "utf8"))) };
+        }
+
+        test("a receipt with a key beyond the known ones still reads as installed", async () => {
+            const { storeRoot, receiptPath, receipt } = await installedRoot();
+            writeFileSync(receiptPath, JSON.stringify({ ...receipt, note: "extra" }));
+
+            expect(await inspectStoreContent(storeRoot)).toBe("installed");
+        });
+
+        test.each([
+            ["text that is not JSON", () => "{"],
+            ["JSON null", () => "null"],
+            ["an array", () => "[]"],
+            ["a version of another number", (receipt: Record<string, unknown>) => JSON.stringify({ ...receipt, version: 2 })],
+            ["an arch outside the two that the store serves", (receipt: Record<string, unknown>) => JSON.stringify({ ...receipt, arch: "ppc64" })],
+            ["an activation time that is a number", (receipt: Record<string, unknown>) => JSON.stringify({ ...receipt, activatedAt: 1 })],
+            [
+                "a layer that is null between valid layers",
+                (receipt: Record<string, unknown>) =>
+                    JSON.stringify({ ...receipt, layers: [{ mediaType: "m", digest: "d", size: 1 }, null, { mediaType: "m", digest: "d", size: 1 }] }),
+            ],
+            [
+                "a layer with a size that is a string",
+                (receipt: Record<string, unknown>) => JSON.stringify({ ...receipt, layers: [{ mediaType: "m", digest: "d", size: "1" }] }),
+            ],
+        ])("a receipt with %s reads as invalid, and the store content stays", async (_name, corrupt) => {
+            const { storeRoot, receiptPath, receipt } = await installedRoot();
+            writeFileSync(receiptPath, corrupt(receipt));
+
+            expect(await inspectStoreContent(storeRoot)).toBe("invalid_receipt");
+            expect(existsSync(join(storeRoot, "store", ALPHA))).toBe(true);
+        });
+    });
+});
+
 describe("runCatalogTransfer", () => {
     /** The transfer row as it stands, or `null` when no run wrote one. */
     function catalogRow(): TransferRow | null {
@@ -391,7 +498,7 @@ describe("runCatalogTransfer", () => {
         freshDb();
         const storeRoot = tempDir("inflexa-store-dl-");
         const layers = await catalogLayers(1);
-        const [track, base] = layers as [FakeLayer, FakeLayer];
+        const [track, base] = layers;
         const registry = makeRegistry(layers);
         // The swap rides the GET of the SECOND layer: the first blob is on disk and hashed by then,
         // and only the unpack reads it again. The head of a zstd frame carries no block, thus the

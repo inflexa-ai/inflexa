@@ -10,10 +10,10 @@ import {
     type ChatTurnStart,
     type ModelMessage,
     type OpenChatTurnRequest,
-    type Pool,
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
+import { fakeTransactionalPool } from "../../../test_support/fake_pool.ts";
 import { buildChatSession, healTailOrphan, runChatTurn, turnSpend, type ChatTurnSeams, type TurnOutcome } from "../turn.ts";
 
 // The engine is exercised offline: the chat turns of the harness are one injected fake, thus no Postgres, no
@@ -29,8 +29,8 @@ const conversationAgent: AgentDefinition = { id: "conv", systemPrompt: "", model
 const session = buildChatSession(ANALYSIS_ID, THREAD_ID);
 const ROOT = { agentId: "conv", callPath: ["conv"] };
 
-// The heal tests never read the pool, thus a bare pool stands in for it.
-const pool = {} as unknown as Pool;
+// The heal tests never read the pool, thus a pool that holds no row stands in for it.
+const pool = fakeTransactionalPool(() => []);
 
 /**
  * A whole-turn rollup as a provider reports one. It carries the cache and reasoning breakdowns beside

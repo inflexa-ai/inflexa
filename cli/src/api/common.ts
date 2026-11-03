@@ -1,6 +1,8 @@
 // The wire types that each route of the local server shares. The server routes (src/server/) and the
 // client fetchers (src/client/) import the same declarations, thus the two sides cannot disagree on a shape.
 
+import { z } from "zod";
+
 /** The `error` code of an {@link ApiError} body. Each code has one HTTP status. */
 export type ApiErrorCode =
     | "invalid_json"
@@ -41,6 +43,17 @@ export type ApiError = {
     /** Code-specific data, for example the zod `flatten()` output of a `validation_error`, or the `phase` of an `unavailable`. */
     details?: unknown;
 };
+
+/**
+ * Accepts the JSON of an error body: an object with an `error` that is a code of {@link API_ERROR_STATUS}, a string
+ * `message`, and a `details` of any value. A key beyond these passes through unchanged, because a route can add
+ * context to a body and the client must give the whole body to its caller.
+ */
+export const apiErrorSchema: z.ZodType<ApiError> = z.looseObject({
+    error: z.string().refine((code): code is ApiErrorCode => Object.hasOwn(API_ERROR_STATUS, code)),
+    message: z.string(),
+    details: z.unknown().optional(),
+});
 
 /** The zero-based page that a list request asks for. */
 export type PageQuery = {

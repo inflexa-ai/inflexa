@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { PAGE_ASSETS } from "@inflexa-ai/harness/report-render/assets.js";
 import { errAsync, ok, okAsync } from "neverthrow";
 
-import type { ServerActivity, ServerBootState, ServerState, ShutdownMode } from "../../api/server.ts";
+import type { ServerBootState, ServerState, ShutdownMode } from "../../api/server.ts";
 import type { ClientOpts } from "../../client/api.ts";
 import { fetchServerState } from "../../client/server.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
@@ -13,13 +13,14 @@ import { releaseInstanceLock } from "../../lib/lock.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { signIn } from "../../test_support/browser_session.ts";
 import { freshDb } from "../../test_support/db.ts";
+import { errorBody, jsonBody } from "../../test_support/response_body.ts";
 import { idleLifecycle, startTestServer, type TestServer } from "../../test_support/server.ts";
 import { buildApp } from "../app.ts";
 import type { ServerBoot } from "../boot.ts";
 import type { ServerLifecycle } from "../lifecycle.ts";
+import type { PoolRuntime } from "../http.ts";
 import { createPageGrantStore } from "../report_page_grants.ts";
 import { serverRoutes, type ServerRouteOpts } from "../routes/server.ts";
 import { anyOf, stringContaining } from "../../test_support/matchers.ts";
@@ -161,8 +162,7 @@ describe("the session cookie", () => {
 
     async function expectUnauthorized(response: Response, message: string): Promise<void> {
         expect(response.status).toBe(401);
-        // An error body of the app is an `ApiError`.
-        const body = (await response.json()) as { error: string; message: string };
+        const body = await errorBody(response);
         expect(body.error).toBe("unauthorized");
         expect(body.message).toContain(message);
     }
@@ -249,8 +249,7 @@ describe("the Host and Origin check", () => {
 
     async function expectForbidden(response: Response, header: "Host" | "Origin"): Promise<void> {
         expect(response.status).toBe(403);
-        // An error body of the app is an `ApiError`.
-        const body = (await response.json()) as { error: string; message: string };
+        const body = await errorBody(response);
         expect(body.error).toBe("forbidden");
         expect(body.message).toStartWith(`The ${header} header must be`);
     }
@@ -315,8 +314,7 @@ describe("the Origin null exception of the report pages", () => {
 
     async function expectForbidden(response: Response, header: "Host" | "Origin"): Promise<void> {
         expect(response.status).toBe(403);
-        // An error body of the app is an `ApiError`.
-        const body = (await response.json()) as { error: string; message: string };
+        const body = await errorBody(response);
         expect(body.error).toBe("forbidden");
         expect(body.message).toStartWith(`The ${header} header must be`);
     }
@@ -553,14 +551,13 @@ describe("GET /api/v1/server/activity", () => {
         durableWork: durable,
     });
     // The route passes the pool of the runtime to the ledger read and reads nothing else of it.
-    const runtime = { pool: {} } as unknown as HarnessRuntime;
-    const readyBoot: ServerBoot = { state: () => STARTING, runtime: () => runtime, start: async () => undefined };
+    const runtime: PoolRuntime = { pool: { query: () => Promise.reject(new Error("the route must not query the pool")) } };
+    const readyBoot: ServerBoot<PoolRuntime> = { state: () => STARTING, runtime: () => runtime, start: async () => undefined };
 
-    async function activity(boot: ServerBoot, opts: ServerRouteOpts, lifecycle: ServerLifecycle = idleLifecycle()): Promise<ServerActivity> {
+    async function activity(boot: ServerBoot<PoolRuntime>, opts: ServerRouteOpts, lifecycle: ServerLifecycle = idleLifecycle()): Promise<unknown> {
         const response = await serverRoutes(boot, lifecycle, opts).request("/activity");
         expect(response.status).toBe(200);
-        // The route builds the body from `ServerActivity`.
-        return (await response.json()) as ServerActivity;
+        return await jsonBody(response);
     }
 
     test("counts the turns, the profile drives, and the durable work of the ledger", async () => {
@@ -576,7 +573,7 @@ describe("GET /api/v1/server/activity", () => {
             fakeBoot(STARTING).boot,
             counts(() => okAsync({ runs: 9, profiles: 9, turns: 9 })),
         );
-        expect(body.durable).toEqual({ state: "no_runtime" });
+        expect(body).toHaveProperty("durable", { state: "no_runtime" });
     });
 
     test("a ledger read that fails is `unreadable`, and a stop in progress shows its mode", async () => {
@@ -587,7 +584,7 @@ describe("GET /api/v1/server/activity", () => {
             counts(() => errAsync(new Error("pg down"))),
             lifecycle,
         );
-        expect(body.durable).toEqual({ state: "unreadable" });
-        expect(body.stopping).toBe("drain");
+        expect(body).toHaveProperty("durable", { state: "unreadable" });
+        expect(body).toHaveProperty("stopping", "drain");
     });
 });

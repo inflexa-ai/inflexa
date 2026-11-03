@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUIDv7 } from "bun";
 import { ProvDocument } from "@inflexa-ai/tsprov";
+import { z } from "zod";
 
 import { freshDb } from "../../../test_support/db.ts";
 import { insertAnchor, insertAnalysis } from "../../../db/primary_mutation.ts";
 import { getAnalysisIntegrity, getAnalysisProvenance } from "../../../db/primary_query.ts";
 import { Bus } from "../../../lib/bus.ts";
+import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type { ProvActor, ProvModelId } from "../../../types/prov.ts";
@@ -40,17 +42,24 @@ const conversationThread = "thread-conv-1";
 const reportThread = "thread-report-1";
 const reportQn = `inflexa:report-${cliProvDigest(reportThread)}`;
 
+const typedLiteralSchema = z.object({ $: z.unknown() });
+
 /** PROV-JSON renders an attribute as a bare literal, a typed `{ $ }` object, or an array of either — flatten all three to strings. */
 function attrValues(value: unknown): string[] {
     const list = Array.isArray(value) ? value : [value];
-    return list.map((v) => (typeof v === "object" && v !== null && "$" in v ? String((v as { $: unknown }).$) : String(v)));
+    return list.map((v) => {
+        const typed = typedLiteralSchema.safeParse(v);
+        return typed.success ? String(typed.data.$) : String(v);
+    });
 }
 
-type ProvJson = {
-    entity?: Record<string, Record<string, unknown>>;
-    activity?: Record<string, Record<string, unknown>>;
-    agent?: Record<string, Record<string, unknown>>;
-};
+const provJsonSchema = z.object({
+    entity: z.record(z.string(), unknownRecordSchema).optional(),
+    activity: z.record(z.string(), unknownRecordSchema).optional(),
+    agent: z.record(z.string(), unknownRecordSchema).optional(),
+});
+
+type ProvJson = z.infer<typeof provJsonSchema>;
 
 /** Every action activity of one `prov:type` — a lifecycle action takes a fresh id per act, so the type is the only handle on it. */
 function activitiesOfType(json: ProvJson, type: string): Record<string, unknown>[] {
@@ -73,7 +82,7 @@ async function flushedDocument(): Promise<ProvDocument> {
 }
 
 async function flushedJson(): Promise<ProvJson> {
-    return JSON.parse((await flushedDocument()).serialize("json")) as ProvJson;
+    return provJsonSchema.parse(JSON.parse((await flushedDocument()).serialize("json")));
 }
 
 async function flushedProvN(): Promise<string> {

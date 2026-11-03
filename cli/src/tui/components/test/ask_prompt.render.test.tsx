@@ -337,12 +337,13 @@ describe("AskPrompt mouse activation", () => {
 
             // Walk the renderable tree from the root — the same getChildren() recursion app.tsx's
             // applySelectionColors uses. A <text> exposes `plainText` (its concatenated visible text) and the
-            // `selectable` flag; a <box> exposes neither, so `"plainText" in r` selects exactly the text nodes
-            // and makes the read of those two members sound.
+            // `selectable` flag; a <box> exposes neither, so the two `in` tests select exactly the text nodes.
             type SelectableText = { plainText: string; selectable: boolean };
             const texts: SelectableText[] = [];
             const collect = (r: Renderable): void => {
-                if ("plainText" in r) texts.push(r as unknown as SelectableText);
+                if ("plainText" in r && "selectable" in r && typeof r.plainText === "string" && typeof r.selectable === "boolean") {
+                    texts.push({ plainText: r.plainText, selectable: r.selectable });
+                }
                 for (const child of r.getChildren()) collect(child);
             };
             collect(setup.renderer.root);

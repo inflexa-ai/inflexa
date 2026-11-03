@@ -5,6 +5,8 @@ import { createRoot } from "solid-js";
 import type { FarmHealOutcome } from "../../../api/runs.ts";
 import type { TransferReportView } from "../../../api/store.ts";
 import type { Analysis } from "../../../types/analysis.ts";
+import { asStr256 } from "../../../lib/types.ts";
+import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
 import type { Workspace } from "../../contexts/workspace.ts";
 import type { Notice } from "../../theme.ts";
 import { __resetSandboxGateForTest, __setTransferReportsForTest } from "../sandbox_gate.tsx";
@@ -15,11 +17,11 @@ import { __resetFarmHealForTest, watchFarmHeal, type FarmHealSeams } from "../fa
 // written directly. The heal itself is composition.test.ts territory.
 
 // The hook reads only `.id` off the analysis.
-const ANALYSIS = { id: "a1", name: "My analysis" } as unknown as Analysis;
+const ANALYSIS = buildAnalysis({ id: "a1", name: asStr256("My analysis") });
 
 /** A workspace stub: the hook reads `analysis`, and the injected seams carry the dialog. */
 function wsWith(analysis: Analysis | null): Workspace {
-    return { analysis } as unknown as Workspace;
+    return buildWorkspace({ analysis });
 }
 
 /** One catalog transfer report in the row shape, with everything else quiet. */

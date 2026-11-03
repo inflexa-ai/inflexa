@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { ExportProvenanceResult, LineageFormat } from "../../api/provenance.ts";
 import { getAnalysis } from "../../db/primary_query.ts";
 import { getLogger } from "../../lib/log.ts";
+import { isMember } from "../../lib/types.ts";
 import { exportAnalysisProvenance } from "../../modules/prov/export.ts";
 import { walkAnalysisLineage } from "../../modules/prov/lineage.ts";
 import { flushProvenanceAsync } from "../../modules/prov/prov.ts";
@@ -119,7 +120,7 @@ export function provenanceRoutes(): Hono<ServerEnv> {
 
 /** A type predicate over a query value: sound because it tests membership in the closed list of formats. */
 function isLineageFormat(value: string): value is LineageFormat {
-    return (LINEAGE_FORMATS as readonly string[]).includes(value);
+    return isMember(LINEAGE_FORMATS, value);
 }
 
 /** The analysis row of the path. The error channel holds the response to send. The guard of `{A}` already gives 404 for an unknown id. */

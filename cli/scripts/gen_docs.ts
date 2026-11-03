@@ -13,6 +13,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Argument, Command, Option } from "commander";
 import pkg from "../package.json";
+import { keysOf } from "../src/lib/types.ts";
 
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the sanctioned "is this a `bun test` process?" question (same as env.ts's guard): the build channel is unset in both a source run and a test run, so only NODE_ENV can answer it.
 if (process.env.NODE_ENV === "test") {
@@ -54,7 +55,6 @@ const { cli } = await import("../src/cli/index.ts");
 // secret channel (INFLEXA_MODEL_API_KEY, INFLEXA_EMBEDDING_API_KEY) must not be visible in `--help` and
 // absent from the published reference. src/cli/test/gen_docs.test.ts fails when a list reaches no page here.
 const { embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc } = await import("../src/lib/env.ts");
-type EnvDocEntry = import("../src/lib/env.ts").EnvDocEntry;
 
 const OUT_DIR = join(import.meta.dir, "..", "dist-docs");
 
@@ -211,7 +211,8 @@ function renderEnvironmentPage(): string {
     // var is documented once, naming every path it moves.
     const baseVarLabels = new Map<string, string[]>();
 
-    for (const [key, doc] of Object.entries(envDoc) as [keyof typeof envDoc, EnvDocEntry][]) {
+    for (const key of keysOf(envDoc)) {
+        const doc = envDoc[key];
         if (doc.kind === "path") {
             // env paths resolve from the placeholder base vars seeded above, so this is
             // "$XDG_DATA_HOME/inflexa/…" — deterministic, not the generating machine's home.

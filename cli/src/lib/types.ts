@@ -42,6 +42,8 @@ export function str256(s: string): Result<Str256, Str256Error> {
     const len = [...trimmed].length;
     if (len === 0) return err("empty");
     if (len > 256) return err("too_long");
+    // SAFETY: the two checks above reject an empty and an over-long `trimmed`, which are the bounds that the brand states.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the brand has no runtime form that a guard could check
     return ok(trimmed as Str256);
 }
 
@@ -50,5 +52,30 @@ export function str256(s: string): Result<Str256, Str256Error> {
  * back from the DB), skipping validation. Use only when the source guarantees validity.
  */
 export function asStr256(s: string): Str256 {
+    // SAFETY: the caller states that its source already enforced the bounds of `Str256`, and the brand has no runtime form.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the brand has no runtime form that a guard could check
     return s as Str256;
+}
+
+/**
+ * Whether `value` is one of `members`, narrowing it to the member type. The tuple of a closed set is
+ * widened to `readonly string[]` through an annotation, because `.includes` on the literal tuple
+ * accepts only a member, which is the very thing under test.
+ */
+export function isMember<T extends string>(members: readonly T[], value: string): value is T {
+    const widened: readonly string[] = members;
+    return widened.includes(value);
+}
+
+/**
+ * The own enumerable string keys of `table`, typed as the keys of its type. `Object.keys` widens to
+ * `string[]`, while `for...in` over a generic `T` types its key as `Extract<keyof T, string>`. The
+ * own-property test keeps the result equal to `Object.keys`.
+ */
+export function keysOf<T extends object>(table: T): (keyof T & string)[] {
+    const keys: (keyof T & string)[] = [];
+    for (const key in table) {
+        if (Object.hasOwn(table, key)) keys.push(key);
+    }
+    return keys;
 }

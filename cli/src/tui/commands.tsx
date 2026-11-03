@@ -1735,10 +1735,10 @@ function ProjectListDialog(props: { projects: ProjectSummary[] }): JSX.Element {
 function SetProjectDialog(props: { projects: ProjectSummary[] }): JSX.Element {
     const ws = useWorkspace();
     const a = ws.analysis;
-    const items = [
-        { value: null as string | null, title: "(none)", description: "Clear project grouping" },
+    const items: SelectItem<string | null>[] = [
+        { value: null, title: "(none)", description: "Clear project grouping" },
         // oxlint-disable-next-line solid/reactivity -- seed-once: the dialog mounts one time with the list that its opener read, and a new read opens a new dialog
-        ...props.projects.map((p) => ({ value: p.id as string | null, title: p.name, description: p.description ?? undefined })),
+        ...props.projects.map((p) => ({ value: p.id, title: p.name, description: p.description ?? undefined })),
     ];
     return (
         <SelectDialog

@@ -17,6 +17,7 @@ import { z } from "zod";
 // which only exists once the extension loader has run.
 import "../../../extensions/index.ts";
 import { env } from "../../../lib/env.ts";
+import { fakeFetch } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     ON_DEMAND_REFERENCE_NOTE,
@@ -880,7 +881,7 @@ describe("progress readout teardown", () => {
             }
         });
 
-        expect((thrown as Error | undefined)?.message).toBe("catalog seam exploded mid-transfer");
+        expect(thrown instanceof Error ? thrown.message : undefined).toBe("catalog seam exploded mid-transfer");
         // Without the teardown the repaint timer would still be running and, on a terminal, the bar
         // would still own the screen. The closing line is the observable proof it was torn down.
         expect(stdout).toContain("Download failed at 0/1 files");
@@ -1022,15 +1023,10 @@ describe("transfer rate", () => {
  */
 function sealGlobalFetch(escaped: string[]): () => void {
     const real = globalThis.fetch;
-    // Borrowing `preconnect` off the real implementation keeps the replacement structurally complete,
-    // so installing it needs no cast — Bun's `typeof fetch` carries that property.
-    globalThis.fetch = Object.assign(
-        async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-            escaped.push(`${init?.method ?? "GET"} ${String(input)}`);
-            throw new Error("a sealed setup must never reach the global fetch");
-        },
-        { preconnect: real.preconnect },
-    );
+    globalThis.fetch = fakeFetch(async (input, init) => {
+        escaped.push(`${init?.method ?? "GET"} ${String(input)}`);
+        throw new Error("a sealed setup must never reach the global fetch");
+    });
     return () => {
         globalThis.fetch = real;
     };

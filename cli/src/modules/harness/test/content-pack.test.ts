@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { randomUUIDv7 } from "bun";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { contentHashOf, packContent, unpackTo, type PackEntry } from "../content-pack.ts";
+import { PACK_VERSION, contentHashOf, packContent, unpackTo, type PackEntry } from "../content-pack.ts";
 
 const FILES: PackEntry[] = [
     { path: "skills/foo/SKILL.md", bytes: Buffer.from("# Foo\nbody\n", "utf8") },
@@ -72,6 +72,21 @@ describe("packContent / unpackTo", () => {
     test("reports a malformed header", () => {
         // header len 2, body "{!" — invalid JSON
         expect(unpackTo(Buffer.from([0, 0, 0, 2, 0x7b, 0x21]), dest)._unsafeUnwrapErr().type).toBe("malformed_header");
+    });
+
+    // A header that parses as JSON but is not a header object: the documented contract is a Result and no throw.
+    test.each([
+        ["null", "null"],
+        ["an array", "[]"],
+        ["an entry with a wrong field type", JSON.stringify({ v: PACK_VERSION, entries: [{ path: "a.md", size: "3" }] })],
+        ["an entry that is null", JSON.stringify({ v: PACK_VERSION, entries: [null] })],
+        ["entries that are not a list", JSON.stringify({ v: PACK_VERSION, entries: {} })],
+        ["another version", JSON.stringify({ v: PACK_VERSION + 1, entries: [] })],
+    ])("reports a header that is %s as malformed_header", (_label, headerJson) => {
+        const body = Buffer.from(headerJson, "utf8");
+        const prefix = Buffer.alloc(4);
+        prefix.writeUInt32BE(body.length, 0);
+        expect(unpackTo(Buffer.concat([prefix, body]), dest)._unsafeUnwrapErr().type).toBe("malformed_header");
     });
 });
 

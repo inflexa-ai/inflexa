@@ -114,9 +114,10 @@ describe("freshDb / resetDb", () => {
 // SHARES the sandbox's prefix. `mkdtempSync` names are attacker-free but not collision-free: a stale
 // `/tmp/inflexa-test-AbC123-old` from a previous run sits right beside a live `/tmp/inflexa-test-AbC123`.
 describe("assertTestSandbox containment", () => {
-    // Non-null is guaranteed upstream: env.ts refuses to evaluate under NODE_ENV=test without the
-    // marker, and the import of `env` at the top of this file would have thrown before we got here.
-    const sandbox = process.env.INFLEXA_TEST_SANDBOX as string;
+    // env.ts refuses to evaluate under NODE_ENV=test without the marker, and the import of `env` at the
+    // top of this file would have thrown before we got here, so the guard below never fires.
+    const sandbox = process.env.INFLEXA_TEST_SANDBOX;
+    if (sandbox === undefined) throw new Error("INFLEXA_TEST_SANDBOX is not set");
 
     test("a path inside the sandbox is authorized", () => {
         expect(() => assertTestSandbox(join(sandbox, "data", "inflexa", "agent.db"))).not.toThrow();

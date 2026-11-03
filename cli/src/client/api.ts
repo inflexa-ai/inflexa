@@ -1,10 +1,10 @@
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 
-import { API_ERROR_STATUS, type ApiError } from "../api/common.ts";
+import { apiErrorSchema, type ApiError } from "../api/common.ts";
 import type { ServerDiscovery } from "../api/server.ts";
 import { env } from "../lib/env.ts";
-import { readFileResult, type FsError } from "../lib/fs.ts";
+import { errnoCode, readFileResult, type FsError } from "../lib/fs.ts";
 
 /** Where a client sends its requests, and the bearer token that it sends with each one. */
 export type ServerEndpoint = {
@@ -71,7 +71,7 @@ export function readServerDiscovery(path: string = env.serverFilePath): Result<S
         readFileResult(path, "read the server discovery file")
             .map((raw): ServerDiscovery | null => JSON.parseWith(raw, discoverySchema))
             // `readFileSync` throws a Node errno error. A cause with no `code` reads as a failure that is not ENOENT.
-            .orElse((e) => ((e.cause as NodeJS.ErrnoException | null)?.code === "ENOENT" ? ok(null) : err(e)))
+            .orElse((e) => (errnoCode(e.cause) === "ENOENT" ? ok(null) : err(e)))
     );
 }
 
@@ -142,8 +142,7 @@ export function request<T>(method: HttpMethod, path: string, req: ApiRequest = {
     return send(method, path, req, "application/json", opts).andThen(({ response, baseUrl }) =>
         readJsonBody(response, baseUrl, req.signal).andThen((body): Result<T, ClientError> => {
             if (!response.ok) return err(errorFromBody(response.status, body));
-            // The cast is sound for the reason in the JSDoc above: one checkout builds both sides of the wire.
-            return ok(body as T);
+            return ok(trustWireBody<T>(body));
         }),
     );
 }
@@ -271,21 +270,28 @@ const parseJson = Result.fromThrowable(
     (cause) => cause,
 );
 
+/**
+ * The one place where the client trusts the shape of a success body or an SSE frame, and gives it the type `T`
+ * that the caller names. The body is not validated: a schema for each wire type of `src/api/` would turn a
+ * mismatch into `bad_json`, which is not the behavior of the client.
+ */
+function trustWireBody<T>(value: unknown): T {
+    // SAFETY: (1) One checkout builds the server routes and the client fetchers from the same `src/api/` types, so
+    // the declared `T` is the shape that the route sends. (2) A command connects through `ensureServer`, and the TUI
+    // through its boot hook, and each of the two refuses a server of a different `apiVersion`. (3) Accepted residual:
+    // `request` does not check the version itself, so it does not detect a version difference for a call that no
+    // earlier check precedes, or for a server that a different build replaces during one client session.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the wire types, not a runtime check, carry the shape; a schema for each wire type would turn a mismatch into `bad_json`
+    return value as T;
+}
+
 function parseFrame<T>(data: string): Result<T, ClientError> {
-    // The cast is sound for the reason in the JSDoc of `request`: one checkout builds both sides of the wire.
     return parseJson(data)
-        .map((frame) => frame as T)
+        .map((frame) => trustWireBody<T>(frame))
         .mapErr((): ClientError => ({ type: "bad_json", status: 200, detail: data.slice(0, 200) }));
 }
 
 function errorFromBody(status: number, body: unknown): ClientError {
-    return isApiError(body) ? { type: "http", status, body } : { type: "bad_json", status, detail: "the error body is not an API error" };
-}
-
-/** A type predicate over the JSON of an error body: sound because it tests each required field, and `error` against the closed set of codes. */
-function isApiError(value: unknown): value is ApiError {
-    if (typeof value !== "object" || value === null) return false;
-    // A non-null object indexes as a record of unknown values. Each field is tested before the predicate holds.
-    const record = value as Record<string, unknown>;
-    return typeof record["error"] === "string" && Object.hasOwn(API_ERROR_STATUS, record["error"]) && typeof record["message"] === "string";
+    const parsed = apiErrorSchema.safeParse(body);
+    return parsed.success ? { type: "http", status, body: parsed.data } : { type: "bad_json", status, detail: "the error body is not an API error" };
 }

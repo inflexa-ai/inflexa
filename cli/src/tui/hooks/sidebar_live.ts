@@ -514,10 +514,10 @@ export function stepStateOf(status: StepExecutionStatus): RunStepView["state"] {
             return "failed";
         default: {
             const _exhaustive: never = status;
-            // Unreachable: the `never` assignment above proves every status is handled. The cast only
-            // satisfies the return type on this dead branch — if it ever runs, the harness added a
-            // status the switch does not cover, and we surface its raw string rather than crash.
-            return String(_exhaustive) as RunStepView["state"];
+            // Unreachable: the `never` assignment above proves every status is handled. `never` fits the
+            // return type on this dead branch — if it ever runs, the harness added a status the switch
+            // does not cover, and we surface its raw string rather than crash.
+            return _exhaustive;
         }
     }
 }

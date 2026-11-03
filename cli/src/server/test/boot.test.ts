@@ -4,21 +4,20 @@ import { err, ok, type Result } from "neverthrow";
 import type { ServerBootError, ServerBootState } from "../../api/server.ts";
 import * as harnessConfig from "../../modules/harness/config.ts";
 import * as harnessRuntime from "../../modules/harness/runtime.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import * as setup from "../../modules/infra/setup.ts";
-import { createServerBoot, DEFAULT_SERVER_BOOT_OPTS, type BootProgressOpts, type ServerBootOpts } from "../boot.ts";
+import { createServerBoot, DEFAULT_SERVER_BOOT_OPTS, type BootedRuntime, type BootProgressOpts, type ServerBootOpts } from "../boot.ts";
 import { anyOf } from "../../test_support/matchers.ts";
 
 const STARTED_AT = new Date("2026-10-02T08:00:00.000Z");
 
 // The boot holder reads only the connection identity and the conversation model of the handle, thus a
 // stand-in with those two fields is sound for these offline tests.
-function fakeRuntime(model: string): HarnessRuntime {
-    return { conversation: { model }, connection: { provider: "anthropic", mode: "cliproxy" } } as unknown as HarnessRuntime;
+function fakeRuntime(model: string): BootedRuntime {
+    return { conversation: { model }, connection: { provider: "anthropic", mode: "cliproxy" } };
 }
 
 /** How a test settles the boot: the runtime, or the boot error. */
-type Outcome = { runtime: HarnessRuntime } | { bootError: ServerBootError };
+type Outcome = { runtime: BootedRuntime } | { bootError: ServerBootError };
 
 /** The ISO time of the test clock, `seconds` after the start of the server. */
 function at(seconds: number): string {
@@ -30,13 +29,13 @@ function at(seconds: number): string {
  * test moves. `attempts` holds the callbacks that the holder gave to each attempt, in order.
  */
 function controlled(): {
-    opts: ServerBootOpts;
+    opts: ServerBootOpts<BootedRuntime>;
     attempts: BootProgressOpts[];
     advance: (seconds: number) => void;
     settle: (outcome: Outcome) => void;
     reject: (cause: unknown) => void;
     boots: () => number;
-    readies: HarnessRuntime[];
+    readies: BootedRuntime[];
     settled: ServerBootState[];
 } {
     let boots = 0;
@@ -44,7 +43,7 @@ function controlled(): {
     const attempts: BootProgressOpts[] = [];
     let settle: (outcome: Outcome) => void = () => undefined;
     let reject: (cause: unknown) => void = () => undefined;
-    const readies: HarnessRuntime[] = [];
+    const readies: BootedRuntime[] = [];
     const settled: ServerBootState[] = [];
     return {
         opts: {
@@ -55,7 +54,7 @@ function controlled(): {
                 return new Promise<Outcome>((resolve, fail) => {
                     settle = resolve;
                     reject = fail;
-                }).then((outcome): Result<HarnessRuntime, ServerBootError> => ("runtime" in outcome ? ok(outcome.runtime) : err(outcome.bootError)));
+                }).then((outcome): Result<BootedRuntime, ServerBootError> => ("runtime" in outcome ? ok(outcome.runtime) : err(outcome.bootError)));
             },
             now: () => new Date(clock),
             onReady: (runtime) => readies.push(runtime),

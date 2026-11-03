@@ -3,23 +3,12 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, s
 import { open } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
-import type { ArtifactOrigin, CortexRunRow, Pool } from "@inflexa-ai/harness";
+import type { ArtifactOrigin } from "@inflexa-ai/harness";
+import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import { err, errAsync, ok, okAsync } from "neverthrow";
+import { z } from "zod";
 
 import type { ApiError } from "../../../api/common.ts";
-import type {
-    FilePreview,
-    FolderList,
-    FsSearch,
-    HomeFolder,
-    InputsPlace,
-    PinList,
-    PinView,
-    PlaceItem,
-    PlaceSectionId,
-    Places,
-    RecentFiles,
-} from "../../../api/fs.ts";
 import {
     addPin,
     deleteAnalysis,
@@ -38,16 +27,51 @@ import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../../mo
 import { writeMarker } from "../../../modules/anchor/marker.ts";
 import { DEFAULT_SEARCH_LIMITS, spawnWalkChildWith, type SearchIndexCache, type SearchLimits, type WalkSpawner } from "../../../modules/fs/search_index.ts";
 import { readFolderEntries } from "../../../modules/fs/walk_child.ts";
-import type { HarnessRuntime } from "../../../modules/harness/runtime.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { SPEC_FILE_TYPES } from "../../../test_support/file_types.ts";
 import { idleBoot } from "../../../test_support/server.ts";
 import { inProcessSpawner } from "../../../test_support/walk_spawner.ts";
 import type { ServerBoot } from "../../boot.ts";
+import type { PoolRuntime } from "../../http.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "../fs.ts";
 
-// The routes alone, with no app and no bearer check: `app.test.ts` covers those. Each `as` cast of a body below
-// reads JSON that the route under test builds from the same `src/api/` type.
+// The routes alone, with no app and no bearer check: `app.test.ts` covers those. A test reads a body as `unknown`.
+// It asserts the body with `toEqual` or `toHaveProperty`, or it parses a schema below that names only the fields that
+// the test computes on. The schemas are loose, thus each other field stays on the parsed value.
+const maybe = z.unknown().optional();
+const entryBody = z.looseObject({
+    name: z.string(),
+    path: z.string(),
+    type: maybe,
+    kind: maybe,
+    language: maybe,
+    hidden: maybe,
+    mode: maybe,
+    modifiedAt: z.string().nullish(),
+    itemCount: maybe,
+    isInput: maybe,
+    origin: maybe,
+});
+const folderListBody = z.looseObject({ entries: z.array(entryBody), folder: z.looseObject({ path: z.string(), readable: maybe }), total: z.number() });
+const searchResultBody = z.looseObject({ truncated: z.boolean(), hits: z.array(z.looseObject({ subpath: z.string(), entry: entryBody })) });
+const pinBody = z.looseObject({ id: z.string(), path: z.string() });
+const pinListBody = z.looseObject({ pins: z.array(pinBody) });
+const recentsBody = z.looseObject({ entries: z.array(entryBody) });
+const placeItemBody = z.union([
+    z.looseObject({ kind: z.literal("inputs"), label: z.string(), count: z.number(), entries: z.array(entryBody) }),
+    z.looseObject({
+        kind: z.enum(["workspace", "run", "step", "home", "desktop", "documents", "downloads", "analysis", "drive", "pin"]),
+        label: z.string(),
+        path: z.string(),
+    }),
+]);
+const tableHead = z.looseObject({ kind: z.literal("table"), text: z.string() });
+const folderNames = z.looseObject({ kind: z.literal("folder"), names: z.array(z.looseObject({ name: z.string() })) });
+const placesBody = z.looseObject({ sections: z.array(z.looseObject({ id: z.string(), items: z.array(placeItemBody) })) });
+
+/** The pool of the booted runtime of a route test. The route only passes it to the injected reads, thus a stand-in that rejects each query is enough. */
+const standInPool: Querier = { query: () => Promise.reject(new Error("the route must not query the pool")) };
 const routes = fsRoutes(idleBoot());
 
 let root = "";
@@ -57,7 +81,7 @@ const searchCaches: SearchIndexCache[] = [];
  * Routes whose search cache the cleanup stops, thus no walk and no TTL timer outlives its test. The walk runs in the test
  * process unless the test gives its own spawner.
  */
-function searchRoutes(boot: ServerBoot, opts: Partial<FsRouteOpts> = {}): ReturnType<typeof fsRoutes> {
+function searchRoutes(boot: ServerBoot<PoolRuntime>, opts: Partial<FsRouteOpts> = {}): ReturnType<typeof fsRoutes> {
     return fsRoutes(boot, {
         ...DEFAULT_FS_ROUTE_OPTS,
         spawnWalk: inProcessSpawner().spawn,
@@ -70,10 +94,10 @@ function searchLimits(limits: Partial<SearchLimits>): SearchLimits {
     return { ...DEFAULT_SEARCH_LIMITS, ...limits };
 }
 
-async function searchBody(app: ReturnType<typeof fsRoutes>, path: string, query: string): Promise<FsSearch> {
+async function searchBody(app: ReturnType<typeof fsRoutes>, path: string, query: string): Promise<z.infer<typeof searchResultBody>> {
     const response = await app.request(`/search?path=${encodeURIComponent(path)}${query}`);
     expect(response.status).toBe(200);
-    return (await response.json()) as FsSearch;
+    return searchResultBody.parse(await jsonBody(response));
 }
 
 beforeEach(() => {
@@ -90,10 +114,10 @@ function list(path: string, query = ""): Promise<Response> {
     return Promise.resolve(routes.request(`/list?path=${encodeURIComponent(path)}${query}`));
 }
 
-async function listBody(path: string, query = ""): Promise<FolderList> {
+async function listBody(path: string, query = ""): Promise<z.infer<typeof folderListBody>> {
     const response = await list(path, query);
     expect(response.status).toBe(200);
-    return (await response.json()) as FolderList;
+    return folderListBody.parse(await jsonBody(response));
 }
 
 /** The standard folder of the sort scenarios: the folder `beta`, the files `alpha.txt` and `Zeta.txt`, and the file `.env`. */
@@ -108,7 +132,7 @@ describe("GET /api/v1/fs/home", () => {
     test("gives the canonical home folder of the server user", async () => {
         const response = await routes.request("/home");
         expect(response.status).toBe(200);
-        expect((await response.json()) as HomeFolder).toEqual({ path: realpathSync(homedir()) });
+        expect(await jsonBody(response)).toEqual({ path: realpathSync(homedir()) });
     });
 
     test("gives the real path of a home folder behind a link", async () => {
@@ -118,7 +142,7 @@ describe("GET /api/v1/fs/home", () => {
         const linked = fsRoutes(idleBoot(), { ...DEFAULT_FS_ROUTE_OPTS, homedir: () => join(root, "home-link") });
         const response = await linked.request("/home");
         expect(response.status).toBe(200);
-        expect((await response.json()) as HomeFolder).toEqual({ path: real });
+        expect(await jsonBody(response)).toEqual({ path: real });
     });
 
     test("gives the home path as the operating system gives it when the server cannot resolve it", async () => {
@@ -126,7 +150,7 @@ describe("GET /api/v1/fs/home", () => {
         const missingHome = fsRoutes(idleBoot(), { ...DEFAULT_FS_ROUTE_OPTS, homedir: () => missing });
         const response = await missingHome.request("/home");
         expect(response.status).toBe(200);
-        expect((await response.json()) as HomeFolder).toEqual({ path: missing });
+        expect(await jsonBody(response)).toEqual({ path: missing });
     });
 });
 
@@ -157,7 +181,7 @@ describe("the analysis guard of the fs routes", () => {
     test("404 `not_found` for an unknown analysis on /list, with no lock call", async () => {
         const response = await guardedList("nope");
         expect(response.status).toBe(404);
-        const body = (await response.json()) as ApiError;
+        const body = await errorBody(response);
         expect(body.error).toBe("not_found");
         expect(body.message).toContain("nope");
         expect(acquired).toEqual([]);
@@ -166,14 +190,14 @@ describe("the analysis guard of the fs routes", () => {
     test("404 `not_found` for an unknown analysis on /home", async () => {
         const response = await guarded.request("/home?analysisId=nope");
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
     });
 
     test("409 `locked` with the pid of the holder from a different live process", async () => {
         outcome = { acquired: false, holderPid: 4242 };
         const response = await guardedList("a1");
         expect(response.status).toBe(409);
-        const body = (await response.json()) as ApiError;
+        const body = await errorBody(response);
         expect(body.error).toBe("locked");
         expect(body.details).toEqual({ holderPid: 4242 });
         expect(acquired).toEqual(["a1"]);
@@ -212,7 +236,7 @@ describe("the analysis guard of the fs routes", () => {
         writeFileSync(join(root, "a.csv"), "x");
         const response = await counted.request(`/search?path=${encodeURIComponent(root)}&q=a&analysisId=nope`);
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(acquired).toEqual([]);
         expect(read).toEqual([]);
         expect(clockReads).toBe(0);
@@ -221,7 +245,7 @@ describe("the analysis guard of the fs routes", () => {
     test("404 `not_found` for an unknown analysis on /preview, with no lock call", async () => {
         const response = await guarded.request(`/preview?path=${encodeURIComponent(root)}&analysisId=nope`);
         expect(response.status).toBe(404);
-        expect(((await response.json()) as ApiError).error).toBe("not_found");
+        expect(await errorBody(response)).toHaveProperty("error", "not_found");
         expect(acquired).toEqual([]);
     });
 });
@@ -299,7 +323,7 @@ describe("GET /api/v1/fs/list", () => {
             },
         });
         const response = await counted.request(`/list?path=${encodeURIComponent(root)}&page=2&perPage=100`);
-        expect(((await response.json()) as FolderList).entries).toHaveLength(50);
+        expect(await jsonBody(response)).toHaveProperty(["entries", "length"], 50);
         expect(read).toHaveLength(50);
         expect(read[0]).toBe("f200.txt");
     });
@@ -384,7 +408,7 @@ describe("GET /api/v1/fs/list", () => {
         symlinkSync("sub", join(root, "link"));
         symlinkSync(join(root, "b.csv"), join(root, "filelink"));
 
-        const count = (body: FolderList, name: string): number | null | undefined => body.entries.find((e) => e.name === name)?.itemCount;
+        const count = (body: z.infer<typeof folderListBody>, name: string): unknown => body.entries.find((e) => e.name === name)?.itemCount;
         const shown = await listBody(root);
         expect(count(shown, "sub")).toBe(1);
         expect(count(shown, "link")).toBe(1);
@@ -504,9 +528,8 @@ describe("GET /api/v1/fs/list namePrefix", () => {
 
 describe("GET /api/v1/fs/list isInput and origin", () => {
     const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
-    // The route only passes the pool to the injected read, thus a stand-in object is enough.
-    const runtime = { pool: {} as Pool } as unknown as HarnessRuntime;
-    const readyBoot: ServerBoot = {
+    const runtime = { pool: standInPool };
+    const readyBoot: ServerBoot<PoolRuntime> = {
         state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
         runtime: () => runtime,
         start: async () => undefined,
@@ -520,7 +543,7 @@ describe("GET /api/v1/fs/list isInput and origin", () => {
     let rows: ArtifactOrigin[] = [];
     let failing = false;
 
-    function listWith(boot: ServerBoot): ReturnType<typeof fsRoutes> {
+    function listWith(boot: ServerBoot<PoolRuntime>): ReturnType<typeof fsRoutes> {
         return fsRoutes(boot, {
             ...DEFAULT_FS_ROUTE_OPTS,
             acquireLock: () => ({ acquired: true }),
@@ -531,10 +554,10 @@ describe("GET /api/v1/fs/list isInput and origin", () => {
         });
     }
 
-    async function listAs(boot: ServerBoot, path: string, query: string): Promise<FolderList> {
+    async function listAs(boot: ServerBoot<PoolRuntime>, path: string, query: string): Promise<z.infer<typeof folderListBody>> {
         const response = await listWith(boot).request(`/list?path=${encodeURIComponent(path)}${query}`);
         expect(response.status).toBe(200);
-        return (await response.json()) as FolderList;
+        return folderListBody.parse(await jsonBody(response));
     }
 
     beforeEach(async () => {
@@ -661,7 +684,7 @@ describe("GET /api/v1/fs/list isInput and origin", () => {
 
         const without = await listAs(readyBoot, outside, "");
         const withAnalysis = await listAs(readyBoot, outside, "&analysisId=a1");
-        const facts = (body: FolderList): (string | number | null)[][] => body.entries.map((e) => [e.name, e.kind, e.itemCount]);
+        const facts = (body: z.infer<typeof folderListBody>): unknown[][] => body.entries.map((e) => [e.name, e.kind, e.itemCount]);
         expect(facts(withAnalysis)).toEqual([
             ["sub", null, 2],
             ["link", null, 2],
@@ -674,7 +697,7 @@ describe("GET /api/v1/fs/list isInput and origin", () => {
         db()._unsafeUnwrap().run("ALTER TABLE analysis_inputs RENAME TO analysis_inputs_unreadable");
         const response = await listWith(readyBoot).request(`/list?path=${encodeURIComponent(outside)}&analysisId=a1`);
         expect(response.status).toBe(500);
-        expect(((await response.json()) as ApiError).error).toBe("internal_error");
+        expect(await errorBody(response)).toHaveProperty("error", "internal_error");
         expect(calls).toEqual([]);
     });
 
@@ -682,7 +705,7 @@ describe("GET /api/v1/fs/list isInput and origin", () => {
         db()._unsafeUnwrap().run("ALTER TABLE anchors RENAME TO anchors_unreadable");
         const response = await listWith(readyBoot).request(`/list?path=${encodeURIComponent(outside)}&analysisId=a1`);
         expect(response.status).toBe(500);
-        expect(((await response.json()) as ApiError).error).toBe("internal_error");
+        expect(await errorBody(response)).toHaveProperty("error", "internal_error");
         expect(calls).toEqual([]);
     });
 
@@ -777,7 +800,7 @@ describe("GET /api/v1/fs/list isInput and origin", () => {
 describe("GET /api/v1/fs/list errors", () => {
     async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
         expect(response.status).toBe(status);
-        const body = (await response.json()) as ApiError;
+        const body = await errorBody(response);
         expect(body.error).toBe(code);
         return body;
     }
@@ -835,10 +858,10 @@ describe("GET /api/v1/fs/preview", () => {
         return Promise.resolve(app.request(`/preview?path=${encodeURIComponent(path)}`));
     }
 
-    async function previewBody(path: string, app: ReturnType<typeof fsRoutes> = routes): Promise<FilePreview> {
+    async function previewBody(path: string, app: ReturnType<typeof fsRoutes> = routes): Promise<unknown> {
         const response = await preview(path, app);
         expect(response.status).toBe(200);
-        return (await response.json()) as FilePreview;
+        return jsonBody(response);
     }
 
     describe("the members", () => {
@@ -853,7 +876,7 @@ describe("GET /api/v1/fs/preview", () => {
             writeFileSync(join(root, "counts.tsv"), text);
             const body = await previewBody(join(root, "counts.tsv"), previewWith({ previewBytes: 32 }));
             expect(body).toMatchObject({ kind: "table", separator: "\t", columnCount: 2, rowCount: null });
-            const head = body.kind === "table" ? body.text : "";
+            const head = tableHead.parse(body).text;
             expect(head.endsWith("\n")).toBe(true);
             expect(head.length).toBeLessThanOrEqual(32);
             expect(text.startsWith(head)).toBe(true);
@@ -994,7 +1017,7 @@ describe("GET /api/v1/fs/preview", () => {
             for (let i = 0; i < 25; i += 1) writeFileSync(join(root, `f${String(24 - i).padStart(2, "0")}.txt`), "x");
             const body = await previewBody(root);
             expect(body).toMatchObject({ kind: "folder", items: 26 });
-            const names = body.kind === "folder" ? body.names : [];
+            const names = folderNames.parse(body).names;
             expect(names.map((entry) => entry.name)).toEqual(["zz", ...Array.from({ length: 9 }, (_, i) => `f${String(i).padStart(2, "0")}.txt`)]);
         });
 
@@ -1077,7 +1100,7 @@ describe("GET /api/v1/fs/preview", () => {
             const { app, opened, closed } = tracked((_path, flags) => open(join(root, "other"), flags));
             const response = await preview(join(root, "asked"), app);
             expect(response.status).toBe(403);
-            expect(((await response.json()) as ApiError).error).toBe("forbidden");
+            expect(await errorBody(response)).toHaveProperty("error", "forbidden");
             expect([opened(), closed()]).toEqual([1, 1]);
         });
 
@@ -1086,7 +1109,7 @@ describe("GET /api/v1/fs/preview", () => {
             const app = previewWith({ open: () => Promise.reject(Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })) });
             const response = await preview(join(root, "a.csv"), app);
             expect(response.status).toBe(403);
-            expect(((await response.json()) as ApiError).details).toEqual({ code: "EACCES" });
+            expect(await errorBody(response)).toHaveProperty("details", { code: "EACCES" });
         });
 
         test("400 `validation_error` for an open that fails the way a socket does", async () => {
@@ -1094,14 +1117,14 @@ describe("GET /api/v1/fs/preview", () => {
             const app = previewWith({ open: () => Promise.reject(Object.assign(new Error("ENXIO"), { code: "ENXIO" })) });
             const response = await preview(join(root, "a.csv"), app);
             expect(response.status).toBe(400);
-            expect(((await response.json()) as ApiError).error).toBe("validation_error");
+            expect(await errorBody(response)).toHaveProperty("error", "validation_error");
         });
     });
 
     describe("the errors", () => {
         async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
             expect(response.status).toBe(status);
-            const body = (await response.json()) as ApiError;
+            const body = await errorBody(response);
             expect(body.error).toBe(code);
             return body;
         }
@@ -1364,8 +1387,7 @@ describe("GET /api/v1/fs/search", () => {
 
             const response = await fetch(url("&q=inside"));
             expect(response.status).toBe(200);
-            // The body is the `FsSearch` that the route builds.
-            const body = (await response.json()) as FsSearch;
+            const body = searchResultBody.parse(await jsonBody(response));
             expect(body.truncated).toBe(false);
             expect(body.hits.map((hit) => `${hit.subpath}/${hit.entry.name}`)).toEqual(["slow/inside.csv"]);
             expect(reads.sort()).toEqual([root, slow]);
@@ -1399,12 +1421,12 @@ describe("GET /api/v1/fs/search", () => {
         await spawned.promise;
         const listed = await app.request(`/list?path=${encodeURIComponent(join(root, "other"))}`);
         expect(listed.status).toBe(200);
-        expect(((await listed.json()) as FolderList).entries.map((entry) => entry.name)).toEqual(["a.csv"]);
+        expect(folderListBody.parse(await jsonBody(listed)).entries.map((entry) => entry.name)).toEqual(["a.csv"]);
         expect(settled).toBe(false);
         expect(kills).toBe(0);
         const response = await search;
         expect(response.status).toBe(200);
-        expect((await response.json()) as FsSearch).toEqual({ hits: [], truncated: true });
+        expect(await jsonBody(response)).toEqual({ hits: [], truncated: true });
         expect(kills).toBe(1);
     });
 
@@ -1447,7 +1469,7 @@ describe("GET /api/v1/fs/search", () => {
 
             const absent = await app.request(`/search?path=${encodeURIComponent(vanishing)}&q=a`);
             expect(absent.status).toBe(404);
-            expect(((await absent.json()) as ApiError).error).toBe("not_found");
+            expect(await errorBody(absent)).toHaveProperty("error", "not_found");
         } finally {
             rmSync(outside, { recursive: true, force: true });
         }
@@ -1471,7 +1493,7 @@ describe("GET /api/v1/fs/search", () => {
 describe("GET /api/v1/fs/search errors", () => {
     async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
         expect(response.status).toBe(status);
-        const body = (await response.json()) as ApiError;
+        const body = await errorBody(response);
         expect(body.error).toBe(code);
         return body;
     }
@@ -1537,15 +1559,15 @@ describe("the pins of the picker", () => {
         );
     }
 
-    async function pins(query = ""): Promise<PinList> {
+    async function pins(query = ""): Promise<z.infer<typeof pinListBody>> {
         const response = await picker.request(`/pins${query}`);
         expect(response.status).toBe(200);
-        return (await response.json()) as PinList;
+        return pinListBody.parse(await jsonBody(response));
     }
 
     async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
         expect(response.status).toBe(status);
-        const body = (await response.json()) as ApiError;
+        const body = await errorBody(response);
         expect(body.error).toBe(code);
         return body;
     }
@@ -1556,7 +1578,7 @@ describe("the pins of the picker", () => {
         const response = await postPin({ path: join(root, "study"), label: "  Study  " });
 
         expect(response.status).toBe(201);
-        const pin = (await response.json()) as PinView;
+        const pin = pinBody.parse(await jsonBody(response));
         expect(pin).toMatchObject({ path: join(root, "study"), label: "Study", isDir: true, absolutePath: join(root, "study") });
         expect(await pins()).toMatchObject({ pins: [pin], total: 1, page: 0, hasMore: false });
     });
@@ -1564,19 +1586,19 @@ describe("the pins of the picker", () => {
     test("a pin of a file stores isDir false, and a blank label is no label", async () => {
         writeFileSync(join(root, "ref.csv"), "x");
 
-        const pin = (await (await postPin({ path: join(root, "ref.csv"), label: "   " })).json()) as PinView;
+        const pin = pinBody.parse(await jsonBody(postPin({ path: join(root, "ref.csv"), label: "   " })));
 
         expect(pin).toMatchObject({ isDir: false, label: null });
     });
 
     test("a second pin of the same folder gives 200 with the first pin and keeps one row", async () => {
         mkdirSync(join(root, "study", "raw"), { recursive: true });
-        const first = (await (await postPin({ path: join(root, "study"), label: "Study" })).json()) as PinView;
+        const first = pinBody.parse(await jsonBody(postPin({ path: join(root, "study"), label: "Study" })));
 
         const second = await postPin({ path: join(root, "study", "raw", ".."), label: "Other" });
 
         expect(second.status).toBe(200);
-        expect((await second.json()) as PinView).toEqual(first);
+        expect(await jsonBody(second)).toEqual(first);
         expect((await pins()).pins).toHaveLength(1);
     });
 
@@ -1584,7 +1606,7 @@ describe("the pins of the picker", () => {
         mkdirSync(join(root, "study"));
         symlinkSync(join(root, "study"), join(root, "latest"));
 
-        const pin = (await (await postPin({ path: join(root, "latest") })).json()) as PinView;
+        const pin = pinBody.parse(await jsonBody(postPin({ path: join(root, "latest") })));
 
         expect(pin.path).toBe(join(root, "study"));
     });
@@ -1679,11 +1701,11 @@ describe("the pins of the picker", () => {
 
     test("removes a pin with 200, then 404 `not_found` for the same id", async () => {
         mkdirSync(join(root, "study"));
-        const pin = (await (await postPin({ path: join(root, "study") })).json()) as PinView;
+        const pin = pinBody.parse(await jsonBody(postPin({ path: join(root, "study") })));
 
         const first = await picker.request(`/pins/${pin.id}`, { method: "DELETE" });
         expect(first.status).toBe(200);
-        expect(await first.json()).toEqual({ deleted: true });
+        expect(await jsonBody(first)).toEqual({ deleted: true });
         await expectError(await picker.request(`/pins/${pin.id}`, { method: "DELETE" }), 404, "not_found");
         expect((await pins()).pins).toEqual([]);
     });
@@ -1711,21 +1733,21 @@ describe("the recent files of the picker", () => {
         return Promise.resolve(picker.request("/recents", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
     }
 
-    async function recents(query = ""): Promise<RecentFiles> {
+    async function recents(query = ""): Promise<z.infer<typeof recentsBody>> {
         const response = await picker.request(`/recents${query}`);
         expect(response.status).toBe(200);
-        return (await response.json()) as RecentFiles;
+        return recentsBody.parse(await jsonBody(response));
     }
 
     async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
         expect(response.status).toBe(status);
-        const body = (await response.json()) as ApiError;
+        const body = await errorBody(response);
         expect(body.error).toBe(code);
         return body;
     }
 
     function rowCount(where = "1 = 1"): number {
-        return (db()._unsafeUnwrap().query(`SELECT COUNT(*) AS n FROM recent_files WHERE ${where}`).get() as { n: number }).n;
+        return db()._unsafeUnwrap().query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM recent_files WHERE ${where}`).get()?.n ?? 0;
     }
 
     test("records a file with 200, and the read gives it with its kind", async () => {
@@ -1734,7 +1756,7 @@ describe("the recent files of the picker", () => {
         const response = await postRecent({ path: join(root, "a.csv") });
 
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ recorded: true });
+        expect(await jsonBody(response)).toEqual({ recorded: true });
         const body = await recents();
         expect(body.entries.map((e) => [e.path, e.kind, e.type, e.isInput, e.origin])).toEqual([[join(root, "a.csv"), "table", "file", false, null]]);
     });
@@ -1957,9 +1979,8 @@ describe("the recent files of the picker", () => {
 
 describe("GET /api/v1/fs/recents isInput and origin", () => {
     const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
-    // The route only passes the pool to the injected read, thus a stand-in object is enough.
-    const runtime = { pool: {} as Pool } as unknown as HarnessRuntime;
-    const readyBoot: ServerBoot = {
+    const runtime = { pool: standInPool };
+    const readyBoot: ServerBoot<PoolRuntime> = {
         state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
         runtime: () => runtime,
         start: async () => undefined,
@@ -2007,7 +2028,7 @@ describe("GET /api/v1/fs/recents isInput and origin", () => {
         const response = await picker.request("/recents?analysisId=a1");
 
         expect(response.status).toBe(200);
-        const body = (await response.json()) as RecentFiles;
+        const body = recentsBody.parse(await jsonBody(response));
         expect(body.entries.map((e) => [e.name, e.isInput, e.origin]).sort()).toEqual([
             ["de.csv", true, { runId: "r1", stepId: "s1" }],
             ["other.csv", true, null],
@@ -2018,9 +2039,8 @@ describe("GET /api/v1/fs/recents isInput and origin", () => {
 
 describe("GET /api/v1/fs/places", () => {
     const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;
-    // The route only passes the pool to the injected reads, thus a stand-in object is enough.
-    const runtime = { pool: {} as Pool } as unknown as HarnessRuntime;
-    const readyBoot: ServerBoot = {
+    const runtime = { pool: standInPool };
+    const readyBoot: ServerBoot<PoolRuntime> = {
         state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
         runtime: () => runtime,
         start: async () => undefined,
@@ -2037,7 +2057,7 @@ describe("GET /api/v1/fs/places", () => {
     let runsFail = false;
     let roots: FsRouteOpts["volumeRoots"] = () => [];
 
-    function picker(boot: ServerBoot = readyBoot): ReturnType<typeof fsRoutes> {
+    function picker(boot: ServerBoot<PoolRuntime> = readyBoot): ReturnType<typeof fsRoutes> {
         return fsRoutes(boot, {
             ...DEFAULT_FS_ROUTE_OPTS,
             acquireLock: () => ({ acquired: true }),
@@ -2047,7 +2067,7 @@ describe("GET /api/v1/fs/places", () => {
                 runCalls += 1;
                 expect(page).toEqual({ limit: 10 });
                 // A test row names the run id only, which is the one field that the places read uses.
-                return runsFail ? errAsync({ type: "query_failed", op: "test", cause: "down" }) : okAsync(runIds.map((runId) => ({ runId }) as CortexRunRow));
+                return runsFail ? errAsync({ type: "query_failed", op: "test", cause: "down" }) : okAsync(runIds.map((runId) => ({ runId })));
             },
             artifactOrigins: (): ReturnType<FsRouteOpts["artifactOrigins"]> => {
                 originCalls += 1;
@@ -2056,13 +2076,13 @@ describe("GET /api/v1/fs/places", () => {
         });
     }
 
-    async function places(query = "", boot?: ServerBoot): Promise<Places> {
+    async function places(query = "", boot?: ServerBoot<PoolRuntime>): Promise<z.infer<typeof placesBody>> {
         const response = await picker(boot).request(`/places${query}`);
         expect(response.status).toBe(200);
-        return (await response.json()) as Places;
+        return placesBody.parse(await jsonBody(response));
     }
 
-    function itemsOf(body: Places, id: PlaceSectionId): PlaceItem[] {
+    function itemsOf(body: z.infer<typeof placesBody>, id: string): z.infer<typeof placeItemBody>[] {
         const found = body.sections.find((section) => section.id === id);
         expect(found).toBeDefined();
         return found?.items ?? [];
@@ -2111,7 +2131,7 @@ describe("GET /api/v1/fs/places", () => {
         test("404 `not_found` for an unknown analysis", async () => {
             const response = await picker().request("/places?analysisId=nope");
             expect(response.status).toBe(404);
-            expect(((await response.json()) as ApiError).error).toBe("not_found");
+            expect(await errorBody(response)).toHaveProperty("error", "not_found");
         });
     });
 
@@ -2267,7 +2287,7 @@ describe("GET /api/v1/fs/places", () => {
             insertAnalysisInput({ path, isDir, analysisId: "a1", anchorId: null })._unsafeUnwrap();
         }
 
-        function inputsOf(body: Places): InputsPlace {
+        function inputsOf(body: z.infer<typeof placesBody>): Extract<z.infer<typeof placeItemBody>, { kind: "inputs" }> {
             const item = itemsOf(body, "analysis").find((found) => found.kind === "inputs");
             if (item?.kind !== "inputs") throw new Error("the analysis section has no inputs item");
             return item;
@@ -2399,7 +2419,7 @@ describe("GET /api/v1/fs/places", () => {
             try {
                 const response = await picker().request("/places?analysisId=a1");
                 expect(response.status).toBe(500);
-                expect(((await response.json()) as ApiError).error).toBe("internal_error");
+                expect(await errorBody(response)).toHaveProperty("error", "internal_error");
             } finally {
                 read.mockRestore();
             }

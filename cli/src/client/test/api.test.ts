@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "neverthrow";
+import { z } from "zod";
 
 import { describeClientError, readSseFrames, request, setClientSurface, streamRequest, type ClientError, type ClientOpts } from "../api.ts";
 
 const BASE = "http://127.0.0.1:8436";
+
+const headersSchema = z.record(z.string(), z.string());
 
 /** Client opts with a fixed endpoint, whose fetch gives `respond(url, init)` and records each call. */
 function withFetch(respond: (url: string, init: RequestInit) => Promise<Response>): { opts: ClientOpts; calls: { url: string; init: RequestInit }[] } {
@@ -23,7 +26,7 @@ function withFetch(respond: (url: string, init: RequestInit) => Promise<Response
 const json = (body: unknown, status = 200): Promise<Response> => Promise.resolve(Response.json(body, { status }));
 
 /** The headers of a recorded call. `send` always builds them as a plain object, never as a `Headers` or an array. */
-const headersOf = (call: { init: RequestInit } | undefined): Record<string, string> => (call?.init.headers ?? {}) as Record<string, string>;
+const headersOf = (call: { init: RequestInit } | undefined): Record<string, string> => headersSchema.parse(call?.init.headers ?? {});
 
 /** A body stream that gives each of `chunks` as one read. */
 function chunked(chunks: string[]): ReadableStream<Uint8Array> {
@@ -97,6 +100,37 @@ describe("request", () => {
 
         const foreign = withFetch(() => json({ error: "made_up_code", message: "?" }, 400));
         expect((await request("GET", "/x", {}, foreign.opts))._unsafeUnwrapErr()).toMatchObject({ type: "bad_json", status: 400 });
+    });
+
+    describe("the error body schema", () => {
+        const notAnApiError = "the error body is not an API error";
+
+        test("an `error` code outside the closed set is `bad_json`", async () => {
+            const { opts } = withFetch(() => json({ error: "made_up_code", message: "a turn runs" }, 409));
+            const e = (await request("GET", "/x", {}, opts))._unsafeUnwrapErr();
+            expect(e).toEqual({ type: "bad_json", status: 409, detail: notAnApiError });
+        });
+
+        test("a `message` that is not a string is `bad_json`", async () => {
+            const { opts } = withFetch(() => json({ error: "busy", message: 7 }, 409));
+            const e = (await request("GET", "/x", {}, opts))._unsafeUnwrapErr();
+            expect(e).toEqual({ type: "bad_json", status: 409, detail: notAnApiError });
+        });
+
+        test("a body that is not an object is `bad_json`", async () => {
+            for (const body of [null, "busy", 409, ["busy"]]) {
+                const { opts } = withFetch(() => json(body, 409));
+                const e = (await request("GET", "/x", {}, opts))._unsafeUnwrapErr();
+                expect(e).toEqual({ type: "bad_json", status: 409, detail: notAnApiError });
+            }
+        });
+
+        test("a body with an extra key and a `details` value is an `http` error with the body unchanged", async () => {
+            const body = { error: "busy", message: "a turn runs", details: { reasons: ["turn"] }, requestId: "r-1" } as const;
+            const { opts } = withFetch(() => json(body, 409));
+            const e = (await request("GET", "/x", {}, opts))._unsafeUnwrapErr();
+            expect(e).toEqual({ type: "http", status: 409, body });
+        });
     });
 
     test("no discovery file is `unreachable` before any fetch", async () => {

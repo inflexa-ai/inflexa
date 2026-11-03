@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 
 import { type Result, err, ok } from "neverthrow";
+import { z } from "zod";
 
 /** Archive layout version. Bumping it changes {@link contentHashOf} not at all (the hash is over content, not format), but a reader rejects a header whose `v` it does not recognize. */
 export const PACK_VERSION = 1;
@@ -24,6 +25,8 @@ export const PACK_VERSION = 1;
 export type PackEntry = { readonly path: string; readonly bytes: Buffer };
 
 type Header = { readonly v: number; readonly entries: ReadonlyArray<{ readonly path: string; readonly size: number }> };
+
+const headerSchema: z.ZodType<Header> = z.object({ v: z.number(), entries: z.array(z.object({ path: z.string(), size: z.number() })) });
 
 /** Why unpacking failed — each variant maps to one actionable cause. */
 export type PackError =
@@ -74,19 +77,16 @@ export function unpackTo(archive: Buffer, destDir: string): Result<ReadonlyArray
     const headerEnd = 4 + headerLen;
     if (headerEnd > archive.length) return err({ type: "truncated", detail: "header length exceeds archive size" });
 
-    let header: Header;
+    let parsedJson: unknown;
     try {
-        header = JSON.parse(archive.subarray(4, headerEnd).toString("utf8")) as Header;
+        parsedJson = JSON.parse(archive.subarray(4, headerEnd).toString("utf8"));
     } catch (cause) {
         return err({ type: "malformed_header", detail: String(cause) });
     }
-    // Held in a variable on purpose: `Array.isArray` on `header.entries` itself would narrow it to
-    // `any[]` and make every entry read below an unchecked `any`. `header` is reassigned, so the
-    // variable gives no narrowing and `header.entries` keeps its entry type.
-    const hasEntryList = Array.isArray(header.entries);
-    if (header.v !== PACK_VERSION || !hasEntryList) {
-        return err({ type: "malformed_header", detail: `unexpected header (v=${String(header?.v)})` });
-    }
+    const parsedHeader = headerSchema.safeParse(parsedJson);
+    if (!parsedHeader.success) return err({ type: "malformed_header", detail: `unexpected header: ${parsedHeader.error.message}` });
+    const header = parsedHeader.data;
+    if (header.v !== PACK_VERSION) return err({ type: "malformed_header", detail: `unexpected header (v=${header.v})` });
 
     const root = resolve(destDir);
     const written: string[] = [];

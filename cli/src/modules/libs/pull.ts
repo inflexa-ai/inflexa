@@ -23,6 +23,7 @@ import { fail } from "../../lib/cli.ts";
 import { ensureRuntime, readConfig, selectedRuntime, writeConfig } from "../../lib/config.ts";
 import { capture, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
+import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { isPublishedSandboxImage, isRetiredSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
 import { inspectStoreContent, type StoreContentState } from "./store_download.ts";
 import { readTransferReports, startImageTransfer, type TransferReport } from "./transfers.ts";
@@ -37,9 +38,9 @@ import { readTransferReports, startImageTransfer, type TransferReport } from "./
 export function configuredSandboxImage(): string {
     // `harness` is declared `unknown` in the config schema (validated downstream in
     // modules/harness/config.ts); read the one field we own defensively.
-    const harness = readConfig().harness;
-    if (typeof harness === "object" && harness !== null) {
-        const img = (harness as Record<string, unknown>).sandboxImage;
+    const harness = unknownRecordSchema.safeParse(readConfig().harness);
+    if (harness.success) {
+        const img = harness.data.sandboxImage;
         if (typeof img === "string" && img.trim() !== "") return img;
     }
     return SANDBOX_IMAGE;
@@ -61,11 +62,11 @@ export function configuredSandboxImage(): string {
  */
 export function migrateRetiredSandboxImageOverride(): string | null {
     const cfg = readConfig();
-    const harness = cfg.harness;
-    if (typeof harness !== "object" || harness === null) return null;
-    const img = (harness as Record<string, unknown>).sandboxImage;
+    const harness = unknownRecordSchema.safeParse(cfg.harness);
+    if (!harness.success) return null;
+    const img = harness.data.sandboxImage;
     if (typeof img !== "string" || !isRetiredSandboxImage(img)) return null;
-    const rest = { ...(harness as Record<string, unknown>) };
+    const rest = { ...harness.data };
     delete rest.sandboxImage;
     return writeConfig({ ...cfg, harness: rest }).match(
         () => img,

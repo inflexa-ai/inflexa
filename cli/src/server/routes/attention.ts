@@ -2,6 +2,7 @@ import {
     createThreadStore,
     queryRunProgressByRuns,
     queryRunsEndedSince,
+    type AskGateway,
     type DbError as PgError,
     type EndedRunSummary,
     type ListRecentThreadsInput,
@@ -18,7 +19,6 @@ import { MAX_PER_PAGE } from "../../api/common.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getRunSeenBaseline, listAnalysisNames, listSeenRunIds } from "../../db/primary_query.ts";
 import { getLogger } from "../../lib/log.ts";
-import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { ServerBoot } from "../boot.ts";
 import { listLiveRunIds, listLiveTurns, type LiveTurn } from "../durable_work.ts";
 import { internalError, parseCount, requireRuntime, type ServerEnv } from "../http.ts";
@@ -28,18 +28,27 @@ import { isTerminalRunStatus } from "./runs.ts";
 /** The count of `recentThreads` when the request names none. */
 const DEFAULT_RECENT_THREADS_LIMIT = 10;
 
+/**
+ * The part of the runtime handle that the attention read uses. `P` is the type of the pool: the route only gives it
+ * to the reads of {@link AttentionRouteOpts}, thus a test gives a small value for `P`.
+ */
+export type AttentionRuntime<P = Pool> = {
+    readonly pool: P;
+    readonly askGateway: AskGateway;
+};
+
 /** Each read of an attention request. Tests replace each one, because the reads need Postgres or the SQLite file. */
-export type AttentionRouteOpts = {
+export type AttentionRouteOpts<P = Pool> = {
     /** Each pending ask of the runtime. It rejects on a failure. */
-    readonly pendingAsks: (runtime: HarnessRuntime) => Promise<readonly PendingAsk[]>;
+    readonly pendingAsks: (runtime: AttentionRuntime<P>) => Promise<readonly PendingAsk[]>;
     /** The id of each run with a live workflow, the newest start first, at most `limit`. */
-    readonly liveRunIds: (pool: Pool, limit: number) => ResultAsync<string[], unknown>;
+    readonly liveRunIds: (pool: P, limit: number) => ResultAsync<string[], unknown>;
     /** The progress of each run of the list, in one read. */
-    readonly runProgress: (pool: Pool, runIds: string[]) => ResultAsync<RunProgressSummary[], PgError>;
+    readonly runProgress: (pool: P, runIds: string[]) => ResultAsync<RunProgressSummary[], PgError>;
     /** The newest `limit` terminal runs that ended at or after `since`. */
-    readonly endedRuns: (pool: Pool, input: { since: string; limit: number }) => ResultAsync<EndedRunSummary[], PgError>;
+    readonly endedRuns: (pool: P, input: { since: string; limit: number }) => ResultAsync<EndedRunSummary[], PgError>;
     /** The newest live threads over each analysis. */
-    readonly recentThreads: (pool: Pool, input: ListRecentThreadsInput) => ResultAsync<Thread[], PgError>;
+    readonly recentThreads: (pool: P, input: ListRecentThreadsInput) => ResultAsync<Thread[], PgError>;
     /** The seen baseline in epoch milliseconds, or `null` when its row is gone. */
     readonly seenBaseline: () => Result<number | null, DbError>;
     /** The ids of the list that have a seen mark. */
@@ -47,7 +56,7 @@ export type AttentionRouteOpts = {
     /** The name of each analysis of the list that has a row. */
     readonly analysisNames: (ids: readonly string[]) => Result<Map<string, string>, DbError>;
     /** The turn of each thread of the list whose durable workflow is live. */
-    readonly liveTurns: (pool: Pool, threadIds: readonly string[]) => ResultAsync<LiveTurn[], unknown>;
+    readonly liveTurns: (pool: P, threadIds: readonly string[]) => ResultAsync<LiveTurn[], unknown>;
 };
 
 /** The production {@link AttentionRouteOpts}. */
@@ -70,8 +79,8 @@ export const DEFAULT_ATTENTION_ROUTE_OPTS: AttentionRouteOpts = {
  * the count of seen marks: the unseen runs come from the newest {@link MAX_PER_PAGE} ended runs since the
  * baseline, thus an unseen run that is older than that window is absent.
  */
-export function attentionRoutes(boot: ServerBoot, opts: AttentionRouteOpts = DEFAULT_ATTENTION_ROUTE_OPTS): Hono<ServerEnv> {
-    const routes = new Hono<ServerEnv>();
+export function attentionRoutes<P>(boot: ServerBoot<AttentionRuntime<P>>, opts: AttentionRouteOpts<P>): Hono<ServerEnv<AttentionRuntime<P>>> {
+    const routes = new Hono<ServerEnv<AttentionRuntime<P>>>();
     const runtimeGate = requireRuntime(boot);
 
     routes.get("/", runtimeGate, async (c) => {

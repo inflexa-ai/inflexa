@@ -4,7 +4,9 @@ import { err, errAsync, ok, okAsync } from "neverthrow";
 import type { ThreadSummary } from "../../api/conversation.ts";
 import type { ClientError } from "../../client/api.ts";
 import { mintReportSessionAccess } from "../../client/conversation.ts";
+import { buildAnalysis, buildWorkspace } from "../../test_support/builders.ts";
 import { fakeClient, type FakeResponse } from "../../test_support/fake_client.ts";
+import { asStr256 } from "../../lib/types.ts";
 import { conversationSummary, reportSummary, threadListOf, FIXTURE_ANALYSIS_ID } from "../../test_support/threads.ts";
 import { __setBootStateForTest } from "../hooks/boot.ts";
 import {
@@ -41,9 +43,8 @@ afterEach(() => {
 
 describe("report session flows", () => {
     // Only `id` is load-bearing: the flows pass the row through to `openSession` and compare it by id.
-    // Thus a partial stand-in cast keeps the fixture flat, as `commands.test.ts` does.
-    const ANALYSIS = { id: FIXTURE_ANALYSIS_ID, name: "Alpha", projectId: null } as unknown as Analysis;
-    const OTHER = { id: "a2", name: "Beta", projectId: null } as unknown as Analysis;
+    const ANALYSIS = buildAnalysis({ id: FIXTURE_ANALYSIS_ID });
+    const OTHER = buildAnalysis({ id: "a2", name: asStr256("Beta") });
     const serverErr: ClientError = { type: "http", status: 500, body: { error: "internal_error", message: "boom" } };
     const READY = { phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } } as const;
 
@@ -74,7 +75,8 @@ describe("report session flows", () => {
         let dialogs = 0;
         let closes = 0;
         const scope: { analysis: Analysis | null; sessionId: string | null } = { analysis, sessionId };
-        const ws = {
+        // The getters read the scope at each access, which a spread of `buildWorkspace` would freeze.
+        const ws: Workspace = {
             get analysis() {
                 return scope.analysis;
             },
@@ -83,6 +85,8 @@ describe("report session flows", () => {
             },
             workingDir: "/work",
             project: null,
+            anchor: null,
+            inputCount: null,
             openDialog: () => {
                 dialogs += 1;
             },
@@ -92,8 +96,9 @@ describe("report session flows", () => {
             openSession: (threadId: string | null, _workingDir: string, next: Analysis) => {
                 opened.push({ threadId, analysisId: next.id });
             },
+            refreshScope: () => {},
             quit: async () => {},
-        } as unknown as Workspace;
+        };
         return {
             ws,
             dialogs: () => dialogs,
@@ -491,7 +496,7 @@ describe("report session flows", () => {
             __setBootStateForTest(READY);
             const entry = commands.find((c) => c.id === "session.report-switch");
             expect(entry).toBeDefined();
-            expect(entry?.enabled?.({ analysis: ANALYSIS, sessionId: null } as unknown as Workspace)).toBe(true);
+            expect(entry?.enabled?.(buildWorkspace({ analysis: ANALYSIS }))).toBe(true);
 
             const t = makeOpts();
             const w = sessionScope(ANALYSIS, null);
@@ -920,14 +925,14 @@ describe("report session flows", () => {
         test("a dispatch before the runtime is ready names the state and opens nothing", async () => {
             const w = sessionScope(ANALYSIS, CHILD.id);
 
-            __setBootStateForTest({ phase: "starting" } as never);
+            __setBootStateForTest({ phase: "booting" });
             const booting = pageOpts(GRANT);
             await openReportPage(w.ws, booting.opts);
             expect(booting.requests).toEqual([]);
             expect(booting.urls).toEqual([]);
             expect<unknown>(booting.notices).toEqual([{ kind: "info", text: stringContaining("still booting") }]);
 
-            __setBootStateForTest({ phase: "failed" } as never);
+            __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
             const failed = pageOpts(GRANT);
             await openReportPage(w.ws, failed.opts);
             expect(failed.urls).toEqual([]);
@@ -975,10 +980,10 @@ describe("report session flows", () => {
             expect(entry?.title).toBe("Open report page");
             expect(entry?.category).toBe("Session");
 
-            const open = { analysis: ANALYSIS, sessionId: CHILD.id } as unknown as Workspace;
+            const open = buildWorkspace({ analysis: ANALYSIS, sessionId: CHILD.id });
             __setBootStateForTest(READY);
             expect(entry?.enabled?.(open)).toBe(true);
-            expect(entry?.enabled?.({ analysis: null, sessionId: null } as unknown as Workspace)).toBe(false);
+            expect(entry?.enabled?.(buildWorkspace())).toBe(false);
             __setBootStateForTest({ phase: "idle" });
             expect(entry?.enabled?.(open)).toBe(false);
         });

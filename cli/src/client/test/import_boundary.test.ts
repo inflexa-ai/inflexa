@@ -59,29 +59,27 @@ const CASES = {
 
 type CaseName = keyof typeof CASES;
 
-let lintOnce: Promise<Record<CaseName, Report[]>> | undefined;
+let lintOnce: Promise<Map<string, Report[]>> | undefined;
 
-/** The reports of each case. One oxlint spawn serves the whole suite. */
-function reports(): Promise<Record<CaseName, Report[]>> {
+/** The reports of the case `name`. One oxlint spawn serves the whole suite. */
+async function reportsOf(name: CaseName): Promise<Report[]> {
     lintOnce ??= (async () => {
-        // `Object.keys` types its result as `string[]`; the keys of `CASES` are exactly `CaseName`.
-        const names = Object.keys(CASES) as CaseName[];
-        const run = await lintScratch(names.map((name) => CASES[name]));
-        // `Object.fromEntries` types its result as a string-keyed record; it holds one entry for each of `names`.
-        return Object.fromEntries(names.map((name, i) => [name, run.snippets[i] ?? []])) as Record<CaseName, Report[]>;
+        const entries = Object.entries(CASES);
+        const run = await lintScratch(entries.map(([, snippet]) => snippet));
+        return new Map(entries.map(([entryName], i) => [entryName, run.snippets[i] ?? []]));
     })();
-    return lintOnce;
+    return (await lintOnce).get(name) ?? [];
 }
 
 /** The specifiers of `specifiers` that `rule` reports in the case `name`. */
 async function banned(name: CaseName, specifiers: readonly string[], rule: string): Promise<string[]> {
-    const lines = new Set(linesOf((await reports())[name], rule));
+    const lines = new Set(linesOf(await reportsOf(name), rule));
     return specifiers.filter((_, i) => lines.has(i * 2 + 1));
 }
 
 /** The paths of `forms` that `rule` reports in the case `name`. Form `i` sits on line `i + 1`. */
 async function bannedForms(name: CaseName, forms: readonly { path: string }[], rule: string): Promise<string[]> {
-    const lines = new Set(linesOf((await reports())[name], rule));
+    const lines = new Set(linesOf(await reportsOf(name), rule));
     return forms.filter((_, i) => lines.has(i + 1)).map((f) => f.path);
 }
 
@@ -137,7 +135,7 @@ describe("the client import boundary", () => {
     test(
         "a type-only import of a module is banned too: a client takes each wire type from src/api/",
         async () => {
-            expect(linesOf((await reports()).typeOnly, RESTRICTED_SYNTAX)).toContain(1);
+            expect(linesOf(await reportsOf("typeOnly"), RESTRICTED_SYNTAX)).toContain(1);
         },
         OXLINT_SPAWN_TIMEOUT_MS,
     );
