@@ -40,8 +40,9 @@ const OPTS: WalkOpts = { hidden: true, maxDepth: 64, width: 8 };
 /** The buffers that a walk writes. */
 async function walkBytes(scope: string, opts: WalkOpts = OPTS, read: ReadEntries = readFolderEntries): Promise<Uint8Array[]> {
     const chunks: Uint8Array[] = [];
-    const written = await walkToRecords(scope, opts, read, async (bytes) => {
+    const written = await walkToRecords(scope, opts, read, (bytes) => {
         chunks.push(bytes);
+        return Promise.resolve();
     });
     expect(written.isOk()).toBe(true);
     return chunks;
@@ -246,8 +247,9 @@ describe("walkToRecords and decodeRecords", () => {
                 root,
                 OPTS,
                 read,
-                async (bytes) => {
+                (bytes) => {
                     chunks.push(bytes);
+                    return Promise.resolve();
                 },
                 abort.signal,
             )

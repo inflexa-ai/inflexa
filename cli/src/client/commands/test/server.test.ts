@@ -82,35 +82,38 @@ function machine(): { opts: ServerCommandOpts; out: () => string; world: Machine
             if (world.stops.length > 0 && world.exitAfterPolls !== null && polls++ >= world.exitAfterPolls) world.live = false;
             return world.live;
         },
-        fetch: async (url, init) => {
-            if (!world.answering) throw new Error("ECONNREFUSED");
-            const path = new URL(url).pathname;
-            if (path === "/api/v1/server") return Response.json(world.state);
-            if (path === "/api/v1/server/boot") {
-                world.boots += 1;
-                world.state = {
-                    version: world.state.version,
-                    apiVersion: world.state.apiVersion,
-                    startedAt: world.state.startedAt,
-                    phase: "starting",
-                    boot: { attemptStartedAt: world.state.startedAt, step: null, done: [] },
-                    stopping: world.state.stopping,
-                };
-                return Response.json(world.state, { status: 202 });
-            }
-            if (path === "/api/v1/server/activity") {
-                return world.activity === null ? Response.json({ error: "internal_error", message: "boom" }, { status: 500 }) : Response.json(world.activity);
-            }
-            if (path === "/api/v1/server/shutdown") {
-                // The route reads the JSON body that `request` serializes.
-                const mode = JSON.parseWith(String(init.body), z.looseObject({ mode: z.enum(["now", "drain"]) }))?.mode;
-                if (mode === undefined) throw new Error("the shutdown body has no mode");
-                world.stops.push(mode);
-                if (world.shutdownReply === "connection_lost") throw new Error("socket closed");
-                return Response.json({ mode, activeTurns: world.activity?.turns ?? 0 }, { status: 202 });
-            }
-            return Response.json({ error: "not_found", message: path }, { status: 404 });
-        },
+        fetch: (url, init) =>
+            Promise.try(() => {
+                if (!world.answering) throw new Error("ECONNREFUSED");
+                const path = new URL(url).pathname;
+                if (path === "/api/v1/server") return Response.json(world.state);
+                if (path === "/api/v1/server/boot") {
+                    world.boots += 1;
+                    world.state = {
+                        version: world.state.version,
+                        apiVersion: world.state.apiVersion,
+                        startedAt: world.state.startedAt,
+                        phase: "starting",
+                        boot: { attemptStartedAt: world.state.startedAt, step: null, done: [] },
+                        stopping: world.state.stopping,
+                    };
+                    return Response.json(world.state, { status: 202 });
+                }
+                if (path === "/api/v1/server/activity") {
+                    return world.activity === null
+                        ? Response.json({ error: "internal_error", message: "boom" }, { status: 500 })
+                        : Response.json(world.activity);
+                }
+                if (path === "/api/v1/server/shutdown") {
+                    // The route reads the JSON body that `request` serializes.
+                    const mode = JSON.parseWith(String(init.body), z.looseObject({ mode: z.enum(["now", "drain"]) }))?.mode;
+                    if (mode === undefined) throw new Error("the shutdown body has no mode");
+                    world.stops.push(mode);
+                    if (world.shutdownReply === "connection_lost") throw new Error("socket closed");
+                    return Response.json({ mode, activeTurns: world.activity?.turns ?? 0 }, { status: 202 });
+                }
+                return Response.json({ error: "not_found", message: path }, { status: 404 });
+            }),
         probeTimeoutMs: 2_000,
         logPath: "/test/logs/server.dev.log",
         removeStale: (_path, pid) => world.removed.push(pid),

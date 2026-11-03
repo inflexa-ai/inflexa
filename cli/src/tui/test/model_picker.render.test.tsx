@@ -19,7 +19,7 @@ import { present } from "../../lib/present.ts";
 
 const noop = (): void => {};
 // The picking-phase exhibits never commit, so save is unreachable at rest — a stub keeps the surface inert.
-const saveNoop = async (): Promise<string | null> => null;
+const saveNoop = (): Promise<string | null> => Promise.resolve(null);
 
 /** Listed models that each offer the same effort ladder — the full one unless the case names another. */
 function listed(ids: readonly string[], efforts: readonly AgentEffort[] = AGENT_EFFORTS): ListedModel[] {
@@ -384,9 +384,9 @@ describe("runModelCommit — save then close-or-report", () => {
             errors,
             closed: () => closed,
             effects: {
-                save: async (selection: AgentSelection): Promise<string | null> => {
+                save: (selection: AgentSelection): Promise<string | null> => {
                     saved.push(selection);
-                    return refusal;
+                    return Promise.resolve(refusal);
                 },
                 onSaved: (): void => {
                     closed += 1;

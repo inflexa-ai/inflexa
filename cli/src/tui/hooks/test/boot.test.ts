@@ -51,8 +51,9 @@ function scripted(answers: (() => ResultAsync<ServerState, ClientError>)[]): { o
     return {
         opts: {
             readState: () => present(answers[Math.min(reads++, answers.length - 1)])(),
-            sleep: async () => {
+            sleep: () => {
                 sleeps += 1;
+                return Promise.resolve();
             },
             pollMs: 1,
             readDiscovery: () => DISCOVERY,
@@ -165,7 +166,10 @@ describe("the recovery of a failed boot", () => {
                 calls.push("read");
                 return watch.opts.readState();
             },
-            signIn: async () => void calls.push("sign-in"),
+            signIn: () => {
+                calls.push("sign-in");
+                return Promise.resolve();
+            },
             requestBoot: () => {
                 calls.push("boot");
                 return requestBoot === undefined ? okAsync({ ...identity, phase: "starting", boot: noBoot }) : requestBoot();
@@ -220,7 +224,10 @@ describe("the start of a server from the chat", () => {
                 calls.push("read");
                 return watch.opts.readState();
             },
-            signIn: async () => void calls.push("sign-in"),
+            signIn: () => {
+                calls.push("sign-in");
+                return Promise.resolve();
+            },
             requestBoot: () => {
                 calls.push("boot");
                 return okAsync(starting);
@@ -235,7 +242,7 @@ describe("the start of a server from the chat", () => {
 
     test("the start after a crash runs the spawn path, then the store reads the server until it is ready", async () => {
         await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
-        const { opts, calls } = startOpts([() => okAsync(ready("claude-after"))], async () => ok(undefined));
+        const { opts, calls } = startOpts([() => okAsync(ready("claude-after"))], () => Promise.resolve(ok(undefined)));
 
         await recoverServerBoot("restart_server", opts);
 
@@ -245,7 +252,7 @@ describe("the start of a server from the chat", () => {
 
     test("the start runs the spawn path of an instance command, then the store reads the server until it is ready", async () => {
         await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
-        const { opts, calls } = startOpts([() => okAsync(starting), () => okAsync(ready("claude-after"))], async () => ok(undefined));
+        const { opts, calls } = startOpts([() => okAsync(starting), () => okAsync(ready("claude-after"))], () => Promise.resolve(ok(undefined)));
 
         const pending = recoverServerBoot("start_server", opts);
         // The start can take seconds, and the header must not keep saying that no server runs.
@@ -259,7 +266,7 @@ describe("the start of a server from the chat", () => {
     test("a start that failed offers the start again, with its reason, and reads nothing", async () => {
         await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
         const reason = "Could not start the Inflexa server: `inflexa serve --detach` exited with code 1. See its log: /logs/server.log";
-        const { opts, calls } = startOpts([() => okAsync(ready("never"))], async () => err(reason));
+        const { opts, calls } = startOpts([() => okAsync(ready("never"))], () => Promise.resolve(err(reason)));
 
         await recoverServerBoot("start_server", opts);
 

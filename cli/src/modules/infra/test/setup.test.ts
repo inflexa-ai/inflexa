@@ -54,7 +54,7 @@ import { readConfig, writeConfig } from "../../../lib/config.ts";
 import type { BootStepId } from "../../../api/server.ts";
 import * as container from "../../../lib/container.ts";
 import * as cliPrompts from "../../../lib/cli.ts";
-import { fakeFetch } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, respondWith } from "../../../test_support/fake_fetch.ts";
 import { requestedModel } from "../../../test_support/request_body.ts";
 // Namespace import beside the named one purely so `detectProviderEnv` is spyable at the seam setup.ts
 // calls it through; `env` itself is a value the assertions read, so it stays a named import.
@@ -273,7 +273,7 @@ describe("pingMessagesEndpoint — only a recognizable not-found body names the 
     const cred = { token: "t", scheme: "bearer" } as const;
 
     function ping(body: string): ReturnType<typeof pingMessagesEndpoint> {
-        return pingMessagesEndpoint("https://gw.corp/v1", "anthropic", cred, "m-1", async () => new Response(body, { status: 404 }));
+        return pingMessagesEndpoint("https://gw.corp/v1", "anthropic", cred, "m-1", respondWith(body, { status: 404 }));
     }
 
     test.each([
@@ -858,21 +858,21 @@ describe("ensureLiveCredential", () => {
     function scripted(probes: Probe[], over: Partial<Parameters<typeof ensureLiveCredential>[0]> = {}, confirmResult = true) {
         const calls: string[] = [];
         const deps: Parameters<typeof ensureLiveCredential>[0] = {
-            probe: async () => {
+            probe: () => {
                 calls.push("probe");
-                return probes.shift() ?? { kind: "ok" };
+                return Promise.resolve(probes.shift() ?? { kind: "ok" });
             },
-            confirmRelogin: async () => {
+            confirmRelogin: () => {
                 calls.push("confirm");
-                return confirmResult;
+                return Promise.resolve(confirmResult);
             },
-            relogin: async () => {
+            relogin: () => {
                 calls.push("relogin");
-                return true;
+                return Promise.resolve(true);
             },
-            restartProxy: async () => {
+            restartProxy: () => {
                 calls.push("restart");
-                return ok<void, { message: string }>(undefined);
+                return Promise.resolve(ok<void, { message: string }>(undefined));
             },
             isInteractive: () => true,
             // Not recorded: announcing is narration, not a policy step, and asserting it would pin the
@@ -939,7 +939,7 @@ describe("ensureLiveCredential", () => {
     });
 
     test("an incomplete re-login fails without restarting or re-probing", async () => {
-        const { deps, calls } = scripted([{ kind: "unauthorized" }], { relogin: async () => false });
+        const { deps, calls } = scripted([{ kind: "unauthorized" }], { relogin: () => Promise.resolve(false) });
         const result = await ensureLiveCredential(deps);
         expect(result.isErr() ? result.error.message : "").toContain("didn't complete");
         expect(calls).toEqual(["probe", "confirm"]);
@@ -947,7 +947,7 @@ describe("ensureLiveCredential", () => {
 
     test("a failed proxy restart fails rather than re-probing a proxy that never saw the fresh login", async () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }], {
-            restartProxy: async () => err({ message: "compose exploded" }),
+            restartProxy: () => Promise.resolve(err({ message: "compose exploded" })),
         });
         const result = await ensureLiveCredential(deps);
         expect(result.isErr() ? result.error.message : "").toContain("restart");
@@ -1035,9 +1035,9 @@ describe("retryWhileUnreachable", () => {
         const outcomes: ProbeAttempt[] = [{ kind: "unreachable", detail: "ECONNREFUSED" }, { kind: "unreachable", detail: "ECONNREFUSED" }, { kind: "ok" }];
         let tries = 0;
         const result = await retryWhileUnreachable(
-            async () => {
+            () => {
                 tries++;
-                return outcomes.shift() ?? { kind: "ok" };
+                return Promise.resolve(outcomes.shift() ?? { kind: "ok" });
             },
             1_000,
             1,
@@ -1048,20 +1048,20 @@ describe("retryWhileUnreachable", () => {
 
     test("a 401 behind a cold container is still caught — the wait does not swallow the verdict it exists to reach", async () => {
         const outcomes: ProbeAttempt[] = [{ kind: "unreachable", detail: "ECONNREFUSED" }, { kind: "unauthorized" }];
-        const result = await retryWhileUnreachable(async () => outcomes.shift() ?? { kind: "ok" }, 1_000, 1);
+        const result = await retryWhileUnreachable(() => Promise.resolve(outcomes.shift() ?? { kind: "ok" }), 1_000, 1);
         expect(result).toEqual({ kind: "unauthorized" });
     });
 
     test("a proxy silent past the budget degrades to unobservable — warn and proceed, never block", async () => {
-        const result = await retryWhileUnreachable(async () => ({ kind: "unreachable", detail: "ECONNREFUSED" }), 5, 1);
+        const result = await retryWhileUnreachable(() => Promise.resolve({ kind: "unreachable", detail: "ECONNREFUSED" }), 5, 1);
         expect(result).toEqual({ kind: "unobservable", detail: "ECONNREFUSED" });
     });
 
     test("an answering proxy is never paced — one try, no wait", async () => {
         let tries = 0;
-        const result = await retryWhileUnreachable(async () => {
+        const result = await retryWhileUnreachable(() => {
             tries++;
-            return { kind: "unauthorized" };
+            return Promise.resolve({ kind: "unauthorized" });
         });
         expect(result).toEqual({ kind: "unauthorized" });
         expect(tries).toBe(1);
@@ -1078,9 +1078,9 @@ describe("retryWhileUnreachable", () => {
         ];
         let tries = 0;
         const result = await retryWhileUnreachable(
-            async () => {
+            () => {
                 tries++;
-                return outcomes.shift() ?? { kind: "ok" };
+                return Promise.resolve(outcomes.shift() ?? { kind: "ok" });
             },
             1_000,
             1,
@@ -1090,7 +1090,7 @@ describe("retryWhileUnreachable", () => {
     });
 
     test("a list still empty at the deadline is the ambiguous empty_at_deadline — never a login, and distinct from an outage's unobservable", async () => {
-        const result = await retryWhileUnreachable(async () => ({ kind: "not_ready" }), 5, 1);
+        const result = await retryWhileUnreachable(() => Promise.resolve({ kind: "not_ready" }), 5, 1);
         expect(result).toEqual({ kind: "empty_at_deadline" });
     });
 });
@@ -1105,7 +1105,7 @@ describe("askProxy — 503 cooldown discrimination", () => {
     });
 
     function stubStatus(status: number, body: string): void {
-        globalThis.fetch = fakeFetch(async () => new Response(body, { status }));
+        globalThis.fetch = fakeFetch(respondWith(body, { status }));
     }
 
     test("a 503 carrying the proxy's auth_unavailable marker is `cooling_down`", async () => {
@@ -1159,8 +1159,10 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
     test("an answered --embeddings mode is configured even when NO container runtime is ready", async () => {
         // mockImplementation (not mockResolvedValue) so the returned Result is consumed, per the neverthrow
         // must-use-result rule (same reasoning as compose.test.ts's wiring block).
-        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
-        const runtimeSpy = spyOn(container, "firstReadyRuntime").mockImplementation(async () => err(new container.ContainerRuntimeError("no usable runtime")));
+        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
+        const runtimeSpy = spyOn(container, "firstReadyRuntime").mockImplementation(() =>
+            Promise.resolve(err(new container.ContainerRuntimeError("no usable runtime"))),
+        );
         spies.push(embedSpy, runtimeSpy);
 
         await setup({ auth: false, start: false, force: false, postgres: true, yes: true, flags: { embeddings: "local" } });
@@ -1185,8 +1187,10 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
         const answersPath = join(dir, "fleet.yml");
         writeFileSync(answersPath, "embedding:\n  mode: local\n");
 
-        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
-        const runtimeSpy = spyOn(container, "firstReadyRuntime").mockImplementation(async () => err(new container.ContainerRuntimeError("no usable runtime")));
+        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
+        const runtimeSpy = spyOn(container, "firstReadyRuntime").mockImplementation(() =>
+            Promise.resolve(err(new container.ContainerRuntimeError("no usable runtime"))),
+        );
         spies.push(embedSpy, runtimeSpy);
 
         await setup({ auth: false, start: false, force: false, postgres: true, yes: true, flags: { config: answersPath } });
@@ -1198,12 +1202,12 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
     });
 
     test("with a ready runtime and an answered mode, the embedding step runs exactly once", async () => {
-        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
+        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
         spies.push(embedSpy);
-        spies.push(spyOn(container, "firstReadyRuntime").mockImplementation(async () => ok(container.runtimes.docker)));
+        spies.push(spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker))));
         // Stub the reference-data step so the full non-interactive flow reaches (and skips) the in-flow
         // embedding site without doing real reference provisioning.
-        spies.push(spyOn(refsCommands, "runReferenceSetup").mockImplementation(async () => ok(undefined)));
+        spies.push(spyOn(refsCommands, "runReferenceSetup").mockImplementation(() => Promise.resolve(ok(undefined))));
 
         // postgres:false skips the compose/engine block (which would spawn a real runtime); the flow still
         // runs past the in-flow embedding site so its guard is exercised.
@@ -1243,24 +1247,26 @@ describe("probeOnce — the election feeds the probe a servable model", () => {
     test("an inaccessible top candidate is walked past, so the completion probe reads ok — not 'not verifiable'", async () => {
         // /models advertises two claude ids (newest ranks first by recency); the newest 404s the
         // count_tokens check, so the election walks to the older served one and the /messages completion 200s.
-        globalThis.fetch = fakeFetch(async (url, init) => {
-            const target = String(url);
-            if (target.endsWith("/messages/count_tokens")) {
-                const model = requestedModel(init);
-                return model === "claude-new"
-                    ? new Response(JSON.stringify({ error: { type: "not_found_error" } }), { status: 404 })
-                    : new Response("{}", { status: 200 });
-            }
-            if (target.endsWith("/messages")) return new Response("{}", { status: 200 });
-            return new Response(
-                JSON.stringify({
-                    data: [
-                        { id: "claude-new", created: 200 },
-                        { id: "claude-old", created: 100 },
-                    ],
-                }),
-            );
-        });
+        globalThis.fetch = fakeFetch((url, init) =>
+            Promise.try(() => {
+                const target = String(url);
+                if (target.endsWith("/messages/count_tokens")) {
+                    const model = requestedModel(init);
+                    return model === "claude-new"
+                        ? new Response(JSON.stringify({ error: { type: "not_found_error" } }), { status: 404 })
+                        : new Response("{}", { status: 200 });
+                }
+                if (target.endsWith("/messages")) return new Response("{}", { status: 200 });
+                return new Response(
+                    JSON.stringify({
+                        data: [
+                            { id: "claude-new", created: 200 },
+                            { id: "claude-old", created: 100 },
+                        ],
+                    }),
+                );
+            }),
+        );
 
         expect(await probeOnce()).toEqual({ kind: "ok" });
     });
@@ -1281,10 +1287,11 @@ describe("warnStalePins", () => {
         const done = warnStalePins({
             connection,
             modelPin,
-            check: async (id) => {
-                checked.push(id);
-                return verdict(id);
-            },
+            check: (id) =>
+                Promise.try(() => {
+                    checked.push(id);
+                    return verdict(id);
+                }),
             warn: (m) => warnings.push(m),
         });
         return { checked, warnings, done };
@@ -1378,10 +1385,10 @@ describe("selectDefaultModel", () => {
     function deps(over: Partial<Parameters<typeof selectDefaultModel>[0]>): Parameters<typeof selectDefaultModel>[0] {
         return {
             isInteractive: () => true,
-            candidates: async () => ["claude-a"],
-            check: async () => "served",
-            prompt: async () => ({ auto: true }),
-            promptManual: async () => null,
+            candidates: () => Promise.resolve(["claude-a"]),
+            check: () => Promise.resolve("served"),
+            prompt: () => Promise.resolve({ auto: true }),
+            promptManual: () => Promise.resolve(null),
             writeBoth,
             warn: () => {},
             ...over,
@@ -1394,12 +1401,14 @@ describe("selectDefaultModel", () => {
     }
 
     test("accepting Auto writes nothing — the default stays adaptive", async () => {
-        await selectDefaultModel(deps({ prompt: async () => ({ auto: true }) }));
+        await selectDefaultModel(deps({ prompt: () => Promise.resolve({ auto: true }) }));
         expect(readConfig().models).toBeUndefined();
     });
 
     test("an explicit pick pins every model role to the chosen id", async () => {
-        await selectDefaultModel(deps({ candidates: async () => ["claude-pick"], prompt: async () => ({ auto: false, modelId: "claude-pick" }) }));
+        await selectDefaultModel(
+            deps({ candidates: () => Promise.resolve(["claude-pick"]), prompt: () => Promise.resolve({ auto: false, modelId: "claude-pick" }) }),
+        );
         expect(persistedAgents()).toEqual({ conversation: "claude-pick", sandbox: "claude-pick", utility: "claude-pick" });
     });
 
@@ -1407,11 +1416,11 @@ describe("selectDefaultModel", () => {
         let offered: string[] = [];
         await selectDefaultModel(
             deps({
-                candidates: async () => ["claude-404", "claude-maybe"],
-                check: async (id) => (id === "claude-404" ? "not_found" : "inconclusive"),
-                prompt: async (_elected, models) => {
+                candidates: () => Promise.resolve(["claude-404", "claude-maybe"]),
+                check: (id) => Promise.resolve(id === "claude-404" ? "not_found" : "inconclusive"),
+                prompt: (_elected, models) => {
                     offered = models;
-                    return { auto: true };
+                    return Promise.resolve({ auto: true });
                 },
             }),
         );
@@ -1422,11 +1431,11 @@ describe("selectDefaultModel", () => {
         let recommended = "";
         await selectDefaultModel(
             deps({
-                candidates: async () => ["claude-404", "claude-newest", "claude-older"],
-                check: async (id) => (id === "claude-404" ? "not_found" : "served"),
-                prompt: async (electedId) => {
+                candidates: () => Promise.resolve(["claude-404", "claude-newest", "claude-older"]),
+                check: (id) => Promise.resolve(id === "claude-404" ? "not_found" : "served"),
+                prompt: (electedId) => {
                     recommended = electedId;
-                    return { auto: true };
+                    return Promise.resolve({ auto: true });
                 },
             }),
         );
@@ -1439,13 +1448,13 @@ describe("selectDefaultModel", () => {
         await selectDefaultModel(
             deps({
                 isInteractive: () => false,
-                candidates: async () => {
+                candidates: () => {
                     listed = true;
-                    return ["claude-x"];
+                    return Promise.resolve(["claude-x"]);
                 },
-                prompt: async () => {
+                prompt: () => {
                     prompted = true;
-                    return { auto: true };
+                    return Promise.resolve({ auto: true });
                 },
             }),
         );
@@ -1457,9 +1466,9 @@ describe("selectDefaultModel", () => {
     test("no offerable list → manual entry: a served typed id pins every model role", async () => {
         await selectDefaultModel(
             deps({
-                candidates: async () => ["claude-404"],
-                promptManual: async () => "claude-x",
-                check: async (id) => (id === "claude-x" ? "served" : "not_found"),
+                candidates: () => Promise.resolve(["claude-404"]),
+                promptManual: () => Promise.resolve("claude-x"),
+                check: (id) => Promise.resolve(id === "claude-x" ? "served" : "not_found"),
             }),
         );
         expect(persistedAgents()).toEqual({ conversation: "claude-x", sandbox: "claude-x", utility: "claude-x" });
@@ -1468,8 +1477,8 @@ describe("selectDefaultModel", () => {
     test("no offerable list → manual entry declined keeps Auto — nothing persisted", async () => {
         await selectDefaultModel(
             deps({
-                candidates: async () => [],
-                promptManual: async () => null,
+                candidates: () => Promise.resolve([]),
+                promptManual: () => Promise.resolve(null),
             }),
         );
         expect(readConfig().models).toBeUndefined();
@@ -1479,9 +1488,9 @@ describe("selectDefaultModel", () => {
         const warnings: string[] = [];
         await selectDefaultModel(
             deps({
-                candidates: async () => ["claude-404"],
-                promptManual: async () => "bad",
-                check: async () => "not_found",
+                candidates: () => Promise.resolve(["claude-404"]),
+                promptManual: () => Promise.resolve("bad"),
+                check: () => Promise.resolve("not_found"),
                 warn: (m) => warnings.push(m),
             }),
         );
@@ -1495,11 +1504,11 @@ describe("selectDefaultModel", () => {
         const checked: string[] = [];
         await selectDefaultModel(
             deps({
-                candidates: async () => [],
-                promptManual: async () => "claude-unlisted",
-                check: async (id) => {
+                candidates: () => Promise.resolve([]),
+                promptManual: () => Promise.resolve("claude-unlisted"),
+                check: (id) => {
                     checked.push(id);
-                    return "not_found";
+                    return Promise.resolve("not_found");
                 },
             }),
         );
@@ -1512,15 +1521,15 @@ describe("selectDefaultModel", () => {
         let listPrompted = false;
         await selectDefaultModel(
             deps({
-                candidates: async () => ["claude-404a", "claude-404b"],
-                check: async () => "not_found",
-                prompt: async () => {
+                candidates: () => Promise.resolve(["claude-404a", "claude-404b"]),
+                check: () => Promise.resolve("not_found"),
+                prompt: () => {
                     listPrompted = true;
-                    return { auto: true };
+                    return Promise.resolve({ auto: true });
                 },
-                promptManual: async () => {
+                promptManual: () => {
                     manualCalled = true;
-                    return null;
+                    return Promise.resolve(null);
                 },
             }),
         );
@@ -1534,13 +1543,13 @@ describe("selectDefaultModel", () => {
     test("manual entry is told WHY there is no list — unanswered listing vs nothing servable", async () => {
         const reasons: string[] = [];
         const record = deps({
-            promptManual: async (reason) => {
+            promptManual: (reason) => {
                 reasons.push(reason);
-                return null;
+                return Promise.resolve(null);
             },
         });
-        await selectDefaultModel({ ...record, candidates: async () => [] });
-        await selectDefaultModel({ ...record, candidates: async () => ["claude-404"], check: async () => "not_found" });
+        await selectDefaultModel({ ...record, candidates: () => Promise.resolve([]) });
+        await selectDefaultModel({ ...record, candidates: () => Promise.resolve(["claude-404"]), check: () => Promise.resolve("not_found") });
         expect(reasons).toEqual(["listing-unavailable", "none-servable"]);
     });
 });
@@ -1632,9 +1641,9 @@ describe("setup() — batch orchestration", () => {
         rmSync(env.cliproxyAuthDir, { recursive: true, force: true });
         process.exitCode = 0;
 
-        firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(async () => ok(container.runtimes.docker));
-        embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
-        refsStep = spyOn(refsCommands, "runReferenceSetup").mockImplementation(async () => ok(undefined));
+        firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker)));
+        embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
+        refsStep = spyOn(refsCommands, "runReferenceSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
         spies.push(firstReady, embedStep, refsStep);
     });
 
@@ -1869,7 +1878,7 @@ describe("setup() — batch orchestration", () => {
         // first run's resource write) while the first started from one without it, so the two spreads
         // insert that key at different positions. `writeConfig` emits a canonical, schema-derived key
         // order precisely so that difference cannot reach the file.
-        spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));
+        spies.push(spyOn(compose, "composeAvailable").mockImplementation(() => Promise.resolve(true)));
         spies.push(spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)));
         // Batch cliproxy with no model answer asks the proxy nothing, so any fetch here is a defect.
         globalThis.fetch = fakeFetch((): Promise<Response> => {
@@ -1918,15 +1927,17 @@ describe("setup() — batch orchestration", () => {
             // `--refs <id>` fail on the very datasets its own first run installed. Stubbing the store
             // inspection is how a "second run" is expressed without a multi-gigabyte download.
             spies.push(
-                spyOn(refsStore, "inspectReferenceStore").mockImplementation(async () =>
-                    ok({
-                        exists: true,
-                        datasets: REFERENCE_DATA_CATALOG.datasets.map((dataset) => ({
-                            dataset,
-                            state: dataset.id === CATALOG_ID ? ("installed" as const) : ("missing" as const),
-                        })),
-                        userContent: [],
-                    }),
+                spyOn(refsStore, "inspectReferenceStore").mockImplementation(() =>
+                    Promise.resolve(
+                        ok({
+                            exists: true,
+                            datasets: REFERENCE_DATA_CATALOG.datasets.map((dataset) => ({
+                                dataset,
+                                state: dataset.id === CATALOG_ID ? ("installed" as const) : ("missing" as const),
+                            })),
+                            userContent: [],
+                        }),
+                    ),
                 ),
             );
 
@@ -1938,7 +1949,9 @@ describe("setup() — batch orchestration", () => {
 
         test("a valid id list lets the run continue — the answered transfers still start", async () => {
             const imageStart = spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 }));
-            const catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 }));
+            const catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(() =>
+                Promise.resolve(ok({ type: "started" as const, pid: 4243 })),
+            );
             spies.push(imageStart, catalogStart);
 
             await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: true }));
@@ -2026,8 +2039,8 @@ describe("setup() — batch orchestration", () => {
         // Podman is answered and dead while Docker is ready — the fallback must NOT rescue it, or one
         // fleet member would silently provision on a different engine than its siblings.
         spies.push(
-            spyOn(container, "ensureReady").mockImplementation(async (rt) =>
-                rt.id === "docker" ? ok(undefined) : err(new container.ContainerRuntimeError("Podman is installed but not ready.")),
+            spyOn(container, "ensureReady").mockImplementation((rt) =>
+                Promise.resolve(rt.id === "docker" ? ok(undefined) : err(new container.ContainerRuntimeError("Podman is installed but not ready."))),
             ),
         );
 
@@ -2039,7 +2052,7 @@ describe("setup() — batch orchestration", () => {
     });
 
     test("an answered runtime that IS ready is persisted like a detected choice", async () => {
-        spies.push(spyOn(container, "ensureReady").mockImplementation(async () => ok(undefined)));
+        spies.push(spyOn(container, "ensureReady").mockImplementation(() => Promise.resolve(ok(undefined))));
 
         await runSetup(batch({ runtime: "podman" }));
 
@@ -2050,7 +2063,9 @@ describe("setup() — batch orchestration", () => {
 
     test("an answered `--sandbox` starts the three transfers without a confirmation", async () => {
         const imageStart = spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 }));
-        const catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 }));
+        const catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(() =>
+            Promise.resolve(ok({ type: "started" as const, pid: 4243 })),
+        );
         spies.push(imageStart, catalogStart);
 
         await runSetup(batch({ sandbox: true }));
@@ -2103,7 +2118,7 @@ describe("setup() — batch orchestration", () => {
     test("answered Postgres fields persist through the persist-only-explicit filter; unanswered batch persists nothing", async () => {
         // The compose layer is a seam here: this test is about which ANSWERS land in config.json, and
         // `--no-start`/`--no-force` already keep every engine command out of the run.
-        spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));
+        spies.push(spyOn(compose, "composeAvailable").mockImplementation(() => Promise.resolve(true)));
         spies.push(spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)));
 
         await runSetup(batch({ postgresPassword: "s3cret" }, { postgres: true }));
@@ -2132,24 +2147,26 @@ describe("setup() — batch orchestration", () => {
             prompts = [];
             selects = [];
             spies.push(
-                spyOn(cliPrompts, "promptText").mockImplementation(async (message: string, opts?: { defaultValue?: string }) => {
+                spyOn(cliPrompts, "promptText").mockImplementation((message: string, opts?: { defaultValue?: string }) => {
                     prompts.push(message);
                     // Accept the pre-fill wherever there is one (what "press Enter" does), and type
                     // `openai` where there is not — the only such prompt these flows reach is the provider
                     // slug, and an openai-compatible connection keeps the anthropic-only credential-helper
                     // offer (which reads the developer's REAL ~/.claude settings) out of the run.
-                    return opts?.defaultValue ?? "openai";
+                    return Promise.resolve(opts?.defaultValue ?? "openai");
                 }),
-                spyOn(cliPrompts, "promptTextOptional").mockImplementation(async (message: string) => {
+                spyOn(cliPrompts, "promptTextOptional").mockImplementation((message: string) => {
                     prompts.push(message);
-                    return null;
+                    return Promise.resolve(null);
                 }),
-                spyOn(cliPrompts, "select").mockImplementation(async (message: string, options: { value: string; label: string }[]) => {
-                    selects.push(message);
-                    // The first option is each of these selects' documented default ("infer", "cliproxy").
-                    return present(options[0]).value;
-                }),
-                spyOn(cliPrompts, "confirm").mockImplementation(async () => false),
+                spyOn(cliPrompts, "select").mockImplementation((message: string, options: { value: string; label: string }[]) =>
+                    Promise.try(() => {
+                        selects.push(message);
+                        // The first option is each of these selects' documented default ("infer", "cliproxy").
+                        return present(options[0]).value;
+                    }),
+                ),
+                spyOn(cliPrompts, "confirm").mockImplementation(() => Promise.resolve(false)),
             );
             // The interactive default-model step lists models off the proxy; every route 404s, so the
             // candidate list is empty and the optional manual-entry fallback is declined by the seam above.
@@ -2171,7 +2188,7 @@ describe("setup() — batch orchestration", () => {
         }
 
         test("`--postgres-password` skips ONLY the password prompt — user and port are still asked", async () => {
-            spies.push(spyOn(compose, "composeAvailable").mockImplementation(async () => true));
+            spies.push(spyOn(compose, "composeAvailable").mockImplementation(() => Promise.resolve(true)));
             spies.push(spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)));
 
             await runSetup(interactive({ connection: "cliproxy", postgresPassword: "s3cret" }, { postgres: true }));
@@ -2246,14 +2263,16 @@ describe("setup() — batch orchestration", () => {
         beforeEach(() => {
             answersDir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
             imageStart = spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 }));
-            catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 }));
+            catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(() =>
+                Promise.resolve(ok({ type: "started" as const, pid: 4243 })),
+            );
             composeWriter = spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined));
             spies.push(
                 imageStart,
                 catalogStart,
                 composeWriter,
-                spyOn(compose, "composeAvailable").mockImplementation(async () => true),
-                spyOn(container, "ensureReady").mockImplementation(async () => ok(undefined)),
+                spyOn(compose, "composeAvailable").mockImplementation(() => Promise.resolve(true)),
+                spyOn(container, "ensureReady").mockImplementation(() => Promise.resolve(ok(undefined))),
             );
             // Every case here is hermetic BY CONSTRUCTION — batch cliproxy never lists models, and the
             // direct cases run under `--no-validate` — so a fetch reaching this stub is a defect in the
@@ -2605,7 +2624,7 @@ describe("setup() — batch orchestration", () => {
         });
 
         test("a failed step records its own name and the version that wrote it", async () => {
-            refsStep.mockImplementation(async () => err({ type: "download_failed" as const, message: "the mirror refused" }));
+            refsStep.mockImplementation(() => Promise.resolve(err({ type: "download_failed" as const, message: "the mirror refused" })));
 
             const output = await runSetup(batch({}));
 
@@ -2656,25 +2675,27 @@ describe("setup() — batch orchestration", () => {
             selects = [];
             continueChoice = "continue";
             spies.push(
-                spyOn(cliPrompts, "promptText").mockImplementation(async (message: string, opts?: { defaultValue?: string }) => {
+                spyOn(cliPrompts, "promptText").mockImplementation((message: string, opts?: { defaultValue?: string }) => {
                     prompts.push(message);
-                    return opts?.defaultValue ?? "openai";
+                    return Promise.resolve(opts?.defaultValue ?? "openai");
                 }),
-                spyOn(cliPrompts, "promptTextOptional").mockImplementation(async (message: string) => {
+                spyOn(cliPrompts, "promptTextOptional").mockImplementation((message: string) => {
                     prompts.push(message);
-                    return null;
+                    return Promise.resolve(null);
                 }),
-                spyOn(cliPrompts, "select").mockImplementation(async (message: string, options: { value: string; label: string }[]) => {
-                    selects.push(message);
-                    // Only the continue offer is steered per test; every other select takes its first
-                    // option, which is each one's documented default.
-                    return message.includes(CONTINUE_QUESTION) ? continueChoice : present(options[0]).value;
-                }),
+                spyOn(cliPrompts, "select").mockImplementation((message: string, options: { value: string; label: string }[]) =>
+                    Promise.try(() => {
+                        selects.push(message);
+                        // Only the continue offer is steered per test; every other select takes its first
+                        // option, which is each one's documented default.
+                        return message.includes(CONTINUE_QUESTION) ? continueChoice : present(options[0]).value;
+                    }),
+                ),
                 spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 })),
-                spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(async () => ok({ type: "started" as const, pid: 4243 })),
+                spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(() => Promise.resolve(ok({ type: "started" as const, pid: 4243 }))),
                 // The transfers consent is the one confirm on this path; a decline keeps the checkpoint flow itself under test.
-                spyOn(cliPrompts, "confirm").mockImplementation(async () => false),
-                spyOn(compose, "composeAvailable").mockImplementation(async () => true),
+                spyOn(cliPrompts, "confirm").mockImplementation(() => Promise.resolve(false)),
+                spyOn(compose, "composeAvailable").mockImplementation(() => Promise.resolve(true)),
                 spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
             );
             globalThis.fetch = fakeFetch(() => Promise.resolve(new Response(null, { status: 404 })));
@@ -2744,14 +2765,16 @@ describe("ensureProxyReady — the boot steps", () => {
     function recordSteps(opts: { composeUpFails: boolean }): BootStepId[] {
         const steps: BootStepId[] = [];
         spies.push(
-            spyOn(configModule, "ensureRuntime").mockImplementation(async () => ok(container.runtimes.docker)),
+            spyOn(configModule, "ensureRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker))),
             spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
-            spyOn(compose, "composePullIfMissing").mockImplementation(async () => ok(undefined)),
-            spyOn(compose, "composeProxyRunning").mockImplementation(async () => ok(false)),
-            spyOn(compose, "composeUp").mockImplementation(async () =>
-                opts.composeUpFails ? err({ type: "container_start_failed", message: "stub: stop the gate after the containers step" }) : ok(undefined),
+            spyOn(compose, "composePullIfMissing").mockImplementation(() => Promise.resolve(ok(undefined))),
+            spyOn(compose, "composeProxyRunning").mockImplementation(() => Promise.resolve(ok(false))),
+            spyOn(compose, "composeUp").mockImplementation(() =>
+                Promise.resolve(
+                    opts.composeUpFails ? err({ type: "container_start_failed", message: "stub: stop the gate after the containers step" }) : ok(undefined),
+                ),
             ),
-            spyOn(embeddingSetup, "ensureEmbedderReady").mockImplementation(async () => ok(undefined)),
+            spyOn(embeddingSetup, "ensureEmbedderReady").mockImplementation(() => Promise.resolve(ok(undefined))),
         );
         return steps;
     }
@@ -2792,9 +2815,9 @@ describe("ensureProxyReady — the boot steps", () => {
         const onPullProgress = (): void => undefined;
         let given: unknown;
         spies.push(
-            spyOn(compose, "composePullIfMissing").mockImplementation(async (_rt, _mode, callback) => {
+            spyOn(compose, "composePullIfMissing").mockImplementation((_rt, _mode, callback) => {
                 given = callback;
-                return ok(undefined);
+                return Promise.resolve(ok(undefined));
             }),
         );
 

@@ -59,11 +59,12 @@ function tempStore(): string {
 
 /** A runner that records each invocation and reports a green run. */
 function countingRunner(invocations: (readonly string[])[]): ProvisionerRunner {
-    return async (invocation) => {
-        invocations.push([...invocation.args]);
-        expect(invocation.egressAllow).toBeNull();
-        return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
-    };
+    return (invocation) =>
+        Promise.try(() => {
+            invocations.push([...invocation.args]);
+            expect(invocation.egressAllow).toBeNull();
+            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+        });
 }
 
 beforeEach(() => {
@@ -211,10 +212,11 @@ describe("runStoreDownload --foreground", () => {
     });
 
     test("a failed settle exits 1 and prints the recorded message", async () => {
-        const transfer = async (): Promise<void> => {
-            startTransferRun("catalog", { state: "running", holderPid: process.pid })._unsafeUnwrap();
-            settleTransfer("catalog", { state: "failed", message: "resolve: the registry said no" })._unsafeUnwrap();
-        };
+        const transfer = (): Promise<void> =>
+            Promise.try(() => {
+                startTransferRun("catalog", { state: "running", holderPid: process.pid })._unsafeUnwrap();
+                settleTransfer("catalog", { state: "failed", message: "resolve: the registry said no" })._unsafeUnwrap();
+            });
 
         await runStoreDownload({ foreground: true }, { transfer });
 
@@ -226,8 +228,9 @@ describe("runStoreDownload --foreground", () => {
         // This process holds the lock, thus the report reads the transfer as live.
         expect(acquireInstanceLock(transferLockKey("catalog")).acquired).toBe(true);
         let ran = 0;
-        const transfer = async (): Promise<void> => {
+        const transfer = (): Promise<void> => {
             ran += 1;
+            return Promise.resolve();
         };
 
         await runStoreDownload({ foreground: true }, { transfer });
@@ -237,10 +240,11 @@ describe("runStoreDownload --foreground", () => {
     });
 
     test("an installed settle exits clean", async () => {
-        const transfer = async (): Promise<void> => {
-            startTransferRun("catalog", { state: "running", holderPid: process.pid })._unsafeUnwrap();
-            settleTransfer("catalog", { state: "installed", message: null })._unsafeUnwrap();
-        };
+        const transfer = (): Promise<void> =>
+            Promise.try(() => {
+                startTransferRun("catalog", { state: "running", holderPid: process.pid })._unsafeUnwrap();
+                settleTransfer("catalog", { state: "installed", message: null })._unsafeUnwrap();
+            });
 
         await runStoreDownload({ foreground: true }, { transfer });
 
@@ -405,7 +409,7 @@ describe("cancelCatalogTransfer", () => {
         mkdirSync(staging, { recursive: true });
         writeFileSync(join(staging, "half-written.tar"), "bytes\n");
 
-        const outcome = await cancelCatalogTransfer(root, async () => ({ type: "timed_out" as const, holderPid: 4242 }));
+        const outcome = await cancelCatalogTransfer(root, () => Promise.resolve({ type: "timed_out" as const, holderPid: 4242 }));
 
         expect(outcome).toEqual({ type: "timed_out", holderPid: 4242 });
         expect(existsSync(join(staging, "half-written.tar"))).toBe(true);

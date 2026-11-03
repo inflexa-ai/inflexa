@@ -17,6 +17,7 @@ import {
     type ValidateSelectionSeams,
 } from "../model_listing.ts";
 import { present } from "../../../lib/present.ts";
+import { respondWith } from "../../../test_support/fake_fetch.ts";
 
 // Drives `listConnectionModels` through injected seams so the per-mode request shaping (cliproxy vs.
 // direct OpenAI-compatible vs. direct Anthropic) and the Result-channel degradations are exercised with
@@ -35,7 +36,7 @@ function seamsFor(opts: {
 }): ListModelsSeams {
     return {
         resolveConnection: () => opts.connection,
-        readProxyKey: opts.readProxyKey ?? (async () => ok("sk-proxy")),
+        readProxyKey: opts.readProxyKey ?? (() => Promise.resolve(ok("sk-proxy"))),
         readModelApiKey: () => opts.modelApiKey,
         resolveAuthCredential:
             opts.resolveAuthCredential ??
@@ -133,7 +134,7 @@ describe("listConnectionModels — per-mode request shape", () => {
                 },
                 // The env key is ALSO set: the auth block must supersede it (the chat path's precedence).
                 modelApiKey: "sk-env-must-not-be-used",
-                resolveAuthCredential: async () => ok({ token: "gw-jwt", scheme: "bearer" }),
+                resolveAuthCredential: () => Promise.resolve(ok({ token: "gw-jwt", scheme: "bearer" })),
                 fetch: rec.fetch,
             }),
         );
@@ -153,7 +154,7 @@ describe("listConnectionModels — per-mode request shape", () => {
                     auth: { kind: "command", command: "corp token", scheme: "bearer" },
                     agents: {},
                 },
-                resolveAuthCredential: async () => err({ type: "command_exit_nonzero", command: "corp token", exitCode: 1, stderr: "idp down" }),
+                resolveAuthCredential: () => Promise.resolve(err({ type: "command_exit_nonzero", command: "corp token", exitCode: 1, stderr: "idp down" })),
                 fetch: rec.fetch,
             }),
         );
@@ -230,7 +231,7 @@ describe("listConnectionModels — expected failures degrade on the Result chann
         const result = await listConnectionModels(
             seamsFor({
                 connection: { mode: "cliproxy", provider: "anthropic", agents: {} },
-                readProxyKey: async () => err({ type: "proxy_key_missing" }),
+                readProxyKey: () => Promise.resolve(err({ type: "proxy_key_missing" })),
                 fetch: rec.fetch,
             }),
         );
@@ -314,7 +315,7 @@ function validateSeamsFor(opts: {
 }): ValidateSelectionSeams {
     return {
         resolveConnection: () => opts.connection,
-        readProxyKey: opts.readProxyKey ?? (async () => ok("sk-proxy")),
+        readProxyKey: opts.readProxyKey ?? (() => Promise.resolve(ok("sk-proxy"))),
         readModelApiKey: () => opts.modelApiKey,
         resolveAuthCredential:
             opts.resolveAuthCredential ??
@@ -450,7 +451,7 @@ describe("listConnectionModels — the pages of the direct Anthropic listing", (
             seamsFor({
                 connection,
                 modelApiKey: "sk-ant",
-                resolveAuthCredential: async () => ok({ token: "gw-jwt", scheme: "bearer" }),
+                resolveAuthCredential: () => Promise.resolve(ok({ token: "gw-jwt", scheme: "bearer" })),
                 fetch: rec.fetch,
             }),
         );
@@ -595,9 +596,9 @@ describe("validateModelSelection — per-mode commit validation", () => {
             "claude-opus-4-8",
             validateSeamsFor({
                 connection: { mode: "cliproxy", provider: "anthropic", agents: {} },
-                checkModelAccess: async (apiKey, modelId) => {
+                checkModelAccess: (apiKey, modelId) => {
                     seen.push({ apiKey, modelId });
-                    return "served";
+                    return Promise.resolve("served");
                 },
             }),
         );
@@ -611,10 +612,10 @@ describe("validateModelSelection — per-mode commit validation", () => {
             "claude-opus-4-8",
             validateSeamsFor({
                 connection: { mode: "cliproxy", provider: "anthropic", agents: {} },
-                readProxyKey: async () => err({ type: "proxy_key_missing" }),
-                checkModelAccess: async () => {
+                readProxyKey: () => Promise.resolve(err({ type: "proxy_key_missing" })),
+                checkModelAccess: () => {
                     delegated++;
-                    return "served";
+                    return Promise.resolve("served");
                 },
             }),
         );
@@ -629,9 +630,9 @@ describe("validateModelSelection — per-mode commit validation", () => {
             validateSeamsFor({
                 connection: DIRECT_ANTHROPIC,
                 modelApiKey: "sk-ant",
-                fetch: async (url, init) => {
+                fetch: (url, init) => {
                     calls.push({ url, init });
-                    return new Response("{}", { status: 200 });
+                    return Promise.resolve(new Response("{}", { status: 200 }));
                 },
             }),
         );
@@ -648,10 +649,10 @@ describe("validateModelSelection — per-mode commit validation", () => {
             validateSeamsFor({
                 connection: { ...DIRECT_ANTHROPIC, auth: { kind: "command", command: "corp token", scheme: "bearer" } },
                 modelApiKey: "sk-env-must-not-be-used",
-                resolveAuthCredential: async () => ok({ token: "gw-jwt", scheme: "bearer" }),
-                fetch: async (url, init) => {
+                resolveAuthCredential: () => Promise.resolve(ok({ token: "gw-jwt", scheme: "bearer" })),
+                fetch: (url, init) => {
                     calls.push({ url, init });
-                    return new Response("{}", { status: 200 });
+                    return Promise.resolve(new Response("{}", { status: 200 }));
                 },
             }),
         );
@@ -667,10 +668,10 @@ describe("validateModelSelection — per-mode commit validation", () => {
             "claude-sonnet-5",
             validateSeamsFor({
                 connection: { ...DIRECT_ANTHROPIC, auth: { kind: "env", var: "CORP_TOKEN", scheme: "bearer" } },
-                resolveAuthCredential: async () => err({ type: "env_var_unset", var: "CORP_TOKEN" }),
-                fetch: async () => {
+                resolveAuthCredential: () => Promise.resolve(err({ type: "env_var_unset", var: "CORP_TOKEN" })),
+                fetch: () => {
                     fetched++;
-                    return new Response("{}", { status: 200 });
+                    return Promise.resolve(new Response("{}", { status: 200 }));
                 },
             }),
         );
@@ -684,7 +685,7 @@ describe("validateModelSelection — per-mode commit validation", () => {
             validateSeamsFor({
                 connection: DIRECT_ANTHROPIC,
                 modelApiKey: "sk-ant",
-                fetch: async () => new Response(JSON.stringify({ error: { type: "not_found_error" } }), { status: 404 }),
+                fetch: respondWith(JSON.stringify({ error: { type: "not_found_error" } }), { status: 404 }),
             }),
         );
         expect(result).toBe("not_found");
@@ -698,7 +699,7 @@ describe("validateModelSelection — per-mode commit validation", () => {
                 modelApiKey: "sk-ant",
                 // A proxy/gateway that does not route count_tokens 404s everything — a bare 404 must NOT read
                 // as inaccessible, only `not_found_error` does.
-                fetch: async () => new Response("Not Found", { status: 404 }),
+                fetch: respondWith("Not Found", { status: 404 }),
             }),
         );
         expect(result).toBe("inconclusive");
@@ -710,9 +711,7 @@ describe("validateModelSelection — per-mode commit validation", () => {
             validateSeamsFor({
                 connection: DIRECT_ANTHROPIC,
                 modelApiKey: "sk-ant",
-                fetch: async () => {
-                    throw new Error("The operation timed out");
-                },
+                fetch: () => Promise.reject(new Error("The operation timed out")),
             }),
         );
         expect(result).toBe("inconclusive");
@@ -725,9 +724,9 @@ describe("validateModelSelection — per-mode commit validation", () => {
             validateSeamsFor({
                 connection: { mode: "direct", provider: "openai", baseURL: "https://api.example.com/v1", protocol: "openai-compatible", agents: {} },
                 modelApiKey: "sk-direct",
-                fetch: async () => {
+                fetch: () => {
                     fetchCount++;
-                    return new Response("{}");
+                    return Promise.resolve(new Response("{}"));
                 },
             }),
         );
@@ -741,13 +740,13 @@ describe("validateModelSelection — per-mode commit validation", () => {
             "claude-opus-4-8",
             validateSeamsFor({
                 connection: { mode: "cliproxy", provider: "anthropic", agents: {}, configError: { issues: "models.agents.sandbox: expected string" } },
-                checkModelAccess: async () => {
+                checkModelAccess: () => {
                     touched++;
-                    return "served";
+                    return Promise.resolve("served");
                 },
-                fetch: async () => {
+                fetch: () => {
                     touched++;
-                    return new Response("{}");
+                    return Promise.resolve(new Response("{}"));
                 },
             }),
         );
@@ -780,9 +779,9 @@ describe("probeContextWindow — the window of the chat model", () => {
         const calls: { url: string; init: RequestInit }[] = [];
         const window = await probeContextWindow(
             "qwen3:8b",
-            windowOptsFor(DIRECT_OLLAMA, async (url, init) => {
+            windowOptsFor(DIRECT_OLLAMA, (url, init) => {
                 calls.push({ url, init });
-                return new Response(JSON.stringify({ model_info: { "general.architecture": "qwen3", "qwen3.context_length": 40960 } }));
+                return Promise.resolve(new Response(JSON.stringify({ model_info: { "general.architecture": "qwen3", "qwen3.context_length": 40960 } })));
             }),
         );
         expect(window).toEqual({ type: "known", tokens: 40960 });
@@ -807,10 +806,7 @@ describe("probeContextWindow — the window of the chat model", () => {
     });
 
     test("an endpoint without /api/show leaves the window unknown", async () => {
-        const window = await probeContextWindow(
-            "gpt-5",
-            windowOptsFor(DIRECT_OLLAMA, async () => new Response("not found", { status: 404 })),
-        );
+        const window = await probeContextWindow("gpt-5", windowOptsFor(DIRECT_OLLAMA, respondWith("not found", { status: 404 })));
         expect(window).toEqual({ type: "unknown" });
     });
 
@@ -829,9 +825,9 @@ describe("readContextWindow — the root of the endpoint", () => {
     /** The URL that `readContextWindow` asks for `baseURL`. */
     async function requestedUrl(baseURL: string): Promise<string | undefined> {
         let url: string | undefined;
-        await readContextWindow(baseURL, {}, "m", async (requested) => {
+        await readContextWindow(baseURL, {}, "m", (requested) => {
             url = requested;
-            return new Response("not found", { status: 404 });
+            return Promise.resolve(new Response("not found", { status: 404 }));
         });
         return url;
     }

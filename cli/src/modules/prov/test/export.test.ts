@@ -56,7 +56,7 @@ describe("exportAnalysisProvenance", () => {
                 ANALYSIS,
                 "json",
                 undefined,
-                opts(async () => err<ProvAttestation, ProvSigningError>({ type: "keypair_race_lost" })),
+                opts(() => Promise.resolve(err<ProvAttestation, ProvSigningError>({ type: "keypair_race_lost" }))),
             )
         )._unsafeUnwrapErr();
 
@@ -73,7 +73,7 @@ describe("exportAnalysisProvenance", () => {
             ANALYSIS,
             "json",
             undefined,
-            opts(async () => ok<ProvAttestation, ProvSigningError>(ATTESTATION)),
+            opts(() => Promise.resolve(ok<ProvAttestation, ProvSigningError>(ATTESTATION))),
         );
 
         const path = join(out, "provenance.json");
@@ -88,9 +88,9 @@ describe("exportAnalysisProvenance", () => {
             ANALYSIS,
             "provn",
             undefined,
-            opts(async () => {
+            opts(() => {
                 signed = true;
-                return ok<ProvAttestation, ProvSigningError>(ATTESTATION);
+                return Promise.resolve(ok<ProvAttestation, ProvSigningError>(ATTESTATION));
             }),
         );
 
@@ -102,7 +102,7 @@ describe("exportAnalysisProvenance", () => {
     test("an `output` path is written as given, and the workspace is not resolved for it", async () => {
         const output = join(root, "elsewhere.json");
         const exported = await exportAnalysisProvenance(ANALYSIS, "json", output, {
-            ...opts(async () => ok<ProvAttestation, ProvSigningError>(ATTESTATION)),
+            ...opts(() => Promise.resolve(ok<ProvAttestation, ProvSigningError>(ATTESTATION))),
             resolveOutputDir: () => errAsync<string, WorkspaceError>({ type: "workspace_unavailable", message: "not writable" }),
         });
 

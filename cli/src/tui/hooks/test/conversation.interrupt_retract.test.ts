@@ -124,7 +124,7 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
         },
         fetchTurn: (analysisId, threadId, turnId) => okAsync({ turnId, threadId, analysisId, startedAt: "2026-10-02T00:00:00.000Z", ...end }),
         rereadTurn: () => errAsync({ type: "http", status: 404, body: { error: "not_found", message: "Turn not found." } }),
-        reloadTranscript: async () => undefined,
+        reloadTranscript: () => Promise.resolve(),
         healRetract: () => okAsync({ kind: "retracted", messages: 0 }),
         transcript: {
             fetchThread: () => okAsync(null),

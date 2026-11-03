@@ -116,7 +116,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             inputSchema: z.object({ label: z.string() }),
             view: "none",
             describeCall: "none",
-            execute: async ({ label }) => ok({ label }),
+            execute: ({ label }) => Promise.resolve(ok({ label })),
         });
 
         const outcome = await chatTurn(

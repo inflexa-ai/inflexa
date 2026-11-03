@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { FetchLike } from "../../../lib/download.ts";
+import { respondWith } from "../../../test_support/fake_fetch.ts";
 import {
     downloadGeoSeries,
     geoSeriesUrls,
@@ -224,12 +225,13 @@ function parentDirectory(pathname: string): string {
 
 /** A fetch stub serving an Apache autoindex per directory url; any other url is a 404. */
 function serveDirs(dirs: Record<string, readonly string[]>): FetchLike {
-    return async (input) => {
-        const url = String(input);
-        const files = dirs[url];
-        if (files === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
-        return new Response(renderIndex(parentDirectory(new URL(url).pathname), files));
-    };
+    return (input) =>
+        Promise.try(() => {
+            const url = String(input);
+            const files = dirs[url];
+            if (files === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
+            return new Response(renderIndex(parentDirectory(new URL(url).pathname), files));
+        });
 }
 
 describe("resolveGeoArtifacts", () => {
@@ -261,27 +263,29 @@ describe("resolveGeoArtifacts", () => {
     });
 
     test("a suppl/ that persistently answers 403 is an empty directory, not a failed resolve", async () => {
-        const fetchStub: FetchLike = async (input) => {
-            const url = String(input);
-            if (url === u.supplDir) return new Response(REAL_FORBIDDEN_PAGE, { status: 403, statusText: "Forbidden" });
-            if (url === u.softDir) return new Response(renderIndex("/", [`${acc}_family.soft.gz`]));
-            return new Response("missing", { status: 404, statusText: "Not Found" });
-        };
+        const fetchStub: FetchLike = (input) =>
+            Promise.try(() => {
+                const url = String(input);
+                if (url === u.supplDir) return new Response(REAL_FORBIDDEN_PAGE, { status: 403, statusText: "Forbidden" });
+                if (url === u.softDir) return new Response(renderIndex("/", [`${acc}_family.soft.gz`]));
+                return new Response("missing", { status: 404, statusText: "Not Found" });
+            });
         const artifacts = (await resolveGeoArtifacts(acc, { fetch: fetchStub, ...FAST }))._unsafeUnwrap();
         expect(artifacts.map((a) => a.fileName)).toEqual([`${acc}_family.soft.gz`]);
     });
 
     test("a 403 that clears on retry yields the directory's files (NCBI sheds load with 403)", async () => {
         let supplCalls = 0;
-        const fetchStub: FetchLike = async (input) => {
-            const url = String(input);
-            if (url === u.supplDir) {
-                supplCalls += 1;
-                if (supplCalls < 3) return new Response(REAL_FORBIDDEN_PAGE, { status: 403, statusText: "Forbidden" });
-                return new Response(renderIndex("/", [`${acc}_counts.txt.gz`]));
-            }
-            return new Response("missing", { status: 404, statusText: "Not Found" });
-        };
+        const fetchStub: FetchLike = (input) =>
+            Promise.try(() => {
+                const url = String(input);
+                if (url === u.supplDir) {
+                    supplCalls += 1;
+                    if (supplCalls < 3) return new Response(REAL_FORBIDDEN_PAGE, { status: 403, statusText: "Forbidden" });
+                    return new Response(renderIndex("/", [`${acc}_counts.txt.gz`]));
+                }
+                return new Response("missing", { status: 404, statusText: "Not Found" });
+            });
         const artifacts = (await resolveGeoArtifacts(acc, { fetch: fetchStub, ...FAST }))._unsafeUnwrap();
         expect(artifacts.map((a) => a.fileName)).toEqual([`${acc}_counts.txt.gz`]);
         expect(supplCalls).toBe(3);
@@ -289,9 +293,9 @@ describe("resolveGeoArtifacts", () => {
 
     test("a transport throw is retried and only then reported as unreachable", async () => {
         let calls = 0;
-        const fetchStub: FetchLike = async () => {
+        const fetchStub: FetchLike = () => {
             calls += 1;
-            throw new Error("ECONNRESET");
+            return Promise.reject(new Error("ECONNRESET"));
         };
         const resolved = await resolveGeoArtifacts(acc, { fetch: fetchStub, ...FAST });
         expect(resolved._unsafeUnwrapErr().type).toBe("unreachable");
@@ -299,7 +303,7 @@ describe("resolveGeoArtifacts", () => {
     });
 
     test("a persistent 5xx is unreachable, not an empty series", async () => {
-        const fetchStub: FetchLike = async () => new Response("boom", { status: 503, statusText: "Service Unavailable" });
+        const fetchStub: FetchLike = respondWith("boom", { status: 503, statusText: "Service Unavailable" });
         const resolved = await resolveGeoArtifacts(acc, { fetch: fetchStub, ...FAST });
         expect(resolved._unsafeUnwrapErr().type).toBe("unreachable");
     });
@@ -323,19 +327,20 @@ function serveSeries(
     if (layout.suppl) dirFiles[u.supplDir] = layout.suppl;
     const bodies = new Map<string, string>();
     for (const [dir, names] of Object.entries(dirFiles)) for (const name of names) bodies.set(`${dir}${encodeURIComponent(name)}`, `content:${name}`);
-    return async (input, init) => {
-        const url = String(input);
-        const listing = dirFiles[url];
-        if (listing !== undefined) return new Response(renderIndex("/", listing));
-        const body = bodies.get(url);
-        if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
-        if (opts.breakOn !== undefined && url.endsWith(encodeURIComponent(opts.breakOn)) && init?.method !== "HEAD") {
-            return new Response("gone", { status: 500, statusText: "Internal Server Error" });
-        }
-        const declared = opts.sizes?.[url.split("/").pop() ?? ""];
-        const headers = declared === undefined ? undefined : { "content-length": String(declared) };
-        return new Response(init?.method === "HEAD" ? null : body, headers === undefined ? {} : { headers });
-    };
+    return (input, init) =>
+        Promise.try(() => {
+            const url = String(input);
+            const listing = dirFiles[url];
+            if (listing !== undefined) return new Response(renderIndex("/", listing));
+            const body = bodies.get(url);
+            if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
+            if (opts.breakOn !== undefined && url.endsWith(encodeURIComponent(opts.breakOn)) && init?.method !== "HEAD") {
+                return new Response("gone", { status: 500, statusText: "Internal Server Error" });
+            }
+            const declared = opts.sizes?.[url.split("/").pop() ?? ""];
+            const headers = declared === undefined ? undefined : { "content-length": String(declared) };
+            return new Response(init?.method === "HEAD" ? null : body, headers === undefined ? {} : { headers });
+        });
 }
 
 describe("downloadGeoSeries", () => {
@@ -489,12 +494,13 @@ describe("downloadGeoSeries", () => {
     test("a name that cannot be written to disk is reported, not silently dropped from the set", async () => {
         const dest = join(geoRoot(), "GSE12345");
         const u = geoSeriesUrls("GSE12345");
-        const stub: FetchLike = async (input, init) => {
-            const url = String(input);
-            if (url === u.softDir) return new Response(`<a href="-rf.txt">bad</a><a href="GSE12345_family.soft.gz">good</a>`);
-            if (url === `${u.softDir}GSE12345_family.soft.gz`) return new Response(init?.method === "HEAD" ? null : "soft");
-            return new Response("missing", { status: 404, statusText: "Not Found" });
-        };
+        const stub: FetchLike = (input, init) =>
+            Promise.try(() => {
+                const url = String(input);
+                if (url === u.softDir) return new Response(`<a href="-rf.txt">bad</a><a href="GSE12345_family.soft.gz">good</a>`);
+                if (url === `${u.softDir}GSE12345_family.soft.gz`) return new Response(init?.method === "HEAD" ? null : "soft");
+                return new Response("missing", { status: 404, statusText: "Not Found" });
+            });
         const skipped: Extract<GeoProgress, { type: "skipped" }>[] = [];
         const paths = (
             await downloadGeoSeries("GSE12345", dest, {
@@ -515,19 +521,20 @@ describe("fetchGeo — connection hygiene", () => {
         const u = geoSeriesUrls("GSE12345");
         let cancels = 0;
         let calls = 0;
-        const stub: FetchLike = async (input) => {
-            if (String(input) !== u.softDir) return new Response("missing", { status: 404, statusText: "Not Found" });
-            calls += 1;
-            if (calls > 1) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
-            // A discarded response still owns its socket until the body is drained or cancelled.
-            return new Response(
-                new ReadableStream({
-                    start: (controller) => controller.enqueue(new TextEncoder().encode("shed")),
-                    cancel: () => void (cancels += 1),
-                }),
-                { status: 403, statusText: "Forbidden" },
-            );
-        };
+        const stub: FetchLike = (input) =>
+            Promise.try(() => {
+                if (String(input) !== u.softDir) return new Response("missing", { status: 404, statusText: "Not Found" });
+                calls += 1;
+                if (calls > 1) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
+                // A discarded response still owns its socket until the body is drained or cancelled.
+                return new Response(
+                    new ReadableStream({
+                        start: (controller) => controller.enqueue(new TextEncoder().encode("shed")),
+                        cancel: () => void (cancels += 1),
+                    }),
+                    { status: 403, statusText: "Forbidden" },
+                );
+            });
         const artifacts = (await resolveGeoArtifacts("GSE12345", { fetch: stub, ...FAST }))._unsafeUnwrap();
         expect(artifacts.map((a) => a.fileName)).toEqual(["GSE12345_family.soft.gz"]);
         expect(cancels).toBe(1);
@@ -574,23 +581,24 @@ describe("downloadGeoSeries progress heartbeat", () => {
         roots.push(root);
         const u = geoSeriesUrls("GSE12345");
         const fileUrl = `${u.softDir}GSE12345_family.soft.gz`;
-        const stub: FetchLike = async (input, init) => {
-            const url = String(input);
-            if (url === u.softDir) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
-            if (url !== fileUrl) return new Response("missing", { status: 404, statusText: "Not Found" });
-            if (init?.method === "HEAD") return new Response(null, { headers: { "content-length": "30" } });
-            // Three chunks: a single-chunk body could not tell a heartbeat from a completion event.
-            // The declared size rides the GET (not the HEAD probe), which is where the readout reads it.
-            return new Response(
-                new ReadableStream<Uint8Array>({
-                    start(controller) {
-                        for (let i = 0; i < 3; i += 1) controller.enqueue(new Uint8Array(10));
-                        controller.close();
-                    },
-                }),
-                { headers: { "content-length": "30" } },
-            );
-        };
+        const stub: FetchLike = (input, init) =>
+            Promise.try(() => {
+                const url = String(input);
+                if (url === u.softDir) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
+                if (url !== fileUrl) return new Response("missing", { status: 404, statusText: "Not Found" });
+                if (init?.method === "HEAD") return new Response(null, { headers: { "content-length": "30" } });
+                // Three chunks: a single-chunk body could not tell a heartbeat from a completion event.
+                // The declared size rides the GET (not the HEAD probe), which is where the readout reads it.
+                return new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            for (let i = 0; i < 3; i += 1) controller.enqueue(new Uint8Array(10));
+                            controller.close();
+                        },
+                    }),
+                    { headers: { "content-length": "30" } },
+                );
+            });
         const events: GeoProgress[] = [];
         const result = await downloadGeoSeries("GSE12345", join(root, "GSE12345"), { fetch: stub, ...FAST, heartbeatMs: 0, onProgress: (e) => events.push(e) });
 
@@ -606,20 +614,21 @@ describe("downloadGeoSeries progress heartbeat", () => {
         const root = mkdtempSync(join(tmpdir(), "inflexa-geo-"));
         roots.push(root);
         const u = geoSeriesUrls("GSE12345");
-        const stub: FetchLike = async (input, init) => {
-            const url = String(input);
-            if (url === u.softDir) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
-            if (!url.endsWith("GSE12345_family.soft.gz")) return new Response("missing", { status: 404, statusText: "Not Found" });
-            if (init?.method === "HEAD") return new Response(null);
-            return new Response(
-                new ReadableStream<Uint8Array>({
-                    start(controller) {
-                        for (let i = 0; i < 5; i += 1) controller.enqueue(new Uint8Array(10));
-                        controller.close();
-                    },
-                }),
-            );
-        };
+        const stub: FetchLike = (input, init) =>
+            Promise.try(() => {
+                const url = String(input);
+                if (url === u.softDir) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
+                if (!url.endsWith("GSE12345_family.soft.gz")) return new Response("missing", { status: 404, statusText: "Not Found" });
+                if (init?.method === "HEAD") return new Response(null);
+                return new Response(
+                    new ReadableStream<Uint8Array>({
+                        start(controller) {
+                            for (let i = 0; i < 5; i += 1) controller.enqueue(new Uint8Array(10));
+                            controller.close();
+                        },
+                    }),
+                );
+            });
         const events: GeoProgress[] = [];
         // A gap no test run can outlast: every chunk lands inside it, so none reports.
         await downloadGeoSeries("GSE12345", join(root, "GSE12345"), { fetch: stub, ...FAST, heartbeatMs: 600_000, onProgress: (e) => events.push(e) });
@@ -629,11 +638,12 @@ describe("downloadGeoSeries progress heartbeat", () => {
 
 describe("measureGeoArtifacts", () => {
     test("sums declared sizes and counts the artifacts that declared none", async () => {
-        const stub: FetchLike = async (input) => {
-            const url = String(input);
-            if (url.endsWith("/sized.txt")) return new Response(null, { headers: { "content-length": "1500" } });
-            return new Response(null);
-        };
+        const stub: FetchLike = (input) =>
+            Promise.try(() => {
+                const url = String(input);
+                if (url.endsWith("/sized.txt")) return new Response(null, { headers: { "content-length": "1500" } });
+                return new Response(null);
+            });
         const size = await measureGeoArtifacts(
             [
                 { url: "https://ftp.ncbi.nlm.nih.gov/a/sized.txt", fileName: "sized.txt" },
@@ -645,9 +655,7 @@ describe("measureGeoArtifacts", () => {
     });
 
     test("a probe that throws is unknown size, never a failure", async () => {
-        const stub: FetchLike = async () => {
-            throw new Error("ECONNRESET");
-        };
+        const stub: FetchLike = () => Promise.reject(new Error("ECONNRESET"));
         const size = await measureGeoArtifacts([{ url: "https://ftp.ncbi.nlm.nih.gov/a/x.txt", fileName: "x.txt" }], { fetch: stub, ...FAST });
         expect(size).toEqual({ declaredBytes: 0, sized: 0, unsized: 1 });
     });

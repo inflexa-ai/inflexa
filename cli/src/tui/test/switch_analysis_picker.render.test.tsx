@@ -180,8 +180,9 @@ describe("Switch analysis picker figures", () => {
 
         // The open of the selected analysis is the option the flow takes, thus the spy is there.
         let chosen: Analysis | null = null;
-        const opts = dialogOpts(async (_ws, analysis) => {
+        const opts = dialogOpts((_ws, analysis) => {
             chosen = analysis;
+            return Promise.resolve();
         });
         const workspace = ws();
         const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
@@ -271,9 +272,9 @@ describe("Switch analysis picker identity", () => {
     test("ctrl+y copies the cursor row's analysis id", async () => {
         const only = analysisIn(dirA, "rna-seq");
         const copied: string[] = [];
-        const restore = __setClipboardWriterForTest(async (text) => {
+        const restore = __setClipboardWriterForTest((text) => {
             copied.push(text);
-            return ok(undefined);
+            return Promise.resolve(ok(undefined));
         });
 
         const workspace = ws();
@@ -296,9 +297,9 @@ describe("Switch analysis picker identity", () => {
         analysisIn(dirA, "rna-seq");
         analysisIn(dirB, "yeast");
         const copied: string[] = [];
-        const restore = __setClipboardWriterForTest(async (text) => {
+        const restore = __setClipboardWriterForTest((text) => {
             copied.push(text);
-            return ok(undefined);
+            return Promise.resolve(ok(undefined));
         });
 
         const workspace = ws();

@@ -37,10 +37,11 @@ describe("store link", () => {
         const linked: FarmLinkView = { linked: ["igraph==0.11.8"], storeDirs: 3 };
         const opts: ClientOpts = {
             discover: () => ok({ baseUrl: "http://store.test", token: "t" }),
-            fetch: async (url, init) => {
-                sent.push({ url, body: parsedJson(String(init.body), z.unknown()) });
-                return new Response(JSON.stringify(linked), { status: 200, headers: { "Content-Type": "application/json" } });
-            },
+            fetch: (url, init) =>
+                Promise.try(() => {
+                    sent.push({ url, body: parsedJson(String(init.body), z.unknown()) });
+                    return new Response(JSON.stringify(linked), { status: 200, headers: { "Content-Type": "application/json" } });
+                }),
         };
         const run = await captured(() => storeLink({ id: "ana-1", name: "Tumor atlas" }, ["igraph"], "python", opts));
         expect(sent).toEqual([{ url: "http://store.test/api/v1/analyses/ana-1/farm/link", body: { packages: ["igraph"], lang: "python" } }]);

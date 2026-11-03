@@ -95,7 +95,7 @@ type Runtime = typeof runtime;
 const readyBoot: ServerBoot<Runtime> = {
     state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
     runtime: () => runtime,
-    start: async () => undefined,
+    start: () => Promise.resolve(),
 };
 
 function failing(name: string): () => never {
@@ -547,7 +547,7 @@ describe("GET {A}/runs", () => {
 
     test("503 `unavailable` while the runtime boots", async () => {
         const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
-        const app = appWith({}, { state: () => starting, runtime: () => null, start: async () => undefined });
+        const app = appWith({}, { state: () => starting, runtime: () => null, start: () => Promise.resolve() });
         const response = await app.request("/api/v1/analyses/x/runs");
         expect(response.status).toBe(503);
         expect(await jsonBody(response)).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
@@ -803,7 +803,7 @@ describe("GET {A}/plans/:planId", () => {
 
     test("503 `unavailable` while the runtime boots, with no read", async () => {
         const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
-        const { app, reads } = planApp(planRecord(), [], { state: () => starting, runtime: () => null, start: async () => undefined });
+        const { app, reads } = planApp(planRecord(), [], { state: () => starting, runtime: () => null, start: () => Promise.resolve() });
         const response = await app.request("/api/v1/analyses/a1/plans/pln-0000000a");
 
         expect(response.status).toBe(503);
@@ -918,7 +918,7 @@ describe("GET {A}/plans", () => {
 
     test("503 `unavailable` while the runtime boots, with no read", async () => {
         const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
-        const { app, reads } = planList({ entries: [], total: 0 }, { state: () => starting, runtime: () => null, start: async () => undefined });
+        const { app, reads } = planList({ entries: [], total: 0 }, { state: () => starting, runtime: () => null, start: () => Promise.resolve() });
         const response = await app.request("/api/v1/analyses/a1/plans");
 
         expect(response.status).toBe(503);
@@ -1015,7 +1015,7 @@ describe("GET {A}/run/:runId/synthesis", () => {
 
     test("503 `unavailable` while the runtime boots", async () => {
         const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
-        const app = appWith({}, { state: () => starting, runtime: () => null, start: async () => undefined });
+        const app = appWith({}, { state: () => starting, runtime: () => null, start: () => Promise.resolve() });
         const response = await app.request("/api/v1/analyses/x/run/r1/synthesis");
         expect(response.status).toBe(503);
         expect(await jsonBody(response)).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
@@ -1099,7 +1099,7 @@ describe("GET {A}/run/:runId/stream", () => {
                 createRunEventStream({
                     pool: asHarnessPool(p),
                     readRun: () => okAsync({ status: "canceled", error: null }),
-                    sleep: async () => undefined,
+                    sleep: () => Promise.resolve(),
                 }).subscribe(options),
         });
         const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/stream`);
@@ -1128,8 +1128,9 @@ describe("GET {A}/run/:runId/stream", () => {
         const app = appWith({
             getRun: () => okAsync(null),
             loadProfile: (_pool, analysisId) => okAsync(analysisId === "mine" ? profileRow({ status: "running", workflowId: "wf-profile" }) : null),
-            subscribeRun: async (_pool, options) => {
+            subscribeRun: (_pool, options) => {
                 subscribed.push(options.runId);
+                return Promise.resolve();
             },
         });
         expect((await app.request("/api/v1/analyses/mine/run/wf-profile/stream")).status).toBe(200);
@@ -1215,7 +1216,7 @@ describe("POST {A}/run/:runId/seen", () => {
 
     test("the route waits for the runtime: 503 `unavailable` while the server boots", async () => {
         const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
-        const response = await appWith({}, { state: () => starting, runtime: () => null, start: async () => undefined }).request(
+        const response = await appWith({}, { state: () => starting, runtime: () => null, start: () => Promise.resolve() }).request(
             "/api/v1/analyses/a/run/r1/seen",
             {
                 method: "POST",
@@ -1458,7 +1459,7 @@ describe("GET {A}/sandbox-readiness", () => {
             {
                 state: () => ({ ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } }),
                 runtime: () => null,
-                start: async () => undefined,
+                start: () => Promise.resolve(),
             },
         );
         expect((await app.request("/api/v1/analyses/x/sandbox-readiness")).status).toBe(200);
@@ -1722,7 +1723,7 @@ describe("POST {A}/plans/:planId/approve", () => {
 
     test("503 `unavailable` while the runtime boots, and the approval does not run", async () => {
         const starting: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
-        const { app, inputs } = approvalApp(() => okAsync(startedApproval), { state: () => starting, runtime: () => null, start: async () => undefined });
+        const { app, inputs } = approvalApp(() => okAsync(startedApproval), { state: () => starting, runtime: () => null, start: () => Promise.resolve() });
 
         const response = await approve(app, "a1");
 

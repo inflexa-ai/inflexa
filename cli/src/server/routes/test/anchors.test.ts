@@ -32,7 +32,7 @@ const readyBoot: ServerBoot<Handle> = {
         connection: { provider: "a", mode: "cliproxy", model: "m" },
     }),
     runtime: () => runtime,
-    start: async () => undefined,
+    start: () => Promise.resolve(),
 };
 const PURGED: AnalysisPurgeOutcome = { threads: 0, messages: 0, workflows: 0, vectorIndexDropped: false };
 
@@ -41,7 +41,7 @@ function opts(busy: (analysisId: string) => BusyReason[] = () => []): { opts: An
     return {
         purged,
         opts: {
-            busyReasons: async (analysisId) => busy(analysisId),
+            busyReasons: (analysisId) => Promise.try(busy, analysisId),
             purgeFor: () => (analysisId) => {
                 purged.push(analysisId);
                 return okAsync<AnalysisPurgeOutcome, PgError>(PURGED);
@@ -190,7 +190,7 @@ describe("POST /api/v1/anchors/prune", () => {
         const busyNow = new Set<string>();
         const purged: string[] = [];
         const raceOpts: AnchorRouteOpts<Handle> = {
-            busyReasons: async (analysisId) => (busyNow.has(analysisId) ? ["chat_turn"] : []),
+            busyReasons: (analysisId) => Promise.resolve(busyNow.has(analysisId) ? ["chat_turn"] : []),
             purgeFor: () => (analysisId) => {
                 purged.push(analysisId);
                 for (const other of ["a1", "a2"]) if (other !== analysisId) busyNow.add(other);

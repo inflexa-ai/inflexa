@@ -67,8 +67,9 @@ function exercisedOptionNames(argv: readonly string[]): string[] {
  */
 async function forwardedFlags(argv: readonly string[]): Promise<SetupAnswerFlags> {
     let captured: SetupAnswerFlags | undefined;
-    setupSpy = spyOn(setupModule, "setup").mockImplementation(async (options) => {
+    setupSpy = spyOn(setupModule, "setup").mockImplementation((options) => {
         captured = options.flags ?? {};
+        return Promise.resolve();
     });
     await buildProgram().parseAsync(["setup", ...argv], { from: "user" });
     expect(setupSpy).toHaveBeenCalledTimes(1);

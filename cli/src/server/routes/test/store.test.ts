@@ -55,10 +55,10 @@ function stubbed(storeRoot: string, over: Partial<StoreRouteOpts> = {}): { opts:
                 return 4242;
             },
             startImage: () => ok({ type: "started", pid: 4242 }),
-            startCatalog: async () => ok({ type: "up_to_date", manifestDigest: "sha256:abc" }),
-            collectDebris: async () => {
+            startCatalog: () => Promise.resolve(ok({ type: "up_to_date", manifestDigest: "sha256:abc" })),
+            collectDebris: () => {
                 debris += 1;
-                return ok({ swept: false, dirs: [], reports: 0 });
+                return Promise.resolve(ok({ swept: false, dirs: [], reports: 0 }));
             },
             ...over,
         },

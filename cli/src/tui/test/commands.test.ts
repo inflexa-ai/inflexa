@@ -203,9 +203,9 @@ describe("session command gating", () => {
 
     test("the copy hands over the FULL id and confirms it in the chip's own words", async () => {
         const copied: string[] = [];
-        const restore = __setClipboardWriterForTest(async (text) => {
+        const restore = __setClipboardWriterForTest((text) => {
             copied.push(text);
-            return ok(undefined);
+            return Promise.resolve(ok(undefined));
         });
         try {
             const cmd = present(commands.find((c) => c.id === "session.copy-id"));
@@ -225,7 +225,7 @@ describe("session command gating", () => {
     });
 
     test("a copy that the native clipboard tool did not set shows no confirmation", async () => {
-        const restore = __setClipboardWriterForTest(async () => err({ type: "native_copy_failed" }));
+        const restore = __setClipboardWriterForTest(() => Promise.resolve(err({ type: "native_copy_failed" })));
         try {
             await present(commands.find((c) => c.id === "session.copy-id")).run(scope(ANALYSIS, "01988cdd-7f00-7abc-8def-0123456789ab"));
             expect(currentNotice()).toBeNull();
@@ -337,7 +337,7 @@ describe("session flows", () => {
             // The files stay by default: a case that is not about the files says so by leaving this alone.
             purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
             chatBusy: () => false,
-            resolveThreadId: async () => "thread-resolved",
+            resolveThreadId: () => Promise.resolve("thread-resolved"),
             workingDirFor: () => "/work",
             refreshThread: (_analysisId, threadId) => {
                 refreshed.push(threadId);
@@ -583,7 +583,7 @@ describe("session flows", () => {
     });
 
     test("a confirmed delete re-lands the chat on the analysis's surviving thread", async () => {
-        const t = makeOpts({ resolveThreadId: async () => "thread-survivor" });
+        const t = makeOpts({ resolveThreadId: () => Promise.resolve("thread-survivor") });
         const w = sessionScope(ANALYSIS, "thread-1");
 
         await confirmSessionDelete(w.ws, ANALYSIS, "thread-1", t.opts);
@@ -641,7 +641,7 @@ describe("session flows", () => {
         const purged: string[] = [];
         let archives = 0;
         const t = makeOpts({
-            resolveThreadId: async () => "thread-survivor",
+            resolveThreadId: () => Promise.resolve("thread-survivor"),
             purgeThread: (_analysisId, threadId) => {
                 purged.push(threadId);
                 return okAsync({ purged: [threadId], pages: { kind: "kept" } });
@@ -1089,7 +1089,7 @@ describe("session flows", () => {
             releaseSlow = r;
         });
         const slow = makeOpts({ resolveThreadId: async () => gate.then(() => "thread-alpha") });
-        const fast = makeOpts({ resolveThreadId: async () => "thread-bravo" });
+        const fast = makeOpts({ resolveThreadId: () => Promise.resolve("thread-bravo") });
         const w = sessionScope(ANALYSIS, null);
 
         const stale = openAnalysis(w.ws, ANALYSIS, slow.opts); // parks on its gate
@@ -1277,10 +1277,11 @@ describe("palette provenance export", () => {
     function answering(status: number, body: unknown, seen: { url: string; body: unknown }[]): ClientOpts {
         return {
             discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
-            fetch: async (url, init) => {
-                seen.push({ url, body: parsedJson(String(init.body), z.unknown()) });
-                return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-            },
+            fetch: (url, init) =>
+                Promise.try(() => {
+                    seen.push({ url, body: parsedJson(String(init.body), z.unknown()) });
+                    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+                }),
         };
     }
 
@@ -1331,9 +1332,10 @@ describe("analysis delete (client)", () => {
                     ? errAsync(out.error)
                     : okAsync(out.response ?? { deleted: true, workspace: { kind: "archived", path: ARCHIVE_PATH }, export: "written" });
             },
-            nextAnalysis: async () => (out.next === undefined ? SURVIVOR : out.next),
-            openAnalysis: async (_ws, a) => {
+            nextAnalysis: () => Promise.resolve(out.next === undefined ? SURVIVOR : out.next),
+            openAnalysis: (_ws, a) => {
                 landed.push(a.id);
+                return Promise.resolve();
             },
             notify: (n) => {
                 notices.push(n);
@@ -1347,8 +1349,9 @@ describe("analysis delete (client)", () => {
         let quits = 0;
         const ws = buildWorkspace({
             analysis: ANALYSIS,
-            quit: async () => {
+            quit: () => {
                 quits += 1;
+                return Promise.resolve();
             },
         });
         return { ws, quits: () => quits };
@@ -1454,13 +1457,15 @@ describe("view.status", () => {
     test("resolves the folder of the workspace with no sighting", async () => {
         const bodies: unknown[] = [];
         const discover = spyOn(DEFAULT_CLIENT_OPTS, "discover").mockImplementation(() => ok({ baseUrl: "http://server.test", token: "t" }));
-        const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation(async (_url, init) => {
-            bodies.push(parsedJson(String(init.body), z.unknown()));
-            return new Response(JSON.stringify({ kind: "empty", describe: "no analysis here", cwd: "/work" }), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            });
-        });
+        const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation((_url, init) =>
+            Promise.try(() => {
+                bodies.push(parsedJson(String(init.body), z.unknown()));
+                return new Response(JSON.stringify({ kind: "empty", describe: "no analysis here", cwd: "/work" }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                });
+            }),
+        );
         let dialogs = 0;
         const ws = buildWorkspace({
             openDialog: () => {
@@ -1487,12 +1492,14 @@ describe("the busy read before a rename or a delete", () => {
         test(`${id} reads GET {A} with touch=false`, async () => {
             const urls: string[] = [];
             const discover = spyOn(DEFAULT_CLIENT_OPTS, "discover").mockImplementation(() => ok({ baseUrl: "http://server.test", token: "t" }));
-            const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation(async (url) => {
+            const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation((url) => {
                 urls.push(String(url));
-                return new Response(JSON.stringify({ error: "internal_error", message: "down" }), {
-                    status: 500,
-                    headers: { "Content-Type": "application/json" },
-                });
+                return Promise.resolve(
+                    new Response(JSON.stringify({ error: "internal_error", message: "down" }), {
+                        status: 500,
+                        headers: { "Content-Type": "application/json" },
+                    }),
+                );
             });
             __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
             __resetNoticesForTest();
@@ -1542,9 +1549,9 @@ describe("the palette command that resumes paused work", () => {
         const notices: Notice[] = [];
         const refreshed: string[] = [];
         await commitResumePausedWork("A", run, "Run DE", {
-            refresh: async (analysisId) => {
+            refresh: (analysisId) => {
                 refreshed.push(analysisId);
-                return [];
+                return Promise.resolve([]);
             },
             resume: (_analysisId, workId) => okAsync({ workId, workflows: 1 }),
             notify: (n) => notices.push(n),
@@ -1555,7 +1562,7 @@ describe("the palette command that resumes paused work", () => {
 
     test("a work that resumed or stopped already reads as no longer paused, and a different failure as an error", async () => {
         const notices: Notice[] = [];
-        const opts = { refresh: async () => [], notify: (n: Notice) => notices.push(n) };
+        const opts = { refresh: () => Promise.resolve([]), notify: (n: Notice) => notices.push(n) };
         await commitResumePausedWork("A", run, "Run DE", {
             ...opts,
             resume: () => errAsync<ResumedWork, ClientError>({ type: "http", status: 404, body: { error: "not_found", message: "gone" } }),

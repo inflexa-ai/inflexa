@@ -436,6 +436,30 @@ describe("createBusArtifactRegistry — register", () => {
         expect(captured).toEqual([]);
         expect(result).toEqual({ registered: [], failed: [], failedCount: 0 });
     });
+
+    test("a throw from a bus subscriber comes back as a refusal with the message, and no suspend", async () => {
+        const registry = createBusArtifactRegistry(modelId);
+        const input: ArtifactRegistrationInput = {
+            resourceId: "an-1",
+            runId: "run-001",
+            stepId: "de-analysis",
+            artifacts: [entry("output/leaf.csv", "sha256:aaa", 10)],
+            collector: fakeCollector([]),
+        };
+        const thrower = (): void => {
+            throw new Error("subscriber broke");
+        };
+        Bus.on("inflexa", thrower);
+        try {
+            const refusal = (await registry.register(input, noSession))._unsafeUnwrapErr();
+
+            expect(refusal.reason).toStartWith("provenance registration threw: ");
+            expect(refusal.reason).toContain("subscriber broke");
+            expect(refusal.suspend).toBe(false);
+        } finally {
+            Bus.off("inflexa", thrower);
+        }
+    });
 });
 
 describe("createRunProvenanceEmitter", () => {

@@ -114,9 +114,9 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
         // Default: nothing on disk yet — the state every (re-)trigger path is in, and the one a failed
         // row must materialize out of. A test asserting the skip overrides this to `true`.
         materialized: () => okAsync(false),
-        stage: async () => {
+        stage: () => {
             ran.stage = true;
-            return ok(STAGED);
+            return Promise.resolve(ok(STAGED));
         },
         seed: () => {
             ran.seed = true;
@@ -303,9 +303,9 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
 
     test("a staging failure stops before the profile decision", async () => {
         const { seams, ran } = trackingSeams({
-            stage: async () => {
+            stage: () => {
                 ran.stage = true;
-                return err({ type: "staging_failed", cause: new Error("disk full") });
+                return Promise.resolve(err({ type: "staging_failed", cause: new Error("disk full") }));
             },
         });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
@@ -485,7 +485,7 @@ describe("ensureProfileAtParity — trigger path (real seed)", () => {
             clear: () => okAsync(true),
             dataDir: () => okAsync("/tmp/parity-data"),
             materialized: () => okAsync(false),
-            stage: async () => ok(STAGED),
+            stage: () => Promise.resolve(ok(STAGED)),
             // The real shared core — this is the whole point of the assertion below.
             seed: seedProfileLedger,
             trigger: (_deps, params) => {

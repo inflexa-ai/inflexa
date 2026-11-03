@@ -42,11 +42,11 @@ const runtime: PoolRuntime = { pool: standInPool };
 const readyBoot: ServerBoot<PoolRuntime> = {
     state: () => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
     runtime: () => runtime,
-    start: async () => undefined,
+    start: () => Promise.resolve(),
 };
 
 const startingState: ServerBootState = { ...identity, phase: "starting", boot: { attemptStartedAt: identity.startedAt, step: null, done: [] } };
-const startingBoot: ServerBoot<PoolRuntime> = { state: () => startingState, runtime: () => null, start: async () => undefined };
+const startingBoot: ServerBoot<PoolRuntime> = { state: () => startingState, runtime: () => null, start: () => Promise.resolve() };
 
 function appWith(opts: ArtifactRoutesOpts, boot: ServerBoot<PoolRuntime> = readyBoot): Hono<ServerEnv> {
     return new Hono<ServerEnv>().route("/api/v1/analyses/:analysisId/artifacts", artifactRoutes(boot, opts));

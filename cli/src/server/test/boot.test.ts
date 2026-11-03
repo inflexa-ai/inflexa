@@ -146,7 +146,7 @@ describe("createServerBoot", () => {
         }
     });
 
-    test("a step moves to `done` with its start time and its end time when the next step starts", async () => {
+    test("a step moves to `done` with its start time and its end time when the next step starts", () => {
         const c = controlled();
         const boot = createServerBoot(STARTED_AT, c.opts);
         void boot.start();
@@ -288,18 +288,18 @@ describe("the production boot", () => {
         const realConfig = harnessConfig.resolveHarnessConfig;
         spies.push(
             spyOn(harnessConfig, "resolveModelConnection").mockImplementation(() => ({ ...realConnection(), mode: "cliproxy", configError: undefined })),
-            spyOn(setup, "ensureProxyReady").mockImplementation(async (_mode, opts) => {
+            spyOn(setup, "ensureProxyReady").mockImplementation((_mode, opts) => {
                 calls.push("ensureProxyReady");
                 given.push(opts);
-                return ok(undefined);
+                return Promise.resolve(ok(undefined));
             }),
             spyOn(harnessConfig, "resolveHarnessConfig").mockImplementation(() => {
                 calls.push("resolveHarnessConfig");
                 return realConfig();
             }),
-            spyOn(harnessRuntime, "bootHarnessRuntime").mockImplementation(async () => {
+            spyOn(harnessRuntime, "bootHarnessRuntime").mockImplementation(() => {
                 calls.push("bootHarnessRuntime");
-                return err({ type: "harness_config_invalid", issues: "stub: stop the boot before a runtime exists" });
+                return Promise.resolve(err({ type: "harness_config_invalid", issues: "stub: stop the boot before a runtime exists" }));
             }),
         );
         const progress: BootProgressOpts = {

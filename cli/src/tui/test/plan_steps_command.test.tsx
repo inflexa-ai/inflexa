@@ -9,12 +9,13 @@ import { commands } from "../commands.tsx";
 import { useKeymapRoot } from "../keymap.ts";
 import { resetHotState, send, type SendOpts } from "../hooks/conversation.ts";
 import type { Workspace } from "../contexts/workspace.ts";
+import { streamOf } from "../../test_support/stream.ts";
 
 const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
 
 /** The frames of one turn stream, as the client reads them off the server. */
-async function* framesOf(frames: readonly ChatFrame[]): AsyncGenerator<Result<ChatFrame, ClientError>> {
-    for (const frame of frames) yield ok(frame);
+function framesOf(frames: readonly ChatFrame[]): AsyncGenerator<Result<ChatFrame, ClientError>> {
+    return streamOf(frames.map((frame) => ok(frame)));
 }
 
 function unexpected(name: string): () => never {
@@ -90,7 +91,7 @@ describe("plan.explore-steps", () => {
                     startedAt: "2026-10-02T00:00:00.000Z",
                     opened: true,
                 }),
-            reloadTranscript: async () => undefined,
+            reloadTranscript: () => Promise.resolve(),
             healRetract: unexpected("healRetract"),
             transcript: { fetchThread: () => okAsync(null), fetchMessages: unexpected("fetchMessages") },
         };

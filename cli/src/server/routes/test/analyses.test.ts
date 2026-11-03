@@ -70,14 +70,14 @@ const runtime: PoolRuntime = { pool: { query: () => Promise.reject(new Error("th
 const readyBoot: ServerBoot<PoolRuntime> = {
     state: (): ServerBootState => ({ ...identity, phase: "ready", connection: { provider: "anthropic", mode: "cliproxy", model: "m" } }),
     runtime: () => runtime,
-    start: async () => undefined,
+    start: () => Promise.resolve(),
 };
 
 const unusedRead = { type: "query_failed", op: "test.unused", cause: "the test did not expect this read" } as const;
 
 const IDLE: AnalysisRouteOpts<PoolRuntime> = {
     ...DEFAULT_ANALYSIS_ROUTE_OPTS,
-    busyReasons: async () => [],
+    busyReasons: () => Promise.resolve([]),
     purgeAnalysis: () => errAsync(unusedRead),
 };
 
@@ -225,7 +225,7 @@ function listOptsOf(over: Partial<AnalysisListOpts<PoolRuntime>> = {}): Analysis
         latestRuns: () => okAsync([]),
         profiles: () => okAsync([]),
         liveWork: () => okAsync(new Map()),
-        pendingAsks: async () => [],
+        pendingAsks: () => Promise.resolve([]),
         hasRunningTurn: () => false,
         profileWorkInFlight: () => false,
         ...over,
@@ -319,7 +319,7 @@ describe("GET /api/v1/analyses: the summary of each analysis", () => {
             profiles: () =>
                 okAsync<DataProfileSummary[]>([{ analysisId: live.id, status: "completed", completedAt: "2026-10-04T10:00:00.000Z", profiledFiles: 12 }]),
             liveWork: () => okAsync(new Map([[live.id, { runs: 1, profiles: 0, turns: 0 }]])),
-            pendingAsks: async () => [{ analysisId: live.id }, { analysisId: live.id }, { analysisId: "someone-else" }],
+            pendingAsks: () => Promise.resolve([{ analysisId: live.id }, { analysisId: live.id }, { analysisId: "someone-else" }]),
         });
 
         const { list } = await listOf(readyBoot, listOpts);
@@ -434,9 +434,9 @@ describe("GET /api/v1/analyses: the summary of each analysis", () => {
                 reads.live += 1;
                 return okAsync(new Map());
             },
-            pendingAsks: async () => {
+            pendingAsks: () => {
                 reads.asks += 1;
-                return [];
+                return Promise.resolve([]);
             },
             pathsExist: (paths, width) => {
                 reads.paths += 1;
@@ -541,7 +541,7 @@ describe("GET {A}", () => {
         const dir = tmp();
         const a = await seedAnalysis(dir);
         insertAnalysisInput({ path: "in.csv", isDir: false, analysisId: a.id, anchorId: a.anchorId })._unsafeUnwrap();
-        const busy: AnalysisRouteOpts<PoolRuntime> = { ...IDLE, busyReasons: async () => ["data_profile"] };
+        const busy: AnalysisRouteOpts<PoolRuntime> = { ...IDLE, busyReasons: () => Promise.resolve(["data_profile"]) };
 
         const detail = analysisDetail.parse(await jsonBody(appWith(idleBoot(), busy).request(`/api/v1/analyses/${a.id}`)));
         expect(detail).toMatchObject({
@@ -590,7 +590,7 @@ describe("GET {A}", () => {
 describe("PATCH {A}", () => {
     test("a rename while work holds the folder is a 409 `busy` that names the work, and nothing changes", async () => {
         const a = await seedAnalysis(tmp());
-        const busy: AnalysisRouteOpts<PoolRuntime> = { ...IDLE, busyReasons: async () => ["chat_turn", "run"] };
+        const busy: AnalysisRouteOpts<PoolRuntime> = { ...IDLE, busyReasons: () => Promise.resolve(["chat_turn", "run"]) };
         const response = await appWith(idleBoot(), busy).request(`/api/v1/analyses/${a.id}`, json("PATCH", { name: "Beta" }));
         expect(response.status).toBe(409);
         expect(await errorBody(response)).toEqual({
@@ -639,15 +639,15 @@ describe("DELETE {A} — the ordered delete", () => {
     } {
         const steps: string[] = [];
         const opts: AnalysisRouteOpts<PoolRuntime> = {
-            busyReasons: async () => out.busy ?? [],
-            hasWorkspaceOnDisk: async () => out.onDisk ?? true,
-            flushProvenance: async () => {
+            busyReasons: () => Promise.resolve(out.busy ?? []),
+            hasWorkspaceOnDisk: () => Promise.resolve(out.onDisk ?? true),
+            flushProvenance: () => {
                 steps.push("flush");
-                return out.flushed ?? true;
+                return Promise.resolve(out.flushed ?? true);
             },
-            exportProvenance: async (_a, format) => {
+            exportProvenance: (_a, format) => {
                 steps.push(`export:${format}`);
-                return out.exported ?? true;
+                return Promise.resolve(out.exported ?? true);
             },
             disposeWorkspace: (_a, mode) => {
                 steps.push(`dispose:${mode}`);
@@ -664,8 +664,9 @@ describe("DELETE {A} — the ordered delete", () => {
                 steps.push("delete-row");
                 return DEFAULT_ANALYSIS_ROUTE_OPTS.deleteAnalysis(id);
             },
-            removeFarm: async () => {
+            removeFarm: () => {
                 steps.push("remove-farm");
+                return Promise.resolve();
             },
             removeInput: DEFAULT_ANALYSIS_ROUTE_OPTS.removeInput,
         };
@@ -730,7 +731,7 @@ describe("DELETE {A} — the ordered delete", () => {
         const opts: AnalysisRouteOpts<PoolRuntime> = {
             ...IDLE,
             purgeAnalysis: () => okAsync(PURGED),
-            removeFarm: async () => undefined,
+            removeFarm: () => Promise.resolve(),
             disposeWorkspace: (analysis, mode) =>
                 disposeWorkspace(analysis, mode, (path) => {
                     removed.push(path);

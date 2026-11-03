@@ -26,7 +26,7 @@ import { env } from "../../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../../lib/credential.ts";
 import { instanceLockPath } from "../../../lib/lock.ts";
 import { claimStoreFlight, deleteStoreFlight } from "../../../db/primary_mutation.ts";
-import { fakeFetch } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, respondWith } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     bootHarnessRuntime,
@@ -85,36 +85,33 @@ function fakeEmbedding(): EmbeddingProvider {
     };
 }
 
+/** A double that records its name in `calls`, then answers with `answer()`. A throw from `answer` rejects. */
+function recorded<T>(calls: string[], name: string, answer: () => T): () => Promise<T> {
+    return () =>
+        Promise.try(() => {
+            calls.push(name);
+            return answer();
+        });
+}
+
 // Seams that record their call order and succeed. The pool/providers built
 // between them are pure construction (pg pools connect lazily), so the boot
 // path runs fully offline.
 function recordingSeams(calls: string[]): BootSeams {
     return {
-        resolveSandboxEngine: async () => {
-            calls.push("resolveSandboxEngine");
-            // Default to a docker pin (today's behavior): no socket, no step-tree loosening.
-            return ok({ runtime: runtimes.docker, socketPath: undefined });
-        },
-        ensurePostgres: async () => {
-            calls.push("postgres");
-            return ok({ host: "localhost", port: 5, database: "d", user: "u", password: "p" });
-        },
+        // Default to a docker pin (today's behavior): no socket, no step-tree loosening.
+        resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () => ok({ runtime: runtimes.docker, socketPath: undefined })),
+        ensurePostgres: recorded(calls, "postgres", () => ok({ host: "localhost", port: 5, database: "d", user: "u", password: "p" })),
         // Real construction (pure, connects lazily) so the offline boot runs unchanged;
         // the engine-wiring tests below swap this for a capturing variant.
         createSandbox: createSandboxClient,
-        readKey: async () => {
-            calls.push("readKey");
-            return ok("proxy-key");
-        },
+        readKey: recorded(calls, "readKey", () => ok("proxy-key")),
         readModelApiKey: () => {
             calls.push("readModelApiKey");
             return "direct-model-key";
         },
-        resolveModel: async () => {
-            calls.push("resolveModel");
-            return ok("claude-from-proxy");
-        },
-        probeContextWindow: async () => ({ type: "not_probed" }),
+        resolveModel: recorded(calls, "resolveModel", () => ok("claude-from-proxy")),
+        probeContextWindow: () => Promise.resolve({ type: "not_probed" }),
         resolveEmbedding: () => {
             calls.push("resolveEmbedding");
             return ok(fakeEmbedding());
@@ -138,7 +135,7 @@ function recordingSeams(calls: string[]): BootSeams {
             // The parent builder receives the registered child callable and wires the
             // bridge's provenance seam, whose run emit is the optional run-lifecycle observer
             //. Exercise it with a stand-in child callable.
-            const child = async () => ({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
+            const child = () => Promise.resolve({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
             const executeAnalysisDeps = workflows.buildExecuteAnalysis(child);
             expect(executeAnalysisDeps.sandboxStepCallable).toBe(child);
             expect(present(executeAnalysisDeps.provenance).emitRunEvent).toBeInstanceOf(Function);
@@ -198,37 +195,40 @@ function recordingSeams(calls: string[]): BootSeams {
                     chatTurns,
                     // The offline boot never pauses work, thus the list is empty and no work resumes.
                     work: {
-                        list: async () => [],
-                        stop: async () => ({ kind: "not_found" }),
-                        resume: async () => ({ kind: "not_found" }),
-                        hold: async () => ({ kind: "not_found" }),
+                        list: () => Promise.resolve([]),
+                        stop: () => Promise.resolve({ kind: "not_found" }),
+                        resume: () => Promise.resolve({ kind: "not_found" }),
+                        hold: () => Promise.resolve({ kind: "not_found" }),
                     },
                     runCanceler: { cancel: () => Promise.reject(new Error("the offline boot cancels no run")) },
                     // The offline boot never drives a report turn, thus this anchor never runs. A
                     // failed arm is the minimal stand-in — a ready arm would build a full durable
                     // session-state row that no assertion here reads.
-                    reportSession: { ensureSessionState: async () => ({ outcome: "failed", kind: "unavailable", detail: "offline boot stub" }) },
+                    reportSession: { ensureSessionState: () => Promise.resolve({ outcome: "failed", kind: "unavailable", detail: "offline boot stub" }) },
                     workflows: {
-                        executeAnalysis: async () => ({
-                            runId: "",
-                            workflowId: "",
-                            status: "completed",
-                            completedSteps: [],
-                            failedSteps: [],
-                            canceledSteps: [],
-                        }),
-                        sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
-                        dataProfile: async () => {},
-                        extractValues: async () => ok({}),
-                        deriveTableExec: async () =>
-                            ok({
-                                execId: "",
-                                exitCode: 0,
-                                stdout: "",
-                                stderr: "",
-                                durationMs: 0,
-                                timedOut: false,
+                        executeAnalysis: () =>
+                            Promise.resolve({
+                                runId: "",
+                                workflowId: "",
+                                status: "completed",
+                                completedSteps: [],
+                                failedSteps: [],
+                                canceledSteps: [],
                             }),
+                        sandboxStep: () => Promise.resolve({ status: "complete", durationMs: 0, finishReason: null, error: null }),
+                        dataProfile: async () => {},
+                        extractValues: () => Promise.resolve(ok({})),
+                        deriveTableExec: () =>
+                            Promise.resolve(
+                                ok({
+                                    execId: "",
+                                    exitCode: 0,
+                                    stdout: "",
+                                    stderr: "",
+                                    durationMs: 0,
+                                    timedOut: false,
+                                }),
+                            ),
                     },
                     // `CoreRuntime` requires the resolver `assembleCoreRuntime` builds; the
                     // real (pure, network-lazy) constructor stands in here, matching how this
@@ -240,22 +240,14 @@ function recordingSeams(calls: string[]): BootSeams {
                 shutdown: async () => {},
             };
         },
-        sweepEphemeral: async () => {
-            calls.push("sweepEphemeral");
-        },
+        sweepEphemeral: recorded(calls, "sweepEphemeral", () => undefined),
         // The ask-expiry sweep is a seam for the same reason `sweepEphemeral` is:
         // it lets `beforeLaunch` run offline with no live ask ledger to query.
-        sweepAsks: async () => {
-            calls.push("sweepAsks");
-            return 0;
-        },
+        sweepAsks: recorded(calls, "sweepAsks", () => 0),
         registerNotificationSweep: () => {
             calls.push("registerNotificationSweep");
         },
-        probeEmbedding: async () => {
-            calls.push("probeEmbedding");
-            return ok(undefined);
-        },
+        probeEmbedding: recorded(calls, "probeEmbedding", () => ok(undefined)),
     };
 }
 
@@ -364,10 +356,7 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            ensurePostgres: async () => {
-                calls.push("postgres");
-                return err({ type: "ready_timeout", message: "pg_isready timed out" });
-            },
+            ensurePostgres: recorded(calls, "postgres", () => err({ type: "ready_timeout", message: "pg_isready timed out" })),
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
@@ -426,10 +415,7 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            ensurePostgres: async () => {
-                calls.push("postgres");
-                return err({ type: "ready_timeout", message: "pg_isready timed out" });
-            },
+            ensurePostgres: recorded(calls, "postgres", () => err({ type: "ready_timeout", message: "pg_isready timed out" })),
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
@@ -456,10 +442,7 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            probeEmbedding: async () => {
-                calls.push("probeEmbedding");
-                return err({ kind: "embed_failed", detail: "HTTP 404" });
-            },
+            probeEmbedding: recorded(calls, "probeEmbedding", () => err({ kind: "embed_failed", detail: "HTTP 404" })),
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
@@ -471,10 +454,7 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            probeEmbedding: async () => {
-                calls.push("probeEmbedding");
-                return err({ kind: "dimension_mismatch", expected: 1536, actual: 768 });
-            },
+            probeEmbedding: recorded(calls, "probeEmbedding", () => err({ kind: "dimension_mismatch", expected: 1536, actual: 768 })),
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
@@ -497,10 +477,7 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            resolveModel: async () => {
-                calls.push("resolveModel");
-                return ok("gemini-2.5-pro");
-            },
+            resolveModel: recorded(calls, "resolveModel", () => ok("gemini-2.5-pro")),
         };
         // The default connection is cliproxy/anthropic, so this degenerates to exactly the old
         // Claude-only check: a gemini id does not match the anthropic family.
@@ -518,10 +495,7 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            resolveModel: async () => {
-                calls.push("resolveModel");
-                return ok("gpt-4o");
-            },
+            resolveModel: recorded(calls, "resolveModel", () => ok("gpt-4o")),
         };
         const result = await bootHarnessRuntime({
             seams,
@@ -763,10 +737,9 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            boot: async () => {
-                calls.push("boot");
+            boot: recorded(calls, "boot", () => {
                 throw new Error("dbos exploded");
-            },
+            }),
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
@@ -807,10 +780,9 @@ describe("bootHarnessRuntime", () => {
         const captured: { config: CreateSandboxClientConfig | null } = { config: null };
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            resolveSandboxEngine: async () => {
-                calls.push("resolveSandboxEngine");
-                return ok({ runtime: runtimes.podman, socketPath: "/var/folders/xy/podman-api.sock" });
-            },
+            resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () =>
+                ok({ runtime: runtimes.podman, socketPath: "/var/folders/xy/podman-api.sock" }),
+            ),
             createSandbox: (cfg) => {
                 captured.config = cfg;
                 return createSandboxClient(cfg);
@@ -831,10 +803,7 @@ describe("bootHarnessRuntime", () => {
         const captured: { config: CreateSandboxClientConfig | null } = { config: null };
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            resolveSandboxEngine: async () => {
-                calls.push("resolveSandboxEngine");
-                return ok({ runtime: runtimes.docker, socketPath: undefined });
-            },
+            resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () => ok({ runtime: runtimes.docker, socketPath: undefined })),
             createSandbox: (cfg) => {
                 captured.config = cfg;
                 return createSandboxClient(cfg);
@@ -854,14 +823,13 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            resolveSandboxEngine: async () => {
-                calls.push("resolveSandboxEngine");
-                return err(
+            resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () =>
+                err(
                     new ContainerRuntimeError(
                         "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.",
                     ),
-                );
-            },
+                ),
+            ),
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
@@ -928,7 +896,7 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
         // Each bag the cohort registers — the conversation agent's, both run-engine workflows', and the
         // data profile's — arrives WITHOUT a recorder of its own, so the one on `core` is the only thing
         // any of them can be stamped with.
-        const child = async () => ({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
+        const child = () => Promise.resolve({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
         const bags = [core?.conversation, core?.workflows.sandboxStep, core?.workflows.buildExecuteAnalysis(child), core?.workflows.dataProfile];
         for (const bag of bags) {
             expect(bag).toBeDefined();
@@ -991,9 +959,10 @@ describe("bootHarnessRuntime — the web-search engine", () => {
         // site fails here: the stub answers the request and records where it went.
         const realFetch = globalThis.fetch;
         let requested: string | undefined;
-        globalThis.fetch = fakeFetch(async (url) => {
+        const answer = respondWith("{}", { status: 200, headers: { "content-type": "application/json" } });
+        globalThis.fetch = fakeFetch((url) => {
             requested = String(url);
-            return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+            return answer();
         });
         try {
             const page = await engine?.search({ query: "q" });

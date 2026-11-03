@@ -261,9 +261,6 @@ export default solid({
             // back on.
             files: ["**/*.{ts,tsx,js,mjs}"],
             rules: {
-                // #809: give each async test double the shape of the real function.
-                "typescript/require-await": "off",
-
                 // #811: the remaining preset rules.
                 "typescript/explicit-function-return-type": "off",
                 "typescript/no-base-to-string": "off",

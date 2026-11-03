@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { respondWith } from "../../test_support/fake_fetch.ts";
 import { declaredContentLength, downloadToFile, type DownloadProgress } from "../download.ts";
 
 const roots: string[] = [];
@@ -26,14 +27,15 @@ function serve(
     body: string,
     opts?: { status?: number; url?: string; contentLength?: boolean },
 ): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
-    return async () => {
-        if (opts?.status !== undefined && opts.status >= 400) return new Response("missing", { status: opts.status, statusText: "Not Found" });
-        const headers: Record<string, string> = {};
-        if (opts?.contentLength) headers["content-length"] = String(Buffer.byteLength(body));
-        const response = new Response(body, Object.keys(headers).length > 0 ? { headers } : undefined);
-        if (opts?.url) Object.defineProperty(response, "url", { value: opts.url });
-        return response;
-    };
+    return () =>
+        Promise.try(() => {
+            if (opts?.status !== undefined && opts.status >= 400) return new Response("missing", { status: opts.status, statusText: "Not Found" });
+            const headers: Record<string, string> = {};
+            if (opts?.contentLength) headers["content-length"] = String(Buffer.byteLength(body));
+            const response = new Response(body, Object.keys(headers).length > 0 ? { headers } : undefined);
+            if (opts?.url) Object.defineProperty(response, "url", { value: opts.url });
+            return response;
+        });
 }
 
 describe("downloadToFile", () => {
@@ -83,7 +85,7 @@ describe("downloadToFile", () => {
             });
             const response = "url" in refused ? new Response(stream) : new Response(stream, refused);
             if ("url" in refused) Object.defineProperty(response, "url", { value: refused.url });
-            const result = await downloadToFile(URL_OK, join(root(), "out.bin"), { fetch: async () => response });
+            const result = await downloadToFile(URL_OK, join(root(), "out.bin"), { fetch: () => Promise.resolve(response) });
             expect(result.isErr()).toBe(true);
             expect(cancelled).toBe(1);
         }
@@ -95,15 +97,17 @@ describe("downloadToFile", () => {
         const dest = join(root(), "out.bin");
         const result = await downloadToFile(URL_OK, dest, {
             retry: { attempts: 2, baseMs: 0, shouldRetry: (status) => status === 429 },
-            fetch: async () => {
+            fetch: () => {
                 calls += 1;
-                if (calls > 1) return new Response("payload");
-                return new Response(
-                    new ReadableStream({
-                        start: (c) => c.enqueue(new TextEncoder().encode("slow down")),
-                        cancel: () => void (cancelled += 1),
-                    }),
-                    { status: 429, statusText: "Too Many Requests" },
+                if (calls > 1) return Promise.resolve(new Response("payload"));
+                return Promise.resolve(
+                    new Response(
+                        new ReadableStream({
+                            start: (c) => c.enqueue(new TextEncoder().encode("slow down")),
+                            cancel: () => void (cancelled += 1),
+                        }),
+                        { status: 429, statusText: "Too Many Requests" },
+                    ),
                 );
             },
         });
@@ -119,7 +123,7 @@ describe("downloadToFile", () => {
         const stream = new ReadableStream({
             start: (c) => c.enqueue(new TextEncoder().encode("first")),
         });
-        const result = await downloadToFile(URL_OK, dest, { fetch: async () => new Response(stream), livenessWindowMs: 40 });
+        const result = await downloadToFile(URL_OK, dest, { fetch: respondWith(stream), livenessWindowMs: 40 });
         expect(result._unsafeUnwrapErr().type).toBe("stalled");
         expect(existsSync(dest)).toBe(false);
     });
@@ -137,7 +141,7 @@ describe("downloadToFile", () => {
                 c.close();
             },
         });
-        const result = await downloadToFile(URL_OK, dest, { fetch: async () => new Response(stream), livenessWindowMs: 50 });
+        const result = await downloadToFile(URL_OK, dest, { fetch: respondWith(stream), livenessWindowMs: 50 });
         expect(result.isOk()).toBe(true);
         expect(readFileSync(dest, "utf8")).toBe("abcde");
     });

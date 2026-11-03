@@ -39,7 +39,7 @@ describe("agent_policy — registerAction couples handler and policy", () => {
         program.exitOverride();
         let seenJson: boolean | undefined;
         const leaf = program.command("go").option("--json", "emit json");
-        registerAction(leaf, "standalone", { kind: "auto", safeFlags: ["json"] }, async (opts: { json?: boolean }) => {
+        registerAction(leaf, "standalone", { kind: "auto", safeFlags: ["json"] }, (opts: { json?: boolean }) => {
             seenJson = opts.json;
         });
 
@@ -110,8 +110,9 @@ describe("agent_policy — the command kind decides the server check", () => {
     function leaf(kind: CommandKind): { program: Command; calls: string[] } {
         const calls: string[] = [];
         const opts: RegisterOpts = {
-            requireServer: async () => {
+            requireServer: () => {
                 calls.push("server-check");
+                return Promise.resolve();
             },
         };
         const program = new Command();
@@ -152,7 +153,7 @@ describe("agent_policy — the command kind decides the server check", () => {
         const program = new Command();
         program.exitOverride();
         registerAction(program, "instance", { kind: "blocked", reason: "test" }, () => void calls.push("handler"), {
-            requireServer: async () => void calls.push("server-check"),
+            requireServer: () => Promise.resolve(void calls.push("server-check")),
         });
         program.hook("preAction", () => {
             throw new Error("classified");

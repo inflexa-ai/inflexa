@@ -120,11 +120,12 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
         const controls: RetractControls = {
             conversation: {
                 canRetract: () => true,
-                retract: async (seed) => {
-                    // Stand in for the user typing while the durable half of the retract is in flight.
-                    ta.setText("a replacement typed mid-retract");
-                    seed("original text");
-                },
+                retract: (seed) =>
+                    Promise.try(() => {
+                        // Stand in for the user typing while the durable half of the retract is in flight.
+                        ta.setText("a replacement typed mid-retract");
+                        seed("original text");
+                    }),
             },
             onFallthrough: () => {},
             onRef: (r) => (ta = r),

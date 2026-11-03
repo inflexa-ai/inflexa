@@ -262,24 +262,27 @@ describe("waitForReady", () => {
         spies.push(spyOn(Date, "now").mockImplementation(() => now));
         // The sleep advances the clock instead of waiting, so the deadline is reached in no real time.
         spies.push(
-            spyOn(Promise, "sleep").mockImplementation(async (ms: number) => {
+            spyOn(Promise, "sleep").mockImplementation((ms: number) => {
                 sleeps.push(ms);
                 now += ms;
+                return Promise.resolve();
             }),
         );
         spies.push(
-            spyOn(container, "capture").mockImplementation(async (_rt, args) => {
-                if (args[0] === "exec") {
-                    poll += 1;
-                    return { code: script.ready(poll) ? 0 : 2, stdout: "", stderr: "no response" };
-                }
-                if (args[0] === "container" && args[1] === "inspect") {
-                    const count = script.restarts(poll);
-                    return count === null ? { code: 1, stdout: "", stderr: "no such field" } : { code: 0, stdout: `${count}\n`, stderr: "" };
-                }
-                if (args[0] === "logs") return script.logs;
-                return { code: 1, stdout: "", stderr: `unexpected engine call: ${args.join(" ")}` };
-            }),
+            spyOn(container, "capture").mockImplementation((_rt, args) =>
+                Promise.try(() => {
+                    if (args[0] === "exec") {
+                        poll += 1;
+                        return { code: script.ready(poll) ? 0 : 2, stdout: "", stderr: "no response" };
+                    }
+                    if (args[0] === "container" && args[1] === "inspect") {
+                        const count = script.restarts(poll);
+                        return count === null ? { code: 1, stdout: "", stderr: "no such field" } : { code: 0, stdout: `${count}\n`, stderr: "" };
+                    }
+                    if (args[0] === "logs") return script.logs;
+                    return { code: 1, stdout: "", stderr: `unexpected engine call: ${args.join(" ")}` };
+                }),
+            ),
         );
         return { sleeps, polls: () => poll };
     }

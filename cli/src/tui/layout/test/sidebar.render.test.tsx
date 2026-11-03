@@ -9,6 +9,7 @@ import { createStore } from "solid-js/store";
 import { parseColor, rgbToHex, type RGBA, type TextareaRenderable } from "@opentui/core";
 import { createMockMouse } from "@opentui/core/testing";
 
+import { respondWith } from "../../../test_support/fake_fetch.ts";
 import { renderFrame } from "../../../test_support/tui.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { DEFAULT_THEME_ID, GLYPHS, size, space, themes } from "../../../lib/design_system.ts";
@@ -584,9 +585,9 @@ describe("Sidebar SESSION section", () => {
             threadOpts(() => okAsync(threadRow())),
         );
         const copied: string[] = [];
-        const restore = __setClipboardWriterForTest(async (text) => {
+        const restore = __setClipboardWriterForTest((text) => {
             copied.push(text);
-            return ok(undefined);
+            return Promise.resolve(ok(undefined));
         });
         const setup = await testRender(sessionNode(1), { width: 44, height: 24 });
         try {
@@ -1143,8 +1144,8 @@ describe("Sidebar USAGE section", () => {
     }
 
     /** A plain analysis row that the fake server answers for. */
-    async function analysisIn(_dir: string, name: string): Promise<Analysis> {
-        return analysisRow(name);
+    function analysisIn(_dir: string, name: string): Promise<Analysis> {
+        return Promise.resolve(analysisRow(name));
     }
 
     /**
@@ -1156,12 +1157,13 @@ describe("Sidebar USAGE section", () => {
         const urls: string[] = [];
         const opts: ClientOpts = {
             discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
-            fetch: async (url) => {
-                urls.push(url);
-                if (totals === null) return new Response(JSON.stringify({ error: "internal_error", message: "boom" }), { status: 500 });
-                const view: UsageView = { scope: { kind: "thread", threadId: THREAD }, totals };
-                return new Response(JSON.stringify(view), { headers: { "Content-Type": "application/json" } });
-            },
+            fetch: (url) =>
+                Promise.try(() => {
+                    urls.push(url);
+                    if (totals === null) return new Response(JSON.stringify({ error: "internal_error", message: "boom" }), { status: 500 });
+                    const view: UsageView = { scope: { kind: "thread", threadId: THREAD }, totals };
+                    return new Response(JSON.stringify(view), { headers: { "Content-Type": "application/json" } });
+                }),
         };
         return {
             opts,
@@ -1567,7 +1569,7 @@ describe("Sidebar USAGE section", () => {
                             tick.live = false;
                         };
                     },
-                    checkServer: async () => true,
+                    checkServer: () => Promise.resolve(true),
                     pollThread: async () => {},
                     pollPaused: async () => {},
                 },
@@ -1807,7 +1809,7 @@ describe("a click on a rail section that opens a dialog", () => {
         // The section reads its figure from the server. A failed read paints "unavailable", which is enough here.
         const failing: ClientOpts = {
             discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
-            fetch: async () => new Response(JSON.stringify({ error: "internal_error", message: "boom" }), { status: 500 }),
+            fetch: respondWith(JSON.stringify({ error: "internal_error", message: "boom" }), { status: 500 }),
         };
         let composer!: TextareaRenderable;
         const setup = await testRender(

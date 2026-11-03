@@ -29,7 +29,7 @@ import { claimDailyAsk, claimUpdateNotice, updateOffer } from "../modules/update
  * Seed the active theme from persisted config, then hand the terminal to OpenTUI to open the chat for the
  * resolved target.
  */
-async function renderChat(target: ChatTarget): Promise<void> {
+function renderChat(target: ChatTarget): void {
     // The server took the instance lock of the analysis when the resolver opened it (`GET {A}`), before
     // the alternate screen, thus a lock that a different process holds already stopped the launch.
     setTheme(readConfig().theme);
@@ -136,18 +136,18 @@ export async function launchNew(opts: { name?: string; paths: string[]; project?
     // Before target resolution, not inside renderChat: resolveNewTarget CREATES the
     // analysis, and a headless run must refuse before any state exists (no-litter).
     requireInteractiveTerminal("inflexa new");
-    await renderChat(await resolveNewTarget(opts));
+    renderChat(await resolveNewTarget(opts));
 }
 
 /** `inflexa resume <id|name>` — reopen an analysis's chat. */
 export async function launchResume(ref: IdOrName): Promise<void> {
     requireInteractiveTerminal("inflexa resume");
-    await renderChat(await resolveResumeTarget(ref));
+    renderChat(await resolveResumeTarget(ref));
 }
 
 /** Bare `inflexa [--analysis <x>|--project <p>]`: resolve context, then open/pick/start (or do nothing). */
 export async function launchDefault(flags: ContextFlags): Promise<void> {
     requireInteractiveTerminal("inflexa");
     const target = await resolveDefaultTarget(flags);
-    if (target) await renderChat(target);
+    if (target) renderChat(target);
 }

@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 
 import "../../../extensions/index.ts"; // installs Response.prototype.jsonWith, which resolveModelId + checkModelAccess use
 import { env } from "../../../lib/env.ts";
-import { fakeFetch } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, respondWith } from "../../../test_support/fake_fetch.ts";
 import { requestedModel } from "../../../test_support/request_body.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
@@ -191,17 +191,16 @@ describe("listModelCandidates", () => {
 
     test("reads `created_at` and `created` of the /models answer, and an entry with a date of an unknown shape costs that date only", async () => {
         globalThis.fetch = fakeFetch(
-            async () =>
-                new Response(
-                    JSON.stringify({
-                        data: [
-                            { id: "claude-new", created_at: "2026-09-21T00:00:00Z" },
-                            { id: "claude-mid", created: 1_760_000_000 },
-                            { id: "claude-epoch", created_at: "1970-01-01T00:00:00Z" },
-                            { id: "claude-odd", created_at: { when: "yesterday" }, created: "soon" },
-                        ],
-                    }),
-                ),
+            respondWith(
+                JSON.stringify({
+                    data: [
+                        { id: "claude-new", created_at: "2026-09-21T00:00:00Z" },
+                        { id: "claude-mid", created: 1_760_000_000 },
+                        { id: "claude-epoch", created_at: "1970-01-01T00:00:00Z" },
+                        { id: "claude-odd", created_at: { when: "yesterday" }, created: "soon" },
+                    ],
+                }),
+            ),
         );
         const candidates = (await listModelCandidates("sk-test"))._unsafeUnwrap();
         expect(candidates).toEqual([
@@ -263,10 +262,12 @@ describe("checkModelAccess", () => {
         // Collect into an array (not narrowable closure-assigned locals) so the property reads keep their
         // `string | null` type at the assertion sites rather than narrowing to the seed value.
         const seen: Array<{ url: string; auth: string | null; model: string }> = [];
-        globalThis.fetch = fakeFetch(async (url, init) => {
-            seen.push({ url: String(url), auth: new Headers(init?.headers).get("Authorization"), model: requestedModel(init) });
-            return new Response("{}", { status: 200 });
-        });
+        globalThis.fetch = fakeFetch((url, init) =>
+            Promise.try(() => {
+                seen.push({ url: String(url), auth: new Headers(init?.headers).get("Authorization"), model: requestedModel(init) });
+                return new Response("{}", { status: 200 });
+            }),
+        );
 
         await checkModelAccess("sk-test", "claude-x");
         expect(seen).toHaveLength(1);
@@ -432,10 +433,12 @@ describe("resolveModelId", () => {
 
     test("the ok path elects the ranked claude id and sends the key as a bearer token on both requests", async () => {
         const seenAuth: Array<string | null> = [];
-        globalThis.fetch = fakeFetch(async (url, init) => {
-            seenAuth.push(new Headers(init?.headers).get("Authorization"));
-            return String(url).endsWith("/messages/count_tokens") ? served() : modelsResponse(["gpt-4o", "claude-sonnet"]);
-        });
+        globalThis.fetch = fakeFetch((url, init) =>
+            Promise.try(() => {
+                seenAuth.push(new Headers(init?.headers).get("Authorization"));
+                return String(url).endsWith("/messages/count_tokens") ? served() : modelsResponse(["gpt-4o", "claude-sonnet"]);
+            }),
+        );
 
         expect((await resolveModelId("sk-test"))._unsafeUnwrap()).toBe("claude-sonnet");
         expect(seenAuth).toEqual(["Bearer sk-test", "Bearer sk-test"]); // /models GET, then the count_tokens POST
