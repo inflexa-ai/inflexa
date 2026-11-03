@@ -1,0 +1,132 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
+
+import type { AnalysisInput } from "../../../types/analysis.ts";
+import { getAnchor } from "../../../db/primary_query.ts";
+import { deleteAnchor } from "../../../db/primary_mutation.ts";
+import { expandAndResolve } from "../../../lib/paths.ts";
+import { classifyInputPath, matchInputRefs } from "../input.ts";
+import { canonicalPathAsync } from "../../../lib/paths.ts";
+import { writeMarker } from "../../anchor/marker.ts";
+
+const created: string[] = [];
+
+function tmp(): string {
+    const dir = mkdtempSync(join(tmpdir(), "inflexa-input-"));
+    created.push(dir);
+    return dir;
+}
+
+/** The anchor ids these tests mint. The classify recovery inserts them into the shared sandbox database. */
+const TEST_ANCHOR_IDS = ["A1", "GHOST-ANCHOR"];
+
+afterEach(() => {
+    for (const dir of created) rmSync(dir, { recursive: true, force: true });
+    created.length = 0;
+    for (const id of TEST_ANCHOR_IDS) deleteAnchor(id).unwrapOr(0);
+});
+
+describe("classifyInputPath", () => {
+    test("inside a tracked anchor → an anchor-relative ref that rides the anchor's UUID", async () => {
+        const dir = tmp();
+        (await writeMarker(dir, "A1"))._unsafeUnwrap();
+        mkdirSync(join(dir, "src"));
+        const ref = (await classifyInputPath("ana1", "src", dir))._unsafeUnwrap();
+        expect(ref).toEqual({ path: "src", isDir: true, analysisId: "ana1", anchorId: "A1" });
+    });
+
+    test("at the anchor directory itself → relative path '.'", async () => {
+        const dir = tmp();
+        (await writeMarker(dir, "A1"))._unsafeUnwrap();
+        const ref = (await classifyInputPath("ana1", ".", dir))._unsafeUnwrap();
+        expect(ref.path).toBe(".");
+        expect(ref.anchorId).toBe("A1");
+    });
+
+    test("a marker the database does not hold recovers its anchor row", async () => {
+        const dir = tmp();
+        (await writeMarker(dir, "GHOST-ANCHOR"))._unsafeUnwrap();
+        mkdirSync(join(dir, "src"));
+        expect(getAnchor("GHOST-ANCHOR")._unsafeUnwrap()).toBeNull();
+
+        const ref = (await classifyInputPath("ana1", "src", dir))._unsafeUnwrap();
+
+        // The ref keeps the identity of the marker, and the row exists again —
+        // the insert of the ref no longer trips the anchor foreign key.
+        expect(ref.anchorId).toBe("GHOST-ANCHOR");
+        expect(getAnchor("GHOST-ANCHOR")._unsafeUnwrap()?.cachedPath).toBe(await canonicalPathAsync(dir));
+    });
+
+    test("not under any anchor → an absolute ref with no anchor", async () => {
+        const dir = tmp(); // no marker anywhere upward
+        mkdirSync(join(dir, "src"));
+        const ref = (await classifyInputPath("ana1", "src", dir))._unsafeUnwrap();
+        expect(ref.anchorId).toBeNull();
+        expect(ref.path).toBe(await canonicalPathAsync(join(dir, "src")));
+    });
+
+    test("a non-existent path → error, never stored as a dangling ref", async () => {
+        const dir = tmp();
+        (await classifyInputPath("ana1", "ghost", dir)).match(
+            () => {
+                throw new Error("expected an error for a missing path");
+            },
+            (e) => expect(e.type).toBe("query_failed"),
+        );
+    });
+});
+
+describe("expandAndResolve", () => {
+    test("expands a leading ~ to the home directory", () => {
+        expect(expandAndResolve("/anywhere", "~/data/x.csv")).toBe(join(homedir(), "data/x.csv"));
+    });
+
+    test("resolves a relative path against cwd", () => {
+        expect(expandAndResolve(join("/root", "proj"), "sub/x.csv")).toBe(join("/root", "proj", "sub/x.csv"));
+    });
+
+    test("leaves an absolute path unchanged", () => {
+        const abs = join("/data", "x.csv");
+        expect(expandAndResolve("/root/proj", abs)).toBe(abs);
+    });
+});
+
+describe("matchInputRefs", () => {
+    // Anchorless inputs resolve to their own absolute path without touching the DB, so these are pure.
+    function absInput(path: string): AnalysisInput {
+        return { path, isDir: false, analysisId: "ana1", anchorId: null };
+    }
+
+    test("matches a raw path by an input's stored ref", async () => {
+        const foo = absInput(join("/data", "foo.csv"));
+        const bar = absInput(join("/data", "bar.csv"));
+        const { matched, notInputs } = await matchInputRefs([foo, bar], [join("/data", "foo.csv")], "/cwd");
+        expect(matched).toEqual([foo]);
+        expect(notInputs).toEqual([]);
+    });
+
+    test("matches an anchorless input by cwd-resolved path", async () => {
+        const foo = absInput(join("/proj", "foo.csv"));
+        const { matched, notInputs } = await matchInputRefs([foo], ["foo.csv"], "/proj");
+        expect(matched).toEqual([foo]);
+        expect(notInputs).toEqual([]);
+    });
+
+    test("a path that is no current input is reported, never matched", async () => {
+        const foo = absInput(join("/data", "foo.csv"));
+        const { matched, notInputs } = await matchInputRefs([foo], [join("/data", "ghost.csv")], "/cwd");
+        expect(matched).toEqual([]);
+        expect(notInputs).toEqual([join("/data", "ghost.csv")]);
+    });
+
+    test("matches without any on-disk check — an input whose file is gone stays removable", async () => {
+        // A path under a tmp dir that never existed: matchInputRefs must still match it by ref alone.
+        const goneAbs = join(tmpdir(), "inflexa-never-existed", "deleted.csv");
+        expect(isAbsolute(goneAbs)).toBe(true);
+        const gone = absInput(goneAbs);
+        const { matched } = await matchInputRefs([gone], [goneAbs], "/cwd");
+        expect(matched).toEqual([gone]);
+    });
+});

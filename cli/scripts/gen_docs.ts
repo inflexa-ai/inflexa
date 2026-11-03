@@ -52,7 +52,7 @@ process.env.XDG_CONFIG_HOME = "$XDG_CONFIG_HOME";
 const { cli } = await import("../src/cli/index.ts");
 // Every exported env-var doc list is imported, not just `envDoc`: a variable that is a feature's only
 // secret channel (INFLEXA_MODEL_API_KEY, INFLEXA_EMBEDDING_API_KEY) must not be visible in `--help` and
-// absent from the published reference. src/cli/gen_docs.test.ts fails when a list reaches no page here.
+// absent from the published reference. src/cli/test/gen_docs.test.ts fails when a list reaches no page here.
 const { embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc } = await import("../src/lib/env.ts");
 type EnvDocEntry = import("../src/lib/env.ts").EnvDocEntry;
 

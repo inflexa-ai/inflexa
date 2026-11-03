@@ -1,0 +1,161 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { testRender } from "@opentui/solid";
+import { parseColor, type RGBA } from "@opentui/core";
+
+import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../../lib/design_system.ts";
+import { setTheme } from "../../theme.ts";
+import { MessageBlock } from "../message_block.tsx";
+import { formatTokenFigure } from "../../../lib/usage_format.ts";
+import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
+import type { Part } from "../../../types/session.ts";
+
+// The interrupted marker is a muted suffix on an assistant turn that streamed before being aborted. A
+// character frame cannot prove the color, so this asserts on the span's resolved fg via captureSpans (the
+// mechanism from theme_contrast.render.test.tsx) on github-light, whose pure-#ffffff bg is the sharpest
+// case for an accidentally-white span.
+const LIGHT = "github-light";
+
+/** The fg of the first captured span whose text contains `needle`, or undefined if none rendered. */
+function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): RGBA | undefined {
+    for (const line of setup.captureSpans().lines) {
+        for (const span of line.spans) {
+            if (span.text.includes(needle)) return span.fg;
+        }
+    }
+    return undefined;
+}
+
+/** An assistant turn with one body part; the header props under test are passed straight through. */
+function renderAssistant(header: { interrupted?: boolean; durationMs?: number; turnUsage?: TokenUsageRollup } = {}): ReturnType<typeof testRender> {
+    const parts: Part[] = [{ type: "text", text: "an answer that began" }];
+    return testRender(
+        () => (
+            <MessageBlock
+                index={1}
+                role="assistant"
+                parts={parts}
+                interrupted={header.interrupted}
+                durationMs={header.durationMs}
+                turnUsage={header.turnUsage}
+                streamPartId={() => null}
+                streamText={() => ""}
+            />
+        ),
+        { width: 60, height: 10 },
+    );
+}
+
+describe("MessageBlock interrupted marker", () => {
+    // The active theme is a module singleton; reset it after each case so order doesn't matter.
+    afterEach(() => setTheme(DEFAULT_THEME_ID));
+
+    test("renders a muted interrupted marker when the flag is set", async () => {
+        setTheme(LIGHT);
+        const setup = await renderAssistant({ interrupted: true });
+        try {
+            // The header (with the marker) paints synchronously; the async markdown body is irrelevant here.
+            await setup.renderOnce();
+            const fg = spanFg(setup, "interrupted");
+            expect(fg).toBeDefined();
+            expect(fg && parseColor(themes[LIGHT].colors.fgMuted).equals(fg)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("renders no interrupted marker when the flag is unset", async () => {
+        setTheme(LIGHT);
+        const setup = await renderAssistant({ interrupted: false });
+        try {
+            await setup.renderOnce();
+            expect(setup.captureCharFrame()).not.toContain("interrupted");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+// What the turn cost sits on the same header line as its elapsed time. The fixture's cache and
+// reasoning counts are the point of every case here: they are breakdowns OF the two headline counts,
+// so any surface that added them in would report an inflated figure — 22.2k in / 4.0k out instead of
+// The two headline quantities render as `↑12.4k ↓3.1k`; the other three are breakdowns and never
+// reach this header. Summing the input side would give 23.4k, the output side 4.0k.
+const REPORTED: TokenUsageRollup = {
+    inputTokens: 12_400,
+    outputTokens: 3100,
+    cacheReadInputTokens: 9800,
+    cacheCreationInputTokens: 1200,
+    reasoningTokens: 900,
+};
+
+describe("MessageBlock turn-usage figures", () => {
+    afterEach(() => setTheme(DEFAULT_THEME_ID));
+
+    test("a reported rollup renders two figures on the meta line, next to the duration", async () => {
+        setTheme(LIGHT);
+        const setup = await renderAssistant({ durationMs: 2400, turnUsage: REPORTED });
+        try {
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            expect(frame).toContain("2.4s");
+            // The LONG form here, not the rail's arrows: this header runs the full stream width and is
+            // where a reader first meets the notation, so it spells the two quantities out.
+            expect(frame).toContain("12.4k in");
+            expect(frame).toContain("3.1k out");
+            expect(frame).not.toContain(GLYPHS.arrowUp);
+            // Frames carry no color, so the figures' legibility is asserted on the resolved span: the
+            // meta line is muted, and an unresolved foreground would paint white — invisible on this
+            // pure-#ffffff light theme.
+            const fg = spanFg(setup, "12.4k in");
+            expect(fg && parseColor(themes[LIGHT].colors.fgMuted).equals(fg)).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("an absent rollup leaves the line unchanged — the duration alone, no zero and no placeholder", async () => {
+        setTheme(LIGHT);
+        const setup = await renderAssistant({ durationMs: 2400 });
+        try {
+            await setup.renderOnce();
+            // Scoped to the header ROW rather than the whole frame: the body prose below it is free to
+            // contain the word "in", and a whole-frame negative would be asserting against the fixture.
+            const header = setup
+                .captureCharFrame()
+                .split("\n")
+                .find((line) => line.includes("Inflexa"));
+            expect(header).toBeDefined();
+            expect(header).toContain("2.4s");
+            expect(header).not.toContain(" in");
+            expect(header).not.toContain(" out");
+            expect(header).not.toContain("0k");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a measured zero prints as a figure, because the header reads the prop against absence", async () => {
+        // A turn that settled inside one millisecond measured zero. A header that tested the prop for
+        // truth would drop that figure and read as a turn that nobody timed, which is a different fact.
+        const setup = await renderAssistant({ durationMs: 0 });
+        try {
+            await setup.renderOnce();
+            // Scoped to the header ROW, because the body prose below it is free to carry the same text.
+            const header = setup
+                .captureCharFrame()
+                .split("\n")
+                .find((line) => line.includes("Inflexa"));
+            expect(header).toBeDefined();
+            expect(header).toContain("0ms");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("the cache and reasoning counts are folded into neither figure", () => {
+        // Asserted on the formatter rather than the frame: "these two numbers are the reported ones"
+        // is a claim about arithmetic, and a frame containing two numbers cannot pin WHICH numbers.
+        // The header's own rendering is the frame assertions above; this pins what it is handed.
+        expect(formatTokenFigure(REPORTED)).toBe(`${GLYPHS.arrowUp}12.4k ${GLYPHS.arrowDown}3.1k`);
+    });
+});

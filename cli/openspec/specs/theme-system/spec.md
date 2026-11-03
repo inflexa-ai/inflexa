@@ -63,7 +63,7 @@ Every token SHALL be present and non-empty in every built-in theme; partial them
 
 ### Requirement: WCAG AA contrast across the rendered pair matrix
 
-Every (foreground token, background token) pair that a TUI component actually renders SHALL meet WCAG 2.1 AA contrast in every built-in theme that renders it: **≥ 4.5:1** for text, **≥ 3:1** for non-text UI (borders, focus frames, large glyph markers), **≥ 1.2:1** for a diff band against `bg`. The set of rendered pairs (the "pair matrix") SHALL be maintained as data in a contrast test (`src/lib/design_system.contrast.test.ts`) that enumerates every pair × every applicable theme and fails on any violation, with each matrix row carrying a reference to the component that renders it. A component that begins rendering a token on a background not present in the matrix SHALL add that pair to the matrix in the same change.
+Every (foreground token, background token) pair that a TUI component actually renders SHALL meet WCAG 2.1 AA contrast in every built-in theme that renders it: **≥ 4.5:1** for text, **≥ 3:1** for non-text UI (borders, focus frames, large glyph markers), **≥ 1.2:1** for a diff band against `bg`. The set of rendered pairs (the "pair matrix") SHALL be maintained as data in a contrast test (`src/lib/test/design_system.contrast.test.ts`) that enumerates every pair × every applicable theme and fails on any violation, with each matrix row carrying a reference to the component that renders it. A component that begins rendering a token on a background not present in the matrix SHALL add that pair to the matrix in the same change.
 
 The matrix SHALL resolve a background from what is actually painted beneath the glyph, not from the surface the component nominally sits on:
 

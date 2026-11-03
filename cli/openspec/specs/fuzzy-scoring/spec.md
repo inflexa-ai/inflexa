@@ -86,7 +86,7 @@ The contract above SHALL be exercised by a test suite runnable via `bun test`, w
 #### Scenario: bun test runs the contract suite
 
 - **WHEN** `bun test` is run
-- **THEN** the `src/lib/fuzzy.test.ts` suite executes and asserts the scorer scenarios (match, rejection, empty-query, case-insensitivity, contiguity, early-hit) and the ranker scenarios (field-weight ordering, no-match drop, tie order, empty-query passthrough) above
+- **THEN** the `src/lib/test/fuzzy.test.ts` suite executes and asserts the scorer scenarios (match, rejection, empty-query, case-insensitivity, contiguity, early-hit) and the ranker scenarios (field-weight ordering, no-match drop, tie order, empty-query passthrough) above
 
 ### Requirement: A byte-level form of the subsequence scorer
 
