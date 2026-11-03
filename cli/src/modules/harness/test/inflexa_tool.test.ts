@@ -18,6 +18,9 @@ import {
     type SubprocessResult,
 } from "../inflexa_tool.ts";
 import { present } from "../../../lib/present.ts";
+import { runAfter } from "../../../lib/timer.ts";
+import { withoutPrefix } from "../../../lib/text.ts";
+import { countOccurrences } from "../../../test_support/text_shapes.ts";
 
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
 const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
@@ -399,7 +402,7 @@ describe("run_inflexa — the described surface tracks the registry", () => {
             // `reportAgentPolicies` walks from the root, whose own grantKey is the bare
             // program name and carries no policy of its own to describe.
             if (row.grantKey === "inflexa") continue;
-            const path = row.grantKey.replace(/^inflexa /, "");
+            const path = withoutPrefix(row.grantKey, "inflexa ");
             expect(description).toContain(`\`${path}\``);
         }
     });
@@ -556,7 +559,7 @@ describe("spawnInflexa — process bounds", () => {
 
         expect(r.endedBy).toBe("exit");
         expect(r.exitCode).toBe(0);
-        expect(r.stdout.match(/tick/g)?.length).toBe(30);
+        expect(countOccurrences(r.stdout, "tick")).toBe(30);
     });
 
     test("the absolute ceiling still bounds a child that never stops talking", async () => {
@@ -597,7 +600,7 @@ describe("spawnInflexa — process bounds", () => {
 
     test("the caller's abort reports cancel, not timeout and not a plain exit", async () => {
         const controller = new AbortController();
-        setTimeout(() => controller.abort(), 100);
+        runAfter(100, () => controller.abort());
         // Both deadlines armed and neither reached: `endedBy` must name the caller, not a bound.
         const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], controller.signal, {
             timeoutMs: 10_000,

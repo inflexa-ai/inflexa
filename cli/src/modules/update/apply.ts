@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { err, ok, Result, ResultAsync } from "neverthrow";
 
 import { downloadToFile, type DownloadError, type DownloadProgress, type FetchLike } from "../../lib/download.ts";
+import { splitWhitespace } from "../../lib/text.ts";
 import { RELEASE_REPO } from "./latest.ts";
 
 /**
@@ -58,7 +59,7 @@ function releaseBaseUrl(version: string): string {
 function parseSums(body: string): Map<string, string> {
     const sums = new Map<string, string>();
     for (const line of body.split("\n")) {
-        const [digest, name] = line.trim().split(/\s+/);
+        const [digest, name] = splitWhitespace(line.trim());
         if (digest !== undefined && name !== undefined) sums.set(name, digest);
     }
     return sums;

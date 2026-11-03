@@ -6,6 +6,7 @@ import { useRenderer } from "@opentui/solid";
 import { randomUUIDv7 } from "bun";
 
 import { zIndex } from "../../../lib/design_system.ts";
+import { runAfter } from "../../../lib/timer.ts";
 import { theme } from "../../theme.ts";
 import { pushMode, MODE_MODAL, useBindings, KEYS, type LayerConfig } from "../../keymap.ts";
 
@@ -361,7 +362,7 @@ export function DialogOverlay(): JSX.Element {
         const target = savedAppFocus;
         savedAppFocus = null;
         // Defer so the unmounting dialog's cleanup runs first.
-        setTimeout(() => {
+        runAfter(1, () => {
             // A dialog opened during the deferred gap — the close-then-open command chain (the
             // palette closes, then the selected command pushes its own dialog in the same tick).
             // That dialog's initial focus wins; restoring here would steal it 1ms after it landed.
@@ -376,7 +377,7 @@ export function DialogOverlay(): JSX.Element {
             // Verify the renderable is still in the tree before refocusing.
             if (renderer.root.findDescendantById(target.id) === undefined) return;
             target.focus();
-        }, 1);
+        });
     });
 
     // MODE_MODAL: suspend the base-UI keymap while any dialog is open.

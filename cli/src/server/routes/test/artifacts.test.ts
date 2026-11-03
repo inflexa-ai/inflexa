@@ -222,6 +222,20 @@ describe("POST {A}/artifacts/resolve", () => {
         expect(await response.json()).toMatchObject({ error: "validation_error" });
         expect(existsSync(join(root, "presentations"))).toBe(false);
     });
+
+    test("a presentation id needs `pres-` and a non-empty body of ASCII letters, digits, `_`, and `-`", async () => {
+        const root = await seedAnalysis("ana-1");
+
+        for (const presId of ["pres-", "Pres-abc", "pres-a b", "pres-a\n", "pres-a.b", "pres-a/b", "pres-caf\u00e9", "pres-\u{1f600}", "abc"]) {
+            const response = await resolve("ana-1", [{ kind: "svg", presId, markup: "<svg/>" }], true);
+            expect({ presId, status: response.status }).toEqual({ presId, status: 400 });
+            expect(await response.json()).toMatchObject({ error: "validation_error" });
+        }
+        expect(existsSync(join(root, "presentations"))).toBe(false);
+
+        const good = await resolve("ana-1", [{ kind: "svg", presId: "pres-aZ09_-x", markup: "<svg/>" }], true);
+        expect(good.status).toBe(200);
+    });
 });
 
 describe("GET {A}/artifacts", () => {

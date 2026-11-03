@@ -32,6 +32,7 @@ import { pendingAddLines, storeFlightLines, transferLabel, transferReports, type
 import type { TransferReportView as TransferReport } from "../../api/store.ts";
 import { openThread } from "../hooks/thread.ts";
 import { writeClipboard } from "../../lib/clipboard.ts";
+import { isPrintableAscii } from "../../lib/text.ts";
 import type { AgentEffort, AgentName, AgentSelection } from "../../api/machine.ts";
 import type { ServerConnection } from "../../api/server.ts";
 import type { UsageTotals } from "../../api/usage.ts";
@@ -534,7 +535,7 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
         // where the width is never guessed wrong. The label is always an ASCII section name.
         const chars = [...value];
         for (const ch of chars) {
-            if (!/[\x20-\x7e]/.test(ch) && !SINGLE_CELL_GLYPHS.has(ch)) return false;
+            if (!isPrintableAscii(ch) && !SINGLE_CELL_GLYPHS.has(ch)) return false;
         }
         return props.label.length + space.sm + chars.length <= RAIL_CONTENT_WIDTH;
     };

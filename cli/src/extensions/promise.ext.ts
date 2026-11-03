@@ -1,3 +1,5 @@
+import { runAfter } from "../lib/timer.ts";
+
 declare global {
     interface PromiseConstructor {
         /**
@@ -11,7 +13,7 @@ declare global {
 
 Promise.sleep = function (ms: number): Promise<void> {
     return new Promise((resolve) => {
-        setTimeout(resolve, ms);
+        runAfter(ms, resolve);
     });
 };
 

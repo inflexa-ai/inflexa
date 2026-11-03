@@ -8,6 +8,7 @@ import { walkChildEnv } from "../../lib/env.ts";
 import { readError, type FolderEntry, type FolderEntryType, type FolderReadError } from "../../lib/folder_listing.ts";
 import { subsequenceScore, subsequenceScoreBytes } from "../../lib/fuzzy.ts";
 import { present } from "../../lib/present.ts";
+import { runAfter, withinDeadline } from "../../lib/timer.ts";
 import { decodeRecords, ENTRY_KIND, type EntryKindCode, type RecordSink, type WalkOpts } from "./walk_child.ts";
 
 /** The caps of a search cache. A test sets small values to reach each cap on a small tree. */
@@ -528,7 +529,7 @@ function createWalk(
     let holdsSlot = false;
     let killed = false;
     let complete = false;
-    let deadline: ReturnType<typeof setTimeout> | null = null;
+    let stopDeadline: (() => void) | null = null;
 
     const cached: CachedIndex = {
         key,
@@ -597,9 +598,8 @@ function createWalk(
             return;
         }
         child = spawned.value;
-        deadline = setTimeout(cut, limits.walkBudgetMs);
         // A walk must not keep the process alive.
-        deadline.unref();
+        stopDeadline = runAfter(limits.walkBudgetMs, cut, { unref: true });
         void readRecords(child.stdout);
     }
 
@@ -651,8 +651,8 @@ function createWalk(
     }
 
     function disarm(): void {
-        if (deadline !== null) clearTimeout(deadline);
-        deadline = null;
+        stopDeadline?.();
+        stopDeadline = null;
     }
 
     function cut(): void {
@@ -714,7 +714,7 @@ export function createSearchIndexCache(
     const total: EntryTotal = { value: 0 };
     const queue: CachedIndex[] = [];
     let live = 0;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let stopTimer: (() => void) | null = null;
 
     function startWalks(): void {
         while (live < limits.maxWalkChildren) {
@@ -757,20 +757,20 @@ export function createSearchIndexCache(
     }
 
     function arm(): void {
-        if (timer !== null) clearTimeout(timer);
-        timer = null;
+        stopTimer?.();
+        stopTimer = null;
         let earliest = Infinity;
         for (const cached of indexes.values()) earliest = Math.min(earliest, cached.lastUse);
         if (earliest === Infinity) return;
-        timer = setTimeout(
+        // An idle index must not keep the process alive.
+        stopTimer = runAfter(
+            Math.max(0, earliest + limits.ttlMs - now()) + 1,
             () => {
                 sweep();
                 arm();
             },
-            Math.max(0, earliest + limits.ttlMs - now()) + 1,
+            { unref: true },
         );
-        // An idle index must not keep the process alive.
-        timer.unref();
     }
 
     /**
@@ -784,7 +784,7 @@ export function createSearchIndexCache(
         await cached.scopeRead;
         const remaining = cached.startedAt + limits.firstWaitMs - now();
         if (cached.ended || remaining <= 0) return;
-        await raceTimeout(cached.end, remaining);
+        await withinDeadline(cached.end, remaining);
     }
 
     function answer(cached: CachedIndex, query: string, limit: number): SearchResult {
@@ -815,8 +815,8 @@ export function createSearchIndexCache(
     }
 
     function stop(): void {
-        if (timer !== null) clearTimeout(timer);
-        timer = null;
+        stopTimer?.();
+        stopTimer = null;
         // The queue empties first, thus the slot that each kill below frees starts no child.
         queue.length = 0;
         for (const cached of indexes.values()) cached.stop();
@@ -827,17 +827,8 @@ export function createSearchIndexCache(
     return { search, stop };
 }
 
-/** Resolves when `promise` settles or after `ms`, and clears its timer. */
-async function raceTimeout(promise: Promise<void>, ms: number): Promise<void> {
-    let wait: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<void>((resolve) => {
-        wait = setTimeout(resolve, ms);
-    });
-    await Promise.race([promise, timeout]).finally(() => clearTimeout(wait));
-}
-
 /** True when the child of `cached` started within `ms`. `begin` sets the flag while this call waits, thus the read follows the wait in this function. */
 async function startedWithin(cached: CachedIndex, ms: number): Promise<boolean> {
-    await raceTimeout(cached.started, ms);
+    await withinDeadline(cached.started, ms);
     return cached.hasStarted;
 }

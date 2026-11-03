@@ -12,6 +12,7 @@ import { getLogger } from "../../lib/log.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import { describePausedWait } from "../../lib/pause_words.ts";
+import { runEvery } from "../../lib/timer.ts";
 import { formatTokenFigure, formatTokenFigureLabelled } from "../../lib/usage_format.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import type { RunStepView } from "../components/run_block.tsx";
@@ -458,7 +459,7 @@ export function runLabelOf(run: Pick<RunSummary, "planTitle" | "runId">): string
 
 /** A short, human-scannable tail of a uuid (dashes stripped) — the run tag the run-detail dialog + sidebar progress embed show. */
 export function idTail(id: string): string {
-    return id.replace(/-/g, "").slice(-6);
+    return id.replaceAll("-", "").slice(-6);
 }
 
 /**
@@ -474,7 +475,7 @@ export function idTail(id: string): string {
  * it. Two surfaces spelling one handle two ways is a difference a reader tries to interpret.
  */
 export function shortSessionId(threadId: string): string {
-    return `S${GLYPHS.middot}${threadId.replace(/-/g, "").slice(0, 4)}`;
+    return `S${GLYPHS.middot}${threadId.replaceAll("-", "").slice(0, 4)}`;
 }
 
 /**
@@ -883,7 +884,7 @@ export type WatchSeams = {
      * stream, thus its pause prompt docks. `threadId` is `null` before a thread is bound. Real: {@link pollPausedWork}.
      */
     readonly pollPaused: (analysisId: string, threadId: string | null) => Promise<void>;
-    /** Arm a repeating timer; returns its disarm. Real: wraps `setInterval`/`clearInterval`. */
+    /** Arm a repeating timer; returns its disarm. Real: `runEvery`. */
     readonly arm: (fn: () => void, ms: number) => () => void;
 };
 
@@ -918,10 +919,7 @@ const realWatchSeams: WatchSeams = {
     checkServer: () => checkServer(),
     pollThread: (analysisId, threadId) => pollOpenThread(analysisId, threadId),
     pollPaused: (analysisId, threadId) => pollPausedWork(analysisId, threadId),
-    arm: (fn, ms) => {
-        const handle = setInterval(fn, ms);
-        return () => clearInterval(handle);
-    },
+    arm: (fn, ms) => runEvery(ms, fn),
 };
 
 const [pollTick, setPollTick] = createSignal(0);

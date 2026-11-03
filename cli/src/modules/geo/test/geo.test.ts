@@ -76,6 +76,18 @@ describe("parseGseAccession", () => {
         expect(parseGseAccession("12345")._unsafeUnwrapErr().type).toBe("invalid_accession");
         expect(parseGseAccession("GSE")._unsafeUnwrapErr().type).toBe("invalid_accession");
     });
+
+    test("rejects a sign, a separator, a non-ASCII digit, and inner white space after the prefix", () => {
+        for (const bad of ["GSE-1", "GSE+1", "GSE1.5", "GSE1e3", "GSE 1", "GSE1 2", "GSE\uff11\uff12", "GSE\u0661", "GSEGSE1", "GSE1\n2"]) {
+            const error = parseGseAccession(bad)._unsafeUnwrapErr();
+            expect(error).toEqual({ type: "invalid_accession", input: bad });
+        }
+    });
+
+    test("keeps the raw input in the error and trims a line break around a good id", () => {
+        expect(parseGseAccession("\ngse7\n")._unsafeUnwrap()).toBe("GSE7");
+        expect(parseGseAccession("  gse-7 ")._unsafeUnwrapErr()).toEqual({ type: "invalid_accession", input: "  gse-7 " });
+    });
 });
 
 describe("geoSeriesUrls", () => {
@@ -142,6 +154,24 @@ describe("parseAutoindex", () => {
         expect(parseAutoindex(html, "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE12nnn/GSE12345/suppl/")).toEqual(["GSE1 counts,final.txt", "p&q.tsv"]);
     });
 
+    test("decodes each entity in any letter case, the numeric apostrophe forms, and never twice", () => {
+        const base = "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE12nnn/GSE12345/suppl/";
+        const html = [
+            `<a href="a&LT;b&Gt;c.txt">1</a>`,
+            `<a href="q&QUOT;r.txt">2</a>`,
+            `<a href="s&#39;t&#039;u&#x27;v&#X0027;w.txt">3</a>`,
+            `<a href="x&AMP;y.txt">4</a>`,
+            `<a href="m&amp;lt;n.txt">5</a>`,
+            `<a href="k&amp;amp;l.txt">6</a>`,
+        ].join("");
+        expect(parseAutoindex(html, base)).toEqual(["a<b>c.txt", 'q"r.txt', "s't'u'v'w.txt", "x&y.txt", "m&lt;n.txt", "k&amp;l.txt"]);
+    });
+
+    test("reads an href with single quotes, upper case, and spaces around the equals sign", () => {
+        const base = "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE12nnn/GSE12345/suppl/";
+        expect(parseAutoindex(`<A HREF = 'one.txt'><a href\n=\t"two.txt"><a href=three.txt>`, base)).toEqual(["one.txt", "two.txt"]);
+    });
+
     test("refuses traversal, both plain and percent-encoded", () => {
         const html = `<a href="a/../../../../etc/passwd">plain</a>
             <a href="%2e%2e%2f%2e%2e%2fetc%2fpasswd">encoded</a>
@@ -184,13 +214,21 @@ function renderIndex(dirPath: string, files: readonly string[]): string {
 <a href="https://www.hhs.gov/vulnerability-disclosure-policy/index.html">HHS Vulnerability Disclosure</a>`;
 }
 
+/** The path with its last directory segment cut off: `/a/b/` gives `/a/`. A path with no non-empty last segment stays as it is. */
+function parentDirectory(pathname: string): string {
+    if (!pathname.endsWith("/")) return pathname;
+    const body = pathname.slice(0, -1);
+    const lastSlash = body.lastIndexOf("/");
+    return body.slice(lastSlash + 1) === "" ? pathname : body.slice(0, lastSlash + 1);
+}
+
 /** A fetch stub serving an Apache autoindex per directory url; any other url is a 404. */
 function serveDirs(dirs: Record<string, readonly string[]>): FetchLike {
     return async (input) => {
         const url = String(input);
         const files = dirs[url];
         if (files === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
-        return new Response(renderIndex(new URL(url).pathname.replace(/[^/]+\/$/, ""), files));
+        return new Response(renderIndex(parentDirectory(new URL(url).pathname), files));
     };
 }
 
@@ -510,6 +548,18 @@ describe("parseByteSize", () => {
 
     test("rejects a malformed or non-positive size", () => {
         for (const bad of ["", "abc", "10PB", "-5GB", "0", "1..5GB", "5 GB extra"]) expect(parseByteSize(bad)).toBeUndefined();
+    });
+
+    test("rejects a number with no digit before or after its point, a second point, and inner unit white space", () => {
+        for (const bad of [".5GB", "1.GB", "1 .5GB", "1.5.2GB", "1 G B", "1.5 .GB", "GB", " ", "1\uff11GB", "1\u0661", "1\u212Ab"]) {
+            expect(parseByteSize(bad)).toBeUndefined();
+        }
+    });
+
+    test("trims Unicode white space around the number and between it and the unit", () => {
+        expect(parseByteSize("\u00a01\u3000KB\ufeff")).toBe(1024);
+        expect(parseByteSize("2\n\tmb\n")).toBe(2 * 1024 ** 2);
+        expect(parseByteSize("1.50KB")).toBe(1536);
     });
 });
 

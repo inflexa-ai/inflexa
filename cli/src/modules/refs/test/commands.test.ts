@@ -17,6 +17,7 @@ import { z } from "zod";
 // which only exists once the extension loader has run.
 import "../../../extensions/index.ts";
 import { env } from "../../../lib/env.ts";
+import { collapseWhitespace } from "../../../lib/text.ts";
 import { fakeFetch } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
@@ -47,6 +48,7 @@ import {
     type ReferenceProvisionError,
     type ReferenceStoreInspection,
 } from "../store.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // Loose objects keep each key that the schema does not name, so `not.toHaveProperty` still sees an absent key as absent.
 const listedDatasetSchema = z.looseObject({
@@ -418,7 +420,7 @@ describe("reference json output", () => {
         const { stdout, stderr, exitCode } = await capture(() => runRefsList({ json: true, source: twoDatasetSource }));
         expect(stderr).toBe("");
         expect(exitCode ?? 0).toBe(0);
-        const document = refsListSchema.parse(JSON.parse(stdout));
+        const document = parsedJson(stdout, refsListSchema);
         expect(document.datasets.map((entry) => entry.id)).toEqual(["extra", "demo"]);
         const [extra, demo] = document.datasets;
         expect(extra.state).toBe("missing");
@@ -484,7 +486,7 @@ describe("reference json output", () => {
         const second = await capture(() => runRefsList({ json: true, source: singleFileSource }));
         expect(first.stdout).toBe(second.stdout);
         expect(first.stderr).toBe("");
-        expect(JSON.parse(first.stdout)).toMatchObject({ exists: false });
+        expect(parsedJson(first.stdout, z.unknown())).toMatchObject({ exists: false });
         // Passive inspection must never materialize the store.
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
     });
@@ -519,7 +521,7 @@ describe("reference json output", () => {
         expect(exitCode).toBe(1);
         // The damaged states live in the document, so stderr stays reserved for genuine failures.
         expect(stderr).toBe("");
-        expect(JSON.parse(stdout)).toEqual({
+        expect(parsedJson(stdout, z.unknown())).toEqual({
             datasets: [{ datasetId: "demo", version: "1", state: "modified", files: [{ path: "file", state: "modified" }] }],
         });
     });
@@ -529,7 +531,7 @@ describe("reference json output", () => {
         const { stdout, stderr, exitCode } = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
         expect(exitCode ?? 0).toBe(0);
         expect(stderr).toBe("");
-        expect(JSON.parse(stdout)).toEqual({
+        expect(parsedJson(stdout, z.unknown())).toEqual({
             datasets: [{ datasetId: "demo", version: "1", state: "valid", files: [{ path: "file", state: "valid" }] }],
         });
     });
@@ -636,7 +638,7 @@ describe("reference selection picker", () => {
     test("the on-demand note names both routes to a later download", () => {
         // Asserted against the copy rather than one layout of it: the prose is wrapped to a width, so
         // any phrase longer than a few words is split by a line break in some rendering of it.
-        const prose = ON_DEMAND_REFERENCE_NOTE.replace(/\s+/g, " ");
+        const prose = collapseWhitespace(ON_DEMAND_REFERENCE_NOTE);
         // The command keeps its own unwrapped line in every layout, so this one is asserted verbatim.
         expect(ON_DEMAND_REFERENCE_NOTE).toContain("  inflexa refs download <id>");
         // The agent route is only honest because `refs download` is registered `approval`, so the
@@ -664,7 +666,7 @@ describe("reference selection picker", () => {
         // Only the command block is indented, so every indented line is one of its wrapped pieces.
         const indented = wrapped.filter((line) => line.startsWith("  "));
         expect(indented.length).toBeGreaterThan(1);
-        expect(indented.join(" ").replace(/\s+/g, " ").trim()).toBe("inflexa refs download <id>");
+        expect(collapseWhitespace(indented.join(" ")).trim()).toBe("inflexa refs download <id>");
         for (const line of indented) expect(line.length).toBeLessThanOrEqual(20);
         // Wrapping splits on whitespace runs, so no line is left blank or double-spaced by the split.
         expect(wrapped.every((line) => !line.includes("   "))).toBe(true);

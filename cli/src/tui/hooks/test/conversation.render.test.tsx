@@ -41,7 +41,7 @@ describe("streamed assistant text survives finalization (rendered)", () => {
                 await setup.renderOnce();
                 const f = setup.captureCharFrame();
                 if (f.includes(needle) || Date.now() - start > timeoutMs) return f;
-                await new Promise((r) => setTimeout(r, 10));
+                await Promise.sleep(10);
             }
         };
         try {

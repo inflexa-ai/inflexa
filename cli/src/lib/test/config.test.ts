@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
+import { z } from "zod";
 
 import { ensureRuntime, readConfig, resolveRuntime, writeConfig, type Config } from "../config.ts";
 import { ContainerRuntimeError, runtimes, type ContainerRuntime } from "../container.ts";
@@ -10,6 +11,7 @@ import { DEFAULT_THEME_ID } from "../design_system.ts";
 import { env } from "../env.ts";
 import { unknownRecordSchema } from "../json_record.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
+import { parsedJson } from "../../test_support/json.ts";
 
 // Drives config through the public readConfig/writeConfig surface against the sandboxed
 // env.configPath (set by the test preload), so it exercises the real fail-closed + self-healing
@@ -146,7 +148,7 @@ describe("writeConfig — canonical key order", () => {
     test("declared keys land in schema order; undeclared ones follow, sorted", () => {
         // Pins WHICH order is canonical — a stable-but-arbitrary order would satisfy the test above just as
         // well, and the schema order is what makes a hand-edited config readable.
-        const document = unknownRecordSchema.parse(JSON.parse(writeAndRead(values)));
+        const document = parsedJson(writeAndRead(values), unknownRecordSchema);
         const keysOf = (key: string): string[] => Object.keys(unknownRecordSchema.parse(document[key]));
 
         expect(Object.keys(document)).toEqual(["telemetry", "theme", "runtime", "keybinds", "leaderTimeout", "postgres", "harness", "models", "embedding"]);
@@ -165,7 +167,7 @@ describe("writeConfig — canonical key order", () => {
         writeConfig({ telemetry: true, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } })._unsafeUnwrap();
         const appended = writeAndRead({ ...readConfig(), harness: { skillsDir: "/skills" } });
 
-        expect(Object.keys(unknownRecordSchema.parse(JSON.parse(appended)))).toEqual(["telemetry", "theme", "leaderTimeout", "harness", "embedding"]);
+        expect(Object.keys(parsedJson(appended, unknownRecordSchema))).toEqual(["telemetry", "theme", "leaderTimeout", "harness", "embedding"]);
     });
 });
 
@@ -218,7 +220,7 @@ describe("resolveRuntime", () => {
         writeRawConfig(JSON.stringify({ telemetry: false }));
         const result = await resolveRuntime(probeReady(["podman"]));
         expect(result._unsafeUnwrap()).toEqual({ runtime: runtimes.podman, detected: true });
-        expect(JSON.parse(readFileSync(env.configPath, "utf8"))).not.toHaveProperty("runtime");
+        expect(parsedJson(readFileSync(env.configPath, "utf8"), z.unknown())).not.toHaveProperty("runtime");
     });
 
     test("an explicit selection is probed alone, and its failure names `inflexa setup`", async () => {

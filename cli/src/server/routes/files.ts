@@ -8,6 +8,7 @@ import { err, ok, ResultAsync, type Result } from "neverthrow";
 
 import { errnoCode } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
+import { isPrintableAscii, withoutPrefix } from "../../lib/text.ts";
 import { classifyRealPath, type ReadRoots } from "../../modules/analysis/boundary.ts";
 import { apiError, type ServerEnv } from "../http.ts";
 
@@ -270,9 +271,12 @@ function matchesNoneMatch(header: string | undefined, etag: string): boolean {
     if (header === undefined) return false;
     return header.split(",").some((item) => {
         const tag = item.trim();
-        return tag === "*" || tag.replace(/^W\//, "") === etag;
+        return tag === "*" || withoutPrefix(tag, "W/") === etag;
     });
 }
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads the first and the last number of one `bytes=<first>-<last>` range of an HTTP `Range` header, with the unit in any letter case and each number empty or ASCII digits. A string form is exact (`trim`, lowercase, `startsWith("bytes=")`, and a `split("-")` into exactly two parts that are each empty or ASCII digits), but it is longer than the pattern.
+const RANGE_HEADER = /^bytes=(\d*)-(\d*)$/i;
 
 /**
  * The range of a `Range` header over a file of `size` bytes. The forms are `bytes=<first>-<last>`, `bytes=<first>-`,
@@ -280,7 +284,7 @@ function matchesNoneMatch(header: string | undefined, etag: string): boolean {
  * a bad form are `none`, thus the route gives the full file.
  */
 function parseRange(header: string | undefined, size: number): RangeRequest {
-    const match = header === undefined ? null : /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
+    const match = header === undefined ? null : RANGE_HEADER.exec(header.trim());
     if (match === null) return "none";
     const [, first = "", last = ""] = match;
     if (first === "") {
@@ -296,7 +300,7 @@ function parseRange(header: string | undefined, size: number): RangeRequest {
 
 /** The `Content-Disposition` of a download: an ASCII `filename` for an old client and the exact name in `filename*`. */
 function attachment(name: string): string {
-    const ascii = name.replace(/[^\x20-\x7e]|["\\]/gu, "_");
-    const encoded = encodeURIComponent(name).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+    const ascii = [...name].map((char) => (isPrintableAscii(char) && char !== '"' && char !== "\\" ? char : "_")).join("");
+    const encoded = [...encodeURIComponent(name)].map((char) => ("'()*".includes(char) ? `%${char.charCodeAt(0).toString(16).toUpperCase()}` : char)).join("");
     return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }

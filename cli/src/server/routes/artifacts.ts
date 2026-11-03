@@ -24,8 +24,15 @@ import type { OpenTarget } from "../../types/session.ts";
 import type { ServerBoot } from "../boot.ts";
 import { apiError, filterValue, internalError, listEnvelope, parsePage, readBody, requireRuntime, type PoolRuntime, type ServerEnv } from "../http.ts";
 
+const PRES_ID_BODY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+
+function isPresId(value: string): boolean {
+    const body = value.slice("pres-".length);
+    return value.startsWith("pres-") && body !== "" && [...body].every((char) => PRES_ID_BODY_CHARS.includes(char));
+}
+
 /** The harness mints each presentation id as `pres-` and a hex digest. The id names a file in the workspace, thus nothing else passes. */
-const presId = z.string().regex(/^pres-[A-Za-z0-9_-]+$/, "A presentation id is `pres-` and a digest.");
+const presId = z.string().refine(isPresId, "A presentation id is `pres-` and a digest.");
 
 const openTarget = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("workspace-file"), path: z.string() }),

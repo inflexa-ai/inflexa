@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { err, ok, type Result } from "neverthrow";
 
 import { sha256File } from "./hash.ts";
+import { runAfter } from "./timer.ts";
 
 /** A fire-and-forget progress notification for one single-file download. */
 export type DownloadProgress =
@@ -123,13 +124,16 @@ export function createLivenessWatch(windowMs: number = LIVENESS_WINDOW_MS): Live
     const controller = new AbortController();
     let fired = false;
     let closed = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stop: (() => void) | undefined;
     const arm = (): void => {
-        timer = setTimeout(() => {
-            fired = true;
-            controller.abort();
-        }, windowMs);
-        timer.unref();
+        stop = runAfter(
+            windowMs,
+            () => {
+                fired = true;
+                controller.abort();
+            },
+            { unref: true },
+        );
     };
     arm();
     return {
@@ -139,14 +143,14 @@ export function createLivenessWatch(windowMs: number = LIVENESS_WINDOW_MS): Live
         // a late chunk from a socket that still drains must not present a dead transfer as a live one.
         alive: () => {
             if (closed || fired) return;
-            if (timer !== undefined) clearTimeout(timer);
+            stop?.();
             arm();
         },
         expired: () => fired,
         close: () => {
             closed = true;
-            if (timer !== undefined) clearTimeout(timer);
-            timer = undefined;
+            stop?.();
+            stop = undefined;
         },
     };
 }

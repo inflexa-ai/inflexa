@@ -656,7 +656,7 @@ describe("the interrupt arm window", () => {
     test("the armed window lapses to disarmed when its timer elapses", async () => {
         armInterrupt(1); // a 1ms window (the override) instead of the 5s production default
         expect(interruptArmed()).toBe(true);
-        await new Promise((r) => setTimeout(r, 10));
+        await Promise.sleep(10);
         // The `.unref`'d timer still fires while the loop is alive, flipping the window closed on its own.
         expect(interruptArmed()).toBe(false);
     });

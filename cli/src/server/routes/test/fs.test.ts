@@ -35,6 +35,7 @@ import { inProcessSpawner } from "../../../test_support/walk_spawner.ts";
 import type { ServerBoot } from "../../boot.ts";
 import type { PoolRuntime } from "../../http.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "../fs.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. A test reads a body as `unknown`.
 // It asserts the body with `toEqual` or `toHaveProperty`, or it parses a schema below that names only the fields that
@@ -1089,7 +1090,7 @@ describe("GET /api/v1/fs/preview", () => {
             const response = await preview(join(root, "a.csv"), app);
             expect(response.status).toBe(403);
             const text = await response.text();
-            expect(JSON.parse(text)).toMatchObject({ error: "forbidden" });
+            expect(parsedJson(text, z.unknown())).toMatchObject({ error: "forbidden" });
             expect(text).not.toContain("TOP-SECRET");
         });
 

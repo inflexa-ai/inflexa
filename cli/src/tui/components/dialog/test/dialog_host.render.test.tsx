@@ -43,7 +43,7 @@ function Harness(props: { onTa?: (ta: TextareaRenderable) => void }) {
 // timeoutMs (20ms) before flushing it as a standalone "escape" key, so settle on a real clock.
 function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
     return async () => {
-        await new Promise((r) => setTimeout(r, 35));
+        await Promise.sleep(35);
         await setup.renderOnce();
         await setup.renderOnce();
     };
@@ -509,7 +509,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
             setup.mockInput.pressEscape();
             await settle();
             // Restore is deferred a tick past unmount cleanup.
-            await new Promise((r) => setTimeout(r, 10));
+            await Promise.sleep(10);
             await setup.renderOnce();
             expect(ta.focused).toBe(true);
         } finally {

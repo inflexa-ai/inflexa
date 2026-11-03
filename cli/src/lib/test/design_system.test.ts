@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_THEME_ID, MARKERS, themeIds, themes } from "../design_system.ts";
+import { isHexColor } from "../../test_support/text_shapes.ts";
 
 // The color roles every theme must define — anchored to the default theme so the invariant is
 // "all themes agree on the same role set" without re-listing the ThemeColors type at runtime.
@@ -26,7 +27,7 @@ describe("theme registry", () => {
     test("every color value is a 6-digit hex string", () => {
         for (const id of themeIds) {
             for (const value of Object.values(themes[id].colors)) {
-                expect(value).toMatch(/^#[0-9a-fA-F]{6}$/);
+                expect(isHexColor(value)).toBe(true);
             }
         }
     });

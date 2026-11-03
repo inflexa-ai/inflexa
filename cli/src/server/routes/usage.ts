@@ -104,7 +104,7 @@ function threadUsage(c: Context, analysisId: string, threadId: string, by: Usage
 
 /** A run id with its dashes removed: the space that a trailing abbreviation matches in. */
 function bareId(id: string): string {
-    return id.replace(/-/g, "");
+    return id.replaceAll("-", "");
 }
 
 /**

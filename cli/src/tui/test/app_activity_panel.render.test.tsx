@@ -127,7 +127,7 @@ async function mountApp(size = { width: 100, height: 26 }) {
     const setup = await testRender(() => <App workingDir={dir} analysis={analysis} />, size);
     const settle = async (): Promise<string> => {
         for (let i = 0; i < 3; i++) {
-            await new Promise((r) => setTimeout(r, 20));
+            await Promise.sleep(20);
             await setup.renderOnce();
         }
         return setup.captureCharFrame();

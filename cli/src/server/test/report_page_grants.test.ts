@@ -5,6 +5,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 
 import { createPageGrantStore, createSessionPagePublisherFactory, PAGE_GRANT_LIFETIME_MS, PAGE_GRANT_LIMIT } from "../report_page_grants.ts";
 import { present } from "../../lib/present.ts";
+import { isLowerHex } from "../../test_support/text_shapes.ts";
 
 /** A store on a clock that a test moves. */
 function storeWithClock(): { store: ReturnType<typeof createPageGrantStore>; advance: (ms: number) => void } {
@@ -16,7 +17,7 @@ describe("the page grant store", () => {
     test("a token is 32 random bytes in hex, and each mint gives a new one", () => {
         const { store } = storeWithClock();
         const first = store.mint("a1", "t1");
-        expect(first.token).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex(first.token, 64)).toBe(true);
         expect(first.expiresAtMs).toBe(1_000_000 + PAGE_GRANT_LIFETIME_MS);
         expect(store.mint("a1", "t1").token).not.toBe(first.token);
     });

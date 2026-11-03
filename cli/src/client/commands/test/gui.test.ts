@@ -4,6 +4,7 @@ import { err, ok } from "neverthrow";
 import { freshDb } from "../../../test_support/db.ts";
 import { startTestServer, type TestServer } from "../../../test_support/server.ts";
 import { gui, type GuiOpts } from "../gui.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 let server: TestServer;
 
@@ -37,7 +38,7 @@ describe("inflexa gui", () => {
         expect(url.origin).toBe(server.baseUrl);
         expect(url.pathname).toBe("/api/v1/session");
         expect(url.searchParams.get("next")).toBe("/gui/");
-        expect(url.searchParams.get("nonce")).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex(url.searchParams.get("nonce") ?? "", 64)).toBe(true);
         expect(lines[1]).toContain("one time");
         expect(lines[1]).toContain("60 s");
         expect(opened).toEqual([link]);

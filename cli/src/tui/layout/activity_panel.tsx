@@ -4,6 +4,7 @@ import { useRenderer } from "@opentui/solid";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space, stroke } from "../../lib/design_system.ts";
+import { runEvery } from "../../lib/timer.ts";
 import { Fg } from "../components/emphasis.tsx";
 import type { ActiveProfileProgress, ActiveRunProgress, PanelSubject } from "../hooks/sidebar_live.ts";
 import type { RunStepView } from "../components/run_block.tsx";
@@ -216,8 +217,7 @@ export function ActivityPanel(props: ActivityPanelProps) {
     // the subject leaving, and the component being disposed.
     createEffect(() => {
         if (!showing()) return;
-        const timer = setInterval(() => setTick((t) => t + 1), ELAPSED_TICK_MS);
-        onCleanup(() => clearInterval(timer));
+        onCleanup(runEvery(ELAPSED_TICK_MS, () => setTick((t) => t + 1)));
     });
 
     /** Relative age of an ISO instant, recomputed on every clock tick — `null` when absent or unparseable. */

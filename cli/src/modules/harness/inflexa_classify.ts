@@ -2,6 +2,7 @@ import { type Command, CommanderError } from "commander";
 
 import { type AgentPolicy, getAgentPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
+import { hasWhitespace } from "../../lib/text.ts";
 
 /**
  * The verdict for a single `inflexa` argv, decided WITHOUT running any action.
@@ -107,7 +108,7 @@ function tokenizeArgvString(input: string): string[] {
  */
 export function toEffectiveArgv(argv: string[]): string[] {
     const [only, second] = argv;
-    return only !== undefined && second === undefined && /\s/.test(only) ? tokenizeArgvString(only) : argv;
+    return only !== undefined && second === undefined && hasWhitespace(only) ? tokenizeArgvString(only) : argv;
 }
 
 /**

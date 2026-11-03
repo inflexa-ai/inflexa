@@ -1,11 +1,24 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { exitIndicatorFrame, startExitIndicator } from "../shutdown.ts";
+import { isAsciiDigits } from "../text.ts";
 
 // The indicator's grace period is a module constant (500ms). These tests exercise the real timers
 // rather than injecting a clock: the whole contract is "stay silent unless the drain is genuinely
 // slow", and a fake clock would test the injection instead of the behaviour that matters.
 const PAST_GRACE_MS = 640;
+
+const BRAILLE_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** True when `text` holds a parenthesized age in whole seconds, such as `(16s)`. */
+function hasAgeInSeconds(text: string): boolean {
+    for (let open = text.indexOf("("); open !== -1; open = text.indexOf("(", open + 1)) {
+        let end = open + 1;
+        while (isAsciiDigits(text.charAt(end))) end++;
+        if (end > open + 1 && text.startsWith("s)", end)) return true;
+    }
+    return false;
+}
 
 const realIsTTY = process.stderr.isTTY;
 const realColumns = process.stderr.columns;
@@ -24,10 +37,6 @@ function captureStderr(isTTY: boolean): string[] {
     return frames;
 }
 
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 afterEach(() => {
     process.stderr.isTTY = realIsTTY;
     process.stderr.columns = realColumns;
@@ -38,7 +47,7 @@ describe("startExitIndicator", () => {
     test("writes nothing when stderr is not a TTY, however long the drain runs", async () => {
         const frames = captureStderr(false);
         const stop = startExitIndicator();
-        await sleep(PAST_GRACE_MS);
+        await Promise.sleep(PAST_GRACE_MS);
         stop();
         expect(frames).toEqual([]);
     });
@@ -52,20 +61,20 @@ describe("startExitIndicator", () => {
     test("draws a spinner frame once the drain outlives the grace period", async () => {
         const frames = captureStderr(true);
         const stop = startExitIndicator();
-        await sleep(PAST_GRACE_MS);
+        await Promise.sleep(PAST_GRACE_MS);
         stop();
 
         const drawn = frames.join("");
         expect(drawn).toContain("Exiting");
-        expect(drawn).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+        expect(BRAILLE_SPINNER_FRAMES.some((frame) => drawn.includes(frame))).toBe(true);
         // The age is what tells the reader the process is alive rather than wedged.
-        expect(drawn).toMatch(/\(\d+s\)/);
+        expect(hasAgeInSeconds(drawn)).toBe(true);
     });
 
     test("erases its line on stop, so the shell prompt lands on a clean row", async () => {
         const frames = captureStderr(true);
         const stop = startExitIndicator();
-        await sleep(PAST_GRACE_MS);
+        await Promise.sleep(PAST_GRACE_MS);
         stop();
         expect(frames.at(-1)).toBe("\r\x1b[2K");
     });
@@ -78,7 +87,7 @@ describe("startExitIndicator", () => {
         };
 
         const stop = startExitIndicator();
-        await sleep(PAST_GRACE_MS);
+        await Promise.sleep(PAST_GRACE_MS);
         expect(() => stop()).not.toThrow();
     });
 
@@ -88,7 +97,7 @@ describe("startExitIndicator", () => {
         // live path is proven to consult the width rather than merely happening to fit.
         process.stderr.columns = 12;
         const stop = startExitIndicator();
-        await sleep(PAST_GRACE_MS);
+        await Promise.sleep(PAST_GRACE_MS);
         stop();
 
         const drawn = frames.map((f) => f.replace("\r\x1b[2K", "")).filter((f) => f.length > 0);

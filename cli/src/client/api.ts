@@ -1,10 +1,12 @@
-import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, ResultAsync, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { apiErrorSchema, type ApiError } from "../api/common.ts";
 import type { ServerDiscovery } from "../api/server.ts";
+import type { JsonParseError } from "../extensions/json.ext.ts";
 import { env } from "../lib/env.ts";
 import { errnoCode, readFileResult, type FsError } from "../lib/fs.ts";
+import { withoutPrefix, withoutSuffix } from "../lib/text.ts";
 
 /** Where a client sends its requests, and the bearer token that it sends with each one. */
 export type ServerEndpoint = {
@@ -210,14 +212,14 @@ export async function* readSseFrames<T>(body: ReadableStream<Uint8Array>, baseUr
             if (chunk.value.done) return;
             buffer += decoder.decode(chunk.value.value, { stream: true });
             for (let newline = buffer.indexOf("\n"); newline !== -1; newline = buffer.indexOf("\n")) {
-                const line = buffer.slice(0, newline).replace(/\r$/, "");
+                const line = withoutSuffix(buffer.slice(0, newline), "\r");
                 buffer = buffer.slice(newline + 1);
                 if (line === "") {
                     // typecheck-disable-next-line must-use-result -- a yielded Result is consumed by the `for await` of the caller, which the rule cannot follow
                     if (data.length > 0) yield parseFrame<T>(data.join("\n"));
                     data = [];
                 } else if (line.startsWith("data:")) {
-                    data.push(line.slice("data:".length).replace(/^ /, ""));
+                    data.push(withoutPrefix(line.slice("data:".length), " "));
                 }
             }
         }
@@ -265,10 +267,9 @@ function connectionError(baseUrl: string, signal: AbortSignal | undefined, cause
 }
 
 /** `unknown`: the body is external input until a caller gives it a type. */
-const parseJson = Result.fromThrowable(
-    (text: string): unknown => JSON.parse(text),
-    (cause) => cause,
-);
+function parseJson(text: string): Result<unknown, JsonParseError> {
+    return JSON.parseResult(text, z.unknown());
+}
 
 /**
  * The one place where the client trusts the shape of a success body or an SSE frame, and gives it the type `T`

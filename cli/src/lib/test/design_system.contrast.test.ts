@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { contrast } from "../../test_support/contrast.ts";
 import { themeIds, themes, type Theme, type ThemeColors, type ThemeSyntax } from "../design_system.ts";
+import { isHexColor } from "../../test_support/text_shapes.ts";
 
 /**
  * The rendered contrast matrix — the executable form of `docs/color_contrast_audit.md` and the
@@ -239,8 +240,8 @@ describe("WCAG AA contrast across the rendered pair matrix", () => {
         for (const id of themeIds) {
             const theme = themes[id];
             for (const s of SURFACES) {
-                expect(s.fg(theme)).toMatch(/^#[0-9a-fA-F]{6}$/);
-                for (const role of s.on) expect(theme.colors[role]).toMatch(/^#[0-9a-fA-F]{6}$/);
+                expect(isHexColor(s.fg(theme))).toBe(true);
+                for (const role of s.on) expect(isHexColor(theme.colors[role])).toBe(true);
             }
         }
     });

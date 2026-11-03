@@ -13,6 +13,7 @@ import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dia
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { ThemePicker } from "../commands.tsx";
 import { present } from "../../lib/present.ts";
+import { parsedJson } from "../../test_support/json.ts";
 
 // The preview contract, driven through the REAL picker, dialog host and keyboard bus — the only place
 // it is observable, because preview/revert live entirely in the gap between the active theme signal and
@@ -38,7 +39,7 @@ const persistedConfigSchema = z.looseObject({ theme: z.string().optional() });
 
 /** The theme id as it was actually written to disk — the ground truth for "persisted". */
 function persistedTheme(): string | undefined {
-    return persistedConfigSchema.parse(JSON.parse(readFileSync(env.configPath, "utf8"))).theme;
+    return parsedJson(readFileSync(env.configPath, "utf8"), persistedConfigSchema).theme;
 }
 
 /** A workspace stub: the picker only ever reaches for `closeDialog`, and records it. */
@@ -63,7 +64,7 @@ type Setup = Awaited<ReturnType<typeof testRender>>;
 // A lone ESC byte is an ambiguous escape-sequence prefix (opentui's parser holds it ~20ms before
 // flushing it as a standalone key), so esc only arrives after a real-clock wait.
 async function settle(setup: Setup): Promise<void> {
-    await new Promise((r) => setTimeout(r, 35));
+    await Promise.sleep(35);
     await setup.renderOnce();
     await setup.renderOnce();
 }

@@ -9,9 +9,25 @@ import { asStr256 } from "../../lib/types.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { startTestServer } from "../../test_support/server.ts";
+import { isAsciiDigits } from "../../lib/text.ts";
 
 // e2e of the commander registry surface — help text and the error/exit-code contract. No DB needed:
 // --help exits before any action, and unknown option/command errors during parse.
+/** The leading `N.N.N` of `text`: three runs of ASCII digits joined by points. It is the empty text when `text` does not start so. */
+function versionPrefix(text: string): string {
+    let end = 0;
+    for (let part = 0; part < 3; part++) {
+        if (part > 0) {
+            if (text.charAt(end) !== ".") return "";
+            end++;
+        }
+        const start = end;
+        while (isAsciiDigits(text.charAt(end))) end++;
+        if (end === start) return "";
+    }
+    return text.slice(0, end);
+}
+
 describe("inflexa help & usage (e2e)", () => {
     test("--help exits 0 and lists the registered commands", () => {
         const result = runCli(["--help"]);
@@ -103,7 +119,7 @@ describe("inflexa help & usage (e2e)", () => {
     test("bare --version prints the CLI version and exits 0", () => {
         const result = runCli(["--version"]);
         expect(result.exitCode).toBe(0);
-        expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+        expect(versionPrefix(result.stdout.trim())).not.toBe("");
     });
 
     test("`sandbox pull` routes to its own handler, not the root --version", () => {
@@ -115,7 +131,8 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("too many arguments");
         // The root `--version` handler did NOT fire (it would print just the version).
-        expect(result.stdout.trim()).not.toMatch(/^\d+\.\d+\.\d+$/);
+        const printed = result.stdout.trim();
+        expect(printed !== "" && versionPrefix(printed) === printed).toBe(false);
     });
 
     // Regression for the reverted `enablePositionalOptions()`: it made a root-style flag

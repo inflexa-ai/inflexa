@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 
+import { runAfter } from "../../lib/timer.ts";
 import type { Notice } from "../theme.ts";
 
 // The transient toast feedback channel, held here (not inside `app.tsx`) so any code — palette
@@ -31,7 +32,7 @@ import type { Notice } from "../theme.ts";
 
 const [current, setCurrent] = createSignal<Notice | null>(null);
 const pending: { notice: Notice; durationMs: number }[] = [];
-let timer: ReturnType<typeof setTimeout> | null = null;
+let stopTimer: (() => void) | null = null;
 
 /** The showing toast, or null. Read inside a tracking scope so the overlay renders reactively. */
 export const currentNotice = current;
@@ -40,14 +41,13 @@ export const currentNotice = current;
 function advance(): void {
     const next = pending.shift();
     if (!next) {
-        timer = null;
+        stopTimer = null;
         setCurrent(null);
         return;
     }
     setCurrent(next.notice);
     // `.unref()`'d so a pending dismissal never keeps the process alive at shutdown.
-    timer = setTimeout(advance, next.durationMs);
-    timer.unref();
+    stopTimer = runAfter(next.durationMs, advance, { unref: true });
 }
 
 /** Delivery discipline for one {@link notify} call. */
@@ -75,16 +75,15 @@ export function notify(notice: Notice, durationMs = 4000, opts: NotifyOptions = 
         pending.push({ notice, durationMs });
         // A live timer means something is showing and will call `advance` itself when its window
         // ends; promoting now would cut that notice short, which is the loss the queue prevents.
-        if (timer === null) advance();
+        if (stopTimer === null) advance();
         return;
     }
     // Replace: take the slot now. `advance` still owns what happens next, so anything queued behind
     // this one is delivered after it rather than dropped.
-    if (timer) clearTimeout(timer);
+    stopTimer?.();
     setCurrent(notice);
     // `.unref()`'d so a pending dismissal never keeps the process alive at shutdown.
-    timer = setTimeout(advance, durationMs);
-    timer.unref();
+    stopTimer = runAfter(durationMs, advance, { unref: true });
 }
 
 /** How many notices are waiting behind the one showing. Test-only view of the queue's depth. */
@@ -94,8 +93,8 @@ export function __pendingNoticeCountForTest(): number {
 
 /** Test hook: clear the showing notice, drain the queue, and cancel the dismiss timer. */
 export function __resetNoticesForTest(): void {
-    if (timer) clearTimeout(timer);
-    timer = null;
+    stopTimer?.();
+    stopTimer = null;
     pending.length = 0;
     setCurrent(null);
 }

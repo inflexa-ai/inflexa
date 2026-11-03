@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { err, errAsync, ok, okAsync } from "neverthrow";
+import { z } from "zod";
 
 import { GLYPHS } from "../../lib/design_system.ts";
 import { __setClipboardWriterForTest } from "../../lib/clipboard.ts";
@@ -42,6 +43,7 @@ import type { DeleteAnalysisResponse, WorkspaceDisposalMode } from "../../api/an
 import type { ApiError } from "../../api/common.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { present } from "../../lib/present.ts";
+import { parsedJson } from "../../test_support/json.ts";
 
 // modelStatusLines reads the module-level boot + agentModels stores, so each test seeds them via the
 // test hooks and the reset below keeps one test's seed from bleeding into the next (the same pairing
@@ -1276,7 +1278,7 @@ describe("palette provenance export", () => {
         return {
             discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
             fetch: async (url, init) => {
-                seen.push({ url, body: JSON.parse(String(init.body)) });
+                seen.push({ url, body: parsedJson(String(init.body), z.unknown()) });
                 return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
             },
         };
@@ -1453,7 +1455,7 @@ describe("view.status", () => {
         const bodies: unknown[] = [];
         const discover = spyOn(DEFAULT_CLIENT_OPTS, "discover").mockImplementation(() => ok({ baseUrl: "http://server.test", token: "t" }));
         const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation(async (_url, init) => {
-            bodies.push(JSON.parse(String(init.body)));
+            bodies.push(parsedJson(String(init.body), z.unknown()));
             return new Response(JSON.stringify({ kind: "empty", describe: "no analysis here", cwd: "/work" }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },

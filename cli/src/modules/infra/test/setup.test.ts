@@ -64,6 +64,7 @@ import { keysOf } from "../../../lib/types.ts";
 import { EMBEDDING_API_KEY_VAR, env, type ProviderEnvSnapshot } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { present } from "../../../lib/present.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 /** Build a provider-env snapshot for the adoption helpers; every field defaults to "absent". */
 function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnapshot {
@@ -102,6 +103,21 @@ describe("normalizeAdoptedBaseURL", () => {
 
     test("an ambiguous gateway root without a version segment gets /v1 appended (the confirmable best guess)", () => {
         expect(normalizeAdoptedBaseURL("anthropic", "https://gw.corp/anthropic")).toBe("https://gw.corp/anthropic/v1");
+    });
+
+    test("a version segment is a final `/v` and digits only, with one optional trailing slash", () => {
+        expect(normalizeAdoptedBaseURL("openai", "https://gw.corp/api/v12/")).toBe("https://gw.corp/api/v12");
+        expect(normalizeAdoptedBaseURL("openai", "https://gw.corp/v1/v2")).toBe("https://gw.corp/v1/v2");
+        for (const root of [
+            "https://gw.corp/v",
+            "https://gw.corp/vv1",
+            "https://gw.corp/v1x",
+            "https://gw.corp/v\u0661",
+            "https://v1.gw.corp",
+            "https://gw.corp/x/v1/y",
+        ]) {
+            expect(normalizeAdoptedBaseURL("openai", root)).toBe(`${root}/v1`);
+        }
     });
 
     test("a trailing slash never produces a doubled //v1", () => {
@@ -412,7 +428,11 @@ describe("probeCredentialSource", () => {
         expect(present(calls[1]).headers.get("authorization")).toBe("Bearer gw-tok");
         expect(present(calls[1]).headers.get("x-api-key")).toBeNull();
         expect(present(calls[1]).headers.get("anthropic-version")).toBe("2023-06-01");
-        expect(JSON.parse(present(present(calls[1]).body))).toEqual({ model: "claude-sonnet-5", max_tokens: 1, messages: [{ role: "user", content: "ping" }] });
+        expect(parsedJson(present(present(calls[1]).body), z.unknown())).toEqual({
+            model: "claude-sonnet-5",
+            max_tokens: 1,
+            messages: [{ role: "user", content: "ping" }],
+        });
     });
 
     test("an openai-compatible ping targets /chat/completions", async () => {
@@ -2493,6 +2513,11 @@ describe("setup() — batch orchestration", () => {
             },
         } satisfies Record<AnswerValueKey, AnswerCase>;
 
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- Cuts the object literal of `ANSWER_QUESTIONS` out of the source text of setup_answers.ts; the lazy scan to the closing line is the one cut, and a string form would hard-code the same two marker lines in more code.
+        const ANSWER_TABLE_SOURCE = /const ANSWER_QUESTIONS = \{\n([\s\S]*?)\n\} as const satisfies/;
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads one entry line of that table (key, optional quotes, body); a string parse of the optional quotes and the key alphabet is longer and does not read more clearly than the pattern.
+        const ANSWER_ENTRY_LINE = /^ {4}"?([A-Za-z][\w.]*)"?: \{(.*)\},$/gm;
+
         /**
          * The answer keys as the SOURCE declares them, read out of `ANSWER_QUESTIONS`'s object literal —
          * the ONE table setup_answers.ts derives its spellings, its merge, and its schema link from. That
@@ -2507,10 +2532,10 @@ describe("setup() — batch orchestration", () => {
          */
         function declaredAnswerKeys(): string[] {
             const source = readFileSync(join(import.meta.dir, "..", "setup_answers.ts"), "utf8");
-            const table = /const ANSWER_QUESTIONS = \{\n([\s\S]*?)\n\} as const satisfies/.exec(source)?.[1];
+            const table = ANSWER_TABLE_SOURCE.exec(source)?.[1];
             expect(table).toBeDefined();
             // Both capture groups are mandatory in the pattern, so every match carries them.
-            return [...(table ?? "").matchAll(/^ {4}"?([A-Za-z][\w.]*)"?: \{(.*)\},$/gm)]
+            return [...(table ?? "").matchAll(ANSWER_ENTRY_LINE)]
                 .filter((match) => !present(match[2]).includes('at: "block"'))
                 .map((match) => present(match[1]));
         }
@@ -2585,7 +2610,7 @@ describe("setup() — batch orchestration", () => {
             const output = await runSetup(batch({}));
 
             expect(process.exitCode).toBe(1);
-            expect(JSON.parse(readFileSync(env.setupStatePath, "utf8"))).toEqual({ step: "refs", version: pkg.version });
+            expect(parsedJson(readFileSync(env.setupStatePath, "utf8"), z.unknown())).toEqual({ step: "refs", version: pkg.version });
             // The step that failed is named back to the operator, because the record is only useful if
             // they know a re-run will act on it.
             expect(output).toContain('continue from the "refs" step');
@@ -2599,6 +2624,16 @@ describe("setup() — batch orchestration", () => {
 
             // A foreign record names a position THIS build cannot honor, so the run proceeds normally —
             // and completing it clears the file rather than leaving the stale record for the next run.
+            expect(process.exitCode).toBe(0);
+            expect(existsSync(env.setupStatePath)).toBe(false);
+        });
+
+        test("a record that is not JSON is ignored, and the completing run deletes it", async () => {
+            mkdirSync(dirname(env.setupStatePath), { recursive: true });
+            writeFileSync(env.setupStatePath, "{ this is not json");
+
+            await runSetup(batch({}));
+
             expect(process.exitCode).toBe(0);
             expect(existsSync(env.setupStatePath)).toBe(false);
         });

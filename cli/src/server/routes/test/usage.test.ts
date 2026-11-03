@@ -9,8 +9,10 @@ import { z } from "zod";
 import type { ClientOpts } from "../../../client/api.ts";
 import { usageReport, usageRuns, usageSessions, usageSteps } from "../../../client/commands/usage.ts";
 import { upsertLlmUsage, type LlmUsageEntry } from "../../../db/primary_mutation.ts";
+import { collapseWhitespace } from "../../../lib/text.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { jsonBody } from "../../../test_support/response_body.ts";
+import { countOccurrences, wordTokens } from "../../../test_support/text_shapes.ts";
 import type { ServerEnv } from "../../http.ts";
 import { usageRoutes } from "../usage.ts";
 
@@ -200,15 +202,15 @@ describe("usage command action", () => {
 
         expect(out).toContain('Usage for "usage" — 3 calls');
         // 12.4k in / 3.1k out — reported as TWO figures. The sum (15.5k) must appear nowhere.
-        expect(out).toMatch(/input\s+12\.4k/);
-        expect(out).toMatch(/output\s+3\.1k/);
+        expect(collapseWhitespace(out)).toContain("input 12.4k");
+        expect(collapseWhitespace(out)).toContain("output 3.1k");
         expect(out).not.toContain("15.5k");
         expect(out).toContain("By served model");
-        expect(out).toMatch(/opus-4\s+2\s+12\.0k\s+3\.0k/);
-        expect(out).toMatch(/haiku-4\s+1\s+400\s+100/);
+        expect(collapseWhitespace(out)).toContain("opus-4 2 12.0k 3.0k");
+        expect(collapseWhitespace(out)).toContain("haiku-4 1 400 100");
         expect(out).toContain("By agent");
-        expect(out).toMatch(/conversation\s+2\s+12\.0k\s+3\.0k/);
-        expect(out).toMatch(/planner\s+1\s+400\s+100/);
+        expect(collapseWhitespace(out)).toContain("conversation 2 12.0k 3.0k");
+        expect(collapseWhitespace(out)).toContain("planner 1 400 100");
     });
 
     test("another analysis's spend cannot leak in: the ledger attributes by scope id alone", async () => {
@@ -251,8 +253,8 @@ describe("usage command action", () => {
         // Two recorded calls that measured nothing: the count is the fact, the figures are unknowns.
         expect(out).toContain("2 calls");
         expect(out).not.toContain("No usage recorded");
-        expect(out).toMatch(/input\s+not reported/);
-        expect(out).toMatch(/output\s+not reported/);
+        expect(collapseWhitespace(out)).toContain("input not reported");
+        expect(collapseWhitespace(out)).toContain("output not reported");
     });
 
     test("an unreported quantity prints as unknown while a reported zero prints as zero", async () => {
@@ -262,7 +264,7 @@ describe("usage command action", () => {
         const out = output();
 
         // outputTokens: 0 is a measurement the provider made; the absent cache/reasoning counts are not.
-        expect(out).toMatch(/output\s+0/);
+        expect(collapseWhitespace(out)).toContain("output 0");
         expect(out).not.toContain("cache read");
         expect(out).not.toContain("reasoning");
     });
@@ -275,11 +277,11 @@ describe("usage command action", () => {
         await usageReport(ANALYSIS, opts);
         const out = output();
 
-        expect(out).toMatch(/input\s+10\.0k/);
-        expect(out).toMatch(/cache write\s+1\.0k/);
-        expect(out).toMatch(/cache read\s+8\.0k/);
-        expect(out).toMatch(/output\s+2\.0k/);
-        expect(out).toMatch(/reasoning\s+900/);
+        expect(collapseWhitespace(out)).toContain("input 10.0k");
+        expect(collapseWhitespace(out)).toContain("cache write 1.0k");
+        expect(collapseWhitespace(out)).toContain("cache read 8.0k");
+        expect(collapseWhitespace(out)).toContain("output 2.0k");
+        expect(collapseWhitespace(out)).toContain("reasoning 900");
         // input + cacheRead (18.0k), input + output (12.0k), and all five (21.9k) are each a number
         // this report must never invent.
         for (const summed of ["18.0k", "12.0k", "21.9k"]) expect(out).not.toContain(summed);
@@ -302,8 +304,8 @@ describe("usage grain subcommand actions", () => {
         const out = output();
 
         expect(out).toContain('Sessions for "usage"');
-        expect(out).toMatch(/thr-a\s+2\s+12\.0k\s+1\.2k/);
-        expect(out).toMatch(/thr-b\s+1\s+400\s+40/);
+        expect(collapseWhitespace(out)).toContain("thr-a 2 12.0k 1.2k");
+        expect(collapseWhitespace(out)).toContain("thr-b 1 400 40");
         // The runs' 30.3k belongs under `usage runs`; folding it into a session would double-count the
         // moment both grains are read, and 42.3k is the number that folding would produce.
         expect(out).not.toContain("30.3k");
@@ -317,9 +319,9 @@ describe("usage grain subcommand actions", () => {
         const out = output();
 
         expect(out).toContain('Runs for "usage"');
-        expect(out).toMatch(new RegExp(`${RUN_A}\\s+3\\s+30\\.3k\\s+1\\.9k`));
+        expect(collapseWhitespace(out)).toContain(`${RUN_A} 3 30.3k 1.9k`);
         // One recorded call, no figures: the count is the fact, and the figures stay unknowns.
-        expect(out).toMatch(new RegExp(`${RUN_B}\\s+1\\s+not reported\\s+not reported`));
+        expect(collapseWhitespace(out)).toContain(`${RUN_B} 1 not reported not reported`);
     });
 
     // The double-count guard, pinned as a COUNT across the three reports rather than as a per-report
@@ -339,12 +341,12 @@ describe("usage grain subcommand actions", () => {
         const runs = output();
 
         const printed = [report, sessions, runs].join("\n");
-        expect(printed.match(/\(no session or run\)/g)).toHaveLength(1);
-        expect(printed.match(/\b800\b/g)).toHaveLength(1);
-        expect(report).toMatch(/\(no session or run\)\s+1\s+800\s+80/);
+        expect(countOccurrences(printed, "(no session or run)")).toBe(1);
+        expect(wordTokens(printed).filter((token) => token === "800")).toHaveLength(1);
+        expect(collapseWhitespace(report)).toContain("(no session or run) 1 800 80");
         // Summing what the three reports DO print reaches the headline the analysis report leads with:
         // 12.4k across sessions + 30.3k across runs + 800 unattributed = 43.5k.
-        expect(report).toMatch(/input\s+43\.5k/);
+        expect(collapseWhitespace(report)).toContain("input 43.5k");
     });
 
     test("each grain table holds only its own grain, and signposts the bucket it does not carry", async () => {
@@ -352,7 +354,7 @@ describe("usage grain subcommand actions", () => {
 
         await usageSessions(ANALYSIS, opts);
         const sessions = output();
-        expect(sessions).toMatch(/thr-a\s+2\s+12\.0k\s+1\.2k/);
+        expect(collapseWhitespace(sessions)).toContain("thr-a 2 12.0k 1.2k");
         expect(sessions).not.toContain("(no session or run)");
         // The signpost names the bucket and where it is reported, and carries no figure of its own —
         // not even the call count — so there is nothing in a grain report left to add up twice.
@@ -362,7 +364,7 @@ describe("usage grain subcommand actions", () => {
         logs = [];
         await usageRuns(ANALYSIS, opts);
         const runs = output();
-        expect(runs).toMatch(new RegExp(`${RUN_A}\\s+3\\s+30\\.3k\\s+1\\.9k`));
+        expect(collapseWhitespace(runs)).toContain(`${RUN_A} 3 30.3k 1.9k`);
         expect(runs).not.toContain("(no session or run)");
         expect(runs).toContain("Calls belonging to no session or run are reported by `inflexa usage`.");
         expect(runs).not.toContain("800");
@@ -382,7 +384,7 @@ describe("usage grain subcommand actions", () => {
 
         logs = [];
         await usageReport(ANALYSIS, opts);
-        expect(output()).toMatch(/\(no session or run\)\s+1\s+800\s+80/);
+        expect(collapseWhitespace(output())).toContain("(no session or run) 1 800 80");
     });
 
     test("an analysis with nothing at a grain says so, with no zeroed figures and no table", async () => {
@@ -406,10 +408,10 @@ describe("usage grain subcommand actions", () => {
         const out = output();
 
         expect(out).toContain(`Steps for run ${RUN_A}`);
-        expect(out).toMatch(/qc_normalize\s+1\s+24\.0k\s+1\.5k/);
-        expect(out).toMatch(/differential_expression\s+1\s+6\.0k\s+400/);
+        expect(collapseWhitespace(out)).toContain("qc_normalize 1 24.0k 1.5k");
+        expect(collapseWhitespace(out)).toContain("differential_expression 1 6.0k 400");
         // A run's calls outside any step are labelled, not blank.
-        expect(out).toMatch(/\(no step\)\s+1\s+300\s+30/);
+        expect(collapseWhitespace(out)).toContain("(no step) 1 300 30");
         // The same step slug under the OTHER run must not leak in — step ids are unique per plan only.
         expect(out).not.toContain("90.0k");
     });
@@ -421,7 +423,7 @@ describe("usage grain subcommand actions", () => {
         const out = output();
 
         expect(out).toContain(`Steps for run ${RUN_A}`);
-        expect(out).toMatch(/qc_normalize\s+1\s+24\.0k/);
+        expect(collapseWhitespace(out)).toContain("qc_normalize 1 24.0k");
     });
 
     test("a run reference matching nothing reports that, rather than an empty table", async () => {
@@ -442,8 +444,8 @@ describe("usage grain subcommand actions", () => {
         // Its own section with its own call count, and the two figures nested the way the headline is
         // — the profile runs at most once per analysis, so there is nothing to enumerate in a table.
         expect(report).toContain("Data profile — 2 calls");
-        expect(report).toMatch(/input\s+60\.5k/);
-        expect(report).toMatch(/output\s+3\.7k/);
+        expect(collapseWhitespace(report)).toContain("input 60.5k");
+        expect(collapseWhitespace(report)).toContain("output 3.7k");
 
         logs = [];
         await usageRuns(ANALYSIS, opts);
@@ -453,7 +455,7 @@ describe("usage grain subcommand actions", () => {
         // table — id and figures both.
         expect(runs).not.toContain(DATA_PROFILE_RUN_LITERAL);
         expect(runs).not.toContain("60.5k");
-        expect(runs).toMatch(new RegExp(`${RUN_A}\\s+3\\s+30\\.3k\\s+1\\.9k`));
+        expect(collapseWhitespace(runs)).toContain(`${RUN_A} 3 30.3k 1.9k`);
     });
 
     test("the grains signpost the data profile they cannot hold", async () => {
@@ -497,7 +499,7 @@ describe("usage grain subcommand actions", () => {
         // 12.4k sessions + 30.3k runs + 60.5k data profile + 800 unattributed = 104.0k. The profile
         // leaving the run grouping is exactly when a grain can go missing from the sum while still
         // counting toward the headline, so the arithmetic is pinned on the printed report.
-        expect(output()).toMatch(/input\s+104\.0k/);
+        expect(collapseWhitespace(output())).toContain("input 104.0k");
     });
 
     test("the profile's run id names no run at the step grain", async () => {

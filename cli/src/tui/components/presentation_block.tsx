@@ -18,7 +18,7 @@ export type PresentationBlockProps = {
  * value renders literally rather than splitting the row into extra columns.
  */
 function cell(value: string): string {
-    return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+    return value.replaceAll("\\", "\\\\").replaceAll("|", "\\|");
 }
 
 /**

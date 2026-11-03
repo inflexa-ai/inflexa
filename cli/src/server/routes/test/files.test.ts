@@ -17,10 +17,18 @@ import type { ServerEnv } from "../../http.ts";
 import type { OpenFile } from "../files.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "../fs.ts";
 import { present } from "../../../lib/present.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 // The read route alone, with no credential check and no app: `app.test.ts` covers those. The analysis guard takes
 // no real lock here, because a stub answers for it. Each `as` cast of a body below reads JSON that the route under
 // test builds from the `ApiError` type.
+/** True for a quoted tag of three non-empty runs of lowercase hex digits joined by hyphens, `"<a>-<b>-<c>"`. */
+function isQuotedHexTriple(tag: string): boolean {
+    if (tag.length < 2 || !tag.startsWith('"') || !tag.endsWith('"')) return false;
+    const parts = tag.slice(1, -1).split("-");
+    return parts.length === 3 && parts.every((part) => isLowerHex(part));
+}
+
 const TEST_FS_ROUTE_OPTS: FsRouteOpts = { ...DEFAULT_FS_ROUTE_OPTS, acquireLock: () => ({ acquired: true }) };
 
 function appWith(opts: Partial<FsRouteOpts> = {}): Hono<ServerEnv> {
@@ -259,7 +267,7 @@ describe("the headers", () => {
         expect(csv.headers.get("Accept-Ranges")).toBe("bytes");
         expect(csv.headers.get("Content-Length")).toBe("4");
         expect(csv.headers.get("Cache-Control")).toBe("no-cache");
-        expect(csv.headers.get("ETag")).toMatch(/^"[0-9a-f]+-[0-9a-f]+-[0-9a-f]+"$/);
+        expect(isQuotedHexTriple(csv.headers.get("ETag") ?? "")).toBe(true);
         expect(csv.headers.get("Content-Security-Policy")).toBeNull();
         expect(csv.headers.get("Content-Disposition")).toBeNull();
         expect((await getAt("table.unknownext")).headers.get("Content-Type")).toBe("application/octet-stream");

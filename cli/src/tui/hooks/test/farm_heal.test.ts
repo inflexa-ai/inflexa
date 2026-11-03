@@ -78,7 +78,7 @@ function mount(ws: Workspace, seams: FarmHealSeams): () => void {
 
 /** Let the async heal decision settle. */
 function settle(): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, 5));
+    return Promise.sleep(5);
 }
 
 afterEach(() => {

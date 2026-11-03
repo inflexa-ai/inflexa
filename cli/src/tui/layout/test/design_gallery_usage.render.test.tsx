@@ -246,7 +246,7 @@ describe("design gallery — token figures are legible on a light theme", () => 
         try {
             await setup.renderOnce();
             dialogPush(() => <DesignGallery onClose={() => dialogClear()} />);
-            await new Promise((r) => setTimeout(r, 20));
+            await Promise.sleep(20);
             await setup.renderOnce();
             await setup.renderOnce();
 

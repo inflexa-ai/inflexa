@@ -45,7 +45,7 @@ export const ACQUIRE_EGRESS_ALLOW = "pypi.org,files.pythonhosted.org,packagemana
  * held exclusively. Matched so the CLI turns a normal condition — two
  * terminals — into an actionable message instead of a bare non-zero exit.
  */
-const STORE_LOCK_PATTERN = /holds the store lock/;
+const STORE_LOCK_PHRASE = "holds the store lock";
 
 /** Why a provisioner run could not complete. Each variant maps to one actionable user message. */
 export type ProvisionerError =
@@ -114,7 +114,7 @@ export const runProvisioner: ProvisionerRunner = async (invocation, onLine, sign
 export function classifyProvisionerRun(res: CaptureResult): Result<void, ProvisionerError> {
     if (res.code === 0) return ok(undefined);
     const combined = `${res.stdout}\n${res.stderr}`;
-    if (res.code === 1 && STORE_LOCK_PATTERN.test(combined)) {
+    if (res.code === 1 && combined.includes(STORE_LOCK_PHRASE)) {
         return err({
             type: "store_locked",
             message: "Another provisioning run holds the package-store lock. Wait for it to finish, then run this command again.",

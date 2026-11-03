@@ -30,6 +30,8 @@ import { z } from "zod";
 import { type AgentPolicy, getAgentPolicy, isTransferPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
 import { env } from "../../lib/env.ts";
+import { hasWhitespace } from "../../lib/text.ts";
+import { runAfter } from "../../lib/timer.ts";
 import { anchorPathForAnalysisId } from "../analysis/output.ts";
 import { classifyInflexaArgv, toEffectiveArgv } from "./inflexa_classify.ts";
 
@@ -265,7 +267,7 @@ function truncateOutput(text: string): string {
  * double-quoted.
  */
 function displayArgvElement(element: string): string {
-    if (!/[\s"']/.test(element)) return element;
+    if (!hasWhitespace(element) && !element.includes('"') && !element.includes("'")) return element;
     return element.includes('"') ? `'${element}'` : `"${element}"`;
 }
 
@@ -380,8 +382,8 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     // firing into an abort nobody reads. Ordering is what closes that, so nothing between here and
     // the clears on the exit path may throw; the deadline controller is built above because
     // `Bun.spawn` needs its signal, but a controller with no timer costs nothing if the spawn fails.
-    const totalTimer: ReturnType<typeof setTimeout> | null = timeoutMs === undefined ? null : setTimeout(expire, timeoutMs);
-    let idleTimer: ReturnType<typeof setTimeout> | null = idleTimeoutMs === undefined ? null : setTimeout(expire, idleTimeoutMs);
+    const stopTotal = timeoutMs === undefined ? null : runAfter(timeoutMs, expire);
+    let stopIdle = idleTimeoutMs === undefined ? null : runAfter(idleTimeoutMs, expire);
     // Latched once the child is reaped, because output outlives it: the pipes are still read
     // during the flush grace below, and a chunk arriving there would otherwise rearm the idle
     // timer AFTER the clears, leaving a timer nothing owns — one that holds the event loop open
@@ -389,15 +391,15 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     let settled = false;
     const noteActivity = (): void => {
         if (idleTimeoutMs === undefined || timedOut || settled) return;
-        if (idleTimer !== null) clearTimeout(idleTimer);
-        idleTimer = setTimeout(expire, idleTimeoutMs);
+        stopIdle?.();
+        stopIdle = runAfter(idleTimeoutMs, expire);
     };
 
     // The abort kill is SIGTERM, which a child can trap and outlive; escalate to
     // SIGKILL after a grace so the deadline is a real bound, not a suggestion.
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let stopKill: (() => void) | undefined;
     const escalate = (): void => {
-        killTimer = setTimeout(() => proc.kill("SIGKILL"), killGraceMs);
+        stopKill = runAfter(killGraceMs, () => proc.kill("SIGKILL"));
     };
     if (combined.aborted) escalate();
     else combined.addEventListener("abort", escalate, { once: true });
@@ -409,9 +411,9 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     const stderr = collectCapped(proc.stderr, budget, noteActivity);
     const exitCode = await proc.exited;
     settled = true;
-    if (totalTimer !== null) clearTimeout(totalTimer);
-    if (idleTimer !== null) clearTimeout(idleTimer);
-    if (killTimer !== undefined) clearTimeout(killTimer);
+    stopTotal?.();
+    stopIdle?.();
+    stopKill?.();
     // The child is reaped; a LATER abort of the caller's long-lived turn signal
     // must not schedule a stray SIGKILL timer against it. No-op when the abort
     // already fired (`once` removed the listener) — the timer was cleared above.

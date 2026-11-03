@@ -5,8 +5,10 @@ import { basename, dirname, join } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 import PQueue from "p-queue";
+import { z } from "zod";
 
 import { declaredContentLength, downloadToFile, type DownloadError, type FetchLike } from "../../lib/download.ts";
+import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf, isAsciiDigits } from "../../lib/text.ts";
 
 /** The GEO FTP mirror (served over HTTPS) that holds per-series files and directory autoindexes. */
 const GEO_FTP_BASE = "https://ftp.ncbi.nlm.nih.gov/geo/series";
@@ -35,10 +37,15 @@ const BYTE_UNITS: Readonly<Record<string, number>> = { b: 1, kb: 1024, mb: 1024 
  * way-forward for every malformed spelling; a `Result` here would carry a distinction nothing reads.
  */
 export function parseByteSize(raw: string): number | undefined {
-    const match = /^\s*(\d+(?:\.\d+)?)\s*([a-z]*)\s*$/i.exec(raw);
-    if (!match) return undefined;
-    const magnitude = Number(match[1]);
-    const unit = (match[2] ?? "").toLowerCase();
+    const text = raw.trim();
+    let numberEnd = 0;
+    while (numberEnd < text.length && consistsOf(text.charAt(numberEnd), `${ASCII_DIGITS}.`)) numberEnd++;
+    const numberParts = text.slice(0, numberEnd).split(".");
+    if (numberParts.length > 2 || !numberParts.every(isAsciiDigits)) return undefined;
+    const rawUnit = text.slice(numberEnd).trim();
+    if (rawUnit !== "" && !consistsOf(rawUnit, ASCII_LOWERCASE + ASCII_UPPERCASE)) return undefined;
+    const magnitude = Number(text.slice(0, numberEnd));
+    const unit = rawUnit.toLowerCase();
     const multiplier = unit === "" ? 1 : BYTE_UNITS[unit];
     if (multiplier === undefined || !Number.isFinite(magnitude)) return undefined;
     const bytes = Math.floor(magnitude * multiplier);
@@ -130,6 +137,11 @@ export type GeoResolveOptions = GeoFetchOptions & {
 /** The Series' declared transfer cost exceeds {@link GEO_SERIES_MAX_BYTES}; nothing was fetched. */
 export type GeoSizeError = { readonly type: "too_large"; readonly declaredBytes: number; readonly cap: number };
 
+const gseAccession = z
+    .string()
+    .startsWith("GSE")
+    .refine((value) => isAsciiDigits(value.slice("GSE".length)));
+
 /**
  * Validate and normalize a GEO Series accession.
  *
@@ -139,7 +151,8 @@ export type GeoSizeError = { readonly type: "too_large"; readonly declaredBytes:
  */
 export function parseGseAccession(raw: string): Result<string, GeoAccessionError> {
     const normalized = raw.trim().toUpperCase();
-    return /^GSE\d+$/.test(normalized) ? ok(normalized) : err({ type: "invalid_accession", input: raw });
+    const parsed = gseAccession.safeParse(normalized);
+    return parsed.success ? ok(parsed.data) : err({ type: "invalid_accession", input: raw });
 }
 
 /**
@@ -171,6 +184,11 @@ export function geoSeriesUrls(accession: string): GeoSeriesUrls {
     };
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds the five predefined HTML entities and the numeric forms of the apostrophe, in any letter case. The match is case-insensitive and the numeric forms hold a run of zeros, so no string method states it.
+const HTML_ENTITY = /&(?:lt|gt|quot|amp|#0*39|#x0*27);/gi;
+
+const HTML_ENTITY_TEXT: Readonly<Record<string, string>> = { lt: "<", gt: ">", quot: '"', amp: "&" };
+
 /**
  * Undo the HTML escaping Apache applies to an `href` attribute value.
  *
@@ -180,12 +198,11 @@ export function geoSeriesUrls(accession: string): GeoSeriesUrls {
  * emit anything else, and a name we cannot decode faithfully is better skipped than guessed at.
  */
 function decodeHtmlEntities(value: string): string {
-    return value
-        .replace(/&lt;/gi, "<")
-        .replace(/&gt;/gi, ">")
-        .replace(/&quot;/gi, '"')
-        .replace(/&#0*39;|&#x0*27;/gi, "'")
-        .replace(/&amp;/gi, "&"); // last: an escaped `&amp;amp;` must not decode twice
+    // One pass decodes each entity once, so an escaped `&amp;amp;` gives `&amp;` and never decodes twice.
+    return value.replace(HTML_ENTITY, (entity) => {
+        const name = entity.slice(1, -1).toLowerCase();
+        return HTML_ENTITY_TEXT[name] ?? "'";
+    });
 }
 
 /**
@@ -203,6 +220,9 @@ function isSafeSegment(name: string): boolean {
     if (name.includes("/") || name.includes("\\") || name.includes("\0")) return false;
     return !name.startsWith("-");
 }
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds each `href` attribute of an HTML autoindex and captures its quoted value. HTML attribute syntax, with a quote of either kind, has no string-method form that is exact.
+const HREF_ATTRIBUTE = /href\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
 
 /**
  * Extract the file names from an Apache directory autoindex.
@@ -233,7 +253,7 @@ export function parseAutoindex(html: string, dirUrl: string, onSkipped?: (fileNa
         return []; // A caller-built directory URL is always well-formed; a malformed one lists nothing.
     }
     const names: string[] = [];
-    for (const match of html.matchAll(/href\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
+    for (const match of html.matchAll(HREF_ATTRIBUTE)) {
         const raw = match[1] ?? match[2] ?? "";
         if (raw === "") continue;
         let resolved: URL;

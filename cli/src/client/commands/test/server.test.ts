@@ -9,6 +9,7 @@ import { z } from "zod";
 import pkg from "../../../../package.json";
 import { API_VERSION, type ServerActivity, type ServerDiscovery, type ServerState, type ShutdownMode } from "../../../api/server.ts";
 import { bootServerAfterUp, serverLogs, serverStatus, serverStop, stopServerAfterUpgrade, type ServerCommandOpts } from "../server.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 const DISCOVERY: ServerDiscovery = {
     pid: 7001,
@@ -185,7 +186,7 @@ describe("inflexa server status", () => {
         running(world);
         await serverStatus({ json: true }, opts);
         // The command writes `JSON.stringify` of a `ServerStatusView`.
-        const view: unknown = JSON.parse(out());
+        const view: unknown = parsedJson(out(), z.unknown());
         expect(view).toMatchObject({
             state: "running",
             pid: DISCOVERY.pid,
@@ -210,7 +211,7 @@ describe("inflexa server status", () => {
         silent.world.live = true;
         await serverStatus({ json: true }, silent.opts);
         // The command writes `JSON.stringify` of a `ServerStatusView`.
-        const view: unknown = JSON.parse(silent.out());
+        const view: unknown = parsedJson(silent.out(), z.unknown());
         expect(view).toHaveProperty("state", "not_answering");
     });
 });

@@ -56,7 +56,7 @@ async function renderFocused(
         getRef()?.focus();
         await setup.renderOnce();
         if (setup.captureCharFrame().includes(needle) || Date.now() - start > timeoutMs) return setup;
-        await new Promise((r) => setTimeout(r, 10));
+        await Promise.sleep(10);
     }
 }
 

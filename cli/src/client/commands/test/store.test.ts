@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
+import { z } from "zod";
 
 import type { FarmLinkView } from "../../../api/store.ts";
 import type { ClientOpts } from "../../api.ts";
 import { storeLink } from "../store.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 /** Run `fn` with the console captured, and restore the exit code, which a refusal sets. */
 async function captured(fn: () => Promise<void>): Promise<{ stdout: string; stderr: string; exitCode: typeof process.exitCode }> {
@@ -36,7 +38,7 @@ describe("store link", () => {
         const opts: ClientOpts = {
             discover: () => ok({ baseUrl: "http://store.test", token: "t" }),
             fetch: async (url, init) => {
-                sent.push({ url, body: JSON.parse(String(init.body)) });
+                sent.push({ url, body: parsedJson(String(init.body), z.unknown()) });
                 return new Response(JSON.stringify(linked), { status: 200, headers: { "Content-Type": "application/json" } });
             },
         };

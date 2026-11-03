@@ -49,6 +49,7 @@ import { createEmbeddingProvider } from "@inflexa-ai/harness";
 import type { AgentSession, EmbeddingProvider, ProviderError } from "@inflexa-ai/harness";
 
 import { onShutdown } from "../../lib/shutdown.ts";
+import { runAfter } from "../../lib/timer.ts";
 import { ensureLlamaServer } from "./llama_runtime.ts";
 
 export interface LocalEmbeddingProviderDeps {
@@ -551,11 +552,11 @@ function terminateProcess(proc: Subprocess): Promise<void> {
     if (existing !== undefined) return existing;
     const done = (async (): Promise<void> => {
         proc.kill("SIGTERM");
-        const killer = setTimeout(() => proc.kill("SIGKILL"), STOP_GRACE_MS);
+        const stopKiller = runAfter(STOP_GRACE_MS, () => proc.kill("SIGKILL"));
         try {
             await proc.exited;
         } finally {
-            clearTimeout(killer);
+            stopKiller();
         }
     })();
     terminations.set(proc, done);
@@ -758,6 +759,7 @@ async function awaitSidecarReady(
  * backtick+quote pair the loader prints, or a bare space on variants that omit the
  * quotes) are matched loosely.
  */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds the dynamic loader line that names a missing glibc, libstdc++, or C++ ABI version symbol. The version digits and the loose gap before `not found` are a pattern, and no string method states them.
 const INCOMPATIBLE_LIBC = /(?:GLIBC(?:XX)?|CXXABI)_[0-9.]+.{0,3}not found/;
 
 /**
@@ -873,6 +875,9 @@ async function defaultProcessScan(): Promise<string> {
     return text;
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads the pid, the ppid, and the command out of one `ps -o pid=,ppid=,command=` line. The column grammar is two digit runs and a rest that keeps its spaces, and a string-method form is longer and does not match the edge cases of `.` and `$` exactly.
+const PS_PID_PPID_COMMAND = /^\s*(\d+)\s+(\d+)\s+(.*)$/;
+
 /**
  * Best-effort reap of leftover sidecars from a previous CLI that died without its
  * shutdown chain (SIGKILL, crash). Kills every process executing THIS installation's
@@ -903,7 +908,7 @@ export async function sweepOrphanedSidecars(serverBin: string): Promise<void> {
     for (const line of output.split("\n")) {
         // pid and ppid are the first two whitespace-delimited columns; the rest is the
         // command, kept verbatim so a data-dir path containing spaces still matches.
-        const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+        const match = PS_PID_PPID_COMMAND.exec(line);
         if (match === null) continue;
         const ppid = Number(match[2]);
         const command = match[3] ?? "";

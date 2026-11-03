@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { PolicyRow } from "../../test_support/agent_policy_report.ts";
 import { lintScratch, linesOf, OXLINT_SPAWN_TIMEOUT_MS, RESTRICTED_SYNTAX } from "../../test_support/oxlint.ts";
+import { parsedJson } from "../../test_support/json.ts";
 
 const REPORT_ENTRY = join(import.meta.dir, "../../test_support/agent_policy_report.ts");
 
@@ -34,7 +35,7 @@ function runReport(channel: "development" | "production"): PolicyRow[] {
     delete childEnv.INFLEXA_DEV;
     const proc = Bun.spawnSync(["bun", "run", REPORT_ENTRY], { env: childEnv });
     if (proc.exitCode !== 0) throw new Error(`agent_policy_report failed (channel=${channel}, exit ${proc.exitCode}):\n${proc.stderr.toString()}`);
-    return z.array(policyRowSchema).parse(JSON.parse(proc.stdout.toString()));
+    return parsedJson(proc.stdout.toString(), z.array(policyRowSchema));
 }
 
 /**

@@ -77,15 +77,12 @@ export function unpackTo(archive: Buffer, destDir: string): Result<ReadonlyArray
     const headerEnd = 4 + headerLen;
     if (headerEnd > archive.length) return err({ type: "truncated", detail: "header length exceeds archive size" });
 
-    let parsedJson: unknown;
-    try {
-        parsedJson = JSON.parse(archive.subarray(4, headerEnd).toString("utf8"));
-    } catch (cause) {
-        return err({ type: "malformed_header", detail: String(cause) });
+    const parsedHeader = JSON.parseResult(archive.subarray(4, headerEnd).toString("utf8"), headerSchema);
+    if (parsedHeader.isErr()) {
+        const { error } = parsedHeader;
+        return err({ type: "malformed_header", detail: error.type === "malformed" ? String(error.cause) : `unexpected header: ${error.error.message}` });
     }
-    const parsedHeader = headerSchema.safeParse(parsedJson);
-    if (!parsedHeader.success) return err({ type: "malformed_header", detail: `unexpected header: ${parsedHeader.error.message}` });
-    const header = parsedHeader.data;
+    const header = parsedHeader.value;
     if (header.v !== PACK_VERSION) return err({ type: "malformed_header", detail: `unexpected header (v=${header.v})` });
 
     const root = resolve(destDir);

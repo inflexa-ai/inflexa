@@ -8,6 +8,8 @@ import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../../lib/design_syst
 import { setTheme } from "../../theme.ts";
 import { RunBlock, type RunStepView } from "../run_block.tsx";
 import { present } from "../../../lib/present.ts";
+import { isAsciiDigits } from "../../../lib/text.ts";
+import { hasNumberBefore, wordTokens } from "../../../test_support/text_shapes.ts";
 
 /**
  * The rail's window size, taken from the design-system token the sidebar itself passes rather than
@@ -30,13 +32,53 @@ function railBlock(total: number, done: number) {
 
 /** Whether step `n` has a row on screen. Word-bounded, so `S1` never matches the `S10`/`S12` rows. */
 function hasStep(frame: string, n: number): boolean {
-    return new RegExp(`\\bS${n}\\b`).test(frame);
+    return wordTokens(frame).includes(`S${n}`);
+}
+
+/** Whether `text` holds a step label, `S` and digits, as a whole word. */
+function hasAnyStep(text: string): boolean {
+    return wordTokens(text).some((token) => token.startsWith("S") && isAsciiDigits(token.slice(1)));
+}
+
+/** The row of `frame` that holds the label of step `n`; it throws when no row does. */
+function stepRow(frame: string, n: number): string {
+    return present(
+        frame.split("\n").find((line) => hasStep(line, n)),
+        `the row of step ${n}`,
+    );
+}
+
+/** Whether `text` holds a minutes-and-seconds age, `4m05s`: digits, `m`, two digits, `s`. */
+function hasMinuteAge(text: string): boolean {
+    for (let at = text.indexOf("m"); at !== -1; at = text.indexOf("m", at + 1)) {
+        if (
+            isAsciiDigits(text.charAt(at - 1)) &&
+            text.slice(at + 1, at + 3).length === 2 &&
+            isAsciiDigits(text.slice(at + 1, at + 3)) &&
+            text.charAt(at + 3) === "s"
+        )
+            return true;
+    }
+    return false;
+}
+
+/** The sum of the counts that the elision markers of `frame` admit to hiding: `8 earlier steps`, `3 more steps`. */
+function hiddenStepCount(frame: string): number {
+    let sum = 0;
+    for (const marker of [" earlier step", " more step"]) {
+        for (let at = frame.indexOf(marker); at !== -1; at = frame.indexOf(marker, at + 1)) {
+            let start = at;
+            while (isAsciiDigits(frame.charAt(start - 1))) start--;
+            if (start < at) sum += Number(frame.slice(start, at));
+        }
+    }
+    return sum;
 }
 
 /** Every step the frame accounts for: the rows it shows plus the counts its elision markers admit to hiding. */
 function accountedFor(frame: string, total: number): number {
     const shown = Array.from({ length: total }, (_, i) => i + 1).filter((n) => hasStep(frame, n)).length;
-    return shown + [...frame.matchAll(/(\d+) (?:earlier|more) steps?/g)].reduce((sum, m) => sum + Number(m[1]), 0);
+    return shown + hiddenStepCount(frame);
 }
 
 /** Right-trim + drop trailing blanks, matching `renderFrame` so frame text and coordinates agree. */
@@ -127,7 +169,7 @@ describe("RunBlock step window", () => {
         // The centring promise: with room on both sides the running step sits at offset floor(7/2)=3,
         // the 4th of 7 rows, so equal context is visible before and after it.
         const frame = await renderFrame(railBlock(20, 10), { width: 40, height: 24 });
-        const rows = frame.split("\n").filter((l) => /\bS\d+\b/.test(l));
+        const rows = frame.split("\n").filter(hasAnyStep);
         expect(rows).toHaveLength(RAIL_WINDOW);
         expect(rows[3]).toContain("S11"); // the running step (index 10)
     });
@@ -231,9 +273,7 @@ describe("RunBlock window pinning", () => {
             // Recentred on the new running step (S12, index 11) — start clamps to 11-3 = 8.
             expect(frame()).toContain("8 earlier steps");
             expect(hasStep(frame(), 12)).toBe(true);
-            const rows = frame()
-                .split("\n")
-                .filter((l) => /\bS\d+\b/.test(l));
+            const rows = frame().split("\n").filter(hasAnyStep);
             expect(rows[3]).toContain("S12");
         });
     });
@@ -270,7 +310,7 @@ describe("RunBlock parallel steps", () => {
             () => <RunBlock name="r" tag="T1" done={8} total={20} steps={parallel([8, 9, 10])} maxSteps={RAIL_WINDOW} heading={false} />,
             { width: 40, height: 24 },
         );
-        const rows = frame.split("\n").filter((l) => /\bS\d+\b/.test(l));
+        const rows = frame.split("\n").filter(hasAnyStep);
         expect(rows[3]).toContain("S9"); // index 8, the earliest running step, dead centre
         for (const n of [9, 10, 11]) expect(hasStep(frame, n)).toBe(true);
     });
@@ -285,9 +325,7 @@ describe("RunBlock parallel steps", () => {
             await update({ steps: parallel([8]) });
 
             expect(hasStep(frame(), 9)).toBe(true);
-            const rows = frame()
-                .split("\n")
-                .filter((l) => /\bS\d+\b/.test(l));
+            const rows = frame().split("\n").filter(hasAnyStep);
             expect(rows[3]).toContain("S9");
         });
     });
@@ -418,23 +456,23 @@ describe("RunBlock running-step elapsed age", () => {
         const startedAt = new Date(Date.now() - (4 * 60_000 + 5_000)).toISOString();
         const frame = await renderFrame(block(agedSteps(startedAt)), { width: 40, height: 12 });
         // The age sits on the running row (`S2`), never the done or queued rows.
-        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
-        expect(s2Row).toMatch(/\d+m\d{2}s/);
-        expect(frame.split("\n").find((l) => /\bS1\b/.test(l))).not.toMatch(/\d+m\d{2}s/);
-        expect(frame.split("\n").find((l) => /\bS3\b/.test(l))).not.toMatch(/\d+m\d{2}s/);
+        const s2Row = stepRow(frame, 2);
+        expect(hasMinuteAge(s2Row)).toBe(true);
+        expect(hasMinuteAge(stepRow(frame, 1))).toBe(false);
+        expect(hasMinuteAge(stepRow(frame, 3))).toBe(false);
     });
 
     test("a running step without a start time shows no age", async () => {
         const frame = await renderFrame(block(agedSteps(null)), { width: 40, height: 12 });
-        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
-        expect(s2Row).not.toMatch(/\d+m\d{2}s/);
-        expect(s2Row).not.toMatch(/\d+s/);
+        const s2Row = stepRow(frame, 2);
+        expect(hasMinuteAge(s2Row)).toBe(false);
+        expect(hasNumberBefore(s2Row, "s")).toBe(false);
     });
 
     test("an unparseable start time degrades to no age", async () => {
         const frame = await renderFrame(block(agedSteps("not-a-timestamp")), { width: 40, height: 12 });
-        const s2Row = frame.split("\n").find((l) => /\bS2\b/.test(l)) ?? "";
-        expect(s2Row).not.toMatch(/\d+s/);
+        const s2Row = stepRow(frame, 2);
+        expect(hasNumberBefore(s2Row, "s")).toBe(false);
     });
 
     // The age is information, not decoration, so it must clear the 4.5:1 text floor on both a dark and a
@@ -449,7 +487,7 @@ describe("RunBlock running-step elapsed age", () => {
                 let ageFg: string | null = null;
                 for (const line of setup.captureSpans().lines) {
                     for (const span of line.spans) {
-                        if (/\d+m\d{2}s/.test(span.text)) ageFg = rgbToHex(span.fg);
+                        if (hasMinuteAge(span.text)) ageFg = rgbToHex(span.fg);
                     }
                 }
                 expect(ageFg).not.toBeNull();
@@ -483,12 +521,12 @@ describe("RunBlock step usage figure", () => {
         const figure = `${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`;
         const frame = await renderFrame(block(figuredSteps(figure)), { width: 80, height: 14 });
         const lines = frame.split("\n");
-        const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
+        const s2 = lines.findIndex((l) => hasStep(l, 2));
         expect(s2).toBeGreaterThanOrEqual(0);
         expect(lines[s2]).toContain(`${GLYPHS.middot} ${figure}`);
         // No second row for it, so the step list stays one row per step and reads as a list of steps
         // rather than as steps interleaved with measurements.
-        expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 1);
+        expect(lines.findIndex((l) => hasStep(l, 3))).toBe(s2 + 1);
     });
 
     test("the figure sits directly after the step's other facts, never pushed to an edge", async () => {
@@ -516,14 +554,14 @@ describe("RunBlock step usage figure", () => {
         const figure = `${GLYPHS.arrowUp}42.6k ${GLYPHS.arrowDown}1.1k`;
         const frame = await renderFrame(block(figuredSteps(figure), size.railStepRows), { width: size.railWidth, height: 14 });
         const lines = frame.split("\n");
-        const s2 = lines.findIndex((l) => /\bS2\b/.test(l));
+        const s2 = lines.findIndex((l) => hasStep(l, 2));
         expect(s2).toBeGreaterThanOrEqual(0);
         // The figure used to take its own line here, on the measurement that a trailing figure wraps the
         // rail. That measurement assumed short identifier-shaped labels; real plan steps are sentences,
         // so the row wraps either way and the extra line bought nothing — see the wrapping case below.
         expect(lines[s2]).toContain(`${GLYPHS.middot} ${figure}`);
         // ...so the step list is one entry per step again, with no row spent on the figure.
-        expect(lines.findIndex((l) => /\bS3\b/.test(l))).toBe(s2 + 1);
+        expect(lines.findIndex((l) => hasStep(l, 3))).toBe(s2 + 1);
     });
 
     test("a sentence-shaped label wraps with or without the figure, and the figure costs no extra line", async () => {
@@ -579,7 +617,7 @@ describe("RunBlock step usage figure", () => {
         expect(frame).not.toContain(GLYPHS.arrowUp);
         expect(frame).not.toContain(GLYPHS.arrowDown);
         // ...and every step still renders.
-        for (const n of [1, 2, 3]) expect(new RegExp(`\\bS${n}\\b`).test(frame)).toBe(true);
+        for (const n of [1, 2, 3]) expect(hasStep(frame, n)).toBe(true);
     });
 
     test("the figure fits the rail mount without wrapping, which is why it is not a row suffix", async () => {

@@ -1,16 +1,11 @@
 import { restrictedSyntax } from "@inflexa-ai/oxlint-plugin";
 import { solid } from "@inflexa-ai/oxlint-plugin-solid";
 
-// The restricted-syntax bans that report on the tree and stay off until their
-// child issue of #608 fixes the sites: `regex`, `jsonParse`, `timers` (#808).
-const syntax = { regex: false, jsonParse: false, timers: false } as const;
-
 // An override that re-declares `eslint-js/no-restricted-syntax` REPLACES the
 // entry list instead of extending it. Each override that adds an entry therefore
 // restates the whole shared set, and spreading these constants keeps every
-// restatement identical. A `false` entry is a switched-off ban and is not a
-// valid rule option, so the factory's own filter is repeated here.
-const sharedBans = Object.values(restrictedSyntax(syntax)).filter((ban) => ban !== false);
+// restatement identical.
+const sharedBans = Object.values(restrictedSyntax());
 
 const nodeEnvBan = {
     // NODE_ENV is not a source of truth in this codebase: our build mode is the baked
@@ -83,18 +78,22 @@ function sourceSelector(pattern: RegExp): string {
 // scope: a TUI test drives the client, not the server state.
 const clientBoundaryBans = [
     {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- an esquery attribute selector takes a regex, and `RegExp.toString()` gives its escaped text; a string method cannot test the source of an import in a selector
         selector: sourceSelector(/(^|\/)db\//),
         message: "A client must not import `src/db/`. Read and write the state through a route of the local server (`src/client/`).",
     },
     {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- an esquery attribute selector takes a regex, and `RegExp.toString()` gives its escaped text; a string method cannot test the source of an import in a selector
         selector: sourceSelector(/(^|\/)server\//),
         message: "A client must not import `src/server/`. Call the server over HTTP through `src/client/`, and share a wire type through `src/api/`.",
     },
     {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- an esquery attribute selector takes a regex, and `RegExp.toString()` gives its escaped text; a string method cannot test the source of an import in a selector
         selector: sourceSelector(/(^|\/)lib\/bus(\.ts)?$/),
         message: "A client must not import the bus: it is in-process to the server. Read the state again through a route on the next read edge.",
     },
     {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- an esquery attribute selector takes a regex, and `RegExp.toString()` gives its escaped text; the lookahead allowlist has no string-method form in a selector
         selector: sourceSelector(/^@inflexa-ai\/harness(?!\/contracts\/|\/app\/data-profile-view(\.js)?$)/),
         message:
             "A client must not import the harness runtime. Only `@inflexa-ai/harness/contracts/*` and `@inflexa-ai/harness/app/data-profile-view` are pure. Get each other type from `src/api/`.",
@@ -102,6 +101,7 @@ const clientBoundaryBans = [
     {
         // `update/` acts only on the `inflexa` binary and its own notice state, which the client and the
         // server share. It holds no state of an analysis or of the server.
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- an esquery attribute selector takes a regex, and `RegExp.toString()` gives its escaped text; the lookahead allowlist has no string-method form in a selector
         selector: sourceSelector(/(^|\/)modules\/(?!harness\/plan_dag\.ts$|harness\/chat_printer\.ts$|prov\/verify_file\.ts$|update\/)/),
         message:
             "A client must not import a module of `src/modules/` that holds state or does I/O. Call a route of the local server through `src/client/`, or lift a pure helper out of the module.",
@@ -112,6 +112,7 @@ const clientBoundaryBans = [
 // is a `GLYPHS` key: `src/lib/design_system.ts` owns both, outside this scope. The hex ban matches a
 // whole value, so prose such as "step #12 of 40" passes. The glyph ban exempts only the
 // typographic punctuation the prose already carries (em dash, ellipsis, middle dot, right arrow).
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- the pattern is the argument of an esquery attribute selector, which takes a regex and gets its escaped text from `RegExp.toString()`; it matches a whole hex color value, with the Unicode white space of `\s` around it
 const hexColor = /^\s*#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\s*$/;
 // Written as a string because the control range `\x00` trips `no-control-regex` as a literal.
 const nonGlyphPunctuation = String.raw`/[^\x00-\x7F—…·→]/`;
@@ -134,7 +135,6 @@ const rendererBans = [
 
 export default solid({
     env: { browser: true },
-    syntax,
     overrides: [
         {
             files: ["**/*.{ts,tsx,js,mjs}"],

@@ -11,6 +11,7 @@ import {
     answersFromFlags,
     describeSetupAnswersError,
     isBatchRun,
+    isVendorSlug,
     loadSetupAnswers,
     readAnswersFile,
     refsPresetOf,
@@ -851,6 +852,11 @@ describe("resolveSetupAnswers — the --provider vocabulary keys on the connecti
             batch(),
         )._unsafeUnwrap();
         expect(resolved.answers.connection?.provider).toBe("deepseek");
+    });
+
+    test("a vendor slug starts with a lowercase letter or digit and holds only lowercase letters, digits, and `._-`", () => {
+        for (const good of ["a", "0", "a.b_c-d", "9lives", "deep-seek.v2"]) expect(isVendorSlug(good)).toBe(true);
+        for (const bad of ["", "-a", ".a", "_a", "A", "aB", "a b", "a\n", "a/b", "caf\u00e9", "a\u{1f600}", "\uff41"]) expect(isVendorSlug(bad)).toBe(false);
     });
 
     test("direct mode still rejects a provider that is not a lowercase slug", () => {

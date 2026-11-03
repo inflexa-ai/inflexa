@@ -31,6 +31,7 @@ import {
 } from "../../client/conversation.ts";
 import { describeCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
+import { runAfter } from "../../lib/timer.ts";
 import { isKnownPart, isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
@@ -159,7 +160,7 @@ const [interruptArmed, setInterruptArmed] = createSignal(false);
 /** True while a first interrupt press has armed the double-press window — read reactively for the hint. */
 export { interruptArmed };
 
-let interruptArmTimer: ReturnType<typeof setTimeout> | null = null;
+let stopInterruptArm: (() => void) | null = null;
 
 /**
  * Arm (or refresh) the interrupt double-press window: the UI's first-press binding calls this, and a
@@ -176,19 +177,22 @@ export function armInterrupt(windowMs: number = INTERRUPT_ARM_WINDOW_MS): void {
     // further press would otherwise flip the hint back to armed while the turn is already dying. Bail:
     // the layer stays enabled harmlessly, since its fire branch re-aborting an aborted signal is a no-op.
     if (abortController?.signal.aborted) return;
-    if (interruptArmTimer) clearTimeout(interruptArmTimer);
+    stopInterruptArm?.();
     setInterruptArmed(true);
-    interruptArmTimer = setTimeout(() => {
-        interruptArmTimer = null;
-        setInterruptArmed(false);
-    }, windowMs);
-    interruptArmTimer.unref();
+    stopInterruptArm = runAfter(
+        windowMs,
+        () => {
+            stopInterruptArm = null;
+            setInterruptArmed(false);
+        },
+        { unref: true },
+    );
 }
 
 /** Disarm the interrupt window (a turn ended, or the window lapsed unfired). Idempotent. */
 function disarmInterrupt(): void {
-    if (interruptArmTimer) clearTimeout(interruptArmTimer);
-    interruptArmTimer = null;
+    stopInterruptArm?.();
+    stopInterruptArm = null;
     setInterruptArmed(false);
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { NONCE_LIFETIME_MS } from "../../api/browser_session.ts";
 import { BROWSER_SESSION_LIMIT, createBrowserSessionStore } from "../browser_session.ts";
+import { isLowerHex } from "../../test_support/text_shapes.ts";
 
 /** A store on a clock that a test moves. */
 function storeWithClock(): { store: ReturnType<typeof createBrowserSessionStore>; advance: (ms: number) => void } {
@@ -13,7 +14,7 @@ describe("the nonces", () => {
     test("a nonce is 32 random bytes in hex, and it expires 60 s after the store makes it", () => {
         const { store } = storeWithClock();
         const first = store.issueNonce();
-        expect(first.nonce).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex(first.nonce, 64)).toBe(true);
         expect(first.expiresAtMs).toBe(1_000_000 + NONCE_LIFETIME_MS);
         expect(store.issueNonce().nonce).not.toBe(first.nonce);
     });
@@ -55,7 +56,7 @@ describe("the sessions", () => {
     test("a session secret is 32 random bytes in hex, and the store knows it", () => {
         const { store } = storeWithClock();
         const secret = store.openSession();
-        expect(secret).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex(secret, 64)).toBe(true);
         expect(store.hasSession(secret)).toBe(true);
         expect(store.openSession()).not.toBe(secret);
     });

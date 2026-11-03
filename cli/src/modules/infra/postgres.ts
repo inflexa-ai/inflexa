@@ -1,6 +1,7 @@
 import { type Result, ok, err } from "neverthrow";
 import { ensureRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { capture, type ContainerRuntime, type CaptureResult } from "../../lib/container.ts";
+import { isAsciiDigits, mentionsAny } from "../../lib/text.ts";
 import { DEFAULT_IMAGE, type PostgresConnection, type PostgresError, type ProvisionOutcome, type SetupOptions } from "./postgres_types.ts";
 import { POSTGRES_CONTAINER_NAME, composeUp, writeComposeFile } from "./compose.ts";
 
@@ -39,7 +40,7 @@ async function readRestartCount(rt: ContainerRuntime): Promise<number | null> {
     const { code, stdout } = await capture(rt, ["container", "inspect", "--format", "{{.RestartCount}}", POSTGRES_CONTAINER_NAME]);
     if (code !== 0) return null;
     const text = stdout.trim();
-    return /^\d+$/.test(text) ? Number(text) : null;
+    return isAsciiDigits(text) ? Number(text) : null;
 }
 
 /**
@@ -105,6 +106,13 @@ export async function waitForReady(rt: ContainerRuntime, conn: PostgresConnectio
 const VECTOR_RETRY_INTERVAL_MS = 1000;
 const VECTOR_RETRY_TIMEOUT_MS = 30_000;
 
+/** The lowercase phrases of a psql error that mean the server is not ready yet: a retry can pass. */
+const TRANSIENT_CONNECTION_STDERR = ["terminating connection", "server closed the connection", "connection to server was lost", "could not connect"];
+/** The lowercase phrases of a psql error that mean the image has no pgvector files. */
+const MISSING_EXTENSION_STDERR = ['extension "vector" does not exist', "could not open extension control file"];
+/** The lowercase phrases of a psql error that mean the user lacks the privilege to create the extension. */
+const PRIVILEGE_STDERR = ["permission denied", "must be superuser"];
+
 /**
  * Run `CREATE EXTENSION IF NOT EXISTS vector` via the image's bundled `psql`.
  * This single idempotent statement is both the probe and the install.
@@ -129,20 +137,20 @@ export async function ensureVectorExtension(rt: ContainerRuntime, conn: Postgres
 
         // Transient: the init-phase fast shutdown killed our connection, or the
         // server isn't accepting connections yet after restart. Retry.
-        if (/terminating connection|server closed the connection|connection to server was lost|could not connect/i.test(stderr)) {
+        if (mentionsAny(stderr, TRANSIENT_CONNECTION_STDERR)) {
             await Promise.sleep(VECTOR_RETRY_INTERVAL_MS);
             continue;
         }
 
         // Permanent: the extension files are missing from the image.
-        if (/extension "vector" does not exist|could not open extension control file/i.test(stderr)) {
+        if (mentionsAny(stderr, MISSING_EXTENSION_STDERR)) {
             return err({
                 type: "vector_install_failed",
                 message: `The pgvector extension is not available in the image ${DEFAULT_IMAGE}.\n  Re-pull with \`inflexa setup --force\`.\n  ${stderr}`,
             });
         }
         // Permanent: privilege issue.
-        if (/permission denied|must be superuser/i.test(stderr)) {
+        if (mentionsAny(stderr, PRIVILEGE_STDERR)) {
             return err({
                 type: "vector_install_failed",
                 message: `Failed to install the vector extension — the configured user lacks superuser privilege.\n  Grant CREATEDB/SUPERUSER to \`${conn.user}\`, or run this SQL as a superuser:\n  ${VECTOR_SQL};\n  ${stderr}`,

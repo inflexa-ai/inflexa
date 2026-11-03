@@ -190,7 +190,7 @@ async function materializeEchart(analysisId: string, target: Extract<OpenTarget,
 
 /** Minimal HTML-escape for the interior text of our own `<div>` notices (not general-purpose sanitization). */
 function escapeHtml(s: string): string {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 /**
@@ -209,9 +209,9 @@ function escapeHtml(s: string): string {
  */
 export function echartHtml(spec: Record<string, unknown>, dataUrl: string | null, dataNote: string | null): string {
     // Escape `<` in the embedded JSON so a spec string containing `</script>` cannot terminate the script tag.
-    const specJson = JSON.stringify(spec).replace(/</g, "\\u003c");
+    const specJson = JSON.stringify(spec).replaceAll("<", "\\u003c");
     // The URL rides the same escaped-JSON channel as the spec — an untrusted-shaped path cannot break out.
-    const dataUrlJson = JSON.stringify(dataUrl).replace(/</g, "\\u003c");
+    const dataUrlJson = JSON.stringify(dataUrl).replaceAll("<", "\\u003c");
     const noteAttr = dataNote ? "" : ' style="display:none"';
     // The parser script tag is emitted only for data-carrying shells, so an inline chart stays one fetch.
     const papaScript =

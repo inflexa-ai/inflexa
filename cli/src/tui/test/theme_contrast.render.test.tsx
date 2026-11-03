@@ -96,7 +96,7 @@ async function renderUntil(
         await setup.renderOnce();
         if (setup.captureCharFrame().includes(needle)) return { setup, rendered: true };
         if (Date.now() - start > timeoutMs) return { setup, rendered: false };
-        await new Promise((r) => setTimeout(r, 10));
+        await Promise.sleep(10);
     }
 }
 

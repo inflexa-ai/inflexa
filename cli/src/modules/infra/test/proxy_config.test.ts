@@ -7,10 +7,14 @@ import { formatInfraStateError } from "../mount_source.ts";
 import { env } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { present } from "../../../lib/present.ts";
+import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf } from "../../../lib/text.ts";
 
 describe("generateApiKey", () => {
     test("returns an sk- prefixed key of 45 alphanumeric characters", () => {
-        expect(generateApiKey()).toMatch(/^sk-[A-Za-z0-9]{45}$/);
+        const key = generateApiKey();
+        expect(key.startsWith("sk-")).toBe(true);
+        expect(key).toHaveLength(48);
+        expect(consistsOf(key.slice(3), ASCII_LOWERCASE + ASCII_UPPERCASE + ASCII_DIGITS)).toBe(true);
     });
 
     test("returns a different key on each call", () => {
@@ -34,24 +38,24 @@ describe("formatInfraStateError", () => {
     test("a non-empty directory occupant names the path and says it is not empty", () => {
         const msg = formatInfraStateError({ type: "path_occupied", path, expected: "file", occupant: "non_empty_directory" });
         expect(msg).toContain(path);
-        expect(msg).toMatch(/not empty/i);
-        expect(msg).toMatch(/will not touch it/i);
+        expect(msg.toLowerCase()).toContain("not empty");
+        expect(msg.toLowerCase()).toContain("will not touch it");
     });
 
     test("a symlink occupant names it as a symlink — never with directory-only prose", () => {
         const msg = formatInfraStateError({ type: "path_occupied", path, expected: "file", occupant: "symlink" });
         expect(msg).toContain(path);
-        expect(msg).toMatch(/symlink/i);
-        expect(msg).toMatch(/will not follow or delete/i);
+        expect(msg.toLowerCase()).toContain("symlink");
+        expect(msg.toLowerCase()).toContain("will not follow or delete");
         // "not empty" only fits a directory; a symlink must never carry it.
-        expect(msg).not.toMatch(/not empty/i);
+        expect(msg.toLowerCase()).not.toContain("not empty");
     });
 
     test("an other (socket/device) occupant is described as not a regular file, not a directory", () => {
         const msg = formatInfraStateError({ type: "path_occupied", path, expected: "file", occupant: "other" });
         expect(msg).toContain(path);
-        expect(msg).toMatch(/not a regular file/i);
-        expect(msg).not.toMatch(/not empty/i);
+        expect(msg.toLowerCase()).toContain("not a regular file");
+        expect(msg.toLowerCase()).not.toContain("not empty");
     });
 
     test("io_failed surfaces the underlying cause message and the path", () => {
@@ -79,7 +83,7 @@ describe("writeProxyConfig damaged-state matrix", () => {
         const outcome = (await writeProxyConfig())._unsafeUnwrap();
         expect(outcome.created).toBe(true);
         if (!outcome.created) throw new Error("unreachable — asserted created above");
-        expect(outcome.apiKey).toMatch(/^sk-/);
+        expect(outcome.apiKey).toStartWith("sk-");
         expect(readFileSync(configPath, "utf8")).toContain(outcome.apiKey);
         expect(statSync(configPath).mode & 0o777).toBe(0o600);
         expect(statSync(cliproxyDir).mode & 0o777).toBe(0o700);
@@ -134,8 +138,8 @@ describe("writeProxyConfig damaged-state matrix", () => {
         // The rendered message names the path and calls it a symlink, never a non-empty directory.
         const msg = formatInfraStateError(error);
         expect(msg).toContain(configPath);
-        expect(msg).toMatch(/symlink/i);
-        expect(msg).not.toMatch(/not empty/i);
+        expect(msg.toLowerCase()).toContain("symlink");
+        expect(msg.toLowerCase()).not.toContain("not empty");
     });
 
     test("is idempotent: a second run reports the existing config without rewriting it", async () => {
@@ -165,5 +169,81 @@ describe("writeProxyConfig damaged-state matrix", () => {
         const management = readFileSync(managementKeyPath(), "utf8").trim();
         expect(config).toContain(`secret-key: "${management}"`);
         expect(readdirSync(cliproxyDir).sort()).toEqual(["auth", "config.yaml", "management.key"]);
+    });
+
+    describe("an existing config from before the management API", () => {
+        const OLD_CONFIG = 'host: ""\nport: 8317\napi-keys:\n  - "sk-old"\ndebug: false\n';
+
+        function seed(text: string, key?: string): void {
+            mkdirSync(cliproxyDir, { recursive: true });
+            writeFileSync(configPath, text);
+            if (key !== undefined) writeFileSync(managementKeyPath(), key);
+        }
+
+        function keyOnDisk(): string {
+            return readFileSync(managementKeyPath(), "utf8");
+        }
+
+        test("a config with no remote-management block gets one at its end, and the key file names its secret-key", async () => {
+            seed(`${OLD_CONFIG}\n\n`);
+
+            const outcome = (await writeProxyConfig())._unsafeUnwrap();
+
+            expect(outcome).toEqual({ created: false, managementAdded: true });
+            const text = readFileSync(configPath, "utf8");
+            expect(text.startsWith(`${OLD_CONFIG.trimEnd()}\nremote-management:\n`)).toBe(true);
+            expect(text).toContain(`  secret-key: "${keyOnDisk()}"`);
+            expect(text.endsWith("  disable-control-panel: true\n")).toBe(true);
+        });
+
+        test("a remote-management key at the start of a line with no secret-key gets one, and its other lines stay", async () => {
+            seed('api-keys:\n  - "sk-old"\nremote-management: {}\nafter: 1\n');
+
+            const outcome = (await writeProxyConfig())._unsafeUnwrap();
+
+            expect(outcome).toEqual({ created: false, managementAdded: true });
+            expect(readFileSync(configPath, "utf8")).toBe(`api-keys:\n  - "sk-old"\nremote-management:\n  secret-key: "${keyOnDisk()}"\nafter: 1\n`);
+        });
+
+        test("an indented secret-key line is replaced in place, with its indent and the lines around it kept", async () => {
+            seed('remote-management:\n  allow-remote: false\n    secret-key: "old-hash"\n  disable-control-panel: true\n');
+
+            const outcome = (await writeProxyConfig())._unsafeUnwrap();
+
+            expect(outcome).toEqual({ created: false, managementAdded: true });
+            expect(readFileSync(configPath, "utf8")).toBe(
+                `remote-management:\n  allow-remote: false\n    secret-key: "${keyOnDisk()}"\n  disable-control-panel: true\n`,
+            );
+        });
+
+        test("an indented remote-management word is not the key at a line start, thus the block is added", async () => {
+            seed("note:\n  remote-management: yes\n");
+
+            const outcome = (await writeProxyConfig())._unsafeUnwrap();
+
+            expect(outcome).toEqual({ created: false, managementAdded: true });
+            const text = readFileSync(configPath, "utf8");
+            expect(text.startsWith("note:\n  remote-management: yes\nremote-management:\n")).toBe(true);
+        });
+
+        test("a block and a key file already there leave the config and the key as they are", async () => {
+            const config = 'remote-management:\n  secret-key: "$2a$hash"\n';
+            seed(config, "held-key");
+
+            const outcome = (await writeProxyConfig())._unsafeUnwrap();
+
+            expect(outcome).toEqual({ created: false, managementAdded: false });
+            expect(readFileSync(configPath, "utf8")).toBe(config);
+            expect(keyOnDisk()).toBe("held-key");
+        });
+
+        test("a block with no key file gets a new key", async () => {
+            seed('remote-management:\n  secret-key: "$2a$hash"\n');
+
+            const outcome = (await writeProxyConfig())._unsafeUnwrap();
+
+            expect(outcome).toEqual({ created: false, managementAdded: true });
+            expect(readFileSync(configPath, "utf8")).toBe(`remote-management:\n  secret-key: "${keyOnDisk()}"\n`);
+        });
     });
 });

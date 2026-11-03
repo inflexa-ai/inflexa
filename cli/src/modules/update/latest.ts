@@ -30,9 +30,12 @@ export type LatestVersionError =
 /** A version as its three numbers. A suffix such as `-rc.1` is dropped, because the compare below ignores it. */
 type SemVer = { readonly major: number; readonly minor: number; readonly patch: number };
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads the three numbers at the start of a release tag: an optional `v`, three digit runs with dots between them, and any suffix after them. A string form is exact (drop a `v`, `split(".")`, two digit-only parts, and a leading digit run of the third part), but it is longer than the pattern.
+const VERSION_PREFIX = /^v?(\d+)\.(\d+)\.(\d+)/;
+
 /** Parse `0.16.1` (with or without a leading `v`, with or without a suffix), or `null` when it is not that shape. */
 function parseVersion(raw: string): SemVer | null {
-    const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(raw.trim());
+    const match = VERSION_PREFIX.exec(raw.trim());
     if (!match) return null;
     return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
 }

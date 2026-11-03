@@ -7,6 +7,7 @@ import { idleBoot, idleLifecycle } from "../../../test_support/server.ts";
 import { buildApp } from "../../app.ts";
 import { createPageGrantStore } from "../../report_page_grants.ts";
 import { stringContaining } from "../../../test_support/matchers.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 const sessionNonce = z.object({ nonce: z.string(), expiresAt: z.string() });
 
@@ -46,7 +47,7 @@ describe("POST /api/v1/session/nonce", () => {
     test("the bearer token gets 201 with a nonce that expires in 60 s", async () => {
         const { app } = appWithClock();
         const { nonce, expiresAt } = await getNonce(app);
-        expect(nonce).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex(nonce, 64)).toBe(true);
         expect(Date.parse(expiresAt)).toBe(START + 60_000);
     });
 
@@ -89,7 +90,7 @@ describe("GET /api/v1/session", () => {
         const response = await open(app, `nonce=${nonce}`);
         const cookie = response.headers.get("Set-Cookie") ?? "";
         const value = cookie.split(";")[0]?.split("=")[1];
-        expect(value).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex(value ?? "", 64)).toBe(true);
         expect(value).not.toBe(TOKEN);
         expect(value).not.toBe(nonce);
         expect(cookie).not.toContain(TOKEN);

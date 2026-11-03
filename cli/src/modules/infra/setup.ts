@@ -33,6 +33,7 @@ import {
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialScheme } from "../../lib/credential.ts";
 import { select, promptText, promptTextOptional, confirm } from "../../lib/cli.ts";
 import { recordOrEmpty, unknownRecordSchema } from "../../lib/json_record.ts";
+import { isAsciiDigits, trimTrailing, withoutSuffix } from "../../lib/text.ts";
 import { isMember } from "../../lib/types.ts";
 import {
     AGENT_NAMES,
@@ -153,10 +154,13 @@ const setupStateSchema = z.object({ step: z.enum(SETUP_STEPS), version: z.string
  */
 function readSetupState(): SetupStep | null {
     return Result.fromThrowable(
-        () => setupStateSchema.safeParse(JSON.parse(readFileSync(env.setupStatePath, "utf8"))),
+        () => readFileSync(env.setupStatePath, "utf8"),
         () => undefined,
     )().match(
-        (parsed) => (parsed.success && parsed.data.version === pkg.version ? parsed.data.step : null),
+        (text) => {
+            const state = JSON.parseWith(text, setupStateSchema);
+            return state !== null && state.version === pkg.version ? state.step : null;
+        },
         () => null,
     );
 }
@@ -1529,7 +1533,7 @@ export function normalizeAdoptedBaseURL(provider: AdoptableProvider, rawBaseURL:
     if (rawBaseURL === undefined || rawBaseURL.trim() === "") {
         return provider === "anthropic" ? ANTHROPIC_PUBLIC_ROOT : OPENAI_PUBLIC_ROOT;
     }
-    const trimmed = rawBaseURL.trim().replace(/\/+$/, ""); // drop trailing slashes so we never emit `…//v1`
+    const trimmed = trimTrailing(rawBaseURL.trim(), "/"); // drop trailing slashes so we never emit `…//v1`
     return hasVersionSegment(trimmed) ? trimmed : `${trimmed}/v1`;
 }
 
@@ -1541,7 +1545,9 @@ export function normalizeAdoptedBaseURL(provider: AdoptableProvider, rawBaseURL:
 function hasVersionSegment(url: string): boolean {
     if (!URL.canParse(url)) return false;
     const { pathname } = new URL(url);
-    return /\/v\d+\/?$/.test(pathname);
+    const path = withoutSuffix(pathname, "/");
+    const versionStart = path.lastIndexOf("/v");
+    return versionStart !== -1 && isAsciiDigits(path.slice(versionStart + 2));
 }
 
 /**
@@ -1862,9 +1868,8 @@ export type ClaudeSettingsRead = {
 export function readClaudeSettings(path: string): ClaudeSettingsRead {
     const none: ClaudeSettingsRead = { helper: null, baseURL: null };
     try {
-        const parsed = unknownRecordSchema.safeParse(JSON.parse(readFileSync(path, "utf8"))); // on-disk settings
-        if (!parsed.success) return none;
-        const record = parsed.data;
+        const record = JSON.parseWith(readFileSync(path, "utf8"), unknownRecordSchema); // on-disk settings
+        if (record === null) return none;
         const helper = record.apiKeyHelper;
         const envBlock = unknownRecordSchema.safeParse(record.env);
         const baseURL = envBlock.success ? envBlock.data.ANTHROPIC_BASE_URL : undefined;
@@ -1959,17 +1964,13 @@ export type MessagePingOutcome =
  * read keeps the user in control via the ambiguous/save-anyway path.
  */
 function isModelNotFoundBody(text: string): boolean {
-    try {
-        const parsed = unknownRecordSchema.safeParse(JSON.parse(text)); // endpoint error body
-        if (!parsed.success) return false;
-        const error = unknownRecordSchema.safeParse(parsed.data.error);
-        if (!error.success) return false;
-        const { type, code, message } = error.data;
-        if (code === "model_not_found") return true;
-        return type === "not_found_error" && typeof message === "string" && message.toLowerCase().includes("model");
-    } catch {
-        return false;
-    }
+    const parsed = JSON.parseWith(text, unknownRecordSchema); // endpoint error body
+    if (parsed === null) return false;
+    const error = unknownRecordSchema.safeParse(parsed.error);
+    if (!error.success) return false;
+    const { type, code, message } = error.data;
+    if (code === "model_not_found") return true;
+    return type === "not_found_error" && typeof message === "string" && message.toLowerCase().includes("model");
 }
 
 /**
@@ -1985,7 +1986,7 @@ export async function pingMessagesEndpoint(
     model: string,
     doFetch: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ): Promise<MessagePingOutcome> {
-    const root = baseURL.replace(/\/+$/, "");
+    const root = trimTrailing(baseURL, "/");
     const url = protocol === "anthropic" ? `${root}/messages` : `${root}/chat/completions`;
     const headers = wireHeaders(cred, protocol);
     headers.set("content-type", "application/json");
@@ -2038,7 +2039,7 @@ export async function probeCredentialSource(
         message: `The endpoint rejected the credential (HTTP ${status}). Check the ${cred.value.scheme} scheme and that the source mints a valid token for ${baseURL}.`,
     });
 
-    const url = `${baseURL.replace(/\/+$/, "")}/models`;
+    const url = `${trimTrailing(baseURL, "/")}/models`;
     let response: Response;
     try {
         response = await doFetch(url, { method: "GET", headers: wireHeaders(cred.value, protocol) });
@@ -2302,7 +2303,7 @@ export function directModelPrefill(listed: ModelCandidate[] | null, provider: st
 /** One `/models` listing attempt for the static-key pre-fill; any failure (non-2xx, parse, network) degrades to null — never an error. */
 async function fetchDirectListing(baseURL: string, protocol: ModelWireProtocol, cred: Credential): Promise<ModelCandidate[] | null> {
     try {
-        const response = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, { method: "GET", headers: wireHeaders(cred, protocol) });
+        const response = await fetch(`${trimTrailing(baseURL, "/")}/models`, { method: "GET", headers: wireHeaders(cred, protocol) });
         if (!response.ok) return null;
         const parsed = probeModelsSchema.safeParse(await response.json());
         return parsed.success ? listedCandidates(parsed.data.data) : null;
@@ -2658,7 +2659,9 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
         stderr: "pipe",
     });
 
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds each http or https URL in a line that the login container prints. A URL runs to the first white space, quote, or angle bracket. A string form (find each `http://` or `https://`, then take characters up to one of those) needs a scan loop with a stop set, which is longer than the pattern.
     const urlPattern = /https?:\/\/[^\s"'<>]+/g;
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds the `ssh -i` or `ssh -L` tunnel command in a line that the login container prints: `ssh`, white space, `-i` or `-L`, and then the text up to the last digit of the line. A string form must try each `ssh` of the line, skip the white space, test the flag, and look back for the last digit, which is longer than the pattern.
     const sshPattern = /ssh\s+-[iL].*\d+/g;
     let authUrl: string | null = null;
     let sshCommand: string | null = null;

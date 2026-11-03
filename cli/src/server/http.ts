@@ -6,6 +6,8 @@ import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import { API_ERROR_STATUS, DEFAULT_PER_PAGE, MAX_PER_PAGE, type ApiError, type ApiErrorCode, type ListEnvelope, type PageQuery } from "../api/common.ts";
 import { SIGN_IN_REQUIRED, type RuntimeUnavailableDetails, type ServerBootState } from "../api/server.ts";
 import { getLogger } from "../lib/log.ts";
+import { isAsciiDigits } from "../lib/text.ts";
+import { runEvery } from "../lib/timer.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { ServerBoot } from "./boot.ts";
 
@@ -84,7 +86,7 @@ export async function readBody<T>(c: Context, schema: ZodType<T>): Promise<Resul
  * none). A value that is absent, or that is not a positive integer, gives `fallback`.
  */
 export function parseCount(value: string | undefined, fallback: number, max: number = MAX_PER_PAGE): number {
-    const count = value !== undefined && /^\d+$/.test(value) && Number(value) > 0 ? Number(value) : fallback;
+    const count = value !== undefined && isAsciiDigits(value) && Number(value) > 0 ? Number(value) : fallback;
     return Math.min(count, max);
 }
 
@@ -96,7 +98,7 @@ export function parseCount(value: string | undefined, fallback: number, max: num
 export function parsePage(page: string | undefined, perPage: string | undefined): PageQuery {
     const count = parseCount(perPage, DEFAULT_PER_PAGE);
     // A route multiplies the page by the count into an offset, thus a page whose offset is not a safe integer is a bad value.
-    const pageNumber = page !== undefined && /^\d+$/.test(page) && Number.isSafeInteger(Number(page) * count) ? Number(page) : 0;
+    const pageNumber = page !== undefined && isAsciiDigits(page) && Number.isSafeInteger(Number(page) * count) ? Number(page) : 0;
     return { page: pageNumber, perPage: count };
 }
 
@@ -205,7 +207,7 @@ export function sseResponse(produce: (writer: SseWriter) => Promise<void>, opts:
     const encoder = new TextEncoder();
     const disconnect = new AbortController();
     let open = true;
-    let ping: ReturnType<typeof setInterval> | undefined;
+    let stopPing: (() => void) | undefined;
 
     const body = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -215,13 +217,13 @@ export function sseResponse(produce: (writer: SseWriter) => Promise<void>, opts:
             const close = (): void => {
                 if (!open) return;
                 open = false;
-                clearInterval(ping);
+                stopPing?.();
                 controller.close();
             };
             // `Bun.serve` sends the response headers with the first body bytes. The headers carry the id that a
             // client needs to abort the work, thus they cannot wait for the first frame of a slow producer.
             write(": open\n\n");
-            ping = setInterval(() => write(": ping\n\n"), opts.pingMs);
+            stopPing = runEvery(opts.pingMs, () => write(": ping\n\n"));
             const writer: SseWriter = { send: (frame) => write(`data: ${JSON.stringify(frame)}\n\n`), signal: disconnect.signal };
             void produce(writer).then(close, (cause: unknown) => {
                 getLogger("server").error({ err: cause }, "an SSE producer failed");
@@ -230,7 +232,7 @@ export function sseResponse(produce: (writer: SseWriter) => Promise<void>, opts:
         },
         cancel() {
             open = false;
-            clearInterval(ping);
+            stopPing?.();
             disconnect.abort();
         },
     });

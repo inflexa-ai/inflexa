@@ -18,6 +18,7 @@ import type { Analysis } from "../../../types/analysis.ts";
 import type { ProvActor, ProvCommandRef, ProvStepRef } from "../../../types/prov.ts";
 import type { ServerEnv } from "../../http.ts";
 import { provenanceRoutes } from "../provenance.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // The routes alone, mounted at their path with no bearer check and no analysis guard: `app.test.ts`
 // covers those. The recorder has no subscriber in this process, thus the flush before each read is a
@@ -103,7 +104,7 @@ describe("POST {A}/provenance/export", () => {
         const path = join(home, defaultOutputSubdir(ANALYSIS.slug), "provenance.json");
         expect(await jsonBody(response)).toEqual({ path, attestationPath: `${path}.sig.json` });
         expect(existsSync(path)).toBe(true);
-        expect(JSON.parse(readFileSync(`${path}.sig.json`, "utf8"))).toHaveProperty("payloadType", "application/json; profile=prov-json");
+        expect(parsedJson(readFileSync(`${path}.sig.json`, "utf8"), z.unknown())).toHaveProperty("payloadType", "application/json; profile=prov-json");
     });
 
     test("a PROV-N export has no attestation, and an absolute `output` is written as given", async () => {

@@ -8,6 +8,7 @@ import { okAsync, errAsync } from "neverthrow";
 import type { UpsertPlanInput } from "@inflexa-ai/harness";
 
 import { intakePlan, type PlanIntakeDeps, type PlanIntakeError } from "../plan_intake.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 // A plan document, kept as a loose record so tests can craft malformed and
 // structurally-invalid variants that never have to satisfy `AnalysisPlan`.
@@ -118,7 +119,8 @@ describe("intakePlan — valid plans", () => {
         // The seam receives the PARSED plan, not the raw bytes.
         expect(call.plan).toHaveProperty("analytical_narrative", "Explore the dataset and quantify differences between the groups.");
         expect(out.planId).toBe(expectedId("analysis-1", content));
-        expect(out.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+        expect(out.planId.startsWith("pln-")).toBe(true);
+        expect(isLowerHex(out.planId.slice(4), 8)).toBe(true);
         expect(out.plan.steps[0]?.agent).toBe("scientific-executor");
         expect(out.planSummary).toBe("Differential expression");
     });
@@ -159,7 +161,8 @@ describe("intakePlan — deterministic plan id", () => {
         const b = (await intakePlan("a1", path, deps))._unsafeUnwrap();
 
         expect(a.planId).toBe(b.planId);
-        expect(a.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+        expect(a.planId.startsWith("pln-")).toBe(true);
+        expect(isLowerHex(a.planId.slice(4), 8)).toBe(true);
     });
 
     test("different bytes → different id (an edited plan is a new plan)", async () => {

@@ -8,10 +8,14 @@ import {
     type LineageWalk as KernelWalk,
 } from "@inflexa-ai/prov-kernel";
 
+import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE } from "../../lib/text.ts";
 import type { LineageFormat, LineageJson, LineageJsonNode, LineageView } from "../../api/provenance.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
 import type { Analysis } from "../../types/analysis.ts";
+
+/** The characters that a graph id keeps. The sanitize of a QName replaces each other UTF-16 unit with `_`. */
+const QNAME_SAFE_CHARS = `${ASCII_LOWERCASE}${ASCII_UPPERCASE}${ASCII_DIGITS}_`;
 
 // The read-side answer to "where did this file come from?" (and, with --forward, "what came from
 // this file?"), over the same stored bytes `export` serializes. The kernel owns the interpretation
@@ -654,7 +658,10 @@ export function formatMermaid(walk: LineageWalk): string {
     const idOf = (qn: string): string => {
         const existing = ids.get(qn);
         if (existing !== undefined) return existing;
-        const base = qn.replaceAll(/[^A-Za-z0-9_]/g, "_");
+        const base = qn
+            .split("")
+            .map((unit) => (QNAME_SAFE_CHARS.includes(unit) ? unit : "_"))
+            .join("");
         let id = base;
         for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
         ids.set(qn, id);

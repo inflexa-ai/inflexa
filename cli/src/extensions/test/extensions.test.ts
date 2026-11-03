@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import { z } from "zod";
 
 // Side-effect import: installs JSON.parseWith / Response.jsonWith / Date.relativeAge / Promise.sleep /
@@ -19,6 +19,43 @@ describe("JSON.parseWith", () => {
 
     test("returns null when valid JSON fails the schema", () => {
         expect(JSON.parseWith('{"a":"not-a-number"}', schema)).toBeNull();
+    });
+
+    test("returns null when a refine of the schema throws", () => {
+        const throwing = z.unknown().refine(() => {
+            throw new Error("refine defect");
+        });
+        expect(JSON.parseWith("1", throwing)).toBeNull();
+    });
+});
+
+describe("JSON.parseResult", () => {
+    const schema = z.object({ a: z.number() });
+
+    test("gives the parsed value when the JSON is valid and matches the schema", () => {
+        expect(JSON.parseResult('{"a":1}', schema)._unsafeUnwrap()).toEqual({ a: 1 });
+    });
+
+    test("gives a malformed error with the cause of the parse on malformed JSON", () => {
+        const error = JSON.parseResult("{not json", schema)._unsafeUnwrapErr();
+        expect(error.type).toBe("malformed");
+        if (error.type !== "malformed") throw new Error("expected a malformed error");
+        expect(error.cause).toBeInstanceOf(SyntaxError);
+    });
+
+    test("gives a mismatch error with the zod error when valid JSON fails the schema", () => {
+        const error = JSON.parseResult('{"a":"not-a-number"}', schema)._unsafeUnwrapErr();
+        expect(error.type).toBe("mismatch");
+        if (error.type !== "mismatch") throw new Error("expected a mismatch error");
+        expect(error.error).toBeInstanceOf(z.ZodError);
+        expect(error.error.issues[0]?.path).toEqual(["a"]);
+    });
+
+    test("lets a throw from a refine of the schema propagate", () => {
+        const throwing = z.unknown().refine(() => {
+            throw new Error("refine defect");
+        });
+        expect(() => JSON.parseResult("1", throwing)).toThrow("refine defect");
     });
 });
 
@@ -171,11 +208,20 @@ describe("String.relativeAge", () => {
 });
 
 describe("Promise.sleep", () => {
-    test("resolves only after roughly the requested delay", async () => {
-        const start = Date.now();
-        await Promise.sleep(20);
-        // Allow scheduler slack below the nominal 20ms, but it must have actually waited.
-        expect(Date.now() - start).toBeGreaterThanOrEqual(15);
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    test("resolves at the requested delay and not before", async () => {
+        let done = false;
+        const sleeping = Promise.sleep(20).then(() => {
+            done = true;
+        });
+        jest.advanceTimersByTime(19);
+        await Promise.resolve();
+        expect(done).toBe(false);
+        jest.advanceTimersByTime(1);
+        await sleeping;
+        expect(done).toBe(true);
     });
 });
 

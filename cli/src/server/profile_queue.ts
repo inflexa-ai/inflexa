@@ -2,6 +2,7 @@ import { ResultAsync } from "neverthrow";
 
 import { Bus } from "../lib/bus.ts";
 import { getLogger } from "../lib/log.ts";
+import { runAfter } from "../lib/timer.ts";
 import { findAnalysesByRef } from "../db/primary_query.ts";
 import { reprofileForInputChange, type ProfileParityOutcome } from "../modules/harness/profile_trigger.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
@@ -114,12 +115,8 @@ export function defaultInputDriftOpts(runtime: () => HarnessRuntime | null): Inp
             ),
         reprofile: reprofileForInputChange,
         sandboxRefusal: (analysisId) => sandboxRefusal(analysisId, INPUT_DRIFT_SANDBOX_GATE_OPTS),
-        schedule: (fn, ms) => {
-            const handle = setTimeout(fn, ms);
-            // A half-elapsed debounce must not keep the process alive at shutdown.
-            handle.unref();
-            return () => clearTimeout(handle);
-        },
+        // A half-elapsed debounce must not keep the process alive at shutdown.
+        schedule: (fn, ms) => runAfter(ms, fn, { unref: true }),
         subscribe: (handler) => {
             Bus.on("inflexa", handler);
             return () => Bus.off("inflexa", handler);

@@ -22,9 +22,11 @@ import {
 } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 import PQueue from "p-queue";
+import { z } from "zod";
 
 import { declaredContentLength, downloadToFile, type DownloadError, type FetchLike } from "../../lib/download.ts";
 import { sha256File } from "../../lib/hash.ts";
+import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf } from "../../lib/text.ts";
 
 /** Reserved and user-owned paths below one public reference store. */
 export type ReferenceStorePaths = {
@@ -561,8 +563,9 @@ async function readReceipt(path: string, storeRoot: string): Promise<{ readonly 
         const info = infoResult.value;
         if (info === undefined) return { exists: false };
         if (info.isSymbolicLink() || !info.isFile()) return { exists: true };
-        const raw: unknown = JSON.parse(await readFile(path, "utf8"));
-        return { exists: true, receipt: parseReferenceInstallReceipt(raw) };
+        const raw = JSON.parseResult(await readFile(path, "utf8"), z.unknown());
+        if (raw.isErr()) return { exists: true };
+        return { exists: true, receipt: parseReferenceInstallReceipt(raw.value) };
     } catch (cause) {
         if (isMissing(cause)) return { exists: false };
         return { exists: true };
@@ -625,8 +628,11 @@ function receiptMatchesCurrentCatalog(dataset: ReferenceDataset, receipt: Refere
     return receipt.artifacts.every((recorded) => expected.has(recorded.path));
 }
 
+const VERSION_SEGMENT_FIRST = ASCII_LOWERCASE + ASCII_UPPERCASE + ASCII_DIGITS;
+const VERSION_SEGMENT_REST = `${VERSION_SEGMENT_FIRST}._-`;
+
 function activeManagedRoot(paths: ReferenceStorePaths, dataset: ReferenceDataset, receipt: ReferenceInstallReceipt): string | undefined {
-    if (receipt.datasetId !== dataset.id || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(receipt.datasetVersion)) return undefined;
+    if (receipt.datasetId !== dataset.id || !consistsOf(receipt.datasetVersion, VERSION_SEGMENT_REST, VERSION_SEGMENT_FIRST)) return undefined;
     const root = join(paths.managed, dataset.id, receipt.datasetVersion);
     return containedPath(paths.managed, root) ? root : undefined;
 }

@@ -12,6 +12,7 @@ import { readConfig, writeConfig } from "../lib/config.ts";
 import { env, isReservedPostgresPort } from "../lib/env.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
+import { runAfter } from "../lib/timer.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { useKeymapRoot, KEYS, chordLabel } from "./keymap.ts";
@@ -449,7 +450,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
                     modelFetchController?.abort();
                     const controller = new AbortController();
                     modelFetchController = controller;
-                    const timer = setTimeout(() => controller.abort(), MODEL_FETCH_TIMEOUT_MS);
+                    const stopTimeout = runAfter(MODEL_FETCH_TIMEOUT_MS, () => controller.abort());
                     // Every listing failure degrades the same way, so they share one branch: an endpoint
                     // that is offline, gates /models, times out, or names its models unconventionally is
                     // still configurable by typing the id. A request to the server that failed is one more.
@@ -458,7 +459,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
                         () => null,
                     );
                     void listing.then((ids) => {
-                        clearTimeout(timer);
+                        stopTimeout();
                         // Unmounted, or a newer probe replaced this one → the flow this continuation targets is
                         // gone; run NOTHING (no setNotice / dialogPush / promptField onto a dead screen). A live
                         // timeout leaves both checks false, so it falls through to the failure branch below.

@@ -18,6 +18,7 @@ import { freshDb } from "../../../test_support/db.ts";
 import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { DEFAULT_MACHINE_ROUTE_OPTS, machineRoutes, type MachineRouteOpts } from "../machine.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. The connection reads are
 // stubs, thus no route here reaches a proxy or an endpoint. A test reads a body as `unknown` and asserts it
@@ -36,7 +37,7 @@ function json(method: string, body: unknown): RequestInit {
 
 /** The config file as written, read raw so the assertion names each key that is present. */
 function persistedConfig(): Record<string, unknown> {
-    return unknownRecordSchema.parse(JSON.parse(readFileSync(env.configPath, "utf8")));
+    return parsedJson(readFileSync(env.configPath, "utf8"), unknownRecordSchema);
 }
 
 beforeEach(() => {
@@ -237,7 +238,7 @@ describe("the settings", () => {
         expect(settings.dataDir).toBe(dirname(env.dbPath));
         expect(settings.serverLogPath).toBe(env.serverLogPath);
         expect(dirname(settings.serverLogPath)).toBe(env.logDir);
-        expect(basename(settings.serverLogPath)).toMatch(/^server(\.dev)?\.log$/);
+        expect(["server.log", "server.dev.log"]).toContain(basename(settings.serverLogPath));
         expect(isAbsolute(settings.dataDir)).toBe(true);
         expect(isAbsolute(settings.serverLogPath)).toBe(true);
     });
@@ -312,7 +313,7 @@ describe("the settings", () => {
         );
         const body = await (await routesWith().request("/settings")).text();
         expect(["sk-secret-1", "pg-secret-1"].filter((secret) => body.includes(secret))).toEqual([]);
-        expect(JSON.parse(body)).toMatchObject({ postgres: { passwordSet: true }, embedding: { mode: "api-key", apiKeySet: true } });
+        expect(parsedJson(body, z.unknown())).toMatchObject({ postgres: { passwordSet: true }, embedding: { mode: "api-key", apiKeySet: true } });
     });
 
     test("PATCH with no password and an `api-key` block with no key keeps each stored secret", async () => {

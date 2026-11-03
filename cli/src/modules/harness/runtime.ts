@@ -50,6 +50,7 @@ import { createCredentialSource, credentialErrorMessage, type Credential, type C
 import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, releaseInstanceLock } from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
+import { withinDeadline } from "../../lib/timer.ts";
 import { notifyProfileSettledActivity } from "../analysis/activity.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { analysisFarmPath, linkPackagesIntoFarm, resolveAnalysisFarm } from "../libs/composition.ts";
@@ -354,16 +355,11 @@ async function probeEmbeddingProvider(provider: EmbeddingProvider): Promise<Resu
     // `EmbeddingProvider.embed` takes no AbortSignal, so a hung call can only be
     // raced, not cancelled — the loser is abandoned, which is fine at boot: on
     // timeout we fail the boot, and on success the process runs long past it.
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), PROBE_TIMEOUT_MS);
-    });
-    const outcome = await Promise.race([checked, timeout]);
-    clearTimeout(timer);
-    if (outcome === "timeout") {
+    const outcome = await withinDeadline(checked, PROBE_TIMEOUT_MS);
+    if (outcome.kind === "timeout") {
         return err({ kind: "embed_failed", detail: `no embedding after ${PROBE_TIMEOUT_MS / 1000}s` });
     }
-    return outcome;
+    return outcome.value;
 }
 
 /**

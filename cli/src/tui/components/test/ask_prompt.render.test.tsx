@@ -42,7 +42,7 @@ function hangsAtGutter(line: string): boolean {
 // dialog/scroll render tests). Harmless for single printable keys, so it is used uniformly.
 function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
     return async () => {
-        await new Promise((r) => setTimeout(r, 35));
+        await Promise.sleep(35);
         await setup.renderOnce();
         await setup.renderOnce();
     };

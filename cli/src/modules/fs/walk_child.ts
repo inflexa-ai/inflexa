@@ -7,6 +7,8 @@ import { err, ok, ResultAsync, type Result } from "neverthrow";
 import { walkParentPid } from "../../lib/env.ts";
 import { errnoCode } from "../../lib/fs.ts";
 import { present } from "../../lib/present.ts";
+import { isAsciiDigits } from "../../lib/text.ts";
+import { runEvery } from "../../lib/timer.ts";
 
 /**
  * The record protocol between the walk child (`inflexa server walk`) and the search cache of the local server. Each
@@ -417,11 +419,14 @@ export async function runWalkCommand(scope: string, flags: WalkCommandFlags, def
     }
     const parent = walkParentPid() ?? process.ppid;
     if (parentGone(parent, process.ppid)) process.exit(1);
-    const parentCheck = setInterval(() => {
-        if (parentGone(parent, process.ppid)) process.exit(1);
-    }, PARENT_CHECK_MS);
     // The walk keeps the process alive. The check must not keep it alive after the walk.
-    parentCheck.unref();
+    runEvery(
+        PARENT_CHECK_MS,
+        () => {
+            if (parentGone(parent, process.ppid)) process.exit(1);
+        },
+        { unref: true },
+    );
     // `Bun.write` and not a `FileSink`: after a write to a closed pipe, a `FileSink` rejects one promise and then drops
     // each later write in silence, thus the walk would not see the end of its reader. `Bun.write` rejects each time.
     const written = await walkToRecords(scope, { hidden: flags.hidden === true, maxDepth, width }, readFolderEntries, async (bytes) => {
@@ -433,6 +438,6 @@ export async function runWalkCommand(scope: string, flags: WalkCommandFlags, def
 /** `value` as a whole number of 1 or more, `fallback` when the flag is absent, or `null` when it is not such a number. */
 function wholeNumber(value: string | undefined, fallback: number): number | null {
     if (value === undefined) return fallback;
-    const parsed = /^\d+$/.test(value) ? Number(value) : 0;
+    const parsed = isAsciiDigits(value) ? Number(value) : 0;
     return parsed >= 1 ? parsed : null;
 }

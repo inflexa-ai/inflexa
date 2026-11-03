@@ -6,10 +6,12 @@ import pino from "pino";
 import type { LogFields, Logger } from "@inflexa-ai/harness";
 
 import { env } from "./env.ts";
+import { runAfter } from "./timer.ts";
 import { isMember } from "./types.ts";
 
 const MAX_LOG_AGE_DAYS = 7;
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads the date out of the name of a log file this module writes: `inflexa-YYYY-MM-DD.log` with an optional `.N` roll number. A string form is exact (`startsWith`, `endsWith`, `split(".")`, and fixed-width ASCII digit parts), but it is longer than the pattern.
 const LOG_FILE_PATTERN = /^inflexa-(\d{4})-(\d{2})-(\d{2})(?:\.\d+)?\.log$/;
 
 /**
@@ -215,7 +217,7 @@ scheduleMidnightRoll(fileDestination, {
     currentFile: openedLogFile,
     now: () => new Date(),
     setTimer: (fn, ms) => {
-        setTimeout(fn, ms).unref();
+        runAfter(ms, fn, { unref: true });
     },
 });
 

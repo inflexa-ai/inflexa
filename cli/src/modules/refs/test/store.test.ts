@@ -16,6 +16,7 @@ import {
     type ReferenceReceiptArtifact,
 } from "@inflexa-ai/harness";
 import { err, ok } from "neverthrow";
+import { z } from "zod";
 
 import {
     buildReferenceListDocument,
@@ -32,6 +33,7 @@ import {
     type ReferenceVerification,
 } from "../store.ts";
 import { objectContaining } from "../../../test_support/matchers.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 const roots: string[] = [];
 
@@ -217,7 +219,7 @@ describe("installation", () => {
         const paths = referenceStorePaths(path);
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "nested", "a.txt"), "utf8")).toBe("alpha");
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "b.txt"), "utf8")).toBe("beta");
-        expect(JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8"))).toEqual(
+        expect(parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.unknown())).toEqual(
             receipt("demo", "2026.07", "2026-07-14T12:00:00.000Z", [
                 { path: "nested/a.txt", bytes: 5, sha256: sha("alpha") },
                 { path: "b.txt", bytes: 4, sha256: sha("beta") },
@@ -268,7 +270,7 @@ describe("installation", () => {
                 now: () => new Date(now),
             });
             expect(installed.isOk()).toBe(true);
-            receipts.push(parseReferenceInstallReceipt(JSON.parse(readFileSync(join(referenceStorePaths(path).receipts, "demo.json"), "utf8"))));
+            receipts.push(parseReferenceInstallReceipt(parsedJson(readFileSync(join(referenceStorePaths(path).receipts, "demo.json"), "utf8"), z.unknown())));
         }
 
         expect(receipts[0]?.activatedAt).not.toBe(receipts[1]?.activatedAt);
@@ -334,7 +336,7 @@ describe("mutable upstream installation", () => {
 
         const paths = referenceStorePaths(path);
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "gene_info.gz"), "utf8")).toBe("mutable-bytes");
-        const receipt: unknown = JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8"));
+        const receipt: unknown = parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.unknown());
         expect(receipt).toHaveProperty("artifacts", [{ path: "gene_info.gz", bytes: 13, sha256: sha("mutable-bytes") }]);
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]).toMatchObject({
             state: "valid",
@@ -377,7 +379,7 @@ describe("mutable upstream installation", () => {
         const forced = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(refreshed) }, { force: true });
         expect(forced._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(16);
         expect(readFileSync(active, "utf8")).toBe("release-b-longer");
-        const receipt: unknown = JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8"));
+        const receipt: unknown = parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.unknown());
         expect(receipt).toHaveProperty("artifacts", [{ path: "gene_info.gz", bytes: 16, sha256: sha("release-b-longer") }]);
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
     });
@@ -546,7 +548,7 @@ describe("transfer progress reporting", () => {
         });
 
         expect(observed._unsafeUnwrap()).toEqual(baseline._unsafeUnwrap());
-        const receipt = (store: string): unknown => JSON.parse(readFileSync(join(referenceStorePaths(store).receipts, "demo.json"), "utf8"));
+        const receipt = (store: string): unknown => parsedJson(readFileSync(join(referenceStorePaths(store).receipts, "demo.json"), "utf8"), z.unknown());
         expect(receipt(noisy)).toEqual(receipt(quiet));
         expect((await verifyReferenceDatasets(noisy, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
     });
@@ -855,7 +857,7 @@ function serveConcurrently(
         state.peak = Math.max(state.peak, state.active);
         try {
             const path = String(input).replace("https://upstream.test/", "");
-            await new Promise((resolve) => setTimeout(resolve, delayByPath[path] ?? 20));
+            await Promise.sleep(delayByPath[path] ?? 20);
             return await inner(input, init);
         } finally {
             state.active -= 1;
@@ -1065,7 +1067,7 @@ describe("reference download sizing", () => {
             fetch: async () => {
                 state.active += 1;
                 state.peak = Math.max(state.peak, state.active);
-                await new Promise((resolve) => setTimeout(resolve, 5));
+                await Promise.sleep(5);
                 state.active -= 1;
                 return new Response(null, { headers: { "content-length": "1" } });
             },

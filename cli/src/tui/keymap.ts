@@ -27,6 +27,8 @@ import type { Renderable } from "@opentui/core";
 
 import { GLYPHS } from "../lib/design_system.ts";
 import { readConfig } from "../lib/config.ts";
+import { splitWhitespace } from "../lib/text.ts";
+import { runAfter } from "../lib/timer.ts";
 import { keysOf } from "../lib/types.ts";
 
 /** A platform-neutral key chord, matched structurally against opentui's parsed key. */
@@ -169,9 +171,9 @@ export function parseKeySpec(spec: string, leader: Chord): Sequence[] {
 function parseSequence(s: string, leader: Chord): Sequence {
     if (s.startsWith(LEADER_TOKEN)) {
         const rest = s.slice(LEADER_TOKEN.length).trim();
-        return rest ? [leader, ...rest.split(/\s+/).map(parseChord)] : [leader];
+        return rest ? [leader, ...splitWhitespace(rest).map(parseChord)] : [leader];
     }
-    return s.split(/\s+/).filter(Boolean).map(parseChord);
+    return splitWhitespace(s).filter(Boolean).map(parseChord);
 }
 
 /** The lowercase, platform-neutral display label for a single chord, e.g. `ctrl+k`, `alt+enter`, `↑`. */
@@ -501,24 +503,27 @@ function activeLayers(): LayerConfig[] {
 // --- pending-sequence state machine ---------------------------------------------------------
 
 const [pending, setPending] = createSignal<Sequence>([]);
-let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+let stopPendingTimer: (() => void) | null = null;
 
 function clearPending(): void {
-    if (pendingTimer) {
-        clearTimeout(pendingTimer);
-        pendingTimer = null;
+    if (stopPendingTimer) {
+        stopPendingTimer();
+        stopPendingTimer = null;
     }
     setPending([]);
 }
 
 function armTimer(): void {
-    if (pendingTimer) clearTimeout(pendingTimer);
-    pendingTimer = setTimeout(() => {
-        pendingTimer = null;
-        setPending([]);
-    }, leaderTimeoutMs());
+    stopPendingTimer?.();
     // Don't let a half-typed chord keep the process alive (matters for tests + clean shutdown).
-    pendingTimer.unref();
+    stopPendingTimer = runAfter(
+        leaderTimeoutMs(),
+        () => {
+            stopPendingTimer = null;
+            setPending([]);
+        },
+        { unref: true },
+    );
 }
 
 function popPending(): void {

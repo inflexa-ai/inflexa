@@ -10,6 +10,7 @@ import { GLYPHS, size, zIndex } from "../lib/design_system.ts";
 import { describePauseCause, nextRetryOf } from "../lib/pause_words.ts";
 import { contractHome } from "../lib/paths.ts";
 import { shutdown } from "../lib/shutdown.ts";
+import { splitWhitespace } from "../lib/text.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus, modelRetry, modelRetryText, type ChatStatus, type ModelRetryStatus } from "./hooks/status.ts";
@@ -1208,7 +1209,7 @@ export function App(props: AppProps) {
         if (composer === null || !text) return;
 
         if (text.startsWith("/")) {
-            const name = text.slice(1).split(/\s+/)[0]?.toLowerCase();
+            const name = splitWhitespace(text.slice(1))[0]?.toLowerCase();
             if (name && QUIT_ALIASES.has(name)) {
                 composer.setText("");
                 if (chatStatus() === "busy") {

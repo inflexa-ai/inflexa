@@ -24,6 +24,7 @@ import { buildApp } from "../../app.ts";
 import type { ServerEnv } from "../../http.ts";
 import { createPageGrantStore, createSessionPagePublisherFactory, type PageGrantStore } from "../../report_page_grants.ts";
 import { present } from "../../../lib/present.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 const TOKEN = "b".repeat(64);
 const AUTH = { Authorization: `Bearer ${TOKEN}` };
@@ -389,7 +390,7 @@ describe("POST /api/v1/analyses/:analysisId/report-sessions/:threadId/access", (
         const body = accessBody.parse(await jsonBody(response));
         expect(body.url).toStartWith("http://127.0.0.1:");
         expect(new URL(body.url).pathname).toBe("/report-sessions/a1/t1/index.html");
-        expect(new URL(body.url).searchParams.get("t")).toMatch(/^[0-9a-f]{64}$/);
+        expect(isLowerHex(new URL(body.url).searchParams.get("t") ?? "", 64)).toBe(true);
         expect(body.expiresAt).toBe(new Date(now + 900_000).toISOString());
     });
 

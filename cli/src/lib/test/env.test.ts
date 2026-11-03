@@ -26,6 +26,7 @@ import {
     stackPorts,
     walkChildEnv,
 } from "../env.ts";
+import { parsedJson } from "../../test_support/json.ts";
 
 // The truth table behind env.isDevelopment: a build is development unless the baked channel is exactly
 // "production". We test the pure helper because env freezes its bakedEnv.buildChannel read at import.
@@ -386,7 +387,7 @@ describe("the base folders of the data and the configuration", () => {
                 },
             );
             expect(run.exitCode).toBe(0);
-            return { ...resolvedPathsSchema.parse(JSON.parse(run.stdout.toString())), home };
+            return { ...parsedJson(run.stdout.toString(), resolvedPathsSchema), home };
         } finally {
             rmSync(home, { recursive: true, force: true });
         }

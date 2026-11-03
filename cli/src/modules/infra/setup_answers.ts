@@ -5,6 +5,7 @@ import { z } from "zod";
 import { runtimeIds } from "../../lib/container.ts";
 import { EMBEDDING_API_KEY_VAR, isReservedPostgresPort, reservedPostgresPorts, resolveEmbeddingApiKey } from "../../lib/env.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
+import { ASCII_DIGITS, ASCII_LOWERCASE, consistsOf, isAsciiDigits } from "../../lib/text.ts";
 import { isMember, keysOf } from "../../lib/types.ts";
 import { type ConnectionMode } from "./compose.ts";
 
@@ -69,16 +70,17 @@ export const OAUTH_ACCOUNT_KINDS = ["gemini", "openai", "claude", "qwen", "iflow
 export type OAuthAccountKind = (typeof OAUTH_ACCOUNT_KINDS)[number];
 
 /** A direct-mode vendor slug: lowercase, digits, and `-`/`_`/`.` — an OPEN vocabulary (only its shape is checked). */
-const VENDOR_SLUG = /^[a-z0-9][a-z0-9._-]*$/;
+const VENDOR_SLUG_FIRST = ASCII_LOWERCASE + ASCII_DIGITS;
+const VENDOR_SLUG_REST = `${VENDOR_SLUG_FIRST}._-`;
 
 /**
  * Whether `value` has the shape of a direct-mode vendor slug. Exported because the orchestrator must
  * re-ask this question on the ONE path this module cannot judge: an interactive run whose mode is
  * decided by a prompt, after the resolver has already returned. Sharing the predicate keeps the
- * vocabulary defined once — a second regex there would drift the moment either is widened.
+ * vocabulary defined once — a second copy of the rule there would drift the moment either is widened.
  */
 export function isVendorSlug(value: string): boolean {
-    return VENDOR_SLUG.test(value);
+    return consistsOf(value, VENDOR_SLUG_REST, VENDOR_SLUG_FIRST);
 }
 
 const authSchemeSchema = z.enum(["x-api-key", "bearer"]);
@@ -431,7 +433,9 @@ const MODE_GATED_LEAVES = {
 const MODE_GATED_BLOCKS = keysOf(MODE_GATED_LEAVES);
 
 /** A plain decimal integer, optionally signed — the ONLY numeric literal shape either front-end accepts. */
-const DECIMAL_INTEGER = /^[+-]?\d+$/;
+function isDecimalInteger(text: string): boolean {
+    return isAsciiDigits(text.startsWith("+") || text.startsWith("-") ? text.slice(1) : text);
+}
 
 /**
  * How a problem at the DOCUMENT root is named. An empty issue path — the whole file is a scalar, or the
@@ -537,9 +541,11 @@ function answersNothing(answers: SetupAnswers): boolean {
 }
 
 /** A block mapping entry: a key, then `:` followed by whitespace or the end of the line (YAML's own rule). */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Splits one YAML block mapping line into its key and its value part. The key is any text up to a colon that a space or the line end follows, which is a YAML rule, and no string method states it exactly.
 const BLOCK_MAPPING_ENTRY = /^([^\s#][^:]*?)\s*:(\s.*)?$/;
 
 /** A block scalar header (`|`, `>`, with optional chomping/indent indicators and a trailing comment). */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Recognizes a YAML block scalar header: an indicator, optional chomping and indent marks in either order, and an optional comment. It is a YAML grammar rule.
 const BLOCK_SCALAR_HEADER = /^[|>][+-]?\d*[+-]?\s*(#.*)?$/;
 
 /** One mapping level of {@link duplicateMappingKeys}: the indent its keys sit at, plus how to name them. */
@@ -561,9 +567,11 @@ type RawAnswerScan = {
 };
 
 /** A trailing YAML comment on a value line: `#` starts one only when whitespace precedes it. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds a YAML trailing comment: a `#` that white space of any kind precedes. The first such place ends the value, which is a YAML rule.
 const TRAILING_COMMENT = /\s+#.*$/;
 
 /** A one-line flow mapping (`postgres: {port: 8080}`) — a block written inline. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Captures the inside of a one-line YAML flow mapping. The braces must wrap the whole value, and `.` stops at a line end, which a string-method form does not match exactly.
 const FLOW_MAPPING = /^\{(.*)\}$/;
 
 /** Record one mapping entry's raw value under its full key path, descending ONE level into a flow mapping. */
@@ -700,7 +708,7 @@ function nonDecimalNumericProblems(scan: RawAnswerScan, document: unknown): stri
     const problems: string[] = [];
     for (const key of NUMERIC_ANSWER_KEYS) {
         const raw = scan.scalars.get(key);
-        if (raw === undefined || DECIMAL_INTEGER.test(raw)) continue;
+        if (raw === undefined || isDecimalInteger(raw)) continue;
         if (typeof answerAt(document, key) !== "number") continue;
         problems.push(`${answerSpelling(key)} — must be a whole number (got "${raw}").`);
     }
@@ -833,7 +841,7 @@ function pruned<T extends Record<string, unknown>>(block: T): T | undefined {
 function wholeNumber(raw: string | undefined, key: AnswerKey, problems: string[]): number | undefined {
     if (raw === undefined) return undefined;
     const text = raw.trim();
-    if (!DECIMAL_INTEGER.test(text)) {
+    if (!isDecimalInteger(text)) {
         problems.push(`${answerSpelling(key)} — must be a whole number (got "${raw}").`);
         return undefined;
     }
