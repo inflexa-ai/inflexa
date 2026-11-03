@@ -25,6 +25,8 @@ import { styleText } from "node:util";
 
 import { confirm } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
+import { splitWhitespace } from "../../lib/text.ts";
+import { runEvery } from "../../lib/timer.ts";
 import {
     buildReferenceListDocument,
     buildReferenceVerifyDocument,
@@ -227,7 +229,7 @@ function wrapBlock(text: string, width: number): readonly string[] {
     const indent = text.slice(0, text.length - text.trimStart().length);
     const lines: string[] = [];
     let line = "";
-    for (const word of text.trim().split(/\s+/)) {
+    for (const word of splitWhitespace(text.trim())) {
         if (line.length === 0) line = word;
         else if (indent.length + line.length + 1 + word.length <= width) line += ` ${word}`;
         else {
@@ -687,8 +689,7 @@ export function createReferenceDownloadProgress(
     painter.start(snapshot());
     // Nothing else repaints a stalled transfer: byte events are the only other trigger, and a stall
     // is precisely their absence. Unref'd so a hung download never holds the process open on its own.
-    const heartbeat = setInterval(() => painter.refresh(snapshot()), PROGRESS_RATE_WINDOW_MS);
-    heartbeat.unref();
+    const stopHeartbeat = runEvery(PROGRESS_RATE_WINDOW_MS, () => painter.refresh(snapshot()), { unref: true });
 
     return {
         report: (event) => {
@@ -730,7 +731,7 @@ export function createReferenceDownloadProgress(
             }
         },
         finish: (failure) => {
-            clearInterval(heartbeat);
+            stopHeartbeat();
             // Nothing is in flight once the plan is over — including on the failure path, where
             // whatever was open was abandoned rather than completed. The closing line reports totals.
             inFlight.clear();

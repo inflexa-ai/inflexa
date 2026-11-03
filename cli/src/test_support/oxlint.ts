@@ -73,13 +73,12 @@ async function spawnOxlint(targets: readonly string[]): Promise<Map<string, Repo
     const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     // Exit 1 means "the lint found an error", which a scratch file expects. Any other code is a failure to lint.
     if (exitCode !== 0 && exitCode !== 1) throw new Error(`oxlint failed (exit ${exitCode}):\n${stderr}\n${stdout}`);
-    let json: unknown;
-    try {
-        json = JSON.parse(stdout);
-    } catch {
-        throw new Error(`oxlint printed no JSON (exit ${exitCode}):\n${stderr}\n${stdout}`);
+    const parsed = JSON.parseResult(stdout, OxlintOutput);
+    if (parsed.isErr()) {
+        if (parsed.error.type === "malformed") throw new Error(`oxlint printed no JSON (exit ${exitCode}):\n${stderr}\n${stdout}`);
+        throw parsed.error.error;
     }
-    const output = OxlintOutput.parse(json);
+    const output = parsed.value;
     if (output.number_of_files !== targets.length) {
         throw new Error(`oxlint linted ${output.number_of_files} files for ${targets.length} targets (a target is ignored or missing):\n${stderr}`);
     }

@@ -21,11 +21,6 @@ function sha(body: string): string {
     return createHash("sha256").update(body).digest("hex");
 }
 
-/** Local rather than `Promise.sleep`: the global extensions load from the CLI entry point, which a test process never runs. */
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /** Offline upstream: serves `body`, optionally as an error status, a post-redirect url, or with a content-length header. */
 function serve(
     body: string,
@@ -136,7 +131,7 @@ describe("downloadToFile", () => {
         const stream = new ReadableStream({
             async start(c) {
                 for (const part of ["a", "b", "c", "d", "e"]) {
-                    await sleep(20);
+                    await Promise.sleep(20);
                     c.enqueue(new TextEncoder().encode(part));
                 }
                 c.close();

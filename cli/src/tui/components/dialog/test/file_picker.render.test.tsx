@@ -9,6 +9,8 @@ import { useKeymapRoot } from "../../../keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "../dialog_host.tsx";
 import { FilePicker } from "../file_picker.tsx";
 import { GLYPHS } from "../../../../lib/design_system.ts";
+import { isAsciiDigits, isWhitespace } from "../../../../lib/text.ts";
+import { wordTokens } from "../../../../test_support/text_shapes.ts";
 
 // FilePicker behavior through the real dialog host + keyboard bus: the INSERT/NORMAL esc
 // layering runs on the close-guard veto, which only exists inside a real dialog entry — so
@@ -45,7 +47,7 @@ type Setup = Awaited<ReturnType<typeof testRender>>;
 // A lone ESC byte is an ambiguous escape-sequence prefix: opentui's StdinParser holds it ~20ms
 // before flushing, so settle on a real clock (the dialog_host test's pattern).
 async function settle(setup: Setup): Promise<string> {
-    await new Promise((r) => setTimeout(r, 35));
+    await Promise.sleep(35);
     await setup.renderOnce();
     await setup.renderOnce();
     return setup.captureCharFrame();
@@ -90,6 +92,50 @@ function gutterOf(frame: string, name: string): string {
     if (before.includes(GLYPHS.circle)) return GLYPHS.circle;
     if (before.includes(GLYPHS.circleHollow)) return GLYPHS.circleHollow;
     return "";
+}
+
+/** The three columns of a mode string, `rwx` for each of the owner, the group, and the others; a hyphen is a bit that is off. */
+const MODE_COLUMNS = ["r-", "w-", "x-"];
+
+/** True when `text` holds nine characters in a row that read as a mode string, such as `rw-r--r--` or `---------`. */
+function holdsMode(text: string): boolean {
+    for (let at = 0; at + 9 <= text.length; at++) {
+        let isMode = true;
+        for (let column = 0; column < 9 && isMode; column++) {
+            isMode = MODE_COLUMNS[column % 3]?.includes(text.charAt(at + column)) === true;
+        }
+        if (isMode) return true;
+    }
+    return false;
+}
+
+const DATE_SHAPE = "dd/dd/dd";
+
+/** The index of the first `dd/dd/dd` in `text` (two digits, a slash, two digits, a slash, two digits), or -1. */
+function dateAt(text: string): number {
+    for (let at = 0; at + DATE_SHAPE.length <= text.length; at++) {
+        const isDate = [...DATE_SHAPE].every((shape, column) => (shape === "d" ? isAsciiDigits(text.charAt(at + column)) : text.charAt(at + column) === shape));
+        if (isDate) return at;
+    }
+    return -1;
+}
+
+/** True when a word of `text` is whole digits and one of `d`, `h`, `m`, such as `3d` or `45m`: a relative age. */
+function holdsRelativeAge(text: string): boolean {
+    return wordTokens(text).some((token) => "dhm".includes(token.slice(-1)) && isAsciiDigits(token.slice(0, -1)));
+}
+
+const SIZE_UNITS = ["B", "KB", "MB", "GB"];
+
+/** True when `text` holds a file size: digits, at most one white space character, and a unit, such as `600 B` or `2.0KB`. */
+function holdsSize(text: string): boolean {
+    return SIZE_UNITS.some((unit) => {
+        for (let at = text.indexOf(unit); at !== -1; at = text.indexOf(unit, at + 1)) {
+            const numberEnd = isWhitespace(text.charAt(at - 1)) ? at - 1 : at;
+            if (isAsciiDigits(text.charAt(numberEnd - 1))) return true;
+        }
+        return false;
+    });
 }
 
 describe("FilePicker", () => {
@@ -411,11 +457,11 @@ describe("FilePicker entry metadata", () => {
             const frame = await openPicker(setup);
             const line = rowLine(frame, "sized.txt");
             // The mode sits LEFT of the name, as `ls -l` puts it.
-            expect(line.slice(0, line.indexOf("sized.txt"))).toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+            expect(holdsMode(line.slice(0, line.indexOf("sized.txt")))).toBe(true);
             expect(line).toContain("2.0 KB");
             // Absolute local time, never a relative age — a record listing reads on the absolute side.
-            expect(line).toMatch(/\d{2}\/\d{2}\/\d{2}/);
-            expect(line).not.toMatch(/\b\d+[dhm]\b/);
+            expect(dateAt(line)).toBeGreaterThanOrEqual(0);
+            expect(holdsRelativeAge(line)).toBe(false);
         } finally {
             setup.renderer.destroy();
         }
@@ -435,7 +481,6 @@ describe("FilePicker entry metadata", () => {
             // Sizes of different widths ("600 B" vs "136.7 KB") end at the same column.
             expect(small.indexOf(GLYPHS.middot)).toBe(large.indexOf(GLYPHS.middot));
             // And the dates start together, which only holds while every part is zero-padded.
-            const dateAt = (l: string): number => l.search(/\d{2}\/\d{2}\/\d{2}/);
             expect(dateAt(small)).toBe(dateAt(large));
         } finally {
             setup.renderer.destroy();
@@ -448,7 +493,6 @@ describe("FilePicker entry metadata", () => {
         try {
             await settle(setup);
             const frame = await openPicker(setup);
-            const dateAt = (l: string): number => l.search(/\d{2}\/\d{2}\/\d{2}/);
             // The blank size field spans its separator too, or the dir's date would slide left.
             expect(dateAt(rowLine(frame, "beta/"))).toBe(dateAt(rowLine(frame, "sized.txt")));
         } finally {
@@ -462,9 +506,9 @@ describe("FilePicker entry metadata", () => {
             await settle(setup);
             const frame = await openPicker(setup);
             const line = rowLine(frame, "beta/");
-            expect(line).toMatch(/\d{2}\/\d{2}\/\d{2}/);
+            expect(dateAt(line)).toBeGreaterThanOrEqual(0);
             // Counting members would cost a readdir per row — the budget this listing protects.
-            expect(line).not.toMatch(/\d+(\.\d+)?\s?(B|KB|MB|GB)/);
+            expect(holdsSize(line)).toBe(false);
         } finally {
             setup.renderer.destroy();
         }
@@ -526,7 +570,7 @@ describe("FilePicker entry metadata", () => {
             const frame = await openPicker(setup);
             const line = rowLine(frame, "dangling.txt");
             expect(line).not.toBe("");
-            expect(line.slice(0, line.indexOf("dangling.txt"))).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+            expect(holdsMode(line.slice(0, line.indexOf("dangling.txt")))).toBe(false);
             // And it holds the column as blanks: a name that starts where the mode starts reads as a
             // mode string, and it breaks the alignment every other row of the listing depends on.
             expect(line.indexOf("dangling.txt")).toBe(rowLine(frame, "alpha.txt").indexOf("alpha.txt"));
@@ -572,7 +616,7 @@ describe("FilePicker entry metadata", () => {
             const frame = await settleUntil(setup, "details off (large folder)");
             expect(frame).toContain("details off (large folder)");
             const line = rowLine(frame, "f0.txt");
-            expect(line.slice(0, line.indexOf("f0.txt"))).not.toMatch(/[r-][w-][x-][r-][w-][x-][r-][w-][x-]/);
+            expect(holdsMode(line.slice(0, line.indexOf("f0.txt")))).toBe(false);
         } finally {
             setup.renderer.destroy();
         }

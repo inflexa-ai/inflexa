@@ -17,7 +17,9 @@ The suite SHALL verify `str256`/`asStr256` (`lib/types.ts`): trimming, code-poin
 
 ### Requirement: Global extensions are tested
 The suite SHALL verify the `src/extensions/*` methods: `JSON.parseWith` (null on parse-throw and on
-schema-mismatch), `Response.prototype.jsonWith`, `Date.relativeAge` (s/m/h/d buckets and negative
+schema-mismatch), `JSON.parseResult` (a `malformed` error for text that is not JSON, a `mismatch`
+error with the zod issues for JSON that fails the schema, and the parsed value otherwise),
+`Response.prototype.jsonWith`, `Date.relativeAge` (s/m/h/d buckets and negative
 clamp to `0s`), `Promise.sleep` (under fake timers), and `Number.prototype.formatBytes` (unit
 boundaries across `B`/`KB`/`MB`/`GB` on a 1024 base, and negative or non-finite input clamped to a
 zero-byte reading rather than `NaN`).
@@ -25,6 +27,11 @@ zero-byte reading rather than `NaN`).
 #### Scenario: parseWith fails closed
 - **WHEN** `JSON.parseWith` receives malformed JSON or JSON failing the schema
 - **THEN** it returns `null` rather than throwing
+
+#### Scenario: parseResult keeps the two failures apart
+- **WHEN** `JSON.parseResult` receives malformed JSON, and then JSON that fails the schema
+- **THEN** the first gives an `Err` of type `malformed` with the parse error as its cause
+- **AND** the second gives an `Err` of type `mismatch` with the zod error, and neither call throws
 
 #### Scenario: relativeAge negative clamp
 - **WHEN** `Date.relativeAge` is given a future timestamp

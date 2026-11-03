@@ -5,6 +5,7 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { rankBy } from "../../lib/fuzzy.ts";
 import { GLYPHS, space } from "../../lib/design_system.ts";
+import { runAfter } from "../../lib/timer.ts";
 import { theme } from "../theme.ts";
 import { KEYS } from "../keymap.ts";
 import { useDialogBindings } from "./dialog/dialog_host.tsx";
@@ -301,7 +302,7 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
     // starts at row 0, which is in view by construction.
     if (seeded >= 0) {
         let attemptsLeft = SEEDED_SCROLL_ATTEMPTS;
-        let scrollPoll: ReturnType<typeof setTimeout>;
+        let stopScrollPoll: () => void;
         function attemptSeededScroll(): void {
             // The viewport is the box `scrollChildIntoView` measures against, so a non-zero height is
             // exactly the condition that makes its comparison meaningful — not a proxy for it.
@@ -309,10 +310,11 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                 scrollCursorIntoView();
                 return;
             }
-            if (--attemptsLeft > 0) scrollPoll = setTimeout(attemptSeededScroll, SEEDED_SCROLL_POLL_MS);
+            if (--attemptsLeft > 0) stopScrollPoll = runAfter(SEEDED_SCROLL_POLL_MS, attemptSeededScroll);
         }
-        scrollPoll = setTimeout(attemptSeededScroll, 0);
-        onCleanup(() => clearTimeout(scrollPoll));
+        // oxlint-disable-next-line solid/reactivity -- the poll reads the viewport once per timer run, outside a tracking scope on purpose; a signal change must not re-run it
+        stopScrollPoll = runAfter(0, attemptSeededScroll);
+        onCleanup(() => stopScrollPoll());
     }
     createEffect(() => props.onCursorChange?.(flat()[cursor()]?.value));
 

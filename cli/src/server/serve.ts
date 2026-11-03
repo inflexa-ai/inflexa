@@ -19,6 +19,7 @@ import { errnoCode, mkdirResult, renameResult, rmResult, writeFileResult, type F
 import { isPidAlive } from "../lib/lock.ts";
 import { getLogger } from "../lib/log.ts";
 import { onShutdown, setSignalStop, shutdown } from "../lib/shutdown.ts";
+import { runEvery } from "../lib/timer.ts";
 import { watchAnalysisActivity } from "../modules/analysis/activity.ts";
 import { watchPendingFlush } from "../modules/libs/store.ts";
 import { buildApp } from "./app.ts";
@@ -296,15 +297,17 @@ export function rotateServerLog(path: string, maxBytes: number): Result<boolean,
 
 /** Measure the log of a detached server each minute, and rotate it at the bound. Gives the stop of the timer. */
 function boundServerLog(path: string): () => void {
-    const timer = setInterval(() => {
-        rotateServerLog(path, SERVER_LOG_ROTATE_BYTES).match(
-            () => undefined,
-            (e) => getLogger("server").warn({ err: e.cause, path }, "could not rotate the server log"),
-        );
-    }, SERVER_LOG_CHECK_MS);
     // The listener keeps the process alive. The timer must not keep it alive after a stop.
-    timer.unref();
-    return () => clearInterval(timer);
+    return runEvery(
+        SERVER_LOG_CHECK_MS,
+        () => {
+            rotateServerLog(path, SERVER_LOG_ROTATE_BYTES).match(
+                () => undefined,
+                (e) => getLogger("server").warn({ err: e.cause, path }, "could not rotate the server log"),
+            );
+        },
+        { unref: true },
+    );
 }
 
 /**

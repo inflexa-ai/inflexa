@@ -231,9 +231,8 @@ export type ConfigError = { type: "config_write_failed"; cause: unknown };
 
 export function readConfig(): Config {
     try {
-        const parsed: unknown = JSON.parse(readFileSync(env.configPath, "utf8")); // unknown: on-disk contents, validated by the schema below
-        const result = configSchema.safeParse(parsed);
-        if (result.success) return result.data;
+        const config = JSON.parseWith(readFileSync(env.configPath, "utf8"), configSchema);
+        if (config !== null) return config;
     } catch {
         // Missing or unreadable config fails closed: consent not granted.
     }

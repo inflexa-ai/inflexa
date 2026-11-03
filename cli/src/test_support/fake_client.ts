@@ -1,6 +1,8 @@
 import { ok } from "neverthrow";
+import { z } from "zod";
 
 import type { ClientOpts } from "../client/api.ts";
+import { parsedJson } from "./json.ts";
 
 /** One request that a {@link fakeClient} saw. `path` holds the query, and `body` is the parsed JSON body. */
 export type FakeRequest = { method: string; path: string; body: unknown };
@@ -23,7 +25,7 @@ export function fakeClient(answer: (req: FakeRequest) => FakeResponse): { opts: 
             discover: () => ok({ baseUrl: BASE_URL, token: "test-token" }),
             fetch: async (url, init) => {
                 // `unknown`: the body is whatever JSON the client under test sent.
-                const body: unknown = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+                const body: unknown = typeof init.body === "string" ? parsedJson(init.body, z.unknown()) : undefined;
                 const req: FakeRequest = { method: init.method ?? "GET", path: url.slice(BASE_URL.length), body };
                 requests.push(req);
                 const res = answer(req);

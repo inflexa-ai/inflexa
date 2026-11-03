@@ -54,6 +54,7 @@ import { errnoCode, isReadableBy, processIdentity, statResultAsync, type Process
 import { getLogger } from "../../lib/log.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
 import { present } from "../../lib/present.ts";
+import { ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf, trimTrailing } from "../../lib/text.ts";
 import { ABSENT_CODES, contains, locateWorkspaceReadRoot } from "../../modules/analysis/boundary.ts";
 import { inputAbsolutePaths } from "../../modules/analysis/input.ts";
 import { defaultOutputSubdir } from "../../modules/analysis/output.ts";
@@ -794,8 +795,10 @@ async function otherAnalysisPlaces(c: Context<ServerEnv>, analysisId: string | u
 
 /** The label of a drive: the drive letter with its colon, or the name of the volume folder. */
 function driveLabel(path: string): string {
-    const stripped = path.replace(/[\\/]+$/, "");
-    return /^[A-Za-z]:$/.test(stripped) ? stripped : placeLabel(stripped);
+    const stripped = trimTrailing(path, "\\/");
+    return stripped.length === 2 && stripped.endsWith(":") && consistsOf(stripped.slice(0, 1), ASCII_LOWERCASE + ASCII_UPPERCASE)
+        ? stripped
+        : placeLabel(stripped);
 }
 
 /**

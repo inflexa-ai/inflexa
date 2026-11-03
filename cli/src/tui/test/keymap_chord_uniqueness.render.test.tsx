@@ -91,7 +91,7 @@ describe("the chord table of App", () => {
         try {
             // After the mount: the first refresh of `App` uses the production reads, and it would wipe an earlier seed.
             await refreshSidebarData(analysis.id, seedOpts);
-            await new Promise((r) => setTimeout(r, 20));
+            await Promise.sleep(20);
             await setup.renderOnce();
 
             const leader = resolveKeybind("app.leader");

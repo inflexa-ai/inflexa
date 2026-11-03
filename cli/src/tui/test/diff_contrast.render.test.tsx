@@ -5,6 +5,7 @@ import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
 import { DEFAULT_THEME_ID, themes, type ThemeId } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
 import { DiffBlock } from "../components/diff_block.tsx";
+import { isAsciiDigits } from "../../lib/text.ts";
 
 // End-to-end guard for the diff token group (design_system.ts's diffAddedBg/diffRemovedBg + the
 // <diff> band/sign/line-number props in diff_block.tsx). captureCharFrame() sees characters only, so
@@ -48,7 +49,7 @@ async function renderDiff(id: ThemeId): Promise<Awaited<ReturnType<typeof testRe
     for (;;) {
         await setup.renderOnce();
         if (setup.captureCharFrame().includes("ROWNEW") || Date.now() - start > 3000) return setup;
-        await new Promise((r) => setTimeout(r, 10));
+        await Promise.sleep(10);
     }
 }
 
@@ -98,7 +99,7 @@ describe("theme-contrast AA: diff bands, signs, and line numbers are themed, not
                 expect(minusSign && parseColor(colors.error).equals(minusSign.fg)).toBe(true);
 
                 // A line-number gutter cell (a bare-digit span) uses fgMuted.
-                const lineNumber = findSpan(setup, (t) => /^\s*\d+\s*$/.test(t));
+                const lineNumber = findSpan(setup, (t) => isAsciiDigits(t.trim()));
                 expect(lineNumber && parseColor(colors.fgMuted).equals(lineNumber.fg)).toBe(true);
             } finally {
                 setup.renderer.destroy();

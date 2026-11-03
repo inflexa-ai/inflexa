@@ -19,6 +19,7 @@ import {
     writeAgentModel,
     writeAgentSelection,
 } from "../config.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // Drives resolveModelConnection through the real readConfig() surface against the sandboxed
 // env.configPath (set by the test preload), exercising the fail-closed + protocol-implication paths
@@ -45,7 +46,7 @@ const onDiskConfigSchema = z.looseObject({ telemetry: z.boolean().optional(), mo
 
 /** The config file as written to disk, read back without the config reader, thus the test sees the exact bytes. */
 function readOnDiskConfig(): z.infer<typeof onDiskConfigSchema> {
-    return onDiskConfigSchema.parse(JSON.parse(readFileSync(env.configPath, "utf8")));
+    return parsedJson(readFileSync(env.configPath, "utf8"), onDiskConfigSchema);
 }
 
 function readModelsBlock(): Record<string, unknown> {

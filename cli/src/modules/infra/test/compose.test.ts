@@ -28,8 +28,50 @@ import { resolveConnectionMode, resolvePostgresConfig } from "../../../lib/confi
 import * as container from "../../../lib/container.ts";
 import { runtimes, type EnginePullOutcome, type EnginePullProgress } from "../../../lib/container.ts";
 import { env } from "../../../lib/env.ts";
+import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf, isAsciiDigits } from "../../../lib/text.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 import type { BootPullProgress } from "../../../api/server.ts";
+
+/** Undoes the two escapes of `escapeYaml` (`\\"` and `\\\\`) in one left-to-right pass, as a YAML parser does. */
+function unescapeYaml(text: string): string {
+    let out = "";
+    for (let at = 0; at < text.length; at++) {
+        const next = text.charAt(at + 1);
+        if (text.charAt(at) === "\\" && (next === '"' || next === "\\")) {
+            out += next;
+            at++;
+        } else {
+            out += text.charAt(at);
+        }
+    }
+    return out;
+}
+
+/** True for a drive letter, a colon, and a backslash at the start: `C:\`. */
+function isWindowsDrivePath(path: string): boolean {
+    return consistsOf(path.charAt(0), ASCII_LOWERCASE + ASCII_UPPERCASE) && path.slice(1, 3) === ":\\";
+}
+
+/** True when `yaml` holds a backslash and `U` with no backslash before the backslash: `\U` that no escape pairs. */
+function hasLoneBackslashU(yaml: string): boolean {
+    for (let at = yaml.indexOf("\\U"); at !== -1; at = yaml.indexOf("\\U", at + 1)) {
+        if (at > 0 && yaml.charAt(at - 1) !== "\\") return true;
+    }
+    return false;
+}
+
+/** True for `<yyyy>.<mm>.<dd>-<hex>@sha256:<64 hex>`: a dated tag with a digest, never a floating tag. */
+function isDatedDigestPin(reference: string): boolean {
+    const [tag, digest, ...afterDigest] = reference.split("@sha256:");
+    if (tag === undefined || digest === undefined || afterDigest.length > 0) return false;
+    const [date, build, ...afterBuild] = tag.split("-");
+    if (date === undefined || build === undefined || afterBuild.length > 0) return false;
+    const parts = date.split(".");
+    const [year, month, day] = parts;
+    const isDate = parts.length === 3 && year?.length === 4 && month?.length === 2 && day?.length === 2 && parts.every(isAsciiDigits);
+    return isDate && consistsOf(build, `${ASCII_DIGITS}abcdef`) && isLowerHex(digest, 64);
+}
 
 /**
  * Every absolute host path bound as a volume in a generated compose file, read back as the YAML parser
@@ -42,13 +84,16 @@ import type { BootPullProgress } from "../../../api/server.ts";
 function bindMountHosts(yaml: string): string[] {
     const hosts: string[] = [];
     for (const line of yaml.split("\n")) {
-        const value = line.match(/^\s*-\s*"(.*)"\s*$/)?.[1];
-        if (value === undefined) continue;
+        const item = line.trim();
+        if (!item.startsWith("-")) continue;
+        const quoted = item.slice(1).trim();
+        if (quoted.length < 2 || !quoted.startsWith('"') || !quoted.endsWith('"')) continue;
+        const value = quoted.slice(1, -1);
         const split = value.lastIndexOf(":/");
         if (split === -1) continue;
         // Undo escapeYaml's two escapes in one left-to-right pass, as a YAML parser does.
-        const host = value.slice(0, split).replace(/\\(["\\])/g, "$1");
-        if (host.startsWith("/") || /^[A-Za-z]:\\/.test(host)) hosts.push(host);
+        const host = unescapeYaml(value.slice(0, split));
+        if (host.startsWith("/") || isWindowsDrivePath(host)) hosts.push(host);
     }
     return hosts;
 }
@@ -80,7 +125,7 @@ describe("host paths in the compose file", () => {
         expect(yaml).toContain(String.raw`- "C:\\Users\\dana\\AppData\\Local\\inflexa\\cliproxy\\auth:/root/.cli-proxy-api"`);
         expect(yaml).toContain(String.raw`- "C:\\Users\\dana\\AppData\\Local\\inflexa\\searxng\\settings.yml:/etc/searxng/settings.yml:ro"`);
         // No raw single backslash survives: `\U` is the escape that made the compose tool reject the file.
-        expect(yaml).not.toMatch(/[^\\]\\U/);
+        expect(hasLoneBackslashU(yaml)).toBe(false);
         expect(bindMountHosts(yaml)).toEqual([windowsHost.cliproxyConfigPath, windowsHost.cliproxyAuthDir, windowsHost.searxngSettingsPath]);
     });
 
@@ -114,7 +159,12 @@ describe("the SearXNG service", () => {
             expect(yaml).toContain(`container_name: ${SEARXNG_CONTAINER_NAME}`);
             // The pin literal itself, then its dated-tag + digest FORM: never a floating tag.
             expect(yaml).toContain(`image: ${SEARXNG_IMAGE}`);
-            expect(yaml).toMatch(/image: docker\.io\/searxng\/searxng:\d{4}\.\d{2}\.\d{2}-[0-9a-f]+@sha256:[0-9a-f]{64}\n/);
+            const pinPrefix = "image: docker.io/searxng/searxng:";
+            const pinAt = yaml.indexOf(pinPrefix);
+            const pinEnd = yaml.indexOf("\n", pinAt);
+            expect(pinAt).toBeGreaterThanOrEqual(0);
+            expect(pinEnd).toBeGreaterThan(pinAt);
+            expect(isDatedDigestPin(yaml.slice(pinAt + pinPrefix.length, pinEnd))).toBe(true);
             expect(yaml).toContain(`"127.0.0.1:${env.searxngPort}:8080"`);
             expect(yaml).toContain(`"${env.searxngSettingsPath}:/etc/searxng/settings.yml:ro"`);
             expect(yaml).toContain("restart: unless-stopped");
@@ -150,7 +200,7 @@ describe("Postgres data location", () => {
             test(`${mode}: a ${platform} host has no top-level volumes block`, () => {
                 const yaml = generateComposeFile(resolvePostgresConfig(), mode, { ...quotedPosixHost, platform });
                 // Service-level `volumes:` keys are indented, so a line-start match sees only the top level.
-                expect(yaml).not.toMatch(/^volumes:/m);
+                expect(yaml.startsWith("volumes:") || yaml.includes("\nvolumes:")).toBe(false);
             });
         }
     }

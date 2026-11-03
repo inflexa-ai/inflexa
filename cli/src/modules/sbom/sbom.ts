@@ -22,6 +22,7 @@ import pkg from "../../../package.json";
 import { selectedRuntime } from "../../lib/config.ts";
 import { capture, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
+import { collapseWhitespace, mentionsAny, withoutPrefix } from "../../lib/text.ts";
 import { provisionerImageFor } from "../libs/images.ts";
 import { configuredSandboxImage } from "../libs/pull.ts";
 import { STORE_SBOM_FILE } from "../libs/store_download.ts";
@@ -84,6 +85,14 @@ function firstLine(text: string): string {
     return text.trim().split("\n")[0] ?? "";
 }
 
+/** The lines of `text`, cut at each terminator that a pattern line honors: `\n`, `\r`, U+2028, and U+2029. */
+function lineTexts(text: string): string[] {
+    return text.replaceAll("\r", "\n").replaceAll("\u2028", "\n").replaceAll("\u2029", "\n").split("\n");
+}
+
+/** The lowercase phrases of a runtime error for an image that the host does not hold: Docker says "no such image", Podman says "image not known". */
+const ABSENT_IMAGE_STDERR = ["no such image", "no such object", "image not known"];
+
 /**
  * The SBOM that one local image holds. The read runs no pull and no network.
  *
@@ -91,7 +100,7 @@ function firstLine(text: string): string {
  * from a build before the SBOM, and any other error of the runtime, with its first line.
  */
 async function readImageSbom(runtime: Result<ContainerRuntime, ContainerRuntimeError>, key: PartKey, image: string): Promise<PartResult> {
-    if (runtime.isErr()) return err({ key, label: image, reason: runtime.error.message.replace(/\s+/g, " ").trim() });
+    if (runtime.isErr()) return err({ key, label: image, reason: collapseWhitespace(runtime.error.message).trim() });
     const rt = runtime.value;
     // `capture` rejects only when the runtime binary cannot spawn. The readiness probe above found it, thus a
     // rejection is a fault of the moment, and its text is the reason.
@@ -101,8 +110,7 @@ async function readImageSbom(runtime: Result<ContainerRuntime, ContainerRuntimeE
         stderr: String(cause),
     }));
     if (inspect.code !== 0) {
-        // Docker says "No such image" and Podman says "image not known" for an image that the host does not hold.
-        const absent = /no such image|no such object|image not known/i.test(inspect.stderr);
+        const absent = mentionsAny(inspect.stderr, ABSENT_IMAGE_STDERR);
         const reason = absent
             ? "the image is not on this host — run `inflexa sandbox pull`"
             : `${rt.label} could not inspect the image: ${firstLine(inspect.stderr)}`;
@@ -119,7 +127,7 @@ async function readImageSbom(runtime: Result<ContainerRuntime, ContainerRuntimeE
     if (read.code !== 0) {
         // `cat` names the missing file itself, thus that text marks an image from a build before the SBOM. Any
         // other failure is an error of the runtime.
-        const absent = /^cat: .*no such file/im.test(read.stderr);
+        const absent = lineTexts(read.stderr.toLowerCase()).some((line) => line.startsWith("cat: ") && line.includes("no such file", "cat: ".length));
         const reason = absent
             ? `the image holds no ${IMAGE_SBOM_PATH} (a build before the SBOM) — run \`inflexa sandbox pull\``
             : `${rt.label} could not read ${IMAGE_SBOM_PATH} from the image: ${firstLine(read.stderr)}`;
@@ -173,7 +181,7 @@ function prefixComponents(components: readonly CdxObject[], prefix: PartKey): Cd
 
 /** A BOM-Link (`urn:cdx:<serial>/<version>`) to the document of one part, when it has a serial number. */
 function bomLink(document: SbomDocument): string | null {
-    const serial = document.serialNumber?.replace(/^urn:uuid:/, "");
+    const serial = document.serialNumber === undefined ? undefined : withoutPrefix(document.serialNumber, "urn:uuid:");
     return serial ? `urn:cdx:${serial}/${document.version ?? 1}` : null;
 }
 

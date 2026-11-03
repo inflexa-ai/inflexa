@@ -18,6 +18,8 @@ import { cliProvDigest, provModel } from "../document.ts";
 import { flushProvenanceAsync, initProvenanceRecording, resetProvenanceRecorderForTests } from "../prov.ts";
 import { resetSigningForTests } from "../signing.ts";
 import { present } from "../../../lib/present.ts";
+import { parsedJson } from "../../../test_support/json.ts";
+import { countOccurrences, literalWithHoles, WORD_DASH } from "../../../test_support/text_shapes.ts";
 
 // The report family walks the same kernel dispatch the core family does, so these assertions read the
 // FLUSHED document — the bytes the column holds after the signed flush — rather than a document the
@@ -83,7 +85,7 @@ async function flushedDocument(): Promise<ProvDocument> {
 }
 
 async function flushedJson(): Promise<ProvJson> {
-    return provJsonSchema.parse(JSON.parse((await flushedDocument()).serialize("json")));
+    return parsedJson((await flushedDocument()).serialize("json"), provJsonSchema);
 }
 
 async function flushedProvN(): Promise<string> {
@@ -140,7 +142,7 @@ describe("report provenance recorder (report bus members → kernel dispatch →
         // The creation is the report's single generation and its attribution, the pair the analysis
         // subject gets from `appendCreation`.
         const provn = await flushedProvN();
-        expect(provn).toMatch(new RegExp(`wasGeneratedBy\\(${reportQn}, inflexa:action-`));
+        expect(provn).toContain(`wasGeneratedBy(${reportQn}, inflexa:action-`);
         expect(provn).toContain(`wasAttributedTo(${reportQn}, inflexa:agent-system)`);
 
         // The signing path is untouched by the new family: the column, the chain hash, and the
@@ -159,8 +161,8 @@ describe("report provenance recorder (report bus members → kernel dispatch →
         emitReportSessionCreated(conversationThread);
         const provn = await flushedProvN();
 
-        expect((provn.match(new RegExp(`wasGeneratedBy\\(${reportQn}, `, "g")) ?? []).length).toBe(1);
-        expect((provn.match(new RegExp(`wasAttributedTo\\(${reportQn}, `, "g")) ?? []).length).toBe(1);
+        expect(countOccurrences(provn, `wasGeneratedBy(${reportQn}, `)).toBe(1);
+        expect(countOccurrences(provn, `wasAttributedTo(${reportQn}, `)).toBe(1);
         // Each emit still records the act itself — the guard covers the entity's edges, not the acts.
         expect(activitiesOfType(await flushedJson(), "inflexa:CreateSession").length).toBe(2);
     });
@@ -206,7 +208,7 @@ describe("report provenance recorder (report bus members → kernel dispatch →
         // Each act `used` the report it operated on, so the four acts and the report node are one
         // connected subgraph rather than four attribute-tagged islands.
         const provn = await flushedProvN();
-        expect((provn.match(new RegExp(`used\\(inflexa:action-[\\w-]+, ${reportQn}`, "g")) ?? []).length).toBe(4);
+        expect(countOccurrences(provn, literalWithHoles`used(inflexa:action-${WORD_DASH}, ${reportQn}`)).toBe(4);
     });
 
     test("the title, the derivation, and the preview each land one typed action with the data of their act", async () => {
@@ -302,7 +304,7 @@ describe("report provenance recorder (report bus members → kernel dispatch →
         // edge, never `wasAttributedTo` (which takes an agent).
         const provn = await flushedProvN();
         expect(provn).toContain(`specializationOf(${versionQn}, ${reportQn})`);
-        expect(provn).toMatch(new RegExp(`wasGeneratedBy\\(${versionQn}, inflexa:action-`));
+        expect(provn).toContain(`wasGeneratedBy(${versionQn}, inflexa:action-`);
     });
 
     test("a version record for an unseen thread mints the report first and specializes onto it", async () => {
@@ -337,7 +339,7 @@ describe("report provenance recorder (report bus members → kernel dispatch →
 
         // `specializationOf` takes no identifier in tsprov, so `unified()` cannot collapse a second
         // copy — the mapping writes it only on the entity's first declaration.
-        expect((provn.match(/specializationOf\(/g) ?? []).length).toBe(1);
+        expect(countOccurrences(provn, "specializationOf(")).toBe(1);
     });
 
     test("the model rides as an inflexa:Model software agent on behalf of the system agent", async () => {
@@ -361,10 +363,10 @@ describe("report provenance recorder (report bus members → kernel dispatch →
         const provn = await flushedProvN();
         // One delegation across both acts: its identifier is the kernel's, so the report records and
         // the step records share a single `(model, responsible)` edge.
-        expect((provn.match(/actedOnBehalfOf\(/g) ?? []).length).toBe(1);
-        expect(provn).toMatch(new RegExp(`actedOnBehalfOf\\(inflexa:delegation-[\\w-]+; ${modelQn}, inflexa:agent-system`));
+        expect(countOccurrences(provn, "actedOnBehalfOf(")).toBe(1);
+        expect(provn).toMatch(literalWithHoles`actedOnBehalfOf(inflexa:delegation-${WORD_DASH}; ${modelQn}, inflexa:agent-system`);
         // Both actions are associated with the model agent, beside their own actor association.
-        expect((provn.match(new RegExp(`wasAssociatedWith\\(inflexa:action-[\\w-]+, ${modelQn}`, "g")) ?? []).length).toBe(2);
+        expect(countOccurrences(provn, literalWithHoles`wasAssociatedWith(inflexa:action-${WORD_DASH}, ${modelQn}`)).toBe(2);
     });
 
     test("the report records round-trip losslessly through the stored PROV-JSON", async () => {

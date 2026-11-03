@@ -4,6 +4,7 @@ import { ProvDocument } from "@inflexa-ai/tsprov";
 import { applyProvEvent, deriveLineageModel, PROV_UNIFY_OPTIONS, type LineageModel } from "@inflexa-ai/prov-kernel";
 import { z } from "zod";
 import { unknownRecordSchema } from "../../../lib/json_record.ts";
+import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE } from "../../../lib/text.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type {
@@ -22,6 +23,7 @@ import { cliProvDigest, provModel, provSubject } from "../document.ts";
 import { computeLineage, formatDot, formatJson, formatMermaid, formatTree, resolveLineageRef, type LineageFileInfo, type LineageRoots } from "../lineage.ts";
 import type { LineageJson } from "../../../api/provenance.ts";
 import { present } from "../../../lib/present.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // The traversal is tested against documents built with the REAL builders — the exact record shapes
 // production writes (deterministic QNames, identified relations, shared (path, hash) entity space)
@@ -638,6 +640,27 @@ describe("formatJson", () => {
     });
 });
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads one edge line of the DOT output back into (from, to, kind): two quoted names with escapes, then the label. The test parses the renderer output, and no string method reads a quoted name with escapes as exactly.
+const DOT_EDGE_LINE = /^\s*"((?:[^"\\]|\\.)*)" -> "((?:[^"\\]|\\.)*)" \[label="(wasGeneratedBy|used)"\];$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Tells a Mermaid node statement (indent, id, `([` or `[`, quote) from an edge line. A string form needs the id alphabet and two bracket forms, and it is longer than the pattern.
+const MERMAID_NODE_START = /^\s+[A-Za-z0-9_]+(\(\[|\[)"/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- The whole grammar of a Mermaid node statement: a grammar-safe id, a quoted label, the closing bracket form. The test holds each line to that grammar.
+const MERMAID_NODE_LINE = /^\s+([A-Za-z0-9_]+)(\(\[|\[)"(.*)"(\]\)|\])$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- The whole grammar of a Mermaid edge line: two grammar-safe ids, a solid or dotted arrow, and the relation label. The test reads the renderer output back with it.
+const MERMAID_EDGE_LINE = /^\s+([A-Za-z0-9_]+) (-->|-\.->)\|(wasGeneratedBy|used)\| ([A-Za-z0-9_]+)$/;
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Each quoted Mermaid label with its bracket pair, found anywhere in a line. A scan for a grammar form in the renderer output.
+const MERMAID_LABEL = /(\(\[|\[)"(.*)"(\]\)|\])/g;
+
+const MERMAID_ID_UNITS = `${ASCII_LOWERCASE}${ASCII_UPPERCASE}${ASCII_DIGITS}_`;
+
+/** The Mermaid id of a qualified name: each UTF-16 unit outside `A-Za-z0-9_` becomes `_`. */
+function mermaidIdOf(qn: string): string {
+    return qn
+        .split("")
+        .map((unit) => (MERMAID_ID_UNITS.includes(unit) ? unit : "_"))
+        .join("");
+}
+
 describe("formatDot", () => {
     test("emits a valid digraph whose edge set matches the JSON edges exactly", () => {
         const roots = resolveLineageRef(graph, heatmapKey.path)._unsafeUnwrap();
@@ -653,7 +676,7 @@ describe("formatDot", () => {
         const edgeLines = dot.split("\n").filter((l) => l.includes("->"));
         const edgeKey = (e: { from: string; to: string; kind: string }): string => `${e.kind}|${e.from}|${e.to}`;
         const parsed = edgeLines.map((l) => {
-            const m = /^\s*"((?:[^"\\]|\\.)*)" -> "((?:[^"\\]|\\.)*)" \[label="(wasGeneratedBy|used)"\];$/.exec(l);
+            const m = DOT_EDGE_LINE.exec(l);
             expect(m).not.toBeNull();
             return { from: present(present(m)[1]), to: present(present(m)[2]), kind: present(present(m)[3]) };
         });
@@ -753,21 +776,20 @@ describe("formatMermaid", () => {
         expect(lines[0]).toBe("flowchart LR");
 
         // Every remaining line is either a node definition or an edge — nothing unclassified.
-        const nodeLines = lines.slice(1).filter((l) => /^\s+[A-Za-z0-9_]+(\(\[|\[)"/.test(l));
+        const nodeLines = lines.slice(1).filter((l) => MERMAID_NODE_START.test(l));
         const edgeLines = lines.slice(1).filter((l) => l.includes("-->") || l.includes("-.->"));
         expect(nodeLines.length + edgeLines.length).toBe(lines.length - 1);
 
         // Node ids are strictly grammar-safe and labels are quoted.
         for (const l of nodeLines) {
-            expect(/^\s+([A-Za-z0-9_]+)(\(\[|\[)"(.*)"(\]\)|\])$/.test(l)).toBe(true);
+            expect(MERMAID_NODE_LINE.test(l)).toBe(true);
         }
 
         // The edge set equals the JSON edges after the same qn → id transform, arrow style agreeing
         // with the labeled relation (solid generation, dotted usage).
-        const idOf = (qn: string): string => qn.replace(/[^A-Za-z0-9_]/g, "_");
-        const expected = json.edges.map((e) => `${idOf(e.from)}|${e.kind}|${idOf(e.to)}`).sort();
+        const expected = json.edges.map((e) => `${mermaidIdOf(e.from)}|${e.kind}|${mermaidIdOf(e.to)}`).sort();
         const parsed = edgeLines.map((l) => {
-            const m = /^\s+([A-Za-z0-9_]+) (-->|-\.->)\|(wasGeneratedBy|used)\| ([A-Za-z0-9_]+)$/.exec(l);
+            const m = MERMAID_EDGE_LINE.exec(l);
             expect(m).not.toBeNull();
             expect(present(m)[2]).toBe(present(m)[3] === "wasGeneratedBy" ? "-->" : "-.->");
             return `${present(m)[1]}|${present(m)[3]}|${present(m)[4]}`;
@@ -789,7 +811,7 @@ describe("formatMermaid", () => {
         const lines = mermaid.split("\n");
         // The tree renders this entity twice (the root and a marked re-encounter); the graph draws
         // it ONCE, carrying both its generation and its self-read usage edge.
-        const fileId = fileQName(selfKey).replace(/[^A-Za-z0-9_]/g, "_");
+        const fileId = mermaidIdOf(fileQName(selfKey));
         expect(lines.filter((l) => l.trimStart().startsWith(`${fileId}([`))).toHaveLength(1);
         const incident = lines.filter((l) => (l.includes("-->") || l.includes("-.->")) && l.includes(fileId));
         expect(incident).toHaveLength(2);
@@ -810,7 +832,7 @@ describe("formatMermaid", () => {
         // inside the quoted label untouched.
         expect(mermaid).toContain("grep #quot;x#quot; (a) #tag (exit 0)");
         // No label body carries a raw double quote — only the wrapping quotes remain.
-        const labels = [...mermaid.matchAll(/(\(\[|\[)"(.*)"(\]\)|\])/g)].map((m) => present(m[2]));
+        const labels = [...mermaid.matchAll(MERMAID_LABEL)].map((m) => present(m[2]));
         expect(labels.length).toBeGreaterThan(0);
         for (const label of labels) expect(label.includes('"')).toBe(false);
     });
@@ -987,7 +1009,7 @@ describe("legacy and current file-tool shapes in one document", () => {
 
     /** The canonical doc's bytes with an old-shape file-tool pseudo-command spliced in. */
     function mixedModel(): LineageModel {
-        const parsed = splicedSectionsSchema.parse(JSON.parse(canonicalDoc().serialize("json")));
+        const parsed = parsedJson(canonicalDoc().serialize("json"), splicedSectionsSchema);
         parsed.activity = {
             ...parsed.activity,
             [legacyCmdQn]: { "prov:type": "inflexa:FileToolWrite", "inflexa:tool": "write_file" },

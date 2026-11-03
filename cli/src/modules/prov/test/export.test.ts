@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProvAttestation, ProvSigningError } from "@inflexa-ai/prov-kernel";
 import { err, errAsync, ok, okAsync } from "neverthrow";
+import { z } from "zod";
 
 import type { DbError } from "../../../db/errors.ts";
 import { buildAnalysis } from "../../../test_support/builders.ts";
 import type { WorkspaceError } from "../../analysis/output.ts";
 import { exportAnalysisProvenance, type ExportProvenanceOpts } from "../export.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // The export's ordering is only observable on disk: "signed before written" and "written then signed"
 // differ solely in what survives a signing failure. These drive the real `mkdir`/`writeFile` against a
@@ -77,7 +79,7 @@ describe("exportAnalysisProvenance", () => {
         const path = join(out, "provenance.json");
         expect(exported._unsafeUnwrap()).toEqual({ path, attestationPath: `${path}.sig.json` });
         expect(readFileSync(path, "utf8")).toBe(DOCUMENT);
-        expect(JSON.parse(readFileSync(`${path}.sig.json`, "utf8"))).toEqual(ATTESTATION);
+        expect(parsedJson(readFileSync(`${path}.sig.json`, "utf8"), z.unknown())).toEqual(ATTESTATION);
     });
 
     test("a PROV-N export is never signed: the attestation claims the PROV-JSON payload type", async () => {

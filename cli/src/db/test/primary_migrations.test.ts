@@ -465,16 +465,16 @@ describe("migration 13 — the pins and the recent files of the picker", () => {
     test("a second pin of a path trips the unique index", () => {
         const db = migratedMemoryDb();
         db.run("INSERT INTO picker_pins (id, created_at, updated_at, path, label, is_dir) VALUES ('p1', 1, 1, '/d', NULL, 1)");
-        expect(() => db.run("INSERT INTO picker_pins (id, created_at, updated_at, path, label, is_dir) VALUES ('p2', 1, 1, '/d', NULL, 1)")).toThrow(/UNIQUE/);
+        expect(() => db.run("INSERT INTO picker_pins (id, created_at, updated_at, path, label, is_dir) VALUES ('p2', 1, 1, '/d', NULL, 1)")).toThrow("UNIQUE");
     });
 
     test("a path is unique in the machine scope and in each analysis scope, and the scopes are apart", () => {
         const db = dbWithAnalysis();
         insertRecent(db, "r1", "/data/a.csv", null);
-        expect(() => insertRecent(db, "r2", "/data/a.csv", null)).toThrow(/UNIQUE/);
+        expect(() => insertRecent(db, "r2", "/data/a.csv", null)).toThrow("UNIQUE");
 
         insertRecent(db, "r3", "/data/a.csv", "a1");
-        expect(() => insertRecent(db, "r4", "/data/a.csv", "a1")).toThrow(/UNIQUE/);
+        expect(() => insertRecent(db, "r4", "/data/a.csv", "a1")).toThrow("UNIQUE");
     });
 
     test("the recent files go with their analysis", () => {

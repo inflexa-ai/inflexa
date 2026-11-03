@@ -17,6 +17,7 @@ import { describeCause } from "../../lib/cause.ts";
 import { confirm, fail } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
 import { errnoCode, statResult, type FsError } from "../../lib/fs.ts";
+import { isAsciiDigits } from "../../lib/text.ts";
 import { describeClientError } from "../api.ts";
 import {
     DEFAULT_SERVER_LOOKUP_OPTS,
@@ -262,7 +263,7 @@ async function stopServer(discovery: ServerDiscovery, mode: ShutdownMode, opts: 
  * each line that the server appends, also across a rotation, until Ctrl+C.
  */
 export async function serverLogs(flags: { lines: string; follow: boolean }, opts: ServerCommandOpts = DEFAULT_SERVER_COMMAND_OPTS): Promise<void> {
-    const lines = /^\d+$/.test(flags.lines) ? Number(flags.lines) : 0;
+    const lines = isAsciiDigits(flags.lines) ? Number(flags.lines) : 0;
     if (lines < 1) return opts.fail(`--lines takes a whole number of 1 or more, not "${flags.lines}".`);
     opts.write(`==> ${opts.logPath} <==\n`);
     const tail = readLogTail(opts.logPath, lines).match(

@@ -41,7 +41,7 @@ function mount(ws: Workspace, opts: ReportChildrenOpts): () => void {
 
 /** Let a refresh promise resolve — the effect returns before its listing does. */
 async function settle(): Promise<void> {
-    await new Promise<void>((r) => setTimeout(r, 0));
+    await Promise.sleep(0);
 }
 
 describe("watchReportChildren", () => {

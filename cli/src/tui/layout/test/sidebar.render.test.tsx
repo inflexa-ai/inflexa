@@ -44,12 +44,16 @@ import { tokenFigureDetail } from "../../../lib/usage_format.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type { ThreadSummary } from "../../../api/conversation.ts";
 import { present } from "../../../lib/present.ts";
+import { hasNumberBefore } from "../../../test_support/text_shapes.ts";
 
 // The sidebar reads the anchor and the input count of the workspace store, which reads `GET {A}` of the
 // server. Each case seeds the store directly: a plain analysis row and the scope that the read would give.
 
 let dirA = "";
 let dirB = "";
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Strips the rail chrome after a figure: the border and the scroll thumb are symbols, and the text before them ends in a letter or a number of any script. A letter or a number is a Unicode property (`\p{L}`, `\p{N}`), and no string method or builtin tests one.
+const TRAILING_NON_ALPHANUMERIC = /[^\p{L}\p{N}]+$/u;
 
 /** A plain analysis row: the sidebar reads its fields, and the server keeps the rest. */
 function analysisRow(name: string): Analysis {
@@ -590,7 +594,7 @@ describe("Sidebar SESSION section", () => {
             // chip one cell. A coordinate read off the first frame therefore misses the chip by one and
             // lands on the spacer beside it — settle the layout, then measure what the user would click.
             await setup.renderOnce();
-            await new Promise((r) => setTimeout(r, 20));
+            await Promise.sleep(20);
             await setup.renderOnce();
 
             const handle = shortSessionId(THREAD_ID);
@@ -1309,11 +1313,7 @@ describe("Sidebar USAGE section", () => {
         expect(lines[inputRow]).toContain("3.1k out");
         // Trailing rail chrome (the border and the scroll thumb) stripped, so the assertion is about
         // where the FIGURE lands rather than about what the rail paints around it.
-        expect(
-            present(lines[inputRow])
-                .replace(/[^\p{L}\p{N}]+$/u, "")
-                .endsWith("3.1k out"),
-        ).toBe(true);
+        expect(present(lines[inputRow]).replace(TRAILING_NON_ALPHANUMERIC, "").endsWith("3.1k out")).toBe(true);
         // Both cache quantities sit BELOW that row, indented — the nesting is the only thing that says
         // they are parts of input rather than a third and fourth headline...
         expect(cacheWriteRow).toBe(inputRow + 1);
@@ -1433,7 +1433,7 @@ describe("Sidebar USAGE section", () => {
             expect(frame).toContain(label);
         }
         // The rail still carries the sections' own content, not just their labels.
-        expect(frame).toMatch(/\d+ inputs?/);
+        expect(hasNumberBefore(frame, " input")).toBe(true);
     });
 
     test("a completed turn advances the figures with no timer elapsing", async () => {
@@ -1844,7 +1844,7 @@ describe("a click on a rail section that opens a dialog", () => {
         );
         // A lone ESC byte waits 20 ms in the stdin parser before it is a key, thus the settle waits on a real clock.
         const settle = async (): Promise<void> => {
-            await new Promise((r) => setTimeout(r, 35));
+            await Promise.sleep(35);
             await setup.renderOnce();
             await setup.renderOnce();
         };
@@ -1864,7 +1864,7 @@ describe("a click on a rail section that opens a dialog", () => {
             setup.mockInput.pressEscape();
             await settle();
             // The restore of the focus waits one tick past the unmount of the dialog.
-            await new Promise((r) => setTimeout(r, 10));
+            await Promise.sleep(10);
             await setup.renderOnce();
 
             expect(dialogIsOpen()).toBe(false);

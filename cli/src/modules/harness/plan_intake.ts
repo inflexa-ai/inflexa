@@ -89,20 +89,14 @@ function readPlanBytes(path: string): Result<Buffer, PlanIntakeError> {
 }
 
 /**
- * Parse the file bytes as JSON. A local wrapper rather than `JSON.parseWith`
- * (`extensions/json.ext.ts`) because that helper collapses a parse failure and a
- * schema mismatch into a single `null`, discarding the zod issues — intake needs
- * the two failures distinct (`invalid_json` vs `schema_invalid`) and the issues
- * verbatim, so it parses and schema-validates in separate, individually-typed steps.
+ * Parse the file bytes as an {@link AnalysisPlan}. `JSON.parseResult` keeps the two failures distinct
+ * (`invalid_json` vs `schema_invalid`) and the zod issues verbatim, which `JSON.parseWith` would
+ * collapse into a single `null`.
  */
-function parsePlanJson(path: string, bytes: Buffer): Result<unknown, PlanIntakeError> {
-    try {
-        // unknown: external file content, validated by `AnalysisPlanSchema` next.
-        const parsed: unknown = JSON.parse(bytes.toString("utf8"));
-        return ok(parsed);
-    } catch (cause) {
-        return err({ type: "invalid_json", path, cause });
-    }
+function parsePlanJson(path: string, bytes: Buffer): Result<AnalysisPlan, PlanIntakeError> {
+    return JSON.parseResult(bytes.toString("utf8"), AnalysisPlanSchema).mapErr((error): PlanIntakeError =>
+        error.type === "malformed" ? { type: "invalid_json", path, cause: error.cause } : { type: "schema_invalid", path, issues: error.error.issues },
+    );
 }
 
 /**
@@ -141,10 +135,6 @@ function derivePlanId(analysisId: string, fileBytes: Buffer): string {
 export function validatePlanFile(analysisId: string, path: string): Result<PlanIntake, PlanIntakeError> {
     return readPlanBytes(path).andThen((bytes) =>
         parsePlanJson(path, bytes)
-            .andThen((raw): Result<AnalysisPlan, PlanIntakeError> => {
-                const parsed = AnalysisPlanSchema.safeParse(raw);
-                return parsed.success ? ok(parsed.data) : err({ type: "schema_invalid", path, issues: parsed.error.issues });
-            })
             .andThen((plan): Result<AnalysisPlan, PlanIntakeError> => {
                 // `validatePlan` deliberately treats an empty `steps` array as
                 // valid (a no-op run — harness `validate-plan.ts`). The cli refuses

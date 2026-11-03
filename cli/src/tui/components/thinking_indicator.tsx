@@ -2,6 +2,7 @@ import { createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 
 import { GLYPHS, MARKERS, space } from "../../lib/design_system.ts";
+import { runEvery } from "../../lib/timer.ts";
 import { Fg } from "./emphasis.tsx";
 
 /**
@@ -18,11 +19,12 @@ export function ThinkingIndicator(): JSX.Element {
     const [age, setAge] = createSignal("0s");
     // Captured at mount: callers mount this when the turn goes busy, unmount it when it settles.
     const start = Date.now();
-    const timer = setInterval(() => {
-        setFrame((f) => (f + 1) % GLYPHS.spinner.length);
-        setAge(Date.relativeAge(start));
-    }, 80);
-    onCleanup(() => clearInterval(timer));
+    onCleanup(
+        runEvery(80, () => {
+            setFrame((f) => (f + 1) % GLYPHS.spinner.length);
+            setAge(Date.relativeAge(start));
+        }),
+    );
     return (
         <box flexDirection="row" paddingBottom={space.sm}>
             <text>

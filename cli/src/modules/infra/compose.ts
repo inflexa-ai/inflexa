@@ -70,7 +70,7 @@ export const POSTGRES_VOLUME_NAME = `${PREFIX}-postgres-data`;
 
 /** Escape a value for use inside a YAML double-quoted string (`"…"`). */
 function escapeYaml(s: string): string {
-    return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+    return s.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n");
 }
 
 /**

@@ -18,7 +18,22 @@ import { env } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { generateComposeFile, POSTGRES_CONTAINER_NAME, PROXY_CONTAINER_NAME } from "../compose.ts";
 import { waitForReady } from "../postgres.ts";
-import { present } from "../../../lib/present.ts";
+import { isAsciiDigits } from "../../../lib/text.ts";
+import { countOccurrences } from "../../../test_support/text_shapes.ts";
+
+/** True when a dash, white space, and a quoted `<digits>:<digits>` mapping follow each other: a port mapping with no host address. */
+function hasBareNumericPortMapping(yaml: string): boolean {
+    for (let dash = yaml.indexOf("-"); dash !== -1; dash = yaml.indexOf("-", dash + 1)) {
+        const afterDash = yaml.slice(dash + 1);
+        const body = afterDash.trimStart();
+        if (body.length === afterDash.length || !body.startsWith('"')) continue;
+        const close = body.indexOf('"', 1);
+        if (close === -1) continue;
+        const [host, container, ...rest] = body.slice(1, close).split(":");
+        if (host !== undefined && container !== undefined && rest.length === 0 && isAsciiDigits(host) && isAsciiDigits(container)) return true;
+    }
+    return false;
+}
 
 describe("postgres constants", () => {
     test("container name includes inflexa-postgres (dev or prod prefix)", () => {
@@ -177,7 +192,7 @@ describe("compose file generation", () => {
         // proxy reachable only from this host. A bare numeric mapping is the
         // regression this guards — it would re-expose both services to the LAN.
         expect(yaml).toContain('"127.0.0.1:9999:5432"');
-        expect(yaml).not.toMatch(/-\s+"\d+:\d+"/);
+        expect(hasBareNumericPortMapping(yaml)).toBe(false);
     });
 
     test("generated compose file uses the fixed pgvector image", () => {
@@ -215,8 +230,8 @@ describe("compose file generation", () => {
 
     test("every service gets restart: unless-stopped (three in cliproxy mode, two in direct)", () => {
         const conn = resolvePostgresConfig();
-        expect(present(generateComposeFile(conn, "cliproxy").match(/restart: unless-stopped/g)).length).toBe(3);
-        expect(present(generateComposeFile(conn, "direct").match(/restart: unless-stopped/g)).length).toBe(2);
+        expect(countOccurrences(generateComposeFile(conn, "cliproxy"), "restart: unless-stopped")).toBe(3);
+        expect(countOccurrences(generateComposeFile(conn, "direct"), "restart: unless-stopped")).toBe(2);
     });
 });
 

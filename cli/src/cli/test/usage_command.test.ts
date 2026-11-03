@@ -10,6 +10,7 @@ import { getAnalysisUsageTotals, getAnchor } from "../../db/primary_query.ts";
 import { insertAnalysis, insertAnchor, upsertLlmUsage } from "../../db/primary_mutation.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
 import { asStr256 } from "../../lib/types.ts";
+import { collapseWhitespace } from "../../lib/text.ts";
 
 // `inflexa usage` end to end, as a real subprocess. The point of these tests is WHERE the answer comes
 // from: the sandbox has no durable engine, no Postgres, and no model proxy running, so a zero exit and
@@ -99,8 +100,8 @@ describe("usage command (e2e)", () => {
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain('Usage for "My Analysis" — 2 calls');
         // Two figures, never their sum: 12.4k in and 3.1k out, with 15.5k appearing nowhere.
-        expect(result.stdout).toMatch(/input\s+12\.4k/);
-        expect(result.stdout).toMatch(/output\s+3\.1k/);
+        expect(collapseWhitespace(result.stdout)).toContain("input 12.4k");
+        expect(collapseWhitespace(result.stdout)).toContain("output 3.1k");
         expect(result.stdout).not.toContain("15.5k");
         expect(result.stdout).toContain("By served model");
         expect(result.stdout).toContain("opus-4");
@@ -173,21 +174,21 @@ describe("usage grain subcommands (e2e)", () => {
             const sessions = await usage(["usage", "sessions", "--analysis", "My Analysis"], cwd);
             expect(sessions.exitCode).toBe(0);
             expect(sessions.stdout).toContain('Sessions for "My Analysis"');
-            expect(sessions.stdout).toMatch(/thr-a\s+1\s+12\.0k\s+3\.0k/);
+            expect(collapseWhitespace(sessions.stdout)).toContain("thr-a 1 12.0k 3.0k");
             // 15.0k is the two figures added; no grain may produce it.
             expect(sessions.stdout).not.toContain("15.0k");
 
             const runs = await usage(["usage", "runs", "--analysis", "My Analysis"], cwd);
             expect(runs.exitCode).toBe(0);
             expect(runs.stdout).toContain('Runs for "My Analysis"');
-            expect(runs.stdout).toMatch(new RegExp(`${RUN_ID}\\s+2\\s+24\\.3k\\s+1\\.5k`));
+            expect(collapseWhitespace(runs.stdout)).toContain(`${RUN_ID} 2 24.3k 1.5k`);
 
             // Work under neither frame is carried by the analysis report — the one report that also prints
             // the headline it is part of — and by neither grain table, so summing the two printed grain
             // reports cannot count it twice. Each grain instead signposts it, figure-free.
             const report = await usage(["usage", "--analysis", "My Analysis"], cwd);
             expect(report.exitCode).toBe(0);
-            expect(report.stdout).toMatch(/\(no session or run\)\s+1\s+800\s+80/);
+            expect(collapseWhitespace(report.stdout)).toContain("(no session or run) 1 800 80");
             for (const grain of [sessions.stdout, runs.stdout]) {
                 expect(grain).not.toContain("(no session or run)");
                 expect(grain).not.toContain("800");
@@ -197,8 +198,8 @@ describe("usage grain subcommands (e2e)", () => {
             const steps = await usage(["usage", "steps", "--run", RUN_ID, "--analysis", "My Analysis"], cwd);
             expect(steps.exitCode).toBe(0);
             expect(steps.stdout).toContain(`Steps for run ${RUN_ID}`);
-            expect(steps.stdout).toMatch(/qc_normalize\s+1\s+24\.0k\s+1\.5k/);
-            expect(steps.stdout).toMatch(/\(no step\)\s+1\s+300\s+30/);
+            expect(collapseWhitespace(steps.stdout)).toContain("qc_normalize 1 24.0k 1.5k");
+            expect(collapseWhitespace(steps.stdout)).toContain("(no step) 1 300 30");
         },
         GRAIN_RUNS_TIMEOUT_MS,
     );

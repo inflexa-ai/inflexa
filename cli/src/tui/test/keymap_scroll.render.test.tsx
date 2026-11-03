@@ -71,7 +71,7 @@ function Harness(props: { sticky?: boolean; lines?: () => string[]; onRefs: (sb:
 // So we must yield real time, not just spin renderOnce, for esc to reach the dispatcher.
 function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
     return async () => {
-        await new Promise((r) => setTimeout(r, 35));
+        await Promise.sleep(35);
         await setup.renderOnce();
         await setup.renderOnce();
     };

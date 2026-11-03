@@ -51,7 +51,7 @@ const PUBLIC_LINK_MESSAGE = "A public file of the report session must be a file 
 
 /** Whether an id of the path is one safe segment: not empty, no separator, no NUL byte, and not `.` or `..`. */
 function isSafeId(id: string): boolean {
-    return id !== "" && id !== "." && id !== ".." && !/[/\\\0]/.test(id);
+    return id !== "" && id !== "." && id !== ".." && !id.includes("/") && !id.includes("\\") && !id.includes("\0");
 }
 
 /** Whether a segment of the path inside the session folder can name a file: safe, and not hidden. */

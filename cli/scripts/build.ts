@@ -12,6 +12,8 @@ import { dirname, join, relative, sep } from "node:path";
 import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@opentui/solid/bun-plugin";
 import { z } from "zod";
 
+import "../src/extensions/index.ts";
+import { describeCause } from "../src/lib/cause.ts";
 import { unknownRecordSchema } from "../src/lib/json_record.ts";
 import { present } from "../src/lib/present.ts";
 import { audienceInvalidReason } from "../src/modules/auth/auth.ts";
@@ -35,13 +37,21 @@ resetSolidTransformPluginState();
 // the source.
 const ENV_TS = "src/lib/env.ts";
 
+const BAKED_ENV_OPEN = "export const bakedEnv = Object.freeze({";
+const BAKED_ENV_CLOSE = "});";
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds each literal `process.env.NAME` dot access in source text. It is a scan for a source grammar, and no string method finds each identifier that follows a prefix.
+const ENV_DOT_ACCESS = /process\.env\.([A-Z][A-Z0-9_]*)/g;
+
 function bakedVarNames(source: string): string[] {
-    const block = source.match(/export const bakedEnv = Object\.freeze\(\{([\s\S]*?)\}\);/);
-    if (!block || block[1] === undefined) {
+    const open = source.indexOf(BAKED_ENV_OPEN);
+    const close = open < 0 ? -1 : source.indexOf(BAKED_ENV_CLOSE, open + BAKED_ENV_OPEN.length);
+    if (close < 0) {
         console.error(`error: could not find the bakedEnv Object.freeze block in ${ENV_TS}`);
         process.exit(1);
     }
-    const names = [...new Set([...block[1].matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)].flatMap((match) => (match[1] === undefined ? [] : [match[1]])))];
+    const block = source.slice(open + BAKED_ENV_OPEN.length, close);
+    const names = [...new Set([...block.matchAll(ENV_DOT_ACCESS)].flatMap((match) => (match[1] === undefined ? [] : [match[1]])))];
     if (names.length === 0) {
         console.error(`error: no process.env.<NAME> dot accesses found in the bakedEnv block of ${ENV_TS}`);
         process.exit(1);
@@ -224,6 +234,17 @@ const manifestSchema = z.looseObject({
 // package does not stop the walk: the name falls back to the queued name, and the version to 0.0.0.
 const thirdPartyManifestSchema = unknownRecordSchema.catch({}).pipe(manifestSchema);
 
+/** The parsed package.json at `path`. A manifest that is not JSON, or that fails `schema`, prints its reason and ends the build with exit code 1. */
+function readManifest<T>(path: string, schema: z.ZodType<T>): T {
+    const parsed = JSON.parseResult(readFileSync(path, "utf8"), schema);
+    if (parsed.isErr()) {
+        const { error } = parsed;
+        console.error(`${path}: ${error.type === "malformed" ? `not valid JSON: ${describeCause(error.cause)}` : error.error.message}`);
+        process.exit(1);
+    }
+    return parsed.value;
+}
+
 // Release target matrix, built by `bun run build:all` (passes --all). The
 // default `bun run build` compiles only the host target for quick local
 // iteration. To ship a new platform, add it here — Bun cross-compiles by
@@ -250,7 +271,7 @@ if (targets.length === 0) {
 if (targets.some((target) => target.os !== hostOs || target.arch !== process.arch)) {
     // Read via the filesystem: the package's exports map does not expose its
     // package.json for import.
-    const opentuiVersion = versionManifestSchema.parse(JSON.parse(await Bun.file("node_modules/@opentui/core/package.json").text())).version;
+    const opentuiVersion = readManifest("node_modules/@opentui/core/package.json", versionManifestSchema).version;
     await $`bun install --os="*" --cpu="*" @opentui/core@${opentuiVersion}`.quiet();
 }
 
@@ -410,6 +431,7 @@ type CdxComponent = {
 const SUPPLIER = { name: "Inflexa", url: ["https://github.com/inflexa-ai/inflexa"] };
 
 // A license name that names nothing a reader can act on. The same rule as images/sbom/sbom_common.py.
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Matches a license name that is a placeholder: a hash, a file pointer, `unknown`, or empty. It is a case-insensitive alternation with white space and `c`/`s` variants, the same grammar as sbom_common.py, and no string method states it shorter.
 const UNRESOLVED_LICENSE_NAME = /^(sha256:[0-9a-f]+|file\s+licen[cs]e|see\s+licen[cs]e.*|unknown|noassertion|none|)$/i;
 
 /** The CycloneDX licenses of one npm package: its SPDX expression, or its declared value with the license text. */
@@ -455,7 +477,7 @@ function admitsTarget(pkg: ThirdPartyPackage, os: string, cpu: string): boolean 
 /** The npm purl of a package: a scope keeps its `@` as `%40`, and a `+` in the version is `%2B`. */
 function npmPurl(name: string, version: string): string {
     const encodedName = name.startsWith("@") ? `%40${name.slice(1)}` : name;
-    return `pkg:npm/${encodedName}@${version.replace(/\+/g, "%2B")}`;
+    return `pkg:npm/${encodedName}@${version.replaceAll("+", "%2B")}`;
 }
 
 function sha256Hex(bytes: Uint8Array | string): string {
@@ -493,7 +515,7 @@ function cliSbom(
     grammars: CdxComponent[],
 ): Record<string, unknown> {
     const npmOs = target.os === "windows" ? "win32" : target.os;
-    const cliPkg = versionManifestSchema.parse(JSON.parse(readFileSync("package.json", "utf8")));
+    const cliPkg = readManifest("package.json", versionManifestSchema);
     const components: CdxComponent[] = packages
         .filter((pkg) => admitsTarget(pkg, npmOs, target.arch))
         .map((pkg) => ({
@@ -540,6 +562,7 @@ function cliSbom(
     });
 
     // MODEL_URL names the Hugging Face repository and the pinned revision of the model file.
+    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads the owner, repository, and hex revision out of a pinned Hugging Face file URL. A `URL` parse changes the match (userinfo, port, host case, percent forms) and is longer, and the hex test has no string method.
     const model = /^https:\/\/huggingface\.co\/([^/]+)\/([^/]+)\/resolve\/([0-9a-f]+)\//.exec(MODEL_URL);
     if (!model) {
         console.error(`error: MODEL_URL is not a pinned Hugging Face file URL: ${MODEL_URL}`);
@@ -804,7 +827,7 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
         return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : null;
     }
 
-    function readMatchingText(pkgDir: string, matcher: RegExp): string | null {
+    function readMatchingText(pkgDir: string, prefixes: readonly string[]): string | null {
         let entries: string[];
         try {
             entries = readdirSync(pkgDir);
@@ -814,7 +837,10 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
         // Concatenate all matches so dual-licensed packages (LICENSE-MIT +
         // LICENSE-APACHE) keep both texts.
         const texts = entries
-            .filter((entry) => matcher.test(entry))
+            .filter((entry) => {
+                const lower = entry.toLowerCase();
+                return prefixes.some((prefix) => lower.startsWith(prefix));
+            })
             .sort()
             .map((entry) => {
                 try {
@@ -827,7 +853,7 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
         return texts.length > 0 ? texts.join("\n\n") : null;
     }
 
-    const rootPkg = manifestSchema.parse(JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")));
+    const rootPkg = readManifest(join(rootDir, "package.json"), manifestSchema);
     enqueue(rootPkg.dependencies, rootDir);
     enqueue(rootPkg.optionalDependencies, rootDir);
 
@@ -838,7 +864,7 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
         if (!pkgDir || seenDirs.has(pkgDir)) continue;
         seenDirs.add(pkgDir);
 
-        const pkg = thirdPartyManifestSchema.parse(JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")));
+        const pkg = readManifest(join(pkgDir, "package.json"), thirdPartyManifestSchema);
         const pkgName = pkg.name ?? item.name;
         const version = pkg.version ?? "0.0.0";
         const key = `${pkgName}@${version}`;
@@ -848,8 +874,8 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
                 version,
                 license: typeof pkg.license === "string" ? pkg.license : "SEE LICENSE FILE",
                 homepage: typeof pkg.homepage === "string" ? pkg.homepage : null,
-                licenseText: readMatchingText(pkgDir, /^(licen[cs]e|copying)/i),
-                noticeText: readMatchingText(pkgDir, /^notice/i),
+                licenseText: readMatchingText(pkgDir, ["license", "licence", "copying"]),
+                noticeText: readMatchingText(pkgDir, ["notice"]),
                 os: stringList(pkg.os),
                 cpu: stringList(pkg.cpu),
                 libc: stringList(pkg.libc),

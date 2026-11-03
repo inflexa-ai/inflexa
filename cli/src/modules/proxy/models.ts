@@ -106,12 +106,15 @@ let cachedModelId: string | null = null;
  */
 export type ChatSetupError = { type: "proxy_key_missing" } | { type: "proxy_unreachable"; detail: string } | { type: "no_models" } | { type: "cooling_down" };
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads the first quoted entry of the `api-keys:` list: the key at a line start (`m`), white space that holds a line break, a dash, white space, and a quoted value with no inner quote. A string form must find the line start, check the line break in the white space run, and read up to the closing quote, which is longer than the pattern.
+const API_KEYS_FIRST_ENTRY = /^api-keys:\s*\n\s*-\s*"([^"]+)"/m;
+
 /** The proxy requires the client API key we generated into its config at setup. */
 export async function readApiKey(): Promise<Result<string, ChatSetupError>> {
     const text = await Bun.file(env.cliproxyConfigPath)
         .text()
         .catch(() => "");
-    const key = text.match(/^api-keys:\s*\n\s*-\s*"([^"]+)"/m)?.[1];
+    const key = API_KEYS_FIRST_ENTRY.exec(text)?.[1];
     if (!key) return err({ type: "proxy_key_missing" });
     return ok(key);
 }

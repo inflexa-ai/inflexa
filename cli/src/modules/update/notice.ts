@@ -24,10 +24,10 @@ type AskState = z.infer<typeof askStateSchema>;
  */
 function readAskState(): AskState | null {
     return Result.fromThrowable(
-        () => askStateSchema.safeParse(JSON.parse(readFileSync(env.updateStatePath, "utf8"))),
+        () => readFileSync(env.updateStatePath, "utf8"),
         () => undefined,
     )().match(
-        (parsed) => (parsed.success ? parsed.data : null),
+        (text) => JSON.parseWith(text, askStateSchema),
         () => null,
     );
 }

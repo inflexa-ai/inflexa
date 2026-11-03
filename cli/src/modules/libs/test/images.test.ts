@@ -1,10 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
 import { isPublishedSandboxImage, isRetiredSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "../images.ts";
+import { isAsciiDigits } from "../../../lib/text.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 describe("SANDBOX_IMAGE", () => {
     test("is the one published runtime image at a pinned build tag, never a moving tag", () => {
-        expect(SANDBOX_IMAGE).toMatch(/^ghcr\.io\/inflexa-ai\/sandbox-base:\d{8}-[0-9a-f]{7}$/);
+        const repository = "ghcr.io/inflexa-ai/sandbox-base:";
+        expect(SANDBOX_IMAGE.startsWith(repository)).toBe(true);
+        const tag = SANDBOX_IMAGE.slice(repository.length);
+        expect(tag).toHaveLength(16);
+        expect(isAsciiDigits(tag.slice(0, 8))).toBe(true);
+        expect(tag.charAt(8)).toBe("-");
+        expect(isLowerHex(tag.slice(9), 7)).toBe(true);
     });
 });
 

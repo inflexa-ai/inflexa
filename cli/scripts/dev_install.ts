@@ -28,9 +28,13 @@ function exists(path: string): boolean {
     }
 }
 
+function withoutOneTrailingSeparator(entry: string): string {
+    return entry.endsWith("/") || entry.endsWith("\\") ? entry.slice(0, -1) : entry;
+}
+
 function onPath(dir: string): boolean {
     const sep = process.platform === "win32" ? ";" : ":";
-    return (process.env.PATH ?? "").split(sep).some((entry) => entry.replace(/[/\\]$/, "") === dir);
+    return (process.env.PATH ?? "").split(sep).some((entry) => withoutOneTrailingSeparator(entry) === dir);
 }
 
 const built = builtBinPath();

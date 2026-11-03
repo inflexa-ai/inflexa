@@ -1091,7 +1091,7 @@ describe("buildAuthInjectingFetch", () => {
             get: () => Promise.resolve(err<Credential, CredentialError>({ type: "env_var_unset", var: "MISSING" })),
             forceRefresh: () => Promise.resolve(err<Credential, CredentialError>({ type: "env_var_unset", var: "MISSING" })),
         };
-        await expect(buildAuthInjectingFetch(source, underlying)("https://x/messages", {})).rejects.toThrow(/MISSING/);
+        await expect(buildAuthInjectingFetch(source, underlying)("https://x/messages", {})).rejects.toThrow("MISSING");
     });
 });
 

@@ -54,6 +54,7 @@ import { CATALOG_TRANSFER_FLAG } from "../../lib/child_flags.ts";
 import { sha256File } from "../../lib/hash.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { acquireInstanceLock, releaseInstanceLock, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../lib/lock.ts";
+import { runAfter, runEvery } from "../../lib/timer.ts";
 import type { TransferPhase } from "../../types/store.ts";
 /**
  * The image inventory record of the catalog, at the store root. The catalog build writes it beside the
@@ -415,13 +416,16 @@ async function resolveManifest(doFetch: FetchLike, reference: string, token: str
     // The digest comes from the raw bytes, not from a header: it is the value the receipt pins, so a
     // later run compares against exactly what was served rather than a value the registry can restate.
     const manifestDigest = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(new TextDecoder().decode(bytes));
-    } catch (cause) {
-        return err({ type: "manifest_failed", message: `The manifest for ${reference} was not valid JSON.`, cause });
+    const parsed = JSON.parseResult(new TextDecoder().decode(bytes), z.unknown());
+    if (parsed.isErr()) {
+        const { error } = parsed;
+        return err({
+            type: "manifest_failed",
+            message: `The manifest for ${reference} was not valid JSON.`,
+            cause: error.type === "malformed" ? error.cause : error.error,
+        });
     }
-    const layers = readManifestLayers(parsed);
+    const layers = readManifestLayers(parsed.value);
     if (layers.isErr()) return err(layers.error);
     return ok({ manifestDigest, layers: layers.value });
 }
@@ -581,17 +585,17 @@ type TarRun = {
 async function runTar(args: readonly string[], boundMs: number, keepAlive?: () => void): Promise<TarRun> {
     const proc = Bun.spawn(["tar", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     let boundFired = false;
-    const bound = setTimeout(() => {
+    const stopBound = runAfter(boundMs, () => {
         boundFired = true;
         proc.kill("SIGKILL");
-    }, boundMs);
-    const pulse = keepAlive === undefined ? undefined : setInterval(keepAlive, PROGRESS_WRITE_INTERVAL_MS);
+    });
+    const stopPulse = keepAlive === undefined ? undefined : runEvery(PROGRESS_WRITE_INTERVAL_MS, keepAlive);
     try {
         const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
         return { code, stdout, stderr, boundFired };
     } finally {
-        clearTimeout(bound);
-        if (pulse !== undefined) clearInterval(pulse);
+        stopBound();
+        stopPulse?.();
     }
 }
 
@@ -1052,8 +1056,9 @@ async function readStoreReceipt(receiptPath: string): Promise<{ readonly exists:
     // A symlink or a non-file where the receipt belongs is a tampered or damaged store, treated as invalid.
     if (info.isSymbolicLink() || !info.isFile()) return { exists: true };
     try {
-        const raw: unknown = JSON.parse(await readFile(receiptPath, "utf8"));
-        return { exists: true, receipt: parseStoreReceipt(raw) };
+        const raw = JSON.parseResult(await readFile(receiptPath, "utf8"), z.unknown());
+        if (raw.isErr()) return { exists: true };
+        return { exists: true, receipt: parseStoreReceipt(raw.value) };
     } catch {
         return { exists: true };
     }

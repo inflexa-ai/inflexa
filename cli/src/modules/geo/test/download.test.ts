@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../../lib/lock.ts";
+import { splitWhitespace } from "../../../lib/text.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { runCliAsync } from "../../../test_support/cli.ts";
 import { freshDb } from "../../../test_support/db.ts";
@@ -190,7 +191,10 @@ describe("describeGeoDownloadError", () => {
         const cap = 32 * 1024 ** 3;
         for (const declaredBytes of [1024, 500 * 1024 ** 2, cap + 1, Math.floor(32.5 * 1024 ** 3), 33 * 1024 ** 3 + 1]) {
             const message = describeGeoDownloadError({ type: "too_large", declaredBytes, cap }, "GSE12345");
-            const quoted = /--max-size (\S+)/.exec(message)?.[1];
+            const flag = "--max-size ";
+            const flagAt = message.indexOf(flag);
+            const word = flagAt === -1 ? "" : splitWhitespace(message.slice(flagAt + flag.length))[0];
+            const quoted = word === "" ? undefined : word;
             expect(quoted).toBeDefined();
             // A remedy is only a remedy if re-running with it clears the cap that just refused. Rounding the
             // suggestion DOWN would hand the user a ceiling the same series fails against a second time.

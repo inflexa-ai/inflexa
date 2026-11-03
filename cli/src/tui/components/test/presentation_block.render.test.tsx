@@ -21,7 +21,7 @@ async function frameWith(
             await setup.renderOnce();
             const frame = setup.captureCharFrame();
             if (frame.includes(needle) || Date.now() - start > timeoutMs) return frame;
-            await new Promise((r) => setTimeout(r, 10));
+            await Promise.sleep(10);
         }
     } finally {
         setup.renderer.destroy();

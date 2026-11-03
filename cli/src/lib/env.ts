@@ -1,6 +1,8 @@
 import { availableParallelism, cpus, homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
+import { isAsciiDigits } from "./text.ts";
+
 /**
  * True when this process is a `bun test` run whose sandbox preload never executed — the one condition
  * under which importing this module is a data-loss hazard rather than ordinary configuration.
@@ -96,7 +98,7 @@ export function resolveKnowledgeApiKey(): string | undefined {
  */
 export function walkParentPid(): number | null {
     const value = process.env[walkParentPidVar];
-    return value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+    return value !== undefined && isAsciiDigits(value) ? Number(value) : null;
 }
 
 /**

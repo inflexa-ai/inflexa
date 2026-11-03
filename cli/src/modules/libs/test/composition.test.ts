@@ -24,6 +24,8 @@ import {
     resolvePackageRequest,
     takeFarmCompositionFailure,
 } from "../composition.ts";
+import { parsedJson } from "../../../test_support/json.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 // The provisioner that owns the other implementation of the farm layout.
 const PROVISIONER = join(import.meta.dir, "..", "..", "..", "..", "..", "images", "sandbox-provisioner");
@@ -121,7 +123,7 @@ const farmLockSchema = z.looseObject({
 
 /** The parsed `inflexa.lock` of one farm, read raw so a test asserts on the exact shape the gate reads. */
 function farmLockOf(farmPath: string): z.infer<typeof farmLockSchema> {
-    return farmLockSchema.parse(JSON.parse(readFileSync(join(farmPath, "inflexa.lock"), "utf8")));
+    return parsedJson(readFileSync(join(farmPath, "inflexa.lock"), "utf8"), farmLockSchema);
 }
 
 /** Every path of a tree, with what it holds: a directory, a file, or a link and its target. */
@@ -585,7 +587,7 @@ describe("extendFarm builds a farm from named roots", () => {
         expect(lock.packages.find((entry) => entry.store_dir === RPKGA)?.track).toBe("cran");
         expect(lock.packages.find((entry) => entry.store_dir === ALPHA)?.track).toBe("python");
         // Each entry carries the full store hash, read from the pool marker.
-        for (const entry of lock.packages) expect(entry.hash).toMatch(/^[0-9a-f]{64}$/);
+        for (const entry of lock.packages) expect(isLowerHex(entry.hash, 64)).toBe(true);
         // The languages copy from the catalog, for the tracks the farm carries.
         expect(Object.keys(lock.languages).sort()).toEqual(["python", "r"]);
     });
@@ -1031,7 +1033,7 @@ describe("linkPackagesIntoFarm", () => {
         // whole pool, and the seam must say THAT — a per-package "absent"
         // here would send the caller after packages the pool holds.
         const graphPath = join(root, "deps.json");
-        const graph = z.looseObject({ nodes: z.record(z.string(), z.unknown()) }).parse(JSON.parse(readFileSync(graphPath, "utf8")));
+        const graph = parsedJson(readFileSync(graphPath, "utf8"), z.looseObject({ nodes: z.record(z.string(), z.unknown()) }));
         delete graph.nodes[ALPHA];
         writeFileSync(graphPath, JSON.stringify(graph));
 

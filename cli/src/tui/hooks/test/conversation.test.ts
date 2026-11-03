@@ -2296,7 +2296,7 @@ describe("the open thread that a different client changes", () => {
             release = resolve;
         });
         const sending = send({ sessionId: SID, analysisId: AID, userText: "my question" }, { ...fakeServer(done(), () => gate), transcript: thread.opts });
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await Promise.sleep(0);
         expect(chatStatus()).toBe("busy");
 
         // The opening of this turn moved the stamp. The live turn already shows it.

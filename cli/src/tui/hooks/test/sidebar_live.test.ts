@@ -527,14 +527,14 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         const dispose = mountWatch(ws, { refresh, arm: () => () => {} });
         try {
             bootReady(); // Trigger 1 fires refresh(A)
-            await new Promise<void>((r) => setTimeout(r, 0)); // let A's reads settle
+            await Promise.sleep(0); // let A's reads settle
             expect(activeRunProgress().size).toBeGreaterThan(0); // A's active run is pinned
 
             setStore({ analysis: buildAnalysis({ id: "B" }) }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
             expect(activeRunProgress().size).toBe(0); // no stale A entries during the swap window
 
             gatedB.release(profileState({ status: "completed" })); // let B settle so no read leaks past the test
-            await new Promise<void>((r) => setTimeout(r, 0));
+            await Promise.sleep(0);
         } finally {
             dispose();
         }
@@ -846,7 +846,7 @@ describe("watchSidebarData — an idle TUI sees the work of a different client",
         const liveCadences = (): number[] => timers.filter((t) => t.live).map((t) => t.ms);
         const tick = async (): Promise<void> => {
             for (const t of timers.filter((t) => t.live)) t.fn();
-            await new Promise<void>((r) => setTimeout(r, 0));
+            await Promise.sleep(0);
         };
         const listedIds = (): string[] | null => {
             const snap = runsSnapshot();
@@ -893,7 +893,7 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         return {
             tick: async () => {
                 for (const timer of timers.filter((t) => t.live)) timer.fn();
-                for (let i = 0; i < 3; i++) await new Promise<void>((r) => setTimeout(r, 0));
+                for (let i = 0; i < 3; i++) await Promise.sleep(0);
             },
             dispose,
         };
@@ -916,7 +916,7 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         );
         const poll = mountPoll(ws);
         try {
-            await new Promise<void>((r) => setTimeout(r, 0));
+            await Promise.sleep(0);
             expect(ws.inputCount).toBe(2);
 
             // A second client renames the analysis and adds an input between two ticks.
@@ -1066,7 +1066,7 @@ describe("watchSidebarData — swap resets the snapshots before the new analysis
         const dispose = mountWatch(ws, { refresh, arm: () => () => {} });
         try {
             bootReady(); // Trigger 1 fires refresh(A)
-            await new Promise<void>((r) => setTimeout(r, 0)); // let A's reads settle
+            await Promise.sleep(0); // let A's reads settle
             expect(profileSnapshot().kind).toBe("loaded"); // A's data is on screen — stale state to clear
 
             setStore({ analysis: buildAnalysis({ id: "B" }) }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
@@ -1074,7 +1074,7 @@ describe("watchSidebarData — swap resets the snapshots before the new analysis
             expect(runsSnapshot().kind).toBe("not_ready");
 
             gatedB.release(runningProfile()); // B's read resolves
-            await new Promise<void>((r) => setTimeout(r, 0));
+            await Promise.sleep(0);
             const p = profileSnapshot();
             expect(p.kind).toBe("loaded"); // B's data lands after the window
             if (p.kind === "loaded") expect(p.profile.status).toBe("running");
@@ -1382,7 +1382,7 @@ describe("the bounded poll never overlaps itself", () => {
 
             h.release();
             // The tick settles after its refresh and the reads beside it, thus a macrotask, not a count of microtasks.
-            await new Promise<void>((r) => setTimeout(r, 0));
+            await Promise.sleep(0);
 
             // Once the in-flight refresh settles the poll resumes.
             h.tick();
@@ -1460,7 +1460,7 @@ describe("the in-flight guard is bounded", () => {
             expect(runsSnapshot()).toEqual({ kind: "loaded", analysisId: "A", runs: [] });
 
             setSystemTime();
-            await new Promise<void>((r) => setTimeout(r, 0));
+            await Promise.sleep(0);
             const snap = runsSnapshot();
             expect(snap.kind === "loaded" && snap.runs.map((r) => r.runId)).toEqual(["after-the-bound"]);
         } finally {

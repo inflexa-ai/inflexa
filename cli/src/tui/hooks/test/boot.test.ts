@@ -282,7 +282,7 @@ describe("the probe of the server at each poll tick", () => {
 
     /** Let the boot that a probe follows read the server to its end. */
     async function settle(): Promise<void> {
-        for (let i = 0; i < 3; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        for (let i = 0; i < 3; i++) await Promise.sleep(0);
     }
 
     test("the server that the store saw ready still answers: the store stays ready", async () => {

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
 
 import type { SessionNonce } from "../../api/browser_session.ts";
+import { isPrintableAscii } from "../../lib/text.ts";
 import { SIGN_IN_AGAIN_MESSAGE, sessionCookieName, type BrowserSessionStore } from "../browser_session.ts";
 import { apiError, listenerPort, type ServerEnv } from "../http.ts";
 
@@ -14,10 +15,8 @@ const DEFAULT_NEXT = "/gui/";
  * `/%09/evil.example` would become `//evil.example`. A CR or an LF would make the `Location` header fail after the
  * nonce is used.
  */
-const NEXT_PATH = /^\/(?!\/)[!-~]*$/;
-
 function isServerPath(next: string): boolean {
-    return NEXT_PATH.test(next) && !next.includes("\\");
+    return next.startsWith("/") && !next.startsWith("//") && [...next].every((char) => char !== " " && isPrintableAscii(char)) && !next.includes("\\");
 }
 
 /**

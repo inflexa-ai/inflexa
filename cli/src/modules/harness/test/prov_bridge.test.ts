@@ -21,6 +21,7 @@ import type { ProvModelId } from "../../../types/prov.ts";
 import { provModel } from "../../prov/document.ts";
 import { flushProvenanceAsync, initProvenanceRecording, resetProvenanceRecorderForTests } from "../../prov/prov.ts";
 import { resetSigningForTests } from "../../prov/signing.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 const { fileQName } = provModel;
 import {
@@ -907,7 +908,7 @@ describe("readProvenanceExport", () => {
         expect(provenance).toBeDefined();
         // The exact bytes of the column, which are the bytes the chain hash covers.
         expect(present(provenance).document).toBe(present(getAnalysisProvenance("a1")._unsafeUnwrap()));
-        const attestation = attestationSchema.parse(JSON.parse(present(present(provenance).attestation)));
+        const attestation = parsedJson(present(present(provenance).attestation), attestationSchema);
         expect((await verifyAttestation(present(provenance).document, attestation)).status).toBe("valid");
     });
 

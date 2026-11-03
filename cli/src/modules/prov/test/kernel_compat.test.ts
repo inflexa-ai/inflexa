@@ -6,6 +6,7 @@ import { applyProvEvent, importPublicKeyJwk, verifyProvenance, PROV_UNIFY_OPTION
 import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { cliProvDigest, provModel } from "../document.ts";
 import { present } from "../../../lib/present.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // The kernel-adoption continuity suite. The fixture was generated ONCE by the pre-kernel
 // implementation (the cli's own dialect code, deleted in the same change): a small document driven
@@ -29,7 +30,7 @@ type CompatFixture = Omit<z.infer<typeof fixtureSchema>, "events"> & { events: P
 const sectionsSchema = z.record(z.string(), unknownRecordSchema);
 const activitiesSchema = z.looseObject({ activity: z.record(z.string(), unknownRecordSchema) });
 
-const parsedFixture = fixtureSchema.parse(JSON.parse(readFileSync(join(import.meta.dir, "..", "__fixtures__", "kernel_compat.json"), "utf-8")));
+const parsedFixture = parsedJson(readFileSync(join(import.meta.dir, "..", "__fixtures__", "kernel_compat.json"), "utf-8"), fixtureSchema);
 
 const fixture: CompatFixture = {
     ...parsedFixture,
@@ -68,7 +69,7 @@ const executionEvents = fixture.events.filter(
  * would collapse onto one key, so the count assertion keeps a duplication visible.
  */
 function normalizeBlankIds(json: string): Record<string, Record<string, unknown>> {
-    const parsed = sectionsSchema.parse(JSON.parse(json));
+    const parsed = parsedJson(json, sectionsSchema);
     for (const section of Object.values(parsed)) {
         const blanks = Object.keys(section).filter((k) => k.startsWith("_:"));
         for (const key of blanks) {
@@ -105,7 +106,7 @@ describe("kernel adoption — continuity against the pre-kernel fixture", () => 
     test("kernel loadDocument rehydrates the pre-kernel document", () => {
         const doc = provModel.loadDocument(subject, fixture.document);
         expect(doc.isOk()).toBe(true);
-        const json = sectionsSchema.parse(JSON.parse(doc._unsafeUnwrap().serialize("json")));
+        const json = parsedJson(doc._unsafeUnwrap().serialize("json"), sectionsSchema);
         expect(Object.keys(present(json.entity))).toContain("inflexa:analysis-compat-a1");
         expect(Object.keys(present(json.agent))).toContain("inflexa:agent-user-alice_example_org");
     });
@@ -130,20 +131,20 @@ describe("kernel adoption — continuity against the pre-kernel fixture", () => 
             analysisId: subject.analysisId,
             actor: { kind: "user", id: "alice@example.org", email: "alice@example.org" },
         });
-        const json = sectionsSchema.parse(JSON.parse(doc.serialize("json")));
+        const json = parsedJson(doc.serialize("json"), sectionsSchema);
         expect(Object.keys(present(json.agent))).toContain("inflexa:agent-user-alice_example_org");
     });
 
     test("accepted forward delta: a fresh kernel document omits inflexa:args when args is empty", () => {
         const doc = provModel.freshDocument(subject);
         for (const event of executionEvents) applyProvEvent(provModel, doc, event);
-        const json = activitiesSchema.parse(JSON.parse(doc.unified(PROV_UNIFY_OPTIONS).serialize("json")));
+        const json = parsedJson(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), activitiesSchema);
         const cmd = present(json.activity[fixture.qnames.command]);
         // The pre-kernel code wrote `inflexa:args: ""` for an empty argument vector; the kernel
         // omits the attribute. Existing documents keep the old value (previous test); new ones
         // never carry it.
         expect(cmd["inflexa:args"]).toBeUndefined();
-        const original: unknown = JSON.parse(fixture.document);
+        const original: unknown = parsedJson(fixture.document, z.unknown());
         expect(original).toMatchObject({ activity: { [fixture.qnames.command]: { "inflexa:args": "" } } });
     });
 });

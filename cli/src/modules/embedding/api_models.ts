@@ -13,6 +13,8 @@
 import { z } from "zod";
 import { err, ok, type Result } from "neverthrow";
 
+import { trimTrailing } from "../../lib/text.ts";
+
 /** The OpenAI-compatible `/models` payload; only `id` is load-bearing for the picker. */
 const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 
@@ -43,7 +45,7 @@ function isLoopbackHost(hostname: string): boolean {
  * configure this endpoint".
  */
 function isEmbeddingModelId(id: string): boolean {
-    return /embed/i.test(id);
+    return id.toLowerCase().includes("embed");
 }
 
 /**
@@ -72,7 +74,7 @@ export async function listEmbeddingModels(baseURL: string, apiKey: string, signa
         return err({ type: "invalid_url", detail: `refusing to send the api key over cleartext http to non-loopback host ${parsedURL.hostname}` });
     }
     // Tolerate a trailing slash on the user-typed base URL, so `…/v1/` does not become `…/v1//models`.
-    const url = `${baseURL.replace(/\/+$/, "")}/models`;
+    const url = `${trimTrailing(baseURL, "/")}/models`;
     let res: Response;
     // fetch throws on a dead endpoint (or an aborted signal); bridge that throw into the Result channel.
     try {

@@ -21,6 +21,8 @@ import type { DestinationStream } from "pino";
 
 import pkg from "../../package.json";
 import { env } from "./env.ts";
+import { trimTrailing } from "./text.ts";
+import { withinDeadline } from "./timer.ts";
 import { unknownRecordSchema } from "./json_record.ts";
 import { getLogger } from "./log.ts";
 
@@ -50,7 +52,7 @@ export function initOtel(consented: boolean): boolean {
     if (!consented || !endpoint) return false;
 
     try {
-        const base = endpoint.replace(/\/+$/, "");
+        const base = trimTrailing(endpoint, "/");
         const provider = new LoggerProvider({
             resource: resourceFromAttributes({
                 [ATTR_SERVICE_NAME]: pkg.name,
@@ -142,10 +144,5 @@ export function createOtelLogStream(): DestinationStream {
  */
 export async function shutdownOtel(): Promise<void> {
     if (!registeredLoggerProvider) return;
-    await Promise.race([
-        Promise.allSettled([registeredLoggerProvider.shutdown()]),
-        new Promise<void>((resolve) => {
-            setTimeout(resolve, 2_000).unref();
-        }),
-    ]);
+    await withinDeadline(Promise.allSettled([registeredLoggerProvider.shutdown()]), 2_000, { unref: true });
 }

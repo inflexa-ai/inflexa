@@ -2,6 +2,7 @@ import { createSignal, onCleanup, For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 
 import { GLYPHS, MARKERS, space } from "../../lib/design_system.ts";
+import { runEvery } from "../../lib/timer.ts";
 import { theme } from "../theme.ts";
 import { Bold, Fg } from "./emphasis.tsx";
 
@@ -35,11 +36,12 @@ export function BootIndicator(props: BootIndicatorProps): JSX.Element {
     // The timer keeps ticking while the boot is FAILED (message set) — harmless: the failed branch
     // ignores frame()/age(), and onCleanup clears the interval on unmount. Kept identical to
     // ThinkingIndicator rather than special-casing a stop.
-    const timer = setInterval(() => {
-        setFrame((f) => (f + 1) % GLYPHS.spinner.length);
-        setAge(Date.relativeAge(start));
-    }, 80);
-    onCleanup(() => clearInterval(timer));
+    onCleanup(
+        runEvery(80, () => {
+            setFrame((f) => (f + 1) % GLYPHS.spinner.length);
+            setAge(Date.relativeAge(start));
+        }),
+    );
     return (
         <Show
             when={props.message}

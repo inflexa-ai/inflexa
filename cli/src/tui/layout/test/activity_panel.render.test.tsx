@@ -8,6 +8,7 @@ import { setTheme } from "../../theme.ts";
 import { ELAPSED_TICK_MS, ActivityPanel } from "../activity_panel.tsx";
 import type { ActiveProfileProgress, ActiveRunProgress, PanelSubject } from "../../hooks/sidebar_live.ts";
 import type { RunStepView } from "../../components/run_block.tsx";
+import { hasDigitRatio } from "../../../test_support/text_shapes.ts";
 
 // The panel is the chat column's live readout for ONE focused subject — a run or the analysis's data
 // profile. Its contract has three legs, and only the first is a character-frame question:
@@ -33,7 +34,7 @@ async function settledFrame(node: Parameters<typeof testRender>[0], size: { widt
     const setup = await testRender(node, size);
     try {
         for (let i = 0; i < 3; i++) {
-            await new Promise((resolve) => setTimeout(resolve, 5));
+            await Promise.sleep(5);
             await setup.renderOnce();
         }
         return setup
@@ -197,7 +198,7 @@ describe("ActivityPanel profile content", () => {
 
         // No denominator anywhere, in any form: a synthesized `total: 1` would read `0/1`, a widened
         // run shape would read `0/0`, and the pattern catches both without naming either.
-        expect(frame).not.toMatch(/\d+\s*\/\s*\d+/);
+        expect(hasDigitRatio(frame, true)).toBe(false);
         // No step row. The arrow is the frontier row's own marker, so it is present even for a row whose
         // label is empty — which is what an empty `<For>` row would render, and what a bare
         // `not.toContain("align reads")` would miss entirely.

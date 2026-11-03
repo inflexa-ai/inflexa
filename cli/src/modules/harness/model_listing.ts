@@ -2,6 +2,7 @@ import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
 import { env, resolveModelApiKey } from "../../lib/env.ts";
+import { trimTrailing, withoutSuffix } from "../../lib/text.ts";
 import { createCredentialSource, type Credential, type CredentialError } from "../../lib/credential.ts";
 import { readApiKey, checkModelAccess, byRecencyThenId, releaseTimeOf, type ChatSetupError, type ModelAccess } from "../proxy/models.ts";
 import { AGENT_EFFORTS, type ModelAuthConfig } from "../../lib/config.ts";
@@ -455,7 +456,7 @@ export async function readContextWindow(
     modelId: string,
     fetchFn: ContextWindowOpts["fetch"],
 ): Promise<number | null> {
-    const root = baseURL.replace(/\/+$/, "").replace(/\/v1$/, "");
+    const root = withoutSuffix(trimTrailing(baseURL, "/"), "/v1");
     let res: Response;
     // fetch throws on a dead endpoint and on the timeout; either way the window stays unknown.
     try {

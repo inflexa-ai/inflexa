@@ -13,6 +13,8 @@ import { findAnalysesByRef, listAnalyses, listAnalysisInputs } from "../../../db
 import { asStr256, str256 } from "../../../lib/types.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type { AnalysisInput } from "../../../types/analysis.ts";
+import { parsedJson } from "../../../test_support/json.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 describe("makeBaseSlug", () => {
     test("lowercases and kebab-cases a name", () => {
@@ -23,12 +25,22 @@ describe("makeBaseSlug", () => {
         expect(makeBaseSlug("  --Foo___Bar!!!  ")).toBe("foo-bar");
     });
 
+    test("keeps only ASCII letters and digits, and drops a character beyond the BMP", () => {
+        expect(makeBaseSlug("a\u{1f600}b")).toBe("a-b");
+        expect(makeBaseSlug("a_b-c.d")).toBe("a-b-c-d");
+        expect(makeBaseSlug("--a--b--")).toBe("a-b");
+        expect(makeBaseSlug("A1 B2")).toBe("a1-b2");
+        expect(makeBaseSlug("\u00a0x\u3000y\u00a0")).toBe("x-y");
+    });
+
     test("strips diacritics via NFKD normalization", () => {
         expect(makeBaseSlug("Café")).toBe("cafe");
     });
 
     test("falls back to a generated handle when the name slugs to empty", () => {
-        expect(makeBaseSlug("!!!")).toMatch(/^analysis-[0-9a-f]{6}$/);
+        const slug = makeBaseSlug("!!!");
+        expect(slug.startsWith("analysis-")).toBe(true);
+        expect(isLowerHex(slug.slice("analysis-".length), 6)).toBe(true);
     });
 });
 
@@ -145,7 +157,7 @@ describe("createAnalysis makes the empty farm", () => {
 
         const lockPath = join(env.packageStoreDir, "farms", a.id, "inflexa.lock");
         expect(existsSync(lockPath)).toBe(true);
-        const lock = z.object({ schema: z.number(), arch: z.string(), packages: z.array(z.unknown()) }).parse(JSON.parse(readFileSync(lockPath, "utf8")));
+        const lock = parsedJson(readFileSync(lockPath, "utf8"), z.object({ schema: z.number(), arch: z.string(), packages: z.array(z.unknown()) }));
         expect(lock.schema).toBe(1);
         expect(lock.packages).toEqual([]);
     });

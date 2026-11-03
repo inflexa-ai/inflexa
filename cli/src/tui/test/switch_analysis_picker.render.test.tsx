@@ -16,6 +16,8 @@ import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dia
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { DEFAULT_ANALYSIS_DIALOG_OPTS, openSwitchAnalysis, type AnalysisDialogOpts } from "../commands.tsx";
 import type { Analysis } from "../../types/analysis.ts";
+import { isAsciiDigits } from "../../lib/text.ts";
+import { hasNumberBefore } from "../../test_support/text_shapes.ts";
 
 // The Switch analysis picker is the ONE place the interface reports a whole-analysis total, so this drives
 // the REAL flow (`analysis.switch` → its dialog) against a fake client of the server: the claim is that each
@@ -39,6 +41,24 @@ afterEach(() => {
 });
 
 let next = 0;
+
+/** True when `text` holds a date written `d/m/yy` to `dd/mm/yyyy`: a digit, a slash, one or two digits, a slash, and at least two digits. */
+function holdsSlashedDate(text: string): boolean {
+    const parts = text.split("/");
+    return parts.some((before, at) => {
+        const month = parts[at + 1];
+        const year = parts[at + 2];
+        return (
+            month !== undefined &&
+            year !== undefined &&
+            isAsciiDigits(before.slice(-1)) &&
+            (month.length === 1 || month.length === 2) &&
+            isAsciiDigits(month) &&
+            year.length >= 2 &&
+            isAsciiDigits(year.slice(0, 2))
+        );
+    });
+}
 
 /** One row of `GET /api/v1/analyses`, in the folder `dir`, newest last. */
 function analysisIn(dir: string, name: string, usage?: UsageTotals): AnalysisSummary {
@@ -112,7 +132,7 @@ type Setup = Awaited<ReturnType<typeof testRender>>;
 // A real-clock settle: the dialog host applies focus on a microtask and the list's seeded scroll
 // retries on a macrotask, so a bare render pair is too early for both.
 async function settle(setup: Setup): Promise<string> {
-    await new Promise((r) => setTimeout(r, 20));
+    await Promise.sleep(20);
     await setup.renderOnce();
     await setup.renderOnce();
     return setup.captureCharFrame();
@@ -236,9 +256,9 @@ describe("Switch analysis picker identity", () => {
             const frame = await settle(setup);
 
             const row = frame.split("\n").find((l) => l.includes("rna-seq")) ?? "";
-            expect(row).toMatch(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
+            expect(holdsSlashedDate(row)).toBe(true);
             // A record listing reads on the absolute side of the time convention.
-            expect(row).not.toMatch(/\b\d+[dhm] ago\b/);
+            expect(["d", "h", "m"].some((unit) => hasNumberBefore(row, `${unit} ago`))).toBe(false);
 
             // The detail line of the cursor row is the one unambiguous handle for a row.
             expect(frame).toContain(only.id);

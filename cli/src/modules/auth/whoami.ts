@@ -66,11 +66,5 @@ export function currentUserEmail(): string | null {
 export function decodeIdTokenClaims(idToken: string): IdTokenClaims | null {
     const payload = idToken.split(".")[1];
     if (!payload) return null;
-    try {
-        const parsed: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")); // unknown: JWT payload, validated by the schema below
-        const result = idTokenClaimsSchema.safeParse(parsed);
-        return result.success ? result.data : null;
-    } catch {
-        return null;
-    }
+    return JSON.parseWith(Buffer.from(payload, "base64url").toString("utf8"), idTokenClaimsSchema);
 }

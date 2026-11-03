@@ -7,6 +7,7 @@ import { writeSearxngSettings } from "../searxng_config.ts";
 import { formatInfraStateError, publishFileExclusively, tryFs } from "../mount_source.ts";
 import { env } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 // writeSearxngSettings writes the REAL file at env.searxngSettingsPath. Under the test preload that
 // lives inside the mkdtemp sandbox; guard first (the data-loss backstop) and reap the settings dir
@@ -27,7 +28,12 @@ describe("writeSearxngSettings", () => {
 
         const text = readFileSync(settingsPath, "utf8");
         expect(text).toContain("use_default_settings: true\n");
-        expect(text).toMatch(/server:\n {2}secret_key: "[0-9a-f]{64}"\n {2}limiter: false\n {2}public_instance: false\n/);
+        const keyLine = 'server:\n  secret_key: "';
+        const keyLineAt = text.indexOf(keyLine);
+        expect(keyLineAt).toBeGreaterThanOrEqual(0);
+        const keyAt = keyLineAt + keyLine.length;
+        expect(isLowerHex(text.slice(keyAt, keyAt + 64), 64)).toBe(true);
+        expect(text.slice(keyAt + 64)).toStartWith('"\n  limiter: false\n  public_instance: false\n');
         expect(text).toContain("search:\n  formats:\n    - html\n    - json\n");
         // The shipped key stops the container; the provisioned key must never be it.
         expect(text).not.toContain("ultrasecretkey");
@@ -120,7 +126,7 @@ describe("writeSearxngSettings", () => {
         expect(readFileSync(target, "utf8")).toBe("target-bytes");
         const msg = formatInfraStateError(error);
         expect(msg).toContain(settingsPath);
-        expect(msg).toMatch(/symlink/i);
-        expect(msg).not.toMatch(/not empty/i);
+        expect(msg.toLowerCase()).toContain("symlink");
+        expect(msg.toLowerCase()).not.toContain("not empty");
     });
 });

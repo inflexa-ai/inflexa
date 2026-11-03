@@ -19,8 +19,9 @@ export function friendlyStepLabel(functionName: string): string {
     if (functionName.endsWith(".model")) return "model call";
     // A tool step is `{toolName}.{toolCallId}`, and the provider mints the call id as `toolu_…` or `call_…`.
     // The prefix tells a tool step from a harness step such as `sandbox.create`.
-    const tool = functionName.match(/^([^.]+)\.(?:toolu_|call_)/);
-    if (tool) return `tool ${tool[1]}`;
+    const dot = functionName.indexOf(".");
+    const callId = functionName.slice(dot + 1);
+    if (dot > 0 && (callId.startsWith("toolu_") || callId.startsWith("call_"))) return `tool ${functionName.slice(0, dot)}`;
     if (functionName.includes("submit-exec")) return "dispatching sandbox command";
     if (functionName === "DBOS.recv" || functionName === "DBOS.sleep" || functionName === "DBOS.now") return "sandbox executing";
     return functionName;

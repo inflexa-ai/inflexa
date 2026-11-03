@@ -5,6 +5,7 @@ import { readSessionUsage, usageBreakdown, type SessionUsageSnapshot } from "../
 import type { UsageGrouping, UsageTotals, UsageView } from "../../../../api/usage.ts";
 import type { ClientOpts } from "../../../../client/api.ts";
 import { present } from "../../../../lib/present.ts";
+import { collapseWhitespace, splitWhitespace } from "../../../../lib/text.ts";
 
 // The dialog's arithmetic, tested as pure functions. A character frame cannot carry these claims: it
 // shows that two numbers painted, not WHICH two, and "this figure is never the sum of those" is
@@ -17,6 +18,11 @@ function snapshot(over: Partial<SessionUsageSnapshot> = {}): SessionUsageSnapsho
         byAgent: [],
         ...over,
     };
+}
+
+/** True when the whitespace-collapsed `row` holds `collapsed`, and the raw `row` holds `literal` with its single spaces: a column gap is any run of white space, but the figures keep one space. */
+function rowHas(row: string, collapsed: string, literal: string): boolean {
+    return collapseWhitespace(row).includes(collapsed) && row.includes(literal);
 }
 
 /** Just the group rows — headings are asserted separately, by name. */
@@ -33,7 +39,7 @@ describe("usageBreakdown", () => {
             }),
         );
 
-        expect(lines.some((r) => /claude-opus-4-8\s+2\s+↑12\.0k ↓3\.0k/.test(r))).toBe(true);
+        expect(lines.some((r) => rowHas(r, "claude-opus-4-8 2 ↑12.0k ↓3.0k", "↑12.0k ↓3.0k"))).toBe(true);
         // 15.0k would be the two arms added; nothing here may produce it.
         expect(lines.join("\n")).not.toContain("15.0k");
     });
@@ -81,7 +87,7 @@ describe("usageBreakdown", () => {
             }),
         )
             .lines.flatMap((l) => (l.kind === "row" ? [l.text] : []))
-            .map((t) => t.trim().split(/\s+/)[0]);
+            .map((t) => splitWhitespace(t.trim())[0]);
 
         // `small` reports more output and more calls; only the input-led order puts `big` first, and a
         // group that reported nothing sorts below one that reported zeros.
@@ -96,9 +102,9 @@ describe("usageBreakdown", () => {
             }),
         );
 
-        expect(lines.some((r) => /conversation\s+2\s+not reported/.test(r))).toBe(true);
+        expect(lines.some((r) => rowHas(r, "conversation 2 not reported", "not reported"))).toBe(true);
         // Never a zero: "the provider measured nothing" is not "nothing was spent".
-        expect(lines.some((r) => /conversation\s+2\s+↑0 ↓0/.test(r))).toBe(false);
+        expect(lines.some((r) => collapseWhitespace(r).includes("conversation 2 ↑0 ↓0"))).toBe(false);
     });
 
     test("a reported zero still prints as a measurement", () => {

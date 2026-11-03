@@ -12,6 +12,7 @@ import type { ChatMessage } from "@inflexa-ai/harness/contracts/index.js";
 import type { DataProfileView, RunDetail, RunSummary } from "../../../api/runs.ts";
 import type { ClientError } from "../../../client/api.ts";
 import type { Part } from "../../../types/session.ts";
+import { hasDigitRatio } from "../../../test_support/text_shapes.ts";
 
 // A run card is the conversation's memory of a launch. It must never vanish on completion — that is
 // the very defect this work removes — and it carries no progress meter at any point: live done/total
@@ -37,7 +38,7 @@ async function frameWith(node: Parameters<typeof testRender>[0], needle: string,
             await setup.renderOnce();
             const f = setup.captureCharFrame();
             if (f.includes(needle) || Date.now() - start > timeoutMs) return f;
-            await new Promise((r) => setTimeout(r, 10));
+            await Promise.sleep(10);
         }
     } finally {
         setup.renderer.destroy();
@@ -95,7 +96,7 @@ describe("run card states", () => {
         expect(frame).not.toContain("unavailable");
         // This is also what an ACTIVE run's card renders — `resolveRunCardState` gives a running run
         // no state at all. `x/y` is the meter's signature; the card never emits one.
-        expect(frame).not.toMatch(/\d+\/\d+/);
+        expect(hasDigitRatio(frame)).toBe(false);
         expect(frame).not.toContain(GLYPHS.bar);
     });
 
@@ -118,7 +119,7 @@ describe("run card states", () => {
         expect(frame).toContain("completed");
         expect(frame).toContain("2m30s");
         // And still no meter — the settled line states counts in words, never as a bar.
-        expect(frame).not.toMatch(/\d+\/\d+/);
+        expect(hasDigitRatio(frame)).toBe(false);
         expect(frame).not.toContain(GLYPHS.bar);
     });
 

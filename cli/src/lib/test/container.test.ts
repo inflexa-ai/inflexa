@@ -18,6 +18,7 @@ import {
     type EnginePullProgress,
     type EngineSocketProbes,
 } from "../container.ts";
+import { runAfter } from "../timer.ts";
 
 describe("runtime mountArg", () => {
     test("docker uses the bare host:container form", () => {
@@ -356,7 +357,7 @@ describe("pullImageThroughEngine", () => {
             socket: {
                 data(client) {
                     client.write(`HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n${line.length.toString(16)}\r\n${line}\r\n`);
-                    setTimeout(() => client.end(), 20);
+                    runAfter(20, () => client.end());
                 },
             },
         });

@@ -7,19 +7,21 @@
 // here, and images/sbom/test_sbom_common.py there), thus a change to one copy that the other does not get
 // fails a suite.
 
+import { splitWhitespace, withoutSuffix } from "../../lib/text.ts";
+
 /**
  * The SPDX ids that an expression can name: the KNOWN_SPDX set of images/sbom/sbom_common.py. A value outside the
  * set is not an error: it stays a declared name, and the license text of the package goes beside it.
  */
 export const KNOWN_SPDX: ReadonlySet<string> = new Set(
-    `0BSD AFL-2.1 AFL-3.0 AGPL-3.0 AGPL-3.0-only AGPL-3.0-or-later Apache-1.1 Apache-2.0 Artistic-1.0
+    splitWhitespace(`0BSD AFL-2.1 AFL-3.0 AGPL-3.0 AGPL-3.0-only AGPL-3.0-or-later Apache-1.1 Apache-2.0 Artistic-1.0
     Artistic-1.0-Perl Artistic-2.0 BlueOak-1.0.0 BSD-1-Clause BSD-2-Clause BSD-3-Clause BSD-3-Clause-Clear
     BSD-4-Clause BSL-1.0 bzip2-1.0.6 CC-BY-3.0 CC-BY-4.0 CC-BY-SA-3.0 CC-BY-SA-4.0 CC0-1.0 CDDL-1.0 CDDL-1.1
     CPL-1.0 ECL-2.0 EPL-1.0 EPL-2.0 EUPL-1.1 EUPL-1.2 GFDL-1.3-only GPL-1.0-or-later GPL-2.0 GPL-2.0-only
     GPL-2.0-or-later GPL-3.0 GPL-3.0-only GPL-3.0-or-later HPND ISC LGPL-2.0-only LGPL-2.0-or-later LGPL-2.1
     LGPL-2.1-only LGPL-2.1-or-later LGPL-3.0 LGPL-3.0-only LGPL-3.0-or-later LPL-1.02 MIT MIT-0 MIT-CMU MPL-1.1
     MPL-2.0 MS-PL NCSA ODbL-1.0 OFL-1.1 OpenSSL PostgreSQL PSF-2.0 Python-2.0 Unicode-3.0 Unicode-DFS-2016
-    Unlicense UPL-1.0 Vim W3C WTFPL X11 Zlib ZPL-2.1`.split(/\s+/),
+    Unlicense UPL-1.0 Vim W3C WTFPL X11 Zlib ZPL-2.1`),
 );
 
 /** The SPDX exceptions that an expression can name after WITH, the same set as images/sbom/sbom_common.py. */
@@ -39,12 +41,7 @@ export const KNOWN_SPDX_EXCEPTIONS: ReadonlySet<string> = new Set([
  * one passes here.
  */
 export function spdxValid(value: string): boolean {
-    const tokens = value
-        .replace(/\(/g, " ( ")
-        .replace(/\)/g, " ) ")
-        .trim()
-        .split(/\s+/)
-        .filter((token) => token !== "");
+    const tokens = splitWhitespace(value.replaceAll("(", " ( ").replaceAll(")", " ) ").trim()).filter((token) => token !== "");
     let position = 0;
     function term(): boolean {
         const token = tokens[position];
@@ -55,7 +52,7 @@ export function spdxValid(value: string): boolean {
             position += 1;
             return true;
         }
-        if (!KNOWN_SPDX.has(token.replace(/\+$/, ""))) return false;
+        if (!KNOWN_SPDX.has(withoutSuffix(token, "+"))) return false;
         position += 1;
         if (tokens[position] === "WITH") {
             const exception = tokens[position + 1];

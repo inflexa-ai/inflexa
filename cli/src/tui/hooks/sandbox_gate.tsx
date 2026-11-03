@@ -5,6 +5,7 @@ import type { PendingAddView, StoreFlightView, StoreState, TransferReportView, T
 import { describeClientError, type ClientError } from "../../client/api.ts";
 import { createTransfer, fetchStore } from "../../client/store.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
+import { runEvery } from "../../lib/timer.ts";
 import type { Notice } from "../theme.ts";
 import { notify } from "./notice.ts";
 
@@ -105,8 +106,7 @@ async function pollTransferState(seams: Pick<SandboxGateSeams, "readStore">): Pr
  */
 export function watchTransfers(seams: Pick<SandboxGateSeams, "readStore" | "pollMs"> = realSandboxGateSeams): void {
     void pollTransferState(seams);
-    const timer = setInterval(() => void pollTransferState(seams), seams.pollMs);
-    onCleanup(() => clearInterval(timer));
+    onCleanup(runEvery(seams.pollMs, () => void pollTransferState(seams)));
 }
 
 /** The human label of one transfer kind, as every surface renders it. */

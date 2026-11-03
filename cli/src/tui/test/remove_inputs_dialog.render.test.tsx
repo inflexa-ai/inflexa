@@ -15,6 +15,7 @@ import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dia
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { openRemoveInputs } from "../commands.tsx";
 import type { Analysis } from "../../types/analysis.ts";
+import { isWhitespace } from "../../lib/text.ts";
 
 // The flat inputs list drives the REAL `analysis.remove-input` flow against a fake client of the server,
 // which gives the inputs and records the removal. Two claims are under test and neither is visible from
@@ -105,7 +106,7 @@ function harnessNode(workspace: Workspace): () => JSX.Element {
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
 async function settle(setup: Setup): Promise<string> {
-    await new Promise((r) => setTimeout(r, 20));
+    await Promise.sleep(20);
     await setup.renderOnce();
     await setup.renderOnce();
     return setup.captureCharFrame();
@@ -117,7 +118,7 @@ async function settle(setup: Setup): Promise<string> {
  * match. These paths hold no spaces, so collapsing the frame reassembles them exactly.
  */
 function flat(frame: string): string {
-    return frame.replace(/[\s\u2500-\u257f]/g, "");
+    return [...frame].filter((char) => !isWhitespace(char) && !(char >= "\u2500" && char <= "\u257f")).join("");
 }
 
 /** Run the real `analysis.remove-input` flow against the fake server and push the dialog it opens onto the host. */

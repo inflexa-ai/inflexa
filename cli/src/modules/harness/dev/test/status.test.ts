@@ -14,6 +14,13 @@ describe("friendlyStepLabel", () => {
         expect(friendlyStepLabel("execute_command.call_7Hx2")).toBe("tool execute_command");
     });
 
+    test("a call id prefix counts only after the first dot of a non-empty tool name", () => {
+        expect(friendlyStepLabel(".toolu_01")).toBe(".toolu_01");
+        expect(friendlyStepLabel("a.b.toolu_01")).toBe("a.b.toolu_01");
+        expect(friendlyStepLabel("a.toolu_")).toBe("tool a");
+        expect(friendlyStepLabel("a.b.c.call_9")).toBe("a.b.c.call_9");
+    });
+
     test("a harness step with a dotted name is no tool step", () => {
         expect(friendlyStepLabel("sandbox.create")).toBe("sandbox.create");
     });

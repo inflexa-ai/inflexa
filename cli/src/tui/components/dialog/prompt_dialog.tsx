@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 import type { TextareaRenderable } from "@opentui/core";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
+import { runEvery } from "../../../lib/timer.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel } from "../../keymap.ts";
 import { useDialogCancel, useDialogCloseGuard, useDialogEntry } from "./dialog_host.tsx";
@@ -89,11 +90,11 @@ export function PromptDialog(props: {
 
     createEffect(() => {
         if (!props.busy) return;
-        const timer = setInterval(() => {
+        const stopSpin = runEvery(80, () => {
             setSpinFrame((f) => (f + 1) % GLYPHS.spinner.length);
-        }, 80);
+        });
         onCleanup(() => {
-            clearInterval(timer);
+            stopSpin();
             setSpinFrame(0);
         });
     });

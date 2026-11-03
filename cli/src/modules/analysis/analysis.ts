@@ -11,6 +11,7 @@ import { analysisFarmPath, describeFarmCompositionError, makeEmptyFarm } from ".
 import { Bus } from "../../lib/bus.ts";
 import { env } from "../../lib/env.ts";
 import { pathExistsAsync, renameResultAsync } from "../../lib/fs.ts";
+import { ASCII_DIGITS, ASCII_LOWERCASE, consistsOf } from "../../lib/text.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 import { findMarkerUpwards, isDirWritable } from "../anchor/marker.ts";
 import { classifyInputPath } from "./input.ts";
@@ -28,17 +29,25 @@ export type CreateAnalysisInput = {
     projectId?: string | null;
 };
 
+const SLUG_CHARS = ASCII_LOWERCASE + ASCII_DIGITS;
+
 /**
  * Kebab/lowercase a name into a URL-safe slug. A symbol-only name (which slugs to empty) falls back
  * to a generated `analysis-<6 hex>` handle (from a randomUUIDv7 slice) so every analysis still has a
  * stable slug.
  */
 export function makeBaseSlug(name: string): string {
-    const slug = name
-        .toLowerCase()
-        .normalize("NFKD")
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
+    const words: string[] = [];
+    let word = "";
+    for (const char of name.toLowerCase().normalize("NFKD")) {
+        if (consistsOf(char, SLUG_CHARS)) word += char;
+        else if (word !== "") {
+            words.push(word);
+            word = "";
+        }
+    }
+    if (word !== "") words.push(word);
+    const slug = words.join("-");
     if (slug) return slug;
     return `analysis-${randomUUIDv7().slice(-6).toLowerCase()}`;
 }

@@ -24,12 +24,14 @@ import { getTransfer } from "../../../db/primary_query.ts";
 import type { DownloadRetry, FetchLike } from "../../../lib/download.ts";
 import { env } from "../../../lib/env.ts";
 import { instanceLockPath, PACKAGE_STORE_METADATA_LOCK_KEY } from "../../../lib/lock.ts";
+import { runEvery } from "../../../lib/timer.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import type { TransferRow } from "../../../types/store.ts";
 import { downloadPackageStore, inspectStoreContent, runCatalogTransfer, storeDownloadPaths, type StoreDownloadOutcome } from "../store_download.ts";
 import { transferLockKey } from "../transfers.ts";
 import { present } from "../../../lib/present.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // The scenarios of the `package-store-download` spec, against a fake registry on
 // the fetch seam. The layers are real zstd-compressed tars, because the module
@@ -243,7 +245,7 @@ describe("downloadPackageStore", () => {
         // catalog was proven beside from the store root.
         expect(readFileSync(join(storeRoot, "image-packages.json"), "utf8")).toBe(JSON.stringify({ image: 1 }));
         const paths = storeDownloadPaths(storeRoot);
-        const receipt = receiptDigestSchema.parse(JSON.parse(readFileSync(paths.receipt, "utf8")));
+        const receipt = parsedJson(readFileSync(paths.receipt, "utf8"), receiptDigestSchema);
         expect(receipt.manifestDigest).toBe(registry.manifestDigest);
         // The receipt is durable, thus the second copy of the store in the blob cache is dropped.
         expect(existsSync(paths.blobs)).toBe(false);
@@ -319,7 +321,7 @@ describe("downloadPackageStore", () => {
         expect(existsSync(join(storeRoot, "farms", "catalog", "user-note.txt"))).toBe(false);
         // The farm of the analysis is untouched.
         expect(readFileSync(join(storeRoot, "farms", "my-analysis", "marker.txt"), "utf8")).toBe("mine\n");
-        const receipt = receiptDigestSchema.parse(JSON.parse(readFileSync(storeDownloadPaths(storeRoot).receipt, "utf8")));
+        const receipt = parsedJson(readFileSync(storeDownloadPaths(storeRoot).receipt, "utf8"), receiptDigestSchema);
         expect(receipt.manifestDigest).toBe(registryV2.manifestDigest);
     });
 
@@ -448,7 +450,7 @@ describe("the tolerant readers of a registry answer", () => {
             const storeRoot = tempDir("inflexa-store-dl-");
             expectDownloaded((await download(storeRoot, makeRegistry(await catalogLayers(1))))._unsafeUnwrap());
             const receiptPath = storeDownloadPaths(storeRoot).receipt;
-            return { storeRoot, receiptPath, receipt: z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(receiptPath, "utf8"))) };
+            return { storeRoot, receiptPath, receipt: parsedJson(readFileSync(receiptPath, "utf8"), z.record(z.string(), z.unknown())) };
         }
 
         test("a receipt with a key beyond the known ones still reads as installed", async () => {
@@ -558,10 +560,10 @@ describe("runCatalogTransfer", () => {
         const registry = makeRegistry([framed.layer, base]);
 
         const samples: TransferRow[] = [];
-        const poll = setInterval(() => {
+        const stopPoll = runEvery(40, () => {
             const row = catalogRow();
             if (row !== null) samples.push(row);
-        }, 40);
+        });
         // The phase as the row reads it while the bytes still move. A poll cannot catch this, because
         // the fake registry serves a layer faster than any interval reads the row.
         let phaseWhileBytesMove: TransferRow["phase"] | undefined;
@@ -573,21 +575,21 @@ describe("runCatalogTransfer", () => {
                 phaseWhileBytesMove = catalogRow()?.phase;
                 const fd = pipeBlob(blobPath(storeRoot, framed.layer.digest));
                 let next = 0;
-                const feed = setInterval(() => {
+                const stopFeed = runEvery(100, () => {
                     if (next < framed.frames.length) {
                         writeSync(fd, Buffer.from(present(framed.frames[next])));
                         next += 1;
                         return;
                     }
-                    clearInterval(feed);
+                    stopFeed();
                     closeWriter(fd);
-                }, 100);
+                });
             }
             return registry.fetch(input, init);
         };
 
         await runCatalogTransfer({ storeRoot, update: false, fetch: slow, retry: FAST_RETRY, arch: "arm64" });
-        clearInterval(poll);
+        stopPoll();
 
         expect(catalogRow()?.state).toBe("installed");
         const unpacking = samples.filter((row) => row.phase === "unpacking");

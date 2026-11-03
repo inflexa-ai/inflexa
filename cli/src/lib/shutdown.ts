@@ -1,6 +1,7 @@
 import { GLYPHS } from "./design_system.ts";
 import { flushLogs } from "./log.ts";
 import { shutdownOtel } from "./otel.ts";
+import { runEvery } from "./timer.ts";
 
 let shuttingDown = false;
 
@@ -107,22 +108,25 @@ export function startExitIndicator(): () => void {
 
     const startedAt = Date.now();
     let frame = 0;
-    const timer = setInterval(() => {
-        const elapsedMs = Date.now() - startedAt;
-        if (elapsedMs < INDICATOR_DELAY_MS) return;
-        const glyph = GLYPHS.spinner[frame++ % GLYPHS.spinner.length];
-        if (glyph === undefined) return;
-        // `\r\x1b[2K` returns to column 0 and clears the row, so each frame overwrites the last
-        // in place instead of scrolling a new line per tick. Width is re-read every frame so a
-        // resize mid-drain is picked up without a SIGWINCH listener to unregister.
-        draw(`\r\x1b[2K${exitIndicatorFrame(glyph, startedAt, columnsOf(process.stderr))}`);
-    }, INDICATOR_FRAME_MS);
     // The indicator must never be the reason the process stays alive: `beforeExit` reaches
     // `shutdown()` precisely when nothing else is pending, and a ref'd timer would re-arm the loop.
-    timer.unref();
+    const stopTimer = runEvery(
+        INDICATOR_FRAME_MS,
+        () => {
+            const elapsedMs = Date.now() - startedAt;
+            if (elapsedMs < INDICATOR_DELAY_MS) return;
+            const glyph = GLYPHS.spinner[frame++ % GLYPHS.spinner.length];
+            if (glyph === undefined) return;
+            // `\r\x1b[2K` returns to column 0 and clears the row, so each frame overwrites the last
+            // in place instead of scrolling a new line per tick. Width is re-read every frame so a
+            // resize mid-drain is picked up without a SIGWINCH listener to unregister.
+            draw(`\r\x1b[2K${exitIndicatorFrame(glyph, startedAt, columnsOf(process.stderr))}`);
+        },
+        { unref: true },
+    );
 
     return () => {
-        clearInterval(timer);
+        stopTimer();
         // Erase only what was drawn. Below the delay the indicator never wrote, and clearing the row
         // would wipe whatever the command legitimately left on the last line.
         if (Date.now() - startedAt >= INDICATOR_DELAY_MS) draw("\r\x1b[2K");

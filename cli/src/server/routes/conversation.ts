@@ -44,6 +44,7 @@ import { findAnalysesByRef } from "../../db/primary_query.ts";
 import { causeDetailLines, describeCause } from "../../lib/cause.ts";
 import { rmResultAsync, type FsError } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
+import { isAsciiDigits } from "../../lib/text.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { locateExistingOutputDir } from "../../modules/analysis/output.ts";
 import { resolveModelConnection, type ModelConnectionIdentity } from "../../modules/harness/config.ts";
@@ -160,12 +161,12 @@ const updateThreadBody = z.object({ title: z.string() });
 /**
  * The query of `GET {T}/messages` that needs a form check. `before` is decimal digits whose number is a safe
  * integer, which is what the store compares a turn start against. The empty string has no digits, thus the
- * pattern refuses it.
+ * digit test refuses it.
  */
 const transcriptQuery = z.object({
     before: z
         .string()
-        .regex(/^\d+$/, "must be a decimal integer")
+        .refine(isAsciiDigits, "must be a decimal integer")
         .refine((value) => Number.isSafeInteger(Number(value)), "must be a safe integer")
         .optional(),
 });

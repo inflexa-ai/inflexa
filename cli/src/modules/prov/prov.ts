@@ -16,6 +16,7 @@ import { loadOrGenerateKeypair } from "./signing.ts";
 import { currentUserEmail } from "../auth/whoami.ts";
 import pkg from "../../../package.json";
 import { WaitGroup } from "@/lib/wg.ts";
+import { runAfter } from "@/lib/timer.ts";
 
 // The provenance recorder: a process-global bus subscriber that keeps each open analysis's PROV
 // document in memory (append-only) and persists it to `analyses.provenance`. Recording is decoupled
@@ -75,7 +76,7 @@ function flushWasRequested(): boolean {
     return flushRequested;
 }
 let flushScheduled = false;
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushTimer: (() => void) | null = null;
 let subscribed = false;
 
 /** Record an append against `analysisId`: advance its revision, mark it dirty, and wake the flush. */
@@ -202,11 +203,11 @@ function scheduleFlush(): void {
     // overlap and read the same `prev` chain hash.
     if (flushScheduled || flushInProgress) return;
     flushScheduled = true;
-    flushTimer = setTimeout(() => {
+    flushTimer = runAfter(0, () => {
         flushScheduled = false;
         flushTimer = null;
         launchFlush();
-    }, 0);
+    });
 }
 
 /** Start a flush pass unless one is already running (which will itself drain the new wakeup). */
@@ -333,7 +334,7 @@ export function resetProvenanceRecorderForTests(): void {
     chainHashes.clear();
     dirty.clear();
     revision.clear();
-    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer?.();
     flushTimer = null;
     flushScheduled = false;
     flushInProgress = false;

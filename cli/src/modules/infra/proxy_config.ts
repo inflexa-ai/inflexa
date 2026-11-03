@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 import { env } from "../../lib/env.ts";
+import { trimTrailing } from "../../lib/text.ts";
 import { classifyPath, ensureFileMountSource, publishFileExclusively, tryFs, type InfraStateError } from "./mount_source.ts";
 
 // The CLIProxyAPI proxy config (`config.yaml`) and the provider-credential dir are host-side state we
@@ -126,6 +127,12 @@ export function managementKeyPath(): string {
     return join(dirname(env.cliproxyConfigPath), "management.key");
 }
 
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds the `remote-management:` key at the start of a line of the proxy config, and the replace swaps that line in place. The `m` flag starts a line after `\n`, `\r`, U+2028, and U+2029, and `.` stops at the same four. A string form must find each line start and line end by those four terminators and rebuild the text around the line, which is longer than the pattern.
+const REMOTE_MANAGEMENT_LINE = /^remote-management:.*$/m;
+
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds a `secret-key:` line of the proxy config and keeps the indent and the key name (`$1`) when the replace swaps the value. `\s+` runs over any white space, a line break included, and `m` and `.` honor the four line terminators. A string form must scan for a line start, a white space run, and the key, and rebuild the text, which is longer than the pattern.
+const SECRET_KEY_LINE = /^(\s+secret-key:).*$/m;
+
 /**
  * Give a config from before the management API a management key, and report whether the file changed.
  * A config that has a key the CLI cannot read (a lost key file, or a hand edit) gets a new key. The edit
@@ -138,17 +145,17 @@ async function ensureManagementKey(configPath: string): Promise<Result<boolean, 
     if (existing.isErr()) return err(existing.error);
     const text = await tryFs(configPath, () => readFile(configPath, "utf8"));
     if (text.isErr()) return err(text.error);
-    const hasBlock = /^remote-management:/m.test(text.value);
+    const hasBlock = REMOTE_MANAGEMENT_LINE.test(text.value);
     if (existing.value.kind === "file" && hasBlock) return ok(false);
 
     const key = generateApiKey();
     let next: string;
     if (!hasBlock) {
-        next = `${text.value.replace(/\n*$/, "\n")}${managementBlock(key)}`;
-    } else if (/^\s+secret-key:.*$/m.test(text.value)) {
-        next = text.value.replace(/^(\s+secret-key:).*$/m, `$1 "${key}"`);
+        next = `${trimTrailing(text.value, "\n")}\n${managementBlock(key)}`;
+    } else if (SECRET_KEY_LINE.test(text.value)) {
+        next = text.value.replace(SECRET_KEY_LINE, `$1 "${key}"`);
     } else {
-        next = text.value.replace(/^remote-management:.*$/m, `remote-management:\n  secret-key: "${key}"`);
+        next = text.value.replace(REMOTE_MANAGEMENT_LINE, `remote-management:\n  secret-key: "${key}"`);
     }
     const keyWritten = await tryFs(keyPath, () => writeFile(keyPath, key, { mode: 0o600 }));
     if (keyWritten.isErr()) return err(keyWritten.error);

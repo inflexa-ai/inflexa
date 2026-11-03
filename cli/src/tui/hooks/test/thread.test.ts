@@ -15,6 +15,7 @@ import { __resetBootForTest, __setBootStateForTest, type BootState } from "../bo
 import { setChatStatus } from "../status.ts";
 import { __resetOpenThreadForTest, openThread, refreshOpenThread, resolveThreadId, watchOpenThread, type ThreadOpts } from "../thread.ts";
 import { present } from "../../../lib/present.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
 
 // The open-thread store is a module singleton (one chat screen at a time) and so are the boot phase
 // and the chat status the watch reads, so every case resets all three — otherwise an in-flight
@@ -37,7 +38,19 @@ const OTHER_ANALYSIS = buildAnalysis({ id: "analysis-beta", name: asStr256("Beta
 // UUIDv7 by construction: version nibble 7 and the RFC 4122 variant bits. `resolveThreadId` mints an
 // identity whose VALUE is random, so a fresh mint can only be asserted by SHAPE — and the shape is
 // what carries the time-sortable ordering the thread listing depends on.
-const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function isUuidV7(text: string): boolean {
+    const [time, middle, version, variant, node, ...extra] = text.split("-");
+    return (
+        extra.length === 0 &&
+        isLowerHex(time ?? "", 8) &&
+        isLowerHex(middle ?? "", 4) &&
+        isLowerHex(version ?? "", 4) &&
+        version?.startsWith("7") === true &&
+        isLowerHex(variant ?? "", 4) &&
+        "89ab".includes(variant?.charAt(0) ?? "") &&
+        isLowerHex(node ?? "", 12)
+    );
+}
 
 function threadRow(over: Partial<ThreadSummary> = {}): ThreadSummary {
     // The resolver and the rail read only live rows, so the fixture carries no tombstone.
@@ -99,7 +112,7 @@ describe("resolveThreadId", () => {
         const t = makeOpts();
         const resolved = await resolveThreadId(ANALYSIS.id, t.opts);
 
-        expect(resolved).toMatch(UUID_V7);
+        expect(isUuidV7(resolved ?? "")).toBe(true);
         // The listing is scoped to the open analysis.
         expect(t.listings).toEqual([ANALYSIS.id]);
         // Minting an identity writes nothing — the row is the first turn's job.
@@ -124,7 +137,7 @@ describe("resolveThreadId", () => {
         const resolved = await resolveThreadId(ANALYSIS.id, t.opts);
 
         // The user still gets a working chat; the unread threads stay recoverable through the picker.
-        expect(resolved).toMatch(UUID_V7);
+        expect(isUuidV7(resolved ?? "")).toBe(true);
         expect(t.notices).toHaveLength(1);
         expect(t.notices[0]?.kind).toBe("warn");
         expect(t.notices[0]?.text).toContain("new one");
@@ -156,7 +169,7 @@ describe("resolveThreadId", () => {
 
         const resolved = await resolveThreadId(ANALYSIS.id, t.opts);
 
-        expect(resolved).toMatch(UUID_V7);
+        expect(isUuidV7(resolved ?? "")).toBe(true);
         expect(resolved).not.toBe(child.id);
     });
 });
@@ -522,7 +535,7 @@ function mountWatch(ws: Workspace, opts: ThreadOpts): () => void {
 
 /** Let the ready-edge resolution's promise chain settle (the effect returns before its listing resolves). */
 async function settle(): Promise<void> {
-    await new Promise<void>((r) => setTimeout(r, 0));
+    await Promise.sleep(0);
 }
 
 /** A fresh `ready` boot state — a NEW object each call, so re-seeding it is an observable signal edge. */

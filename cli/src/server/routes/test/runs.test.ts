@@ -46,6 +46,7 @@ import { __resetTurnsForTest, refuseNewTurns, startTurn } from "../../turns.ts";
 import { DEFAULT_RUN_ROUTES_OPTS, runRoutes, type RunRoutesOpts } from "../runs.ts";
 import { anything, objectContaining } from "../../../test_support/matchers.ts";
 import { present } from "../../../lib/present.ts";
+import { parsedJson } from "../../../test_support/json.ts";
 
 // The routes under the mount path of the app, with no bearer check and no analysis guard: `app.test.ts` covers
 // those. Each harness read is a fake, because each needs Postgres or DBOS. A test reads a body as `unknown`.
@@ -247,7 +248,7 @@ async function sseFrames(response: Response): Promise<unknown[]> {
     return text
         .split("\n\n")
         .filter((block) => block.startsWith("data: "))
-        .map((block): unknown => JSON.parse(block.slice("data: ".length)));
+        .map((block): unknown => parsedJson(block.slice("data: ".length), z.unknown()));
 }
 
 beforeEach(() => {
@@ -1680,7 +1681,7 @@ describe("POST {A}/plans/:planId/approve", () => {
 
             expect(response.status).toBe(500);
             const text = await response.text();
-            expect(JSON.parse(text)).toMatchObject({ error: "internal_error" });
+            expect(parsedJson(text, z.unknown())).toMatchObject({ error: "internal_error" });
             expect(text).not.toContain("secret");
         }
     });

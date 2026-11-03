@@ -19,6 +19,9 @@ import { managementKeyPath } from "./proxy_config.ts";
 /** Bounds the whole exec round trip, so a wedged engine or proxy never stalls the launch or the TUI. */
 const READ_TIMEOUT_MS = 5_000;
 
+/** The status line of a good answer from the management API: HTTP/1.0 or HTTP/1.1, status 200. */
+const HTTP_OK_PREFIXES = ["HTTP/1.0 200 ", "HTTP/1.1 200 "];
+
 /**
  * What the proxy says about its provider credentials:
  * - `login_dead` — each usable credential failed a refresh or got a 401, so only a new login fixes it.
@@ -118,7 +121,8 @@ export async function readCredentialVerdict(): Promise<Result<CredentialVerdict,
 
     const split = stdout.indexOf("\r\n\r\n");
     const statusLine = stdout.slice(0, stdout.indexOf("\r\n"));
-    if (split < 0 || !/^HTTP\/1\.[01] 200 /.test(statusLine)) return err({ type: "bad_response", detail: statusLine || "no response" });
+    if (split < 0 || !HTTP_OK_PREFIXES.some((prefix) => statusLine.startsWith(prefix)))
+        return err({ type: "bad_response", detail: statusLine || "no response" });
     const body = JSON.parseWith(stdout.slice(split + 4), authFilesSchema);
     if (body === null) return err({ type: "bad_response", detail: "unexpected auth-files body" });
     return ok(classifyCredentials(body.files));

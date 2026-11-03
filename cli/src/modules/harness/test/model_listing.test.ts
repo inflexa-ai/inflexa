@@ -10,6 +10,7 @@ import {
     listConnectionModels,
     probeContextWindow,
     probedContextWindow,
+    readContextWindow,
     validateModelSelection,
     type ContextWindowOpts,
     type ListModelsSeams,
@@ -821,6 +822,42 @@ describe("probeContextWindow — the window of the chat model", () => {
             type: "not_probed",
         });
         expect(await probeContextWindow("claude-opus-5-5", windowOptsFor(DIRECT_ANTHROPIC, fetch))).toEqual({ type: "not_probed" });
+    });
+});
+
+describe("readContextWindow — the root of the endpoint", () => {
+    /** The URL that `readContextWindow` asks for `baseURL`. */
+    async function requestedUrl(baseURL: string): Promise<string | undefined> {
+        let url: string | undefined;
+        await readContextWindow(baseURL, {}, "m", async (requested) => {
+            url = requested;
+            return new Response("not found", { status: 404 });
+        });
+        return url;
+    }
+
+    test("a trailing /v1 is cut, and so is a run of trailing slashes before and after it", async () => {
+        expect(await requestedUrl("http://gpu-box:11434/v1")).toBe("http://gpu-box:11434/api/show");
+        expect(await requestedUrl("http://gpu-box:11434/v1/")).toBe("http://gpu-box:11434/api/show");
+        expect(await requestedUrl("http://gpu-box:11434/v1///")).toBe("http://gpu-box:11434/api/show");
+        expect(await requestedUrl("http://gpu-box:11434///")).toBe("http://gpu-box:11434/api/show");
+    });
+
+    test("a base URL with no /v1 and no trailing slash is used as it is", async () => {
+        expect(await requestedUrl("http://gpu-box:11434")).toBe("http://gpu-box:11434/api/show");
+        expect(await requestedUrl("http://gpu-box/ollama")).toBe("http://gpu-box/ollama/api/show");
+    });
+
+    test("only one /v1 is cut, and only at the end", async () => {
+        expect(await requestedUrl("http://gpu-box/v1/v1")).toBe("http://gpu-box/v1/api/show");
+        expect(await requestedUrl("http://gpu-box/v1/ollama")).toBe("http://gpu-box/v1/ollama/api/show");
+        expect(await requestedUrl("http://gpu-box/v10")).toBe("http://gpu-box/v10/api/show");
+        expect(await requestedUrl("http://gpu-box/xv1")).toBe("http://gpu-box/xv1/api/show");
+    });
+
+    test("the empty base URL and a bare /v1 give the empty root", async () => {
+        expect(await requestedUrl("")).toBe("/api/show");
+        expect(await requestedUrl("/v1")).toBe("/api/show");
     });
 });
 

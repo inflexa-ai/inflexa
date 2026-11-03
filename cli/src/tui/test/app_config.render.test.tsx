@@ -15,6 +15,7 @@ import { startTestServer, type TestServer } from "../../test_support/server.ts";
 import { ConfigApp } from "../app_config.tsx";
 import { dialogClear, dialogIsOpen } from "../components/dialog/dialog_host.tsx";
 import { present } from "../../lib/present.ts";
+import { parsedJson } from "../../test_support/json.ts";
 
 // The embedding-backend wiring drives the REAL ConfigApp (standalone: it installs its own keymap root
 // and DialogOverlay) through the keyboard bus, against a local server in this process (the settings and the
@@ -81,7 +82,7 @@ type Setup = Awaited<ReturnType<typeof testRender>>;
 // flushing), and the api-key probe resolves across microtasks — settle on a real clock, then render twice,
 // matching the dialog-host render tests.
 async function settle(setup: Setup): Promise<void> {
-    await new Promise((r) => setTimeout(r, 35));
+    await Promise.sleep(35);
     await setup.renderOnce();
     await setup.renderOnce();
 }
@@ -100,7 +101,7 @@ const persistedEmbeddingSchema = z.looseObject({ embedding: unknownRecordSchema.
 function persistedEmbedding(): Record<string, unknown> {
     // The on-disk config is validated JSON the ConfigApp just wrote; reading it raw (not through readConfig)
     // keeps the assertion honest about which keys are literally present.
-    return persistedEmbeddingSchema.parse(JSON.parse(readFileSync(env.configPath, "utf8"))).embedding ?? {};
+    return parsedJson(readFileSync(env.configPath, "utf8"), persistedEmbeddingSchema).embedding ?? {};
 }
 
 // Embedding is the last of the nine sections (telemetry, theme, runtime, the five postgres fields, then
@@ -395,7 +396,7 @@ describe("ConfigApp secrets (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             // The config file is validated JSON that the server just wrote.
-            const persisted: unknown = JSON.parse(readFileSync(env.configPath, "utf8"));
+            const persisted: unknown = parsedJson(readFileSync(env.configPath, "utf8"), z.unknown());
             expect(persisted).toHaveProperty("postgres", { password: "pg-new-2" });
             expect(persisted).toHaveProperty("embedding", { mode: "api-key", apiKey: "sk-secret-1" });
         } finally {
@@ -467,7 +468,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             expect(patchBodies).toHaveLength(1);
-            const sent: unknown = JSON.parse(patchBodies[0] ?? "");
+            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.unknown());
             expect(sent).toStrictEqual({ telemetry: true });
         } finally {
             setup.renderer.destroy();
@@ -487,7 +488,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             expect(patchBodies).toHaveLength(1);
-            const sent: unknown = JSON.parse(patchBodies[0] ?? "");
+            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.unknown());
             expect(sent).toStrictEqual({ runtime: "docker" });
         } finally {
             setup.renderer.destroy();
@@ -511,7 +512,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             expect(patchBodies).toHaveLength(1);
-            const sent: unknown = JSON.parse(patchBodies[0] ?? "");
+            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.unknown());
             expect(sent).toHaveProperty("postgres.password", "pg-new");
             expect(sent).not.toHaveProperty("telemetry");
             expect(sent).not.toHaveProperty("runtime");
@@ -538,7 +539,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             expect(patchBodies).toHaveLength(1);
-            const sent: unknown = JSON.parse(patchBodies[0] ?? "");
+            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.unknown());
             expect(sent).toStrictEqual({
                 embedding: { mode: "api-key", apiKey: "sk-patch", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
             });

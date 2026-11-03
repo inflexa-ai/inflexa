@@ -9,6 +9,7 @@ import { DynamicList } from "../dynamic_list.tsx";
 import { GLYPHS } from "../../../lib/design_system.ts";
 import type { SelectItem } from "../list_core.tsx";
 import { present } from "../../../lib/present.ts";
+import { countOccurrences } from "../../../test_support/text_shapes.ts";
 
 // Behavior tests for the list primitives through the real keyboard bus. The lists register
 // their layer via useDialogBindings; outside any dialog that gates on !dialogIsOpen(), which is
@@ -108,7 +109,7 @@ describe("filtering", () => {
             setQuery(""); // restored WITHOUT a duplicate — the pin re-appends only what ranking dropped
             frame = await settle(setup);
             expect(frame).toContain("apple");
-            expect(frame.match(/Enter something else/g)?.length).toBe(1);
+            expect(countOccurrences(frame, "Enter something else")).toBe(1);
         } finally {
             setup.renderer.destroy();
         }
@@ -127,7 +128,7 @@ describe("filtering", () => {
         try {
             setQuery("apple"); // matches the pinned row AND a real one
             const frame = await settle(setup);
-            expect(frame.match(/enter apple manually/g)?.length).toBe(1);
+            expect(countOccurrences(frame, "enter apple manually")).toBe(1);
             expect(frame).toContain("apple");
         } finally {
             setup.renderer.destroy();
@@ -413,7 +414,7 @@ describe("initial cursor seeding", () => {
         );
         try {
             await setup.renderOnce();
-            await new Promise((r) => setTimeout(r, 5));
+            await Promise.sleep(5);
             await setup.renderOnce();
             const frame = setup.captureCharFrame();
             expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
@@ -450,10 +451,10 @@ describe("initial cursor seeding", () => {
             await setup.renderOnce();
             setup.renderer.suspend(); // no frames land from here, so nothing lays the list out
             setMounted(true);
-            await new Promise((r) => setTimeout(r, 40)); // the one-shot retry's window, against zeros
+            await Promise.sleep(40); // the one-shot retry's window, against zeros
             setup.renderer.resume();
             await setup.renderOnce(); // the list's first layout, only now
-            await new Promise((r) => setTimeout(r, 20)); // a later poll tick sees real geometry
+            await Promise.sleep(20); // a later poll tick sees real geometry
             await setup.renderOnce();
             const frame = setup.captureCharFrame();
             expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
@@ -873,7 +874,8 @@ describe("two-line meta rows", () => {
             expect(metaLine).not.toContain("Clinical");
             // Left-aligned under the title: the meta begins near the left (a 2-col indent under the
             // title text), NOT pushed to the right edge — assert only a small leading gap precedes it.
-            expect(metaLine).toMatch(/^\s{0,4}58a37a · completed · 7\/13/);
+            expect(metaLine.trimStart()).toStartWith("58a37a · completed · 7/13");
+            expect(metaLine.length - metaLine.trimStart().length).toBeLessThanOrEqual(4);
             // The inline hint is suppressed while meta is present.
             expect(frame).not.toContain("SUPPRESSED");
         } finally {

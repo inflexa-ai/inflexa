@@ -34,7 +34,7 @@ type Setup = Awaited<ReturnType<typeof testRender>>;
 // A real-clock settle: the dialog host applies initial focus on a microtask and the list's seeded
 // scroll retries on a macrotask, so a pure render pair is too early for both.
 async function settle(setup: Setup): Promise<string> {
-    await new Promise((r) => setTimeout(r, 20));
+    await Promise.sleep(20);
     await setup.renderOnce();
     await setup.renderOnce();
     return setup.captureCharFrame();

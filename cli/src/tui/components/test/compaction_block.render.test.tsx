@@ -7,6 +7,7 @@ import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../../lib/design_system.ts"
 import { setTheme } from "../../theme.ts";
 import { CompactionBlock, type CompactionBlockProps } from "../compaction_block.tsx";
 import { present } from "../../../lib/present.ts";
+import { ASCII_LOWERCASE, ASCII_UPPERCASE } from "../../../lib/text.ts";
 
 const FORMS: Record<string, CompactionBlockProps> = {
     running: { status: "running", tokensBefore: 162_000 },
@@ -18,6 +19,8 @@ const FORMS: Record<string, CompactionBlockProps> = {
 function frameOf(props: CompactionBlockProps, width = 100): Promise<string> {
     return renderFrame(() => <CompactionBlock {...props} />, { width, height: 4 });
 }
+
+const ASCII_LETTERS = `${ASCII_LOWERCASE}${ASCII_UPPERCASE}`;
 
 describe("CompactionBlock", () => {
     test("shows one muted progress line and no rule while running", async () => {
@@ -75,7 +78,7 @@ describe("CompactionBlock on a light theme", () => {
                 .filter((span) => span.text.trim().length > 0);
             expect(spans.length).toBeGreaterThan(0);
             for (const span of spans) {
-                const isLabel = /[a-z]/i.test(span.text);
+                const isLabel = [...span.text].some((char) => ASCII_LETTERS.includes(char));
                 const expected = isLabel ? colors.fgMuted : colors.fgSubtle;
                 expect({ text: span.text.trim(), matches: parseColor(expected).equals(span.fg) }).toEqual({ text: span.text.trim(), matches: true });
             }

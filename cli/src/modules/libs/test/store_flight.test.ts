@@ -32,6 +32,8 @@ import {
 import { flushAndPrint } from "../store.ts";
 import type { LoadCheckRunner, ProvisionerRunner } from "../provisioner.ts";
 import { present } from "../../../lib/present.ts";
+import { parsedJson } from "../../../test_support/json.ts";
+import { withoutPrefix } from "../../../lib/text.ts";
 
 const graphNodesSchema = z.object({ nodes: z.record(z.string(), z.unknown()) });
 const graphSchema = z.object({
@@ -52,13 +54,10 @@ type StagedNodes = Parameters<typeof commitStagedNodes>[1];
  * unqualified `igraph` that both ecosystems hold, thus this suite and the
  * provisioner suite cannot drift on the wire shape.
  */
-const IDENTITY_FIXTURE = z
-    .object({ both_hit_report: z.object({ spec: z.string(), outcome: z.string(), candidates: z.array(z.string()) }) })
-    .parse(
-        JSON.parse(
-            readFileSync(join(import.meta.dir, "..", "..", "..", "..", "..", "harness", "src", "sandbox", "__fixtures__", "package-identity.json"), "utf8"),
-        ),
-    );
+const IDENTITY_FIXTURE = parsedJson(
+    readFileSync(join(import.meta.dir, "..", "..", "..", "..", "..", "harness", "src", "sandbox", "__fixtures__", "package-identity.json"), "utf8"),
+    z.object({ both_hit_report: z.object({ spec: z.string(), outcome: z.string(), candidates: z.array(z.string()) }) }),
+);
 
 const created: string[] = [];
 
@@ -74,7 +73,7 @@ function tempStore(): string {
 function reportPathOf(storeRoot: string, args: readonly string[]): string {
     const at = args.indexOf("--report");
     const containerPath = args[at + 1] ?? "";
-    return join(storeRoot, containerPath.replace(/^\/mnt\/libs\//, ""));
+    return join(storeRoot, withoutPrefix(containerPath, "/mnt/libs/"));
 }
 
 /** A runner that acquires one fake distribution: it writes the pool directory, the markers, and the report. */
@@ -101,7 +100,7 @@ function acquiringRunner(outcomesBySpec: Record<string, Record<string, unknown>>
 /** A load check with a fixed verdict per staged directory. */
 function loadCheck(failing: readonly string[]): LoadCheckRunner {
     return async (params) => {
-        const raw = graphNodesSchema.parse(JSON.parse(readFileSync(join(params.storeRoot, params.reportName), "utf8")));
+        const raw = parsedJson(readFileSync(join(params.storeRoot, params.reportName), "utf8"), graphNodesSchema);
         const results = Object.keys(raw.nodes).map((dir) => ({ package: dir, track: "python", ok: !failing.includes(dir) }));
         return ok<CaptureResult, never>({ code: results.every((r) => r.ok) ? 0 : 1, stdout: JSON.stringify({ results }), stderr: "" });
     };
@@ -230,7 +229,7 @@ describe("flushPendingStoreAdds", () => {
         expect(kinds.get("ghost")).toBe("refused");
         // The commit appended the staged node under the metadata lock, and the graph
         // orders the new name by its own record.
-        const graph = graphSchema.parse(JSON.parse(readFileSync(join(root, "deps.json"), "utf8")));
+        const graph = parsedJson(readFileSync(join(root, "deps.json"), "utf8"), graphSchema);
         expect(graph.nodes[NEW_DIR]).toBeDefined();
         expect(graph.by_name.python["newpkg"]).toEqual([NEW_DIR]);
         // The acquired flight deleted its row — a success that everyone has is
@@ -293,7 +292,7 @@ describe("flushPendingStoreAdds", () => {
         expect(result.outcomes[0]?.kind).toBe("refused");
         // No advertised state: the graph holds no node for the failed package. The
         // pool bytes stay, and the debris pass frees them.
-        const graph = graphNodesSchema.parse(JSON.parse(readFileSync(join(root, "deps.json"), "utf8")));
+        const graph = parsedJson(readFileSync(join(root, "deps.json"), "utf8"), graphNodesSchema);
         expect(graph.nodes[BAD_DIR]).toBeUndefined();
         expect(existsSync(join(root, "store", BAD_DIR))).toBe(true);
         // The refusal settled durably, with the load-check phase in front.
@@ -466,7 +465,7 @@ describe("the graph commit", () => {
         expect(outcome.committed).toContain("beta-0.4.1-000000000000bbbb");
         expect(outcome.committed).toContain("newpkg-1.0-000000000new0001");
         expect(outcome.refused).toEqual([]);
-        const graph = graphSchema.parse(JSON.parse(readFileSync(join(root, "deps.json"), "utf8")));
+        const graph = parsedJson(readFileSync(join(root, "deps.json"), "utf8"), graphSchema);
         expect(graph.nodes["beta-0.4.1-000000000000bbbb"]?.edges).toEqual(["alpha-1.2.0-000000000000aaaa"]);
         expect(graph.nodes["newpkg-1.0-000000000new0001"]).toBeDefined();
         // The shelf gains no duplicate entry for the kept node.
@@ -487,7 +486,7 @@ describe("the graph commit", () => {
 
         expect(outcome.refused).toEqual([]);
         expect(outcome.committed).toEqual(["rpkgc-3.0-000000000000fff2"]);
-        const graph = graphSchema.parse(JSON.parse(readFileSync(join(root, "deps.json"), "utf8")));
+        const graph = parsedJson(readFileSync(join(root, "deps.json"), "utf8"), graphSchema);
         expect(graph.nodes["rpkgc-3.0-000000000000fff2"]?.edges).toEqual(["rpkga-1.0-000000000000fff0"]);
         // The commit writes the shelf under the node name, thus the R shelf
         // keys the DESCRIPTION spelling here too.
@@ -497,7 +496,7 @@ describe("the graph commit", () => {
     test("a graph of another version refuses the commit, and it names the remedy of its direction", async () => {
         const root = tempStore();
         const graphPath = join(root, "deps.json");
-        const published = unknownRecordSchema.parse(JSON.parse(readFileSync(graphPath, "utf8")));
+        const published = parsedJson(readFileSync(graphPath, "utf8"), unknownRecordSchema);
         const staged: StagedNodes = {
             "newpkg-1.0-000000000new0001": { track: "python", name: "newpkg", version: "1.0", order: "0b", edges: [] },
         };
@@ -516,7 +515,7 @@ describe("the graph commit", () => {
         expect(newer.message).toContain("version 3");
         expect(newer.message).toContain("Upgrade `inflexa`");
         // The refused commit left the graph exactly as it found it.
-        expect(graphNodesSchema.parse(JSON.parse(readFileSync(graphPath, "utf8"))).nodes["newpkg-1.0-000000000new0001"]).toBeUndefined();
+        expect(parsedJson(readFileSync(graphPath, "utf8"), graphNodesSchema).nodes["newpkg-1.0-000000000new0001"]).toBeUndefined();
     });
 });
 

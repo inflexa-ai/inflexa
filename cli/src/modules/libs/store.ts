@@ -45,6 +45,8 @@ import { readFarmLock } from "@inflexa-ai/harness";
 
 import { STORE_FLUSH_FLAG } from "../../lib/child_flags.ts";
 import { env } from "../../lib/env.ts";
+import { hasWhitespace } from "../../lib/text.ts";
+import { runEvery } from "../../lib/timer.ts";
 import { acquireInstanceLock, liveInstanceLockHolds, releaseInstanceLock, PACKAGE_STORE_RECLAIM_LOCK_KEY, TRANSFER_LOCK_KEY_PREFIX } from "../../lib/lock.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import { listAnalyses, listPendingStoreAdds } from "../../db/primary_query.ts";
@@ -164,8 +166,7 @@ export function createPendingFlushGate(opts: PendingFlushOpts = DEFAULT_PENDING_
  */
 export function watchPendingFlush(opts: PendingFlushOpts = DEFAULT_PENDING_FLUSH_OPTS): () => void {
     const gate = createPendingFlushGate(opts);
-    const timer = setInterval(() => gate.step(), opts.pollMs);
-    return () => clearInterval(timer);
+    return runEvery(opts.pollMs, () => gate.step());
 }
 
 /** Why a store-management action could not complete. Each variant maps to one actionable user message. */
@@ -1054,7 +1055,7 @@ export function queueStoreAdd(pkg: string, options: StoreAddOptions): Result<Sto
     // One package per call is the rule of the command surface. A second name
     // would ride the version flag or the argument list, and commander already
     // refuses extra arguments — this refusal covers the embedded-space form.
-    if (/\s/.test(pkg.trim())) {
+    if (hasWhitespace(pkg.trim())) {
         return err({ type: "invalid_package", message: "`inflexa store add` takes exactly one package per call. Run the command once per package." });
     }
 

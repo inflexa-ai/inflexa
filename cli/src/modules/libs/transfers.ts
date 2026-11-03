@@ -23,6 +23,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import { IMAGE_TRANSFER_FLAG } from "../../lib/child_flags.ts";
 import { selfInvocation } from "../../lib/self_invocation.ts";
+import { runEvery } from "../../lib/timer.ts";
 import { ensureRuntime } from "../../lib/config.ts";
 import {
     capture,
@@ -265,7 +266,7 @@ export async function runImageTransfer(kind: "runtime_image" | "provisioner_imag
         if (api.kind === "unavailable") {
             // The CLI fallback reports no byte figure, thus a heartbeat moves the
             // row's `updated_at` and the row never reads as stuck.
-            const heartbeat = setInterval(() => recordTransferProgress(kind, { bytesTransferred: 0, layersCompleted: 0 }).unwrapOr(0), PULL_HEARTBEAT_MS);
+            const stopHeartbeat = runEvery(PULL_HEARTBEAT_MS, () => recordTransferProgress(kind, { bytesTransferred: 0, layersCompleted: 0 }).unwrapOr(0));
             let pulled: { code: number; stdout: string; stderr: string };
             try {
                 pulled = await capture(rt, ["pull", image]);
@@ -276,7 +277,7 @@ export async function runImageTransfer(kind: "runtime_image" | "provisioner_imag
                 }).unwrapOr(undefined);
                 return;
             } finally {
-                clearInterval(heartbeat);
+                stopHeartbeat();
             }
             if (pulled.code !== 0) {
                 const tail = outputTail(`${pulled.stdout}\n${pulled.stderr}`);

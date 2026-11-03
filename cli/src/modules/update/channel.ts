@@ -25,7 +25,10 @@ export type InstallChannel =
 
 /** The path segments of `path`, on either separator, with the empty ones dropped. */
 function segments(path: string): string[] {
-    return path.split(/[\\/]/).filter((segment) => segment.length > 0);
+    return path
+        .replaceAll("\\", "/")
+        .split("/")
+        .filter((segment) => segment.length > 0);
 }
 
 /**

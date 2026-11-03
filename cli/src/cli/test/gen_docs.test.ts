@@ -10,6 +10,7 @@ import pkg from "../../../package.json";
 import * as envModule from "../../lib/env.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { present } from "../../lib/present.ts";
+import { parsedJson } from "../../test_support/json.ts";
 
 // The docs generator refuses to run in-process under `bun test` (src/lib/env.ts's data-loss guard,
 // and the script's own NODE_ENV check) — the ONLY supported invocation is a plain `bun` process. So
@@ -69,7 +70,7 @@ function exportedDocLists(): [string, unknown][] {
     // `unknown` because the guard's job is to survive a list whose shape it has never seen; the entries
     // are narrowed structurally in declaredVarNames rather than typed against today's two shapes.
     const exports: Record<string, unknown> = envModule;
-    return Object.entries(exports).filter(([name, value]) => /envdoc$/i.test(name) && typeof value === "object" && value !== null);
+    return Object.entries(exports).filter(([name, value]) => name.toLowerCase().endsWith("envdoc") && typeof value === "object" && value !== null);
 }
 
 /**
@@ -100,7 +101,7 @@ function variablesSection(): string {
 }
 
 function readManifest(): z.infer<typeof manifestSchema> {
-    return manifestSchema.parse(JSON.parse(read("manifest.json")));
+    return parsedJson(read("manifest.json"), manifestSchema);
 }
 
 let gen: { exitCode: number; stderr: string };

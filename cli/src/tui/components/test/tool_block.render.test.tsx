@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 
 import { MAX_NESTED_ROWS, ToolBlock } from "../tool_block.tsx";
+import { isWhitespace } from "../../../lib/text.ts";
 
 // Frame coverage for the inline-vs-completion-line status placement. captureCharFrame gives characters
 // only, which is all these assertions need: the invariant is WHICH ROW the status sits on, and (for the
@@ -16,7 +17,7 @@ async function frameWith(node: Parameters<typeof testRender>[0], width: number, 
             await setup.renderOnce();
             const f = setup.captureCharFrame();
             if (f.includes(needle) || Date.now() - start > timeoutMs) return f;
-            await new Promise((r) => setTimeout(r, 10));
+            await Promise.sleep(10);
         }
     } finally {
         setup.renderer.destroy();
@@ -26,6 +27,14 @@ async function frameWith(node: Parameters<typeof testRender>[0], width: number, 
 /** Index of the first frame row containing `needle`, or -1. */
 function rowOf(frame: string, needle: string): number {
     return frame.split("\n").findIndex((line) => line.includes(needle));
+}
+
+/** The count of leading spaces of `line` when a character that is not white space follows them, else -1. */
+function indentOf(line: string): number {
+    let spaces = 0;
+    while (line.charAt(spaces) === " ") spaces++;
+    const next = line.charAt(spaces);
+    return next !== "" && !isWhitespace(next) ? spaces : -1;
 }
 
 describe("ToolBlock status placement", () => {
@@ -125,10 +134,10 @@ describe("ToolBlock detail reflow", () => {
             "read_file",
         );
         const lines = frame.split("\n");
-        expect(lines[rowOf(frame, LONG_DETAIL)]).toMatch(/^ {2}\S/);
-        expect(lines[rowOf(frame, "planner: bash")]).toMatch(/^ {2}\S/);
+        expect(indentOf(lines[rowOf(frame, LONG_DETAIL)] ?? "")).toBe(2);
+        expect(indentOf(lines[rowOf(frame, "planner: bash")] ?? "")).toBe(2);
         // The name line itself stays flush — the marker gutter is what the rows indent under.
-        expect(lines[rowOf(frame, "read_file")]).toMatch(/^\S/);
+        expect(indentOf(lines[rowOf(frame, "read_file")] ?? "")).toBe(0);
     });
 
     test("a hookless tool with no detail renders exactly as before", async () => {
