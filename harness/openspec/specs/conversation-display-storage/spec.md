@@ -105,7 +105,7 @@ The recorder SHALL record each call's outcome and detail as the live surface rec
 
 The live display recorder MUST keep each `data-pause` part that the workflow of the turn writes. It MUST fold the part latest-wins by its id. Thus the stored turn holds the pause part of the turn in the position of its first part, with the state of its last part. A reload MUST give the stored pause part field for field.
 
-A stop that aborts the turn leaves its open round unstored, and the turn record shows the interruption. The stored display of an aborted turn MUST still hold the `data-pause` parts of that open round. It MUST hold no other part of that round.
+A stop that aborts the turn leaves its open round unstored, and the turn record shows the interruption. A failure leaves its open round unstored too, and the failure note shows the failure. The stored display of an aborted or a failed turn MUST still hold the `data-pause` parts of that open round. It MUST hold no other part of that round.
 
 The recorder MUST NOT keep a `data-pause` part of a sub-agent, because the recorder excludes the display parts of a sub-agent.
 
@@ -120,6 +120,12 @@ The recorder MUST NOT keep a `data-pause` part of a sub-agent, because the recor
 - **GIVEN** a turn that waits in `paused`, and the host stops it in the process that runs the turn
 - **WHEN** the transcript is loaded
 - **THEN** the assistant message of the turn holds one `data-pause` part with `end: "abort"`
+
+#### Scenario: A turn that fails after a resume keeps its pause part
+
+- **GIVEN** a turn that waits in `paused`, and the user resumes it
+- **WHEN** the next model request fails, and the transcript is loaded
+- **THEN** the transcript holds one `data-pause` part with `end: "resume"`
 
 #### Scenario: The pause of a sub-agent stays out of the stored display
 

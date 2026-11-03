@@ -451,8 +451,10 @@ function failureReasonOf(err: unknown): string {
 /** The note that closes a turn: a failed, an aborted, or a declined turn has one, and a turn that the model answered has none. */
 function closingNoteOf(outcome: ChatTurnOutcome, recorder: ConversationDisplayRecorder): ConversationTurn | undefined {
     switch (outcome.status) {
-        case "failed":
-            return conversationRecordTurn(failureNote(outcome.reason));
+        case "failed": {
+            const note = conversationRecordTurn(failureNote(outcome.reason));
+            return { ...note, displayMessages: [...recorder.openRoundPauses(), ...note.displayMessages] };
+        }
         case "aborted":
             return interruptionNote(recorder);
         case "done":

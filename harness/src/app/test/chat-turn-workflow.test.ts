@@ -460,6 +460,34 @@ describe("a chat turn as a workflow", () => {
         ]);
     }, 30_000);
 
+    it("stores the pause part of a turn that failed after a resume, with the end of the wait", async () => {
+        const scripted = scriptedModel([
+            { fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) },
+            { fail: Object.assign(new Error("HTTP 400"), { statusCode: 400 }) },
+        ]);
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        await pausedWorkOf(turnId);
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        await DBOS.retrieveWorkflow(turnId).getResult();
+
+        expect((await turnRecords(threadId)).map((record) => record.status)).toEqual(["failed"]);
+        const pauses = (await transcriptOf(threadId)).flatMap((message) => message.parts.filter((part) => part.type === "data-pause"));
+        expect(pauses).toMatchObject([
+            {
+                type: "data-pause",
+                id: turnId,
+                state: "running",
+                cause: { kind: "host", reason: "payment_required" },
+                pausedAt: ANY_STRING,
+                endedAt: ANY_STRING,
+                end: "resume",
+            },
+        ]);
+    }, 30_000);
+
     it("closes a paused turn as aborted on a stop, and frees its thread", async () => {
         const scripted = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }]);
         provider = scripted.provider;
