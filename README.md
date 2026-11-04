@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="#quick-start"><b>Quick start</b></a> ·
-  <a href="#from-question-to-result"><b>Walkthrough</b></a> ·
+  <a href="#real-analyses-on-public-data"><b>Examples</b></a> ·
   <a href="#what-you-can-analyze"><b>What you can analyze</b></a> ·
   <a href="#cite-inflexa"><b>Cite</b></a>
 </p>
@@ -22,7 +22,6 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/inflexa-ai/inflexa"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/inflexa-ai/inflexa/badge" /></a>
   <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" /></a>
   <a href="https://doi.org/10.5281/zenodo.21361439"><img alt="DOI" src="https://zenodo.org/badge/1266094931.svg" /></a>
-  <a href="https://app.inflexa.ai"><img src="https://img.shields.io/badge/Try-Web%20UI-orange" alt="Web UI" /></a>
 </p>
 
 <p align="center">
@@ -47,7 +46,12 @@ The demo above uses GSE4115, a public study of airway cells from smokers with an
 
 Ask for changes. Inflexa asks for your approval before it runs the plan.
 
-**3. Get files, not only an answer.** Each step writes its scripts, its data, and any figures to your analysis folder. If a step cannot do the work, it stops with a blocker and a reason.
+**3. Get files, not only an answer.** Each step writes its scripts, its data, and any figures to your analysis folder. If a step cannot do the work, it stops with a blocker and a reason. Ask for a report, and Inflexa writes one that opens from your disk.
+
+<p align="center">
+  <a href="https://inflexa.ai/tutorials/dexamethasone-airway-de-pathway"><img src="resources/readme/report-gse52778.png" alt="An Inflexa report section" width="720" /></a><br />
+  <sub>A section of the GSE52778 tutorial report. <a href="https://doi.org/10.5281/zenodo.22081987">Get the full run on Zenodo</a>.</sub>
+</p>
 
 **4. Trace each result.** A signed provenance record connects each file to the inputs and the commands that made it:
 
@@ -56,6 +60,51 @@ inflexa prov lineage <analysis> <file>   # the inputs and the commands that made
 inflexa prov verify <analysis>           # make sure that the hash chain and the signature are correct
 inflexa prov export <analysis>           # export the record as W3C PROV
 ```
+
+## Real analyses on public data
+
+Each tutorial gives the dataset, the prompts as they were typed, the decisions, and the full report. Some runs also show where the analysis went wrong, and how Inflexa found it.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+<a href="https://inflexa.ai/tutorials/dexamethasone-airway-de-pathway"><img src="resources/readme/tutorial-dexamethasone-volcano.png" alt="Volcano plot of dexamethasone against untreated airway smooth muscle, from a donor-blocked limma-trend model" /></a>
+
+**[What is dexamethasone doing to airway smooth muscle?](https://inflexa.ai/tutorials/dexamethasone-airway-de-pathway)**<br />
+Bulk RNA-seq · GSE52778. Paired DE on an FPKM matrix, and a claim that the run withdrew after a check.
+
+</td>
+<td width="50%" valign="top">
+
+<a href="https://inflexa.ai/tutorials/ifn-beta-pbmc-pseudobulk"><img src="resources/readme/tutorial-ifn-beta-classification.png" alt="Scatter of the averaged interferon effect against the cell-type interaction, which separates core genes from lineage-specific genes" /></a>
+
+**[What is IFN-β doing to PBMCs, cell type by cell type?](https://inflexa.ai/tutorials/ifn-beta-pbmc-pseudobulk)**<br />
+Single-cell RNA-seq · GSE96583. 24,562 cells in 108 donor-paired pseudobulk libraries.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+<a href="https://inflexa.ai/tutorials/melanoma-immunotherapy-proteomics"><img src="resources/readme/tutorial-melanoma-hallmark.png" alt="Hallmark enrichment before and after purity adjustment in two melanoma cohorts" /></a>
+
+**[Which proteins mark response to melanoma immunotherapy?](https://inflexa.ai/tutorials/melanoma-immunotherapy-proteomics)**<br />
+Proteomics · PXD006003. A sign error that the run found in its own output.
+
+</td>
+<td width="50%" valign="top">
+
+<a href="https://inflexa.ai/tutorials/ldl-gwas-to-drug-targets"><img src="resources/readme/tutorial-ldl-manhattan.png" alt="Manhattan plot of the LDL cholesterol GWAS with the top loci labeled" /></a>
+
+**[Which way would a drug have to push each LDL gene?](https://inflexa.ai/tutorials/ldl-gwas-to-drug-targets)**<br />
+GWAS · GCST90239658, N = 1.32M. With the known loss or gain of function, all nine established LDL genes get the correct drug direction.
+
+</td>
+</tr>
+</table>
+
+More: [all tutorials](https://inflexa.ai/tutorials), [live reports](https://inflexa.ai/examples), and a [case study](https://inflexa.ai/news/protect-pediatric-uc-responder-analysis) on 206 pediatric ulcerative colitis patients.
 
 > ⭐ **Like what you see?** [Star the repository](https://github.com/inflexa-ai/inflexa). A star helps other scientists find Inflexa.
 
@@ -116,7 +165,7 @@ Run the plan.
 
 Inflexa asks before it downloads. To see the scripts, the data, and the figures, run `inflexa open lung-cancer`.
 
-For your own data, go to the data folder and run `inflexa`.
+For your own data, go to the data folder and run `inflexa`. The full guide is at [inflexa.ai/docs](https://inflexa.ai/docs).
 
 ## Why Inflexa
 
