@@ -2,8 +2,19 @@
   <img src="resources/inflexa-logo-solid-white-bg.png" alt="Inflexa" width="200" />
 </p>
 
+<h3 align="center">Ask a biological question. Get the code, the figures, and a signed record of each step.</h3>
+
 <p align="center">
-  Turn a biological question into auditable code, figures and results, locally, with the AI model you choose.
+  A chat window gives you an answer. Inflexa gives you the analysis.<br />
+  An open-source AI agent for omics data. It runs on your machine.<br />
+  Use your Claude, OpenAI, or Gemini account, or a local model.
+</p>
+
+<p align="center">
+  <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="#from-question-to-result"><b>Walkthrough</b></a> ·
+  <a href="#what-you-can-analyze"><b>What you can analyze</b></a> ·
+  <a href="#cite-inflexa"><b>Cite</b></a>
 </p>
 
 <p align="center">
@@ -12,120 +23,169 @@
   <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" /></a>
   <a href="https://doi.org/10.5281/zenodo.21361439"><img alt="DOI" src="https://zenodo.org/badge/1266094931.svg" /></a>
   <a href="https://app.inflexa.ai"><img src="https://img.shields.io/badge/Try-Web%20UI-orange" alt="Web UI" /></a>
-  <a href="https://www.linkedin.com/company/inflexa-ai"><img src="https://img.shields.io/badge/Follow-LinkedIn-0077B5" alt="Follow on LinkedIn" /></a>
 </p>
-
----
 
 <p align="center">
-  <img src="resources/inflexa.gif" alt="Inflexa demo" />
+  <img src="resources/inflexa.gif" alt="Inflexa reads a public lung cancer dataset, describes the study, and plans a differential expression analysis and a classifier" />
 </p>
 
-Inflexa turns a plain-language analysis request into runnable code, executes it in an isolated sandbox, and records exactly what happened so the result can be reproduced and audited. It runs entirely on your machine and works with the model provider of your choice, including local models for a fully offline workflow.
+<p align="center">
+  <b>Install:</b> <code>brew install inflexa-ai/tap/inflexa</code> · <a href="#quick-start">other options</a>
+</p>
 
-It is built for scientists, bioinformaticians, and engineers who need analysis they can trust and re-run, not just an answer in a chat window.
+## From question to result
 
-## Why Inflexa
+The demo above uses GSE4115, a public study of airway cells from smokers with and without lung cancer.
 
-- **Local-first.** Your data, code, and results stay on your machine. No account required.
-- **Reproducible by construction.** Every run records its full provenance and lineage in a local SQLite database, with export and replay.
-- **Sandboxed execution.** Generated code runs in an isolated, unprivileged, resource-limited sandbox with no network access by default. The full isolation model is described in [`SECURITY.md`](./SECURITY.md).
-- **Bring your own model.** Use any supported LLM provider via API key, or run local models end to end, offline.
-- **Packages you can extend.** Analyses draw their R and Python packages from a local package store, not from a baked image. `inflexa store add <package>` installs one more, per analysis, in seconds and with no image rebuild.
-- **Open source, in full.** The CLI is a complete product under Apache-2.0, not a limited trial. See [Open source and commercial](#open-source-and-commercial).
+**1. Ask about the data.** Inflexa reads the files and describes the study: the platform, the samples, the covariates, and the case and control split.
+
+**2. Read the plan before the analysis runs.** For the demo, Inflexa wrote this plan (an excerpt):
+
+> - **T1S2** — Covariate-adjusted limma DE (cancer vs no-cancer, adjusting for age/gender/race/smoking/packyears on the 163 complete samples), with an unadjusted 192-sample contrast as sensitivity check.
+> - **T1S3** — GO BP/CC/MF over-representation of the DE genes.
+> - **T2S1** — Leak-free cross-validated classifier (feature selection inside folds only), reporting AUC/sensitivity/specificity + signature stability.
+
+Ask for changes. Inflexa asks for your approval before it runs the plan.
+
+**3. Get files, not only an answer.** Each step writes its scripts, its data, and any figures to your analysis folder. If a step cannot do the work, it stops with a blocker and a reason.
+
+**4. Trace each result.** A signed provenance record connects each file to the inputs and the commands that made it:
+
+```bash
+inflexa prov lineage <analysis> <file>   # the inputs and the commands that made the file
+inflexa prov verify <analysis>           # make sure that the hash chain and the signature are correct
+inflexa prov export <analysis>           # export the record as W3C PROV
+```
+
+> ⭐ **Like what you see?** [Star the repository](https://github.com/inflexa-ai/inflexa). A star helps other scientists find Inflexa.
 
 ## Quick start
 
-Install with [Homebrew](https://brew.sh) (macOS, or Linux on x86_64):
+**1. Install.** You must have Docker or Podman, with Compose.
 
 ```bash
 brew install inflexa-ai/tap/inflexa
 ```
 
-Or with the install script (same platforms, no Homebrew needed) — it downloads the latest release, verifies its checksum, and installs to `~/.local/bin`:
+<details>
+<summary>Other install options: script, Windows, npm, binary</summary>
+
+macOS or Linux, without Homebrew. The script makes sure that the checksum is correct, then installs to `~/.local/bin`:
 
 ```bash
 curl -fsSL https://inflexa.ai/install.sh | bash
 ```
 
-On Windows (PowerShell):
+Windows (PowerShell):
 
 ```powershell
 irm https://inflexa.ai/install.ps1 | iex
 ```
 
-Or from npm (any platform above, Node.js 18+) — also runnable without installing via `npx @inflexa-ai/inflexa`:
+npm (Node.js 18 or later). You can also run `npx @inflexa-ai/inflexa` with no install:
 
 ```bash
 npm install -g @inflexa-ai/inflexa
 ```
 
-On other platforms, download a binary from the [latest release](https://github.com/inflexa-ai/inflexa/releases/latest), or [run from source](#running-from-source).
+To install by hand, download a binary from the [latest release](https://github.com/inflexa-ai/inflexa/releases/latest).
 
-All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` CLI itself is self-contained.
+</details>
 
-```bash
-inflexa setup            # one-time: connect a model provider, start local services, download the sandbox images and the packages
-cd path/to/your/data     # go where your data lives
-inflexa                  # launch the TUI
-```
-
-Prefer to run from source? See [Running from source](#running-from-source).
-
-## Configuration
-
-`inflexa setup` walks you through the model connection: sign in to a provider through the local proxy, or point Inflexa at your own endpoint — including a local model, for a fully offline workflow. It prompts for what it needs and tells you how to supply your key.
-
-In one pass it provisions everything an analysis needs:
-
-- **Model connection** — sign in to Claude, OpenAI, Gemini, Qwen, or iFlow through the managed local proxy, or point at your own endpoint.
-- **Postgres + pgvector** — the database the harness runs on, provisioned as a local container via Docker Compose.
-- **Analysis resource allowance** — the share of your machine's CPU and memory that analyses may use in total.
-- **Embeddings** — an in-process local model, your own API key, or off.
-- **Sandbox and packages** — starts three background transfers: the `sandbox-base` runtime image, the `sandbox-provisioner` image, and the published package catalog. The runtime image bakes no analysis package; the analysis packages come from the local package store.
-
-To change any of it later, run `inflexa config`.
-
-## Running from source
-
-Developing, or building the binary yourself, additionally requires [Bun](https://bun.sh/). The CLI lives in [`cli/`](./cli):
+**2. Set up.** Connect a model and get the sandbox. You do this one time. The sandbox images and the package store use approximately 20 GB of disk.
 
 ```bash
-git clone https://github.com/inflexa-ai/inflexa.git
-cd inflexa/cli
-bun install
-
-bun run dev                 # launch the TUI from source
-bun run build               # compile a standalone dist/inflexa-<os>-<arch>
+inflexa setup
 ```
 
-See [`cli/README.md`](./cli/README.md) for the full CLI developer guide, and [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the development environment and contribution workflow.
+**3. Try it on public data.** Make a folder and start an analysis:
 
-## Repository layout
+```bash
+mkdir lung-cancer && cd lung-cancer
+inflexa new lung-cancer
+```
 
-This repository is a monorepo of independent subsystems — work inside the one you are changing; each has its own dependencies and tooling.
+Type these requests in the chat, one at a time:
 
-| Directory | What it is |
-|-|-|
-| [`cli/`](./cli) | The local-first TUI/CLI — this product. SQLite storage, auth, the chat UI. Start here to run from source. |
-| [`harness/`](./harness) | `@inflexa-ai/harness`, the host-agnostic agent harness: agent loop, durable workflows, sandbox protocol, providers. The execution model and its design decisions live here — see [`harness/CONTEXT.md`](./harness/CONTEXT.md) and the specs in [`harness/openspec/specs/`](./harness/openspec/specs/). |
-| [`prov-kernel/`](./prov-kernel) | `@inflexa-ai/prov-kernel`, the provenance format kernel: the PROV dialect vocabulary, document model, and chain/signature primitives. The harness emits observation hooks; hosts own their recorders and consume this kernel. |
-| [`skills/`](./skills) | Shared bioinformatics skill packs the agent loads at runtime. |
-| [`images/`](./images) | The two sandbox images — `sandbox-base`, the runtime image with its Go execution server, and `sandbox-provisioner`, the network-enabled builder that writes the package store — plus the package-set manifest the store builds from. |
-| [`scripts/`](./scripts) | Build, validation, and publishing tooling for the package store. |
+```text
+Download the GEO series GSE4115 and add it as an input.
+What is this dataset about?
+Plan a differential expression analysis of cancer versus no cancer.
+Run the plan.
+```
+
+Inflexa asks before it downloads. To see the scripts, the data, and the figures, run `inflexa open lung-cancer`.
+
+For your own data, go to the data folder and run `inflexa`.
+
+## Why Inflexa
+
+- **You control what leaves your machine.** An Inflexa account is not necessary. Your model provider receives only the chat and the content that the agent reads. The research tools send queries, for example gene names, to public services such as PubMed. With a local model and local embeddings, the chat and your files stay on your machine.
+- **The analysis code runs in a sandbox.** No network, no root, and a limit on CPU and memory. [`SECURITY.md`](./SECURITY.md) gives the full isolation model.
+- **Use the model that you prefer.** Use a local model or your own endpoint. Or sign in with a Claude, OpenAI, Gemini, Qwen, or iFlow account.
+- **Open source, in full.** Apache-2.0. The CLI is the complete product, not a trial.
+
+## What you can analyze
+
+Method guides in [`skills/`](./skills) tell the agent which method fits your data and your question. Each guide is open: read it, or improve it with a pull request.
+
+<table>
+<tr>
+<td valign="top">
+
+**Transcriptomics**<br />
+Bulk RNA-seq · microarrays · DESeq2 · limma · edgeR
+
+**Single-cell and spatial**<br />
+scanpy · Seurat · CITE-seq · Multiome · Visium · MERFISH · squidpy
+
+**Proteomics and metabolomics**<br />
+DIA · TMT · Olink · SomaScan · untargeted and targeted metabolomics
+
+**Genomics and epigenomics**<br />
+VCF · PLINK · GWAS · methylation arrays · ATAC-seq and ChIP-seq peaks
+
+</td>
+<td valign="top">
+
+**Microbiome and immunology**<br />
+16S · ITS · shotgun metagenomics · immune deconvolution · TCR and BCR repertoires
+
+**Pathways and networks**<br />
+GSEA · ORA · TF activity with decoupler · WGCNA · multi-omics integration
+
+**Statistics and machine learning**<br />
+Survival analysis · classifiers · biomarker discovery
+
+**Drug discovery**<br />
+RDKit · drug repurposing · PK/PD · safety pharmacology
+
+</td>
+</tr>
+</table>
+
+Is a package not there? `inflexa store add <package>` adds one from PyPI, CRAN, or Bioconductor, with no image rebuild.
+
+## Build from source
+
+To build from source, you must have [Bun](https://bun.sh/). Refer to [`cli/README.md`](./cli/README.md) and [`CONTRIBUTING.md`](./CONTRIBUTING.md). [`CONTEXT.md`](./CONTEXT.md) gives the map of the repository.
+
+## Cite Inflexa
+
+If you use Inflexa in your research, cite it. GitHub shows a "Cite this repository" button from [`CITATION.cff`](./CITATION.cff). The DOI is [10.5281/zenodo.21361439](https://doi.org/10.5281/zenodo.21361439).
 
 ## Open source and commercial
 
-Inflexa is developed by Inflexa, Inc. The open-source CLI in this repository is a complete, standalone product under [Apache-2.0](./LICENSE). A separate commercial hosted platform adds team- and organization-scale capabilities such as collaboration, governance, managed infrastructure, and compliance support. The boundary, and the commitments behind it, are described in [`COMMERCIAL.md`](./COMMERCIAL.md).
+Inflexa, Inc. develops Inflexa. The CLI in this repository is a complete product under [Apache-2.0](./LICENSE). A separate hosted platform adds team features, for example collaboration, governance, and managed infrastructure. [`COMMERCIAL.md`](./COMMERCIAL.md) gives the boundary and the commitments.
 
-## Contributing
+## Contribute
 
-Contributions of all kinds are welcome: code, example datasets, documentation, validation reports, and triage. Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md). The project follows a [Code of Conduct](./CODE_OF_CONDUCT.md) and the governance model in [`GOVERNANCE.md`](./GOVERNANCE.md).
+We welcome code, example datasets, documents, validation reports, and triage. Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md). The project obeys a [Code of Conduct](./CODE_OF_CONDUCT.md) and the governance model in [`GOVERNANCE.md`](./GOVERNANCE.md).
 
 ## Security
 
-Please do not report security vulnerabilities in public issues. Follow the private disclosure process in [`SECURITY.md`](./SECURITY.md).
+Do not report a vulnerability in a public issue. Use the private process in [`SECURITY.md`](./SECURITY.md).
 
 ## License and trademarks
 
-Code is licensed under [Apache-2.0](./LICENSE). The Inflexa name and logo are trademarks, handled separately in [`TRADEMARK.md`](./TRADEMARK.md): the code is yours to use and fork under the license, but a redistributed fork should be renamed.
+The code is under [Apache-2.0](./LICENSE). The Inflexa name and logo are trademarks, and [`TRADEMARK.md`](./TRADEMARK.md) gives the rules. You can use and fork the code, but give a redistributed fork a different name.
