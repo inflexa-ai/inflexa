@@ -61,6 +61,7 @@ const CASES = {
     clientClientSafe: { scope: "src/client", ext: "ts", text: importsOf(CLIENT_SAFE) },
     typeOnly: { scope: "src/tui", ext: "ts", text: 'import type { AgentName } from "../modules/harness/agent_switch.ts";\n' },
     devChannel: { scope: "src/tui", ext: "ts", text: importsOf(["./dev/chat.ts"]) },
+    productDevDynamic: { scope: "src/cli", ext: "ts", text: 'export const lazyDev = () => import("../../modules/harness/dev/run.ts");' },
     clientForms: { scope: "src/client", ext: "ts", text: FORMS.map((f) => f.text).join("\n") },
     clientSafeForms: { scope: "src/client", ext: "ts", text: CLIENT_SAFE_FORMS.map((f) => f.text).join("\n") },
     tuiComputed: { scope: "src/tui", ext: "ts", text: COMPUTED_FORMS.map((f) => f.text).join("\n") },
@@ -174,6 +175,14 @@ describe("the client import boundary", () => {
         "a client file cannot import a dev-channel surface: the `src/**` import ban applies",
         async () => {
             expect(await banned("devChannel", ["./dev/chat.ts"], RESTRICTED_IMPORTS)).toEqual(["./dev/chat.ts"]);
+        },
+        OXLINT_SPAWN_TIMEOUT_MS,
+    );
+
+    test(
+        "a product file cannot import a dev-channel surface lazily without a directive",
+        async () => {
+            expect(linesOf(await reportsOf("productDevDynamic"), RESTRICTED_IMPORTS)).toEqual([1]);
         },
         OXLINT_SPAWN_TIMEOUT_MS,
     );

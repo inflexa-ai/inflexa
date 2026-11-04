@@ -2,7 +2,7 @@
 """The conformance suite of the Python copy of the SPDX expression check.
 
 The suite reads one fixture, which the TypeScript copy (cli/src/modules/sbom/spdx.ts)
-also reads in cli/src/modules/sbom/spdx.test.ts. A case that one copy answers
+also reads in cli/src/modules/sbom/test/spdx.test.ts. A case that one copy answers
 differently fails its own suite, thus the two copies cannot drift in silence.
 
 The fixture lives in the repository, beside the TypeScript copy, and not in an

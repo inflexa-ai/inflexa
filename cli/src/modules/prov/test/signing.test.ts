@@ -75,6 +75,8 @@ describe("keypair lifecycle", () => {
         ["a key that is not an object", { publicKey: "x", privateKey: 5 }],
         ["an array", []],
         ["a number", 5],
+        ["the number zero", 0],
+        ["false", false],
         ["a string", "x"],
     ])("a parseable keypair file with %s returns keypair_corrupt and keeps the file", async (_label, body) => {
         const dir = useTempKeyDir();
