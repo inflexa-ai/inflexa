@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { respondWith } from "../../../test_support/fake_fetch.ts";
+import { respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { applyErrorMessage, applyUpdate, releaseAsset } from "../apply.ts";
 import { awaitOk } from "../../../test_support/result.ts";
 
@@ -32,7 +32,7 @@ function sha(body: string): string {
 function serveRelease(asset: string, body: string, sums?: string): FetchStub {
     return (input) =>
         Promise.try(() => {
-            const url = String(input);
+            const url = fetchInputUrl(input);
             if (url.endsWith("/SHA256SUMS")) return new Response(sums ?? `${sha(body)}  ${asset}\n`);
             return new Response(body);
         });

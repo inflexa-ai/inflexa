@@ -210,7 +210,7 @@ describe("walkToRecords and decodeRecords", () => {
             scopeRead: () => undefined,
             end: () => undefined,
         });
-        const record = (name: string): number[] => [0, 0, 0, 0, 0, 0, name.length, 0, ...[...name].map((c) => c.charCodeAt(0))];
+        const record = (name: string): number[] => [0, 0, 0, 0, 0, 0, name.length, 0, ...Array.from(name).map((c) => c.charCodeAt(0))];
         expect(push(new Uint8Array([...record("a"), ...record("b")]))._unsafeUnwrap()).toBe(false);
         expect(names).toEqual(["a"]);
     });

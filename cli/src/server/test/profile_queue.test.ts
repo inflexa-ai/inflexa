@@ -13,6 +13,7 @@ import {
     watchInputDrift,
     type InputDriftOpts,
 } from "../profile_queue.ts";
+import { errorOf } from "../../lib/cause.ts";
 
 beforeEach(() => {
     __resetProfileQueueForTest();
@@ -68,7 +69,7 @@ describe("serializeProfileWork", () => {
         expect(
             await failed.then(
                 () => "ok",
-                (cause: unknown) => (cause instanceof Error ? cause.message : "?"),
+                (cause: unknown) => errorOf(cause)?.message ?? "?",
             ),
         ).toBe("staging failed");
         await next;

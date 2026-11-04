@@ -7,6 +7,7 @@ import { createCredentialSource, type Credential, type CredentialError } from ".
 import { readApiKey, checkModelAccess, byRecencyThenId, releaseTimeOf, type ChatSetupError, type ModelAccess } from "../proxy/models.ts";
 import { AGENT_EFFORTS, type ModelAuthConfig } from "../../lib/config.ts";
 import { resolveModelConnection, type AgentEffort, type ModelWireProtocol, type ResolvedModelConnection } from "./config.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // Live model listing for the agent-model picker. Deliberately DISTINCT from
 // `resolveModelId` (proxy/models.ts): that resolves ONE default id for boot and CACHES it per process
@@ -271,7 +272,7 @@ async function readPage(
         res = await seams.fetch(url, headers, signal);
     } catch (cause) {
         if (signal.aborted) return err({ type: "timed_out", afterMs: timeoutMs });
-        return err({ type: "unreachable", detail: cause instanceof Error ? cause.message : String(cause) });
+        return err({ type: "unreachable", detail: messageOf(cause) });
     }
     // TODO(extend): a 503 carrying the proxy's `auth_unavailable` cooldown marker (see `isProxyCooldown`
     // in ../proxy/models.ts, used by `listModelCandidates`) is folded into the generic `unreachable` here,

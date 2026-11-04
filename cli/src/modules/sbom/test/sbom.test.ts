@@ -8,6 +8,7 @@ import { runtimes } from "../../../lib/container.ts";
 import { env } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { sbomAction } from "../sbom.ts";
+import { describeCause } from "../../../lib/cause.ts";
 
 // `sbomAction` spawns `runtimes.docker.bin`. The test points that binary at a fake that answers `info` (ready) and
 // `image inspect` (the image is there), and prints a chosen stderr for the read of the SBOM file, so the test reaches
@@ -41,7 +42,7 @@ exit 1
     errors = [];
     logged = spyOn(console, "log").mockImplementation(() => undefined);
     failed = spyOn(console, "error").mockImplementation((line: unknown) => {
-        errors.push(String(line));
+        errors.push(describeCause(line));
     });
 });
 

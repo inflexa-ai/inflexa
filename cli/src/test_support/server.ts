@@ -14,6 +14,7 @@ import { createPageGrantStore } from "../server/report_page_grants.ts";
 import { listen, writeServerDiscovery } from "../server/serve.ts";
 import { assertTestSandbox } from "./sandbox.ts";
 import { present } from "../lib/present.ts";
+import { describeCause } from "../lib/cause.ts";
 
 /** A local server for a test, in this process, on a free port, with its own discovery file. */
 export type TestServer = {
@@ -83,7 +84,7 @@ export function startTestServer(opts: { boot?: ServerBoot } = {}): TestServer {
     const server = listen(buildApp({ token, boot, lifecycle: idleLifecycle(), pageGrants: createPageGrantStore() }), 0).match(
         (s) => s,
         (e) => {
-            throw new Error(`startTestServer: could not bind a free port: ${String(e.cause)}`);
+            throw new Error(`startTestServer: could not bind a free port: ${describeCause(e.cause)}`);
         },
     );
     // A TCP listener always has a port; `undefined` is the unix-socket form, which `listen` never makes.
@@ -102,7 +103,7 @@ export function startTestServer(opts: { boot?: ServerBoot } = {}): TestServer {
         () => undefined,
         (e) => {
             void server.stop(true);
-            throw new Error(`startTestServer: could not write the discovery file ${discoveryPath}: ${String(e.cause)}`);
+            throw new Error(`startTestServer: could not write the discovery file ${discoveryPath}: ${describeCause(e.cause)}`);
         },
     );
 

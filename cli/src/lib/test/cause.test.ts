@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { causeDetailLines, describeCause, findAuthCause } from "../cause.ts";
+import { causeDetailLines, chainCarriesCode, describeCause, errorOf, findAuthCause, messageOf } from "../cause.ts";
 
 describe("describeCause", () => {
     test("an Error renders `name: message`", () => {
@@ -238,5 +238,95 @@ describe("findAuthCause", () => {
         expect(findAuthCause("auth")).toBeNull();
         expect(findAuthCause(null)).toBeNull();
         expect(findAuthCause(undefined)).toBeNull();
+    });
+});
+
+describe("messageOf", () => {
+    test("an Error gives its bare message, with no name prefix and no cause tail", () => {
+        expect(messageOf(new TypeError("nope"))).toBe("nope");
+        expect(messageOf(new Error("outer", { cause: new Error("inner") }))).toBe("outer");
+    });
+
+    test("a string gives itself", () => {
+        expect(messageOf("plain text")).toBe("plain text");
+    });
+
+    test("a primitive gives the text that String gives", () => {
+        expect(messageOf(42)).toBe("42");
+        expect(messageOf(true)).toBe("true");
+        expect(messageOf(10n)).toBe("10");
+        expect(messageOf(Symbol("tag"))).toBe("Symbol(tag)");
+        expect(messageOf(null)).toBe("null");
+    });
+
+    test("undefined gives the text undefined", () => {
+        expect(messageOf(undefined)).toBe("undefined");
+    });
+
+    test("a { type, message } object gives `type: message`", () => {
+        expect(messageOf({ type: "provider", message: "rate limited" })).toBe("provider: rate limited");
+    });
+
+    test("a plain object gives its JSON, never [object Object]", () => {
+        expect(messageOf({ code: 7 })).toBe('{"code":7}');
+    });
+});
+
+describe("errorOf", () => {
+    test("an Error gives the same instance", () => {
+        const error = new RangeError("out");
+        expect(errorOf(error)).toBe(error);
+    });
+
+    test("a structural lookalike, a string, and undefined give undefined", () => {
+        expect(errorOf({ name: "Error", message: "lookalike" })).toBeUndefined();
+        expect(errorOf("text")).toBeUndefined();
+        expect(errorOf(undefined)).toBeUndefined();
+        expect(errorOf(null)).toBeUndefined();
+    });
+});
+
+describe("chainCarriesCode", () => {
+    function withCode(code: string, cause?: unknown): Error {
+        return Object.assign(new Error(`failed with ${code}`), { code }, cause === undefined ? {} : { cause });
+    }
+
+    test("a code on the value itself matches", () => {
+        expect(chainCarriesCode(withCode("ENOSPC"), "ENOSPC")).toBe(true);
+    });
+
+    test("a code on a wrapped cause matches", () => {
+        const wrapped = new Error("outer", { cause: new Error("middle", { cause: withCode("ENOSPC") }) });
+        expect(chainCarriesCode(wrapped, "ENOSPC")).toBe(true);
+    });
+
+    test("a plain object with a code matches, because a link is read structurally", () => {
+        expect(chainCarriesCode({ code: "ENOSPC" }, "ENOSPC")).toBe(true);
+        expect(chainCarriesCode({ cause: { code: "ENOSPC" } }, "ENOSPC")).toBe(true);
+    });
+
+    test("a different code does not match", () => {
+        expect(chainCarriesCode(withCode("ENOENT"), "ENOSPC")).toBe(false);
+    });
+
+    test("the walk stops after five links", () => {
+        let chain: unknown = withCode("ENOSPC");
+        for (let link = 0; link < 4; link++) chain = new Error(`wrapper-${link}`, { cause: chain });
+        expect(chainCarriesCode(chain, "ENOSPC")).toBe(true);
+        chain = new Error("wrapper-4", { cause: chain });
+        expect(chainCarriesCode(chain, "ENOSPC")).toBe(false);
+    });
+
+    test("a self-referential chain ends", () => {
+        const cyclic: { cause?: unknown } = {};
+        cyclic.cause = cyclic;
+        expect(chainCarriesCode(cyclic, "ENOSPC")).toBe(false);
+    });
+
+    test("a value with no code gives false", () => {
+        expect(chainCarriesCode(new Error("plain"), "ENOSPC")).toBe(false);
+        expect(chainCarriesCode("ENOSPC", "ENOSPC")).toBe(false);
+        expect(chainCarriesCode(undefined, "ENOSPC")).toBe(false);
+        expect(chainCarriesCode(null, "ENOSPC")).toBe(false);
     });
 });

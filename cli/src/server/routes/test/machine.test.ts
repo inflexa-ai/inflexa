@@ -19,6 +19,8 @@ import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { DEFAULT_MACHINE_ROUTE_OPTS, machineRoutes, type MachineRouteOpts } from "../machine.ts";
 import { parsedJson } from "../../../test_support/json.ts";
+import { present } from "../../../lib/present.ts";
+import { describeCause } from "../../../lib/cause.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. The connection reads are
 // stubs, thus no route here reaches a proxy or an endpoint. A test reads a body as `unknown` and asserts it
@@ -207,9 +209,9 @@ describe("GET /api/v1/models", () => {
         });
         const server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 1, fetch: app.fetch });
         const outcome = (path: string, init?: RequestInit): Promise<string> =>
-            fetch(`http://127.0.0.1:${server.port}${path}`, init).then(
+            fetch(`http://127.0.0.1:${present(server.port, "the port of the test server")}${path}`, init).then(
                 async (response) => `${response.status} ${await response.text()}`,
-                (cause: unknown) => `failed: ${String(cause)}`,
+                (cause: unknown) => `failed: ${describeCause(cause)}`,
             );
         try {
             const [models, quiet, withBody] = await Promise.all([outcome("/models"), outcome("/quiet-control"), outcome("/body-control", json("POST", {}))]);
@@ -315,7 +317,7 @@ describe("the settings", () => {
         );
         const body = await (await routesWith().request("/settings")).text();
         expect(["sk-secret-1", "pg-secret-1"].filter((secret) => body.includes(secret))).toEqual([]);
-        expect(parsedJson(body, z.unknown())).toMatchObject({ postgres: { passwordSet: true }, embedding: { mode: "api-key", apiKeySet: true } });
+        expect(parsedJson(body, z.json())).toMatchObject({ postgres: { passwordSet: true }, embedding: { mode: "api-key", apiKeySet: true } });
     });
 
     test("PATCH with no password and an `api-key` block with no key keeps each stored secret", async () => {

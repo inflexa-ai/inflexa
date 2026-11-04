@@ -65,6 +65,7 @@ import {
 import { withStoreMetadataMutex } from "./store_download.ts";
 import { readTransferReport } from "./transfers.ts";
 import type { StoreEcosystem, StoreFlightRow } from "../../types/store.ts";
+import { messageOf, errorOf } from "../../lib/cause.ts";
 
 /**
  * The spec that keys a flight, in the shape of the two request tables.
@@ -216,42 +217,36 @@ export function enqueueStoreAdd(entry: { readonly query: PackageQuery; readonly 
 // --- The acquire report --------------------------------------------------------
 
 /** One staged graph node of an acquire report, kept RAW: the commit writes these bytes into `deps.json`. */
-const reportNodeSchema = z
-    .object({
-        track: z.enum(["python", "r"]),
-        name: z.string(),
-        version: z.string(),
-        order: z.string().optional(),
-        edges: z.array(z.string()).default([]),
-    })
-    .passthrough();
+const reportNodeSchema = z.looseObject({
+    track: z.enum(["python", "r"]),
+    name: z.string(),
+    version: z.string(),
+    order: z.string().optional(),
+    edges: z.array(z.string()).default([]),
+});
 
-const reportOutcomeSchema = z
-    .object({
-        spec: z.string(),
-        outcome: z.enum(["acquired", "refused", "both_hit"]),
-        reason: z.string().optional(),
-        // The candidates of a both-hit are IDENTITY KEYS, `<track>:<name>`, the
-        // form `identityKey` of the harness mints and the provisioner writes.
-        // A second shape here would make every spec of the batch fail the
-        // schema, because a report that misses drops the whole run.
-        candidates: z.array(z.string()).optional(),
-        store_dirs: z.array(z.string()).optional(),
-    })
-    .passthrough();
+const reportOutcomeSchema = z.looseObject({
+    spec: z.string(),
+    outcome: z.enum(["acquired", "refused", "both_hit"]),
+    reason: z.string().optional(),
+    // The candidates of a both-hit are IDENTITY KEYS, `<track>:<name>`, the
+    // form `identityKey` of the harness mints and the provisioner writes.
+    // A second shape here would make every spec of the batch fail the
+    // schema, because a report that misses drops the whole run.
+    candidates: z.array(z.string()).optional(),
+    store_dirs: z.array(z.string()).optional(),
+});
 
 /**
  * The acquire report of the provisioner. Exported so the conformance test can
  * parse the shared fixture through the very schema the flight reads, thus the
  * two sides of the wire cannot drift.
  */
-export const acquireReportSchema = z
-    .object({
-        schema: z.literal(1),
-        outcomes: z.array(reportOutcomeSchema),
-        nodes: z.record(z.string(), reportNodeSchema).default({}),
-    })
-    .passthrough();
+export const acquireReportSchema = z.looseObject({
+    schema: z.literal(1),
+    outcomes: z.array(reportOutcomeSchema),
+    nodes: z.record(z.string(), reportNodeSchema).default({}),
+});
 
 type AcquireReport = z.infer<typeof acquireReportSchema>;
 type ReportNode = z.infer<typeof reportNodeSchema>;
@@ -259,18 +254,16 @@ type ReportNode = z.infer<typeof reportNodeSchema>;
 // --- The graph commit ----------------------------------------------------------
 
 /** The raw shape of `deps.json` at the store root, read leniently so the commit writes back what it read. */
-const rawGraphSchema = z
-    .object({
-        version: z.number(),
-        nodes: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
-        by_name: z
-            .object({
-                python: z.record(z.string(), z.array(z.string())).default({}),
-                r: z.record(z.string(), z.array(z.string())).default({}),
-            })
-            .default({ python: {}, r: {} }),
-    })
-    .passthrough();
+const rawGraphSchema = z.looseObject({
+    version: z.number(),
+    nodes: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
+    by_name: z
+        .object({
+            python: z.record(z.string(), z.array(z.string())).default({}),
+            r: z.record(z.string(), z.array(z.string())).default({}),
+        })
+        .default({ python: {}, r: {} }),
+});
 
 /** Why the commit refused a staged node. The spec of the node drops out with this reason. */
 type CommitRefusal = { readonly storeDir: string; readonly reason: string };
@@ -428,7 +421,7 @@ export async function commitStagedNodes(
                 return err<never, ProvisionerError>({
                     type: "provisioner_failed",
                     code: 1,
-                    message: `Could not write the dependency graph at ${graphPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                    message: `Could not write the dependency graph at ${graphPath}: ${messageOf(cause)}`,
                 });
             }
             return ok({ committed: [...accepted.keys(), ...kept], refused });
@@ -734,7 +727,8 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
                         const reason = `the load check failed inside the sandbox image — nothing was advertised:\n${detail}`;
                         outcomes.push({ kind: "refused", spec: item.entry.spec, reason });
                         failures.set(item.entry.key, `load_check: ${reason}`);
-                        for (const dir of item.storeDirs) delete staged[dir];
+                        const droppedDirs = new Set(item.storeDirs);
+                        staged = Object.fromEntries(Object.entries(staged).filter(([dir]) => !droppedDirs.has(dir)));
                         acquired.splice(index, 1);
                     }
                 }
@@ -800,8 +794,8 @@ export async function flushPendingStoreAdds(storeRoot: string, deps: FlushDeps =
 
 /** One line of a ledger failure: the variant, with the cause the driver reported. */
 function describeDbError(error: DbError): string {
-    const cause = "cause" in error && error.cause instanceof Error ? `: ${error.cause.message}` : "";
-    return `${error.type}${cause}`;
+    const failure = "cause" in error ? errorOf(error.cause) : undefined;
+    return `${error.type}${failure === undefined ? "" : `: ${failure.message}`}`;
 }
 
 /**
@@ -815,9 +809,7 @@ function describeDbError(error: DbError): string {
 function failedLoadResults(stdout: string, stagedDirs: readonly string[]): Map<string, string> {
     const parsed = JSON.parseWith(
         stdout,
-        z
-            .object({ results: z.array(z.object({ package: z.string(), ok: z.boolean(), error: z.string().optional() }).passthrough()).default([]) })
-            .passthrough(),
+        z.looseObject({ results: z.array(z.looseObject({ package: z.string(), ok: z.boolean(), error: z.string().optional() })).default([]) }),
     );
     if (parsed === null) return new Map(stagedDirs.map((dir) => [dir, `the check wrote no readable verdict. Its output:\n${stdout}`]));
     const failed = new Map<string, string>();

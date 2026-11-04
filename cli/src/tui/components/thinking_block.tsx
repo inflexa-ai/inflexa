@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space, MARKERS } from "../../lib/design_system.ts";
@@ -23,7 +24,7 @@ export type ThinkingBlockProps = {
  * duration, and a collapsed-by-default italic reasoning body behind an expand
  * affordance. The body sits under a left rule so it reads as quoted reasoning.
  */
-export function ThinkingBlock(props: ThinkingBlockProps) {
+export function ThinkingBlock(props: ThinkingBlockProps): JSX.Element {
     const duration = (): string => (props.durationMs ? ` ${GLYPHS.middot} ${Date.formatDuration(props.durationMs)}` : "");
     return (
         <box flexDirection="column" paddingBottom={space.sm}>

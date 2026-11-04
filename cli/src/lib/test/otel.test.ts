@@ -60,6 +60,16 @@ describe("createOtelLogStream", () => {
         expect(attributes.loop).toBe(JSON.stringify({ finishReason: "max_iterations", cappedOut: true }));
     });
 
+    test("exports a scalar as itself and an array as JSON text, and skips a null", () => {
+        const attributes = exportedAttributes({ level: 30, time: 1, msg: "m", text: "t", count: 2, flag: false, list: [1, "x"], gone: null });
+
+        expect(attributes.text).toBe("t");
+        expect(attributes.count).toBe(2);
+        expect(attributes.flag).toBe(false);
+        expect(attributes.list).toBe(JSON.stringify([1, "x"]));
+        expect(attributes).not.toHaveProperty("gone");
+    });
+
     test("a line that is not a JSON object is skipped, and the valid lines around it still go out", () => {
         captured.length = 0;
         const stream = createOtelLogStream();

@@ -15,6 +15,7 @@ import { jsonBody } from "../../../test_support/response_body.ts";
 import { countOccurrences, wordTokens } from "../../../test_support/text_shapes.ts";
 import type { ServerEnv } from "../../http.ts";
 import { usageRoutes } from "../usage.ts";
+import { describeCause } from "../../../lib/cause.ts";
 
 // The route alone, mounted at its path with no bearer check and no analysis guard: `app.test.ts` covers
 // those. The ledger matches rows by scope id alone, thus no analysis row is necessary.
@@ -94,7 +95,7 @@ function output(): string {
 beforeEach(() => {
     freshDb();
     logs = [];
-    console.log = (...args: unknown[]): void => void logs.push(args.join(" "));
+    console.log = (...args: unknown[]): void => void logs.push(args.map((a) => describeCause(a)).join(" "));
 });
 
 afterEach(() => {

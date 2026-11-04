@@ -1,4 +1,4 @@
-import { createMemo, Show, type Accessor } from "solid-js";
+import { createMemo, Show, type Accessor, type JSX } from "solid-js";
 
 import { GLYPHS, space, MARKERS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
@@ -56,6 +56,12 @@ function settledMark(status: string): { glyph: string; role: keyof ThemeColors }
     }
 }
 
+/** The step count of a settled run, or `undefined` when the run left no total. */
+function stepCountText(state: Extract<RunCardState, { kind: "settled" }>): string | undefined {
+    const { total } = state;
+    return total === undefined ? undefined : `${state.done ?? 0}/${total} steps`;
+}
+
 /**
  * The run-card block: the launch record, plus whatever the run has since become.
  *
@@ -75,7 +81,7 @@ function settledMark(status: string): { glyph: string; role: keyof ThemeColors }
  *  - **unavailable** — the identity it recorded, and an honest note that the run could not be
  *    resolved. Never a fabricated status.
  */
-export function RunCardBlock(props: RunCardBlockProps) {
+export function RunCardBlock(props: RunCardBlockProps): JSX.Element {
     const heading = (): string => props.title || props.runId;
     // The launch-time step count, or the settled one once resolved — the ledger knows better than the
     // card's recorded number, which was written before any step existed.
@@ -103,9 +109,7 @@ export function RunCardBlock(props: RunCardBlockProps) {
                         <text>
                             <Fg role={settledMark(done().status).role}>{`${settledMark(done().status).glyph} `}</Fg>
                             <Fg role="fg">{done().status}</Fg>
-                            <Show when={done().total !== undefined}>
-                                <Fg role="fgMuted">{` ${GLYPHS.middot} ${done().done ?? 0}/${done().total} steps`}</Fg>
-                            </Show>
+                            <Show when={stepCountText(done())}>{(steps) => <Fg role="fgMuted">{` ${GLYPHS.middot} ${steps()}`}</Fg>}</Show>
                             <Show when={done().durationMs !== null}>
                                 <Fg role="fgMuted">{` ${GLYPHS.middot} ${Date.formatDuration(done().durationMs ?? 0)}`}</Fg>
                             </Show>

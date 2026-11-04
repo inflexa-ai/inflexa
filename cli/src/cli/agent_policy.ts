@@ -191,6 +191,7 @@ function hydrateFromAncestors(command: Command): void {
  * `preAction` hook on the root, and an ancestor hook fires before it. A server check in a hook of the
  * root would thus run during each classification of a bare `inflexa`.
  */
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- `Args` ties the parameter types of the handler to the commander action callback, so each handler keeps its own typed parameters
 export function registerAction<Args extends readonly unknown[]>(
     command: Command,
     kind: CommandKind,

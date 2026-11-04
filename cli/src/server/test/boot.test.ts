@@ -76,7 +76,8 @@ function controlled(): {
 describe("createServerBoot", () => {
     test("is `starting` with no runtime before the boot settles", () => {
         const boot = createServerBoot(STARTED_AT, controlled().opts);
-        expect<unknown>(boot.state()).toEqual({
+        const startingState: unknown = boot.state();
+        expect(startingState).toEqual({
             version: anyOf(String),
             apiVersion: 1,
             startedAt: STARTED_AT.toISOString(),

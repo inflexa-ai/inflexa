@@ -6,6 +6,7 @@ import { ensureRuntime } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { PROXY_CONTAINER_NAME } from "./compose.ts";
 import { managementKeyPath } from "./proxy_config.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // A failed chat call through CLIProxyAPI says too little to act on: a dead login and a provider rate
 // limit can both arrive as a 429 or an `auth_unavailable`. The proxy's management API reports the state
@@ -115,7 +116,7 @@ export async function readCredentialVerdict(): Promise<Result<CredentialVerdict,
         stdout = await new Response(proc.stdout).text();
         code = await proc.exited;
     } catch (cause) {
-        return err({ type: "exec_failed", detail: cause instanceof Error ? cause.message : String(cause) });
+        return err({ type: "exec_failed", detail: messageOf(cause) });
     }
     if (code !== 0) return err({ type: "exec_failed", detail: `exit code ${code}` });
 

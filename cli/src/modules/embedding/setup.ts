@@ -26,7 +26,7 @@ import { err, ok, type Result } from "neverthrow";
 import { createEmbeddingProvider, makeLocalAuth, type AgentSession } from "@inflexa-ai/harness";
 
 import { readConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
-import { promptSecret, promptText, select } from "../../lib/cli.ts";
+import { promptSecret, promptText, select, stdinIsTTY } from "../../lib/cli.ts";
 import { EMBEDDING_API_KEY_VAR, env, resolveEmbeddingApiKey } from "../../lib/env.ts";
 import { isCompiledBinary } from "../../lib/install_context.ts";
 import { isMember } from "../../lib/types.ts";
@@ -34,6 +34,7 @@ import { ensureLlamaServer, materializedLlamaServer } from "./llama_runtime.ts";
 import { createLocalEmbeddingProvider, LOCAL_EMBEDDING_DIMENSIONS, stopLocalSidecar } from "./local-provider.ts";
 import { MODEL_SHA256, MODEL_URL } from "./model_pin.ts";
 import { DEFAULT_API_BASE_URL, DEFAULT_API_EMBEDDING_DIMENSIONS, DEFAULT_API_EMBEDDING_MODEL } from "./resolve.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /**
  * How embedding setup can fail. One variant per stage of the flow — read the answers, acquire the bytes,
@@ -119,7 +120,7 @@ function readEmbeddingApiKey(): string | undefined {
 function configWriteFailed(stage: string, e: ConfigError): EmbeddingSetupError {
     return {
         type: "config_write_failed",
-        message: `${stage} — config.json could not be written: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`,
+        message: `${stage} — config.json could not be written: ${messageOf(e.cause)}`,
         cause: e.cause,
     };
 }
@@ -140,7 +141,7 @@ function modelPin(): { readonly url: string; readonly sha256: string } {
  */
 async function embeddedModelPath(): Promise<string | null> {
     if (embeddedModelOverride !== null) return embeddedModelOverride;
-    if (typeof __INFLEXA_COMPILED__ !== "undefined" && __INFLEXA_COMPILED__ === true) {
+    if (typeof __INFLEXA_COMPILED__ !== "undefined" && __INFLEXA_COMPILED__) {
         return (await import("../../../.llama-cache/bge-small-en-v1.5-q8_0.gguf", { with: { type: "file" } })).default;
     }
     return null;
@@ -236,7 +237,7 @@ export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>>
         await unlink(partPath).catch(() => {});
         return err({
             type: "acquire_failed",
-            message: `Model acquisition failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Model acquisition failed: ${messageOf(cause)}`,
             cause,
         });
     }
@@ -358,7 +359,7 @@ export async function runEmbeddingSetup(interactive: boolean, answers?: Embeddin
     // The single "may this run ask a question?" fact, applied to every branch below: a batch run falls
     // back to the answers and the pre-fills instead of dying inside a prompt that cannot render. Both
     // call sites pass `process.stdin.isTTY` as `interactive`.
-    const canPrompt = interactive && process.stdin.isTTY === true;
+    const canPrompt = interactive && stdinIsTTY();
     const validate = answers?.validate ?? true;
 
     const mode = answers?.mode;
@@ -382,7 +383,7 @@ export async function runEmbeddingSetup(interactive: boolean, answers?: Embeddin
         answers?.gguf === undefined ? null : "gguf",
         answers?.baseURL === undefined ? null : "baseURL",
         answers?.model === undefined ? null : "model",
-    ].filter((field): field is string => field !== null);
+    ].filter((field) => field !== null);
     if (orphaned.length > 0 && !(config.embedding.mode === "off" && canPrompt)) {
         return err({
             type: "invalid_answers",

@@ -99,7 +99,7 @@ describe("list_launch_dir — describeCall", () => {
         // no hook is, and the sentinel reaches no consumer.
         const tool = createLaunchDirTool();
 
-        expect(tool.describeCall).toBeUndefined();
+        expect(typeof tool.describeCall).toBe("undefined");
         expect("describeCall" in tool).toBe(false);
         expect(JSON.stringify(tool)).not.toContain("none");
     });

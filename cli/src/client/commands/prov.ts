@@ -21,8 +21,9 @@ const EXPORT_FORMATS = { json: "prov-json", provn: "prov-n" } as const satisfies
  * signature for third-party verification.
  */
 export async function provExport(analysis: ProvAnalysis, flags: { format?: string; output?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const flag = (flags.format ?? "json").toLowerCase();
-    if (flag !== "json" && flag !== "provn") fail(`Unknown format "${flags.format}". Use "json" or "provn".`);
+    const format = flags.format ?? "json";
+    const flag = format.toLowerCase();
+    if (flag !== "json" && flag !== "provn") fail(`Unknown format "${format}". Use "json" or "provn".`);
     const output = flags.output === undefined ? {} : { output: resolve(process.cwd(), flags.output) };
     (await createProvenanceExport(analysis.id, { format: EXPORT_FORMATS[flag], ...output }, opts)).match(
         (exported) => {

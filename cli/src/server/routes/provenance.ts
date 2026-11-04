@@ -14,6 +14,7 @@ import { flushProvenanceAsync } from "../../modules/prov/prov.ts";
 import { verifyAnalysisIntegrity } from "../../modules/prov/verify.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { apiError, internalError, readBody, type ServerEnv } from "../http.ts";
+import { present } from "../../lib/present.ts";
 
 const exportBody = z.object({
     format: z.enum(["prov-json", "prov-n"]),
@@ -79,13 +80,13 @@ export function provenanceRoutes(): Hono<ServerEnv> {
         const ref = c.req.query("ref");
         if (ref === undefined || ref === "")
             return apiError(c, "validation_error", "Send the record to trace as `ref`.", { fieldErrors: { ref: ["required"] } });
-        const format = (c.req.query("format") ?? "tree").toLowerCase();
-        if (!isLineageFormat(format))
-            return apiError(c, "validation_error", `Unknown format "${c.req.query("format")}". Use "tree", "json", "dot", or "mermaid".`);
+        const rawFormat = c.req.query("format") ?? "tree";
+        const format = rawFormat.toLowerCase();
+        if (!isLineageFormat(format)) return apiError(c, "validation_error", `Unknown format "${rawFormat}". Use "tree", "json", "dot", or "mermaid".`);
         const rawDepth = c.req.query("depth");
         const depth = rawDepth === undefined ? undefined : Number(rawDepth);
         if (depth !== undefined && (!Number.isInteger(depth) || depth < 1)) {
-            return apiError(c, "validation_error", `\`depth\` must be a positive integer, got "${rawDepth}".`);
+            return apiError(c, "validation_error", `\`depth\` must be a positive integer, got "${present(rawDepth, "the depth query")}".`);
         }
         const forward = c.req.query("forward") === "true";
 

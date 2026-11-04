@@ -792,7 +792,7 @@ describe("formatMermaid", () => {
             const m = MERMAID_EDGE_LINE.exec(l);
             expect(m).not.toBeNull();
             expect(present(m)[2]).toBe(present(m)[3] === "wasGeneratedBy" ? "-->" : "-.->");
-            return `${present(m)[1]}|${present(m)[3]}|${present(m)[4]}`;
+            return `${present(present(m)[1])}|${present(present(m)[3])}|${present(present(m)[4])}`;
         });
         expect(parsed.sort()).toEqual(expected);
     });

@@ -33,6 +33,7 @@ import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { isLowerHex } from "../../../test_support/text_shapes.ts";
 import type { BootPullProgress } from "../../../api/server.ts";
 import { awaitOk } from "../../../test_support/result.ts";
+import { describeCause } from "../../../lib/cause.ts";
 
 /** Undoes the two escapes of `escapeYaml` (`\\"` and `\\\\`) in one left-to-right pass, as a YAML parser does. */
 function unescapeYaml(text: string): string {
@@ -586,7 +587,7 @@ describe("composePullIfMissing", () => {
                 }),
             ),
             spyOn(console, "log").mockImplementation((line: unknown) => {
-                logs.push(String(line));
+                logs.push(describeCause(line));
             }),
         );
         return { inherited, pulled, logs };

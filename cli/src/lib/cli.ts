@@ -63,6 +63,16 @@ export function dieOn(message: string): (error: { type: string; cause?: unknown 
 }
 
 /**
+ * Whether stdin is an interactive terminal. The type says `boolean`, but a piped or closed stdin has no
+ * `isTTY` property at run time, so the read normalizes `undefined` to `false`. The property is read at
+ * each call, because a test redefines it.
+ */
+export function stdinIsTTY(): boolean {
+    // oxlint-disable-next-line typescript/no-unnecessary-boolean-literal-compare -- the type is `boolean`, but a piped stdin has no `isTTY` at run time, and `=== true` is what turns `undefined` into `false`
+    return process.stdin.isTTY === true;
+}
+
+/**
  * PRE-FLIGHT bail-out unless stdin is an interactive terminal. Every opentui
  * launcher calls this before doing ANY other work: the TUI renders into the
  * alternate screen and cannot function on a pipe, so a headless invocation (a
@@ -88,7 +98,7 @@ export function requireInteractiveTerminal(surface: string): void {
 export async function confirm(question: string): Promise<boolean> {
     if (process.stdin.isTTY) {
         const answer = await clackConfirm({ message: question, initialValue: false });
-        return !isCancel(answer) && answer === true;
+        return !isCancel(answer) && answer;
     }
 
     // Non-interactive stdin: clack reads raw keypresses and can't run headless, but a piped

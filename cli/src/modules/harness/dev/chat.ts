@@ -31,6 +31,7 @@ import { getLogger } from "../../../lib/log.ts";
 import { shutdown } from "../../../lib/shutdown.ts";
 import { isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../chat_printer.ts";
 import { planToDag } from "../plan_dag.ts";
+import { present } from "../../../lib/present.ts";
 
 /** The `empty`-context hint specific to `inflexa chat`. */
 const CHAT_EMPTY_HINT = "No analysis here. Run `inflexa` to start one, add inputs, then `inflexa chat`.";
@@ -94,11 +95,11 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
     );
     switch (selection.kind) {
         case "lookup_failed":
-            fail(`Could not look up thread "${threadRef}": ${describeClientError(selection.cause)}`);
+            fail(`Could not look up thread "${present(threadRef, "the thread reference")}": ${describeClientError(selection.cause)}`);
             break;
         case "not_found":
             fail(
-                `No thread "${threadRef}" for "${analysis.name}". Omit --thread to start a new conversation, or pass an id from a prior chat on this analysis.`,
+                `No thread "${present(threadRef, "the thread reference")}" for "${analysis.name}". Omit --thread to start a new conversation, or pass an id from a prior chat on this analysis.`,
             );
             break;
         case "new":

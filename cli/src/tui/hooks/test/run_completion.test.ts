@@ -49,7 +49,7 @@ function runDetail(run: RunSummary): RunDetail {
 function optsFor(runs: RunSummary[]): RefreshOpts {
     return {
         ready: () => true,
-        loadProfile: () => okAsync<DataProfileView, never>({ status: null }),
+        loadProfile: () => okAsync<DataProfileView>({ status: null }),
         loadRuns: () => okAsync(runs),
         loadActiveRuns: () => okAsync(runs),
         loadRun: (_analysisId, runId) => okAsync(runDetail(runs.find((run) => run.runId === runId) ?? runRow({ runId }))),

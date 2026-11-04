@@ -12,6 +12,7 @@ import { env } from "../env.ts";
 import { unknownRecordSchema } from "../json_record.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { parsedJson } from "../../test_support/json.ts";
+import { describeCause } from "../cause.ts";
 
 // Drives config through the public readConfig/writeConfig surface against the sandboxed
 // env.configPath (set by the test preload), so it exercises the real fail-closed + self-healing
@@ -220,7 +221,7 @@ describe("resolveRuntime", () => {
         writeRawConfig(JSON.stringify({ telemetry: false }));
         const result = await resolveRuntime(probeReady(["podman"]));
         expect(result._unsafeUnwrap()).toEqual({ runtime: runtimes.podman, detected: true });
-        expect(parsedJson(readFileSync(env.configPath, "utf8"), z.unknown())).not.toHaveProperty("runtime");
+        expect(parsedJson(readFileSync(env.configPath, "utf8"), z.json())).not.toHaveProperty("runtime");
     });
 
     test("an explicit selection is probed alone, and its failure names `inflexa setup`", async () => {
@@ -268,7 +269,7 @@ describe("ensureRuntime", () => {
         const logs: string[] = [];
         const originalLog = console.log;
         console.log = (...args: unknown[]): void => {
-            logs.push(args.map((a) => String(a)).join(" "));
+            logs.push(args.map((a) => describeCause(a)).join(" "));
         };
         try {
             const result = await ensureRuntime(probeReady(["podman"]));

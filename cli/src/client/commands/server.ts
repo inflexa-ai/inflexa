@@ -14,7 +14,7 @@ import {
     type ShutdownMode,
 } from "../../api/server.ts";
 import { describeCause } from "../../lib/cause.ts";
-import { confirm, fail } from "../../lib/cli.ts";
+import { confirm, fail, stdinIsTTY } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
 import { errnoCode, statResult, type FsError } from "../../lib/fs.ts";
 import { isAsciiDigits } from "../../lib/text.ts";
@@ -70,7 +70,7 @@ export const DEFAULT_SERVER_COMMAND_OPTS: ServerCommandOpts = {
     followSignal: new AbortController().signal,
     write: (text) => void process.stdout.write(text),
     fail: (message) => fail(message),
-    interactive: () => process.stdin.isTTY === true,
+    interactive: stdinIsTTY,
     confirm,
 };
 

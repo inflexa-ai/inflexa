@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { GLYPHS, size, space } from "../design_system.ts";
 import { formatTokenFigure, formatTokenFigureLabelled, tokenFigureDetail, type TokenQuantities } from "../usage_format.ts";
+import { present } from "../present.ts";
 
 // The design's real ledger figures, chosen so the rendered string is the exact one the spec writes.
 const IN = 767_600;
@@ -209,7 +210,7 @@ describe("tokenFigureDetail", () => {
         // a nesting surface printing arms itself must produce the same characters as the joined line.
         const quantities = { inputTokens: IN, outputTokens: OUT, cacheReadInputTokens: 700_000 };
         const detail = tokenFigureDetail(quantities);
-        expect(`${detail.input?.compact} ${detail.output?.compact}`).toBe(formatTokenFigure(quantities));
-        expect(`${detail.input?.labelled} ${GLYPHS.middot} ${detail.output?.labelled}`).toBe(formatTokenFigureLabelled(quantities));
+        expect(`${present(detail.input).compact} ${present(detail.output).compact}`).toBe(formatTokenFigure(quantities));
+        expect(`${present(detail.input).labelled} ${GLYPHS.middot} ${present(detail.output).labelled}`).toBe(formatTokenFigureLabelled(quantities));
     });
 });

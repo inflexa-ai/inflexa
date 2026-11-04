@@ -35,7 +35,7 @@ import { present } from "../../../lib/present.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { withoutPrefix } from "../../../lib/text.ts";
 
-const graphNodesSchema = z.object({ nodes: z.record(z.string(), z.unknown()) });
+const graphNodesSchema = z.object({ nodes: z.record(z.string(), z.json()) });
 const graphSchema = z.object({
     nodes: z.record(z.string(), z.object({ edges: z.array(z.string()) })),
     by_name: z.object({ python: z.record(z.string(), z.array(z.string())), r: z.record(z.string(), z.array(z.string())) }),
@@ -94,7 +94,7 @@ function acquiringRunner(outcomesBySpec: Record<string, Record<string, unknown>>
                 nodes,
             };
             writeFileSync(reportPathOf(invocation.storeRoot, invocation.args), `${JSON.stringify(report, null, 2)}\n`);
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+            return ok<CaptureResult>({ code: 0, stdout: "", stderr: "" });
         });
 }
 
@@ -104,7 +104,7 @@ function loadCheck(failing: readonly string[]): LoadCheckRunner {
         Promise.try(() => {
             const raw = parsedJson(readFileSync(join(params.storeRoot, params.reportName), "utf8"), graphNodesSchema);
             const results = Object.keys(raw.nodes).map((dir) => ({ package: dir, track: "python", ok: !failing.includes(dir) }));
-            return ok<CaptureResult, never>({ code: results.every((r) => r.ok) ? 0 : 1, stdout: JSON.stringify({ results }), stderr: "" });
+            return ok<CaptureResult>({ code: results.every((r) => r.ok) ? 0 : 1, stdout: JSON.stringify({ results }), stderr: "" });
         });
 }
 
@@ -344,8 +344,8 @@ describe("flushPendingStoreAdds", () => {
 
             if (result.type !== "flew") throw new Error(`expected a flight, got ${result.type}`);
             expect(result.outcomes).toHaveLength(1);
-            const outcome = result.outcomes[0];
-            if (outcome?.kind !== "refused") throw new Error(`expected a refusal, got ${outcome?.kind}`);
+            const outcome = present(result.outcomes[0], "the first outcome");
+            if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
             // The refusal names the ledger problem, and no acquire run started:
             // "joined" would promise that somebody else does the work.
             expect(outcome.reason).toContain("flight ledger");
@@ -536,7 +536,7 @@ describe("the flush tail", () => {
         const debrisInvocations: (readonly string[])[] = [];
         const debrisRun: ProvisionerRunner = (invocation) => {
             debrisInvocations.push([...invocation.args]);
-            return Promise.resolve(ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" }));
+            return Promise.resolve(ok<CaptureResult>({ code: 0, stdout: "", stderr: "" }));
         };
 
         try {
@@ -562,7 +562,7 @@ describe("the flush tail", () => {
         const debrisInvocations: (readonly string[])[] = [];
         const debrisRun: ProvisionerRunner = (invocation) => {
             debrisInvocations.push([...invocation.args]);
-            return Promise.resolve(ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" }));
+            return Promise.resolve(ok<CaptureResult>({ code: 0, stdout: "", stderr: "" }));
         };
 
         await flushAndPrint(root, { flush: { run, loadCheck: loadCheck([]) }, debris: { run: debrisRun } });

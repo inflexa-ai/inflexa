@@ -114,7 +114,9 @@ const DATE_SHAPE = "dd/dd/dd";
 /** The index of the first `dd/dd/dd` in `text` (two digits, a slash, two digits, a slash, two digits), or -1. */
 function dateAt(text: string): number {
     for (let at = 0; at + DATE_SHAPE.length <= text.length; at++) {
-        const isDate = [...DATE_SHAPE].every((shape, column) => (shape === "d" ? isAsciiDigits(text.charAt(at + column)) : text.charAt(at + column) === shape));
+        const isDate = Array.from(DATE_SHAPE).every((shape, column) =>
+            shape === "d" ? isAsciiDigits(text.charAt(at + column)) : text.charAt(at + column) === shape,
+        );
         if (isDate) return at;
     }
     return -1;

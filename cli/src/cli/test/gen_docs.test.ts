@@ -70,7 +70,9 @@ function exportedDocLists(): [string, unknown][] {
     // `unknown` because the guard's job is to survive a list whose shape it has never seen; the entries
     // are narrowed structurally in declaredVarNames rather than typed against today's two shapes.
     const exports: Record<string, unknown> = envModule;
-    return Object.entries(exports).filter(([name, value]) => name.toLowerCase().endsWith("envdoc") && typeof value === "object" && value !== null);
+    return Object.entries(exports).filter(
+        ([name, value]) => name.toLowerCase().endsWith("envdoc") && (Array.isArray(value) || unknownRecordSchema.safeParse(value).success),
+    );
 }
 
 /**

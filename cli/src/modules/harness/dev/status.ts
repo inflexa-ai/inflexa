@@ -49,7 +49,7 @@ export async function readNewestWorkflowStep(
         });
         const row = result.rows[0];
         if (!row) return null;
-        return { step: Number(row.function_id) + 1, label: friendlyStepLabel(row.function_name) };
+        return { step: row.function_id + 1, label: friendlyStepLabel(row.function_name) };
     } catch {
         return null;
     }

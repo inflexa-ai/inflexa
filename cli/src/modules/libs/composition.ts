@@ -44,6 +44,8 @@ import { acquireInstanceLock, instanceLockHolder, releaseInstanceLock, PACKAGE_S
 import { type FsError, readFileResult, writeFileResult } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
 import { isMember } from "../../lib/types.ts";
+import { messageOf } from "../../lib/cause.ts";
+import { present } from "../../lib/present.ts";
 
 // --- The store layout ---------------------------------------------------------
 
@@ -281,11 +283,13 @@ export type FarmCompositionError =
 export function describeFarmCompositionError(error: FarmCompositionError): string {
     switch (error.type) {
         case "io_failed":
-            return `could not ${error.op} (${error.cause instanceof Error ? error.cause.message : String(error.cause)})`;
+            return `could not ${error.op} (${messageOf(error.cause)})`;
         case "graph_unusable":
             return `the dependency graph at ${error.path} is unusable: ${error.detail}`;
-        case "graph_dangling_edge":
-            return `the dependency graph names ${error.edges.length} edge(s) that it does not hold, for example ${error.edges[0]?.from} to ${error.edges[0]?.to}`;
+        case "graph_dangling_edge": {
+            const first = present(error.edges[0], "the first dangling edge");
+            return `the dependency graph names ${error.edges.length} edge(s) that it does not hold, for example ${first.from} to ${first.to}`;
+        }
         case "unknown_root":
             return `the dependency graph holds no store directory named ${error.roots.join(", ")}`;
         case "template_unusable":
@@ -979,9 +983,9 @@ function writeFarmLockFile(farmPath: string, lock: FarmLock): Result<void, FsErr
     return writeFileResult(temp, `${JSON.stringify(lock, null, 2)}\n`, "write the lock of the farm").andThen(() => {
         try {
             renameSync(temp, path);
-            return ok<void, FsError>(undefined);
+            return ok<undefined, FsError>(undefined);
         } catch (cause) {
-            return err<void, FsError>({ type: "io_failed", op: "publish the lock of the farm", cause });
+            return err<undefined, FsError>({ type: "io_failed", op: "publish the lock of the farm", cause });
         }
     });
 }

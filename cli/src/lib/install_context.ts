@@ -46,7 +46,7 @@ let testOverride: boolean | null = null;
  */
 export function isCompiledBinary(): boolean {
     if (testOverride !== null) return testOverride;
-    return typeof __INFLEXA_COMPILED__ !== "undefined" && __INFLEXA_COMPILED__ === true;
+    return typeof __INFLEXA_COMPILED__ !== "undefined" && __INFLEXA_COMPILED__;
 }
 
 /**

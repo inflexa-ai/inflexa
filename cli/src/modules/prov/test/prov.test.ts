@@ -1099,14 +1099,14 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        const section = z.record(z.string(), z.record(z.string(), z.unknown())).optional();
+        const section = z.record(z.string(), z.record(z.string(), z.json())).optional();
         const records = parsedJson(present(stored), z.object({ activity: section, wasAssociatedWith: section, wasInformedBy: section }));
         const approvalEntry = Object.entries(records.activity ?? {}).find(([, activity]) => activity["prov:type"] === "inflexa:ApprovePlan");
         expect(approvalEntry).toBeDefined();
         const [approvalQn, approval] = present(approvalEntry);
         expect(approval).toMatchObject({ "inflexa:threadId": "thread-1", "inflexa:planId": "pln-0000000a", "inflexa:runId": runRef.runId });
-        const approvedAt = Date.parse(String(approval["prov:startTime"]));
-        const startedAt = Date.parse(String(records.activity?.["inflexa:run-run-001"]?.["prov:startTime"]));
+        const approvedAt = Date.parse(z.string().parse(approval["prov:startTime"]));
+        const startedAt = Date.parse(z.string().parse(records.activity?.["inflexa:run-run-001"]?.["prov:startTime"]));
         expect(approvedAt).toBe(runRef.startedAtMs - 1_000);
         expect(approvedAt).toBeLessThan(startedAt);
         expect(Object.values(records.wasAssociatedWith ?? {})).toContainEqual({

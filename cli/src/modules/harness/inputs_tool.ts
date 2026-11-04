@@ -13,7 +13,7 @@
  * subcommands are the TERMINAL surface and are agent-blocked; the agent uses this.
  */
 
-import { defineTool, scopeResource, DETAIL_MAX_LENGTH, type AgentSession, type AskRequest, type ToolError } from "@inflexa-ai/harness";
+import { defineTool, scopeResource, DETAIL_MAX_LENGTH, type AgentSession, type AskRequest, type Tool, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -98,7 +98,9 @@ export type ManageInputsToolOpts = {
 export const DEFAULT_MANAGE_INPUTS_TOOL_OPTS: ManageInputsToolOpts = { removeInput };
 
 /** Build the in-process `manage_inputs` conversation tool. */
-export function createManageInputsTool(opts: ManageInputsToolOpts = DEFAULT_MANAGE_INPUTS_TOOL_OPTS) {
+export function createManageInputsTool(
+    opts: ManageInputsToolOpts = DEFAULT_MANAGE_INPUTS_TOOL_OPTS,
+): Tool<{ action: "add" | "remove" | "list"; paths?: string[] | undefined }, ManageInputsResult> {
     return defineTool({
         id: "manage_inputs",
         description:
@@ -132,7 +134,7 @@ export function createManageInputsTool(opts: ManageInputsToolOpts = DEFAULT_MANA
             if (paths === undefined || paths.length === 0) return action;
             const listed = `${action} ${paths.join(", ")}`;
             // Code points, which is the unit the harness caps in.
-            if ([...listed].length <= DETAIL_MAX_LENGTH) return listed;
+            if (Array.from(listed).length <= DETAIL_MAX_LENGTH) return listed;
             return `${action} ${paths.length} path${paths.length === 1 ? "" : "s"}`;
         },
         // The loop asks the user before an add or a remove runs, with the paths that it changes.

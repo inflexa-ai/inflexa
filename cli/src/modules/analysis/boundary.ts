@@ -30,7 +30,7 @@ export function computeRoots(analysis: Analysis): ResultAsync<Roots, WorkspaceEr
             new ResultAsync(resolveEach(inputs)).map((resolved): Roots => {
                 // Drop inputs whose anchor can't be resolved (null) — they aren't readable until
                 // relocated; the CLI surfaces unresolved inputs, this library doesn't print.
-                const readableInputs = resolved.filter((p): p is string => p !== null).map((p) => resolve(p));
+                const readableInputs = resolved.filter((p) => p !== null).map((p) => resolve(p));
                 const out = resolve(outDir);
                 return {
                     writable: [out],

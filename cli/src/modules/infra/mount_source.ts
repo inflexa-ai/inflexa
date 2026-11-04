@@ -5,6 +5,7 @@ import { randomUUIDv7 } from "bun";
 import { type Result, ok, err } from "neverthrow";
 
 import { errnoCode } from "../../lib/fs.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // Classify-and-heal machinery for a FILE-typed host bind-mount source, shared by the stack's file
 // provisioners (the CLIProxyAPI config of proxy_config.ts and the SearXNG settings of
@@ -173,7 +174,7 @@ export function formatInfraStateError(e: InfraStateError): string {
         case "path_occupied":
             return `${e.path} already exists but is not the ${e.expected} inflexa expects there. ${occupantSentence(e.occupant)} Move or remove it, then re-run.`;
         case "io_failed":
-            return `Could not provision ${e.path}: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
+            return `Could not provision ${e.path}: ${messageOf(e.cause)}`;
         default: {
             const unreachable: never = e;
             throw new Error(`unhandled infra-state error: ${String(unreachable)}`);

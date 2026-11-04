@@ -118,7 +118,9 @@ async function settle(setup: Setup): Promise<string> {
  * match. These paths hold no spaces, so collapsing the frame reassembles them exactly.
  */
 function flat(frame: string): string {
-    return [...frame].filter((char) => !isWhitespace(char) && !(char >= "\u2500" && char <= "\u257f")).join("");
+    return Array.from(frame)
+        .filter((char) => !isWhitespace(char) && !(char >= "\u2500" && char <= "\u257f"))
+        .join("");
 }
 
 /** Run the real `analysis.remove-input` flow against the fake server and push the dialog it opens onto the host. */

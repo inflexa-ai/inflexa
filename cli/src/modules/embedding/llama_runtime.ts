@@ -32,6 +32,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import { env } from "../../lib/env.ts";
 import { isCompiledBinary } from "../../lib/install_context.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /**
  * Failure modes of runtime acquisition, kept as narrow as the seam needs. Every
@@ -162,10 +163,6 @@ let pinOverride: ResolvedPin | null = null;
 let acquireOverride: LlamaAcquire | null = null;
 let inFlight: Promise<Result<string, LlamaRuntimeError>> | null = null;
 
-function errText(cause: unknown): string {
-    return cause instanceof Error ? cause.message : String(cause);
-}
-
 /** The server binary's filename on the ACTIVE runtime platform (`.exe` on Windows). */
 function serverBinaryName(): string {
     return process.platform === "win32" ? "llama-server.exe" : "llama-server";
@@ -248,7 +245,7 @@ async function writeEmbeddedArchive(destPath: string): Promise<Result<void, Llam
         await Bun.write(destPath, bytes);
         return ok(undefined);
     } catch (cause) {
-        return err({ type: "io_failed", message: `Could not read the embedded llama-server archive: ${errText(cause)}`, cause });
+        return err({ type: "io_failed", message: `Could not read the embedded llama-server archive: ${messageOf(cause)}`, cause });
     }
 }
 
@@ -275,7 +272,7 @@ async function downloadArchive(destPath: string, pin: ResolvedPin): Promise<Resu
     } catch (cause) {
         return err({
             type: "download_failed",
-            message: `Downloading the llama-server runtime failed: ${errText(cause)}. Retry \`inflexa setup --embeddings local\`.`,
+            message: `Downloading the llama-server runtime failed: ${messageOf(cause)}. Retry \`inflexa setup --embeddings local\`.`,
             cause,
         });
     }
@@ -301,7 +298,7 @@ async function verifyArchiveHash(archivePath: string, expected: string): Promise
         }
         return ok(undefined);
     } catch (cause) {
-        return err({ type: "io_failed", message: `Could not hash the llama-server archive: ${errText(cause)}`, cause });
+        return err({ type: "io_failed", message: `Could not hash the llama-server archive: ${messageOf(cause)}`, cause });
     }
 }
 
@@ -325,7 +322,7 @@ async function extractArchive(archivePath: string, destDir: string): Promise<Res
         }
         return ok(undefined);
     } catch (cause) {
-        return err({ type: "extract_failed", message: `Extracting the llama-server archive failed: ${errText(cause)}`, cause });
+        return err({ type: "extract_failed", message: `Extracting the llama-server archive failed: ${messageOf(cause)}`, cause });
     }
 }
 
@@ -346,7 +343,7 @@ function locateRuntimeRoot(stageDir: string): Result<string, LlamaRuntimeError> 
             if (statSync(only).isDirectory()) root = only;
         }
     } catch (cause) {
-        return err({ type: "extract_failed", message: `Could not inspect the extracted llama-server archive: ${errText(cause)}`, cause });
+        return err({ type: "extract_failed", message: `Could not inspect the extracted llama-server archive: ${messageOf(cause)}`, cause });
     }
     if (!existsSync(join(root, serverBinaryName()))) {
         return err({
@@ -398,7 +395,7 @@ async function materialize(): Promise<Result<string, LlamaRuntimeError>> {
     } catch (cause) {
         return err({
             type: "io_failed",
-            message: `Could not prepare the llama-server runtime directory under ${env.llamaServerDir}: ${errText(cause)}`,
+            message: `Could not prepare the llama-server runtime directory under ${env.llamaServerDir}: ${messageOf(cause)}`,
             cause,
         });
     }
@@ -453,7 +450,7 @@ async function materialize(): Promise<Result<string, LlamaRuntimeError>> {
         // success — the point is an idempotent, tag-named directory, not who won. Otherwise propagate.
         const winner = join(finalDir, serverName);
         if (existsSync(winner)) return ok(winner);
-        return err({ type: "io_failed", message: `Could not install the llama-server runtime into ${finalDir}: ${errText(cause)}`, cause });
+        return err({ type: "io_failed", message: `Could not install the llama-server runtime into ${finalDir}: ${messageOf(cause)}`, cause });
     }
 
     await cleanup();

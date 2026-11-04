@@ -6,6 +6,7 @@ import { err, ok, Result, ResultAsync } from "neverthrow";
 import { downloadToFile, type DownloadError, type DownloadProgress, type FetchLike } from "../../lib/download.ts";
 import { splitWhitespace } from "../../lib/text.ts";
 import { RELEASE_REPO } from "./latest.ts";
+import { describeCause } from "../../lib/cause.ts";
 
 /**
  * The release asset each platform gets, keyed by `${process.platform}-${process.arch}`. The names are the
@@ -161,10 +162,10 @@ export async function applyUpdate(version: string, options: ApplyOptions = {}): 
     }
 
     return swapBinary(staged, target).match(
-        () => ok<void, ApplyError>(undefined),
+        () => ok<undefined, ApplyError>(undefined),
         (error) => {
             rmSync(staged, { force: true });
-            return err<void, ApplyError>(error);
+            return err<undefined, ApplyError>(error);
         },
     );
 }
@@ -177,7 +178,7 @@ export function applyErrorMessage(error: ApplyError): string {
         case "manifest_failed":
             return `The release checksum file answered with status ${error.status}.`;
         case "manifest_unreachable":
-            return `Could not reach the release checksum file: ${String(error.cause)}`;
+            return `Could not reach the release checksum file: ${describeCause(error.cause)}`;
         case "asset_missing":
             return `The release does not list ${error.asset}.`;
         case "download_failed":

@@ -40,6 +40,7 @@ import { recordTransferProgress, recordTransferResolve, settleTransfer, startTra
 import { TRANSFER_KINDS, type TransferKind, type TransferRow, type TransferStatus } from "../../types/store.ts";
 import { provisionerImageFor } from "./images.ts";
 import { configuredSandboxImage } from "./pull.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /** The instance-lock key of one transfer kind. The child holds it for its whole life. */
 export function transferLockKey(kind: TransferKind): string {
@@ -273,7 +274,7 @@ export async function runImageTransfer(kind: "runtime_image" | "provisioner_imag
             } catch (cause) {
                 settleTransfer(kind, {
                     state: "failed",
-                    message: `Could not start \`${rt.bin} pull ${image}\`: ${cause instanceof Error ? cause.message : String(cause)}. Run \`inflexa sandbox pull\` to try again.`,
+                    message: `Could not start \`${rt.bin} pull ${image}\`: ${messageOf(cause)}. Run \`inflexa sandbox pull\` to try again.`,
                 }).unwrapOr(undefined);
                 return;
             } finally {

@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space } from "../../lib/design_system.ts";
@@ -19,7 +20,7 @@ export type CompactionBlockProps = {
 const RULE = GLYPHS.lineHorizontal.repeat(512);
 
 /** One side of the divider: a rule that takes the cells that the label leaves. */
-function Rule() {
+function Rule(): JSX.Element {
     return (
         <box flexGrow={1} flexShrink={1} flexBasis={0} minWidth={0} height={1} overflow="hidden">
             <text wrapMode="none" fg={theme().fgSubtle}>
@@ -33,7 +34,7 @@ function Rule() {
  * One muted progress line while the harness summarizes the earlier conversation, then a divider with the
  * result: the mark between the summarized part of the conversation and the rest.
  */
-export function CompactionBlock(props: CompactionBlockProps) {
+export function CompactionBlock(props: CompactionBlockProps): JSX.Element {
     const figures = (): string =>
         props.tokensAfter === undefined ? "" : `${props.tokensBefore.formatTokens()} ${GLYPHS.arrowRight} ${props.tokensAfter.formatTokens()}`;
     return (

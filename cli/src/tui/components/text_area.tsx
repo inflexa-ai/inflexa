@@ -86,8 +86,8 @@ export function TextArea(props: TextAreaProps): JSX.Element {
     const [focused, setFocused] = createSignal(props.autoFocus ?? true);
     let ref: TextareaRenderable | null = null;
 
-    const modeWord = () => (focused() ? "INSERT" : "NORMAL");
-    const isBare = () => props.chrome === "bare";
+    const modeWord = (): string => (focused() ? "INSERT" : "NORMAL");
+    const isBare = (): boolean => props.chrome === "bare";
 
     function handleClick(): void {
         ref?.focus();

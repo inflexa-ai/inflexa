@@ -1020,13 +1020,13 @@ describe("activity panel abort", () => {
         await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
 
         // The cancel of run-a stays open until the test releases it.
-        const held = Promise.withResolvers<void>();
-        const requestOpen = Promise.withResolvers<void>();
+        const held = Promise.withResolvers<undefined>();
+        const requestOpen = Promise.withResolvers<undefined>();
         const record = newRecord();
         const opts = abortOpts(record, {
             cancel: (runId) => {
                 if (runId !== "run-a") return okAsync(cancelResult(runId));
-                requestOpen.resolve();
+                requestOpen.resolve(undefined);
                 return ResultAsync.fromSafePromise(held.promise.then(() => cancelResult(runId)));
             },
         });
@@ -1049,7 +1049,7 @@ describe("activity panel abort", () => {
         ]);
 
         // The guard goes when the request settles: run-a can be aborted again.
-        held.resolve();
+        held.resolve(undefined);
         await first;
         focusNextSubject();
         expect(focusedRunSubject()?.runId).toBe("run-a");

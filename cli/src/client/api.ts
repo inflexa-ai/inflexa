@@ -276,6 +276,7 @@ function parseJson(text: string): Result<unknown, JsonParseError> {
  * that the caller names. The body is not validated: a schema for each wire type of `src/api/` would turn a
  * mismatch into `bad_json`, which is not the behavior of the client.
  */
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- `T` appears only in the return type because this is the one trusted cast of the client: each caller names the wire type that its route sends
 function trustWireBody<T>(value: unknown): T {
     // SAFETY: (1) One checkout builds the server routes and the client fetchers from the same `src/api/` types, so
     // the declared `T` is the shape that the route sends. (2) A command connects through `ensureServer`, and the TUI

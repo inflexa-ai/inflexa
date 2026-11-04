@@ -79,7 +79,8 @@ describe("exportAnalysisProvenance", () => {
         const path = join(out, "provenance.json");
         expect(exported._unsafeUnwrap()).toEqual({ path, attestationPath: `${path}.sig.json` });
         expect(readFileSync(path, "utf8")).toBe(DOCUMENT);
-        expect(parsedJson(readFileSync(`${path}.sig.json`, "utf8"), z.unknown())).toEqual(ATTESTATION);
+        const written: unknown = parsedJson(readFileSync(`${path}.sig.json`, "utf8"), z.json());
+        expect(written).toEqual(ATTESTATION);
     });
 
     test("a PROV-N export is never signed: the attestation claims the PROV-JSON payload type", async () => {

@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { GLYPHS, space } from "../../lib/design_system.ts";
@@ -56,7 +57,7 @@ function toMarkdown(body: PresentationBody): string {
  * title head it when a title is present. The markdown config mirrors {@link MessageBlock}'s text part
  * exactly (`streaming` pinned true, `internalBlockMode="top-level"`) — see the note there for why.
  */
-export function PresentationBlock(props: PresentationBlockProps) {
+export function PresentationBlock(props: PresentationBlockProps): JSX.Element {
     const content = (): string => toMarkdown(props.body);
     return (
         <box flexDirection="column" paddingBottom={space.sm}>

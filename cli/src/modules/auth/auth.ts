@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { bakedEnv, env } from "../../lib/env.ts";
 import { errnoCode } from "../../lib/fs.ts";
+import { describeCause } from "../../lib/cause.ts";
 
 /**
  * offline_access is required: inflexa's sliding session (log in once, renew on
@@ -142,9 +143,9 @@ export function describeAuthError(error: AuthError): string {
         case "revoke_failed":
             return `Could not revoke the session at Auth0: ${error.detail}`;
         case "token_read_failed":
-            return `Could not read the stored auth tokens: ${String(error.cause)}`;
+            return `Could not read the stored auth tokens: ${describeCause(error.cause)}`;
         case "token_write_failed":
-            return `Could not write the auth token file: ${String(error.cause)}`;
+            return `Could not write the auth token file: ${describeCause(error.cause)}`;
     }
 }
 
@@ -246,7 +247,7 @@ export async function requestDeviceCode(config: Auth0Config): Promise<Result<Dev
         });
         raw = await response.text();
     } catch (cause) {
-        return err({ type: "device_code_request_failed", detail: String(cause) });
+        return err({ type: "device_code_request_failed", detail: describeCause(cause) });
     }
 
     if (!response.ok) {
@@ -291,7 +292,7 @@ export async function pollForToken(config: Auth0Config, device: DeviceCodeRespon
             // The loop sleeps `interval` before the next attempt, so retries are
             // already paced.
             if (++consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-                return err({ type: "token_poll_failed", detail: String(cause) });
+                return err({ type: "token_poll_failed", detail: describeCause(cause) });
             }
             continue;
         }
@@ -340,7 +341,7 @@ export async function refreshAccessToken(config: Auth0Config, current: StoredAut
         });
         raw = await response.text();
     } catch (cause) {
-        return err({ type: "refresh_failed", detail: String(cause) });
+        return err({ type: "refresh_failed", detail: describeCause(cause) });
     }
 
     const wire = JSON.parseWith(raw, tokenWireSchema);
@@ -397,7 +398,7 @@ export async function revokeRefreshToken(config: Auth0Config, refreshToken: stri
             token: refreshToken,
         });
     } catch (cause) {
-        return err({ type: "revoke_failed", detail: String(cause) });
+        return err({ type: "revoke_failed", detail: describeCause(cause) });
     }
 
     if (!response.ok) {

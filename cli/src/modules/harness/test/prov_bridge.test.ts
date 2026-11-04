@@ -53,9 +53,9 @@ afterEach(() => {
 type FileEvent = Extract<StampedEvent, { type: "prov.file_written" }>;
 type CommandEvent = Extract<StampedEvent, { type: "prov.command_executed" }>;
 type InputEvent = Extract<StampedEvent, { type: "prov.input_used" }>;
-const commandEvents = (): CommandEvent[] => captured.filter((e): e is CommandEvent => e.type === "prov.command_executed");
-const fileEvents = (): FileEvent[] => captured.filter((e): e is FileEvent => e.type === "prov.file_written");
-const inputEvents = (): InputEvent[] => captured.filter((e): e is InputEvent => e.type === "prov.input_used");
+const commandEvents = (): CommandEvent[] => captured.filter((e: StampedEvent): e is CommandEvent => e.type === "prov.command_executed");
+const fileEvents = (): FileEvent[] => captured.filter((e: StampedEvent): e is FileEvent => e.type === "prov.file_written");
+const inputEvents = (): InputEvent[] => captured.filter((e: StampedEvent): e is InputEvent => e.type === "prov.input_used");
 
 // The bus adapter addresses no external system, so it ignores the session entirely.
 const noSession = buildAgentSession();
@@ -576,7 +576,7 @@ describe("createRunProvenanceEmitter", () => {
 
 describe("createSwappableSandboxEmitters", () => {
     type StepEvent = Extract<StampedEvent, { type: "prov.step_completed" }>;
-    const stepModels = (): string[] => captured.filter((e): e is StepEvent => e.type === "prov.step_completed").map((e) => e.model);
+    const stepModels = (): string[] => captured.filter((e: StampedEvent): e is StepEvent => e.type === "prov.step_completed").map((e) => e.model);
 
     // A step_completed event carrying an ascending `atMs` so successive emits stay distinguishable.
     function stepAt(atMs: number): RunProvenanceEvent {

@@ -6,6 +6,7 @@ import { errorBody } from "../../test_support/response_body.ts";
 import type { ServerBoot } from "../boot.ts";
 import { apiError, listEnvelope, parseCount, parsePage, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
 import { present } from "../../lib/present.ts";
+import { describeCause } from "../../lib/cause.ts";
 
 describe("apiError", () => {
     test("each code gets its status, and `details` only when given", async () => {
@@ -261,13 +262,13 @@ describe("sseResponse", () => {
             ),
         );
         const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch });
-        const headers = fetch(`http://127.0.0.1:${server.port}/`).then(
+        const headers = fetch(`http://127.0.0.1:${present(server.port, "the port of the test server")}/`).then(
             async (response) => {
                 const turnId = response.headers.get("Inflexa-Turn-Id");
                 await response.body?.cancel();
                 return turnId;
             },
-            (cause: unknown) => `the request failed: ${String(cause)}`,
+            (cause: unknown) => `the request failed: ${describeCause(cause)}`,
         );
         try {
             const first = await Promise.race([headers, Promise.sleep(1_000).then(() => "no response headers 1 s after the request")]);

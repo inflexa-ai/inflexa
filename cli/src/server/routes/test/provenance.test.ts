@@ -104,7 +104,7 @@ describe("POST {A}/provenance/export", () => {
         const path = join(home, defaultOutputSubdir(ANALYSIS.slug), "provenance.json");
         expect(await jsonBody(response)).toEqual({ path, attestationPath: `${path}.sig.json` });
         expect(existsSync(path)).toBe(true);
-        expect(parsedJson(readFileSync(`${path}.sig.json`, "utf8"), z.unknown())).toHaveProperty("payloadType", "application/json; profile=prov-json");
+        expect(parsedJson(readFileSync(`${path}.sig.json`, "utf8"), z.json())).toHaveProperty("payloadType", "application/json; profile=prov-json");
     });
 
     test("a PROV-N export has no attestation, and an absolute `output` is written as given", async () => {

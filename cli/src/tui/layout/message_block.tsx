@@ -219,7 +219,7 @@ function MarkdownBody(props: { content: string; paddingLeft: number }): JSX.Elem
  * The streaming text part renders from the live stream accessors and flips to the stored text once
  * the part completes.
  */
-export function MessageBlock(props: MessageBlockProps) {
+export function MessageBlock(props: MessageBlockProps): JSX.Element {
     // `· #N`, plus `· <dur>` and `· <in> in · <out> out` for a completed assistant turn, through the
     // shared Date.formatDuration and token-figure vocabularies. User turns carry no figure — the cost
     // was not incurred by the party that sent the message — and a not-yet-finished turn has none.
@@ -394,16 +394,14 @@ export function MessageBlock(props: MessageBlockProps) {
                                 <Fg role="fgMuted">{` ${GLYPHS.middot} interrupted`}</Fg>
                             </Show>
                         </text>
-                        {props.role === "user" ? (
-                            // The user turn's body rides a left border rule in the user color (the quoted-content idiom
-                            // shared with the thinking / plan-card / run blocks). The header sits OUTSIDE this box so its
-                            // gutter marker column never shifts; only the body is indented under the rule.
+                        {/* The user turn's body rides a left border rule in the user color (the quoted-content idiom
+                        shared with the thinking / plan-card / run blocks). The header sits OUTSIDE this box so its
+                        gutter marker column never shifts; only the body is indented under the rule. */}
+                        <Show when={props.role === "user"} fallback={parts()}>
                             <box flexDirection="column" border={["left"]} borderColor={theme().user}>
                                 {parts()}
                             </box>
-                        ) : (
-                            parts()
-                        )}
+                        </Show>
                     </>
                 }
             >
@@ -422,7 +420,7 @@ export function MessageBlock(props: MessageBlockProps) {
  * "Open report page" command, which asks the server for a fresh grant. The flow is imported at the click,
  * because the command module reaches this layout through the design gallery.
  */
-function ReportRenderedEntry(props: { title?: string; renderedAt: string }) {
+function ReportRenderedEntry(props: { title?: string; renderedAt: string }): JSX.Element {
     const ws = useWorkspace();
     const open = (): void => {
         void import("../commands.tsx").then((commands) => commands.openReportPage(ws));
@@ -441,7 +439,7 @@ function ReportRenderedEntry(props: { title?: string; renderedAt: string }) {
  * Reads the workspace context for the in-place open, thus a mount outside the provider is a wiring
  * bug — the same rule as each other consumer of {@link useWorkspace}.
  */
-export function ReportSessionEntry(props: { threadId: string }) {
+export function ReportSessionEntry(props: { threadId: string }): JSX.Element {
     const ws = useWorkspace();
     const row = (): ThreadSummary | undefined => reportChildren().find((child) => child.id === props.threadId);
     // An unscoped chat has no analysis to open a session against, thus the click does nothing.
@@ -475,7 +473,7 @@ export function ReportSessionEntry(props: { threadId: string }) {
  * no path shows: a row reads "path could not be resolved", and only an `unavailable` entry is degraded,
  * because that is the one fact the reference itself holds.
  */
-function OpenableCard(props: { title?: string; entries: OpenableEntry[]; folderPath?: string }) {
+function OpenableCard(props: { title?: string; entries: OpenableEntry[]; folderPath?: string }): JSX.Element {
     const ws = useWorkspace();
     const analysisId = (): string => ws.analysis?.id ?? "";
     const [resolved, setResolved] = createSignal<readonly ResolvedArtifact[] | null>(null);
@@ -560,7 +558,7 @@ function askMarker(status: LiveAskPart["status"]): { glyph: string; role: keyof 
  * status that the harness closed the ask with, and never the reject feedback, which is live screen state.
  * Co-located with {@link MessageBlock}, its only caller.
  */
-function AskCard(props: { part: LiveAskPart }) {
+function AskCard(props: { part: LiveAskPart }): JSX.Element {
     const marker = (): { glyph: string; role: keyof ThemeColors } => askMarker(props.part.status);
     const heading = (): string => props.part.title || props.part.command;
     return (

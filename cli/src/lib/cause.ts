@@ -15,6 +15,8 @@ const MAX_DETAIL_LINES = 400;
 const MAX_CAUSE_DEPTH = 5;
 /** How many of an `AggregateError`'s sub-errors the ONE-LINE summary names before it elides the rest. */
 const MAX_ONE_LINE_AGGREGATE = 3;
+/** How many links of a `.cause` chain {@link chainCarriesCode} reads before it gives up. */
+const MAX_ERRNO_LINKS = 5;
 
 /**
  * Render an unknown failure value as ONE human line for a banner or a log summary. Never
@@ -47,6 +49,39 @@ export function describeCause(cause: unknown): string {
         return head;
     }
     return describeNonError(cause);
+}
+
+/**
+ * The message of a failure value, with no `name:` prefix and no `.cause` tail: an `Error` gives its
+ * `message`, and any other value gives its {@link describeCause} rendering (a string as itself, a
+ * `{ type, message }` object as `type: message`, other objects as bounded JSON). Use it where the
+ * text follows a sentence of the caller; use {@link describeCause} where the line stands alone.
+ */
+export function messageOf(cause: unknown): string {
+    return cause instanceof Error ? cause.message : describeNonError(cause);
+}
+
+/**
+ * The value itself when it is an `Error`, else `undefined`. The check is the class check, so a
+ * structural lookalike does not pass. A catch site that reads a field of an `Error` reads through
+ * this, and keeps its fallback for every other value.
+ */
+export function errorOf(cause: unknown): Error | undefined {
+    return cause instanceof Error ? cause : undefined;
+}
+
+/**
+ * Whether a failure value, or a value that it wraps through `.cause`, carries the errno `code`.
+ * The walk reads at most {@link MAX_ERRNO_LINKS} links, outermost first, so a self-referential
+ * chain ends. A link is read structurally: a wrapper is not always an `Error`.
+ */
+export function chainCarriesCode(cause: unknown, code: string): boolean {
+    let current = cause;
+    for (let depth = 0; depth < MAX_ERRNO_LINKS && current !== null && current !== undefined; depth += 1) {
+        if (typeof current === "object" && "code" in current && current.code === code) return true;
+        current = typeof current === "object" && "cause" in current ? current.cause : undefined;
+    }
+    return false;
 }
 
 /**
@@ -95,8 +130,7 @@ function describeShallow(cause: unknown): string {
 
 /** The non-`Error` branch of {@link describeCause}: string, discriminated object, primitive, or JSON. */
 function describeNonError(cause: unknown): string {
-    if (typeof cause === "string") return cause;
-    if (cause === null || typeof cause !== "object") return String(cause);
+    if (typeof cause !== "object" || cause === null) return describePrimitive(cause);
     // A discriminated domain error `{ type, ... }`. Prefer a human `message` field (ProviderError et
     // al.) after the discriminant so the line names both the KIND of failure and its reason.
     // `type`/`message` are read structurally off an opaque object.
@@ -105,6 +139,32 @@ function describeNonError(cause: unknown): string {
         return typeof record.message === "string" && record.message.length > 0 ? `${record.type}: ${record.message}` : record.type;
     }
     return truncateOneLine(safeStringify(cause));
+}
+
+/**
+ * The text of a value that is not a non-null object, the same text `String(value)` gives. Each kind
+ * is a typed branch, so no conversion of an `unknown` value is left. The caller reads an object
+ * itself, and the `object` branch gives the bounded JSON only to keep the switch total.
+ */
+function describePrimitive(value: unknown): string {
+    switch (typeof value) {
+        case "string":
+            return value;
+        case "undefined":
+            return "undefined";
+        case "number":
+            return `${value}`;
+        case "bigint":
+            return value.toString();
+        case "boolean":
+            return value ? "true" : "false";
+        case "symbol":
+            return value.toString();
+        case "function":
+            return value.toString();
+        case "object":
+            return value === null ? "null" : safeStringify(value);
+    }
 }
 
 /**
@@ -191,7 +251,7 @@ function appendCauseDetail(cause: unknown, lines: string[], depth: number): void
         return;
     }
     if (cause === null || typeof cause !== "object") {
-        lines.push(String(cause));
+        lines.push(describePrimitive(cause));
         return;
     }
     for (const line of safeStringify(cause, 2).split("\n")) lines.push(line);
@@ -204,7 +264,7 @@ function appendCauseDetail(cause: unknown, lines: string[], depth: number): void
  */
 function indentFrom(lines: string[], start: number, emit: () => void): void {
     emit();
-    for (let i = start; i < lines.length; i++) lines[i] = `  ${lines[i]}`;
+    for (const [offset, line] of lines.slice(start).entries()) lines[start + offset] = `  ${line}`;
 }
 
 /**
@@ -216,8 +276,10 @@ function indentFrom(lines: string[], start: number, emit: () => void): void {
  */
 function safeStringify(value: unknown, space?: number): string {
     try {
+        // oxlint-disable-next-line typescript/no-base-to-string -- the value has no JSON form (a function, a symbol, `undefined`), and `String` is the only rendering left for it
         return stringifyOnce(value, space) ?? String(value);
     } catch {
+        // oxlint-disable-next-line typescript/no-base-to-string -- `JSON.stringify` threw (a BigInt, a throwing getter), and `String` is the only rendering left for the value
         return String(value);
     }
 }

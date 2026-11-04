@@ -135,6 +135,10 @@ const rendererBans = [
 
 export default solid({
     env: { browser: true },
+    // The error normalizer of cli:
+    // - src/lib/cause.ts — renders and reads an arbitrary thrown value, and its `Error`
+    //   passthrough (`errorOf`) must see the class, because a structural lookalike must not pass.
+    instanceofErrorAllowIn: ["src/lib/cause.ts"],
     overrides: [
         {
             files: ["**/*.{ts,tsx,js,mjs}"],
@@ -255,39 +259,88 @@ export default solid({
             },
         },
         {
-            // Preset rules that report on the tree. Each one stays off until the child
-            // issue of #608 named above its group fixes the sites and removes the entry.
-            // This block comes after every other override, so no other block turns a rule
-            // back on.
-            files: ["**/*.{ts,tsx,js,mjs}"],
-            rules: {
-                // #811: the remaining preset rules.
-                "typescript/explicit-function-return-type": "off",
-                "typescript/no-base-to-string": "off",
-                "typescript/restrict-template-expressions": "off",
-                "typescript/restrict-plus-operands": "off",
-                "typescript/no-invalid-void-type": "off",
-                "typescript/unbound-method": "off",
-                "typescript/no-deprecated": "off",
-                "typescript/no-dynamic-delete": "off",
-                "typescript/no-unnecessary-type-conversion": "off",
-                "typescript/no-unnecessary-type-arguments": "off",
-                "typescript/no-unnecessary-type-parameters": "off",
-                "typescript/no-unnecessary-template-expression": "off",
-                "typescript/no-unnecessary-boolean-literal-compare": "off",
-                "typescript/no-redundant-type-constituents": "off",
-                "typescript/no-misused-spread": "off",
-                "typescript/prefer-promise-reject-errors": "off",
-                "typescript/only-throw-error": "off",
-                "typescript/no-confusing-void-expression": "off",
-                "@inflexa-ai/no-instanceof-error": "off",
-                "@inflexa-ai/no-typeof-object": "off",
-                "@inflexa-ai/no-unknown-type-guards": "off",
-                "@inflexa-ai/export-at-declaration": "off",
-                "@inflexa-ai/no-empty-schema": "off",
-                "@inflexa-ai/no-interface": "off",
-                "solid/prefer-show": "off",
-            },
+            // Boundary predicates that must answer on the original object, or that read an
+            // arbitrary value:
+            // - src/modules/sbom/sbom.ts — `isCdxObject`: the CycloneDX walk must keep the
+            //   original object, and a schema parse answers on a copy.
+            // - src/lib/test/timer.test.ts — `isHandle`: reads a spy result that is a timer
+            //   handle object or `{}`, and no schema describes a handle.
+            files: ["src/modules/sbom/sbom.ts", "src/lib/test/timer.test.ts"],
+            rules: { "@inflexa-ai/no-unknown-type-guards": "off" },
+        },
+        {
+            // The `typeof` probes that read an arbitrary value or the original object:
+            // - src/lib/cause.ts — the error normalizer and the cause walks read an arbitrary
+            //   thrown value structurally, and a record parse answers on a copy that drops the
+            //   own non-enumerable `message` and `cause` of an `Error`.
+            // - src/lib/fs.ts — `errnoCode` reads the `code` of a thrown value, for the same
+            //   reason.
+            // - src/lib/bus.ts — the emit stamps `__infId` on the original event object in
+            //   place, and a schema parse would stamp a copy.
+            // - src/modules/sbom/sbom.ts — the body of `isCdxObject`, which must answer on the
+            //   original object of the walk.
+            // - src/lib/test/timer.test.ts — the body of `isHandle`, for the reason of the
+            //   `no-unknown-type-guards` entry.
+            files: ["src/lib/cause.ts", "src/lib/fs.ts", "src/lib/bus.ts", "src/modules/sbom/sbom.ts", "src/lib/test/timer.test.ts"],
+            rules: { "@inflexa-ai/no-typeof-object": "off" },
+        },
+        {
+            // Deliberately open schemas. Each leaf is read or forwarded opaque, and a narrower
+            // schema would refuse a body or a file that parses today:
+            // - src/api/common.ts — the `details` of an error body hold any value, and the
+            //   client gives the whole body to its caller.
+            // - src/client/api.ts — the body before `trustWireBody`. The client does not
+            //   validate a success body, and a `z.json()` walk of each body checks nothing
+            //   that `JSON.parse` did not.
+            // - src/lib/config.ts — `harness` and `models` are validated downstream, so one
+            //   bad field cannot drop the whole config.
+            // - src/lib/json_record.ts — `unknownRecordSchema` is the walk container: each
+            //   value stays `unknown` until the caller reads it.
+            // - src/modules/libs/store_download.ts and src/modules/refs/store.ts — the JSON
+            //   text of a manifest or a receipt, which a second parser shapes and refuses.
+            // - src/modules/libs/store.ts and src/modules/libs/store_flight.ts — the `nodes`
+            //   of `deps.json`: only the keys are read, or the commit writes back what it read.
+            // - src/modules/harness/model_listing.ts — the Ollama `model_info`, whose keys name
+            //   the architecture.
+            // - src/modules/infra/proxy_config.ts — a credential file that the code writes back
+            //   with each key that it read.
+            // - src/modules/embedding/local-provider.ts — only the length of `tokens` is read.
+            // - src/server/routes/artifacts.ts — the echart `spec`, forwarded to the opener.
+            // - scripts/build.ts — the package.json fields that the license walk narrows.
+            files: [
+                "src/api/common.ts",
+                "src/client/api.ts",
+                "src/lib/config.ts",
+                "src/lib/json_record.ts",
+                "src/modules/libs/store_download.ts",
+                "src/modules/refs/store.ts",
+                "src/modules/libs/store.ts",
+                "src/modules/libs/store_flight.ts",
+                "src/modules/harness/model_listing.ts",
+                "src/modules/infra/proxy_config.ts",
+                "src/modules/embedding/local-provider.ts",
+                "src/server/routes/artifacts.ts",
+                "scripts/build.ts",
+            ],
+            rules: { "@inflexa-ai/no-empty-schema": "off" },
+        },
+        {
+            // Declarations whose form is the reported one:
+            // - the ambient module files `llama_assets.d.ts`, `content-assets.d.ts`, and
+            //   `assets.d.ts`: an ambient module has no form that puts `export default` on a
+            //   typed `const`, and the importers use the default import of a
+            //   `with { type: "file" }` asset.
+            // - src/tui/hooks/conversation.ts and src/tui/hooks/pauses.ts — each exports the
+            //   read accessor of a Solid signal or store, and the setter stays private to the
+            //   module. `export const [value, setValue] = …` would export the setter too.
+            files: [
+                "src/modules/embedding/llama_assets.d.ts",
+                "src/modules/harness/content-assets.d.ts",
+                "src/tui/grammars/assets.d.ts",
+                "src/tui/hooks/conversation.ts",
+                "src/tui/hooks/pauses.ts",
+            ],
+            rules: { "@inflexa-ai/export-at-declaration": "off" },
         },
     ],
 });

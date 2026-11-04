@@ -8,6 +8,7 @@ import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { ASCII_DIGITS, ASCII_LOWERCASE, consistsOf, isAsciiDigits } from "../../lib/text.ts";
 import { isMember, keysOf } from "../../lib/types.ts";
 import { type ConnectionMode } from "./compose.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // The setup ANSWERS layer: one schema for every interactive decision point of `inflexa setup`, two
 // front-ends that populate it (value flags, the `--config` YAML file), and the resolver that merges them
@@ -496,11 +497,6 @@ function describeIssue(issue: AnswersIssue): string[] {
     return [`${spellPath(issue.path)} — ${issue.message}`];
 }
 
-/** An unknown thrown value's message, for the file-boundary errors — `String` covers the non-Error throws a runtime boundary can produce. */
-function causeMessage(cause: unknown): string {
-    return cause instanceof Error ? cause.message : String(cause);
-}
-
 /**
  * The problem lines inside an error, for the places that CONCATENATE two error's lists into one report.
  *
@@ -535,7 +531,7 @@ const EMPTY_FILE_PROBLEM = "the file is empty — it must be a YAML mapping of s
  */
 function answersNothing(answers: SetupAnswers): boolean {
     return Object.values(answers).every((answer) => {
-        if (typeof answer !== "object" || Array.isArray(answer)) return false;
+        if (typeof answer === "string" || typeof answer === "boolean" || Array.isArray(answer)) return false;
         return Object.values(answer).every((leaf) => leaf === undefined);
     });
 }
@@ -734,13 +730,13 @@ export function readAnswersFile(path: string): Result<SetupAnswers, SetupAnswers
     }
     return Result.fromThrowable(
         () => readFileSync(path, "utf8"),
-        (cause): SetupAnswersError => ({ type: "answers_file_unreadable", path, detail: causeMessage(cause) }),
+        (cause): SetupAnswersError => ({ type: "answers_file_unreadable", path, detail: messageOf(cause) }),
     )()
         .andThen((text) =>
             Result.fromThrowable(
                 // unknown: an on-disk YAML document, validated by the schema below.
                 (): unknown => Bun.YAML.parse(text),
-                (cause): SetupAnswersError => ({ type: "answers_file_unparseable", path, detail: causeMessage(cause) }),
+                (cause): SetupAnswersError => ({ type: "answers_file_unparseable", path, detail: messageOf(cause) }),
             )().map((document) => ({ text, document })),
         )
         .andThen(({ text, document }) => {

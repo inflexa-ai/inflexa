@@ -27,6 +27,7 @@ import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { isPublishedSandboxImage, isRetiredSandboxImage, provisionerImageFor, SANDBOX_IMAGE } from "./images.ts";
 import { inspectStoreContent, type StoreContentState } from "./store_download.ts";
 import { readTransferReports, startImageTransfer, type TransferReport } from "./transfers.ts";
+import { formatIecBytes } from "../../lib/bytes.ts";
 
 /**
  * The configured sandbox image from the raw config's opaque `harness` block,
@@ -300,7 +301,7 @@ function describeTransferLine(report: TransferReport): string | null {
             return `  Transfer ${label}: starting`;
         case "running": {
             const row = report.row;
-            const meter = row !== null && row.totalBytes !== null ? ` — ${formatBytes(row.bytesTransferred)} of ${formatBytes(row.totalBytes)}` : "";
+            const meter = row !== null && row.totalBytes !== null ? ` — ${formatIecBytes(row.bytesTransferred)} of ${formatIecBytes(row.totalBytes)}` : "";
             // The catalog child unpacks the layers after the last byte, thus the byte
             // meter stops at the total while the work continues. The age of the last
             // write is the proof of motion. A terminal row names its own failure, thus
@@ -321,17 +322,4 @@ function describeTransferLine(report: TransferReport): string | null {
             throw new Error(`unhandled transfer state: ${JSON.stringify(unreachable)}`);
         }
     }
-}
-
-/** Render a byte count in the largest unit that keeps it readable. */
-function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ["KiB", "MiB", "GiB", "TiB"];
-    let value = bytes / 1024;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit += 1;
-    }
-    return `${value.toFixed(1)} ${units[unit]}`;
 }

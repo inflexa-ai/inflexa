@@ -1,4 +1,5 @@
 import { createSignal, Show } from "solid-js";
+import type { JSX } from "solid-js";
 import type { TextareaRenderable } from "@opentui/core";
 
 import { GLYPHS } from "../../lib/design_system.ts";
@@ -78,7 +79,7 @@ export type ChatBarProps = {
  * hints live only in the status bar. The host keeps the textarea ref so it can read/clear the buffer
  * and restore focus when a dialog closes.
  */
-export function ChatBar(props: ChatBarProps) {
+export function ChatBar(props: ChatBarProps): JSX.Element {
     // Seed from autoFocus so a blurred mount renders NORMAL from the first frame — the renderable
     // emits no blur event at mount to correct a wrong seed (mirrors TextArea's own seed).
     // oxlint-disable-next-line solid/reactivity -- seed-once: autoFocus is a mount-time contract, then focus events drive the signal
@@ -117,13 +118,16 @@ export function ChatBar(props: ChatBarProps) {
             />
             <box width="100%" flexDirection="row" paddingLeft={1} paddingRight={1} backgroundColor={focused() ? undefined : theme().bgActive}>
                 <text fg={focused() ? theme().fgMuted : theme().accent}>
-                    {focused() ? (
-                        "INSERT"
-                    ) : (
-                        <Bold>
-                            <Fg role="accent">NORMAL</Fg>
-                        </Bold>
-                    )}
+                    <Show
+                        when={focused()}
+                        fallback={
+                            <Bold>
+                                <Fg role="accent">NORMAL</Fg>
+                            </Bold>
+                        }
+                    >
+                        INSERT
+                    </Show>
                 </text>
                 {/* The scope word sits between the mode word and the interrupt hint: the mode says what the
                 keys do, the scope says what the typing reaches, and the hint qualifies the mode word it
@@ -133,13 +137,11 @@ export function ChatBar(props: ChatBarProps) {
                     {(scope: { word: string; accent: boolean }) => (
                         <text fg={theme().fgMuted}>
                             {` ${GLYPHS.middot} `}
-                            {scope.accent ? (
+                            <Show when={scope.accent} fallback={scope.word}>
                                 <Bold>
                                     <Fg role="accent">{scope.word}</Fg>
                                 </Bold>
-                            ) : (
-                                scope.word
-                            )}
+                            </Show>
                         </text>
                     )}
                 </Show>

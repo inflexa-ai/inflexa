@@ -521,9 +521,9 @@ function createWalk(
 ): CachedIndex {
     const index = new NameIndex(scope);
     total.value += 1;
-    const ended = Promise.withResolvers<void>();
-    const started = Promise.withResolvers<void>();
-    const scopeRead = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<undefined>();
+    const started = Promise.withResolvers<undefined>();
+    const scopeRead = Promise.withResolvers<undefined>();
     let child: WalkChild | null = null;
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     let holdsSlot = false;
@@ -572,10 +572,10 @@ function createWalk(
             // A cause with the errno code, so that the mapping of a read error sees the same code as an in-process read.
             cached.error = readError(scope, code === "" ? { message } : { code, message });
             cached.stopped = true;
-            scopeRead.resolve();
+            scopeRead.resolve(undefined);
         },
         scopeRead() {
-            scopeRead.resolve();
+            scopeRead.resolve(undefined);
         },
         end() {
             complete = true;
@@ -587,12 +587,12 @@ function createWalk(
         holdsSlot = true;
         cached.hasStarted = true;
         cached.startedAt = now();
-        started.resolve();
+        started.resolve(undefined);
         const spawned = spawnWalk(scope, { hidden, maxDepth: limits.maxDepth, width: limits.width });
         if (spawned.isErr()) {
             cached.error = spawned.error;
             cached.stopped = true;
-            scopeRead.resolve();
+            scopeRead.resolve(undefined);
             release();
             finish();
             return;
@@ -627,7 +627,7 @@ function createWalk(
         if (cached.ended) return;
         if (cached.error === null && !complete) cached.truncated = true;
         cached.stopped = true;
-        scopeRead.resolve();
+        scopeRead.resolve(undefined);
         // After a scope error the child writes nothing more and exits by itself.
         if (reader !== null) void reader.cancel().catch(() => undefined);
         release();
@@ -660,7 +660,7 @@ function createWalk(
         cached.truncated = true;
         cached.stopped = true;
         kill();
-        scopeRead.resolve();
+        scopeRead.resolve(undefined);
         finish();
     }
 
@@ -668,8 +668,8 @@ function createWalk(
         if (cached.ended) return;
         cached.ended = true;
         disarm();
-        started.resolve();
-        ended.resolve();
+        started.resolve(undefined);
+        ended.resolve(undefined);
         onEnd(cached);
     }
 

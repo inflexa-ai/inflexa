@@ -22,7 +22,7 @@
 
 import { join } from "node:path";
 
-import { defineTool, viewFields, viewJson, viewText, type AskRequest, type ToolError, type ViewFields } from "@inflexa-ai/harness";
+import { defineTool, viewFields, viewJson, viewText, type AskRequest, type Tool, type ToolError, type ViewFields } from "@inflexa-ai/harness";
 import type { Command } from "commander";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -327,7 +327,7 @@ function collectCapped(
 }
 
 /** Injectable process bounds for {@link spawnInflexa}; graces default to the real values, shrinkable in tests. */
-export interface SpawnBounds {
+export type SpawnBounds = {
     /**
      * Absolute ceiling on the run, however chatty the child is. Omitted means no ceiling, and then only
      * `idleTimeoutMs` and the caller's own signal can end the child — the shape a transfer command runs
@@ -338,7 +338,7 @@ export interface SpawnBounds {
     readonly idleTimeoutMs?: number;
     readonly flushGraceMs?: number;
     readonly killGraceMs?: number;
-}
+};
 
 /**
  * The real subprocess wrapper: spawn `cmd`, capture stdout/stderr memory-bounded,
@@ -467,7 +467,7 @@ function describeCommandSurface(): string {
 }
 
 /** Construction deps for {@link createRunInflexaTool}; every field defaults to the real host value, overridable in tests. */
-export interface RunInflexaToolDeps {
+export type RunInflexaToolDeps = {
     readonly runSubprocess?: RunSubprocess;
     readonly isDevelopment?: boolean;
     readonly execPath?: string;
@@ -475,14 +475,14 @@ export interface RunInflexaToolDeps {
     readonly timeoutMs?: number;
     readonly idleTimeoutMs?: number;
     readonly resolveAnalysisFolder?: ResolveAnalysisFolder;
-}
+};
 
 /**
  * Build the `run_inflexa` conversation tool. Defaults wire the real host: the
  * baked dev/release channel, this process's `bun`/binary path, the source entry
  * beside this module, and a real timeout-bounded spawn.
  */
-export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
+export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv: string[] }, RunInflexaResult> {
     const isDevelopment = deps.isDevelopment ?? env.isDevelopment;
     const execPath = deps.execPath ?? process.execPath;
     // This module lives at src/modules/harness/, so the CLI source entry is two levels up.

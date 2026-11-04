@@ -24,8 +24,8 @@ import { stringContaining } from "../../../test_support/matchers.ts";
 
 const storeBody = z.looseObject({
     transfers: z.array(z.looseObject({ kind: z.string() })),
-    flights: z.array(z.unknown()),
-    pendingAdds: z.array(z.unknown()),
+    flights: z.array(z.json()),
+    pendingAdds: z.array(z.json()),
 });
 const startsBody = z.looseObject({ starts: z.array(z.looseObject({ kind: z.string() })) });
 const linkBody = z.looseObject({ linked: z.array(z.string()), storeDirs: z.number() });

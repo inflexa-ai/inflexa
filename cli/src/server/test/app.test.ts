@@ -182,7 +182,7 @@ describe("the session cookie", () => {
 
     test("a cookie of an unknown session gives 401 with the message that names `inflexa gui`", async () => {
         const name = (await signIn(app, TOKEN)).split("=")[0];
-        const response = await app.request("/api/v1/server", { headers: { Cookie: `${name}=${"f".repeat(64)}` } });
+        const response = await app.request("/api/v1/server", { headers: { Cookie: `${present(name, "the cookie name")}=${"f".repeat(64)}` } });
         await expectUnauthorized(response, SIGN_IN_AGAIN);
     });
 

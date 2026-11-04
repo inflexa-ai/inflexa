@@ -134,11 +134,11 @@ test("the help of `server` lists its commands and not the hidden walk child", ()
     const server = program.commands.find((command) => command.name() === "server");
     expect(server).toBeDefined();
     if (server === undefined) return;
-    const visible = program
+    const visible: unknown = program
         .createHelp()
         .visibleCommands(server)
         .map((command) => command.name());
-    expect<unknown>(visible).toEqual(arrayContaining(["status", "stop", "logs"]));
+    expect(visible).toEqual(arrayContaining(["status", "stop", "logs"]));
     expect(visible).not.toContain("walk");
     expect(server.commands.map((command) => command.name())).toContain("walk");
 });

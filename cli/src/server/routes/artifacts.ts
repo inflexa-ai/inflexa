@@ -28,7 +28,7 @@ const PRES_ID_BODY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
 
 function isPresId(value: string): boolean {
     const body = value.slice("pres-".length);
-    return value.startsWith("pres-") && body !== "" && [...body].every((char) => PRES_ID_BODY_CHARS.includes(char));
+    return value.startsWith("pres-") && body !== "" && Array.from(body).every((char) => PRES_ID_BODY_CHARS.includes(char));
 }
 
 /** The harness mints each presentation id as `pres-` and a hex digest. The id names a file in the workspace, thus nothing else passes. */

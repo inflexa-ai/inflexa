@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 import { syntaxStyle, theme } from "../theme.ts";
 import { GLYPHS, space, stroke, MARKERS } from "../../lib/design_system.ts";
 import { Fg } from "./emphasis.tsx";
@@ -19,7 +20,7 @@ export type DiffBlockProps = {
  * the hunk rendered by the native `<diff>` renderable (its own +/− gutters and
  * tint), and the accept/reject/edit affordance line.
  */
-export function DiffBlock(props: DiffBlockProps) {
+export function DiffBlock(props: DiffBlockProps): JSX.Element {
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>

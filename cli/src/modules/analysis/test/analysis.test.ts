@@ -157,7 +157,7 @@ describe("createAnalysis makes the empty farm", () => {
 
         const lockPath = join(env.packageStoreDir, "farms", a.id, "inflexa.lock");
         expect(existsSync(lockPath)).toBe(true);
-        const lock = parsedJson(readFileSync(lockPath, "utf8"), z.object({ schema: z.number(), arch: z.string(), packages: z.array(z.unknown()) }));
+        const lock = parsedJson(readFileSync(lockPath, "utf8"), z.object({ schema: z.number(), arch: z.string(), packages: z.array(z.json()) }));
         expect(lock.schema).toBe(1);
         expect(lock.packages).toEqual([]);
     });

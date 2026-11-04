@@ -11,7 +11,7 @@ describe("parsedJson", () => {
     });
 
     test("gives the whole value for z.unknown()", () => {
-        expect(parsedJson('{"a":[1,"x",null]}', z.unknown())).toEqual({ a: [1, "x", null] });
+        expect(parsedJson('{"a":[1,"x",null]}', z.json())).toEqual({ a: [1, "x", null] });
     });
 
     test("throws an Error with the parse message for a malformed text", () => {

@@ -518,7 +518,8 @@ describe("report session flows", () => {
 
             expect(w.dialogs()).toBe(0);
             expect(w.opened).toEqual([]);
-            expect<unknown>(t.notices).toEqual([{ kind: "info", text: stringContaining("No analysis is open") }]);
+            const notices: unknown = t.notices;
+            expect(notices).toEqual([{ kind: "info", text: stringContaining("No analysis is open") }]);
         });
 
         test("a report session lists its siblings — the children of its parent", async () => {
@@ -917,7 +918,8 @@ describe("report session flows", () => {
 
             expect(t.requests).toEqual([]);
             expect(t.urls).toEqual([]);
-            expect<unknown>(t.notices).toEqual([{ kind: "info", text: stringContaining("No analysis is open") }]);
+            const notices: unknown = t.notices;
+            expect(notices).toEqual([{ kind: "info", text: stringContaining("No analysis is open") }]);
             expect(w.dialogs()).toBe(0);
             expect(w.opened).toEqual([]);
         });
@@ -930,7 +932,8 @@ describe("report session flows", () => {
             await openReportPage(w.ws, booting.opts);
             expect(booting.requests).toEqual([]);
             expect(booting.urls).toEqual([]);
-            expect<unknown>(booting.notices).toEqual([{ kind: "info", text: stringContaining("still booting") }]);
+            const bootingNotices: unknown = booting.notices;
+            expect(bootingNotices).toEqual([{ kind: "info", text: stringContaining("still booting") }]);
 
             __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
             const failed = pageOpts(GRANT);

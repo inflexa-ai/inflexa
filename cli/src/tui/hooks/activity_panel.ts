@@ -12,6 +12,7 @@ import { bootState } from "./boot.ts";
 import { notify, type NotifyOptions } from "./notice.ts";
 import { activeSubjects, refreshSidebarData, RUN_STATUS_TERMINAL, type PanelSubject } from "./sidebar_live.ts";
 import { isKnownPart } from "../../modules/harness/chat_printer.ts";
+import { present } from "../../lib/present.ts";
 
 // Which subject the activity panel is showing, whether it is dismissed, and what that subject is
 // doing right now — held here (not inside `app.tsx`) so the state is decoupled from its renderer, the
@@ -385,7 +386,7 @@ function unsettledLedgers(converged: CancelRunResult["converged"]): string[] {
 /** Join names as prose: "a", "a and b", "a, b, and c". */
 function joinNames(names: readonly string[]): string {
     if (names.length <= 2) return names.join(" and ");
-    return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+    return `${names.slice(0, -1).join(", ")}, and ${present(names.at(-1), "the last name")}`;
 }
 
 /**

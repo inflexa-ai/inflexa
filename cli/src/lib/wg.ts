@@ -7,12 +7,12 @@ export class WaitGroup {
     private work: Promise<unknown>[] = [];
 
     /** Track a single in-flight promise. */
-    public go(p: Promise<unknown>) {
+    public go(p: Promise<unknown>): void {
         this.work.push(p);
     }
 
     /** Fan out `workFn` over every item, tracking each returned promise. */
-    public goMany<T>(items: T[], workFn: (item: T) => Promise<unknown>) {
+    public goMany<T>(items: T[], workFn: (item: T) => Promise<unknown>): void {
         for (const item of items) {
             this.work.push(workFn(item));
         }

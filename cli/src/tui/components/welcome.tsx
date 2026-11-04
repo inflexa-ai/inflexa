@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space } from "../../lib/design_system.ts";
@@ -21,7 +22,7 @@ export type WelcomeProps = {
  * bottom hints. Purely presentational — the caller supplies anchor/greeting data
  * it has already read, so this block touches no disk (the no-litter rule).
  */
-export function Welcome(props: WelcomeProps) {
+export function Welcome(props: WelcomeProps): JSX.Element {
     return (
         <box flexDirection="column" paddingBottom={space.md}>
             <ascii_font text="inflexa" color={theme().accent} />

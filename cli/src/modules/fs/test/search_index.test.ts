@@ -74,11 +74,14 @@ function streamSpawner(bytes: Uint8Array, children: FakeChild[] = []): WalkSpawn
 /** A read that records each path, and that holds each path in `held` until the test or the cleanup releases it. */
 function recordingRead(held: ReadonlySet<string> = new Set()): { read: ReadEntries; reads: string[]; release: () => void } {
     const reads: string[] = [];
-    const gate = Promise.withResolvers<void>();
-    gates.push(gate.resolve);
+    const gate = Promise.withResolvers<undefined>();
+    const release = (): void => {
+        gate.resolve(undefined);
+    };
+    gates.push(release);
     return {
         reads,
-        release: gate.resolve,
+        release,
         read: async (path) => {
             reads.push(path);
             if (held.has(path)) await gate.promise;
@@ -342,7 +345,7 @@ describe("the walk", () => {
             kind,
             name.length,
             0,
-            ...[...name].map((c) => c.charCodeAt(0)),
+            ...Array.from(name).map((c) => c.charCodeAt(0)),
         ];
         const bytes = new Uint8Array([2, ...entry(0, 0, "a.csv"), ...entry(1, 0, "x")]);
         const result = await searchOk(cacheWith({}, streamSpawner(bytes, children)), root, "");

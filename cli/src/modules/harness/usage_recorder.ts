@@ -3,6 +3,7 @@ import type { LlmUsageRecord, NoticeFailure, Scope, UsageRecorder } from "@infle
 
 import type { DbError } from "../../db/errors.ts";
 import { upsertLlmUsage, type LlmUsageEntry } from "../../db/primary_mutation.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // The cli's realization of the harness `UsageRecorder` seam: one synchronous upsert into the local
 // SQLite ledger per completed LLM call. The harness names no storage — it emits records and the
@@ -109,7 +110,7 @@ export function createUsageRecorder(deps: UsageRecorderDeps = {}): UsageRecorder
                 reason: `usage ledger write failed for ${call.recordKey}: ${error.type}`,
             }));
         },
-        (cause): NoticeFailure => ({ reason: `usage ledger write threw: ${cause instanceof Error ? cause.message : "a non-Error value"}` }),
+        (cause): NoticeFailure => ({ reason: `usage ledger write threw: ${messageOf(cause)}` }),
     );
 
     return {

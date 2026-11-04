@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { fakeFetch } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { listEmbeddingModels } from "../api_models.ts";
 import { present } from "../../../lib/present.ts";
 import { awaitOk } from "../../../test_support/result.ts";
@@ -22,7 +22,7 @@ describe("listEmbeddingModels", () => {
         const spy: { calls: { url: string; auth: string | null }[] } = { calls: [] };
         // Test-only replacement of the global fetch; afterEach restores realFetch.
         globalThis.fetch = fakeFetch((input, init) => {
-            spy.calls.push({ url: String(input), auth: new Headers(init?.headers).get("Authorization") });
+            spy.calls.push({ url: fetchInputUrl(input), auth: new Headers(init?.headers).get("Authorization") });
             return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
         });
         return spy;

@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { Fg } from "./emphasis.tsx";
 
@@ -22,7 +23,7 @@ export type ReportSessionBlockProps = {
  * The second line names the kind. A title is seeded from the first message of the session, thus it
  * reads as a conversation title and says nothing about what the entry opens.
  */
-export function ReportSessionBlock(props: ReportSessionBlockProps) {
+export function ReportSessionBlock(props: ReportSessionBlockProps): JSX.Element {
     return (
         <box flexDirection="column" paddingBottom={space.sm} onMouseDown={() => props.onOpen()}>
             <text>

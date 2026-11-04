@@ -248,7 +248,9 @@ const DIMENSION_SAMPLE_CAP = 3;
 
 /** The dataset's classification — domain, subtype, organism — or `null` when the snapshot carries none. */
 function datasetLineOf(r: DataProfileResult): string | null {
-    const parts = [r.domain, r.subtype, r.organism?.scientificName].filter((part): part is string => typeof part === "string" && part.length > 0);
+    const parts = [r.domain, r.subtype, r.organism?.scientificName].filter(
+        (part: string | undefined): part is string => typeof part === "string" && part.length > 0,
+    );
     return parts.length === 0 ? null : parts.join(` ${GLYPHS.middot} `);
 }
 
@@ -278,7 +280,7 @@ function formatsOf(formats: DataProfileGroup["formats"]): string | null {
  */
 function groupLineOf(g: DataProfileGroup): string {
     const facts = [`${g.count} ${GLYPHS.multiply} ${g.memberRepresents}`, g.totalBytes.formatBytes(), formatsOf(g.formats), g.displayPattern].filter(
-        (fact): fact is string => fact !== null && fact.length > 0,
+        (fact: string | null): fact is string => fact !== null && fact.length > 0,
     );
     return `  ${g.unclassified === true ? `${GLYPHS.warning} ` : ""}${g.name} ${GLYPHS.emDash} ${facts.join(` ${GLYPHS.middot} `)}`;
 }

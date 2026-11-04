@@ -2,6 +2,7 @@ import { randomUUIDv7 } from "bun";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { present } from "../lib/present.ts";
 
 const cliRoot = join(import.meta.dir, "../..");
 
@@ -53,7 +54,7 @@ export async function lintScratch(snippets: readonly Snippet[], realPaths: reado
     for (const { scope } of snippets) {
         if (!scratchRoot.has(scope)) scratchRoot.set(scope, `${scope}/zz_oxlint_scratch_${randomUUIDv7()}`);
     }
-    const snippetPaths = snippets.map(({ scope, ext }) => `${scratchRoot.get(scope)}/${randomUUIDv7()}.${ext}`);
+    const snippetPaths = snippets.map(({ scope, ext }) => `${present(scratchRoot.get(scope), "the scratch folder of the scope")}/${randomUUIDv7()}.${ext}`);
     try {
         for (const dir of scratchRoot.values()) await mkdir(join(cliRoot, dir), { recursive: true });
         await Promise.all(snippets.map(({ text }, i) => writeFile(join(cliRoot, snippetPaths[i] ?? ""), text)));

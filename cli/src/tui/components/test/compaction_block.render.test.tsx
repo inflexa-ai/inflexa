@@ -36,7 +36,7 @@ describe("CompactionBlock", () => {
         expect(frame.endsWith(GLYPHS.lineHorizontal)).toBe(true);
         expect(frame).toContain(`Summarized earlier conversation ${GLYPHS.middot} 162.0k ${GLYPHS.arrowRight} 14.0k ${GLYPHS.middot} 21.0s`);
         expect(frame.split("\n")).toHaveLength(1);
-        expect([...frame]).toHaveLength(100);
+        expect(Array.from(frame)).toHaveLength(100);
     });
 
     test("names the drop and the two token figures of a failed compaction that dropped turns", async () => {
@@ -78,7 +78,7 @@ describe("CompactionBlock on a light theme", () => {
                 .filter((span) => span.text.trim().length > 0);
             expect(spans.length).toBeGreaterThan(0);
             for (const span of spans) {
-                const isLabel = [...span.text].some((char) => ASCII_LETTERS.includes(char));
+                const isLabel = Array.from(span.text).some((char) => ASCII_LETTERS.includes(char));
                 const expected = isLabel ? colors.fgMuted : colors.fgSubtle;
                 expect({ text: span.text.trim(), matches: parseColor(expected).equals(span.fg) }).toEqual({ text: span.text.trim(), matches: true });
             }

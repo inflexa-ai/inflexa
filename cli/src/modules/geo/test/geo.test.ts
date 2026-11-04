@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { FetchLike } from "../../../lib/download.ts";
-import { respondWith } from "../../../test_support/fake_fetch.ts";
+import { respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import {
     downloadGeoSeries,
     geoSeriesUrls,
@@ -228,7 +228,7 @@ function parentDirectory(pathname: string): string {
 function serveDirs(dirs: Record<string, readonly string[]>): FetchLike {
     return (input) =>
         Promise.try(() => {
-            const url = String(input);
+            const url = fetchInputUrl(input);
             const files = dirs[url];
             if (files === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
             return new Response(renderIndex(parentDirectory(new URL(url).pathname), files));
@@ -266,7 +266,7 @@ describe("resolveGeoArtifacts", () => {
     test("a suppl/ that persistently answers 403 is an empty directory, not a failed resolve", async () => {
         const fetchStub: FetchLike = (input) =>
             Promise.try(() => {
-                const url = String(input);
+                const url = fetchInputUrl(input);
                 if (url === u.supplDir) return new Response(REAL_FORBIDDEN_PAGE, { status: 403, statusText: "Forbidden" });
                 if (url === u.softDir) return new Response(renderIndex("/", [`${acc}_family.soft.gz`]));
                 return new Response("missing", { status: 404, statusText: "Not Found" });
@@ -279,7 +279,7 @@ describe("resolveGeoArtifacts", () => {
         let supplCalls = 0;
         const fetchStub: FetchLike = (input) =>
             Promise.try(() => {
-                const url = String(input);
+                const url = fetchInputUrl(input);
                 if (url === u.supplDir) {
                     supplCalls += 1;
                     if (supplCalls < 3) return new Response(REAL_FORBIDDEN_PAGE, { status: 403, statusText: "Forbidden" });
@@ -330,7 +330,7 @@ function serveSeries(
     for (const [dir, names] of Object.entries(dirFiles)) for (const name of names) bodies.set(`${dir}${encodeURIComponent(name)}`, `content:${name}`);
     return (input, init) =>
         Promise.try(() => {
-            const url = String(input);
+            const url = fetchInputUrl(input);
             const listing = dirFiles[url];
             if (listing !== undefined) return new Response(renderIndex("/", listing));
             const body = bodies.get(url);
@@ -404,7 +404,7 @@ describe("downloadGeoSeries", () => {
         const base = serveSeries("GSE12345", { soft: ["GSE12345_family.soft.gz"], suppl: ["GSE12345_counts.txt.gz"] });
         let gets = 0;
         const stub: FetchLike = async (input, init) => {
-            if (init?.method !== "HEAD" && String(input).endsWith(encodeURIComponent("GSE12345_counts.txt.gz"))) {
+            if (init?.method !== "HEAD" && fetchInputUrl(input).endsWith(encodeURIComponent("GSE12345_counts.txt.gz"))) {
                 gets += 1;
                 if (gets === 1) return new Response("shed", { status: 503, statusText: "Service Unavailable" });
             }
@@ -497,7 +497,7 @@ describe("downloadGeoSeries", () => {
         const u = geoSeriesUrls("GSE12345");
         const stub: FetchLike = (input, init) =>
             Promise.try(() => {
-                const url = String(input);
+                const url = fetchInputUrl(input);
                 if (url === u.softDir) return new Response(`<a href="-rf.txt">bad</a><a href="GSE12345_family.soft.gz">good</a>`);
                 if (url === `${u.softDir}GSE12345_family.soft.gz`) return new Response(init?.method === "HEAD" ? null : "soft");
                 return new Response("missing", { status: 404, statusText: "Not Found" });
@@ -524,7 +524,7 @@ describe("fetchGeo — connection hygiene", () => {
         let calls = 0;
         const stub: FetchLike = (input) =>
             Promise.try(() => {
-                if (String(input) !== u.softDir) return new Response("missing", { status: 404, statusText: "Not Found" });
+                if (fetchInputUrl(input) !== u.softDir) return new Response("missing", { status: 404, statusText: "Not Found" });
                 calls += 1;
                 if (calls > 1) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
                 // A discarded response still owns its socket until the body is drained or cancelled.
@@ -584,7 +584,7 @@ describe("downloadGeoSeries progress heartbeat", () => {
         const fileUrl = `${u.softDir}GSE12345_family.soft.gz`;
         const stub: FetchLike = (input, init) =>
             Promise.try(() => {
-                const url = String(input);
+                const url = fetchInputUrl(input);
                 if (url === u.softDir) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
                 if (url !== fileUrl) return new Response("missing", { status: 404, statusText: "Not Found" });
                 if (init?.method === "HEAD") return new Response(null, { headers: { "content-length": "30" } });
@@ -617,7 +617,7 @@ describe("downloadGeoSeries progress heartbeat", () => {
         const u = geoSeriesUrls("GSE12345");
         const stub: FetchLike = (input, init) =>
             Promise.try(() => {
-                const url = String(input);
+                const url = fetchInputUrl(input);
                 if (url === u.softDir) return new Response(renderIndex("/", ["GSE12345_family.soft.gz"]));
                 if (!url.endsWith("GSE12345_family.soft.gz")) return new Response("missing", { status: 404, statusText: "Not Found" });
                 if (init?.method === "HEAD") return new Response(null);
@@ -641,7 +641,7 @@ describe("measureGeoArtifacts", () => {
     test("sums declared sizes and counts the artifacts that declared none", async () => {
         const stub: FetchLike = (input) =>
             Promise.try(() => {
-                const url = String(input);
+                const url = fetchInputUrl(input);
                 if (url.endsWith("/sized.txt")) return new Response(null, { headers: { "content-length": "1500" } });
                 return new Response(null);
             });

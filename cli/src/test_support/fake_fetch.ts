@@ -16,3 +16,10 @@ export function fakeFetch(fake: (input: string | URL | Request, init?: RequestIn
 export function respondWith(body?: BodyInit | null, init?: ResponseInit): () => Promise<Response> {
     return () => Promise.try(() => new Response(body, init));
 }
+
+/** The URL text of the first argument of `fetch`, in each of its three forms: a string as itself, a `URL` as its `href`, and a `Request` as its `url`. */
+export function fetchInputUrl(input: string | URL | Request): string {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.href;
+    return input.url;
+}

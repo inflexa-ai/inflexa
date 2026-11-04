@@ -20,7 +20,7 @@ const fixtureSchema = z.object({
     chainHash: z.string(),
     signature: z.string(),
     publicKeyJwk: unknownRecordSchema,
-    events: z.array(z.unknown()),
+    events: z.array(z.json()),
     qnames: z.object({ file: z.string(), command: z.string(), modelAgent: z.string() }),
 });
 
@@ -70,16 +70,17 @@ const executionEvents = fixture.events.filter(
  */
 function normalizeBlankIds(json: string): Record<string, Record<string, unknown>> {
     const parsed = parsedJson(json, sectionsSchema);
-    for (const section of Object.values(parsed)) {
-        const blanks = Object.keys(section).filter((k) => k.startsWith("_:"));
-        for (const key of blanks) {
-            const record = section[key];
-            delete section[key];
-            section[`_:${JSON.stringify(record)}`] = record;
-        }
-        expect(Object.keys(section).filter((k) => k.startsWith("_:")).length).toBe(blanks.length);
-    }
-    return parsed;
+    return Object.fromEntries(
+        Object.entries(parsed).map(([name, section]): [string, Record<string, unknown>] => {
+            const kept = Object.entries(section).filter(([key]) => !key.startsWith("_:"));
+            const blanks = Object.entries(section)
+                .filter(([key]) => key.startsWith("_:"))
+                .map(([, record]): [string, unknown] => [`_:${JSON.stringify(record)}`, record]);
+            const rekeyed = Object.fromEntries([...kept, ...blanks]);
+            expect(Object.keys(rekeyed).filter((k) => k.startsWith("_:")).length).toBe(blanks.length);
+            return [name, rekeyed];
+        }),
+    );
 }
 
 describe("kernel adoption — continuity against the pre-kernel fixture", () => {
@@ -144,7 +145,7 @@ describe("kernel adoption — continuity against the pre-kernel fixture", () => 
         // omits the attribute. Existing documents keep the old value (previous test); new ones
         // never carry it.
         expect(cmd["inflexa:args"]).toBeUndefined();
-        const original: unknown = parsedJson(fixture.document, z.unknown());
+        const original: unknown = parsedJson(fixture.document, z.json());
         expect(original).toMatchObject({ activity: { [fixture.qnames.command]: { "inflexa:args": "" } } });
     });
 });

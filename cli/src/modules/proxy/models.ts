@@ -2,6 +2,7 @@ import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
 import { env } from "../../lib/env.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // CLIProxyAPI (provisioned by `inflexa setup`) exposes an OpenAI-compatible endpoint that routes to
 // whichever provider was authenticated. These helpers cover the proxy-endpoint concerns a model caller
@@ -166,7 +167,7 @@ export async function listModelCandidates(apiKey: string, signal?: AbortSignal):
     try {
         res = await fetch(`${env.cliproxyApiUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}` }, signal });
     } catch (cause) {
-        return err({ type: "proxy_unreachable", detail: cause instanceof Error ? cause.message : String(cause) });
+        return err({ type: "proxy_unreachable", detail: messageOf(cause) });
     }
     // A 503 carrying the proxy's `auth_unavailable` cooldown marker is a temporary all-credential block
     // that recovers on its own — a distinct condition from an outage, surfaced as its own error so the

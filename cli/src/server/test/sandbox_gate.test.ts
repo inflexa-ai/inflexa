@@ -22,6 +22,7 @@ import {
     type SandboxReadinessOpts,
 } from "../sandbox_gate.ts";
 import { anyOf } from "../../test_support/matchers.ts";
+import { present } from "../../lib/present.ts";
 
 /** One transfer report as `readTransferReports` gives it, with everything else quiet. */
 function report(kind: TransferKind, state: TransferStatus | null, live: boolean, message: string | null = null): TransferReport {
@@ -154,7 +155,7 @@ describe("a readiness read leaves the farm failure for the gate", () => {
             expect((await read()).farm.failure).toBe(first);
 
             const gate = opts({ readiness: read, readFarmFailure: takeFarmCompositionFailure });
-            expect(await sandboxRefusal(analysisId, gate)).toContain(`could not be composed: ${first}`);
+            expect(await sandboxRefusal(analysisId, gate)).toContain(`could not be composed: ${present(first, "the farm failure")}`);
             expect((await read()).farm.failure).toBeNull();
         } finally {
             rmSync(storeRoot, { recursive: true, force: true });
@@ -169,8 +170,8 @@ describe("readMachineSandboxReadiness", () => {
     };
 
     test("gives the image, the store, and the catalog farm of the machine from the replaced reads", async () => {
-        const machineRead = await readMachineSandboxReadiness(readOpts);
-        expect<unknown>(machineRead).toEqual({
+        const machineRead: unknown = await readMachineSandboxReadiness(readOpts);
+        expect(machineRead).toEqual({
             image: { state: "absent", image: anyOf(String) },
             store: "incomplete",
             catalogFarmPresent: false,

@@ -2,13 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 
 import { awaitOk } from "../result.ts";
+import { errorOf } from "../../lib/cause.ts";
 
 async function rejection(call: Promise<unknown>): Promise<Error> {
     try {
         await call;
     } catch (thrown) {
         expect(thrown).toBeInstanceOf(Error);
-        if (thrown instanceof Error) return thrown;
+        const error = errorOf(thrown);
+        if (error !== undefined) return error;
     }
     throw new Error("the call did not reject with an Error");
 }

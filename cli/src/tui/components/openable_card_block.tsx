@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { Bold, Fg, Underline } from "./emphasis.tsx";
@@ -48,7 +49,7 @@ export type OpenableCardBlockProps = {
  * The title needs its own `fg` role because opentui's text renderable defaults to opaque white and `<Bold>`
  * sets an attribute only — an unpainted bold title is invisible against a light theme's background.
  */
-export function OpenableCardBlock(props: OpenableCardBlockProps) {
+export function OpenableCardBlock(props: OpenableCardBlockProps): JSX.Element {
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <Show when={props.title}>
@@ -68,9 +69,7 @@ export function OpenableCardBlock(props: OpenableCardBlockProps) {
                             <text>
                                 <Fg role={row.degraded ? "error" : "accent"}>{`${row.degraded ? GLYPHS.cross : GLYPHS.arrowUpRight} `}</Fg>
                                 <Fg role={row.degraded ? "fgMuted" : "fg"}>{row.name}</Fg>
-                                <Show when={row.caption}>
-                                    <Fg role="fgMuted">{` ${GLYPHS.middot} ${row.caption}`}</Fg>
-                                </Show>
+                                <Show when={row.caption}>{(caption) => <Fg role="fgMuted">{` ${GLYPHS.middot} ${caption()}`}</Fg>}</Show>
                             </text>
                             <text paddingLeft={space.md}>
                                 <Fg role={row.degraded ? "error" : "fgMuted"}>

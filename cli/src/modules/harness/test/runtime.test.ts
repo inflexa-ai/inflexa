@@ -26,7 +26,7 @@ import { env } from "../../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../../lib/credential.ts";
 import { instanceLockPath } from "../../../lib/lock.ts";
 import { claimStoreFlight, deleteStoreFlight } from "../../../db/primary_mutation.ts";
-import { fakeFetch, respondWith } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     bootHarnessRuntime,
@@ -131,8 +131,8 @@ function recordingSeams(calls: string[]): BootSeams {
             // bus-adapter artifact registry (its `register`/`sync` translate a step's
             // artifacts into `prov.*` events).
             expect(workflows.sandboxStep.buildAgent).toBeInstanceOf(Function);
-            expect(workflows.sandboxStep.artifactRegistry.register).toBeInstanceOf(Function);
-            expect(workflows.sandboxStep.artifactRegistry.sync).toBeInstanceOf(Function);
+            expect(typeof workflows.sandboxStep.artifactRegistry.register).toBe("function");
+            expect(typeof workflows.sandboxStep.artifactRegistry.sync).toBe("function");
             // The parent builder receives the registered child callable and wires the
             // bridge's provenance seam, whose run emit is the optional run-lifecycle observer
             //. Exercise it with a stand-in child callable.
@@ -149,13 +149,13 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.dataProfile.resolveWorkspaceRoot).toBe(conversation.resolveWorkspaceRoot);
             expect(workflows.dataProfile.skillsDir).toBe(skillsDir);
             expect(workflows.dataProfile.embedding.dimensions).toBe(1536);
-            expect(workflows.dataProfile.embedding.embed).toBeInstanceOf(Function);
+            expect(typeof workflows.dataProfile.embedding.embed).toBe("function");
             expect(conversation.utilityProvider).toBeDefined();
             expect(conversation.utilityModel).toBeDefined();
             // The conversation bundle carries the local realizations: the configured
             // skills tree, and the shared launcher.
             expect(conversation.skillsDir).toBe(skillsDir);
-            expect(conversation.runLauncher.launch).toBeInstanceOf(Function);
+            expect(typeof conversation.runLauncher.launch).toBe("function");
             // The Logger seam reaches every conversation tool that takes one — `generate_plan`
             // above all, which drives a whole sub-agent loop and writes no ledger row, so its
             // records are the only account of an invocation. `ConversationAgentDeps.logger` is
@@ -164,7 +164,7 @@ function recordingSeams(calls: string[]): BootSeams {
             // is how a planner failing for nine minutes produced an empty log, and this
             // assertion is what makes the omission fail loudly instead.
             expect(conversation.logger).toBeDefined();
-            expect(conversation.logger?.named).toBeInstanceOf(Function);
+            expect(typeof conversation.logger?.named).toBe("function");
             // The embedder hands the harness its skills root and its own no-op
             // telemetry (the CLI owns OTel); the boot handle owns skills validation,
             // state init, the connection budget, assemble, and launch itself.
@@ -317,8 +317,8 @@ describe("bootHarnessRuntime", () => {
         const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }))._unsafeUnwrap();
 
         expect(runtime.runTriggerDeps.executeAnalysis).toBeInstanceOf(Function);
-        expect(runtime.runTriggerDeps.runLauncher.launch).toBeInstanceOf(Function);
-        expect(runtime.runTriggerDeps.runAuthorizer.authorize).toBeInstanceOf(Function);
+        expect(typeof runtime.runTriggerDeps.runLauncher.launch).toBe("function");
+        expect(typeof runtime.runTriggerDeps.runAuthorizer.authorize).toBe("function");
         // Same pool the ledger queries run against — mirrors triggerDeps.
         expect(runtime.runTriggerDeps.pool).toBe(runtime.pool);
     });
@@ -893,7 +893,7 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
         await awaitOk(bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }));
 
         const core = lastCore;
-        expect(core?.usageRecorder?.record).toBeInstanceOf(Function);
+        expect(typeof core?.usageRecorder?.record).toBe("function");
         // Each bag the cohort registers — the conversation agent's, both run-engine workflows', and the
         // data profile's — arrives WITHOUT a recorder of its own, so the one on `core` is the only thing
         // any of them can be stamped with.
@@ -962,7 +962,7 @@ describe("bootHarnessRuntime — the web-search engine", () => {
         let requested: string | undefined;
         const answer = respondWith("{}", { status: 200, headers: { "content-type": "application/json" } });
         globalThis.fetch = fakeFetch((url) => {
-            requested = String(url);
+            requested = fetchInputUrl(url);
             return answer();
         });
         try {

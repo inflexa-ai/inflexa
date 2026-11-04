@@ -479,10 +479,9 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                     when={flat().length > 0}
                     fallback={<text fg={props.errorText ? theme().warning : theme().fgMuted}>{props.errorText ?? props.emptyText}</text>}
                 >
-                    {/* strategy is fixed per wrapper (never changes after mount), so a plain ternary
-                        — not a <Show> — picks the loop component once. */}
                     {/* oxlint-disable solid/reactivity -- false positives on the loop callbacks: For's `item` is a per-node constant (thunked deliberately so renderRow gets one accessor shape), and Index's `item` IS the accessor renderRow tracks */}
-                    {props.strategy === "for" ? (
+                    {/* The strategy is fixed per wrapper (it never changes after mount), so the condition never flips and the loop component mounts one time. */}
+                    <Show when={props.strategy === "for"} fallback={<Index each={flat()}>{(item, i) => renderRow(item, () => `${lid}-slot-${i}`)}</Index>}>
                         <For each={flat()}>
                             {(item) =>
                                 renderRow(
@@ -491,9 +490,7 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                                 )
                             }
                         </For>
-                    ) : (
-                        <Index each={flat()}>{(item, i) => renderRow(item, () => `${lid}-slot-${i}`)}</Index>
-                    )}
+                    </Show>
                     {/* oxlint-enable solid/reactivity */}
                 </Show>
             </ScrollPane>

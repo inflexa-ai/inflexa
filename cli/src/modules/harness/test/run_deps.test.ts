@@ -25,6 +25,7 @@ import type { StampedEvent } from "../../../types/events.ts";
 import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "../prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "../run_deps.ts";
 import { present } from "../../../lib/present.ts";
+import { errorOf } from "../../../lib/cause.ts";
 
 // All factories below construct lazily (pg pools connect on first query; the
 // SDK clients open no socket at construction), so the whole module builds
@@ -342,7 +343,7 @@ describe("buildSandboxStepDeps", () => {
             (e: unknown) => e,
         );
         expect(thrown).toBeInstanceOf(Error);
-        const message = thrown instanceof Error ? thrown.message : "";
+        const message = errorOf(thrown)?.message ?? "";
         expect(message).toContain('unknown sandbox agent id "not-a-real-agent"');
         // Every known catalog id is listed for the operator.
         for (const id of Object.keys(SANDBOX_AGENT_META)) {

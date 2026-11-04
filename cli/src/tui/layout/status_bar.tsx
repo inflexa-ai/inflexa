@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
@@ -43,7 +44,7 @@ function toneColor(tone: StatusTone): string {
  * state region, and right-aligned affordance hints. Composed by both the chat (`app.tsx`) and
  * the config screen. Imports only `theme`, so every region recolors live on a theme switch.
  */
-export function StatusBar(props: StatusBarProps) {
+export function StatusBar(props: StatusBarProps): JSX.Element {
     return (
         <box height={1} width="100%" flexDirection="row" backgroundColor={theme().bgRaised} paddingLeft={1} paddingRight={1}>
             <text fg={theme().accent}>

@@ -14,6 +14,7 @@ import { z } from "zod";
 import { err, ok, type Result } from "neverthrow";
 
 import { trimTrailing } from "../../lib/text.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /** The OpenAI-compatible `/models` payload; only `id` is load-bearing for the picker. */
 const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
@@ -80,7 +81,7 @@ export async function listEmbeddingModels(baseURL: string, apiKey: string, signa
     try {
         res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` }, signal });
     } catch (cause) {
-        return err({ type: "unreachable", detail: cause instanceof Error ? cause.message : String(cause) });
+        return err({ type: "unreachable", detail: messageOf(cause) });
     }
     if (!res.ok) return err({ type: "http_error", status: res.status });
     // jsonWith yields null (never throws) on an unparseable or schema-mismatched body.

@@ -31,7 +31,7 @@ const listBody = z.looseObject({
         z.looseObject({ path: z.string(), role: z.string(), kind: z.string().nullable(), language: z.string(), absolutePath: z.string().nullable() }),
     ),
     total: z.number(),
-    extensionCounts: z.array(z.unknown()),
+    extensionCounts: z.array(z.json()),
 });
 
 const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z" } as const;

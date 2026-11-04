@@ -482,7 +482,7 @@ describe("send() drives the adapter over the turn stream", () => {
             void emit({ type: "data-plan", source: ROOT, data: { id: "plan-card-1", planId: "pln-00000001", title: "DE analysis", steps: [PLAN_STEP] } });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
-        const part = requirePart((p): p is PlanPart => p.type === "data-plan");
+        const part = requirePart((p: Part): p is PlanPart => p.type === "data-plan");
         // The source of a frame routes the frame, and it is not a field of the part.
         expect(part).toEqual({ type: "data-plan", id: "plan-card-1", planId: "pln-00000001", title: "DE analysis", steps: [PLAN_STEP] });
         const plan = readPlanCard(part);
@@ -503,7 +503,7 @@ describe("send() drives the adapter over the turn stream", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
-        const run = requirePart((p): p is RunCardPart => p.type === "data-run-card");
+        const run = requirePart((p: Part): p is RunCardPart => p.type === "data-run-card");
         expect(run.runId).toBe("run-1");
         expect(run.title).toBe("DE run");
         expect(run.stepCount).toBe(3);
@@ -522,7 +522,7 @@ describe("send() drives the adapter over the turn stream", () => {
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
         expect(messages[1]?.parts.map((p) => p.type)).toEqual(["text", "data-run-card"]);
-        expect(requirePart((p): p is RunCardPart => p.type === "data-run-card").runId).toBe("run-2");
+        expect(requirePart((p: Part): p is RunCardPart => p.type === "data-run-card").runId).toBe("run-2");
     });
 
     test("an unknown data part stays in the transcript, not swallowed", async () => {
@@ -543,7 +543,7 @@ describe("send() drives the adapter over the turn stream", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
-        const view = readPresentation(requirePart((p): p is PresentationPart => p.type === "data-presentation"));
+        const view = readPresentation(requirePart((p: Part): p is PresentationPart => p.type === "data-presentation"));
         expect(view).toEqual({ shape: "inline", title: "Finding", body: { kind: "markdown", body: "**TP53** up" } });
     });
 
@@ -576,7 +576,7 @@ describe("send() drives the adapter over the turn stream", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
-        const view = readFileReference(requirePart((p): p is FileReferencePart => p.type === "data-file-reference"));
+        const view = readFileReference(requirePart((p: Part): p is FileReferencePart => p.type === "data-file-reference"));
         expect(view.entries.length).toBe(2);
         expect(view.entries[0]?.name).toBe("a.png");
         expect(view.entries[1]?.caption).toBe("heatmap");
@@ -598,7 +598,7 @@ describe("send() drives the adapter over the turn stream", () => {
             });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
-        expect(findPart((p): p is PlanPart => p.type === "data-plan")).toBeUndefined();
+        expect(findPart((p: Part): p is PlanPart => p.type === "data-plan")).toBeUndefined();
         expect(findPart(isToolCall)).toBeUndefined();
         // The top-level delta still flushed.
         const part = messages[1]?.parts[0];
@@ -987,7 +987,7 @@ describe("watchPausedTurn reads a paused turn that this client does not stream",
 describe("send() handles data-ask parts: reconcile-by-id + the pending-asks store", () => {
     /** Every ask-card part on the assistant message, in mounted order. */
     function askCards(): LiveAskPart[] {
-        return (messages[1]?.parts ?? []).filter((p): p is LiveAskPart => p.type === "data-ask");
+        return (messages[1]?.parts ?? []).filter((p: Part): p is LiveAskPart => p.type === "data-ask");
     }
 
     test("pending then resolved under one id reconciles to ONE card with the updated status", async () => {
@@ -1108,7 +1108,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
 
 describe("send() handles data-compaction parts: one part updated in place by its id", () => {
     function compactionParts(): CompactionPart[] {
-        return (messages[1]?.parts ?? []).filter((p): p is CompactionPart => p.type === "data-compaction");
+        return (messages[1]?.parts ?? []).filter((p: Part): p is CompactionPart => p.type === "data-compaction");
     }
 
     test("running then done under one id gives one compaction part with the status and the figures of the second emission", async () => {
@@ -1221,7 +1221,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
 
-        const textParts = (messages[1]?.parts ?? []).filter((p): p is LiveTextPart => p.type === "text");
+        const textParts = (messages[1]?.parts ?? []).filter((p: Part): p is LiveTextPart => p.type === "text");
         // Two DISTINCT text parts — the pre-card prose and the post-card prose never merged.
         expect(textParts.map((p) => p.text)).toEqual(["before", "after"]);
         expect(textParts[0]?.key).not.toBe(textParts[1]?.key);

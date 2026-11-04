@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, on } from "solid-js";
+import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { theme } from "../theme.ts";
@@ -29,7 +30,7 @@ export type ChatProps = {
     onScrollPaneRef: (r: ScrollBoxRenderable) => void;
 };
 
-export function Chat(props: ChatProps) {
+export function Chat(props: ChatProps): JSX.Element {
     const ws = useWorkspace();
 
     // The report sessions of the open thread. The store (`hooks/report_children.ts`) owns the read and
