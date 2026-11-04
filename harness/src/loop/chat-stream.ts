@@ -41,14 +41,17 @@ const HarnessFrameChunkSchema = z.object({
     data: z.looseObject({ type: z.string() }),
 });
 
-/** The chunk that carries one frame of the harness in the stream of a turn. A transient chunk is live only. */
+/**
+ * The chunk that carries one frame of the harness in the stream of a turn. A transient chunk is in the stream, and
+ * a reader gets it. A replay of the step does not write it again, and the stored transcript does not hold it.
+ */
 export function chunkOfFrame(frame: ChatFrame, transient = false): UIMessageChunk {
     return transient ? { type: HARNESS_FRAME_CHUNK, data: frame, transient: true } : { type: HARNESS_FRAME_CHUNK, data: frame };
 }
 
 /**
- * Whether a frame from a tool step shows progress only. The library gives such a frame live, and a replay of the
- * step does not give it again. Each other frame of a tool step is checkpointed with the step, and the display of a
+ * Whether a frame from a step shows progress only. Such a frame goes to the stream at once, and a replay of the step
+ * does not write it again. Each other frame of a tool step is checkpointed with the step, and the display of a
  * round that a recovery stores keeps it: the end of each call, and each part of the root agent.
  */
 function isProgressFrame(frame: ChatFrame): boolean {
@@ -69,18 +72,31 @@ export type TurnStreamWriter = {
 };
 
 /**
- * Run each body write of one workflow after the body write before it ends.
+ * Run each body write of one workflow after the body write before it ends, and each step write after the step write
+ * before it ends.
  *
  * DBOS gives a stream write its offset inside the insert, thus two writes in flight take the same offset, and the
  * write that loses sleeps 100 ms before it tries again. A body write must still take its function id at the call,
  * because a replay finds each checkpoint by the order of the calls. Thus the call reserves its id now, and the
- * chained write takes the reserved id from the context of the workflow when it starts.
+ * chained write takes the reserved id from the context of the workflow when it starts. A step write takes no
+ * function id, thus its chain reserves none.
  */
-function chainBodyWrites(): (start: () => Promise<void>) => Promise<void> {
-    let tail: Promise<void> = Promise.resolve();
+function chainWrites(): (start: () => Promise<void>) => Promise<void> {
+    let bodyTail: Promise<void> = Promise.resolve();
+    let stepTail: Promise<void> = Promise.resolve();
+    const ended = (write: Promise<void>): Promise<void> =>
+        write.then(
+            () => undefined,
+            () => undefined,
+        );
     return (start) => {
+        if (DBOS.isInStep()) {
+            const write = stepTail.then(start, start);
+            stepTail = ended(write);
+            return write;
+        }
         const ctx = getCurrentContextStore();
-        if (ctx === undefined || !DBOS.isInWorkflow() || DBOS.isInStep()) return start();
+        if (ctx === undefined || !DBOS.isInWorkflow()) return start();
         const reserved = functionIDGetIncrement();
         const run = (): Promise<void> => {
             // A continuation keeps the async context of its call, thus DBOS reads the id from this same context.
@@ -94,11 +110,8 @@ function chainBodyWrites(): (start: () => Promise<void>) => Promise<void> {
                 ctx.curWFFunctionId = next;
             }
         };
-        const write = tail.then(run, run);
-        tail = write.then(
-            () => undefined,
-            () => undefined,
-        );
+        const write = bodyTail.then(run, run);
+        bodyTail = ended(write);
         return write;
     };
 }
@@ -112,7 +125,7 @@ function chainBodyWrites(): (start: () => Promise<void>) => Promise<void> {
  */
 export function createTurnStreamWriter(rootSource: EventSource, observe: (frame: ChatFrame) => void): TurnStreamWriter {
     const pending: Promise<void>[] = [];
-    const chained = chainBodyWrites();
+    const chained = chainWrites();
     const track = (write: Promise<void>): void => {
         // Observed now, thus a failure before the settle is not an unhandled rejection. The settle still sees it.
         write.catch(() => undefined);
@@ -143,10 +156,13 @@ export function createTurnStreamWriter(rootSource: EventSource, observe: (frame:
     const emit: EmitFn = async (event) => {
         const frame = toChatFrame(event, rootSource);
         if (frame === null) return;
-        // A tool step gives its frames to the library, which checkpoints each one that is not progress.
         if (DBOS.isInStep()) {
             const liveOnly = "transient" in event && event.transient === true;
-            toolWriter().write(chunkOfFrame(frame, liveOnly || isProgressFrame(frame)));
+            const transient = liveOnly || isProgressFrame(frame);
+            // A model step has no library writer, and a transient chunk is not checkpointed with its step. Thus the
+            // chunk goes straight to the stream. The library checkpoints each other frame with its tool step.
+            if (transient) writer.write(chunkOfFrame(frame, true));
+            else toolWriter().write(chunkOfFrame(frame));
             return;
         }
         await write(frame);

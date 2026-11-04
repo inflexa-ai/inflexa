@@ -86,6 +86,32 @@ const concurrentWritesWorkflow = DBOS.registerWorkflow(
     { name: "chat-stream-concurrent-writes" },
 );
 
+const RETRY_ATTEMPTS = Array.from({ length: 12 }, (_, index) => index + 1);
+
+/** One step that emits the retry parts of a request in one tick, with no wait between the emits. */
+const stepEmitsWorkflow = DBOS.registerWorkflow(
+    async (): Promise<void> => {
+        const writer = createTurnStreamWriter(ROOT, () => undefined);
+        await DBOS.runStep(
+            async () => {
+                const emits = RETRY_ATTEMPTS.map((attempt) =>
+                    writer.emit({
+                        type: "data-model-retry",
+                        source: ROOT,
+                        data: { id: "request-1", attempt, maxRetries: RETRY_ATTEMPTS.length, retryAt: "2026-01-01T00:00:00.000Z" },
+                    }),
+                );
+                await Promise.all(emits);
+            },
+            { name: "emit-retries" },
+        );
+        await writer.write({ type: "finish", source: ROOT, finishReason: "stop" });
+        await writer.settle();
+        await closeDurableStream(CHAT_STREAM_KEY, "stop");
+    },
+    { name: "chat-stream-step-emits" },
+);
+
 let parked = false;
 let attempts = 0;
 
@@ -219,6 +245,14 @@ describe("the durable stream of a chat turn", () => {
         expect(frames.map((frame) => (frame.type === "tool-started" ? frame.toolUseId : frame.type))).toEqual([...STARTED_IDS, "finish"]);
         const steps = (await DBOS.listWorkflowSteps(turnId)) ?? [];
         expect(steps.slice(0, 4).map((step) => step.name)).toEqual(["DBOS.writeStream", "DBOS.writeStream", "DBOS.writeStream", "after-writes"]);
+    });
+
+    it("writes the frames that a step emits in one tick in the order of the emits", async () => {
+        const turnId = rig.nextWorkflowId("chat-stream-step-emits-");
+        await (await DBOS.startWorkflow(stepEmitsWorkflow, { workflowID: turnId })()).getResult();
+
+        const frames = await readAll(turnId);
+        expect(frames.map((frame) => (frame.type === "data-model-retry" ? frame.attempt : frame.type))).toEqual([...RETRY_ATTEMPTS, "finish"]);
     });
 
     it("shows the text of the second attempt only, after a crash during a reply", async () => {

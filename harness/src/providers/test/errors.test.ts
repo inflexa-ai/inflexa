@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
-import { classifyProviderError, extractStatus, findSuspendError, isProviderError, RequestTimeoutError, toProviderError } from "../errors.js";
+import { APICallError } from "@ai-sdk/provider";
+
+import { classifyProviderError, extractStatus, findSuspendError, isProviderError, modelFailureOf, RequestTimeoutError, toProviderError } from "../errors.js";
 import { presentAt } from "../../lib/present.js";
 
 /** Build a synthetic API error carrying an HTTP status, SDK-shaped. */
@@ -114,6 +116,28 @@ describe("classifyProviderError", () => {
             kind: "provider",
             retryable: true,
         });
+    });
+
+    // The shape that Bun gives when nothing listens at the endpoint: the AI SDK wraps a fetch TypeError whose code is
+    // not a Node code, and the error has no status.
+    it("classifies a connection that Bun refuses as a retryable provider error, and its failure as an outage", () => {
+        const refused = new APICallError({
+            message: "Cannot connect to API: Unable to connect. Is the computer able to access the url?",
+            url: "http://127.0.0.1:8181/v1/messages",
+            requestBodyValues: {},
+            isRetryable: true,
+            cause: Object.assign(new TypeError("Unable to connect. Is the computer able to access the url?"), { code: "ConnectionRefused" }),
+        });
+        expect(classifyProviderError(refused)).toEqual({ kind: "provider", retryable: true });
+        expect(modelFailureOf(toProviderError(refused, "a test call"))).toEqual({ kind: "outage" });
+    });
+
+    it("classifies a connection that Bun resets as a retryable provider error", () => {
+        const reset = Object.assign(
+            new TypeError("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
+            { code: "ECONNRESET" },
+        );
+        expect(classifyProviderError(reset)).toEqual({ kind: "provider", retryable: true });
     });
 
     it("classifies 400 as a non-retryable provider error", () => {
