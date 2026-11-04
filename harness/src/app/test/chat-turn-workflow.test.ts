@@ -4,6 +4,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { APICallError } from "@ai-sdk/provider";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
@@ -486,6 +487,108 @@ describe("a chat turn as a workflow", () => {
                 end: "resume",
             },
         ]);
+    }, 30_000);
+
+    it("waits in retrying with the cause outage when Bun refuses the connection to the model", async () => {
+        const refused = new APICallError({
+            message: "Cannot connect to API: Unable to connect. Is the computer able to access the url?",
+            url: "http://127.0.0.1:8181/v1/messages",
+            requestBodyValues: {},
+            isRetryable: true,
+            cause: Object.assign(new TypeError("Unable to connect. Is the computer able to access the url?"), { code: "ConnectionRefused" }),
+        });
+        const scripted = scriptedModel([{ fail: refused }, { fail: refused }], { maxRetries: 1 });
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+
+        expect(await pausedWorkOf(turnId)).toMatchObject({ waiting: [{ workflowId: turnId, state: "retrying", cause: { kind: "outage" } }] });
+        expect(scripted.calls).toHaveLength(2);
+        await turns.stop(turnId);
+        await DBOS.retrieveWorkflow(turnId).getResult();
+        expect(await turnRecords(threadId)).toEqual([{ status: "aborted", reason: null }]);
+    }, 30_000);
+
+    it("gives each reader the retry parts of a model request, and stores none of them", async () => {
+        const unavailable = () =>
+            new APICallError({
+                message: "HTTP 503",
+                url: "https://models.example/v1/messages",
+                requestBodyValues: {},
+                statusCode: 503,
+                responseHeaders: { "retry-after-ms": "10" },
+            });
+        const gate = () => {
+            let open = () => {};
+            const opened = new Promise<void>((resolve) => (open = resolve));
+            return { opened, open };
+        };
+        // A gate that never opens ends the wait, thus a missing retry part fails an assertion and does not hang the file.
+        const held = async (...gates: { opened: Promise<void> }[]): Promise<void> => {
+            await Promise.race([Promise.all(gates.map((candidate) => candidate.opened)), Bun.sleep(5_000)]);
+        };
+        const firstHasFrame = gate();
+        const secondHasFrame = gate();
+        const firstHasRetry2 = gate();
+        const secondHasRetry2 = gate();
+        provider = scriptedModel(
+            [
+                async () => {
+                    await held(firstHasFrame);
+                    return { fail: unavailable() };
+                },
+                async () => {
+                    await held(secondHasFrame);
+                    return { fail: unavailable() };
+                },
+                async () => {
+                    await held(firstHasRetry2, secondHasRetry2);
+                    return reply([text("back")]);
+                },
+            ],
+            { maxRetries: 2 },
+        ).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+        const retriesSeen = (frames: readonly ChatFrame[]) => frames.filter((frame) => frame.type === "data-model-retry").length;
+        const readerOf = async (turnId: string, onFrame: (frames: readonly ChatFrame[]) => void): Promise<ChatFrame[]> => {
+            const frames: ChatFrame[] = [];
+            for await (const frame of turns.read(turnId)) {
+                frames.push(frame);
+                onFrame(frames);
+            }
+            return frames;
+        };
+
+        const turnId = await startTurn(threadId);
+        let second: Promise<ChatFrame[]> | undefined;
+        const first = readerOf(turnId, (frames) => {
+            firstHasFrame.open();
+            if (retriesSeen(frames) >= 1 && second === undefined) {
+                second = readerOf(turnId, (secondFrames) => {
+                    secondHasFrame.open();
+                    if (retriesSeen(secondFrames) >= 2) secondHasRetry2.open();
+                });
+            }
+            if (retriesSeen(frames) >= 2) firstHasRetry2.open();
+        });
+        const firstFrames = await first;
+        const secondFrames = (await second) ?? [];
+
+        const retryParts = (frames: readonly ChatFrame[]) =>
+            frames.filter((frame) => frame.type === "data-model-retry").map((frame) => ("data" in frame ? frame.data : frame));
+        for (const frames of [firstFrames, secondFrames]) {
+            const parts = retryParts(frames);
+            expect(parts).toMatchObject([
+                { attempt: 1, maxRetries: 2, status: 503 },
+                { attempt: 2, maxRetries: 2, status: 503 },
+            ]);
+            const ids = parts.map((part) => z.object({ id: z.string().min(1) }).parse(part).id);
+            expect(ids[1]).toBe(ids[0]);
+            expect(textOf(frames)).toBe("back");
+        }
+        const stored = await transcriptOf(threadId);
+        expect(stored.flatMap((message) => message.parts.filter((part) => part.type === "data-model-retry"))).toEqual([]);
     }, 30_000);
 
     it("closes a paused turn as aborted on a stop, and frees its thread", async () => {

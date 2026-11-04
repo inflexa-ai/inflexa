@@ -264,9 +264,10 @@ export type ProviderErrorClassification =
 /** Max links walked on the `cause` chain looking for a structured status. */
 const MAX_CAUSE_HOPS = 5;
 
-/** Node/undici error codes that mean "the connection itself failed". */
+/** Node/undici and Bun error codes that mean "the connection itself failed". Bun names a refused connection `ConnectionRefused`. */
 const CONNECTION_ERROR_CODES = new Set([
     "ECONNREFUSED",
+    "ConnectionRefused",
     "ECONNRESET",
     "ENOTFOUND",
     "ETIMEDOUT",
