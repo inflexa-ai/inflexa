@@ -14,6 +14,7 @@ import { EMBEDDING_API_KEY_VAR, env } from "../../../lib/env.ts";
 import { __setCompiledBinaryForTest } from "../../../lib/install_context.ts";
 import { embeddingsRequestSchema, tokenizeRequestSchema } from "../../../test_support/embedding_requests.ts";
 import { fakeFetch, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
+import { replaceProperty } from "../../../test_support/replace_property.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import type { SetupAnswers } from "../../infra/setup_answers.ts";
 import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, materializedLlamaServer, type ResolvedPin } from "../llama_runtime.ts";
@@ -131,19 +132,13 @@ function useStubSidecar(origin: string): void {
 }
 
 /**
- * Run `body` with `process.stdin.isTTY` forced to `value`. It is a getter at runtime, so redefining it is
- * safe here — the code under test only ever reads it — and forcing it ON is what lets a test assert that
- * an ANSWERED question skips its prompt: with prompting available, a prompt that still ran would stall the
- * run instead of completing it.
+ * Force `process.stdin.isTTY` to `value` until the end of the test. It is a getter at runtime, so redefining
+ * it is safe here — the code under test only ever reads it — and forcing it ON is what lets a test assert
+ * that an ANSWERED question skips its prompt: with prompting available, a prompt that still ran would stall
+ * the run instead of completing it.
  */
-async function withTTY<T>(value: boolean, body: () => Promise<T>): Promise<T> {
-    const wasTTY = process.stdin.isTTY;
-    Object.defineProperty(process.stdin, "isTTY", { value, configurable: true });
-    try {
-        return await body();
-    } finally {
-        Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
-    }
+function forceTTY(value: boolean): void {
+    replaceProperty(process.stdin, "isTTY", value);
 }
 
 /**
@@ -321,7 +316,8 @@ describe("ensureEmbedderReady", () => {
 describe("runEmbeddingSetup", () => {
     test("non-interactive (no TTY) → ok, mode unchanged", async () => {
         writeConfigWith({ mode: "off" });
-        const result = await withTTY(false, () => runEmbeddingSetup(false));
+        forceTTY(false);
+        const result = await runEmbeddingSetup(false);
         expect(result.isOk()).toBe(true);
         expect(readConfig().embedding.mode).toBe("off");
     });
@@ -367,7 +363,8 @@ describe("runEmbeddingSetup (answers)", () => {
             // Prompting is AVAILABLE here (interactive + a TTY) and every question is answered, so a prompt
             // that still ran would hang this test rather than pass it — the assertion that answers skip
             // their prompts, including the masked key prompt when the variable is set.
-            const result = await withTTY(true, () => runEmbeddingSetup(true, { mode: "api-key", baseURL: `${stub.origin}/v1`, model: "my-embed" }));
+            forceTTY(true);
+            const result = await runEmbeddingSetup(true, { mode: "api-key", baseURL: `${stub.origin}/v1`, model: "my-embed" });
 
             expect(result.isOk()).toBe(true);
             const embedding = readConfig().embedding;
@@ -392,8 +389,9 @@ describe("runEmbeddingSetup (answers)", () => {
         // failing it, and the sentinel return makes "the prompt won anyway" visible in the persisted key.
         const secretPrompt = spyOn(prompts, "promptSecret").mockImplementation(() => Promise.resolve("sk-typed-at-the-prompt"));
         try {
+            forceTTY(true);
             const { value: result, output } = await captureStdout(() =>
-                withTTY(true, () => runEmbeddingSetup(true, { mode: "api-key", baseURL: `${stub.origin}/v1`, model: "my-embed" })),
+                runEmbeddingSetup(true, { mode: "api-key", baseURL: `${stub.origin}/v1`, model: "my-embed" }),
             );
 
             expect(result.isOk()).toBe(true);
@@ -507,7 +505,8 @@ describe("runEmbeddingSetup (answers)", () => {
         useStubSidecar(stub.origin);
         try {
             // Prompting available and unused: the answered path replaces the path prompt.
-            const result = await withTTY(true, () => runEmbeddingSetup(true, { mode: "local", gguf: customPath }));
+            forceTTY(true);
+            const result = await runEmbeddingSetup(true, { mode: "local", gguf: customPath });
 
             expect(result.isOk()).toBe(true);
             const embedding = readConfig().embedding;
@@ -714,7 +713,8 @@ describe("runEmbeddingSetup (a value answer with no mode)", () => {
 
         // Prompting is available, but a configured machine is deliberately never re-prompted, so the picker
         // — the only thing that could have consumed this answer — never runs.
-        const result = await withTTY(true, () => runEmbeddingSetup(true, { gguf: "/brand/new.gguf" }));
+        forceTTY(true);
+        const result = await runEmbeddingSetup(true, { gguf: "/brand/new.gguf" });
 
         expect(result.isErr()).toBe(true);
         const e = result._unsafeUnwrapErr();
@@ -746,7 +746,8 @@ describe("runEmbeddingSetup (a value answer with no mode)", () => {
         writeConfigWith({ mode: "api-key", apiKey: "sk-existing" });
 
         // A TTY with no picker stub: a run that (wrongly) fell through to the prompt would hang, not pass.
-        const result = await withTTY(true, () => runEmbeddingSetup(true, { validate: true }));
+        forceTTY(true);
+        const result = await runEmbeddingSetup(true, { validate: true });
 
         expect(result.isOk()).toBe(true);
         expect(readConfig().embedding.mode).toBe("api-key");
@@ -770,7 +771,8 @@ describe("runEmbeddingSetup (picker)", () => {
         __setEmbeddingApiKeyForTest(() => "sk-from-env");
         const picker = spyOn(prompts, "select").mockImplementation(() => Promise.resolve("api-key"));
         try {
-            const result = await withTTY(true, () => runEmbeddingSetup(true, { baseURL: `${stub.origin}/v1`, model: "my-embed" }));
+            forceTTY(true);
+            const result = await runEmbeddingSetup(true, { baseURL: `${stub.origin}/v1`, model: "my-embed" });
 
             expect(result.isOk()).toBe(true);
             expect(picker).toHaveBeenCalledTimes(1);
@@ -797,7 +799,8 @@ describe("runEmbeddingSetup (picker)", () => {
         useStubSidecar(stub.origin);
         const picker = spyOn(prompts, "select").mockImplementation(() => Promise.resolve("custom"));
         try {
-            const result = await withTTY(true, () => runEmbeddingSetup(true, { gguf: customPath }));
+            forceTTY(true);
+            const result = await runEmbeddingSetup(true, { gguf: customPath });
 
             expect(result.isOk()).toBe(true);
             const embedding = readConfig().embedding;
@@ -818,7 +821,8 @@ describe("runEmbeddingSetup (picker)", () => {
         const before = readFileSync(env.configPath, "utf8");
         const picker = spyOn(prompts, "select").mockImplementation(() => Promise.resolve("off"));
         try {
-            const result = await withTTY(true, () => runEmbeddingSetup(true));
+            forceTTY(true);
+            const result = await runEmbeddingSetup(true);
 
             expect(result.isOk()).toBe(true);
             expect(readFileSync(env.configPath, "utf8")).toBe(before);

@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createRoot } from "solid-js";
 import { createStore } from "solid-js/store";
 import { okAsync, errAsync, ResultAsync } from "neverthrow";
 import type { StepActivityPart } from "@inflexa-ai/harness/contracts/index.js";
@@ -8,6 +7,7 @@ import type { CancelRunResult, DataProfileState, DataProfileView, RunDetail, Run
 import { describeClientError, type ClientError } from "../../../client/api.ts";
 import type { Workspace } from "../../contexts/workspace.ts";
 import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
+import { withRootAsync } from "../../../test_support/solid.ts";
 import type { Notice } from "../../theme.ts";
 import { __pendingNoticeCountForTest, __resetNoticesForTest, currentNotice } from "../notice.ts";
 import { __resetRunCompletionsForTest, watchRunCompletions } from "../run_completion.ts";
@@ -435,7 +435,7 @@ describe("activity panel dismissal", () => {
     });
 
     test("a dismissal expires once no run is active, so a later run is not silently invisible", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             watchActivityPanel(WS, panelOpts(null));
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             toggleActivityPanel();
@@ -446,14 +446,13 @@ describe("activity panel dismissal", () => {
             expect(activityPanelVisible()).toBe(false); // still nothing to show
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-b" })]));
             expect(activityPanelVisible()).toBe(true);
-            dispose();
         });
     });
 });
 
 describe("activity panel activity label", () => {
     test("the focused run's activity is published verbatim", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             watchActivityPanel(WS, panelOpts("Running script deseq2.R"));
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             // Delivery is async; let its microtask settle.
@@ -462,7 +461,6 @@ describe("activity panel activity label", () => {
             // Passed through untouched: the harness already emits a human phrase, so any re-mapping
             // here could only degrade it.
             expect(focusedSubjectActivity()).toBe("Running script deseq2.R");
-            dispose();
         });
     });
 
@@ -470,7 +468,7 @@ describe("activity panel activity label", () => {
         // The defect this pins: every other test in this suite drives ONE label for the life of the
         // subscription, so a store that latched its first value — or that only ever read once per
         // focused run — passed the whole suite while the live panel showed a phrase from minutes ago.
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
@@ -485,23 +483,21 @@ describe("activity panel activity label", () => {
 
             panel.push(activityPart("run-a", "Writing volcano.png"));
             expect(focusedSubjectActivity()).toBe("Writing volcano.png");
-            dispose();
         });
     });
 
     test("an unresolvable label is null, never a fabricated placeholder", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             watchActivityPanel(WS, panelOpts(null));
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBeNull();
-            dispose();
         });
     });
 
     test("a step that has settled stops describing work, rather than freezing on its last phrase", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
@@ -514,12 +510,11 @@ describe("activity panel activity label", () => {
             panel.push(activityPart("run-a", "Step complete", { phase: "complete" }));
             expect(focusedSubjectActivity()).toBeNull();
             expect(activityPanelVisible()).toBe(true);
-            dispose();
         });
     });
 
     test("with two steps in flight the newest report wins", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts(null);
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
@@ -539,12 +534,11 @@ describe("activity panel activity label", () => {
             // And a settled step drops out of the running, leaving the other one's phrase.
             panel.push(activityPart("run-a", "Step complete", { stepId: "T1S1", phase: "complete" }));
             expect(focusedSubjectActivity()).toBe("Running script enrich.R");
-            dispose();
         });
     });
 
     test("no active run clears the label rather than leaving the last run's showing", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
@@ -556,14 +550,13 @@ describe("activity panel activity label", () => {
             expect(focusedSubjectActivity()).toBeNull();
             // The run terminating is a teardown edge, not just a focus one.
             expect(panel.subscribed()).toBeNull();
-            dispose();
         });
     });
 });
 
 describe("activity panel activity subscription", () => {
     test("one subscription per focused run, held across the sidebar's poll", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
             const runs = [runRow({ runId: "run-a" })];
@@ -578,12 +571,11 @@ describe("activity panel activity subscription", () => {
             await Promise.resolve();
             expect(panel.opened()).toHaveLength(1);
             expect(panel.subscribed()).toBe("run-a");
-            dispose();
         });
     });
 
     test("the subscription is opened under the open analysis, and again under the next one after a swap", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts(null);
             const { ws, open } = workspaceOn("analysis-1");
             watchActivityPanel(ws, panel);
@@ -598,12 +590,11 @@ describe("activity panel activity subscription", () => {
                 ["analysis-1", "run-a", true],
                 ["analysis-2", "run-a", false],
             ]);
-            dispose();
         });
     });
 
     test("moving focus tears the old subscription down and opens one on the new run", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
@@ -617,7 +608,6 @@ describe("activity panel activity subscription", () => {
             // The previous run's phrase must not survive the switch — the panel would be captioning
             // run-b with run-a's work.
             expect(focusedSubjectActivity()).toBeNull();
-            dispose();
         });
     });
 
@@ -625,7 +615,7 @@ describe("activity panel activity subscription", () => {
         // Teardown is best-effort by construction: the durability engine's reader can be suspended
         // inside an await when it is asked to wind down, so a part CAN arrive after the abort. The
         // generation token is what makes that harmless, and this drives exactly that race.
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts(null);
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
@@ -638,31 +628,28 @@ describe("activity panel activity subscription", () => {
 
             stale?.deliver(activityPart("run-a", "Running script qc.R"));
             expect(focusedSubjectActivity()).toBe("Running script enrich.R");
-            dispose();
         });
     });
 
     test("unmounting the screen tears the subscription down", async () => {
         const panel = panelOpts("Running script deseq2.R");
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             expect(panel.subscribed()).toBe("run-a");
-            dispose();
         });
         expect(panel.opened()[0]?.aborted).toBe(true);
     });
 
     test("no subscription is opened while the runtime is not booted", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel: FakePanelOpts = { ...panelOpts("Running script deseq2.R"), ready: () => false };
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
             await Promise.resolve();
             expect(panel.opened()).toHaveLength(0);
             expect(focusedSubjectActivity()).toBeNull();
-            dispose();
         });
     });
 });
@@ -672,7 +659,7 @@ describe("activity panel activity for a focused profile", () => {
         // A profile's live path end to end, and the one place the two kinds genuinely differ: the
         // stream is addressed by the workflow id the ledger row records rather than by the subject's
         // own identity.
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             // No initial part. A profile's first report lands after the panel has subscribed, and
             // starting from nothing is what makes the two pushes below two OBSERVED changes rather
             // than one change away from whatever the stream handed over at attach.
@@ -695,12 +682,11 @@ describe("activity panel activity for a focused profile", () => {
 
             panel.push(profileActivityPart("Reading counts.csv"));
             expect(focusedSubjectActivity()).toBe("Reading counts.csv");
-            dispose();
         });
     });
 
     test("a profile whose row records no workflow id yet opens no stream and shows no activity", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts("Starting sandbox");
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([], { profile: profileRow({ workflowId: null }) }));
@@ -709,7 +695,6 @@ describe("activity panel activity for a focused profile", () => {
             expect(focusedSubject()?.kind).toBe("profile");
             expect(panel.opened()).toHaveLength(0);
             expect(focusedSubjectActivity()).toBeNull();
-            dispose();
         });
     });
 
@@ -720,7 +705,7 @@ describe("activity panel activity for a focused profile", () => {
         // and the comparison is redundant besides, because the subscription is scoped to one workflow,
         // so a delivered part belongs to the focused subject by construction. This test exists so that
         // re-adding the check fails a test instead of silently breaking profiles.
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const panel = panelOpts(null);
             watchActivityPanel(WS, panel);
             await refreshSidebarData("analysis-1", optsFor([], { profile: profileRow() }));
@@ -735,7 +720,6 @@ describe("activity panel activity for a focused profile", () => {
             expect(part.runId).not.toBe("analysis-1");
             panel.push(part);
             expect(focusedSubjectActivity()).toBe("Reading counts.csv");
-            dispose();
         });
     });
 });
@@ -885,7 +869,7 @@ describe("activity panel abort", () => {
     });
 
     test("a canceled run that the refreshed runs do not hold gets exactly one notice, from the watcher", async () => {
-        await createRoot(async (dispose) => {
+        await withRootAsync(async () => {
             const reads: [string, string][] = [];
             watchRunCompletions({
                 loadRun: (analysisId, runId) => {
@@ -912,7 +896,6 @@ describe("activity panel abort", () => {
             expect(reads).toEqual([["analysis-1", "run-a"]]);
             expect(currentNotice()).toEqual({ kind: "error", text: "Run Differential expression was canceled in 1m00s (0/1 steps)" });
             expect(__pendingNoticeCountForTest()).toBe(0);
-            dispose();
         });
     });
 

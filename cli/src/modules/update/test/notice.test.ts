@@ -5,26 +5,17 @@ import { dirname } from "node:path";
 import pkg from "../../../../package.json";
 import { env } from "../../../lib/env.ts";
 import { __setCompiledBinaryForTest } from "../../../lib/install_context.ts";
+import { fakeStderr } from "../../../test_support/fake_stderr.ts";
 import { __releaseUpdateNoticeClaimForTest, claimDailyAsk, claimUpdateNotice, printUpdateNotice, updateOffer } from "../notice.ts";
 
-const realWrite = process.stderr.write.bind(process.stderr);
-const realIsTTY = process.stderr.isTTY;
-
-/** Run `body` with stderr faked as a terminal, and give back everything it wrote. */
+/** Run `body` with stderr faked as a terminal or a pipe, and give back everything it wrote. */
 function captureStderr(isTTY: boolean, body: () => void): string {
-    const written: string[] = [];
-    Object.defineProperty(process.stderr, "isTTY", { value: isTTY, configurable: true });
-    process.stderr.write = (chunk: string | Uint8Array): boolean => {
-        written.push(String(chunk));
-        return true;
-    };
+    const written = fakeStderr(isTTY);
     body();
     return written.join("");
 }
 
 afterEach(() => {
-    process.stderr.write = realWrite;
-    Object.defineProperty(process.stderr, "isTTY", { value: realIsTTY, configurable: true });
     __setCompiledBinaryForTest(null);
     __releaseUpdateNoticeClaimForTest();
     rmSync(env.updateStatePath, { force: true });

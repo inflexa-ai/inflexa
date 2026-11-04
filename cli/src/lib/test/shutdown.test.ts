@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
+import { fakeStderr } from "../../test_support/fake_stderr.ts";
+import { replaceProperty } from "../../test_support/replace_property.ts";
 import { exitIndicatorFrame, startExitIndicator } from "../shutdown.ts";
 import { isAsciiDigits } from "../text.ts";
 
@@ -20,32 +22,9 @@ function hasAgeInSeconds(text: string): boolean {
     return false;
 }
 
-const realIsTTY = process.stderr.isTTY;
-const realColumns = process.stderr.columns;
-const realWrite = process.stderr.write.bind(process.stderr);
-
-/** Capture stderr for the duration of one test, returning the frames written. */
-function captureStderr(isTTY: boolean): string[] {
-    const frames: string[] = [];
-    // `isTTY` is an own property of the stream in Node and Bun alike, so a plain assignment is the
-    // supported way to simulate a pipe; `afterEach` restores both it and `write`.
-    process.stderr.isTTY = isTTY;
-    process.stderr.write = (chunk: string | Uint8Array): boolean => {
-        frames.push(String(chunk));
-        return true;
-    };
-    return frames;
-}
-
-afterEach(() => {
-    process.stderr.isTTY = realIsTTY;
-    process.stderr.columns = realColumns;
-    process.stderr.write = realWrite;
-});
-
 describe("startExitIndicator", () => {
     test("writes nothing when stderr is not a TTY, however long the drain runs", async () => {
-        const frames = captureStderr(false);
+        const frames = fakeStderr(false);
         const stop = startExitIndicator();
         await Promise.sleep(PAST_GRACE_MS);
         stop();
@@ -53,13 +32,13 @@ describe("startExitIndicator", () => {
     });
 
     test("stays silent for a drain that finishes inside the grace period", () => {
-        const frames = captureStderr(true);
+        const frames = fakeStderr(true);
         startExitIndicator()();
         expect(frames).toEqual([]);
     });
 
     test("draws a spinner frame once the drain outlives the grace period", async () => {
-        const frames = captureStderr(true);
+        const frames = fakeStderr(true);
         const stop = startExitIndicator();
         await Promise.sleep(PAST_GRACE_MS);
         stop();
@@ -72,7 +51,7 @@ describe("startExitIndicator", () => {
     });
 
     test("erases its line on stop, so the shell prompt lands on a clean row", async () => {
-        const frames = captureStderr(true);
+        const frames = fakeStderr(true);
         const stop = startExitIndicator();
         await Promise.sleep(PAST_GRACE_MS);
         stop();
@@ -80,11 +59,11 @@ describe("startExitIndicator", () => {
     });
 
     test("survives a stderr that throws, so a dead terminal cannot crash the exit it narrates", async () => {
-        process.stderr.isTTY = true;
-        process.stderr.write = () => {
+        replaceProperty(process.stderr, "isTTY", true);
+        replaceProperty(process.stderr, "write", () => {
             // What a real stderr does once the terminal goes away mid-drain (the SIGHUP path).
             throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
-        };
+        });
 
         const stop = startExitIndicator();
         await Promise.sleep(PAST_GRACE_MS);
@@ -92,17 +71,17 @@ describe("startExitIndicator", () => {
     });
 
     test("fits the row it is given, so a frame never wraps and smears down the screen", async () => {
-        const frames = captureStderr(true);
+        const frames = fakeStderr(true);
         // Narrow enough that even the short variant with an age (`⠋ Exiting… (0s)`) overflows, so the
         // live path is proven to consult the width rather than merely happening to fit.
-        process.stderr.columns = 12;
+        replaceProperty(process.stderr, "columns", 12);
         const stop = startExitIndicator();
         await Promise.sleep(PAST_GRACE_MS);
         stop();
 
         const drawn = frames.map((f) => f.replace("\r\x1b[2K", "")).filter((f) => f.length > 0);
         expect(drawn.length).toBeGreaterThan(0);
-        for (const frame of drawn) expect(frame.length).toBeLessThanOrEqual(11);
+        expect(drawn.filter((frame) => frame.length > 11)).toEqual([]);
     });
 });
 

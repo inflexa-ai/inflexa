@@ -15,7 +15,6 @@ import {
     type DataProfileStatus,
     type DbError,
     type PlanApproval,
-    type Pool,
     type PlanPage,
     type PlanPageEntry,
     type PlanRecord,
@@ -1084,10 +1083,6 @@ describe("GET {A}/run/:runId/synthesis", () => {
     });
 });
 
-// SAFETY: the stand-in answers `query`, which is the only member that the reader calls on the pool, and only for the step ledger.
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `createRunEventStream` types its pool `Pool`, and the harness is not part of this change.
-const asHarnessPool = (standIn: Querier): Pool => standIn as Pool;
-
 describe("GET {A}/run/:runId/stream", () => {
     test("a canceled run ends with the `data-run-failed` part of reason `canceled`, then the stream closes", async () => {
         const analysisId = seedAnalysis();
@@ -1097,7 +1092,7 @@ describe("GET {A}/run/:runId/stream", () => {
             // thus the parent stream drains with no terminal part, and the row read decides the end.
             subscribeRun: (p, options) =>
                 createRunEventStream({
-                    pool: asHarnessPool(p),
+                    pool: p,
                     readRun: () => okAsync({ status: "canceled", error: null }),
                     sleep: () => Promise.resolve(),
                 }).subscribe(options),

@@ -627,6 +627,10 @@ entries cover a static import, a re-export, and a dynamic `import()`.
 
 - A client must not import `src/db/`, `src/server/`, `lib/bus.ts`, the harness
   runtime, or a module of `src/modules/`. The ban also covers a type-only import.
+- A dynamic `import()` in a client must write its path out: a string literal, or
+  a template literal with no interpolation. The rule refuses each other source
+  (an interpolation, a variable, a concatenation), because the bans above read the
+  path and a computed path escapes them.
 - A client can import `src/api/`, the rest of `src/lib/`, `src/types/`, and
   `@inflexa-ai/harness/contracts/*`. It can also import the pure module files that
   the rule names, for example `modules/harness/plan_dag.ts`.

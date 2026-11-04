@@ -15,3 +15,19 @@ export function withRoot<T>(body: () => T): T {
         }
     });
 }
+
+/**
+ * The async twin of `withRoot`: runs `body` inside a Solid reactive root and disposes it when the body
+ * settles — also when it rejects, as a failed assertion does — so a watcher that the body started cannot
+ * outlive its test and take the state of the next one. Reactive work that the body starts before its
+ * first `await` is owned by the root, as with `createRoot`.
+ */
+export async function withRootAsync<T>(body: () => Promise<T>): Promise<T> {
+    return createRoot(async (dispose) => {
+        try {
+            return await body();
+        } finally {
+            dispose();
+        }
+    });
+}

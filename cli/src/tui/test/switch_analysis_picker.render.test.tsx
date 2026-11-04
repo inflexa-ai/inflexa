@@ -11,6 +11,7 @@ import type { UsageTotals } from "../../api/usage.ts";
 import { __setClipboardWriterForTest } from "../../lib/clipboard.ts";
 import { contractHome } from "../../lib/paths.ts";
 import { fakeClient } from "../../test_support/fake_client.ts";
+import { __resetNoticesForTest } from "../hooks/notice.ts";
 import { useKeymapRoot } from "../keymap.ts";
 import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
@@ -37,6 +38,7 @@ beforeEach(() => {
 
 afterEach(() => {
     dialogClear();
+    __resetNoticesForTest();
     for (const dir of [dirA, dirB]) rmSync(dir, { recursive: true, force: true });
 });
 

@@ -274,7 +274,7 @@ describe("listConnectionModels — expected failures degrade on the Result chann
     });
 
     test("a non-ok response is unreachable naming the status", async () => {
-        const rec = recordingFetch(() => Promise.resolve(new Response("nope", { status: 503 })));
+        const rec = recordingFetch(respondWith("nope", { status: 503 }));
         const result = await listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: rec.fetch }));
 
         expect(result._unsafeUnwrapErr()).toEqual({ type: "unreachable", detail: "HTTP 503" });
@@ -290,7 +290,7 @@ describe("listConnectionModels — expected failures degrade on the Result chann
             type: "no_models",
         });
 
-        const garbage = recordingFetch(() => Promise.resolve(new Response("not json at all")));
+        const garbage = recordingFetch(respondWith("not json at all"));
         expect(
             (
                 await listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: garbage.fetch }))
