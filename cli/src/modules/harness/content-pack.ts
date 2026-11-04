@@ -17,6 +17,7 @@ import { dirname, resolve, sep } from "node:path";
 
 import { type Result, err, ok } from "neverthrow";
 import { z } from "zod";
+import { describeCause } from "../../lib/cause.ts";
 
 /** Archive layout version. Bumping it changes {@link contentHashOf} not at all (the hash is over content, not format), but a reader rejects a header whose `v` it does not recognize. */
 export const PACK_VERSION = 1;
@@ -80,7 +81,7 @@ export function unpackTo(archive: Buffer, destDir: string): Result<ReadonlyArray
     const parsedHeader = JSON.parseResult(archive.subarray(4, headerEnd).toString("utf8"), headerSchema);
     if (parsedHeader.isErr()) {
         const { error } = parsedHeader;
-        return err({ type: "malformed_header", detail: error.type === "malformed" ? String(error.cause) : `unexpected header: ${error.error.message}` });
+        return err({ type: "malformed_header", detail: error.type === "malformed" ? describeCause(error.cause) : `unexpected header: ${error.error.message}` });
     }
     const header = parsedHeader.value;
     if (header.v !== PACK_VERSION) return err({ type: "malformed_header", detail: `unexpected header (v=${header.v})` });

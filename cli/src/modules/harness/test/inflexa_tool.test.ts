@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { normalizeDetail, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 import { describe, expect, spyOn, test } from "bun:test";
+import { z } from "zod";
 
 import type { AgentPolicy } from "../../../cli/agent_policy.ts";
 import { reportAgentPolicies } from "../../../test_support/agent_policy_report.ts";
@@ -756,8 +757,8 @@ describe("run_inflexa — describeCall", () => {
     /** Read the hook the way the harness emit site reads it. */
     function describeCall(argv: string[]): string | undefined {
         const tool = makeTool(recordingSubprocess().fn);
-        expect(tool.describeCall).toBeDefined();
-        return present(tool.describeCall).call(tool, { argv });
+        expect(typeof tool.describeCall).toBe("function");
+        return tool.describeCall?.({ argv });
     }
 
     test("a word argv describes those words", () => {
@@ -804,24 +805,25 @@ describe("run_inflexa — describeCall", () => {
 
         const prompt = present(ask.calls[0]).command;
         expect(prompt.startsWith("inflexa ")).toBe(true);
-        expect(present(tool.describeCall).call(tool, { argv })).toBe(prompt.slice("inflexa ".length));
+        expect(tool.describeCall?.({ argv })).toBe(prompt.slice("inflexa ".length));
     });
 });
 
 describe("run_inflexa — view", () => {
     const tool = makeTool(recordingSubprocess().fn);
 
+    /** The shown fields. The view classes are instances, so a plain-object record schema would refuse them. */
+    const shownFieldsSchema = z.object({
+        fields: z.array(z.object({ name: z.string(), leaf: z.object({ kind: z.string(), text: z.string().optional(), value: z.json().optional() }) })),
+    });
+
     /** The fields of the shown result, each as its name, its kind, and its value, in the order that the view gives. */
     function shown(result: Parameters<NonNullable<NonNullable<typeof tool.view>["result"]>>[1]): Array<[string, string, unknown]> {
-        const value: unknown = tool.view?.result?.({ argv: [] }, result);
-        if (value === undefined || value === null || typeof value !== "object" || !("fields" in value) || !Array.isArray(value.fields)) {
+        const value = shownFieldsSchema.safeParse(tool.view?.result?.({ argv: [] }, result));
+        if (!value.success) {
             throw new Error("the view gave no fields");
         }
-        return value.fields.map((field: { name: string; leaf: { kind: string; text?: string; value?: unknown } }) => [
-            field.name,
-            field.leaf.kind,
-            field.leaf.kind === "text" ? field.leaf.text : field.leaf.value,
-        ]);
+        return value.data.fields.map((field) => [field.name, field.leaf.kind, field.leaf.kind === "text" ? field.leaf.text : field.leaf.value]);
     }
 
     test("shows the argv as the input and declares the error", () => {

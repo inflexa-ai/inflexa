@@ -10,6 +10,7 @@ import pkg from "../../../../package.json";
 import { API_VERSION, type ServerActivity, type ServerDiscovery, type ServerState, type ShutdownMode } from "../../../api/server.ts";
 import { bootServerAfterUp, serverLogs, serverStatus, serverStop, stopServerAfterUpgrade, type ServerCommandOpts } from "../server.ts";
 import { parsedJson } from "../../../test_support/json.ts";
+import { requestBodyText } from "../../../test_support/request_body.ts";
 
 const DISCOVERY: ServerDiscovery = {
     pid: 7001,
@@ -106,7 +107,7 @@ function machine(): { opts: ServerCommandOpts; out: () => string; world: Machine
                 }
                 if (path === "/api/v1/server/shutdown") {
                     // The route reads the JSON body that `request` serializes.
-                    const mode = JSON.parseWith(String(init.body), z.looseObject({ mode: z.enum(["now", "drain"]) }))?.mode;
+                    const mode = JSON.parseWith(requestBodyText(init), z.looseObject({ mode: z.enum(["now", "drain"]) }))?.mode;
                     if (mode === undefined) throw new Error("the shutdown body has no mode");
                     world.stops.push(mode);
                     if (world.shutdownReply === "connection_lost") throw new Error("socket closed");
@@ -189,7 +190,7 @@ describe("inflexa server status", () => {
         running(world);
         await serverStatus({ json: true }, opts);
         // The command writes `JSON.stringify` of a `ServerStatusView`.
-        const view: unknown = parsedJson(out(), z.unknown());
+        const view: unknown = parsedJson(out(), z.json());
         expect(view).toMatchObject({
             state: "running",
             pid: DISCOVERY.pid,
@@ -214,7 +215,7 @@ describe("inflexa server status", () => {
         silent.world.live = true;
         await serverStatus({ json: true }, silent.opts);
         // The command writes `JSON.stringify` of a `ServerStatusView`.
-        const view: unknown = parsedJson(silent.out(), z.unknown());
+        const view: unknown = parsedJson(silent.out(), z.json());
         expect(view).toHaveProperty("state", "not_answering");
     });
 });

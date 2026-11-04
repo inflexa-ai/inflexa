@@ -377,7 +377,7 @@ async function summarizePage<R extends PoolRuntime>(
 
 /** Whether the anchor folder of each analysis exists, with a bounded width. A `null` path reads as absent. */
 async function existenceOf(anchorPaths: readonly (string | null)[], opts: Pick<AnalysisListOpts, "pathsExist">): Promise<boolean[]> {
-    const paths = anchorPaths.filter((path): path is string => path !== null);
+    const paths = anchorPaths.filter((path) => path !== null);
     const exists = await opts.pathsExist(paths, DISK_READ_WIDTH);
     let next = 0;
     // `pathsExist` gives one boolean for each path that it got, in order, and `next` walks the non-null paths.
@@ -536,7 +536,7 @@ export function analysisRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts:
         const absolute = await inputAbsolutePaths(current.value);
         const canonical = await mapBounded(body.value.paths, canonicalPathAsync);
         const wanted = new Set(canonical);
-        const have = new Set([...absolute.values()].filter((p): p is string => p !== null));
+        const have = new Set([...absolute.values()].filter((p) => p !== null));
         const toAdd = [...new Set(body.value.paths.filter((_, i) => !have.has(canonical[i] ?? "")))];
         const toRemove = current.value.filter((input) => {
             const abs = absolute.get(input) ?? null;

@@ -91,6 +91,7 @@ import { createUsageRecorder } from "./usage_recorder.ts";
 import quickjsWasm from "@inflexa-ai/harness/tools/script/quickjs.wasm" with { type: "file" };
 import type { ScriptRuntime } from "@inflexa-ai/harness/tools/script/run-script.js";
 import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch, type AgentSelection } from "./agent_switch.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -308,7 +309,7 @@ export function describeBootError(e: HarnessBootError): string {
                 "  If it is the Inflexa server (`inflexa server status` shows its pid), stop it with `inflexa server stop`. Otherwise wait for that process to end."
             );
         case "runtime_boot_failed":
-            return `Harness runtime failed to boot: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
+            return `Harness runtime failed to boot: ${messageOf(e.cause)}`;
         default: {
             const exhaustive: never = e;
             throw new Error(`unhandled boot error: ${JSON.stringify(exhaustive)}`);
@@ -690,7 +691,7 @@ function applyCredential(headers: Headers, cred: Credential): void {
  * failure surfaces unchanged. A resolution failure REJECTS the fetch (its throwing contract), which the
  * harness maps to a provider error with the actionable message. `underlying` is injectable for tests.
  */
-export function buildAuthInjectingFetch(source: CredentialSource, underlying: InjectingFetch = fetch) {
+export function buildAuthInjectingFetch(source: CredentialSource, underlying: InjectingFetch = fetch): InjectingFetch & Pick<typeof fetch, "preconnect"> {
     const attempt = (input: string | URL | Request, init: RequestInit | undefined, cred: Credential): Promise<Response> => {
         // A fresh Headers per attempt, seeded from the ORIGINAL init, so a retry never inherits the prior
         // attempt's rewrite — each attempt applies the (possibly refreshed) credential from a clean base.
@@ -698,7 +699,7 @@ export function buildAuthInjectingFetch(source: CredentialSource, underlying: In
         applyCredential(headers, cred);
         return underlying(input, { ...init, headers });
     };
-    const inject = async (input: string | URL | Request, init: RequestInit | undefined) => {
+    const inject = async (input: string | URL | Request, init: RequestInit | undefined): Promise<Response> => {
         const first = await source.get();
         // A failed credential resolution can only surface through fetch's throwing contract; the harness's
         // provider-error mapping wraps it into the chat error path with this actionable message.

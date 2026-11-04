@@ -20,6 +20,7 @@ import { resetSigningForTests } from "../signing.ts";
 import { present } from "../../../lib/present.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { countOccurrences, literalWithHoles, WORD_DASH } from "../../../test_support/text_shapes.ts";
+import { describeCause } from "../../../lib/cause.ts";
 
 // The report family walks the same kernel dispatch the core family does, so these assertions read the
 // FLUSHED document — the bytes the column holds after the signed flush — rather than a document the
@@ -45,14 +46,14 @@ const conversationThread = "thread-conv-1";
 const reportThread = "thread-report-1";
 const reportQn = `inflexa:report-${cliProvDigest(reportThread)}`;
 
-const typedLiteralSchema = z.object({ $: z.unknown() });
+const typedLiteralSchema = z.object({ $: z.json() });
 
 /** PROV-JSON renders an attribute as a bare literal, a typed `{ $ }` object, or an array of either — flatten all three to strings. */
 function attrValues(value: unknown): string[] {
     const list = Array.isArray(value) ? value : [value];
     return list.map((v) => {
         const typed = typedLiteralSchema.safeParse(v);
-        return typed.success ? String(typed.data.$) : String(v);
+        return describeCause(typed.success ? typed.data.$ : v);
     });
 }
 

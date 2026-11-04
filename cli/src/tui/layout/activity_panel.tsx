@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Accessor } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Accessor, type JSX } from "solid-js";
 import { LayoutEvents, type BoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/solid";
 
@@ -149,7 +149,7 @@ const PROFILE_NAME = "Data profile";
  * The chat column's live subject readout. Renders nothing (no rows at all) when no subject is focused,
  * so an idle chat composes exactly as it did before the panel existed.
  */
-export function ActivityPanel(props: ActivityPanelProps) {
+export function ActivityPanel(props: ActivityPanelProps): JSX.Element {
     // Narrowed once each, so every arm's JSX reads its own kind's fields without re-testing the tag.
     const run = createMemo((): ActiveRunProgress | null => (props.subject?.kind === "run" ? props.subject.run : null));
     const profile = createMemo((): ActiveProfileProgress | null => (props.subject?.kind === "profile" ? props.subject.profile : null));

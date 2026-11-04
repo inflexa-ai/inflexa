@@ -3,6 +3,7 @@ import { type Command, CommanderError } from "commander";
 import { type AgentPolicy, getAgentPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
 import { hasWhitespace } from "../../lib/text.ts";
+import { errorOf, messageOf } from "../../lib/cause.ts";
 
 /**
  * The verdict for a single `inflexa` argv, decided WITHOUT running any action.
@@ -246,7 +247,7 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
         // approved action. Gating it as malformed is the safe default: the argv did
         // not cleanly resolve to a runnable command, so a caller must not treat it
         // as one.
-        const message = e instanceof Error ? e.message.trim() : String(e);
+        const message = errorOf(e)?.message.trim() ?? messageOf(e);
         return { kind: "malformed", message };
     }
 

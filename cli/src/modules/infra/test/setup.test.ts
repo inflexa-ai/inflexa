@@ -55,7 +55,7 @@ import { readConfig, writeConfig } from "../../../lib/config.ts";
 import type { BootStepId } from "../../../api/server.ts";
 import * as container from "../../../lib/container.ts";
 import * as cliPrompts from "../../../lib/cli.ts";
-import { fakeFetch, respondWith } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { requestedModel } from "../../../test_support/request_body.ts";
 // Namespace import beside the named one purely so `detectProviderEnv` is spyable at the seam setup.ts
 // calls it through; `env` itself is a value the assertions read, so it stays a named import.
@@ -63,9 +63,11 @@ import * as envModule from "../../../lib/env.ts";
 import { recordOrEmpty, unknownRecordSchema } from "../../../lib/json_record.ts";
 import { keysOf } from "../../../lib/types.ts";
 import { EMBEDDING_API_KEY_VAR, env, type ProviderEnvSnapshot } from "../../../lib/env.ts";
+import { unsetEnvVar } from "../../../test_support/env_vars.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { present } from "../../../lib/present.ts";
 import { parsedJson } from "../../../test_support/json.ts";
+import { describeCause } from "../../../lib/cause.ts";
 
 /** Build a provider-env snapshot for the adoption helpers; every field defaults to "absent". */
 function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnapshot {
@@ -429,7 +431,7 @@ describe("probeCredentialSource", () => {
         expect(present(calls[1]).headers.get("authorization")).toBe("Bearer gw-tok");
         expect(present(calls[1]).headers.get("x-api-key")).toBeNull();
         expect(present(calls[1]).headers.get("anthropic-version")).toBe("2023-06-01");
-        expect(parsedJson(present(present(calls[1]).body), z.unknown())).toEqual({
+        expect(parsedJson(present(present(calls[1]).body), z.json())).toEqual({
             model: "claude-sonnet-5",
             max_tokens: 1,
             messages: [{ role: "user", content: "ping" }],
@@ -873,7 +875,7 @@ describe("ensureLiveCredential", () => {
             },
             restartProxy: () => {
                 calls.push("restart");
-                return Promise.resolve(ok<void, { message: string }>(undefined));
+                return Promise.resolve(ok<undefined, { message: string }>(undefined));
             },
             isInteractive: () => true,
             // Not recorded: announcing is narration, not a policy step, and asserting it would pin the
@@ -1250,7 +1252,7 @@ describe("probeOnce — the election feeds the probe a servable model", () => {
         // count_tokens check, so the election walks to the older served one and the /messages completion 200s.
         globalThis.fetch = fakeFetch((url, init) =>
             Promise.try(() => {
-                const target = String(url);
+                const target = fetchInputUrl(url);
                 if (target.endsWith("/messages/count_tokens")) {
                     const model = requestedModel(init);
                     return model === "claude-new"
@@ -1571,7 +1573,7 @@ describe("setup() — batch orchestration", () => {
     /** Serve per-route responses keyed by URL suffix; an unmapped route 404s (mirrors probeCredentialSource's own tests). */
     function routeFetch(routes: Record<string, () => Response>): void {
         globalThis.fetch = fakeFetch((url) => {
-            const target = String(url);
+            const target = fetchInputUrl(url);
             const route = Object.keys(routes).find((suffix) => target.endsWith(suffix));
             return Promise.resolve(route !== undefined ? present(routes[route])() : new Response(null, { status: 404 }));
         });
@@ -1585,7 +1587,7 @@ describe("setup() — batch orchestration", () => {
     async function runSetup(options: Parameters<typeof setup>[0]): Promise<string> {
         const chunks: string[] = [];
         const write = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-            chunks.push(String(chunk));
+            chunks.push(describeCause(chunk));
             return true;
         });
         try {
@@ -1666,7 +1668,7 @@ describe("setup() — batch orchestration", () => {
 
     /** The `budget` of the persisted `harness.resourceLimits`, or `undefined` for a config that holds none. */
     function persistedBudget(harness: unknown): unknown {
-        const parsed = z.object({ resourceLimits: z.object({ budget: z.unknown().optional() }).optional() }).safeParse(harness);
+        const parsed = z.object({ resourceLimits: z.object({ budget: z.json().optional() }).optional() }).safeParse(harness);
         return parsed.success ? parsed.data.resourceLimits?.budget : undefined;
     }
 
@@ -2594,7 +2596,7 @@ describe("setup() — batch orchestration", () => {
                     await runSetup(batch(flags, entry.options ?? {}));
                 } finally {
                     for (const [name, prior] of restore) {
-                        if (prior === undefined) delete Bun.env[name];
+                        if (prior === undefined) unsetEnvVar(Bun.env, name);
                         else Bun.env[name] = prior;
                     }
                 }
@@ -2630,7 +2632,7 @@ describe("setup() — batch orchestration", () => {
             const output = await runSetup(batch({}));
 
             expect(process.exitCode).toBe(1);
-            expect(parsedJson(readFileSync(env.setupStatePath, "utf8"), z.unknown())).toEqual({ step: "refs", version: pkg.version });
+            expect(parsedJson(readFileSync(env.setupStatePath, "utf8"), z.json())).toEqual({ step: "refs", version: pkg.version });
             // The step that failed is named back to the operator, because the record is only useful if
             // they know a re-run will act on it.
             expect(output).toContain('continue from the "refs" step');

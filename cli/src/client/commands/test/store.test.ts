@@ -6,6 +6,8 @@ import type { FarmLinkView } from "../../../api/store.ts";
 import type { ClientOpts } from "../../api.ts";
 import { storeLink } from "../store.ts";
 import { parsedJson } from "../../../test_support/json.ts";
+import { requestBodyText } from "../../../test_support/request_body.ts";
+import { describeCause } from "../../../lib/cause.ts";
 
 /** Run `fn` with the console captured, and restore the exit code, which a refusal sets. */
 async function captured(fn: () => Promise<void>): Promise<{ stdout: string; stderr: string; exitCode: typeof process.exitCode }> {
@@ -15,10 +17,10 @@ async function captured(fn: () => Promise<void>): Promise<{ stdout: string; stde
     let stdout = "";
     let stderr = "";
     console.log = (msg?: unknown) => {
-        stdout += `${String(msg)}\n`;
+        stdout += `${describeCause(msg)}\n`;
     };
     console.error = (msg?: unknown) => {
-        stderr += `${String(msg)}\n`;
+        stderr += `${describeCause(msg)}\n`;
     };
     try {
         await fn();
@@ -39,7 +41,7 @@ describe("store link", () => {
             discover: () => ok({ baseUrl: "http://store.test", token: "t" }),
             fetch: (url, init) =>
                 Promise.try(() => {
-                    sent.push({ url, body: parsedJson(String(init.body), z.unknown()) });
+                    sent.push({ url, body: parsedJson(requestBodyText(init), z.json()) });
                     return new Response(JSON.stringify(linked), { status: 200, headers: { "Content-Type": "application/json" } });
                 }),
         };

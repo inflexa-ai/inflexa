@@ -15,7 +15,7 @@
 
 import { join, sep } from "node:path";
 
-import { defineTool, scopeResource, type ToolError } from "@inflexa-ai/harness";
+import { defineTool, scopeResource, type Tool, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
 import PQueue from "p-queue";
 import { z } from "zod";
@@ -73,7 +73,7 @@ function isRegistered(abs: string, index: { files: Set<string>; dirs: string[] }
 }
 
 /** Build the `list_launch_dir` conversation tool. Read-only; needs no host deps. */
-export function createLaunchDirTool() {
+export function createLaunchDirTool(): Tool<Record<string, never>, LaunchDirResult> {
     return defineTool({
         id: "list_launch_dir",
         description:

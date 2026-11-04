@@ -74,8 +74,8 @@ export function ConfirmDialog(props: {
             <box flexDirection="row" justifyContent="flex-end" gap={1}>
                 <For each={choices()}>
                     {(key) => {
-                        const label = () => (key === "cancel" ? (props.cancelLabel ?? key) : (props.confirmLabel ?? key));
-                        const isActive = () => active() === key;
+                        const label = (): string => (key === "cancel" ? (props.cancelLabel ?? key) : (props.confirmLabel ?? key));
+                        const isActive = (): boolean => active() === key;
                         return (
                             <box
                                 paddingLeft={1}

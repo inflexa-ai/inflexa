@@ -264,6 +264,7 @@ describe("listConnectionModels — expected failures degrade on the Result chann
 
     test("an endpoint that never answers is timed_out at the bound, not a request with no end", async () => {
         const hung: ListModelsSeams["fetch"] = (_url, _headers, signal) =>
+            // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- a real fetch rejects with `signal.reason`, which is typed `any`, so the double does the same
             new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
         const listing = listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: hung }), 50);
         const outcome = await Promise.race([listing, Promise.sleep(1000).then(() => "no answer" as const)]);
@@ -567,7 +568,8 @@ describe("listConnectionModels — the pages of the direct Anthropic listing", (
         const fetchPages: ListModelsSeams["fetch"] = (_url, _headers, signal) =>
             pageNo++ === 0
                 ? Promise.resolve(datedResponse([{ id: "claude-a" }], { has_more: true, last_id: "claude-a" }))
-                : new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+                : // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- a real fetch rejects with `signal.reason`, which is typed `any`, so the double does the same
+                  new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
         const outcome = await listConnectionModels(seamsFor({ connection: DIRECT_ANTHROPIC, modelApiKey: "sk-ant", fetch: fetchPages }), 50);
         expect(outcome._unsafeUnwrapErr()).toEqual({ type: "timed_out", afterMs: 50 });
     });

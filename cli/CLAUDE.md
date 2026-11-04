@@ -365,8 +365,8 @@ the schema is shaped that way today. Each live table is columnar.
 
 - Prefer `type` over `interface`, `const` over `let`, and `function` over an arrow
   function.
-- Always type the function parameters and the return values, except for a JSX
-  return.
+- Always type the function parameters and the return values. Give each Solid
+  component the return type `JSX.Element`.
 - Comment each `any` and each `unknown`.
 - **Use a domain type. Never use a raw `string` for a known value set.** The shared
   domain types are in `src/types/`, grouped by domain: the persisted entity shapes

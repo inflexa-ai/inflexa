@@ -27,6 +27,8 @@ import { z } from "zod";
 import { declaredContentLength, downloadToFile, type DownloadError, type FetchLike } from "../../lib/download.ts";
 import { sha256File } from "../../lib/hash.ts";
 import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf } from "../../lib/text.ts";
+import { errorOf } from "../../lib/cause.ts";
+import { errnoCode } from "../../lib/fs.ts";
 
 /** Reserved and user-owned paths below one public reference store. */
 export type ReferenceStorePaths = {
@@ -551,7 +553,7 @@ async function pathLstat(path: string): Promise<Result<Stats | undefined, Refere
 }
 
 function isMissing(cause: unknown): boolean {
-    return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+    return errnoCode(errorOf(cause)) === "ENOENT";
 }
 
 async function readReceipt(path: string, storeRoot: string): Promise<{ readonly exists: boolean; readonly receipt?: ReferenceInstallReceipt }> {

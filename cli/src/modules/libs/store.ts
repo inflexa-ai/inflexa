@@ -82,6 +82,8 @@ import {
 import { readTransferReport } from "./transfers.ts";
 import { spawnDetachedSelf } from "./transfers.ts";
 import type { StoreEcosystem, StoreFlightStatus, TransferPhase } from "../../types/store.ts";
+import { messageOf } from "../../lib/cause.ts";
+import { formatIecBytes } from "../../lib/bytes.ts";
 
 /** The pin marker the provisioner writes inside each store directory, recording its `name==version`. */
 const PIN_MARKER = ".inflexa-pin";
@@ -393,7 +395,7 @@ async function advertisedStoreDirs(storeRoot: string): Promise<ReadonlySet<strin
     const path = join(storeRoot, "deps.json");
     if (!existsSync(path)) return new Set();
     try {
-        const parsed = JSON.parseWith(await readFile(path, "utf8"), z.object({ nodes: z.record(z.string(), z.unknown()).default({}) }).passthrough());
+        const parsed = JSON.parseWith(await readFile(path, "utf8"), z.looseObject({ nodes: z.record(z.string(), z.unknown()).default({}) }));
         return parsed === null ? null : new Set(Object.keys(parsed.nodes));
     } catch {
         return null;
@@ -1079,7 +1081,7 @@ function ensureStoreRoot(storeRoot: string): Result<void, StoreAddRefusal> {
     } catch (cause) {
         return err({
             type: "store_root_failed",
-            message: `Could not create the package store at ${storeRoot} (${cause instanceof Error ? cause.message : String(cause)}).`,
+            message: `Could not create the package store at ${storeRoot} (${messageOf(cause)}).`,
             cause,
         });
     }
@@ -1352,8 +1354,8 @@ export async function runStoreReclaim(): Promise<void> {
 /** Render the bytes moved against the bytes the manifest declares. Before the manifest resolves there is no total, thus no ratio. */
 function describeTransfer(bytesTransferred: number, totalBytes: number | null): string {
     return totalBytes === null
-        ? `${formatBytes(bytesTransferred)} transferred — resolving the manifest`
-        : `${formatBytes(bytesTransferred)} of ${formatBytes(totalBytes)}`;
+        ? `${formatIecBytes(bytesTransferred)} transferred — resolving the manifest`
+        : `${formatIecBytes(bytesTransferred)} of ${formatIecBytes(totalBytes)}`;
 }
 
 /**
@@ -1433,13 +1435,13 @@ function printInspection(inspection: StoreInspection): void {
     printFlights(inspection.flights);
     printFailedFlights(inspection.failed);
     printPending(inspection.pending);
-    console.log(`  Disk     ${formatBytes(inspection.storeBytes)}`);
+    console.log(`  Disk     ${formatIecBytes(inspection.storeBytes)}`);
     // The total counts only the debris tier: no farm link AND no graph node.
     // A graph-advertised package with no farm link yet is inventory, and the
     // hint must never point a reader at removing it. A zero total is the
     // common state, and printing it would be noise, so the line stays silent.
     if (inspection.reclaimableBytes > 0) {
-        console.log(`  Reclaim  ${formatBytes(inspection.reclaimableBytes)} of debris — run \`inflexa store reclaim\` to recover it`);
+        console.log(`  Reclaim  ${formatIecBytes(inspection.reclaimableBytes)} of debris — run \`inflexa store reclaim\` to recover it`);
     }
     printDownload(inspection.download);
 }
@@ -1482,19 +1484,6 @@ function printPending(pending: readonly StorePendingInspection[]): void {
     for (const entry of pending) {
         console.log(`    ${entry.spec}  ${entry.analysis === null ? "no analysis" : `analysis "${entry.analysis}"`}`);
     }
-}
-
-/** Render a byte count in the largest unit that keeps it readable. */
-function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ["KiB", "MiB", "GiB", "TiB"];
-    let value = bytes / 1024;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit += 1;
-    }
-    return `${value.toFixed(1)} ${units[unit]}`;
 }
 
 /** Whether any live store work — a flight, a pending flush — is on this machine. The reclaim reads it, and a test seeds it. */

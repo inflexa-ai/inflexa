@@ -16,7 +16,7 @@ const DEFAULT_NEXT = "/gui/";
  * nonce is used.
  */
 function isServerPath(next: string): boolean {
-    return next.startsWith("/") && !next.startsWith("//") && [...next].every((char) => char !== " " && isPrintableAscii(char)) && !next.includes("\\");
+    return next.startsWith("/") && !next.startsWith("//") && Array.from(next).every((char) => char !== " " && isPrintableAscii(char)) && !next.includes("\\");
 }
 
 /**

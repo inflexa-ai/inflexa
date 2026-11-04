@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ModelAuthConfig } from "./config.ts";
 import { readEnvCredentialVar } from "./env.ts";
 import { unknownRecordSchema } from "./json_record.ts";
+import { messageOf } from "./cause.ts";
 
 // A `direct` connection's wire credential, generalized from "a static key read once at boot" to a cached,
 // refreshing SOURCE — so direct mode can consume a short-lived token from a credential helper (the pattern
@@ -43,7 +44,7 @@ export function credentialErrorMessage(e: CredentialError): string {
         case "env_var_unset":
             return `environment variable ${e.var} is not set`;
         case "command_spawn_failed":
-            return `credential command could not be run (${e.command}): ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
+            return `credential command could not be run (${e.command}): ${messageOf(e.cause)}`;
         case "command_exit_nonzero":
             return `credential command exited ${e.exitCode} (${e.command})${e.stderr.trim() ? `: ${e.stderr.trim()}` : ""}`;
         case "command_empty_output":
@@ -125,7 +126,7 @@ function parseCommandCredential(
         if (parsed.isErr()) {
             const { error } = parsed;
             if (error.type === "malformed") {
-                return err({ type: "exec_credential_invalid", command, detail: error.cause instanceof Error ? error.cause.message : String(error.cause) });
+                return err({ type: "exec_credential_invalid", command, detail: messageOf(error.cause) });
             }
             return err({ type: "exec_credential_invalid", command, detail: error.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
         }

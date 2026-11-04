@@ -78,7 +78,7 @@ describe("readPoolInventorySections", () => {
         // Cut one edge target out of the graph: the strict reader must refuse,
         // and the reason must carry the from/to pair the repair needs.
         const graphPath = join(root, "deps.json");
-        const graph = parsedJson(readFileSync(graphPath, "utf8"), z.looseObject({ nodes: z.record(z.string(), z.unknown()) }));
+        const graph = parsedJson(readFileSync(graphPath, "utf8"), z.looseObject({ nodes: z.record(z.string(), z.json()) }));
         delete graph.nodes["alpha-1.2.0-000000000000aaaa"];
         writeFileSync(graphPath, JSON.stringify(graph));
 

@@ -18,6 +18,7 @@ import { TextInput } from "../text_input.tsx";
 import { DynamicList } from "../dynamic_list.tsx";
 import { Bold } from "../emphasis.tsx";
 import type { SelectItem } from "../list_core.tsx";
+import { messageOf } from "../../../lib/cause.ts";
 
 // A navigable, multi-select file browser on DynamicList: a shared folder listing re-minted per
 // navigation (the textbook DynamicList source), a fuzzy filter within the current folder, and
@@ -155,7 +156,7 @@ export type FilePickerProps = {
  */
 function listDir(dir: string, hideHidden: boolean, identity: ProcessIdentity | null): ResultAsync<{ path: string; listing: Listing }, string> {
     return readFolder(dir, !hideHidden)
-        .mapErr((e) => (e.cause instanceof Error ? e.cause.message : String(e.cause)))
+        .mapErr((e) => messageOf(e.cause))
         .map(async ({ path, entries, rawCount }): Promise<{ path: string; listing: Listing }> => {
             // Decided from the RAW entry count, not the filtered row count: hiding dot-entries must not be
             // what brings a 50k-entry folder under the ceiling, or `a` would silently start a huge stat pass.
@@ -521,7 +522,9 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
                             {(seg, i) => (
                                 <>
                                     {i() > 0 ? ` ${GLYPHS.chevronRight} ` : ""}
-                                    {i() === breadcrumb().length - 1 ? <Bold>{seg}</Bold> : seg}
+                                    <Show when={i() === breadcrumb().length - 1} fallback={seg}>
+                                        <Bold>{seg}</Bold>
+                                    </Show>
                                 </>
                             )}
                         </For>

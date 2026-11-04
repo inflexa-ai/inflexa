@@ -293,15 +293,13 @@ export function UsageDialog(props: UsageDialogProps): JSX.Element {
                                 width="100%"
                             >
                                 <For each={breakdown.lines}>
-                                    {(l) =>
-                                        l.kind === "heading" ? (
+                                    {(l) => (
+                                        <Show when={l.kind === "heading"} fallback={<text fg={theme().fg}>{l.text}</text>}>
                                             <text fg={theme().accent}>
                                                 <Bold>{l.text}</Bold>
                                             </text>
-                                        ) : (
-                                            <text fg={theme().fg}>{l.text}</text>
-                                        )
-                                    }
+                                        </Show>
+                                    )}
                                 </For>
                             </ScrollPane>
                         </Show>

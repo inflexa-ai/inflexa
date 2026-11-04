@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { Fg } from "./emphasis.tsx";
 
@@ -17,7 +18,7 @@ export type ReportRenderedBlockProps = {
  * The page opens outside the terminal, thus the marker is the north-east arrow of the openable card. Each
  * render opens the same live page, thus an earlier render opens the page of now, not the page of then.
  */
-export function ReportRenderedBlock(props: ReportRenderedBlockProps) {
+export function ReportRenderedBlock(props: ReportRenderedBlockProps): JSX.Element {
     return (
         <box flexDirection="column" paddingBottom={space.sm} onMouseDown={() => props.onOpen()}>
             <text>

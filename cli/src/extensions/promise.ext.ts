@@ -7,7 +7,7 @@ declare global {
          * static on Promise so retry/poll loops can pace themselves without each module
          * redeclaring its own one-line helper.
          */
-        sleep(ms: number): Promise<void>;
+        sleep: (ms: number) => Promise<void>;
     }
 }
 

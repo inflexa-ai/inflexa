@@ -36,11 +36,12 @@ import type { ServerBoot } from "../../boot.ts";
 import type { PoolRuntime } from "../../http.ts";
 import { DEFAULT_FS_ROUTE_OPTS, fsRoutes, type FsRouteOpts } from "../fs.ts";
 import { parsedJson } from "../../../test_support/json.ts";
+import { present } from "../../../lib/present.ts";
 
 // The routes alone, with no app and no bearer check: `app.test.ts` covers those. A test reads a body as `unknown`.
 // It asserts the body with `toEqual` or `toHaveProperty`, or it parses a schema below that names only the fields that
 // the test computes on. The schemas are loose, thus each other field stays on the parsed value.
-const maybe = z.unknown().optional();
+const maybe = z.json().optional();
 const entryBody = z.looseObject({
     name: z.string(),
     path: z.string(),
@@ -1090,7 +1091,7 @@ describe("GET /api/v1/fs/preview", () => {
             const response = await preview(join(root, "a.csv"), app);
             expect(response.status).toBe(403);
             const text = await response.text();
-            expect(parsedJson(text, z.unknown())).toMatchObject({ error: "forbidden" });
+            expect(parsedJson(text, z.json())).toMatchObject({ error: "forbidden" });
             expect(text).not.toContain("TOP-SECRET");
         });
 
@@ -1351,28 +1352,29 @@ describe("GET /api/v1/fs/search", () => {
         writeFileSync(join(root, "top.csv"), "x");
         const slow = join(root, "slow");
         const reads: string[] = [];
-        const slowStarted = Promise.withResolvers<void>();
-        const gate = Promise.withResolvers<void>();
+        const slowStarted = Promise.withResolvers<undefined>();
+        const gate = Promise.withResolvers<undefined>();
         const app = searchRoutes(idleBoot(), {
             spawnWalk: inProcessSpawner(async (path) => {
                 reads.push(path);
                 if (path === slow) {
-                    slowStarted.resolve();
+                    slowStarted.resolve(undefined);
                     await gate.promise;
                 }
                 return readFolderEntries(path);
             }).spawn,
         });
-        const serverAborted = Promise.withResolvers<void>();
+        const serverAborted = Promise.withResolvers<undefined>();
         const server = Bun.serve({
             hostname: "127.0.0.1",
             port: 0,
             fetch: (request, bun) => {
-                request.signal.addEventListener("abort", () => serverAborted.resolve());
+                request.signal.addEventListener("abort", () => serverAborted.resolve(undefined));
                 return app.fetch(request, bun);
             },
         });
-        const url = (query: string): string => `http://127.0.0.1:${server.port}/search?path=${encodeURIComponent(root)}${query}`;
+        const url = (query: string): string =>
+            `http://127.0.0.1:${present(server.port, "the port of the test server")}/search?path=${encodeURIComponent(root)}${query}`;
         try {
             const client = new AbortController();
             const first = fetch(url("&q=inside"), { signal: client.signal }).then(
@@ -1383,7 +1385,7 @@ describe("GET /api/v1/fs/search", () => {
             client.abort();
             expect(await first).toBe("aborted");
             await serverAborted.promise;
-            gate.resolve();
+            gate.resolve(undefined);
             await Bun.sleep(20);
 
             const response = await fetch(url("&q=inside"));
@@ -1393,7 +1395,7 @@ describe("GET /api/v1/fs/search", () => {
             expect(body.hits.map((hit) => `${hit.subpath}/${hit.entry.name}`)).toEqual(["slow/inside.csv"]);
             expect(reads.sort()).toEqual([root, slow]);
         } finally {
-            gate.resolve();
+            gate.resolve(undefined);
             await server.stop(true);
         }
     });
@@ -1403,9 +1405,9 @@ describe("GET /api/v1/fs/search", () => {
         mkdirSync(join(root, "other"));
         writeFileSync(join(root, "other", "a.csv"), "x");
         let kills = 0;
-        const spawned = Promise.withResolvers<void>();
+        const spawned = Promise.withResolvers<undefined>();
         const silent: WalkSpawner = () => {
-            spawned.resolve();
+            spawned.resolve(undefined);
             return ok({
                 stdout: new ReadableStream<Uint8Array>(),
                 kill: () => {

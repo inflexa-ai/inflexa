@@ -1,5 +1,6 @@
 import { render, useRenderer } from "@opentui/solid";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { homedir } from "node:os";
 import { basename } from "node:path";
@@ -132,7 +133,7 @@ const EMBEDDING_SECTION = PG_FIELD_SECTIONS_START + PG_FIELDS.length;
 /** Upper bound on the api-key model probe. A hung endpoint must not keep the "Fetching models…" notice up: the abort trips this timeout, and the fetch then degrades to manual model-id entry like any other listing failure. */
 const MODEL_FETCH_TIMEOUT_MS = 10_000;
 
-export function ConfigApp(props: { settings: ServerSettings; onClose?: () => void; clientOpts?: ClientOpts }) {
+export function ConfigApp(props: { settings: ServerSettings; onClose?: () => void; clientOpts?: ClientOpts }): JSX.Element {
     const renderer = useRenderer();
     // Saved and draft both start from the server settings and the theme of this machine. Focus starts on
     // the first section (the telemetry toggle) — the top of the form — so every section, including the
@@ -173,16 +174,16 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
     });
 
     /** The draft's postgres connection, resolved by the server. */
-    const pgDraft = () => draft().postgres;
+    const pgDraft = (): SettingsDraft["postgres"] => draft().postgres;
     /** The saved postgres connection, resolved by the server. */
-    const pgSaved = () => saved().postgres;
+    const pgSaved = (): SettingsDraft["postgres"] => saved().postgres;
 
     /** The draft's embedding block — guaranteed present (the schema defaults it to `{ mode: "off" }`). */
-    const embDraft = () => draft().embedding;
+    const embDraft = (): SettingsDraft["embedding"] => draft().embedding;
     /** The saved embedding block — same default guarantee. */
-    const embSaved = () => saved().embedding;
+    const embSaved = (): SettingsDraft["embedding"] => saved().embedding;
     /** Structural compare: a backend change replaces the whole block, so every field is in scope. */
-    const embeddingChanged = () => {
+    const embeddingChanged = (): boolean => {
         const a = embDraft();
         const b = embSaved();
         return (
@@ -205,7 +206,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
         scrollRef?.scrollChildIntoView(`section-${section()}`);
     });
 
-    const dirty = () =>
+    const dirty = (): boolean =>
         settings.some((s) => draft()[s.key] !== saved()[s.key]) ||
         draft().theme !== saved().theme ||
         draft().runtime !== saved().runtime ||
@@ -604,7 +605,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
         setQuitArmed(false);
     }
 
-    function exit() {
+    function exit(): void {
         // Revert any unsaved live theme preview to the persisted selection.
         setTheme(saved().theme);
         // Embedded as a dialog: hand control back to the host (which owns the dialog stack)
@@ -701,19 +702,17 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
             >
                 <For each={settings}>
                     {(setting, index) => {
-                        const focused = () => index() === section();
-                        const label = () =>
+                        const focused = (): boolean => index() === section();
+                        const label = (): string =>
                             `[${draft()[setting.key] ? "x" : " "}] ${setting.label}${draft()[setting.key] !== saved()[setting.key] ? " *" : ""}`;
                         return (
                             <box id={`section-${index()}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
                                 <text fg={theme().fg}>
-                                    {focused() ? (
+                                    <Show when={focused()} fallback={<Bold>{label()}</Bold>}>
                                         <Reverse>
                                             <Bold>{label()}</Bold>
                                         </Reverse>
-                                    ) : (
-                                        <Bold>{label()}</Bold>
-                                    )}
+                                    </Show>
                                 </text>
                                 <box paddingLeft={4} flexDirection="column">
                                     <text fg={theme().fgMuted}>{setting.description}</text>
@@ -725,10 +724,14 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
                 </For>
 
                 <box id={`section-${THEME_SECTION}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
-                    <text fg={theme().fg}>{section() === THEME_SECTION ? <Reverse>theme</Reverse> : <Fg role="fgMuted">theme</Fg>}</text>
+                    <text fg={theme().fg}>
+                        <Show when={section() === THEME_SECTION} fallback={<Fg role="fgMuted">theme</Fg>}>
+                            <Reverse>theme</Reverse>
+                        </Show>
+                    </text>
                     <For each={themeIds}>
                         {(id) => {
-                            const isActive = () => draft().theme === id;
+                            const isActive = (): boolean => draft().theme === id;
                             return (
                                 <box paddingLeft={2}>
                                     <text fg={isActive() && section() === THEME_SECTION ? theme().secondary : isActive() ? theme().accent : theme().fg}>
@@ -743,11 +746,13 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
 
                 <box id={`section-${RUNTIME_SECTION}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
                     <text fg={theme().fg}>
-                        {section() === RUNTIME_SECTION ? <Reverse>container runtime</Reverse> : <Fg role="fgMuted">container runtime</Fg>}
+                        <Show when={section() === RUNTIME_SECTION} fallback={<Fg role="fgMuted">container runtime</Fg>}>
+                            <Reverse>container runtime</Reverse>
+                        </Show>
                     </text>
                     <For each={runtimeIds}>
                         {(id) => {
-                            const isActive = () => draft().runtime === id;
+                            const isActive = (): boolean => draft().runtime === id;
                             return (
                                 <box paddingLeft={2}>
                                     <text fg={isActive() && section() === RUNTIME_SECTION ? theme().secondary : isActive() ? theme().accent : theme().fg}>
@@ -764,23 +769,26 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
                     {(field, i) => {
                         // oxlint-disable-next-line solid/reactivity -- PG_FIELDS is static; the index is stable for the row's lifetime, so seeding-once is safe.
                         const fieldSection = PG_FIELD_SECTIONS_START + i();
-                        const focused = () => section() === fieldSection;
-                        const value = () => (field === "password" ? secretState(pgDraft().password, pgDraft().passwordSet) : String(pgDraft()[field]));
-                        const changed = () => pgDraft()[field] !== pgSaved()[field];
+                        const focused = (): boolean => section() === fieldSection;
+                        const value = (): string => (field === "password" ? secretState(pgDraft().password, pgDraft().passwordSet) : String(pgDraft()[field]));
+                        const changed = (): boolean => pgDraft()[field] !== pgSaved()[field];
                         return (
                             <box id={`section-${fieldSection}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
                                 <text fg={theme().fg}>
-                                    {focused() ? (
+                                    <Show
+                                        when={focused()}
+                                        fallback={
+                                            <Fg role="fgMuted">
+                                                {PG_FIELD_LABELS[field]}: {value()}
+                                                {changed() ? " *" : ""}
+                                            </Fg>
+                                        }
+                                    >
                                         <Reverse>
                                             {PG_FIELD_LABELS[field]}: {value()}
                                             {changed() ? " *" : ""}
                                         </Reverse>
-                                    ) : (
-                                        <Fg role="fgMuted">
-                                            {PG_FIELD_LABELS[field]}: {value()}
-                                            {changed() ? " *" : ""}
-                                        </Fg>
-                                    )}
+                                    </Show>
                                 </text>
                                 <Show when={field === "password"}>
                                     <box paddingLeft={4}>
@@ -797,17 +805,20 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
 
                 <box id={`section-${EMBEDDING_SECTION}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
                     <text fg={theme().fg}>
-                        {section() === EMBEDDING_SECTION ? (
+                        <Show
+                            when={section() === EMBEDDING_SECTION}
+                            fallback={
+                                <Fg role="fgMuted">
+                                    embedding: {embeddingSummary(embDraft(), defaults)}
+                                    {embeddingChanged() ? " *" : ""}
+                                </Fg>
+                            }
+                        >
                             <Reverse>
                                 embedding: {embeddingSummary(embDraft(), defaults)}
                                 {embeddingChanged() ? " *" : ""}
                             </Reverse>
-                        ) : (
-                            <Fg role="fgMuted">
-                                embedding: {embeddingSummary(embDraft(), defaults)}
-                                {embeddingChanged() ? " *" : ""}
-                            </Fg>
-                        )}
+                        </Show>
                     </text>
                     <box paddingLeft={4}>
                         <text fg={theme().fgMuted}>press Enter to choose a backend</text>
@@ -836,7 +847,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
     );
 }
 
-export async function launchConfig() {
+export async function launchConfig(): Promise<void> {
     requireInteractiveTerminal("inflexa config");
     // The server keys come from the server, before the renderer takes the terminal.
     const settings = (await fetchSettings()).match(

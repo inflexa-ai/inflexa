@@ -1,4 +1,5 @@
 import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space, stroke, MARKERS } from "../../lib/design_system.ts";
@@ -22,7 +23,7 @@ export type ErrorBlockProps = {
  * and recovery affordances. The double `stroke.danger` frame is deliberately NOT
  * used here — it is reserved for destructive *confirmation*, not error display.
  */
-export function ErrorBlock(props: ErrorBlockProps) {
+export function ErrorBlock(props: ErrorBlockProps): JSX.Element {
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text fg={theme()[MARKERS.error.role]}>

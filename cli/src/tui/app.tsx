@@ -575,7 +575,7 @@ function bootRecoveryOffer(
     }
 }
 
-export function App(props: AppProps) {
+export function App(props: AppProps): JSX.Element {
     const dims = useTerminalDimensions();
     const renderer = useRenderer();
 
@@ -1203,7 +1203,7 @@ export function App(props: AppProps) {
     // proper registry (parser, help listing, extensible command map) when the slash system lands.
     const QUIT_ALIASES = new Set(["quit", "exit", "q", "bye", "ciao"]);
 
-    async function handleSubmit() {
+    async function handleSubmit(): Promise<void> {
         const composer = textareaRef;
         const text = composer?.editBuffer.getText().trim();
         if (composer === null || !text) return;

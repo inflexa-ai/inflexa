@@ -143,7 +143,7 @@ function startStub(
         }),
     });
     return {
-        origin: `http://127.0.0.1:${server.port}`,
+        origin: `http://127.0.0.1:${present(server.port, "the port of the test server")}`,
         getLastInputs: (): string[] => lastInputs,
         getTokenizeInputs: (): string[] => tokenizeInputs,
         getTokenizeCount: (): number => tokenizeInputs.length,

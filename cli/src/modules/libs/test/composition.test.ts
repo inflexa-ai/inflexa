@@ -118,7 +118,7 @@ const farmLockSchema = z.looseObject({
     packages: z.array(
         z.looseObject({ name: z.string(), version: z.string(), track: z.string(), store_dir: z.string(), hash: z.string(), requested: z.boolean() }),
     ),
-    languages: z.record(z.string(), z.unknown()),
+    languages: z.record(z.string(), z.json()),
     merge_conflicts: z.array(z.looseObject({ entry: z.string(), action: z.string() })).optional(),
 });
 
@@ -1034,9 +1034,9 @@ describe("linkPackagesIntoFarm", () => {
         // whole pool, and the seam must say THAT — a per-package "absent"
         // here would send the caller after packages the pool holds.
         const graphPath = join(root, "deps.json");
-        const graph = parsedJson(readFileSync(graphPath, "utf8"), z.looseObject({ nodes: z.record(z.string(), z.unknown()) }));
-        delete graph.nodes[ALPHA];
-        writeFileSync(graphPath, JSON.stringify(graph));
+        const graph = parsedJson(readFileSync(graphPath, "utf8"), z.looseObject({ nodes: z.record(z.string(), z.json()) }));
+        const cutGraph = { ...graph, nodes: Object.fromEntries(Object.entries(graph.nodes).filter(([name]) => name !== ALPHA)) };
+        writeFileSync(graphPath, JSON.stringify(cutGraph));
 
         const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ spelling: "polars" }, { spelling: "numpy" }]);
 

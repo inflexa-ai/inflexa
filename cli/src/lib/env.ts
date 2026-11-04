@@ -112,9 +112,7 @@ export function walkParentPid(): number | null {
  */
 export function walkChildEnv(base: Record<string, string | undefined> | undefined): Record<string, string | undefined> {
     const childEnv: Record<string, string | undefined> = { ...(base ?? process.env), [walkParentPidVar]: String(process.pid) };
-    delete childEnv[fsPoolVar];
-    delete childEnv.GOMAXPROCS;
-    return childEnv;
+    return Object.fromEntries(Object.entries(childEnv).filter(([name]) => name !== fsPoolVar && name !== "GOMAXPROCS"));
 }
 
 /**

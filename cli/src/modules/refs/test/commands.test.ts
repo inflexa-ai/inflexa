@@ -18,7 +18,7 @@ import { z } from "zod";
 import "../../../extensions/index.ts";
 import { env } from "../../../lib/env.ts";
 import { collapseWhitespace } from "../../../lib/text.ts";
-import { fakeFetch, respondWith } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     ON_DEMAND_REFERENCE_NOTE,
@@ -50,12 +50,13 @@ import {
 } from "../store.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { awaitOk } from "../../../test_support/result.ts";
+import { describeCause, errorOf } from "../../../lib/cause.ts";
 
 // Loose objects keep each key that the schema does not name, so `not.toHaveProperty` still sees an absent key as absent.
 const listedDatasetSchema = z.looseObject({
     id: z.string(),
     state: z.string(),
-    artifacts: z.array(z.unknown()),
+    artifacts: z.array(z.json()),
     installedVersion: z.string().optional(),
     installedAt: z.string().optional(),
 });
@@ -146,10 +147,10 @@ async function capture(fn: () => Promise<void>): Promise<{ stdout: string; stder
     let stdout = "";
     let stderr = "";
     console.log = (msg?: unknown) => {
-        stdout += `${String(msg)}\n`;
+        stdout += `${describeCause(msg)}\n`;
     };
     console.error = (msg?: unknown) => {
-        stderr += `${String(msg)}\n`;
+        stderr += `${describeCause(msg)}\n`;
     };
     try {
         await fn();
@@ -239,7 +240,8 @@ describe("reference command policy", () => {
                 ids: ["demo"],
                 interactive: true,
                 source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])),
-                fetch: async (input) => (String(input).endsWith("/file") ? new Response(null, { headers: { "content-length": "1048576" } }) : unreachable()),
+                fetch: async (input) =>
+                    fetchInputUrl(input).endsWith("/file") ? new Response(null, { headers: { "content-length": "1048576" } }) : unreachable(),
                 confirmDownload: (question) => {
                     questions.push(question);
                     return Promise.resolve(false);
@@ -491,7 +493,7 @@ describe("reference json output", () => {
         const second = await capture(() => runRefsList({ json: true, source: singleFileSource }));
         expect(first.stdout).toBe(second.stdout);
         expect(first.stderr).toBe("");
-        expect(parsedJson(first.stdout, z.unknown())).toMatchObject({ exists: false });
+        expect(parsedJson(first.stdout, z.json())).toMatchObject({ exists: false });
         // Passive inspection must never materialize the store.
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
     });
@@ -526,7 +528,7 @@ describe("reference json output", () => {
         expect(exitCode).toBe(1);
         // The damaged states live in the document, so stderr stays reserved for genuine failures.
         expect(stderr).toBe("");
-        expect(parsedJson(stdout, z.unknown())).toEqual({
+        expect(parsedJson(stdout, z.json())).toEqual({
             datasets: [{ datasetId: "demo", version: "1", state: "modified", files: [{ path: "file", state: "modified" }] }],
         });
     });
@@ -536,7 +538,7 @@ describe("reference json output", () => {
         const { stdout, stderr, exitCode } = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
         expect(exitCode ?? 0).toBe(0);
         expect(stderr).toBe("");
-        expect(parsedJson(stdout, z.unknown())).toEqual({
+        expect(parsedJson(stdout, z.json())).toEqual({
             datasets: [{ datasetId: "demo", version: "1", state: "valid", files: [{ path: "file", state: "valid" }] }],
         });
     });
@@ -888,7 +890,7 @@ describe("progress readout teardown", () => {
             }
         });
 
-        expect(thrown instanceof Error ? thrown.message : undefined).toBe("catalog seam exploded mid-transfer");
+        expect(errorOf(thrown)?.message).toBe("catalog seam exploded mid-transfer");
         // Without the teardown the repaint timer would still be running and, on a terminal, the bar
         // would still own the screen. The closing line is the observable proof it was torn down.
         expect(stdout).toContain("Download failed at 0/1 files");
@@ -1033,7 +1035,7 @@ describe("transfer rate", () => {
 function sealGlobalFetch(escaped: string[]): () => void {
     const real = globalThis.fetch;
     globalThis.fetch = fakeFetch((input, init) => {
-        escaped.push(`${init?.method ?? "GET"} ${String(input)}`);
+        escaped.push(`${init?.method ?? "GET"} ${fetchInputUrl(input)}`);
         return Promise.reject(new Error("a sealed setup must never reach the global fetch"));
     });
     return () => {
@@ -1056,7 +1058,7 @@ describe("reference setup seams", () => {
                     selection: { ids: ["demo"] },
                     source: singleFileSource,
                     fetch: (input, init) => {
-                        seen.push(`${init?.method ?? "GET"} ${String(input)}`);
+                        seen.push(`${init?.method ?? "GET"} ${fetchInputUrl(input)}`);
                         return Promise.resolve(new Response("alpha", { headers: { "content-length": "5" } }));
                     },
                 }),

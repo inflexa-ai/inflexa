@@ -83,6 +83,7 @@ import {
 } from "../../db/primary_query.ts";
 import { recordRunSeen } from "../../db/primary_mutation.ts";
 import { env } from "../../lib/env.ts";
+import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { getLogger } from "../../lib/log.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
@@ -781,8 +782,8 @@ function planOf(planId: string | null, document: unknown): RunPlan | null {
  * is a JSON document whose schema types `title` as optional, thus each hop is tested.
  */
 export function planTitleOf(plan: unknown): string | null {
-    if (typeof plan !== "object" || plan === null || !("title" in plan)) return null;
-    return trimmedTitle(plan.title);
+    const record = unknownRecordSchema.safeParse(plan);
+    return record.success ? trimmedTitle(record.data.title) : null;
 }
 
 /** The title with the spaces at its start and end removed, or `null` when it is not a string or has no text. The one title rule of the run summary and the plan list. */
@@ -798,14 +799,14 @@ function trimmedTitle(title: unknown): string | null {
  */
 export function planStepNames(plan: unknown): ReadonlyMap<string, string> {
     const names = new Map<string, string>();
-    if (typeof plan !== "object" || plan === null || !("steps" in plan)) return names;
-    const steps: unknown = plan.steps;
+    const record = unknownRecordSchema.safeParse(plan);
+    const steps = record.success ? record.data.steps : undefined;
     if (!Array.isArray(steps)) return names;
     const list: unknown[] = steps;
     for (const step of list) {
-        if (typeof step !== "object" || step === null) continue;
-        const id = "id" in step ? step.id : undefined;
-        const name = "name" in step ? step.name : undefined;
+        const stepRecord = unknownRecordSchema.safeParse(step);
+        if (!stepRecord.success) continue;
+        const { id, name } = stepRecord.data;
         if (typeof id === "string" && typeof name === "string" && name.trim().length > 0) names.set(id, name.trim());
     }
     return names;

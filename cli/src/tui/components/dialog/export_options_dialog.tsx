@@ -134,8 +134,8 @@ export function ExportOptionsDialog(props: {
         bindings: [{ chord: KEYS.enter, run: confirm, desc: "Confirm", group: "Dialog" }],
     }));
 
-    const isOnText = () => activeKey() === "__text__";
-    const footer = () =>
+    const isOnText = (): boolean => activeKey() === "__text__";
+    const footer = (): string =>
         isOnText()
             ? `${chordLabel(KEYS.enter)} confirm ${GLYPHS.middot} tab options ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`
             : `${chordLabel(KEYS.space)} toggle ${GLYPHS.middot} tab next ${GLYPHS.middot} ${chordLabel(KEYS.enter)} confirm ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`;
@@ -168,8 +168,8 @@ export function ExportOptionsDialog(props: {
             <box flexDirection="column">
                 <For each={props.items}>
                     {(item) => {
-                        const isActive = () => activeKey() === item.key;
-                        const isChecked = () => values()[item.key] ?? false;
+                        const isActive = (): boolean => activeKey() === item.key;
+                        const isChecked = (): boolean => values()[item.key] ?? false;
                         return (
                             <box
                                 flexDirection="row"

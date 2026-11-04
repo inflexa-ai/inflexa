@@ -94,6 +94,7 @@ import {
     type FileRouteOpts,
     type OpenFile,
 } from "./files.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /**
  * A place from which the server finds mounted volumes. A `parent` root is a folder whose entries are the candidates, for
@@ -583,7 +584,7 @@ function readErrorResponse(c: Parameters<typeof apiError>[0], error: FolderReadE
         case "not_folder":
             return apiError(c, "validation_error", "`path` must name a folder.", { formErrors: [], fieldErrors: { path: ["The path is not a folder."] } });
         case "unreadable": {
-            const reason = error.cause instanceof Error ? error.cause.message : String(error.cause);
+            const reason = messageOf(error.cause);
             return apiError(c, "forbidden", `The server cannot read the folder ${error.path}: ${reason}`, { code: errnoCode(error.cause) });
         }
         default: {

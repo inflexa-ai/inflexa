@@ -199,6 +199,6 @@ export function generateApiKey(): string {
     const rand = new Uint8Array(45);
     crypto.getRandomValues(rand);
     let key = "sk-";
-    for (const b of rand) key += chars[b % chars.length];
+    for (const b of rand) key += chars.charAt(b % chars.length);
     return key;
 }

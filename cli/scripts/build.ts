@@ -94,9 +94,9 @@ function pageAssetErrorMessage(error: PageAssetError): string {
         case "empty_manifest":
             return "error: the page-asset manifest of the harness is empty — refusing to build a binary whose report page has no assets";
         case "unresolved_specifier":
-            return `error: could not resolve the report page asset ${error.specifier} through the harness installation — ${String(error.cause)}`;
+            return `error: could not resolve the report page asset ${error.specifier} through the harness installation — ${describeCause(error.cause)}`;
         case "unreadable_source":
-            return `error: could not read the report page asset ${error.specifier} at ${error.path} — ${String(error.cause)}`;
+            return `error: could not read the report page asset ${error.specifier} at ${error.path} — ${describeCause(error.cause)}`;
     }
 }
 
@@ -569,13 +569,15 @@ function cliSbom(
         process.exit(1);
     }
     const [, modelOwner, modelRepo, modelRevision] = model;
+    // The pattern above has three required groups, so a match carries all of them.
+    const modelPurl = `pkg:huggingface/${present(modelOwner, "the model owner")}/${present(modelRepo, "the model repository")}@${present(modelRevision, "the model revision")}`;
     components.push({
-        "bom-ref": `pkg:huggingface/${modelOwner}/${modelRepo}@${modelRevision}`,
+        "bom-ref": modelPurl,
         type: "machine-learning-model",
         name: MODEL_ARTIFACT,
         version: modelRevision,
         description: "The embedding model of the local embedding sidecar",
-        purl: `pkg:huggingface/${modelOwner}/${modelRepo}@${modelRevision}`,
+        purl: modelPurl,
         licenses: [{ license: { id: "MIT" } }],
         hashes: [{ alg: "SHA-256", content: MODEL_SHA256 }],
         externalReferences: [{ type: "distribution", url: MODEL_URL }],
@@ -752,7 +754,7 @@ for (const target of targets) {
 
     if (!result.success) {
         console.error(`error: build failed for ${name}`);
-        for (const log of result.logs) console.error(String(log));
+        for (const log of result.logs) console.error(`${log.name}: ${log.message}`);
         process.exit(1);
     }
 
@@ -764,7 +766,7 @@ for (const target of targets) {
             const version = (await $`./dist/${name} --version`.text()).trim();
             console.log(`built dist/${name} (smoke test: --version → ${version})`);
         } catch (cause) {
-            console.error(`error: smoke test failed — dist/${name} --version did not run: ${String(cause)}`);
+            console.error(`error: smoke test failed — dist/${name} --version did not run: ${describeCause(cause)}`);
             process.exit(1);
         }
     } else {
@@ -822,9 +824,9 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
         }
     }
 
-    // The string entries of an npm platform field. The type predicate is sound: it holds after a `typeof` test.
+    // The string entries of an npm platform field.
     function stringList(value: unknown): string[] | null {
-        return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : null;
+        return Array.isArray(value) ? value.filter((entry: unknown) => typeof entry === "string") : null;
     }
 
     function readMatchingText(pkgDir: string, prefixes: readonly string[]): string | null {

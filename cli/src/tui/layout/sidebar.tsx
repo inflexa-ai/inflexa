@@ -46,6 +46,7 @@ import { useWorkspace } from "../contexts/workspace.ts";
 import type { AnchorView } from "../../api/analyses.ts";
 import type { ThreadSummary } from "../../api/conversation.ts";
 import type { RunSummary } from "../../api/runs.ts";
+import { formatIecBytes } from "../../lib/bytes.ts";
 
 /** Props for {@link Sidebar}. Only the live message count is passed; analysis/session/project come from the workspace store, which repaints the sidebar on an in-place swap. */
 export type SidebarProps = {
@@ -88,19 +89,6 @@ type LiveLine = {
     onActivate?: () => void;
 };
 
-/** Render a byte count in the largest unit that keeps the rail readable. */
-function formatRailBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ["KiB", "MiB", "GiB", "TiB"];
-    let value = bytes / 1024;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit += 1;
-    }
-    return `${value.toFixed(1)} ${units[unit]}`;
-}
-
 /**
  * One rail row of the TRANSFERS or PACKAGES section: the glyph-and-text line,
  * then the meter line and the muted sub-line where the descriptor carries
@@ -111,7 +99,9 @@ function RailLiveLine(props: { line: LiveLine }): JSX.Element {
     return (
         <>
             <text onMouseUp={() => props.line.onActivate?.()}>
-                {props.line.glyph !== null ? <Fg role={props.line.role}>{`${props.line.glyph} `}</Fg> : null}
+                <Show when={props.line.glyph} keyed>
+                    {(glyph) => <Fg role={props.line.role}>{`${glyph} `}</Fg>}
+                </Show>
                 <Fg role="fgMuted">{props.line.text}</Fg>
             </text>
             <Show when={props.line.meter} keyed>
@@ -187,12 +177,12 @@ function transferLinesOf(reports: readonly TransferReport[]): LiveLine[] {
                         meter: {
                             filled: GLYPHS.bar.repeat(filled),
                             empty: GLYPHS.bar.repeat(TRANSFER_BAR_CELLS - filled),
-                            tail: ` ${formatRailBytes(row.bytesTransferred)}/${formatRailBytes(row.totalBytes)}${phaseTail}`,
+                            tail: ` ${formatIecBytes(row.bytesTransferred)}/${formatIecBytes(row.totalBytes)}${phaseTail}`,
                         },
                     });
                     break;
                 }
-                const moved = row !== null && row.bytesTransferred > 0 ? `${formatRailBytes(row.bytesTransferred)} moved ${GLYPHS.middot} ` : "";
+                const moved = row !== null && row.bytesTransferred > 0 ? `${formatIecBytes(row.bytesTransferred)} moved ${GLYPHS.middot} ` : "";
                 const age = row === null ? "" : `active ${Date.relativeAge(Date.parse(row.updatedAt))}`;
                 const word = row?.phase === "unpacking" ? "unpacking" : "downloading";
                 lines.push({ glyph: GLYPHS.warning, role: "warning", text: `${label} ${word} ${GLYPHS.middot} ${moved}${age}` });
@@ -336,9 +326,7 @@ function AgentModelLine(props: { label: string; agent: AgentName }): JSX.Element
             <text>
                 <Fg role="fgMuted">{`${props.label} `}</Fg>
                 <Fg role="fg">{current() || GLYPHS.emDash}</Fg>
-                <Show when={effort()}>
-                    <Fg role="fgMuted">{` ${GLYPHS.middot} ${effort()}`}</Fg>
-                </Show>
+                <Show when={effort()}>{(level) => <Fg role="fgMuted">{` ${GLYPHS.middot} ${level()}`}</Fg>}</Show>
             </text>
             <Show when={pending()} keyed>
                 {(next: AgentSelection) => (
@@ -410,7 +398,7 @@ const RAIL_CONTENT_WIDTH = size.railWidth - RAIL_BORDER_COLS - space.sm * 2;
 const SINGLE_CELL_GLYPHS: ReadonlySet<string> = new Set(
     Object.values(GLYPHS)
         .flat()
-        .flatMap((s) => [...s]),
+        .flatMap((s) => Array.from(s)),
 );
 
 /**
@@ -520,7 +508,7 @@ function EntityFigureSpan(props: { figure: EntityFigure | null }): JSX.Element {
  * which the whole section carries: the two answer different questions ("open what this section is
  * about" against "act on this one value"), and a section can offer either alone.
  */
-function Section(props: { label: string; value?: string; children: JSX.Element; onActivate?: () => void; onValueActivate?: () => void }) {
+function Section(props: { label: string; value?: string; children: JSX.Element; onActivate?: () => void; onValueActivate?: () => void }): JSX.Element {
     // Read reactively so a later value change (session swap, analysis rename) re-decides the fit. The
     // one-cell gap is space.sm — the minimum separation so label and value never abut on a full row.
     const fitsOnLabelRow = (): boolean => {
@@ -533,7 +521,7 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
         // cells, an emoji several units for one-or-two) has a cell width we cannot cheaply trust — rather
         // than embed a wcwidth table, take the safe path and stack the whole value on its own full line,
         // where the width is never guessed wrong. The label is always an ASCII section name.
-        const chars = [...value];
+        const chars = Array.from(value);
         for (const ch of chars) {
             if (!isPrintableAscii(ch) && !SINGLE_CELL_GLYPHS.has(ch)) return false;
         }
@@ -610,7 +598,7 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
  * The anchor and the input count come from the workspace store, which reads `GET {A}` at each swap, after
  * an input change of this client, and at the end of each turn (the agent can change the inputs).
  */
-export function Sidebar(props: SidebarProps) {
+export function Sidebar(props: SidebarProps): JSX.Element {
     const ws = useWorkspace();
     const renderer = useRenderer();
     // The wide-layout flip: at/above the breakpoint the ANALYSIS path line yields to the badge moving
@@ -827,12 +815,10 @@ export function Sidebar(props: SidebarProps) {
                                     <Show when={t.threadType === "report"}>
                                         <text>
                                             <Fg role="accent">report</Fg>
-                                            {reportParentTitle() !== null ? (
-                                                <>
-                                                    <Sep />
-                                                    <Fg role="fgMuted">{reportParentTitle()}</Fg>
-                                                </>
-                                            ) : null}
+                                            <Show when={reportParentTitle() !== null}>
+                                                <Sep />
+                                                <Fg role="fgMuted">{reportParentTitle()}</Fg>
+                                            </Show>
                                         </text>
                                     </Show>
                                     {/* The absolute created time, not a compact age: a session is a durable
@@ -900,7 +886,7 @@ export function Sidebar(props: SidebarProps) {
                         thread, so they belong to no session and appear in no session figure. Without it
                         the work would be invisible in the rail while still counting toward the analysis. */}
                     <text>
-                        {profileLine().glyph !== null ? <Fg role={profileLine().role}>{`${profileLine().glyph} `}</Fg> : null}
+                        <Show when={profileLine().glyph}>{(glyph) => <Fg role={profileLine().role}>{`${glyph()} `}</Fg>}</Show>
                         <Fg role="fgMuted">{profileLine().text}</Fg>
                         <EntityFigureSpan figure={profileFigure()} />
                     </text>

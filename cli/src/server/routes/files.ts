@@ -11,6 +11,7 @@ import { getLogger } from "../../lib/log.ts";
 import { isPrintableAscii, withoutPrefix } from "../../lib/text.ts";
 import { classifyRealPath, type ReadRoots } from "../../modules/analysis/boundary.ts";
 import { apiError, type ServerEnv } from "../http.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /** The members of an open file that the routes call. A `FileHandle` of `node:fs/promises` satisfies it, and a test gives a small stand-in. */
 export type OpenFile = {
@@ -143,7 +144,7 @@ export async function openRealPath(
 
 /** The 403 `forbidden` response for a failure of the disk that has no named meaning, with the code of the operating system in `details.code`. */
 export function unreadable(c: Context<ServerEnv>, cause: unknown): Response {
-    const reason = cause instanceof Error ? cause.message : String(cause);
+    const reason = messageOf(cause);
     return apiError(c, "forbidden", `The server cannot read the file: ${reason}`, { code: errnoCode(cause) });
 }
 
@@ -300,7 +301,11 @@ function parseRange(header: string | undefined, size: number): RangeRequest {
 
 /** The `Content-Disposition` of a download: an ASCII `filename` for an old client and the exact name in `filename*`. */
 function attachment(name: string): string {
-    const ascii = [...name].map((char) => (isPrintableAscii(char) && char !== '"' && char !== "\\" ? char : "_")).join("");
-    const encoded = [...encodeURIComponent(name)].map((char) => ("'()*".includes(char) ? `%${char.charCodeAt(0).toString(16).toUpperCase()}` : char)).join("");
+    const ascii = Array.from(name)
+        .map((char) => (isPrintableAscii(char) && char !== '"' && char !== "\\" ? char : "_"))
+        .join("");
+    const encoded = Array.from(encodeURIComponent(name))
+        .map((char) => ("'()*".includes(char) ? `%${char.charCodeAt(0).toString(16).toUpperCase()}` : char))
+        .join("");
     return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }

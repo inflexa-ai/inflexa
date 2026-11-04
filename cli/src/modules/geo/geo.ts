@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { declaredContentLength, downloadToFile, type DownloadError, type FetchLike } from "../../lib/download.ts";
 import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf, isAsciiDigits } from "../../lib/text.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /** The GEO FTP mirror (served over HTTPS) that holds per-series files and directory autoindexes. */
 const GEO_FTP_BASE = "https://ftp.ncbi.nlm.nih.gov/geo/series";
@@ -308,7 +309,7 @@ async function fetchGeo(url: string, options: GeoFetchOptions, init: RequestInit
         try {
             response = await doFetch(url, init);
         } catch (cause) {
-            lastFailure = `Could not reach ${url}: ${cause instanceof Error ? cause.message : String(cause)}`;
+            lastFailure = `Could not reach ${url}: ${messageOf(cause)}`;
             continue;
         }
         if (!isSheddingStatus(response.status) || attempt === GEO_RETRY_ATTEMPTS - 1) return ok(response);

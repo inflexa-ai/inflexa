@@ -3,6 +3,7 @@ import { err, ok, type Result } from "neverthrow";
 import { SERVE_DETACHED_CHILD_FLAG } from "./child_flags.ts";
 import { fsPoolVar, processEnv, serverChildEnv } from "./env.ts";
 import { selfInvocation } from "./self_invocation.ts";
+import { describeCause } from "./cause.ts";
 
 /** Replaces this process with `file`, run with `args` and `env`. It returns only when the replacement fails. */
 export type Execve = (file: string, args: readonly string[], env: Record<string, string | undefined>) => void;
@@ -71,7 +72,7 @@ export function ensureServerFsPool(
 
 // At the evaluation of this module, which the entry imports first: no module opened the log stream or started a file
 // call yet. A failed replacement leaves a server with the default pool, which still serves, thus it warns and goes on.
-ensureServerFsPool(process.argv.slice(2), process.execve, processEnv(), process.platform).match(
+ensureServerFsPool(process.argv.slice(2), process.execve?.bind(process), processEnv(), process.platform).match(
     () => undefined,
-    (e) => console.error(`Could not start the server again with a larger file pool (${String(e.cause)}). It runs with the default pool.`),
+    (e) => console.error(`Could not start the server again with a larger file pool (${describeCause(e.cause)}). It runs with the default pool.`),
 );

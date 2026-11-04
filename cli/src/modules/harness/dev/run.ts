@@ -50,7 +50,7 @@ import {
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
 
-import { describeCause } from "../../../lib/cause.ts";
+import { describeCause, messageOf, errorOf } from "../../../lib/cause.ts";
 import { describePausedWait } from "../../../lib/pause_words.ts";
 import { fail, dieOn, failViaShutdown, type Spinner } from "../../../lib/cli.ts";
 import { env } from "../../../lib/env.ts";
@@ -147,7 +147,7 @@ const RUN_LAUNCH_PROVENANCE: Provenance = { agentId: "cli-run-launch", callPath:
 
 /** `RunDedupCollisionError` recognizer robust to a cross-realm instance (name check), mirroring `execute-plan.ts`. */
 function isDedupCollision(cause: unknown): boolean {
-    return cause instanceof RunDedupCollisionError || (cause instanceof Error && cause.name === "RunDedupCollisionError");
+    return cause instanceof RunDedupCollisionError || errorOf(cause)?.name === "RunDedupCollisionError";
 }
 
 /**
@@ -273,9 +273,9 @@ const RUN_EMPTY_HINT = "No analysis here. Run `inflexa` to start one, add inputs
 function describePlanIntakeError(e: PlanIntakeError): string {
     switch (e.type) {
         case "read_failed":
-            return `Could not read the plan file ${e.path}: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}.`;
+            return `Could not read the plan file ${e.path}: ${messageOf(e.cause)}.`;
         case "invalid_json":
-            return `The plan file ${e.path} is not valid JSON: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}.`;
+            return `The plan file ${e.path} is not valid JSON: ${messageOf(e.cause)}.`;
         case "schema_invalid":
             return `The plan file ${e.path} does not match the plan schema:\n${e.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n")}`;
         case "plan_invalid":
@@ -449,7 +449,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
             const lines = [
                 missing.length > 0 ? `The pool does not hold: ${missing.join(", ")}. Add each one first:\n${remedy}` : null,
                 collided.length > 0 ? `A collision refused: ${collided.join(", ")} — drop or re-pin the dependent that pulls the extra version.` : null,
-            ].filter((line): line is string => line !== null);
+            ].filter((line) => line !== null);
             fail(lines.join("\n"));
         }
         s.stop(`Linked ${planPackages.length} plan package(s)`);

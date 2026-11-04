@@ -26,6 +26,7 @@ import {
     stackPorts,
     walkChildEnv,
 } from "../env.ts";
+import { clearEnvVars, unsetEnvVar } from "../../test_support/env_vars.ts";
 import { parsedJson } from "../../test_support/json.ts";
 
 // The truth table behind env.isDevelopment: a build is development unless the baked channel is exactly
@@ -196,20 +197,14 @@ describe("isUnsandboxedTestRun", () => {
 // time (not import), the precedence is directly testable here by driving the three variables.
 describe("resolveModelApiKey — direct-connection key precedence (env only)", () => {
     const KEYS = ["INFLEXA_MODEL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"] as const;
-    const saved: Record<string, string | undefined> = {};
+    let restoreEnv = (): void => undefined;
 
     beforeEach(() => {
         // Isolate from the developer's real environment: snapshot then clear all three before each case.
-        for (const k of KEYS) {
-            saved[k] = process.env[k];
-            delete process.env[k];
-        }
+        restoreEnv = clearEnvVars(process.env, KEYS);
     });
     afterEach(() => {
-        for (const k of KEYS) {
-            if (saved[k] === undefined) delete process.env[k];
-            else process.env[k] = saved[k];
-        }
+        restoreEnv();
     });
 
     test("the explicit INFLEXA_MODEL_API_KEY override wins over the provider variable", () => {
@@ -257,19 +252,13 @@ describe("providerApiKeyVar", () => {
 // (setup copies only the non-secret fields; the key stays an environment read via resolveModelApiKey).
 describe("detectProviderEnv", () => {
     const KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL"] as const;
-    const saved: Record<string, string | undefined> = {};
+    let restoreEnv = (): void => undefined;
 
     beforeEach(() => {
-        for (const k of KEYS) {
-            saved[k] = process.env[k];
-            delete process.env[k];
-        }
+        restoreEnv = clearEnvVars(process.env, KEYS);
     });
     afterEach(() => {
-        for (const k of KEYS) {
-            if (saved[k] === undefined) delete process.env[k];
-            else process.env[k] = saved[k];
-        }
+        restoreEnv();
     });
 
     test("reports whether each API key is set — never its value — plus the raw base URLs", () => {
@@ -314,7 +303,7 @@ describe("model-connection env documentation", () => {
 describe("resolveEmbeddingApiKey", () => {
     const saved = process.env[EMBEDDING_API_KEY_VAR];
     afterEach(() => {
-        if (saved === undefined) delete process.env[EMBEDDING_API_KEY_VAR];
+        if (saved === undefined) unsetEnvVar(process.env, EMBEDDING_API_KEY_VAR);
         else process.env[EMBEDDING_API_KEY_VAR] = saved;
     });
 
@@ -324,7 +313,7 @@ describe("resolveEmbeddingApiKey", () => {
     });
 
     test("unset and empty both resolve to undefined", () => {
-        delete process.env[EMBEDDING_API_KEY_VAR];
+        unsetEnvVar(process.env, EMBEDDING_API_KEY_VAR);
         expect(resolveEmbeddingApiKey()).toBeUndefined();
         process.env[EMBEDDING_API_KEY_VAR] = "";
         expect(resolveEmbeddingApiKey()).toBeUndefined();
@@ -446,10 +435,7 @@ describe("the file pool of a server", () => {
 
     // The environment of the runner, without a pool size: a size that the runner sets would decide each result.
     function unsizedEnv(): Record<string, string | undefined> {
-        const base = { ...Bun.env };
-        delete base[fsPoolVar];
-        delete base.GOMAXPROCS;
-        return base;
+        return Object.fromEntries(Object.entries(Bun.env).filter(([name]) => name !== fsPoolVar && name !== "GOMAXPROCS"));
     }
 
     async function readFolderUnderHungOpens(childEnv: Record<string, string | undefined>): Promise<string> {

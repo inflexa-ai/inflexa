@@ -26,6 +26,7 @@ import { collapseWhitespace, mentionsAny, withoutPrefix } from "../../lib/text.t
 import { provisionerImageFor } from "../libs/images.ts";
 import { configuredSandboxImage } from "../libs/pull.ts";
 import { STORE_SBOM_FILE } from "../libs/store_download.ts";
+import { describeCause } from "../../lib/cause.ts";
 
 // Baked by scripts/build.ts as the SBOM of the binary. A from-source run has no define, thus the
 // `typeof` guard sees it undeclared.
@@ -38,17 +39,15 @@ const IMAGE_SBOM_PATH = "/opt/inflexa/sbom.cdx.json";
 const SUPPLIER = { name: "Inflexa", url: ["https://github.com/inflexa-ai/inflexa"] };
 
 /** The minimal shape of a CycloneDX document that the merge reads. Every other field passes through. */
-const sbomSchema = z
-    .object({
-        bomFormat: z.literal("CycloneDX"),
-        specVersion: z.string(),
-        serialNumber: z.string().optional(),
-        version: z.number().optional(),
-        metadata: z.object({ component: z.object({ name: z.string() }).passthrough() }).passthrough(),
-        components: z.array(z.object({}).passthrough()).optional(),
-        dependencies: z.array(z.object({ ref: z.string(), dependsOn: z.array(z.string()).optional() }).passthrough()).optional(),
-    })
-    .passthrough();
+const sbomSchema = z.looseObject({
+    bomFormat: z.literal("CycloneDX"),
+    specVersion: z.string(),
+    serialNumber: z.string().optional(),
+    version: z.number().optional(),
+    metadata: z.looseObject({ component: z.looseObject({ name: z.string() }) }),
+    components: z.array(z.looseObject({})).optional(),
+    dependencies: z.array(z.looseObject({ ref: z.string(), dependsOn: z.array(z.string()).optional() })).optional(),
+});
 
 type SbomDocument = z.infer<typeof sbomSchema>;
 
@@ -107,7 +106,7 @@ async function readImageSbom(runtime: Result<ContainerRuntime, ContainerRuntimeE
     const inspect = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]).catch((cause: unknown) => ({
         code: -1,
         stdout: "",
-        stderr: String(cause),
+        stderr: describeCause(cause),
     }));
     if (inspect.code !== 0) {
         const absent = mentionsAny(inspect.stderr, ABSENT_IMAGE_STDERR);
@@ -121,7 +120,7 @@ async function readImageSbom(runtime: Result<ContainerRuntime, ContainerRuntimeE
         (cause: unknown) => ({
             code: -1,
             stdout: "",
-            stderr: String(cause),
+            stderr: describeCause(cause),
         }),
     );
     if (read.code !== 0) {

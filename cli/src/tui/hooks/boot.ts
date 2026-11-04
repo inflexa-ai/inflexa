@@ -306,8 +306,12 @@ async function signInInTerminal(renderer: Pick<CliRenderer, "suspend" | "resume"
         () => Bun.spawn({ cmd: selfInvocation(["up"]), stdin: "inherit", stdout: "inherit", stderr: "inherit" }),
         (cause) => describeCause(cause),
     )();
-    const code = spawned.isOk() ? await spawned.value.exited : null;
-    if (code !== 0) await waitForEnter(spawned.isErr() ? `Could not run \`inflexa up\`: ${spawned.error}` : `\`inflexa up\` ended with exit code ${code}.`);
+    if (spawned.isErr()) {
+        await waitForEnter(`Could not run \`inflexa up\`: ${spawned.error}`);
+    } else {
+        const code = await spawned.value.exited;
+        if (code !== 0) await waitForEnter(`\`inflexa up\` ended with exit code ${code}.`);
+    }
     renderer.resume();
     process.off("SIGINT", ignoreInterrupt);
 }

@@ -36,9 +36,15 @@ function noticeForError(e: ArtifactError): Notice {
 async function openTarget(analysisId: string, target: OpenTarget, opts: ClientOpts): Promise<void> {
     (await resolveArtifacts(analysisId, { entries: [target], materialize: true }, opts)).match(
         ({ entries: [entry] }) => {
-            if (entry?.error !== undefined) return notify(noticeForError(entry.error));
+            if (entry?.error !== undefined) {
+                notify(noticeForError(entry.error));
+                return;
+            }
             const path = entry?.path ?? null;
-            if (path === null) return notify(noticeForError({ type: "unresolved" }));
+            if (path === null) {
+                notify(noticeForError({ type: "unresolved" }));
+                return;
+            }
             openExternal(path).match(
                 () => notify({ kind: "info", text: `Opened ${path}` }),
                 () => notify({ kind: "warn", text: `Could not launch an opener — open it manually: ${path}` }),

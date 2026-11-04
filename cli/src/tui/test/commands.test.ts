@@ -44,6 +44,7 @@ import type { ApiError } from "../../api/common.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { present } from "../../lib/present.ts";
 import { parsedJson } from "../../test_support/json.ts";
+import { requestBodyText } from "../../test_support/request_body.ts";
 
 // modelStatusLines reads the module-level boot + agentModels stores, so each test seeds them via the
 // test hooks and the reset below keeps one test's seed from bleeding into the next (the same pairing
@@ -1253,7 +1254,7 @@ describe("activity-panel palette command", () => {
         expect(cmd).toBeDefined();
         expect(present(cmd).category).toBe("View");
         // Discoverable by what a user would actually type after losing the panel.
-        expect(`${present(cmd).title} ${present(cmd).description}`.toLowerCase()).toContain("activity panel");
+        expect(`${present(cmd).title} ${present(present(cmd).description)}`.toLowerCase()).toContain("activity panel");
     });
 
     test("the command is restore-only, not a second toggle", () => {
@@ -1279,7 +1280,7 @@ describe("palette provenance export", () => {
             discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
             fetch: (url, init) =>
                 Promise.try(() => {
-                    seen.push({ url, body: parsedJson(String(init.body), z.unknown()) });
+                    seen.push({ url, body: parsedJson(requestBodyText(init), z.json()) });
                     return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
                 }),
         };
@@ -1459,7 +1460,7 @@ describe("view.status", () => {
         const discover = spyOn(DEFAULT_CLIENT_OPTS, "discover").mockImplementation(() => ok({ baseUrl: "http://server.test", token: "t" }));
         const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation((_url, init) =>
             Promise.try(() => {
-                bodies.push(parsedJson(String(init.body), z.unknown()));
+                bodies.push(parsedJson(requestBodyText(init), z.json()));
                 return new Response(JSON.stringify({ kind: "empty", describe: "no analysis here", cwd: "/work" }), {
                     status: 200,
                     headers: { "Content-Type": "application/json" },
@@ -1493,7 +1494,7 @@ describe("the busy read before a rename or a delete", () => {
             const urls: string[] = [];
             const discover = spyOn(DEFAULT_CLIENT_OPTS, "discover").mockImplementation(() => ok({ baseUrl: "http://server.test", token: "t" }));
             const fetch = spyOn(DEFAULT_CLIENT_OPTS, "fetch").mockImplementation((url) => {
-                urls.push(String(url));
+                urls.push(url);
                 return Promise.resolve(
                     new Response(JSON.stringify({ error: "internal_error", message: "down" }), {
                         status: 500,

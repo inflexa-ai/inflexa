@@ -247,7 +247,7 @@ runtime: docker
         // an unknown key — `postgres` is a real answers block — but it fails all the same, naming the key.
         for (const body of ["start: false", "force: true", "postgres: false", "validate: false", "yes: true", "auth: false"]) {
             const error = readAnswersFile(writeAnswers(`${body}\n`))._unsafeUnwrapErr();
-            expect(problemsOf(error).join("\n")).toContain(`\`${body.split(":")[0]}\``);
+            expect(problemsOf(error).join("\n")).toContain(`\`${present(body.split(":")[0], "the answer key")}\``);
         }
     });
 
@@ -973,7 +973,7 @@ describe("resolveSetupAnswers — no answer is ever silently ignored", () => {
             expect(problems).toHaveLength(1);
             const text = problems.join("\n");
             expect(text).toContain(key);
-            expect(text).toContain(`embedding.${Object.keys(embedding)[0]}`);
+            expect(text).toContain(`embedding.${present(Object.keys(embedding)[0], "the embedding answer key")}`);
             // Both spellings of the answer that is missing, so the file author can fix it in the file.
             expect(text).toContain("--embeddings");
             expect(text).toContain("embedding.mode");

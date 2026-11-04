@@ -34,12 +34,12 @@ export type Str256Error = "empty" | "too_long";
 /**
  * Validate `s` as a {@link Str256}: trim it, then require 1–256 code points.
  *
- * Length is measured in code points (`[...s].length`), not UTF-16 units, so an emoji
+ * Length is measured in code points (`Array.from(s).length`), not UTF-16 units, so an emoji
  * counts once rather than twice.
  */
 export function str256(s: string): Result<Str256, Str256Error> {
     const trimmed = s.trim();
-    const len = [...trimmed].length;
+    const len = Array.from(trimmed).length;
     if (len === 0) return err("empty");
     if (len > 256) return err("too_long");
     // SAFETY: the two checks above reject an empty and an over-long `trimmed`, which are the bounds that the brand states.

@@ -66,7 +66,7 @@ export function initOtel(consented: boolean): boolean {
         // Exporter failures surface through OTel's diag channel; route them to
         // the local file at debug so a dead endpoint is silent but diagnosable.
         const log = getLogger("otel");
-        const toFile = (message: string, ...args: unknown[]) => {
+        const toFile = (message: string, ...args: unknown[]): void => {
             log.debug({ args }, message);
         };
         diag.setLogger({ error: toFile, warn: toFile, info: toFile, debug: toFile, verbose: toFile }, DiagLogLevel.ERROR);
@@ -120,9 +120,9 @@ export function createOtelLogStream(): DestinationStream {
                 for (const [key, value] of Object.entries(record)) {
                     if (key === "level" || key === "time" || key === "msg" || value == null) continue;
                     if (key === MODEL_AUTHORED_KEY) continue;
-                    // A pino line is JSON, so a value that is not an object and not null is a string, a number, or a boolean.
-                    if (typeof value === "object") attributes[key] = JSON.stringify(value);
-                    else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") attributes[key] = value;
+                    // A pino line is JSON, so a value that is not null and not a scalar is an object or an array.
+                    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") attributes[key] = value;
+                    else attributes[key] = JSON.stringify(value);
                 }
 
                 otelLogger.emit({

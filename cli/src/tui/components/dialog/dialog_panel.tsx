@@ -1,7 +1,7 @@
 import { Show } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { dialogSize, space, stroke, type DialogSize } from "../../../lib/design_system.ts";
+import { dialogSize, space, stroke, type DialogDims, type DialogSize } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { dialogPanelMouseDown, dialogPanelMouseUp } from "./dialog_host.tsx";
 
@@ -33,8 +33,8 @@ export function DialogPanel(props: {
     /** The dialog body. */
     children: JSX.Element;
 }): JSX.Element {
-    const dims = () => dialogSize[props.size];
-    const danger = () => props.tone === "danger";
+    const dims = (): DialogDims => dialogSize[props.size];
+    const danger = (): boolean => props.tone === "danger";
 
     return (
         <box

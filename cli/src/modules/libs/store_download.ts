@@ -50,6 +50,7 @@ import {
     type FetchLike,
     type LivenessWatch,
 } from "../../lib/download.ts";
+import { chainCarriesCode, messageOf, errorOf } from "../../lib/cause.ts";
 import { CATALOG_TRANSFER_FLAG } from "../../lib/child_flags.ts";
 import { sha256File } from "../../lib/hash.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
@@ -66,6 +67,8 @@ import { IMAGE_PACKAGES_FILE } from "@inflexa-ai/harness";
 
 import { CATALOG_FARM, ensureStoreMountpoints } from "./composition.ts";
 import { readTransferReport, spawnDetachedSelf, stopTransferChild, transferLockKey, type TransferReport } from "./transfers.ts";
+import { formatIecBytes } from "../../lib/bytes.ts";
+import { errnoCode } from "../../lib/fs.ts";
 
 /** The registry host the store publishes to. */
 const STORE_REGISTRY = "ghcr.io";
@@ -318,11 +321,7 @@ function forwardLayerProgress(onProgress: ((event: StoreDownloadProgress) => voi
 }
 
 function isMissing(cause: unknown): boolean {
-    return cause instanceof Error && "code" in cause && cause.code === "ENOENT";
-}
-
-function errorText(cause: unknown): string {
-    return cause instanceof Error ? cause.message : String(cause);
+    return errnoCode(errorOf(cause)) === "ENOENT";
 }
 
 /**
@@ -373,15 +372,18 @@ type ResolvedStoreManifest = {
     readonly layers: readonly StoreLayer[];
 };
 
+/** A parsed JSON object or array, the two kinds that the manifest checks tell from a scalar or `null`. */
+const jsonContainerSchema = z.union([unknownRecordSchema, z.array(z.unknown())]);
+
 /** Read the layer descriptors from a parsed manifest, refusing any unexpected shape or media type. */
 function readManifestLayers(manifest: unknown): Result<readonly StoreLayer[], StoreDownloadError> {
-    if (typeof manifest !== "object" || manifest === null) return err({ type: "manifest_failed", message: "The manifest was not an object." });
+    if (!jsonContainerSchema.safeParse(manifest).success) return err({ type: "manifest_failed", message: "The manifest was not an object." });
     const manifestRecord = unknownRecordSchema.safeParse(manifest);
     const layersRaw = manifestRecord.success ? manifestRecord.data.layers : undefined;
     if (!Array.isArray(layersRaw) || layersRaw.length === 0) return err({ type: "manifest_failed", message: "The manifest declared no layers." });
     const layers: StoreLayer[] = [];
     for (const entry of layersRaw) {
-        if (typeof entry !== "object" || entry === null) return err({ type: "manifest_failed", message: "A manifest layer was not an object." });
+        if (!jsonContainerSchema.safeParse(entry).success) return err({ type: "manifest_failed", message: "A manifest layer was not an object." });
         const parsed = storeLayerSchema.safeParse(entry);
         if (!parsed.success) {
             return err({ type: "manifest_failed", message: "A manifest layer lacked a media type, a digest, or a size." });
@@ -735,7 +737,7 @@ async function extractLayer(
         }
         return (await verifyStagedLayer(tarPath, stageRoot, layer.digest, boundMs, keepAlive)).map(() => undefined);
     } catch (cause) {
-        return err({ type: "extract_failed", message: `Extracting a store layer failed: ${errorText(cause)}.`, cause });
+        return err({ type: "extract_failed", message: `Extracting a store layer failed: ${messageOf(cause)}.`, cause });
     } finally {
         watch.close();
         await rm(tarPath, { force: true }).catch(() => undefined);
@@ -792,7 +794,7 @@ async function decompressLayer(
         return err(unpackFailure(layer.digest, `moved no bytes for ${describeSeconds(layer.windowMs)}`));
     }
     if (outcome.type === "failed") {
-        return err({ type: "extract_failed", message: `Could not decompress a store layer: ${errorText(outcome.cause)}.`, cause: outcome.cause });
+        return err({ type: "extract_failed", message: `Could not decompress a store layer: ${messageOf(outcome.cause)}.`, cause: outcome.cause });
     }
     return ok(undefined);
 }
@@ -1303,32 +1305,14 @@ const PROGRESS_WRITE_INTERVAL_MS = 500;
 
 /** Whether a thrown cause, or anything it wraps, is the out-of-disk error. */
 function isDiskFull(cause: unknown): boolean {
-    let current = cause;
-    for (let depth = 0; depth < 5 && current !== null && current !== undefined; depth += 1) {
-        if (typeof current === "object" && "code" in current && current.code === "ENOSPC") return true;
-        current = typeof current === "object" && "cause" in current ? current.cause : undefined;
-    }
-    return false;
-}
-
-/** Render a byte count in the largest unit that keeps it readable, for a message a user acts on. */
-function describeBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ["KiB", "MiB", "GiB", "TiB"];
-    let value = bytes / 1024;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit += 1;
-    }
-    return `${value.toFixed(1)} ${units[unit]}`;
+    return chainCarriesCode(cause, "ENOSPC");
 }
 
 /** The bytes the filesystem under `path` still offers this user, or `null` when the question cannot be answered. */
 async function availableBytes(path: string): Promise<number | null> {
     try {
         const fs = await statfs(path);
-        return Number(fs.bavail) * Number(fs.bsize);
+        return fs.bavail * fs.bsize;
     } catch {
         return null;
     }
@@ -1344,8 +1328,8 @@ async function availableBytes(path: string): Promise<number | null> {
 async function describeTransferFailure(error: StoreDownloadError, storeRoot: string, remaining: number | null): Promise<string> {
     if (isDiskFull("cause" in error ? error.cause : undefined)) {
         const free = await availableBytes(storeRoot);
-        const need = remaining === null ? "the rest of the catalog" : describeBytes(remaining);
-        const have = free === null ? "less than that" : describeBytes(free);
+        const need = remaining === null ? "the rest of the catalog" : formatIecBytes(remaining);
+        const have = free === null ? "less than that" : formatIecBytes(free);
         return `The disk ran out while the package store downloaded. The transfer needs ${need} more and ${storeRoot} offers ${have}. Free the difference, then run \`inflexa store download\`.`;
     }
     return `${error.message} Run \`inflexa store download\` to try again.`;

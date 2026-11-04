@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { GLYPHS, zIndex } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
@@ -20,7 +21,7 @@ function groups(keys: NextKey[]): [string, NextKey[]][] {
 }
 
 /** The which-key panel — auto-shown while a leader sequence is pending; hidden otherwise. */
-export function WhichKey() {
+export function WhichKey(): JSX.Element {
     const keys = (): NextKey[] => reachableKeys();
     return (
         <Show when={leaderActive() && keys().length > 0}>

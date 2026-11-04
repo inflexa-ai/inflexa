@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, on, Show, type Accessor } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show, type Accessor, type JSX } from "solid-js";
 import { useRenderer } from "@opentui/solid";
 
 import { theme } from "../theme.ts";
@@ -146,7 +146,7 @@ function stepMark(state: RunStepView["state"]): { glyph: string; role: "success"
  * The long-running run / task block: the `●` marker with the run name and tag, a
  * filled/empty progress meter, and an indented step list (done / running / queued).
  */
-export function RunBlock(props: RunBlockProps) {
+export function RunBlock(props: RunBlockProps): JSX.Element {
     // Read for its selection state alone, on the marker release path — the block renders nothing from it.
     const renderer = useRenderer();
     // The meter's cell counts. Without `maxSteps` it stays one cell per step — the dialog + gallery full
@@ -273,12 +273,12 @@ export function RunBlock(props: RunBlockProps) {
     }
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
-            {(props.heading ?? true) ? (
+            <Show when={props.heading ?? true}>
                 <text>
                     <Fg role={MARKERS.run.role}>{`${MARKERS.run.glyph} `}</Fg>
                     <Fg role="fg">{props.name}</Fg> <Fg role="fgMuted">{props.tag}</Fg>
                 </text>
-            ) : null}
+            </Show>
             <text paddingLeft={space.md}>
                 <Fg role="success">{filled()}</Fg>
                 <Fg role="fgSubtle">{empty()}</Fg> <Fg role="fgMuted">{`${props.done}/${props.total}`}</Fg>

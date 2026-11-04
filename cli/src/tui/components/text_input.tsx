@@ -54,7 +54,7 @@ export function TextInput(props: TextInputProps): JSX.Element {
     const [focused, setFocused] = createSignal(props.autoFocus ?? true);
     let ref: InputRenderable | null = null;
 
-    const isBare = () => props.chrome === "bare";
+    const isBare = (): boolean => props.chrome === "bare";
 
     function handleClick(): void {
         ref?.focus();

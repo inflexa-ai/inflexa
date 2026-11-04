@@ -189,7 +189,7 @@ function drawBox(bits: number[][], text: (string | null)[][], x: number, y: numb
     ]);
     const labelRow = text[y + 1];
     if (!labelRow) return;
-    const chars = [...` ${label} `];
+    const chars = Array.from(` ${label} `);
     for (let index = 0; index < chars.length; index++) {
         const char = chars[index];
         if (char === undefined) continue;

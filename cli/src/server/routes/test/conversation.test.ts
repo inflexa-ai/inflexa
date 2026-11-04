@@ -53,7 +53,7 @@ const messageList = z.looseObject({
 const turnSummary = z.looseObject({
     status: z.string(),
     durationMs: z.number().optional(),
-    failure: z.looseObject({ message: z.string(), detailLines: z.array(z.string()), credential: z.unknown().optional() }).optional(),
+    failure: z.looseObject({ message: z.string(), detailLines: z.array(z.string()), credential: z.json().optional() }).optional(),
 });
 const turnList = z.looseObject({ turns: z.array(z.looseObject({ turnId: z.string(), status: z.string() })), total: z.number() });
 const askList = z.looseObject({ asks: z.array(z.looseObject({ id: z.string() })), total: z.number() });
@@ -527,7 +527,9 @@ describe("the thread routes", () => {
         const thread = turnStore(30);
         const routes = routesWith({ loadPage: thread.loadPage });
         const first = messageList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/messages`)));
-        const last = messageList.parse(await jsonBody(routes.request(`/${A}/threads/${T}/messages?before=${first.before}`)));
+        const last = messageList.parse(
+            await jsonBody(routes.request(`/${A}/threads/${T}/messages?before=${present(first.before, "the cursor of the first page")}`)),
+        );
         expect(last.messages.map(textOf)).toEqual(Array.from({ length: 10 }, (_, i) => `turn ${i}`));
         expect(last).toMatchObject({ total: 10, page: 0, perPage: 20, hasMore: false, before: null });
     });
@@ -650,7 +652,7 @@ describe("POST {A}/chat", () => {
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
         expect(response.status).toBe(200);
         expect(response.headers.get("Content-Type")).toBe("text/event-stream");
-        const turnId = response.headers.get(TURN_ID_HEADER);
+        const turnId = present(response.headers.get(TURN_ID_HEADER));
         expect(turnId).not.toBeNull();
 
         // The TUI draws the thinking line of a sub-agent from the frame of its `iteration`.
@@ -780,7 +782,7 @@ describe("POST {A}/chat", () => {
             },
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
-        const turnId = response.headers.get(TURN_ID_HEADER);
+        const turnId = present(response.headers.get(TURN_ID_HEADER));
         // A detached server holds the port, thus `inflexa serve` cannot start a second one: the remedy stops the
         // server, and the next command starts one that reads the key again.
         const message =
@@ -817,7 +819,7 @@ describe("POST {A}/chat", () => {
             },
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
-        const turnId = response.headers.get(TURN_ID_HEADER);
+        const turnId = present(response.headers.get(TURN_ID_HEADER));
         await framesOf(response);
         const summary = turnSummary.parse(await jsonBody(routes.request(`/${A}/threads/${T}/turns/${turnId}`)));
         expect(summary.failure?.credential).toEqual({ kind: "rate_limited", retryAt: "2026-10-02T12:00:00.000Z" });

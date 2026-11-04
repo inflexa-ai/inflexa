@@ -8,6 +8,7 @@ import { z } from "zod";
 import { env } from "../../../lib/env.ts";
 import { readConfig, writeConfig } from "../../../lib/config.ts";
 import { unknownRecordSchema } from "../../../lib/json_record.ts";
+import { clearEnvVars } from "../../../test_support/env_vars.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     DEFAULT_AGENT_EFFORTS,
@@ -516,7 +517,7 @@ describe("writeAgentSelection — persists the model and the effort in one write
 // silent unauthenticated client.
 describe("resolveKnowledgeConfig", () => {
     const KEY_VAR = "INFLEXA_KNOWLEDGE_API_KEY";
-    let savedKey: string | undefined;
+    let restoreKey = (): void => undefined;
 
     function writeConfigWithKnowledge(knowledge: unknown): void {
         mkdirSync(dirname(env.configPath), { recursive: true });
@@ -526,12 +527,10 @@ describe("resolveKnowledgeConfig", () => {
     // `Bun.env` is the sanctioned way for a test to set an ambient variable (see setup.test.ts); the
     // production reader stays `lib/env.ts`.
     beforeEach(() => {
-        savedKey = Bun.env[KEY_VAR];
-        delete Bun.env[KEY_VAR];
+        restoreKey = clearEnvVars(Bun.env, [KEY_VAR]);
     });
     afterEach(() => {
-        if (savedKey === undefined) delete Bun.env[KEY_VAR];
-        else Bun.env[KEY_VAR] = savedKey;
+        restoreKey();
     });
 
     test("an absent block resolves to null, with or without a key in the environment", () => {

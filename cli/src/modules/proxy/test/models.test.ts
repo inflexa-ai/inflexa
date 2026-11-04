@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 
 import "../../../extensions/index.ts"; // installs Response.prototype.jsonWith, which resolveModelId + checkModelAccess use
 import { env } from "../../../lib/env.ts";
-import { fakeFetch, respondWith } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { requestedModel } from "../../../test_support/request_body.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
@@ -223,7 +223,7 @@ describe("checkModelAccess", () => {
     });
 
     function stubOnce(impl: (url: string, init?: RequestInit) => Promise<Response> | Response): void {
-        globalThis.fetch = fakeFetch(async (url, init) => impl(String(url), init));
+        globalThis.fetch = fakeFetch(async (url, init) => impl(fetchInputUrl(url), init));
     }
 
     function notFoundBody(modelId: string): Response {
@@ -264,7 +264,7 @@ describe("checkModelAccess", () => {
         const seen: Array<{ url: string; auth: string | null; model: string }> = [];
         globalThis.fetch = fakeFetch((url, init) =>
             Promise.try(() => {
-                seen.push({ url: String(url), auth: new Headers(init?.headers).get("Authorization"), model: requestedModel(init) });
+                seen.push({ url: fetchInputUrl(url), auth: new Headers(init?.headers).get("Authorization"), model: requestedModel(init) });
                 return new Response("{}", { status: 200 });
             }),
         );
@@ -379,7 +379,7 @@ describe("resolveModelId", () => {
         let validations = 0;
         globalThis.fetch = fakeFetch(async (url, init) => {
             calls += 1;
-            if (String(url).endsWith("/messages/count_tokens")) {
+            if (fetchInputUrl(url).endsWith("/messages/count_tokens")) {
                 validations += 1;
                 return access(requestedModel(init));
             }
@@ -395,6 +395,7 @@ describe("resolveModelId", () => {
     });
 
     test("a non-Error throw still yields a string detail", async () => {
+        // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- the test drives the path for a rejection that is not an Error
         stubFetch(() => Promise.reject("socket hang up"));
         expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "proxy_unreachable", detail: "socket hang up" });
     });
@@ -436,7 +437,7 @@ describe("resolveModelId", () => {
         globalThis.fetch = fakeFetch((url, init) =>
             Promise.try(() => {
                 seenAuth.push(new Headers(init?.headers).get("Authorization"));
-                return String(url).endsWith("/messages/count_tokens") ? served() : modelsResponse(["gpt-4o", "claude-sonnet"]);
+                return fetchInputUrl(url).endsWith("/messages/count_tokens") ? served() : modelsResponse(["gpt-4o", "claude-sonnet"]);
             }),
         );
 

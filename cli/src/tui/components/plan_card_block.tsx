@@ -1,5 +1,5 @@
 import { createMemo, For, Show } from "solid-js";
-import type { Accessor } from "solid-js";
+import type { Accessor, JSX } from "solid-js";
 import { useTerminalDimensions } from "@opentui/solid";
 
 import { theme } from "../theme.ts";
@@ -32,7 +32,7 @@ export type PlanCardBlockProps = {
  * degrades to the flat list on a narrow terminal (see {@link DAG_NAME_WIDTHS}). The card carries only
  * the primitive fields the harness `readPlanCard` reader extracts; it never holds a harness object.
  */
-export function PlanCardBlock(props: PlanCardBlockProps) {
+export function PlanCardBlock(props: PlanCardBlockProps): JSX.Element {
     const dims = useTerminalDimensions();
     const heading = (): string => props.title || props.planId;
     // Columns the DAG may occupy: the terminal width less the (possibly open) sidebar rail, this

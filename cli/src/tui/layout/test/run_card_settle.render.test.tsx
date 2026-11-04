@@ -78,7 +78,7 @@ function runDetail(runId: string): RunDetail {
 function optsFor(runs: RunSummary[], opts: { runsFail?: boolean } = {}): RefreshOpts {
     return {
         ready: () => true,
-        loadProfile: () => okAsync<DataProfileView, never>({ status: null }),
+        loadProfile: () => okAsync<DataProfileView>({ status: null }),
         loadRuns: () => (opts.runsFail ? errAsync(READ_FAILED) : okAsync(runs)),
         loadActiveRuns: () => (opts.runsFail ? errAsync(READ_FAILED) : okAsync(runs)),
         loadRun: (_analysisId, runId) => okAsync(runDetail(runId)),

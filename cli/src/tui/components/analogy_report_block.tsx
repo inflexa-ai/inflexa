@@ -1,4 +1,5 @@
 import { For, Show, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
@@ -49,7 +50,7 @@ const COVERAGE_TAGS: Record<Exclude<AnalogyCoverageView, "available">, { label: 
  * shows the object mappings, the relevance of each solution, and its sources. A failed report is an
  * {@link ErrorBlock} with the message as its detail, and it does not toggle. The toggle is mouse only, because the transcript has no focus that can target one block.
  */
-export function AnalogyReportBlock(props: AnalogyReportBlockProps) {
+export function AnalogyReportBlock(props: AnalogyReportBlockProps): JSX.Element {
     // oxlint-disable-next-line solid/reactivity -- seed-once: `expanded` sets the state at mount, and a click owns it after that
     const [open, setOpen] = createSignal(props.expanded ?? false);
     return (

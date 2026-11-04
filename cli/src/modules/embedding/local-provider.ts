@@ -51,8 +51,9 @@ import type { AgentSession, EmbeddingProvider, ProviderError } from "@inflexa-ai
 import { onShutdown } from "../../lib/shutdown.ts";
 import { runAfter } from "../../lib/timer.ts";
 import { ensureLlamaServer } from "./llama_runtime.ts";
+import { messageOf } from "../../lib/cause.ts";
 
-export interface LocalEmbeddingProviderDeps {
+export type LocalEmbeddingProviderDeps = {
     /** Absolute path to the GGUF model file (typically `env.embeddingModelPath`). */
     readonly modelPath: string;
     /**
@@ -63,7 +64,7 @@ export interface LocalEmbeddingProviderDeps {
      * model emits and the two can never disagree.
      */
     readonly dimensions?: number;
-}
+};
 
 /**
  * Default vector width — `bge-small-en-v1.5`'s. The built-in model always emits this, so it is the
@@ -231,7 +232,7 @@ type SpawnHandle = {
     /** Resolves with the exit code when the child exits (`proc.exited`). */
     readonly exited: Promise<number>;
     /** The last {@link STDERR_TAIL_BYTES} of the child's stderr, decoded. */
-    tail(): string;
+    tail: () => string;
     /**
      * Resolves when the stderr drain loop has finished (the pipe closed). The
      * early-exit failure path awaits this before reading {@link tail} so the tail is
@@ -242,7 +243,7 @@ type SpawnHandle = {
      */
     readonly tailSettled: Promise<void>;
     /** SIGTERM then SIGKILL after {@link STOP_GRACE_MS}; resolves when the child is gone. */
-    terminate(): Promise<void>;
+    terminate: () => Promise<void>;
 };
 
 /** Brings up a healthy sidecar for `modelPath`, or explains why it could not. */
@@ -371,7 +372,7 @@ async function tokenizeCount(origin: string, key: string, text: string, timeoutM
         }
         return ok(body.data.tokens.length);
     } catch (cause) {
-        return err(providerFault(`Measuring token length via /tokenize failed: ${cause instanceof Error ? cause.message : String(cause)}`, true));
+        return err(providerFault(`Measuring token length via /tokenize failed: ${messageOf(cause)}`, true));
     }
 }
 
@@ -467,7 +468,7 @@ function allocateFreePort(): Promise<Result<number, ProviderError>> {
             const addr = srv.address();
             // A listening TCP server's address() is an AddressInfo object; it is only
             // `null`/string before listen or for a unix socket, neither of which applies here.
-            const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+            const port = addr !== null && typeof addr !== "string" ? addr.port : 0;
             srv.close(() => resolve(port > 0 ? ok(port) : err(providerFault("Port allocation returned no port for the embedding runtime.", true))));
         });
     });
@@ -499,7 +500,7 @@ function mintApiKey(): string {
  * consumed the last chunk. `settled` never rejects — the reader swallows the
  * pipe-closed error and always runs its `finally`.
  */
-function drainStderrTail(stream: ReadableStream<Uint8Array>): { tail(): string; settled: Promise<void> } {
+function drainStderrTail(stream: ReadableStream<Uint8Array>): { tail: () => string; settled: Promise<void> } {
     let tail = new Uint8Array(0);
     const settled = (async (): Promise<void> => {
         const reader = stream.getReader();
@@ -595,9 +596,7 @@ function spawnLlamaServer(serverBin: string, modelPath: string, port: number, ke
             terminate: () => terminateProcess(proc),
         });
     } catch (cause) {
-        return err(
-            providerFault(`Could not start the local embedding runtime (llama-server): ${cause instanceof Error ? cause.message : String(cause)}`, false),
-        );
+        return err(providerFault(`Could not start the local embedding runtime (llama-server): ${messageOf(cause)}`, false));
     }
 }
 

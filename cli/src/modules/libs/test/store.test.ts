@@ -63,7 +63,7 @@ function countingRunner(invocations: (readonly string[])[]): ProvisionerRunner {
         Promise.try(() => {
             invocations.push([...invocation.args]);
             expect(invocation.egressAllow).toBeNull();
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
+            return ok<CaptureResult>({ code: 0, stdout: "", stderr: "" });
         });
 }
 

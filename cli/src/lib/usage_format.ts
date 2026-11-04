@@ -146,7 +146,7 @@ function armOf(arrow: string, word: string, headline: number | undefined, parts:
  */
 function armsOf(q: TokenQuantities): readonly TokenFigureArm[] {
     const detail = tokenFigureDetail(q);
-    return [detail.input, detail.output].filter((arm): arm is TokenFigureArm => arm !== null);
+    return [detail.input, detail.output].filter((arm) => arm !== null);
 }
 
 /**

@@ -31,7 +31,7 @@ import {
     type ProviderEnvSnapshot,
 } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialScheme } from "../../lib/credential.ts";
-import { select, promptText, promptTextOptional, confirm } from "../../lib/cli.ts";
+import { select, promptText, promptTextOptional, confirm, stdinIsTTY } from "../../lib/cli.ts";
 import { recordOrEmpty, unknownRecordSchema } from "../../lib/json_record.ts";
 import { isAsciiDigits, trimTrailing, withoutSuffix } from "../../lib/text.ts";
 import { isMember } from "../../lib/types.ts";
@@ -89,6 +89,7 @@ import {
     type SetupAnswerFlags,
     type SetupAnswers,
 } from "./setup_answers.ts";
+import { messageOf, describeCause } from "../../lib/cause.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
 // local model proxy) and Postgres + pgvector (the harness substrate). Both run
@@ -206,7 +207,7 @@ export async function setup(options: SetupOptions): Promise<void> {
     // "Never prompt" is one fact, not two: `--yes` and a missing terminal withdraw the terminal
     // identically, so every step below reads `batch`/`canPrompt` instead of re-deriving its own TTY
     // policy (which is how the pre-answers flow ended up with three subtly different gates).
-    const batch = isBatchRun(options.yes, Boolean(process.stdin.isTTY));
+    const batch = isBatchRun(options.yes, stdinIsTTY());
 
     // FAIL BEFORE MUTATE. The whole answer set resolves and validates here, ahead of the embedding
     // pre-gate, the runtime probe, and `writeProxyConfig` — the three earliest mutators — so a bad flag,
@@ -790,7 +791,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         printNextSteps(options, pgConn, mode, readConfig().embedding.mode);
         outro("Setup complete");
     } catch (error) {
-        log.error(`Setup failed unexpectedly: ${error}`);
+        log.error(`Setup failed unexpectedly: ${describeCause(error)}`);
         process.exitCode = 1;
     } finally {
         if (process.exitCode === 1) {
@@ -1100,7 +1101,7 @@ async function runDefaultModelSetup(
     if (batch || apiKey === null) return ok(undefined);
     const provider = resolveModelConnection().provider;
     await selectDefaultModel({
-        isInteractive: () => Boolean(process.stdin.isTTY),
+        isInteractive: stdinIsTTY,
         // Bounded like every probe round-trip: this runs right after compose-up WITHOUT waiting on the
         // proxy's port bind, so a proxy that accepts the connection then never answers must not hang
         // setup — the timeout throws, which the Result maps to `[]` (skip), the same as a refused proxy.
@@ -1998,7 +1999,7 @@ export async function pingMessagesEndpoint(
             body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
         });
     } catch (cause) {
-        return { kind: "unreachable", url, detail: cause instanceof Error ? cause.message : String(cause) };
+        return { kind: "unreachable", url, detail: messageOf(cause) };
     }
     if (response.ok) return { kind: "pass" };
     if (response.status === 401 || response.status === 403) return { kind: "auth_rejected", status: response.status };
@@ -2044,7 +2045,7 @@ export async function probeCredentialSource(
     try {
         response = await doFetch(url, { method: "GET", headers: wireHeaders(cred.value, protocol) });
     } catch (cause) {
-        return err({ message: `Could not reach the endpoint ${url}: ${cause instanceof Error ? cause.message : String(cause)}. Check the endpoint URL.` });
+        return err({ message: `Could not reach the endpoint ${url}: ${messageOf(cause)}. Check the endpoint URL.` });
     }
     if (response.status === 401 || response.status === 403) return err(rejected(response.status));
     if (response.ok) {
@@ -2707,7 +2708,7 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
                     console.log();
                     if (copied.isOk()) log.info("Copied to clipboard.");
                     if (sshCommand) {
-                        note(`${sshCommand}`, "Remote? Tunnel the callback port first");
+                        note(sshCommand, "Remote? Tunnel the callback port first");
                     }
                     s.start(`Waiting for ${PROVIDER_LABEL[provider]} callback`);
                 }
@@ -2835,7 +2836,7 @@ export async function askProxy(apiKey: string, modelId: string): Promise<ProbeAt
         // Refused connection, DNS, or the timeout above — bridge the throw in-band. A timeout lands
         // here too and is retried like any other silence, but it burns the whole per-try bound, so the
         // budget check below ends the loop rather than paying it twice.
-        return { kind: "unreachable", detail: cause instanceof Error ? cause.message : String(cause) };
+        return { kind: "unreachable", detail: messageOf(cause) };
     }
     if (res.status === 401) return { kind: "unauthorized" };
     // A 503 carrying the proxy's `auth_unavailable` marker is the cooldown after upstream errors — every
@@ -3107,7 +3108,7 @@ async function verifyCredentialAtLaunch(rt: ContainerRuntime, opts: ProxyReadyOp
         confirmRelogin: () => confirm("Sign in to the provider again now? If you decline, provider calls fail until you sign in."),
         relogin: () => authenticate(rt, providerKindForSlug(resolveModelConnection().provider)),
         restartProxy: () => composeRestartProxy(rt),
-        isInteractive: () => opts.interactiveLogin && Boolean(process.stdin.isTTY),
+        isInteractive: () => opts.interactiveLogin && stdinIsTTY(),
         // Printed, not logged: this lands in the normal-stdio launch phase right before the confirm
         // prompt takes the terminal, beside ensureProxyReady's own fresh-login notice.
         announce: (message) => console.log(`\n  ${message}`),
@@ -3269,7 +3270,7 @@ export async function ensureProxyReady(
                     return err(new ProxyError("Authentication didn't complete.\n  Run `inflexa setup` to finish signing in, then try again."));
                 }
             } catch (cause) {
-                return err(new ProxyError(`Authentication failed: ${cause instanceof Error ? cause.message : String(cause)}`));
+                return err(new ProxyError(`Authentication failed: ${messageOf(cause)}`));
             }
             // The login just rewrote the auth dir, but a proxy container from an earlier session may
             // still be serving without having loaded it — host writes to the mounted auth dir never

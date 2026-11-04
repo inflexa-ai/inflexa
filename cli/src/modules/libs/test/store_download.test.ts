@@ -399,9 +399,11 @@ describe("the tolerant readers of a registry answer", () => {
     test.each([
         ["a manifest that is null", null, "The manifest was not an object."],
         ["a manifest that is an array", [], "The manifest declared no layers."],
+        ["a manifest that is a number", 7, "The manifest was not an object."],
         ["a manifest with an empty layer list", { layers: [] }, "The manifest declared no layers."],
         ["a layer that is null between valid layers", { layers: [LAYER, null, LAYER] }, "A manifest layer was not an object."],
         ["a layer that is an array", { layers: [LAYER, []] }, "A manifest layer lacked a media type, a digest, or a size."],
+        ["a layer that is a string", { layers: [LAYER, "layer"] }, "A manifest layer was not an object."],
         ["a layer with a size that is a string", { layers: [LAYER, { ...LAYER, size: "7" }] }, "A manifest layer lacked a media type, a digest, or a size."],
         [
             "a layer with a digest that is missing",
@@ -450,7 +452,7 @@ describe("the tolerant readers of a registry answer", () => {
             const storeRoot = tempDir("inflexa-store-dl-");
             expectDownloaded((await download(storeRoot, makeRegistry(await catalogLayers(1))))._unsafeUnwrap());
             const receiptPath = storeDownloadPaths(storeRoot).receipt;
-            return { storeRoot, receiptPath, receipt: parsedJson(readFileSync(receiptPath, "utf8"), z.record(z.string(), z.unknown())) };
+            return { storeRoot, receiptPath, receipt: parsedJson(readFileSync(receiptPath, "utf8"), z.record(z.string(), z.json())) };
         }
 
         test("a receipt with a key beyond the known ones still reads as installed", async () => {

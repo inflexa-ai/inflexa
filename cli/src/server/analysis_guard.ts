@@ -62,8 +62,9 @@ export function guardAnalysisId(c: Context<ServerEnv>, analysisId: string, opts:
     return null;
 }
 
-async function guardAnalysis(c: Context<ServerEnv>, next: Next, analysisId: string, opts: AnalysisGuardOpts): Promise<Response | void> {
+async function guardAnalysis(c: Context<ServerEnv>, next: Next, analysisId: string, opts: AnalysisGuardOpts): Promise<Response | undefined> {
     const blocked = guardAnalysisId(c, analysisId, opts);
     if (blocked !== null) return blocked;
     await next();
+    return undefined;
 }

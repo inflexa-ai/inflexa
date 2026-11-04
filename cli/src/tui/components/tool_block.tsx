@@ -1,6 +1,6 @@
 import { useTerminalDimensions } from "@opentui/solid";
 import { For, Show } from "solid-js";
-import type { Accessor } from "solid-js";
+import type { Accessor, JSX } from "solid-js";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { GLYPHS, size, space, stroke, MARKERS } from "../../lib/design_system.ts";
@@ -115,7 +115,7 @@ function statusText(status: ToolBlockProps["status"], durationMs: number | undef
  * names the file — and the detail is one opaque harness string, so the block cannot elide
  * its middle intelligently.
  */
-export function ToolBlock(props: ToolBlockProps) {
+export function ToolBlock(props: ToolBlockProps): JSX.Element {
     const dims = useTerminalDimensions();
     const inline = (): boolean => props.inlineStatus ?? props.result === undefined;
     // The leading ` · ` glues the duration onto the outcome label; the value is delegated to
@@ -156,9 +156,7 @@ export function ToolBlock(props: ToolBlockProps) {
             <text>
                 <Fg role="fgMuted">{`${MARKERS.tool.glyph} `}</Fg>
                 <Fg role="tool">{props.name}</Fg>
-                <Show when={inlineDetail()}>
-                    <Fg role="fgMuted">{` ${inlineDetail()}`}</Fg>
-                </Show>
+                <Show when={inlineDetail()}>{(detail) => <Fg role="fgMuted">{` ${detail()}`}</Fg>}</Show>
                 <Show when={inline()}>
                     {/* Flow the status AFTER the name/detail rather than right-aligning it. A right-aligned
                         segment (a row with a flexGrow spacer) that soft-wraps lands its glyphs at column 0,

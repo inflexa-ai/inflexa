@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { respondWith } from "../fake_fetch.ts";
+import { fetchInputUrl, respondWith } from "../fake_fetch.ts";
 
 describe("respondWith", () => {
     test("gives a new readable Response with the given text and status on each call", async () => {
@@ -27,5 +27,19 @@ describe("respondWith", () => {
             pending = fetcher();
         }).not.toThrow();
         await expect(pending).rejects.toBeInstanceOf(RangeError);
+    });
+});
+
+describe("fetchInputUrl", () => {
+    test("gives a string as itself", () => {
+        expect(fetchInputUrl("https://example.test/a?b=1")).toBe("https://example.test/a?b=1");
+    });
+
+    test("gives a URL as its href", () => {
+        expect(fetchInputUrl(new URL("https://example.test/a?b=1"))).toBe("https://example.test/a?b=1");
+    });
+
+    test("gives a Request as its url", () => {
+        expect(fetchInputUrl(new Request("https://example.test/a?b=1"))).toBe("https://example.test/a?b=1");
     });
 });

@@ -13,7 +13,7 @@ import { present } from "../../../lib/present.ts";
 const ANALYSIS = { id: "a1", name: "liver" } as const;
 
 /** Client options whose server answers each `METHOD /path` from `routes`, in order for a list of answers. */
-function serverOf(routes: Record<string, unknown | unknown[]>): { opts: ClientOpts; requests: string[] } {
+function serverOf(routes: Record<string, unknown>): { opts: ClientOpts; requests: string[] } {
     const requests: string[] = [];
     const served = new Map<string, number>();
     const opts: ClientOpts = {

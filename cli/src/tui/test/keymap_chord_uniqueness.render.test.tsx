@@ -64,7 +64,7 @@ const seedOpts: RefreshOpts = {
     loadProfile: () => okAsync({ status: null }),
     loadRuns: () => okAsync([activeRun]),
     loadActiveRuns: () => okAsync([activeRun]),
-    loadRun: () => okAsync<RunDetail, never>({ ...activeRun, steps: [], plan: null, unattributedUsage: null }),
+    loadRun: () => okAsync<RunDetail>({ ...activeRun, steps: [], plan: null, unattributedUsage: null }),
 };
 
 beforeEach(() => {

@@ -10,12 +10,13 @@ import type { ClientOpts } from "../../client/api.ts";
 import { fetchSettings } from "../../client/machine.ts";
 import { env } from "../../lib/env.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
-import { fakeFetch } from "../../test_support/fake_fetch.ts";
+import { fakeFetch, fetchInputUrl } from "../../test_support/fake_fetch.ts";
 import { startTestServer, type TestServer } from "../../test_support/server.ts";
 import { ConfigApp } from "../app_config.tsx";
 import { dialogClear, dialogIsOpen } from "../components/dialog/dialog_host.tsx";
 import { present } from "../../lib/present.ts";
 import { parsedJson } from "../../test_support/json.ts";
+import { requestBodyText } from "../../test_support/request_body.ts";
 
 // The embedding-backend wiring drives the REAL ConfigApp (standalone: it installs its own keymap root
 // and DialogOverlay) through the keyboard bus, against a local server in this process (the settings and the
@@ -57,7 +58,7 @@ function recordingClientOpts(): { readonly clientOpts: ClientOpts; readonly patc
     const clientOpts: ClientOpts = {
         discover: server.clientOpts.discover,
         fetch: (url, init) => {
-            if (init.method === "PATCH") patchBodies.push(String(init.body));
+            if (init.method === "PATCH") patchBodies.push(requestBodyText(init));
             return server.clientOpts.fetch(url, init);
         },
     };
@@ -396,7 +397,7 @@ describe("ConfigApp secrets (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             // The config file is validated JSON that the server just wrote.
-            const persisted: unknown = parsedJson(readFileSync(env.configPath, "utf8"), z.unknown());
+            const persisted: unknown = parsedJson(readFileSync(env.configPath, "utf8"), z.json());
             expect(persisted).toHaveProperty("postgres", { password: "pg-new-2" });
             expect(persisted).toHaveProperty("embedding", { mode: "api-key", apiKey: "sk-secret-1" });
         } finally {
@@ -468,7 +469,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             expect(patchBodies).toHaveLength(1);
-            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.unknown());
+            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.json());
             expect(sent).toStrictEqual({ telemetry: true });
         } finally {
             setup.renderer.destroy();
@@ -488,7 +489,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             expect(patchBodies).toHaveLength(1);
-            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.unknown());
+            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.json());
             expect(sent).toStrictEqual({ runtime: "docker" });
         } finally {
             setup.renderer.destroy();
@@ -512,7 +513,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             expect(patchBodies).toHaveLength(1);
-            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.unknown());
+            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.json());
             expect(sent).toHaveProperty("postgres.password", "pg-new");
             expect(sent).not.toHaveProperty("telemetry");
             expect(sent).not.toHaveProperty("runtime");
@@ -539,7 +540,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
             await settle(setup);
 
             expect(patchBodies).toHaveLength(1);
-            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.unknown());
+            const sent: unknown = parsedJson(patchBodies[0] ?? "", z.json());
             expect(sent).toStrictEqual({
                 embedding: { mode: "api-key", apiKey: "sk-patch", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
             });
@@ -574,7 +575,7 @@ function installControllableFetch(): ProbeCall[] {
             (input) =>
                 new Promise<Response>((resolve, reject) => {
                     calls.push({
-                        url: String(input),
+                        url: fetchInputUrl(input),
                         resolve: (body, status = 200) =>
                             resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })),
                         reject,

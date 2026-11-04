@@ -26,7 +26,7 @@ export function fakeClient(answer: (req: FakeRequest) => FakeResponse): { opts: 
             fetch: (url, init) =>
                 Promise.try(() => {
                     // `unknown`: the body is whatever JSON the client under test sent.
-                    const body: unknown = typeof init.body === "string" ? parsedJson(init.body, z.unknown()) : undefined;
+                    const body: unknown = typeof init.body === "string" ? parsedJson(init.body, z.json()) : undefined;
                     const req: FakeRequest = { method: init.method ?? "GET", path: url.slice(BASE_URL.length), body };
                     requests.push(req);
                     const res = answer(req);

@@ -428,8 +428,8 @@ describe("migration 12 — the seen marks of the runs", () => {
             ["seen_at", 0],
             ["analysis_id", 0],
         ]);
-        const fks = db.query<{ table: string; to: string; on_delete: string }, []>("PRAGMA foreign_key_list(run_seen_marks)").all();
-        expect<unknown>(fks).toEqual([objectContaining({ table: "analyses", to: "id", on_delete: "CASCADE" })]);
+        const fks: unknown = db.query<{ table: string; to: string; on_delete: string }, []>("PRAGMA foreign_key_list(run_seen_marks)").all();
+        expect(fks).toEqual([objectContaining({ table: "analyses", to: "id", on_delete: "CASCADE" })]);
     });
 });
 

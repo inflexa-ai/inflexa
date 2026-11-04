@@ -13,7 +13,7 @@ import { readConfig, writeConfig, type Config } from "../../../lib/config.ts";
 import { EMBEDDING_API_KEY_VAR, env } from "../../../lib/env.ts";
 import { __setCompiledBinaryForTest } from "../../../lib/install_context.ts";
 import { embeddingsRequestSchema, tokenizeRequestSchema } from "../../../test_support/embedding_requests.ts";
-import { fakeFetch } from "../../../test_support/fake_fetch.ts";
+import { fakeFetch, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import type { SetupAnswers } from "../../infra/setup_answers.ts";
 import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, materializedLlamaServer, type ResolvedPin } from "../llama_runtime.ts";
@@ -28,6 +28,8 @@ import {
     runEmbeddingSetup,
     type EmbeddingSetupAnswers,
 } from "../setup.ts";
+import { describeCause } from "../../../lib/cause.ts";
+import { present } from "../../../lib/present.ts";
 
 // The test preload sandboxes XDG_DATA_HOME/XDG_CONFIG_HOME, so env.configPath
 // and env.embeddingModelPath point into a temp dir — safe to create/delete here.
@@ -154,7 +156,7 @@ async function withTTY<T>(value: boolean, body: () => Promise<T>): Promise<T> {
 async function captureStdout<T>(body: () => Promise<T>): Promise<{ readonly value: T; readonly output: string }> {
     const chunks: string[] = [];
     const write = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-        chunks.push(String(chunk));
+        chunks.push(describeCause(chunk));
         return true;
     });
     try {
@@ -209,7 +211,7 @@ function startEmbeddingStub(
             return new Response("not found", { status: 404 });
         },
     });
-    return { origin: `http://127.0.0.1:${server.port}`, requests, stop: (): void => void server.stop(true) };
+    return { origin: `http://127.0.0.1:${present(server.port, "the port of the test server")}`, requests, stop: (): void => void server.stop(true) };
 }
 
 describe("ensureEmbedderReady", () => {
@@ -864,7 +866,7 @@ describe("acquireModel", () => {
         // branch is caught, not silently exercised) and serves fixture bytes for the source path. It is
         // restored to realFetch in this describe's afterEach.
         globalThis.fetch = fakeFetch((input) => {
-            spy.calls.push(String(input));
+            spy.calls.push(fetchInputUrl(input));
             return Promise.resolve(new Response(bytes));
         });
         return spy;

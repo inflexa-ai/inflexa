@@ -10,6 +10,7 @@ import { CONTAINER_DATA_PATH, CONTAINER_PG_PORT, DEFAULT_IMAGE, type PostgresCon
 import { formatInfraStateError, type InfraStateError } from "./mount_source.ts";
 import { writeProxyConfig } from "./proxy_config.ts";
 import { writeSearxngSettings } from "./searxng_config.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // Docker Compose orchestration for the inflexa infrastructure stack. Generates
 // a compose file that places both the CLIProxyAPI proxy and the Postgres
@@ -245,7 +246,7 @@ export function writeComposeFile(conn: PostgresConnection, mode: ConnectionMode)
         },
         (cause): PostgresError => ({
             type: "compose_file_write_failed",
-            message: `Failed to write compose file: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Failed to write compose file: ${messageOf(cause)}`,
         }),
     )();
 }

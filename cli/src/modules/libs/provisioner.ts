@@ -23,6 +23,7 @@ import { ensureRuntime } from "../../lib/config.ts";
 import { stream, type CaptureResult } from "../../lib/container.ts";
 import { provisionerImageFor } from "./images.ts";
 import { configuredSandboxImage, ensureImagePresent } from "./pull.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /** The path the store is mounted at in the provisioner (read-write) and in the sandbox (read-only). */
 export const LIB_MOUNT = "/mnt/libs";
@@ -105,7 +106,7 @@ export const runProvisioner: ProvisionerRunner = async (invocation, onLine, sign
         // The runtime was ready a moment ago, so a spawn failure now means it became unavailable.
         return err({
             type: "runtime_unavailable",
-            message: `Could not start the provisioner with ${rt.label}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Could not start the provisioner with ${rt.label}: ${messageOf(cause)}`,
         });
     }
 };
@@ -173,7 +174,7 @@ export const runLoadCheck: LoadCheckRunner = async (params) => {
     } catch (cause) {
         return err({
             type: "runtime_unavailable",
-            message: `Could not start the load check with ${rt.label}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Could not start the load check with ${rt.label}: ${messageOf(cause)}`,
         });
     }
 };

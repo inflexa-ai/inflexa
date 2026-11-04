@@ -14,7 +14,6 @@ import { err } from "neverthrow";
 
 import { insertAnalysisInput } from "../../../db/primary_mutation.ts";
 import { listAnalysisInputs } from "../../../db/primary_query.ts";
-import { present } from "../../../lib/present.ts";
 import { buildAgentSession } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { createAnalysis, removeInput } from "../../analysis/analysis.ts";
@@ -201,8 +200,8 @@ describe("manage_inputs — describeCall", () => {
 
     /** Read the hook the way the harness emit site reads it. */
     function describeCall(input: { action: "add" | "remove" | "list"; paths?: string[] }): string | undefined {
-        expect(tool.describeCall).toBeDefined();
-        return present(tool.describeCall).call(tool, input);
+        expect(typeof tool.describeCall).toBe("function");
+        return tool.describeCall?.(input);
     }
 
     test("a single-path add names the file", () => {
@@ -226,7 +225,7 @@ describe("manage_inputs — describeCall", () => {
 
         // The boundary: a rendered line of exactly the cap still enumerates.
         const atCap = "x".repeat(DETAIL_MAX_LENGTH - "add ".length);
-        expect([...(describeCall({ action: "add", paths: [atCap] }) ?? "")].length).toBe(DETAIL_MAX_LENGTH);
+        expect(Array.from(describeCall({ action: "add", paths: [atCap] }) ?? "").length).toBe(DETAIL_MAX_LENGTH);
         expect(describeCall({ action: "add", paths: [`${atCap}y`] })).toBe("add 1 path");
     });
 

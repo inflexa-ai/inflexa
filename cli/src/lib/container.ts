@@ -10,6 +10,7 @@ import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
 import { env } from "./env.ts";
+import { messageOf } from "./cause.ts";
 
 /**
  * Ordered id list — single source of truth for the picker order, the
@@ -362,14 +363,10 @@ export function splitImageRef(image: string): { repo: string; reference: string 
 }
 
 /** One registry manifest, leniently: an image manifest carries `layers`, and an index carries `manifests`. */
-const manifestSchema = z
-    .object({
-        layers: z.array(z.object({ size: z.number() }).passthrough()).optional(),
-        manifests: z
-            .array(z.object({ digest: z.string(), platform: z.object({ architecture: z.string() }).passthrough().optional() }).passthrough())
-            .optional(),
-    })
-    .passthrough();
+const manifestSchema = z.looseObject({
+    layers: z.array(z.looseObject({ size: z.number() })).optional(),
+    manifests: z.array(z.looseObject({ digest: z.string(), platform: z.looseObject({ architecture: z.string() }).optional() })).optional(),
+});
 
 /**
  * The total bytes of an image, summed over the layer sizes of its registry
@@ -407,14 +404,12 @@ export async function resolveImageTotalBytes(rt: ContainerRuntime, image: string
 }
 
 /** One progress event of the docker-compat pull stream. An `error` event ends the pull with that reason. */
-const pullEventSchema = z
-    .object({
-        id: z.string().optional(),
-        status: z.string().optional(),
-        error: z.string().optional(),
-        progressDetail: z.object({ current: z.number().optional(), total: z.number().optional() }).optional(),
-    })
-    .passthrough();
+const pullEventSchema = z.looseObject({
+    id: z.string().optional(),
+    status: z.string().optional(),
+    error: z.string().optional(),
+    progressDetail: z.object({ current: z.number().optional(), total: z.number().optional() }).optional(),
+});
 
 /** The moved bytes of one engine pull, and the layers that completed. */
 export type EnginePullProgress = { doneBytes: number; layersCompleted: number };
@@ -483,7 +478,7 @@ export async function pullImageThroughEngine(socket: string, image: string, onPr
             report();
         }
     } catch (cause) {
-        return { kind: "failed", message: `The pull stream of the engine broke: ${cause instanceof Error ? cause.message : String(cause)}` };
+        return { kind: "failed", message: `The pull stream of the engine broke: ${messageOf(cause)}` };
     }
     if (buffer.trim() !== "") consume(buffer.trim());
     report();

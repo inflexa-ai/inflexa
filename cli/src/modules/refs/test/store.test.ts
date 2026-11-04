@@ -32,7 +32,7 @@ import {
     type ReferenceStoreInspection,
     type ReferenceVerification,
 } from "../store.ts";
-import { respondWith } from "../../../test_support/fake_fetch.ts";
+import { respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { objectContaining } from "../../../test_support/matchers.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 
@@ -99,7 +99,7 @@ function serveRedirectedTo(finalUrl: string, files: readonly Fixture[]): (input:
     const bodies = new Map(files.map((file) => [url(file.path), file.body]));
     return (input) =>
         Promise.try(() => {
-            const response = new Response(bodies.get(String(input)) ?? "");
+            const response = new Response(bodies.get(fetchInputUrl(input)) ?? "");
             // fetch reports the post-redirect location here; Response leaves it "" unless it redirected.
             Object.defineProperty(response, "url", { value: finalUrl });
             return response;
@@ -134,7 +134,7 @@ function serve(files: readonly Fixture[], asked: Asked[] = []): (input: string |
     const bodies = new Map(files.map((file) => [url(file.path), file.body]));
     return (input, init) =>
         Promise.try(() => {
-            const target = String(input);
+            const target = fetchInputUrl(input);
             asked.push({ url: target, range: new Headers(init?.headers).get("range") });
             const body = bodies.get(target);
             if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
@@ -147,7 +147,7 @@ function serveWithContentLength(files: readonly Fixture[]): (input: string | URL
     const bodies = new Map(files.map((file) => [url(file.path), file.body]));
     return (input) =>
         Promise.try(() => {
-            const body = bodies.get(String(input));
+            const body = bodies.get(fetchInputUrl(input));
             if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
             return new Response(body, { headers: { "content-length": String(Buffer.byteLength(body)) } });
         });
@@ -223,7 +223,7 @@ describe("installation", () => {
         const paths = referenceStorePaths(path);
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "nested", "a.txt"), "utf8")).toBe("alpha");
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "b.txt"), "utf8")).toBe("beta");
-        expect(parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.unknown())).toEqual(
+        expect(parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.json())).toEqual(
             receipt("demo", "2026.07", "2026-07-14T12:00:00.000Z", [
                 { path: "nested/a.txt", bytes: 5, sha256: sha("alpha") },
                 { path: "b.txt", bytes: 4, sha256: sha("beta") },
@@ -274,7 +274,7 @@ describe("installation", () => {
                 now: () => new Date(now),
             });
             expect(installed.isOk()).toBe(true);
-            receipts.push(parseReferenceInstallReceipt(parsedJson(readFileSync(join(referenceStorePaths(path).receipts, "demo.json"), "utf8"), z.unknown())));
+            receipts.push(parseReferenceInstallReceipt(parsedJson(readFileSync(join(referenceStorePaths(path).receipts, "demo.json"), "utf8"), z.json())));
         }
 
         expect(receipts[0]?.activatedAt).not.toBe(receipts[1]?.activatedAt);
@@ -340,7 +340,7 @@ describe("mutable upstream installation", () => {
 
         const paths = referenceStorePaths(path);
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "gene_info.gz"), "utf8")).toBe("mutable-bytes");
-        const receipt: unknown = parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.unknown());
+        const receipt: unknown = parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.json());
         expect(receipt).toHaveProperty("artifacts", [{ path: "gene_info.gz", bytes: 13, sha256: sha("mutable-bytes") }]);
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]).toMatchObject({
             state: "valid",
@@ -383,7 +383,7 @@ describe("mutable upstream installation", () => {
         const forced = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(refreshed) }, { force: true });
         expect(forced._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(16);
         expect(readFileSync(active, "utf8")).toBe("release-b-longer");
-        const receipt: unknown = parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.unknown());
+        const receipt: unknown = parsedJson(readFileSync(join(paths.receipts, "demo.json"), "utf8"), z.json());
         expect(receipt).toHaveProperty("artifacts", [{ path: "gene_info.gz", bytes: 16, sha256: sha("release-b-longer") }]);
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
     });
@@ -552,7 +552,7 @@ describe("transfer progress reporting", () => {
         });
 
         expect(observed._unsafeUnwrap()).toEqual(baseline._unsafeUnwrap());
-        const receipt = (store: string): unknown => parsedJson(readFileSync(join(referenceStorePaths(store).receipts, "demo.json"), "utf8"), z.unknown());
+        const receipt = (store: string): unknown => parsedJson(readFileSync(join(referenceStorePaths(store).receipts, "demo.json"), "utf8"), z.json());
         expect(receipt(noisy)).toEqual(receipt(quiet));
         expect((await verifyReferenceDatasets(noisy, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
     });
@@ -860,7 +860,7 @@ function serveConcurrently(
         state.active += 1;
         state.peak = Math.max(state.peak, state.active);
         try {
-            const path = String(input).replace("https://upstream.test/", "");
+            const path = fetchInputUrl(input).replace("https://upstream.test/", "");
             await Promise.sleep(delayByPath[path] ?? 20);
             return await inner(input, init);
         } finally {
@@ -998,7 +998,7 @@ describe("reference download sizing", () => {
         const measured = await measureReferenceDownload(artifacts(3), {
             fetch: (input) =>
                 Promise.try(() => {
-                    const path = String(input).replace("https://upstream.test/", "");
+                    const path = fetchInputUrl(input).replace("https://upstream.test/", "");
                     const length = sizes[path];
                     return new Response(null, { headers: length === undefined ? {} : { "content-length": length } });
                 }),
@@ -1043,7 +1043,7 @@ describe("reference download sizing", () => {
         };
         const measured = await measureReferenceDownload(artifacts(5), {
             fetch: (input) => {
-                const path = String(input).replace("https://upstream.test/", "");
+                const path = fetchInputUrl(input).replace("https://upstream.test/", "");
                 const behaviour = behaviours[path];
                 if (behaviour === undefined) throw new Error(`unexpected probe: ${path}`);
                 return behaviour();

@@ -90,7 +90,7 @@ export type Migration = {
     up: string;
 };
 
-export function ensureDir(path: string) {
+export function ensureDir(path: string): void {
     const dir = path.slice(0, path.lastIndexOf("/"));
     try {
         Bun.spawnSync(["mkdir", "-p", dir]);

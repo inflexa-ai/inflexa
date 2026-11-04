@@ -50,7 +50,7 @@ export type ApiError = {
  * context to a body and the client must give the whole body to its caller.
  */
 export const apiErrorSchema: z.ZodType<ApiError> = z.looseObject({
-    error: z.string().refine((code): code is ApiErrorCode => Object.hasOwn(API_ERROR_STATUS, code)),
+    error: z.string().refine((code: string): code is ApiErrorCode => Object.hasOwn(API_ERROR_STATUS, code)),
     message: z.string(),
     details: z.unknown().optional(),
 });

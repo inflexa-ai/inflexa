@@ -92,10 +92,10 @@ type Recorder = {
 function makeSeams(
     behavior: {
         activeRuns?: (CortexRunRow | null)[];
-        insertThrows?: unknown;
+        insertThrows?: Error;
         insertErr?: boolean;
         authorizeRefusal?: string;
-        launchThrows?: unknown;
+        launchThrows?: Error;
     } = {},
 ): { seams: RunTriggerSeams; rec: Recorder } {
     const rec: Recorder = { queryActiveRun: 0, insertRun: 0, authorize: 0, revoke: 0, launch: 0, updateRunStatus: [], launched: null };

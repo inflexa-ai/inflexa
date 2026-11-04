@@ -466,7 +466,7 @@ async function pickDatasets(model: ReferencePickerModel, panel: readonly string[
                 rowPadding: 3,
                 style: (option, active): string => {
                     const isGroup = option.group === true;
-                    const ticked = isGroup ? this.isGroupSelected(String(option.value)) : selected.includes(option.value);
+                    const ticked = isGroup ? this.isGroupSelected(option.value) : selected.includes(option.value);
                     const box = ticked
                         ? styleText("green", S_CHECKBOX_SELECTED)
                         : active

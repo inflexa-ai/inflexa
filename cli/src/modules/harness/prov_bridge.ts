@@ -30,6 +30,7 @@ import type {
 import { provModel } from "../prov/document.ts";
 import { currentUserActor, flushProvenanceAsync, systemActor } from "../prov/prov.ts";
 import { buildAttestation } from "../prov/verify.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 // The cli↔harness provenance bridge: the whole `ProvenanceSeam` over ONE signed analysis document.
 // The run emit and the artifact registry translate execution facts into `prov.*` bus events, the
@@ -362,7 +363,7 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
         // it is no reason to pause the analysis.
         register: (input: ArtifactRegistrationInput): ResultAsync<ExternalRegistrationResult, GateFailure> =>
             ResultAsync.fromPromise(Promise.try(registerOnBus, input), (cause): GateFailure => ({
-                reason: `provenance registration threw: ${cause instanceof Error ? cause.message : "a non-Error value"}`,
+                reason: `provenance registration threw: ${messageOf(cause)}`,
                 suspend: false,
             })),
         // No-op: the artifact bytes already live in the host workspace tree, so there is nothing to push

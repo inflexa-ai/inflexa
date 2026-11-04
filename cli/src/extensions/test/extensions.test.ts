@@ -22,7 +22,7 @@ describe("JSON.parseWith", () => {
     });
 
     test("returns null when a refine of the schema throws", () => {
-        const throwing = z.unknown().refine(() => {
+        const throwing = z.number().refine(() => {
             throw new Error("refine defect");
         });
         expect(JSON.parseWith("1", throwing)).toBeNull();
@@ -52,7 +52,7 @@ describe("JSON.parseResult", () => {
     });
 
     test("lets a throw from a refine of the schema propagate", () => {
-        const throwing = z.unknown().refine(() => {
+        const throwing = z.number().refine(() => {
             throw new Error("refine defect");
         });
         expect(() => JSON.parseResult("1", throwing)).toThrow("refine defect");

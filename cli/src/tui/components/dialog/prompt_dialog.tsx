@@ -10,6 +10,7 @@ import { useDialogCancel, useDialogCloseGuard, useDialogEntry } from "./dialog_h
 import { DialogPanel } from "./dialog_panel.tsx";
 import { TextArea } from "../text_area.tsx";
 import { TextInput } from "../text_input.tsx";
+import { present } from "../../../lib/present.ts";
 
 /**
  * A text prompt dialog: title, optional description, a text field, enter-to-submit. The single
@@ -131,7 +132,7 @@ export function PromptDialog(props: {
     // closing, and a footer still promising "cancel" would misdescribe the only key the dialog documents.
     const footer = (): string =>
         props.busy
-            ? `${GLYPHS.spinner[spinFrame()]} ${props.busyText ?? `Working${GLYPHS.ellipsis}`}`
+            ? `${present(GLYPHS.spinner[spinFrame()], "the spinner frame")} ${props.busyText ?? `Working${GLYPHS.ellipsis}`}`
             : `${chordLabel(KEYS.enter)} submit ${GLYPHS.middot} ${chordLabel(KEYS.escape)} ${props.onBack ? "back" : "cancel"}`;
 
     return (

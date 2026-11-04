@@ -9,6 +9,7 @@ import { errnoCode } from "../../lib/fs.ts";
 import { present } from "../../lib/present.ts";
 import { isAsciiDigits } from "../../lib/text.ts";
 import { runEvery } from "../../lib/timer.ts";
+import { messageOf } from "../../lib/cause.ts";
 
 /**
  * The record protocol between the walk child (`inflexa server walk`) and the search cache of the local server. Each
@@ -110,7 +111,7 @@ class RecordEncoder {
 
     scopeError(cause: unknown): void {
         const code = (errnoCode(cause) ?? "").slice(0, 255);
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = messageOf(cause);
         const bound = 4 + code.length + Math.min(message.length * 3, 0xffff);
         if (this.at + bound > this.buffer.length) this.flush();
         const buffer = this.buffer;

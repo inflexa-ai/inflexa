@@ -9,7 +9,6 @@ import { z } from "zod";
 import {
     createRunEventStream,
     UnknownRunError,
-    type AgentSession,
     type ApprovePlanInput,
     type ApprovePlanRefusal,
     type CortexRunRow,
@@ -43,7 +42,7 @@ import type { ServerBoot } from "../../boot.ts";
 import type { ServerEnv } from "../../http.ts";
 import { __resetProfileQueueForTest, profileWorkInFlight, serializeProfileWork, watchInputDrift } from "../../profile_queue.ts";
 import { __resetTurnsForTest, refuseNewTurns, startTurn } from "../../turns.ts";
-import { DEFAULT_RUN_ROUTES_OPTS, runRoutes, type RunRoutesOpts } from "../runs.ts";
+import { DEFAULT_RUN_ROUTES_OPTS, planStepNames, planTitleOf, runRoutes, type RunRoutesOpts } from "../runs.ts";
 import { anything, objectContaining } from "../../../test_support/matchers.ts";
 import { present } from "../../../lib/present.ts";
 import { parsedJson } from "../../../test_support/json.ts";
@@ -53,7 +52,7 @@ import { parsedJson } from "../../../test_support/json.ts";
 // It asserts the body with `toEqual` or `toHaveProperty`, or it parses a schema below that names only the
 // fields that the test computes on. The schemas are loose, thus each other field stays on the parsed value.
 
-const maybe = z.unknown().optional();
+const maybe = z.json().optional();
 const runListBody = z.looseObject({
     runs: z.array(
         z.looseObject({
@@ -248,7 +247,7 @@ async function sseFrames(response: Response): Promise<unknown[]> {
     return text
         .split("\n\n")
         .filter((block) => block.startsWith("data: "))
-        .map((block): unknown => parsedJson(block.slice("data: ".length), z.unknown()));
+        .map((block): unknown => parsedJson(block.slice("data: ".length), z.json()));
 }
 
 beforeEach(() => {
@@ -326,7 +325,7 @@ describe("GET {A}/runs", () => {
             listRuns: (_pool, _id, page) => okAsync({ rows: rows.slice(0, page.limit), total: perPage }),
             countArtifacts: () => {
                 reads += 1;
-                return okAsync<RunArtifactCount[], never>([]);
+                return okAsync<RunArtifactCount[]>([]);
             },
         });
         const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?perPage=${perPage}`)));
@@ -377,7 +376,7 @@ describe("GET {A}/runs", () => {
             listRuns: (_pool, _id, page) => okAsync({ rows: rows.slice(0, page.limit), total: perPage }),
             countSteps: () => {
                 reads += 1;
-                return okAsync<RunStepCounts[], never>([]);
+                return okAsync<RunStepCounts[]>([]);
             },
         });
         const list = runListBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/runs?perPage=${perPage}`)));
@@ -568,7 +567,8 @@ describe("GET {A}/run/:runId", () => {
         const detail = runDetailBody.parse(await jsonBody(app.request(`/api/v1/analyses/${analysisId}/run/r1`)));
 
         expect(detail).toMatchObject({ runId: "r1", planTitle: "Plan", usage: { calls: 2, inputTokens: 10 }, unattributedUsage: { calls: 1, inputTokens: 3 } });
-        expect<unknown>(detail.steps).toEqual([
+        const stepList: unknown = detail.steps;
+        expect(stepList).toEqual([
             objectContaining({ stepId: "T1S1", name: "Align reads", status: "completed", usage: { calls: 1, inputTokens: 7 } }),
             objectContaining({ stepId: "T1S2", status: "blocked", blockedReason: "no data" }),
         ]);
@@ -1237,7 +1237,7 @@ describe("POST {A}/run/:runId/cancel", () => {
     };
 
     test("cancels with the local session of the analysis, and gives the result", async () => {
-        const sessions: AgentSession[] = [];
+        const sessions: unknown[] = [];
         const app = appWith({
             getRun: () => okAsync(runRow({ runId: "r1", analysisId: "mine", status: "running" })),
             cancelRun: (_runtime, _runId, session) => {
@@ -1248,7 +1248,7 @@ describe("POST {A}/run/:runId/cancel", () => {
         const response = await app.request("/api/v1/analyses/mine/run/r1/cancel", { method: "POST" });
         expect(response.status).toBe(200);
         expect(await jsonBody(response)).toEqual(result);
-        expect<unknown>(sessions).toEqual([
+        expect(sessions).toEqual([
             {
                 identity: { user: "local" },
                 scope: { kind: "analysis", analysisId: "mine" },
@@ -1682,7 +1682,7 @@ describe("POST {A}/plans/:planId/approve", () => {
 
             expect(response.status).toBe(500);
             const text = await response.text();
-            expect(parsedJson(text, z.unknown())).toMatchObject({ error: "internal_error" });
+            expect(parsedJson(text, z.json())).toMatchObject({ error: "internal_error" });
             expect(text).not.toContain("secret");
         }
     });
@@ -1753,5 +1753,38 @@ describe("POST {A}/plans/:planId/approve", () => {
 
         expect(result._unsafeUnwrap()).toEqual(startedApproval);
         expect(calls).toHaveLength(1);
+    });
+});
+
+describe("planTitleOf and planStepNames", () => {
+    test.each([
+        ["a plan that is null", null],
+        ["a plan that is an array", [{ title: "Liver DE" }]],
+        ["a plan that is a string", "Liver DE"],
+        ["a plan with no title", { steps: [] }],
+        ["a plan with a title that is a number", { title: 7 }],
+        ["a plan with a title of spaces", { title: "   " }],
+    ])("%s gives no title", (_name, plan) => {
+        expect(planTitleOf(plan)).toBeNull();
+    });
+
+    test("a title is trimmed", () => {
+        expect(planTitleOf({ title: "  Liver DE " })).toBe("Liver DE");
+    });
+
+    test.each([
+        ["a plan that is null", null],
+        ["a plan that is an array", [{ id: "s1", name: "Load" }]],
+        ["a plan with steps that are not a list", { steps: { id: "s1", name: "Load" } }],
+        ["a plan with no steps", {}],
+    ])("%s gives no step names", (_name, plan) => {
+        expect(planStepNames(plan).size).toBe(0);
+    });
+
+    test("a step that is not an object, or has no usable id or name, is skipped", () => {
+        const names = planStepNames({
+            steps: [null, "s0", ["s1"], { id: "s2" }, { id: 3, name: "Numbered" }, { id: "s4", name: "   " }, { id: "s5", name: " Load " }],
+        });
+        expect([...names]).toEqual([["s5", "Load"]]);
     });
 });

@@ -2305,7 +2305,7 @@ async function collectArchivedThreads(analysisId: string, opts: SessionOpts): Pr
         if (read.isErr()) return { kind: "unreadable" };
         // The predicate narrows the row type as it filters, which is what lets the picker read
         // `archivedAt` as a string rather than assert on a field absent for every live row.
-        threads.push(...read.value.threads.filter((t): t is ArchivedThread => t.archivedAt !== undefined));
+        threads.push(...read.value.threads.filter((t: ThreadSummary): t is ArchivedThread => t.archivedAt !== undefined));
         if (!read.value.hasMore) return { kind: "read", threads, truncated: false };
     }
     return { kind: "read", threads, truncated: true };

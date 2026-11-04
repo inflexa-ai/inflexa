@@ -95,7 +95,7 @@ function writeExport(
 ): ResultAsync<ExportedProvenance, ExportProvenanceError> {
     // The workspace folder is made here, after the signature, thus a signing failure leaves no folder
     // behind. The folder of an `output` path is not made: the caller chose it.
-    const folder = inWorkspace ? mkdirResultAsync(dirname(path), "exportProvenance:mkdir") : okAsync<void, FsError>(undefined);
+    const folder = inWorkspace ? mkdirResultAsync(dirname(path), "exportProvenance:mkdir") : okAsync<undefined, FsError>(undefined);
     return folder
         .andThen(() => writeFileResultAsync(path, document, "exportProvenance:write"))
         .mapErr((e): ExportProvenanceError => ({ type: "write", path, cause: e.cause }))

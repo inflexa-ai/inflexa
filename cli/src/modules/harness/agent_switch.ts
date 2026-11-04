@@ -4,7 +4,7 @@ import type { ChatProvider } from "@inflexa-ai/harness";
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import type { ProvModelId } from "../../types/prov.ts";
-import { AGENT_NAMES, type AgentEffort, type AgentName } from "./config.ts";
+import type { AgentEffort, AgentName } from "./config.ts";
 
 // The live role-model switch. Two cooperating pieces live here because they
 // are one decision: an agent-work GAUGE that reads whether any agent work is in flight, and the
@@ -374,6 +374,3 @@ export function onAgentStateChange(cb: () => void): () => void {
         stateListeners.delete(cb);
     };
 }
-
-// Re-exported so a caller iterating the agents stays aligned with the config's closed agent set.
-export { AGENT_NAMES, type AgentName };

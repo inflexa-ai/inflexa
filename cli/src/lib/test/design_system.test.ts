@@ -48,7 +48,7 @@ describe("gutter markers", () => {
 
     test("every marker glyph is a single terminal cell (one code point)", () => {
         for (const marker of Object.values(MARKERS)) {
-            expect([...marker.glyph].length).toBe(1);
+            expect(Array.from(marker.glyph).length).toBe(1);
         }
     });
 });

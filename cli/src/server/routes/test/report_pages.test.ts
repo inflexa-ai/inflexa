@@ -450,7 +450,7 @@ describe("POST /api/v1/analyses/:analysisId/report-sessions/:threadId/access", (
                 minted.push(`${analysisId}/${threadId}`);
                 return grants.mint(analysisId, threadId);
             },
-            remainingSeconds: grants.remainingSeconds,
+            remainingSeconds: (token, analysisId, threadId) => grants.remainingSeconds(token, analysisId, threadId),
         };
         app = buildApp({ token: TOKEN, boot: idleBoot(), lifecycle: idleLifecycle(), pageGrants: counting });
         mkdirSync(join(root, "report-sessions", "empty"), { recursive: true });

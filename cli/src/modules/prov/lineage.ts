@@ -293,7 +293,7 @@ export function resolveLineageRef(model: LineageModel, ref: string): Result<Line
         ...new Set(
             pathedInfos(model)
                 .map((f) => f.path)
-                .filter((p): p is string => p !== null),
+                .filter((p) => p !== null),
         ),
     ].slice(0, NOT_FOUND_SAMPLE);
     return err({ type: "not_found", knownPaths });
