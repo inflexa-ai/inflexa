@@ -143,6 +143,9 @@ describe("createAnalysis makes the empty farm", () => {
     beforeEach(() => {
         freshDb();
         dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-farm-birth-")));
+        // Another test block of the process can leave a farm in the sandboxed store, and the blocking file
+        // of the failure test cannot take the place of a `farms` folder.
+        rmSync(env.packageStoreDir, { recursive: true, force: true });
     });
 
     afterEach(() => {

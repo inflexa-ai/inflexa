@@ -55,7 +55,8 @@ function cliproxyConnection(provider: string, agents: ResolvedModelConnection["a
     return { mode: "cliproxy", provider, agents };
 }
 
-let skillsDir: string;
+/** The skills folder of the last `testConfig()` call. It stays empty in a test that never calls it. */
+let skillsDir = "";
 
 /**
  * The `core` bundle the last boot handed to the harness — i.e. exactly what `assembleCoreRuntime`
@@ -265,7 +266,8 @@ beforeEach(() => {
 afterEach(() => {
     __resetHarnessRuntimeForTest();
     lastCore = null;
-    rmSync(skillsDir, { recursive: true, force: true });
+    if (skillsDir !== "") rmSync(skillsDir, { recursive: true, force: true });
+    skillsDir = "";
 });
 
 describe("bootHarnessRuntime", () => {

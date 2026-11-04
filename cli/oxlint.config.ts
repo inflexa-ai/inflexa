@@ -49,7 +49,9 @@ const actionBans = [
 // A selector over the source of every form that names a module: a static import, a
 // re-export, `export *`, and a dynamic `import()`. `RegExp.toString()` escapes the `/` that a
 // selector regex cannot hold bare. The source of `import(\`...\`)` is a `TemplateLiteral`, which has
-// no `value`, so it needs its own selector over the text of its first quasi.
+// no `value`, so it needs its own selector over the text of its first quasi. In a client the ban on a
+// computed `import()` source refuses a template literal with an interpolation, so the first quasi of a
+// template literal that reaches these selectors is its whole text.
 function sourceSelector(pattern: RegExp): string {
     const regex = pattern.toString();
     return [
@@ -105,6 +107,15 @@ const clientBoundaryBans = [
         selector: sourceSelector(/(^|\/)modules\/(?!harness\/plan_dag\.ts$|harness\/chat_printer\.ts$|prov\/verify_file\.ts$|update\/)/),
         message:
             "A client must not import a module of `src/modules/` that holds state or does I/O. Call a route of the local server through `src/client/`, or lift a pure helper out of the module.",
+    },
+    {
+        // The bans above read the path of the source. A source that the program computes (an interpolation,
+        // a variable, a concatenation) has no path to read, thus it would reach the server side unseen.
+        // The `/^/` attribute matches a string value only, so a literal that is not a string (`import(42)`)
+        // is refused too.
+        selector: "ImportExpression:not([source.type='Literal'][source.value=/^/]):not([source.type='TemplateLiteral'][source.expressions.length=0])",
+        message:
+            "A client must write the path of a dynamic `import()` out, as a string or as a template literal with no interpolation: the import boundary bans read the path, and a computed path escapes them.",
     },
 ];
 

@@ -45,6 +45,15 @@ const CLIENT_SAFE_FORMS = [
     { path: "../../modules/harness/chat_printer.ts", text: "export const lazyPrinter = () => import(`../../modules/harness/chat_printer.ts`);" },
 ];
 
+/** Dynamic imports whose source is computed, one on each line. No other ban of the config matches the text of any of them. */
+const COMPUTED_FORMS = [
+    { label: "an interpolation at the start", text: "export const lazyStart = (name: string) => import(`./${name}.ts`);" },
+    { label: "an interpolation after a permitted prefix", text: "export const lazyPrefix = (name: string) => import(`../api/${name}.ts`);" },
+    { label: "a variable", text: "export const lazyVariable = (path: string) => import(path);" },
+    { label: "a concatenation", text: 'export const lazyConcat = (name: string) => import("./" + name);' },
+    { label: "a literal that is not a string", text: "export const lazyNumber = () => import(42);" },
+];
+
 const CASES = {
     tuiServerSide: { scope: "src/tui", ext: "tsx", text: importsOf(SERVER_SIDE) },
     clientServerSide: { scope: "src/client", ext: "ts", text: importsOf(SERVER_SIDE) },
@@ -54,6 +63,9 @@ const CASES = {
     devChannel: { scope: "src/tui", ext: "ts", text: importsOf(["./dev/chat.ts"]) },
     clientForms: { scope: "src/client", ext: "ts", text: FORMS.map((f) => f.text).join("\n") },
     clientSafeForms: { scope: "src/client", ext: "ts", text: CLIENT_SAFE_FORMS.map((f) => f.text).join("\n") },
+    tuiComputed: { scope: "src/tui", ext: "ts", text: COMPUTED_FORMS.map((f) => f.text).join("\n") },
+    clientComputed: { scope: "src/client", ext: "ts", text: COMPUTED_FORMS.map((f) => f.text).join("\n") },
+    serverComputed: { scope: "src/server", ext: "ts", text: COMPUTED_FORMS.map((f) => f.text).join("\n") },
     serverFolder: { scope: "src/server", ext: "ts", text: importsOf(SERVER_SIDE) },
 } satisfies Record<string, Snippet>;
 
@@ -81,6 +93,12 @@ async function banned(name: CaseName, specifiers: readonly string[], rule: strin
 async function bannedForms(name: CaseName, forms: readonly { path: string }[], rule: string): Promise<string[]> {
     const lines = new Set(linesOf(await reportsOf(name), rule));
     return forms.filter((_, i) => lines.has(i + 1)).map((f) => f.path);
+}
+
+/** The labels of `COMPUTED_FORMS` that `rule` reports in the case `name`. Form `i` sits on line `i + 1`. */
+async function bannedComputed(name: CaseName, rule: string): Promise<string[]> {
+    const lines = new Set(linesOf(await reportsOf(name), rule));
+    return COMPUTED_FORMS.filter((_, i) => lines.has(i + 1)).map((f) => f.label);
 }
 
 describe("the client import boundary", () => {
@@ -132,6 +150,18 @@ describe("the client import boundary", () => {
         OXLINT_SPAWN_TIMEOUT_MS,
     );
 
+    for (const scope of ["tui", "client"] as const) {
+        test(
+            `a ${scope} file cannot import lazily with a computed source`,
+            async () => {
+                expect(await bannedComputed(`${scope}Computed`, RESTRICTED_SYNTAX)).toEqual(COMPUTED_FORMS.map((f) => f.label));
+                const messages = (await reportsOf(`${scope}Computed`)).filter((r) => r.rule === RESTRICTED_SYNTAX).map((r) => r.message);
+                expect(messages.filter((message) => !message.includes("A client must write the path of a dynamic `import()` out"))).toEqual([]);
+            },
+            OXLINT_SPAWN_TIMEOUT_MS,
+        );
+    }
+
     test(
         "a type-only import of a module is banned too: a client takes each wire type from src/api/",
         async () => {
@@ -152,6 +182,7 @@ describe("the client import boundary", () => {
         "the server side itself is outside the rule",
         async () => {
             expect(await banned("serverFolder", SERVER_SIDE, RESTRICTED_SYNTAX)).toEqual([]);
+            expect(await bannedComputed("serverComputed", RESTRICTED_SYNTAX)).toEqual([]);
         },
         OXLINT_SPAWN_TIMEOUT_MS,
     );

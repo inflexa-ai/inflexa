@@ -1,34 +1,31 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
+import { replaceProperty } from "../../test_support/replace_property.ts";
 import { stdinIsTTY } from "../cli.ts";
 
 describe("stdinIsTTY", () => {
-    const original = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-
-    afterEach(() => {
-        // A stdin that had no own `isTTY` reads `undefined` again after this.
-        Object.defineProperty(process.stdin, "isTTY", original ?? { value: undefined, configurable: true });
-    });
+    // The same object as `process.stdin`, typed as a pipe sees it: the property can be absent.
+    const stdin: { isTTY?: boolean } = process.stdin;
 
     test("is true when stdin is a terminal", () => {
-        Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+        replaceProperty(stdin, "isTTY", true);
         expect(stdinIsTTY()).toBe(true);
     });
 
     test("is false when stdin is not a terminal", () => {
-        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+        replaceProperty(stdin, "isTTY", false);
         expect(stdinIsTTY()).toBe(false);
     });
 
     test("is false when stdin has no isTTY property, as a pipe has none", () => {
-        Object.defineProperty(process.stdin, "isTTY", { value: undefined, configurable: true });
+        replaceProperty(stdin, "isTTY", undefined);
         expect(stdinIsTTY()).toBe(false);
     });
 
     test("reads the property at each call", () => {
-        Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+        replaceProperty(stdin, "isTTY", true);
         expect(stdinIsTTY()).toBe(true);
-        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+        replaceProperty(stdin, "isTTY", false);
         expect(stdinIsTTY()).toBe(false);
     });
 });

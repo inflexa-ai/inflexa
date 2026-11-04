@@ -6,7 +6,11 @@ import { __pendingNoticeCountForTest, __resetNoticesForTest, currentNotice, noti
 // JSX in app.tsx is presentation. These assert the queue/timer contract a TUI run can't easily check.
 
 // A fake clock, because a real sleep under load can cross zero or two dismiss windows.
-beforeEach(() => jest.useFakeTimers());
+beforeEach(() => {
+    // A notice that another test file left has a real timer, so it goes before the fake clock starts.
+    __resetNoticesForTest();
+    jest.useFakeTimers();
+});
 afterEach(() => {
     __resetNoticesForTest();
     jest.useRealTimers();

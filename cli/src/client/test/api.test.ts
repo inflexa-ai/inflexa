@@ -3,6 +3,7 @@ import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { describeClientError, readSseFrames, request, setClientSurface, streamRequest, type ClientError, type ClientOpts } from "../api.ts";
+import { respondWith } from "../../test_support/fake_fetch.ts";
 import { awaitOk } from "../../test_support/result.ts";
 
 const BASE = "http://127.0.0.1:8436";
@@ -96,7 +97,7 @@ describe("request", () => {
     });
 
     test("a body that is not JSON, or an error body that is not an ApiError, is `bad_json`", async () => {
-        const text = withFetch(() => Promise.resolve(new Response("<html>proxy</html>", { status: 200 })));
+        const text = withFetch(respondWith("<html>proxy</html>", { status: 200 }));
         expect((await request("GET", "/x", {}, text.opts))._unsafeUnwrapErr()).toMatchObject({ type: "bad_json", status: 200, detail: "<html>proxy</html>" });
 
         const foreign = withFetch(() => json({ error: "made_up_code", message: "?" }, 400));

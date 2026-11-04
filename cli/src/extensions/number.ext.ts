@@ -10,8 +10,10 @@ declare global {
          * consistency, and is stated here because the labels no longer state it themselves.
          *
          * An instance method so a byte count reads as one at the call site (`written.formatBytes()`),
-         * and the single place any byte quantity is rendered — a second formatter is how a tree ends up
-         * with three vocabularies. Negative and non-finite inputs clamp to `0 B` rather than printing
+         * and the one formatter of these short labels. The package store and rail readouts are the
+         * exception: they use `formatIecBytes` (`src/lib/bytes.ts`) with the IEC labels `KiB`/`MiB`/`GiB`,
+         * so a new byte readout picks one of the two vocabularies and does not add a third. Negative and
+         * non-finite inputs clamp to `0 B` rather than printing
          * `-1.0 KB` or `NaN B`, the way {@link Date.relativeAge} clamps a future timestamp: an
          * unusable input is unknowable, not renderable.
          */

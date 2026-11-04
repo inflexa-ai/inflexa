@@ -401,24 +401,21 @@ describe("resolveModelId", () => {
     });
 
     test("a non-ok response → proxy_unreachable naming the status", async () => {
-        stubFetch(() => Promise.resolve(new Response("nope", { status: 401 })));
+        stubFetch(respondWith("nope", { status: 401 }));
         expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "proxy_unreachable", detail: "HTTP 401" });
     });
 
     test("a 503 carrying the proxy's auth_unavailable marker → cooling_down (a distinct condition, not a generic unreachable)", async () => {
-        stubFetch(() =>
-            Promise.resolve(
-                new Response(
-                    JSON.stringify({ type: "error", error: { type: "api_error", message: "auth_unavailable: no auth available (providers=claude)" } }),
-                    { status: 503 },
-                ),
-            ),
+        stubFetch(
+            respondWith(JSON.stringify({ type: "error", error: { type: "api_error", message: "auth_unavailable: no auth available (providers=claude)" } }), {
+                status: 503,
+            }),
         );
         expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "cooling_down" });
     });
 
     test("a 503 whose body carries no recognized marker stays proxy_unreachable (status quo)", async () => {
-        stubFetch(() => Promise.resolve(new Response("boom", { status: 503 })));
+        stubFetch(respondWith("boom", { status: 503 }));
         expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "proxy_unreachable", detail: "HTTP 503" });
     });
 
@@ -428,7 +425,7 @@ describe("resolveModelId", () => {
     });
 
     test("a body that fails the schema → no_models (jsonWith yields null, never a throw)", async () => {
-        stubFetch(() => Promise.resolve(new Response("not json at all")));
+        stubFetch(respondWith("not json at all"));
         expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "no_models" });
     });
 

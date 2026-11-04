@@ -8,7 +8,7 @@ import { env } from "../../lib/env.ts";
 import { runCli } from "../cli.ts";
 import { freshDb, resetDb } from "../db.ts";
 import { assertTestSandbox } from "../sandbox.ts";
-import { withRoot } from "../solid.ts";
+import { withRoot, withRootAsync } from "../solid.ts";
 
 // Pin the three harness seams (env sandbox, temp DB, Solid root) so a refactor that breaks isolation
 // fails here loudly rather than silently corrupting every integration test that relies on them.
@@ -174,6 +174,36 @@ describe("withRoot", () => {
             return 42;
         });
         expect(result).toBe(42);
+        expect(disposed).toBe(true);
+    });
+});
+
+describe("withRootAsync", () => {
+    test("returns the body value and disposes the root after the body settles", async () => {
+        let disposed = false;
+        const result = await withRootAsync(async () => {
+            onCleanup(() => {
+                disposed = true;
+            });
+            await Promise.resolve();
+            expect(disposed).toBe(false);
+            return 42;
+        });
+        expect(result).toBe(42);
+        expect(disposed).toBe(true);
+    });
+
+    test("disposes the root when the body rejects, and passes the rejection on", async () => {
+        let disposed = false;
+        const failure = new Error("assertion failed");
+        const settled = withRootAsync(async () => {
+            onCleanup(() => {
+                disposed = true;
+            });
+            await Promise.resolve();
+            throw failure;
+        });
+        await expect(settled).rejects.toBe(failure);
         expect(disposed).toBe(true);
     });
 });

@@ -10,7 +10,7 @@ import type { ClientOpts } from "../../client/api.ts";
 import { fetchSettings } from "../../client/machine.ts";
 import { env } from "../../lib/env.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
-import { fakeFetch, fetchInputUrl } from "../../test_support/fake_fetch.ts";
+import { fakeFetch, fetchInputUrl, respondWith } from "../../test_support/fake_fetch.ts";
 import { startTestServer, type TestServer } from "../../test_support/server.ts";
 import { ConfigApp } from "../app_config.tsx";
 import { dialogClear, dialogIsOpen } from "../components/dialog/dialog_host.tsx";
@@ -552,7 +552,7 @@ describe("ConfigApp save (rendered, real keyboard bus)", () => {
 
 /** A fetch that resolves immediately with `body` as JSON at `status` — the api_models test's stub shape. */
 function resolvingFetch(body: unknown, status = 200): typeof globalThis.fetch {
-    return fakeFetch(() => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })));
+    return fakeFetch(respondWith(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 }
 
 /** One in-flight probe: its URL plus the resolve/reject the test drives manually. */

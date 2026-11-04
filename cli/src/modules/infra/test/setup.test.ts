@@ -56,6 +56,7 @@ import type { BootStepId } from "../../../api/server.ts";
 import * as container from "../../../lib/container.ts";
 import * as cliPrompts from "../../../lib/cli.ts";
 import { fakeFetch, respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
+import { replaceProperty } from "../../../test_support/replace_property.ts";
 import { requestedModel } from "../../../test_support/request_body.ts";
 // Namespace import beside the named one purely so `detectProviderEnv` is spyable at the seam setup.ts
 // calls it through; `env` itself is a value the assertions read, so it stays a named import.
@@ -86,6 +87,12 @@ const CATALOG_ID = present(REFERENCE_DATA_CATALOG.datasets[0]).id;
 const OTHER_CATALOG_ID = present(REFERENCE_DATA_CATALOG.datasets[1]).id;
 /** Shaped like a plausible typo of a real id, which is exactly the mistake the upfront check exists to catch. */
 const UNKNOWN_CATALOG_ID = "gtex-typo";
+
+/** Write `value` as the config file of the sandbox, with its folder, which a test that runs first may not have. */
+function seedConfig(value: Record<string, unknown>): void {
+    mkdirSync(dirname(env.configPath), { recursive: true });
+    writeFileSync(env.configPath, JSON.stringify(value));
+}
 
 // generateApiKey + proxyConfig live in proxy_config.ts alongside writeProxyConfig; their unit tests
 // live beside them in proxy_config.test.ts.
@@ -627,11 +634,6 @@ describe("connection config writes", () => {
     // the setup writers persisted.
     function readModels(): Record<string, unknown> {
         return recordOrEmpty(readConfig().models);
-    }
-
-    function seedConfig(value: Record<string, unknown>): void {
-        mkdirSync(dirname(env.configPath), { recursive: true });
-        writeFileSync(env.configPath, JSON.stringify(value));
     }
 
     test("recordCliproxyProvider maps the account kind to its provider slug", () => {
@@ -1639,9 +1641,12 @@ describe("setup() — batch orchestration", () => {
         assertTestSandbox(env.configPath);
         assertTestSandbox(env.cliproxyConfigPath);
         assertTestSandbox(env.cliproxyAuthDir);
+        assertTestSandbox(env.setupStatePath);
         rmSync(env.configPath, { force: true });
         rmSync(env.cliproxyConfigPath, { force: true });
         rmSync(env.cliproxyAuthDir, { recursive: true, force: true });
+        // A failed run writes the checkpoint, and an interactive run that finds one asks to continue from it.
+        rmSync(env.setupStatePath, { force: true });
         process.exitCode = 0;
 
         firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker)));
@@ -1658,6 +1663,7 @@ describe("setup() — batch orchestration", () => {
         rmSync(env.configPath, { force: true });
         rmSync(env.cliproxyConfigPath, { force: true });
         rmSync(env.cliproxyAuthDir, { recursive: true, force: true });
+        rmSync(env.setupStatePath, { force: true });
     });
 
     /** `readConfig().models` is `unknown` (validated downstream); read it as a record to inspect the writes. */
@@ -1706,25 +1712,20 @@ describe("setup() — batch orchestration", () => {
             // Interactive: batch cliproxy rejects a provider answer upfront (the sign-in needs a browser),
             // so the stranding this guards is only reachable on a run that COULD have signed in. The
             // answered mode means no prompt is reached before the refusal.
-            const wasTTY = process.stdin.isTTY;
-            Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
-            try {
-                // The download consent is the first question of the wizard, thus
-                // the test answers it — the refusal under test sits behind it.
-                const errors = await runCapturingStderr({
-                    auth: false,
-                    start: false,
-                    force: false,
-                    postgres: false,
-                    flags: { connection: "cliproxy", provider: "claude", sandbox: false },
-                });
+            replaceProperty(process.stdin, "isTTY", true);
+            // The download consent is the first question of the wizard, thus
+            // the test answers it — the refusal under test sits behind it.
+            const errors = await runCapturingStderr({
+                auth: false,
+                start: false,
+                force: false,
+                postgres: false,
+                flags: { connection: "cliproxy", provider: "claude", sandbox: false },
+            });
 
-                expect(process.exitCode).toBe(1);
-                expect(errors).toContain("--no-auth");
-                expect(errors).toContain("`--provider` / `connection.provider`");
-            } finally {
-                Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
-            }
+            expect(process.exitCode).toBe(1);
+            expect(errors).toContain("--no-auth");
+            expect(errors).toContain("`--provider` / `connection.provider`");
         });
 
         test("--no-auth alone is untouched — it is only an answer that has nowhere to land that fails", async () => {
@@ -2094,7 +2095,7 @@ describe("setup() — batch orchestration", () => {
         ["an array", ["a", "b"]],
         ["null", null],
     ])("a `harness` block that is %s starts clean, and the budget lands beside no stray keys", async (_name, harness) => {
-        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, harness }));
+        seedConfig({ telemetry: false, harness });
 
         await runSetup(batch({ resourceShare: "50" }));
 
@@ -2108,7 +2109,7 @@ describe("setup() — batch orchestration", () => {
         ["an array", ["a", "b"]],
         ["null", null],
     ])("a `harness.resourceLimits` block that is %s starts clean, and the harness siblings survive", async (_name, resourceLimits) => {
-        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, harness: { model: "m", resourceLimits } }));
+        seedConfig({ telemetry: false, harness: { model: "m", resourceLimits } });
 
         await runSetup(batch({ resourceShare: "50" }));
 
@@ -2140,13 +2141,11 @@ describe("setup() — batch orchestration", () => {
     // TTY on and assert on which questions were actually asked. Every prompt seam is stubbed, so a
     // question that WAS reached shows up as a recorded label rather than a hung suite.
     describe("an answer skips exactly its own prompt on an interactive run", () => {
-        let wasTTY: boolean | undefined;
         let prompts: string[];
         let selects: string[];
 
         beforeEach(() => {
-            wasTTY = process.stdin.isTTY;
-            Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+            replaceProperty(process.stdin, "isTTY", true);
             prompts = [];
             selects = [];
             spies.push(
@@ -2173,11 +2172,7 @@ describe("setup() — batch orchestration", () => {
             );
             // The interactive default-model step lists models off the proxy; every route 404s, so the
             // candidate list is empty and the optional manual-entry fallback is declined by the seam above.
-            globalThis.fetch = fakeFetch(() => Promise.resolve(new Response(null, { status: 404 })));
-        });
-
-        afterEach(() => {
-            Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
+            globalThis.fetch = fakeFetch(respondWith(null, { status: 404 }));
         });
 
         /** An interactive invocation: no `--yes`, and the TTY the surrounding `beforeEach` installed. */
@@ -2662,7 +2657,6 @@ describe("setup() — batch orchestration", () => {
     });
 
     describe("a checkpoint continue silences only the steps before it", () => {
-        let wasTTY: boolean | undefined;
         let prompts: string[];
         let selects: string[];
         let continueChoice: "continue" | "restart";
@@ -2672,8 +2666,7 @@ describe("setup() — batch orchestration", () => {
         beforeEach(() => {
             assertTestSandbox(env.setupStatePath);
             rmSync(env.setupStatePath, { force: true });
-            wasTTY = process.stdin.isTTY;
-            Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+            replaceProperty(process.stdin, "isTTY", true);
             prompts = [];
             selects = [];
             continueChoice = "continue";
@@ -2701,11 +2694,10 @@ describe("setup() — batch orchestration", () => {
                 spyOn(compose, "composeAvailable").mockImplementation(() => Promise.resolve(true)),
                 spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
             );
-            globalThis.fetch = fakeFetch(() => Promise.resolve(new Response(null, { status: 404 })));
+            globalThis.fetch = fakeFetch(respondWith(null, { status: 404 }));
         });
 
         afterEach(() => {
-            Object.defineProperty(process.stdin, "isTTY", { value: wasTTY, configurable: true });
             rmSync(env.setupStatePath, { force: true });
         });
 

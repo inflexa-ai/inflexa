@@ -33,13 +33,13 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { ResultAsync } from "neverthrow";
-import type { Pool } from "pg";
 
 import type { ChatPart, RunFailedPart } from "../contracts/chat-parts.js";
 import { sleep } from "../lib/async-utils.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { describeDbError, type DbError } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
+import type { Querier } from "../state/db.js";
 import { queryRun } from "../state/runs.js";
 import type { RunStatus } from "../state/schema.js";
 import { queryStepsByRun } from "../state/step-executions.js";
@@ -104,7 +104,7 @@ export type RunEventRunRead = {
  * having console forced on it.
  */
 export type RunEventStreamDeps = {
-    readonly pool: Pool;
+    readonly pool: Querier;
     readonly logger?: Logger;
     /** Reads the status and the error of the run row, `null` when no row exists. Defaults to `queryRun` on `pool`. */
     readonly readRun?: (runId: string) => ResultAsync<RunEventRunRead | null, DbError>;

@@ -1,7 +1,7 @@
 import { restrictedSyntax, typescript } from "@inflexa-ai/oxlint-plugin";
 
-// The js/recommended rule set of the plugin, written here because the pinned
-// 0.7.0 exports no named copy of it: the factory applies the set to
+// The js/recommended rule set of the plugin, written here because no public
+// path of the plugin gives a named copy of it: the factory applies the set to
 // `**/*.{ts,tsx}` only, and the harness scripts are JavaScript.
 const jsRecommended = {
     "for-direction": "error",
