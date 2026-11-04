@@ -54,7 +54,7 @@ const jsRecommended = {
     "prefer-spread": "error",
 } as const;
 
-export default typescript({
+const config = typescript({
     env: { node: true },
     // The two lifted bans have no replacement in this package. `JSON.parse`: the tests
     // round-trip PROV-JSON through parse/stringify, and zod 4.4.3 exports no schema that
@@ -100,3 +100,7 @@ export default typescript({
         },
     ],
 });
+
+// A warning fails the run as an error does, so no rule of the preset can pass
+// in silence at `warn`.
+export default { ...config, options: { ...config.options, denyWarnings: true } };
