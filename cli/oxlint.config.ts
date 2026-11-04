@@ -144,7 +144,7 @@ const rendererBans = [
     },
 ];
 
-export default solid({
+const config = solid({
     env: { browser: true },
     // The error normalizer of cli:
     // - src/lib/cause.ts — renders and reads an arbitrary thrown value, and its `Error`
@@ -355,3 +355,7 @@ export default solid({
         },
     ],
 });
+
+// A warning fails the run as an error does, so no rule of the preset can pass
+// in silence at `warn`.
+export default { ...config, options: { ...config.options, denyWarnings: true } };

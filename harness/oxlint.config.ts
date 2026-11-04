@@ -54,7 +54,7 @@ const jsRecommended = {
     "prefer-spread": "error",
 } as const;
 
-export default typescript({
+const config = typescript({
     env: { node: true },
     // The error-normalizing modules of the harness, whose job is turning an
     // arbitrary thrown value into a shaped failure:
@@ -323,3 +323,7 @@ export default typescript({
         },
     ],
 });
+
+// A warning fails the run as an error does, so no rule of the preset can pass
+// in silence at `warn`.
+export default { ...config, options: { ...config.options, denyWarnings: true } };
