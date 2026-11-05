@@ -919,6 +919,39 @@ async function readOpenThread(analysisId: string, threadId: string, opts: Sessio
 }
 
 /**
+ * The guard prologue the four silent-narrowing session flows share (open parent, open report child,
+ * remove, delete): narrow the scope silently — an absent analysis or an unbound thread names no
+ * conversation the user could have meant, and the palette's `enabled` requires both anyway — then
+ * raise the flow's spoken refusals, read the open thread, and speak the flow's words when the read
+ * fails. Absence and unreadability are different facts about the user's data, so the unreadable
+ * notice is the flow's, and so are the pre-read refusals: readiness is gated and worded per flow (the
+ * open flows take their words from the boot phase, the delete flows from the harness requirement),
+ * and the purge adds its live-turn gate there. Returns the scope it read and the thread's row (`null`
+ * for no row — a fact each flow words for itself), or `undefined` when a guard spoke or narrowed.
+ */
+async function readGuardedOpenThread(
+    ctx: Workspace,
+    opts: SessionOpts,
+    refusals: () => Notice | null,
+    unreadable: Notice,
+): Promise<{ readonly analysis: Analysis; readonly threadId: string; readonly thread: ThreadSummary | null } | undefined> {
+    const analysis = ctx.analysis;
+    const threadId = ctx.sessionId;
+    if (!analysis || threadId === null) return undefined;
+    const refusal = refusals();
+    if (refusal !== null) {
+        opts.notify(refusal);
+        return undefined;
+    }
+    const read = await readOpenThread(analysis.id, threadId, opts);
+    if (read.kind === "unreadable") {
+        opts.notify(unreadable);
+        return undefined;
+    }
+    return { analysis, threadId, thread: read.kind === "row" ? read.thread : null };
+}
+
+/**
  * Start a fresh conversation in the open analysis: mint a thread id and swap the chat onto it in place.
  * The row that id names is not written until the first turn creates it (typed `conversation` by the
  * harness default, its title seeded from the message), so nothing is persisted here — which is why
@@ -1070,6 +1103,18 @@ function reportBootNotice(phase: BootState["phase"]): Notice {
 }
 
 /**
+ * The refusals the two open-child flows (open parent, open report child) raise before the read: the
+ * boot phase's words beside the `ready()` gate — a chord dispatches by id and bypasses the palette's
+ * `enabled`, so both are checked. `null` proceeds.
+ */
+function bootPhaseRefusals(opts: SessionOpts): () => Notice | null {
+    return () => {
+        const phase = bootState().phase;
+        return phase !== "ready" || !opts.ready() ? reportBootNotice(phase) : null;
+    };
+}
+
+/**
  * What one read of a conversation's report children found — the rows, or the read itself failing.
  *
  * The split is the one {@link ThreadRead} makes, for the same reason. An empty set is a normal state the
@@ -1210,25 +1255,13 @@ export function selectReportSession(ctx: Workspace, thread: ThreadSummary, analy
  * reachable while the runtime still boots.
  */
 export async function openParentSession(ctx: Workspace, opts: SessionOpts = DEFAULT_SESSION_OPTS): Promise<void> {
-    const analysis = ctx.analysis;
-    const threadId = ctx.sessionId;
-    // An absent analysis or an unbound thread names no session the user could have meant, thus the
-    // narrowing is silent.
-    if (!analysis || threadId === null) return;
-    const phase = bootState().phase;
-    if (phase !== "ready" || !opts.ready()) {
-        opts.notify(reportBootNotice(phase));
-        return;
-    }
-    const read = await readOpenThread(analysis.id, threadId, opts);
-    if (read.kind === "unreadable") {
-        opts.notify({ kind: "error", text: OPEN_SESSION_UNREADABLE });
-        return;
-    }
+    const open = await readGuardedOpenThread(ctx, opts, bootPhaseRefusals(opts), { kind: "error", text: OPEN_SESSION_UNREADABLE });
+    if (open === undefined) return;
+    const { analysis, threadId, thread } = open;
     // A thread with no row is a conversation whose first turn has not landed, because the spawn writes a
     // report child's row before that child exists anywhere. Thus absence and a conversation row are one
     // answer here, and a report row carrying no parent link is that same answer again.
-    const parentId = read.kind === "row" && read.thread.threadType === "report" ? (read.thread.parentThreadId ?? null) : null;
+    const parentId = thread !== null && thread.threadType === "report" ? (thread.parentThreadId ?? null) : null;
     if (parentId === null) {
         opts.notify({ kind: "info", text: "This session has no parent — a report session opens the conversation that spawned it." });
         return;
@@ -1260,26 +1293,16 @@ export async function openParentSession(ctx: Workspace, opts: SessionOpts = DEFA
  * an open report session, and a conversation with no child — are different facts about their data.
  */
 export async function openReportSession(ctx: Workspace, opts: SessionOpts = DEFAULT_SESSION_OPTS): Promise<void> {
-    const analysis = ctx.analysis;
-    const threadId = ctx.sessionId;
-    if (!analysis || threadId === null) return;
-    const phase = bootState().phase;
-    if (phase !== "ready" || !opts.ready()) {
-        opts.notify(reportBootNotice(phase));
-        return;
-    }
-    const read = await readOpenThread(analysis.id, threadId, opts);
-    if (read.kind === "unreadable") {
-        opts.notify({ kind: "error", text: OPEN_SESSION_UNREADABLE });
-        return;
-    }
-    if (read.kind === "row" && read.thread.threadType === "report") {
+    const open = await readGuardedOpenThread(ctx, opts, bootPhaseRefusals(opts), { kind: "error", text: OPEN_SESSION_UNREADABLE });
+    if (open === undefined) return;
+    const { analysis, threadId, thread } = open;
+    if (thread !== null && thread.threadType === "report") {
         opts.notify({ kind: "info", text: "This is a report session — the thread tree stays flat, thus a report session spawns none of its own." });
         return;
     }
     // A thread with no row has no child either. Thus the flow skips the second read, and it answers
     // exactly as an empty set answers.
-    if (read.kind === "none") {
+    if (thread === null) {
         opts.notify({ kind: "info", text: NO_REPORT_CHILD });
         return;
     }
@@ -2047,26 +2070,20 @@ export async function commitSessionRename(
  * the user can undo from the palette, would teach them to distrust it where it is telling the truth.
  */
 export async function deleteSessionFlow(ctx: Workspace, opts: SessionOpts = DEFAULT_SESSION_OPTS): Promise<void> {
-    const analysis = ctx.analysis;
-    const threadId = ctx.sessionId;
-    // An absent analysis or an unbound thread names no conversation the user could have meant, so the
-    // narrowing is silent; the palette's `enabled` requires both anyway.
-    if (!analysis || threadId === null) return;
-    // A server that is not ready is the one reachable miss, because the leader chord dispatches by
-    // command id and never consults `enabled` — so it speaks rather than swallowing the keystroke,
-    // exactly as {@link openRestoreSession} does for the same bypass.
-    if (!opts.ready()) {
-        opts.notify({ kind: "warn", text: SESSION_NEEDS_HARNESS });
-        return;
-    }
     // Both refusals below share one cause — no name to confirm against, and asking the user to type a
     // fiction is not a confirmation — but they are not the same fact, so they do not get the same words.
-    const read = await readOpenThread(analysis.id, threadId, opts);
-    if (read.kind === "unreadable") {
-        opts.notify({ kind: "error", text: "Could not read this conversation — nothing was removed." });
-        return;
-    }
-    if (read.kind === "none") {
+    const open = await readGuardedOpenThread(
+        ctx,
+        opts,
+        // A server that is not ready is the one reachable miss, because the leader chord dispatches by
+        // command id and never consults `enabled` — so it speaks rather than swallowing the keystroke,
+        // exactly as {@link openRestoreSession} does for the same bypass.
+        () => (opts.ready() ? null : { kind: "warn", text: SESSION_NEEDS_HARNESS }),
+        { kind: "error", text: "Could not read this conversation — nothing was removed." },
+    );
+    if (open === undefined) return;
+    const { analysis, threadId, thread } = open;
+    if (thread === null) {
         opts.notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to remove." });
         return;
     }
@@ -2078,7 +2095,7 @@ export async function deleteSessionFlow(ctx: Workspace, opts: SessionOpts = DEFA
         opts.notify({ kind: "info", text: "Session changed — reopen remove for this one." });
         return;
     }
-    const name = threadLabel(read.thread);
+    const name = threadLabel(thread);
     ctx.openDialog(() => (
         <ConfirmDeleteDialog
             entityLabel="session"
@@ -2136,43 +2153,41 @@ export async function confirmSessionDelete(ctx: Workspace, analysis: Analysis, t
  * user who mistakes this one for the other has no way back.
  */
 export async function purgeSessionFlow(ctx: Workspace, opts: SessionOpts = DEFAULT_SESSION_OPTS): Promise<void> {
-    const analysis = ctx.analysis;
-    const threadId = ctx.sessionId;
-    // The same two gates the removal flow raises, in the same order and for the same reasons: silence
-    // where no conversation is named, a spoken refusal where the chord bypassed `enabled`.
-    if (!analysis || threadId === null) return;
-    if (!opts.ready()) {
-        opts.notify({ kind: "warn", text: SESSION_NEEDS_HARNESS });
-        return;
-    }
-    // A turn streaming into this very thread is the one state that makes the purge destructive beyond
-    // what the user asked for. A turn writes its messages with no foreign key and tolerates a missing
-    // thread row, so a turn committing after the purge lands rows under a `thread_id` that resolves to
-    // no analysis — reachable by nothing, since the only route from an analysis to its messages is a
-    // join through the thread row this deleted. The harness states the precondition and cannot enforce
-    // it, because it cannot see a host's in-flight turns, and the server leaves it to the client
-    // (draft 2.3); this is where it is met.
-    //
-    // The narrower check rather than the analysis-wide busy gate: a running data profile or workflow
-    // writes nothing into `messages`, so refusing a conversation delete for one would block the user
-    // over state that cannot be harmed. `chatStatus` is already thread-scoped here, because this flow
-    // only ever purges the OPEN thread. Checked once, before the dialog opens — the modal blocks the
-    // composer, so no turn can start between the check and the confirmation.
-    //
-    // Removal deliberately has no such gate: a turn landing after an archive leaves its messages on a
-    // tombstoned row that Restore brings back intact, which is a recoverable outcome, not a loss.
-    if (opts.chatBusy()) {
-        opts.notify({ kind: "warn", text: "Cannot delete this conversation while a chat turn is running — wait for it to finish, or stop it first." });
-        return;
-    }
     // Absence and unreadability are different facts about the user's data, so they get different words
     // — the same split the removal flow makes, and for the same reason.
-    const read = await readOpenThread(analysis.id, threadId, opts);
-    if (read.kind === "unreadable") {
-        opts.notify({ kind: "error", text: "Could not read this conversation — nothing was deleted." });
-        return;
-    }
-    if (read.kind === "none") {
+    const open = await readGuardedOpenThread(
+        ctx,
+        opts,
+        () => {
+            // A turn streaming into this very thread is the one state that makes the purge destructive
+            // beyond what the user asked for. A turn writes its messages with no foreign key and tolerates a
+            // missing thread row, so a turn committing after the purge lands rows under a `thread_id` that
+            // resolves to no analysis — reachable by nothing, since the only route from an analysis to its
+            // messages is a join through the thread row this deleted. The harness states the precondition
+            // and cannot enforce it, because it cannot see a host's in-flight turns, and the server leaves
+            // it to the client (draft 2.3); this is where it is met.
+            //
+            // The narrower check rather than the analysis-wide busy gate: a running data profile or
+            // workflow writes nothing into `messages`, so refusing a conversation delete for one would
+            // block the user over state that cannot be harmed. `chatStatus` is already thread-scoped
+            // here, because this flow only ever purges the OPEN thread. Checked once, before the dialog
+            // opens — the modal blocks the composer, so no turn can start between the check and the
+            // confirmation.
+            //
+            // Removal deliberately has no such gate: a turn landing after an archive leaves its messages
+            // on a tombstoned row that Restore brings back intact, which is a recoverable outcome, not a
+            // loss.
+            if (!opts.ready()) return { kind: "warn", text: SESSION_NEEDS_HARNESS };
+            if (opts.chatBusy()) {
+                return { kind: "warn", text: "Cannot delete this conversation while a chat turn is running — wait for it to finish, or stop it first." };
+            }
+            return null;
+        },
+        { kind: "error", text: "Could not read this conversation — nothing was deleted." },
+    );
+    if (open === undefined) return;
+    const { analysis, threadId, thread } = open;
+    if (thread === null) {
         opts.notify({ kind: "info", text: "This conversation has nothing saved yet — there is nothing to delete." });
         return;
     }
@@ -2183,7 +2198,7 @@ export async function purgeSessionFlow(ctx: Workspace, opts: SessionOpts = DEFAU
         opts.notify({ kind: "info", text: "Session changed — reopen delete for this one." });
         return;
     }
-    const name = threadLabel(read.thread);
+    const name = threadLabel(thread);
     ctx.openDialog(() => (
         <ConfirmDeleteDialog
             entityLabel="session"

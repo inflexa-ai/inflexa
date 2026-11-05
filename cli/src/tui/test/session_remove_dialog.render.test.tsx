@@ -1,15 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { testRender } from "@opentui/solid";
-import { err, errAsync, okAsync } from "neverthrow";
+import { describe, expect, test } from "bun:test";
 
-import { useKeymapRoot, __resetKeybindCache } from "../keymap.ts";
-import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
-import { WorkspaceContext } from "../contexts/workspace.ts";
-import { deleteSessionFlow, type SessionOpts } from "../commands.tsx";
-import { __setBootStateForTest, __resetBootForTest } from "../hooks/boot.ts";
-import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
-import { buildAnalysis, buildWorkspace } from "../../test_support/builders.ts";
-import type { Notice } from "../theme.ts";
+import { deleteSessionFlow } from "../commands.tsx";
+import { liveThreadConfirmWorld, sessionDialogFrame, type SessionDialogDrive } from "../../test_support/session_dialogs.tsx";
 
 // The removal confirmation is the one surface in the session flows whose CORRECTNESS IS ITS WORDING.
 // `DELETE {T}` writes a tombstone: the row and every message survive, and the thread only stops
@@ -22,92 +14,14 @@ import type { Notice } from "../theme.ts";
 // `md` tier's panel is wide, so it is only correct if the panel grows to fit it. A clipped sentence
 // would read as a promise the flow does not keep.
 
-afterEach(() => {
-    __resetKeybindCache();
-    __resetBootForTest();
-    dialogClear();
-});
+const { scope, opts } = liveThreadConfirmWorld();
 
-const ANALYSIS = buildAnalysis();
-
-/** The flow only ever confirms against a LIVE conversation, so the row it reads carries no tombstone. */
-const THREAD = conversationSummary({ id: "thread-1", resourceId: ANALYSIS.id });
-
-/** Session options whose server answers stand still: the read gives {@link THREAD}, and each write succeeds. */
-function sessionOpts(notices: Notice[]): SessionOpts {
-    return {
-        ready: () => true,
-        listThreads: () => okAsync(threadListOf([])),
-        listReportChildren: () => okAsync(threadListOf([])),
-        getThread: () => okAsync(THREAD),
-        updateTitle: () => okAsync(null),
-        listThreadsWithArchived: () => okAsync(threadListOf([])),
-        archiveThread: () => okAsync(undefined),
-        unarchiveThread: () => okAsync(undefined),
-        purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
-        chatBusy: () => false,
-        resolveThreadId: () => Promise.resolve("thread-2"),
-        workingDirFor: () => "/work",
-        refreshThread: () => {},
-        mintReportPageAccess: () => errAsync({ type: "aborted" }),
-        openUrl: () => err({ type: "open_failed", code: null, cause: null }),
-        notify: (n) => notices.push(n),
-    };
-}
-
-/**
- * Mount the dialog host under a keymap root and drive the real `deleteSessionFlow` through it, so the
- * dialog is the one production pushes — not a hand-built stand-in that could drift from it.
- */
-async function openRemoveDialog() {
-    const notices: Notice[] = [];
-    const ws = buildWorkspace({
-        analysis: ANALYSIS,
-        sessionId: "thread-1",
-        // The flow's `openDialog` is the workspace capability App wires to `dialogPush`; the test
-        // supplies that same wiring, so the dialog under assertion is the one production mounts.
-        openDialog: dialogPush,
-    });
-
-    const setup = await testRender(
-        () => {
-            useKeymapRoot();
-            return (
-                <WorkspaceContext.Provider value={ws}>
-                    <box width="100%" height="100%">
-                        <DialogOverlay />
-                    </box>
-                </WorkspaceContext.Provider>
-            );
-        },
-        { width: 90, height: 30 },
-    );
-
-    __setBootStateForTest({ phase: "ready", model: "claude-test", connection: { provider: "anthropic", mode: "cliproxy" } });
-    await deleteSessionFlow(ws, sessionOpts(notices));
-    await Promise.resolve();
-    await setup.renderOnce();
-    return setup;
-}
-
-/**
- * Mount, capture one frame, assert against it, and ALWAYS destroy the renderer. An undisposed renderer
- * outlives its test and corrupts every later render suite in the same process (opentui installs
- * process-level handlers per renderer), so disposal is not tidiness here — it is what keeps this file
- * from failing other files.
- */
-async function onFrame(assert: (frame: string) => void): Promise<void> {
-    const setup = await openRemoveDialog();
-    try {
-        assert(setup.captureCharFrame());
-    } finally {
-        setup.renderer.destroy();
-    }
-}
+/** Drive the real removal flow through the mounted dialog host. */
+const removeFlow = ({ ws }: SessionDialogDrive) => deleteSessionFlow(ws, opts);
 
 describe("the session-removal confirmation says what the store actually does", () => {
     test("it asks to REMOVE, never to delete", async () => {
-        await onFrame((frame) => {
+        await sessionDialogFrame(scope, removeFlow, (frame) => {
             expect(frame).toContain("Remove session?");
             // The word the copy must not carry: nothing here erases anything.
             expect(frame).not.toContain("Delete session");
@@ -115,7 +29,7 @@ describe("the session-removal confirmation says what the store actually does", (
     });
 
     test("it states that the transcript survives, in full — the panel grows rather than clipping it", async () => {
-        await onFrame((frame) => {
+        await sessionDialogFrame(scope, removeFlow, (frame) => {
             // The line wraps inside the `md` panel, so assert its halves rather than the whole sentence:
             // a frame is a grid of cells and the wrap point falls mid-sentence.
             expect(frame).toContain("It stops appearing in this analysis");
@@ -126,7 +40,7 @@ describe("the session-removal confirmation says what the store actually does", (
     test("it still gates on typing the conversation's own name", async () => {
         // The retention wording softens the claim; it must not soften the confirmation. A removal the
         // user cannot undo from the UI still earns the type-the-name gate.
-        await onFrame((frame) => {
+        await sessionDialogFrame(scope, removeFlow, (frame) => {
             expect(frame).toContain('Type "Cohort survival questions" to confirm');
         });
     });

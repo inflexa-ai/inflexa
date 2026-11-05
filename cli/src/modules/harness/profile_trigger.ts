@@ -247,6 +247,83 @@ async function retryFailedRow(
 }
 
 /**
+ * What a drive does with a `failed` result of the trigger — the one arm the two drives resolve
+ * differently. The trigger's CAS claims only pending/completed rows, so a `failed` result names a row
+ * that needs the `failed → running` retry claim.
+ */
+type FailedRowPolicy = (params: DataProfileTriggerParams) => Promise<ProfileParityOutcome>;
+
+/**
+ * Parity's policy: the ladder already routed the row it read as `failed` to the retry claim, so a
+ * `failed` trigger result means the trigger itself faulted — report it so the UI surfaces it and the
+ * user can re-open or run `inflexa profile`.
+ */
+const parityReportsTriggerFailure: FailedRowPolicy = () =>
+    Promise.resolve({
+        kind: "failed",
+        reason: "the profile workflow could not be started",
+        materialized: true,
+    });
+
+/**
+ * Force's policy: force is the deliberate repair, so unlike parity it resurrects a failure whose
+ * input set is unchanged, through the same retry claim the ladder reaches.
+ */
+function forceTakesRetryClaim(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams): FailedRowPolicy {
+    return (params) => retryFailedRow(runtime, analysis, params, seams);
+}
+
+/**
+ * The dispatch tail both drives share: materialize the input set into `dataDir`, seed the ledger row
+ * from the manifest, then CAS-dispatch the profile workflow through the trigger and map its result to
+ * the outcome. `rowFailedAtRead` carries the row state the caller read before the dispatch (force has
+ * no such read); a `failed` trigger result goes to the caller's {@link FailedRowPolicy}.
+ */
+async function dispatchProfileWorkflow(
+    runtime: ProfileRuntime,
+    analysis: Analysis,
+    dataDir: string,
+    seams: ProfileParitySeams,
+    rowFailedAtRead: boolean,
+    resolveFailedRow: FailedRowPolicy,
+): Promise<ProfileParityOutcome> {
+    const stagedResult = await materializeInputs(analysis, dataDir, seams);
+    if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, materialized: false };
+
+    const paramsResult = await seedFromManifest(runtime, analysis, stagedResult.value, seams);
+    if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, materialized: true };
+    const params = paramsResult.value;
+
+    // The trigger's CAS claims only pending/completed rows, so dispatching it against a row the caller
+    // read as `failed` would report a start failure for a row that simply needs the retry claim. Route
+    // it the way force does instead.
+    if (rowFailedAtRead) return await retryFailedRow(runtime, analysis, params, seams);
+
+    const triggerResult = await seams.trigger(runtime.triggerDeps, params);
+    if (triggerResult.isErr()) return { kind: "failed", reason: `the profile trigger failed (${triggerResult.error.type})`, materialized: true };
+    const result = triggerResult.value;
+    switch (result) {
+        case "started":
+        case "restarted":
+            return { kind: "triggered", restarted: result === "restarted", materialized: true };
+        case "already_running":
+            return { kind: "already_running", materialized: true };
+        case "completed":
+            // The trigger completes a row at once only for an empty manifest, and each drive settles
+            // an empty input set before it dispatches (the ladder clears it, force refuses it as
+            // `no_inputs`), so that completion is not reachable here. A completed profile covers the
+            // dispatched set, thus the outcome is the one a completed row at parity reports.
+            return { kind: "already_profiled", materialized: true };
+        case "failed":
+            return await resolveFailedRow(params);
+        default: {
+            const _exhaustive: never = result;
+            throw new Error(`unhandled trigger result: ${JSON.stringify(_exhaustive)}`);
+        }
+    }
+}
+
+/**
  * What asked for this drive — the ONE thing the ladder branches on that is not ledger state.
  *
  * `"open"` is a chat opening (or an analysis swap): nobody claims the input set changed, so a
@@ -379,42 +456,7 @@ async function runProfileLadder(
         if (materializedResult.value) return { kind: "skipped_failed", materialized: true };
     }
 
-    const stagedResult = await materializeInputs(analysis, dataDir, seams);
-    if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, materialized: false };
-
-    const paramsResult = await seedFromManifest(runtime, analysis, stagedResult.value, seams);
-    if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, materialized: true };
-    const params = paramsResult.value;
-
-    // The trigger's CAS claims only pending/completed rows, so dispatching it against a row we just read
-    // as `failed` would report a start failure for a row that simply needs the retry claim. Route it the
-    // way force does instead.
-    if (status?.status === "failed") return await retryFailedRow(runtime, analysis, params, seams);
-
-    const triggerResult = await seams.trigger(runtime.triggerDeps, params);
-    if (triggerResult.isErr()) return { kind: "failed", reason: `the profile trigger failed (${triggerResult.error.type})`, materialized: true };
-    const result = triggerResult.value;
-    switch (result) {
-        case "started":
-        case "restarted":
-            return { kind: "triggered", restarted: result === "restarted", materialized: true };
-        case "already_running":
-            return { kind: "already_running", materialized: true };
-        case "completed":
-            // The trigger completes a row at once only for an empty manifest, and the ladder settles an
-            // empty input set before it seeds. A completed profile covers the dispatched set, so the
-            // outcome is the one a completed row at parity reports.
-            return { kind: "already_profiled", materialized: true };
-        case "failed":
-            // A `failed` ledger row took the retry-claim route above, so reaching here means the trigger
-            // itself faulted — report it so the UI surfaces it and the user can re-open or run
-            // `inflexa profile`.
-            return { kind: "failed", reason: "the profile workflow could not be started", materialized: true };
-        default: {
-            const _exhaustive: never = result;
-            throw new Error(`unhandled trigger result: ${JSON.stringify(_exhaustive)}`);
-        }
-    }
+    return await dispatchProfileWorkflow(runtime, analysis, dataDir, seams, status?.status === "failed", parityReportsTriggerFailure);
 }
 
 /**
@@ -479,33 +521,5 @@ export async function forceReprofile(runtime: ProfileRuntime, analysis: Analysis
     const dataDirResult = await resolveDataDir(analysis, seams);
     if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, materialized: false };
 
-    const stagedResult = await materializeInputs(analysis, dataDirResult.value, seams);
-    if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, materialized: false };
-
-    const paramsResult = await seedFromManifest(runtime, analysis, stagedResult.value, seams);
-    if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, materialized: true };
-    const params = paramsResult.value;
-
-    const triggerResult = await seams.trigger(runtime.triggerDeps, params);
-    if (triggerResult.isErr()) return { kind: "failed", reason: `the profile trigger failed (${triggerResult.error.type})`, materialized: true };
-    const result = triggerResult.value;
-    switch (result) {
-        case "started":
-        case "restarted":
-            return { kind: "triggered", restarted: result === "restarted", materialized: true };
-        case "already_running":
-            return { kind: "already_running", materialized: true };
-        case "completed":
-            // The same type obligation as the parity ladder: force settles an empty input set as `no_inputs`
-            // before it triggers, so the trigger's empty-manifest completion is not reachable here.
-            return { kind: "already_profiled", materialized: true };
-        case "failed":
-            // The trigger's CAS claims only pending/completed rows; a `failed` row needs the retry claim.
-            // Force is deliberate, so unlike parity it resurrects a failure whose input set is unchanged.
-            return await retryFailedRow(runtime, analysis, params, seams);
-        default: {
-            const _exhaustive: never = result;
-            throw new Error(`unhandled trigger result: ${JSON.stringify(_exhaustive)}`);
-        }
-    }
+    return await dispatchProfileWorkflow(runtime, analysis, dataDirResult.value, seams, false, forceTakesRetryClaim(runtime, analysis, seams));
 }

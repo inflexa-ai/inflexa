@@ -1,5 +1,7 @@
+import { afterEach, beforeEach } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { ok } from "neverthrow";
 
@@ -13,6 +15,7 @@ import type { ServerLifecycle } from "../server/lifecycle.ts";
 import { createPageGrantStore } from "../server/report_page_grants.ts";
 import { listen, writeServerDiscovery } from "../server/serve.ts";
 import { assertTestSandbox } from "./sandbox.ts";
+import { freshDb } from "./db.ts";
 import { present } from "../lib/present.ts";
 import { describeCause } from "../lib/cause.ts";
 
@@ -118,6 +121,42 @@ export function startTestServer(opts: { boot?: ServerBoot } = {}): TestServer {
         stop: async () => {
             await server.stop(true);
             rmSync(discoveryDir, { recursive: true, force: true });
+        },
+    };
+}
+
+/** The per-test scope of the cli e2e command tests: this process's server and its scratch dirs. */
+export type CliServerScope = {
+    /** The server of the CURRENT test — stopped by the cleanup of the lifecycle below. */
+    readonly server: () => TestServer;
+    /** A fresh scratch directory, removed by the cleanup of the lifecycle below. */
+    readonly tmp: (prefix: string) => string;
+};
+
+/**
+ * Register the per-test lifecycle the e2e command tests share: a fresh sandboxed database, a server
+ * of this process whose `childEnv` a spawned `inflexa` finds, and tracking for the scratch dirs a
+ * case creates. The cleanup stops the server and removes every tracked dir — a case that fails midway
+ * must not leak either one into the sibling tests of the same process.
+ */
+export function cliServerScope(): CliServerScope {
+    const created: string[] = [];
+    let server: TestServer;
+    beforeEach(() => {
+        freshDb();
+        server = startTestServer();
+    });
+    afterEach(async () => {
+        await server.stop();
+        for (const dir of created) rmSync(dir, { recursive: true, force: true });
+        created.length = 0;
+    });
+    return {
+        server: () => server,
+        tmp: (prefix: string) => {
+            const dir = mkdtempSync(join(tmpdir(), prefix));
+            created.push(dir);
+            return dir;
         },
     };
 }

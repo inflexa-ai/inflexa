@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
+import { parseColor, rgbToHex } from "@opentui/core";
 import type { JSX } from "solid-js";
 
 import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../lib/design_system.ts";
 import { readPlanCard } from "../../modules/harness/chat_printer.ts";
 import { contrast } from "../../test_support/contrast.ts";
+import { renderUntilPainted, spanFg } from "../../test_support/tui.ts";
 import { setTheme, syntaxStyle, theme } from "../theme.ts";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { PausePrompt } from "../components/pause_prompt.tsx";
@@ -62,42 +63,17 @@ afterEach(() => {
     setTheme(DEFAULT_THEME_ID);
 });
 
-/** The fg of the FIRST captured span whose text contains `needle`, or undefined if none rendered. */
-function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): RGBA | undefined {
-    for (const line of setup.captureSpans().lines) {
-        for (const span of line.spans) {
-            if (span.text.includes(needle)) return span.fg;
-        }
-    }
-    return undefined;
-}
-
 /** How long a block gets to paint its needle before the wait is abandoned and reported as a failure. */
 const RENDER_TIMEOUT_MS = 3000;
 
-/**
- * Render `node`, driving frames on real timers until `needle` appears in the character frame.
- *
- * `rendered` reports whether the needle actually arrived. Blocks whose body goes through the markdown
- * / code / diff renderables parse asynchronously, so some waiting is unavoidable — but a wait that
- * gives up has to SAY it gave up. Returning the same value for "the content arrived" and "the clock
- * ran out" hands the caller a frame it cannot interpret, and any caller that measures an ABSENCE —
- * no sub-floor spans, no wrong colors — would then read a blank screen as a clean bill of health.
- */
+/** {@link renderUntilPainted} at this file's default block size and wait, which most cases take. */
 async function renderUntil(
     node: Parameters<typeof testRender>[0],
     needle: string,
     size: { width: number; height: number } = { width: 60, height: 12 },
     timeoutMs = RENDER_TIMEOUT_MS,
 ): Promise<{ setup: Awaited<ReturnType<typeof testRender>>; rendered: boolean }> {
-    const setup = await testRender(node, size);
-    const start = Date.now();
-    for (;;) {
-        await setup.renderOnce();
-        if (setup.captureCharFrame().includes(needle)) return { setup, rendered: true };
-        if (Date.now() - start > timeoutMs) return { setup, rendered: false };
-        await Promise.sleep(10);
-    }
+    return renderUntilPainted(node, needle, size, timeoutMs);
 }
 
 // These two cases carry their own precondition and so read `rendered` for nothing: each asserts on ONE

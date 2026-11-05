@@ -7,31 +7,7 @@ import type { ClientOpts } from "../../api.ts";
 import { storeLink } from "../store.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { requestBodyText } from "../../../test_support/request_body.ts";
-import { describeCause } from "../../../lib/cause.ts";
-
-/** Run `fn` with the console captured, and restore the exit code, which a refusal sets. */
-async function captured(fn: () => Promise<void>): Promise<{ stdout: string; stderr: string; exitCode: typeof process.exitCode }> {
-    const origLog = console.log;
-    const origError = console.error;
-    const origExitCode = process.exitCode;
-    let stdout = "";
-    let stderr = "";
-    console.log = (msg?: unknown) => {
-        stdout += `${describeCause(msg)}\n`;
-    };
-    console.error = (msg?: unknown) => {
-        stderr += `${describeCause(msg)}\n`;
-    };
-    try {
-        await fn();
-        return { stdout, stderr, exitCode: process.exitCode };
-    } finally {
-        console.log = origLog;
-        console.error = origError;
-        // Bun ignores an `undefined` assignment, thus a captured failure code clears with an explicit 0.
-        process.exitCode = origExitCode ?? 0;
-    }
-}
+import { captureConsole } from "../../../test_support/console_capture.ts";
 
 describe("store link", () => {
     test("links through the farm route of the analysis, and prints each link", async () => {
@@ -45,7 +21,7 @@ describe("store link", () => {
                     return new Response(JSON.stringify(linked), { status: 200, headers: { "Content-Type": "application/json" } });
                 }),
         };
-        const run = await captured(() => storeLink({ id: "ana-1", name: "Tumor atlas" }, ["igraph"], "python", opts));
+        const run = await captureConsole(() => storeLink({ id: "ana-1", name: "Tumor atlas" }, ["igraph"], "python", opts));
         expect(sent).toEqual([{ url: "http://store.test/api/v1/analyses/ana-1/farm/link", body: { packages: ["igraph"], lang: "python" } }]);
         expect(run.stdout).toContain('Linked igraph==0.11.8 into the farm of "Tumor atlas".\nThat farm links 3 store directories now.');
         expect(run.exitCode ?? 0).toBe(0);

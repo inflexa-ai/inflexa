@@ -29,16 +29,8 @@ import type {
     ProvCallRef,
     ProvCommandRef,
 } from "../../../types/prov.ts";
-import {
-    applyProvEvent,
-    attestationSchema,
-    computeChainHash,
-    computePayloadDigest,
-    verifyHexDigest,
-    verifyProvenance,
-    verifyPayload,
-} from "@inflexa-ai/prov-kernel";
-import { provModel, provSubject, serializeProvenance } from "../document.ts";
+import { attestationSchema, computeChainHash, computePayloadDigest, verifyHexDigest, verifyProvenance, verifyPayload } from "@inflexa-ai/prov-kernel";
+import { provModel, serializeProvenance } from "../document.ts";
 import { updateAnalysisProvenance } from "../../../db/primary_mutation.ts";
 import { currentUserActor, initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests, resolveAnalysisForProv } from "../prov.ts";
 import { getAnalysisIntegrity } from "../../../db/primary_query.ts";
@@ -46,6 +38,18 @@ import { resetSigningForTests, loadOrGenerateKeypair } from "../signing.ts";
 import { present } from "../../../lib/present.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { countOccurrences, literalWithHoles, WORD, WORD_DASH } from "../../../test_support/text_shapes.ts";
+import {
+    appendCommandExecuted,
+    appendCreation,
+    appendFileWritten,
+    appendInputAdded,
+    appendInputRemoved,
+    appendInputUsed,
+    appendRunCompleted,
+    appendRunStarted,
+    appendStepCompleted,
+    freshDocument,
+} from "../../../test_support/prov_events.ts";
 
 /** The parts of a serialized PROV-JSON document that these tests read. A read of any other part is a type error. */
 const provJsonSchema = z.object({
@@ -59,63 +63,6 @@ const provJsonSchema = z.object({
 });
 
 const { fileQName, commandQName, modelAgentQName } = provModel;
-
-// Statement production goes through `applyProvEvent` (the kernel's sole supported producer); these
-// helpers keep the historical per-builder call shape the fixtures below were written against.
-function freshDocument(a: Analysis): ProvDocument {
-    return provModel.freshDocument(provSubject(a));
-}
-function appendCreation(doc: ProvDocument, analysisId: string, actor: ProvActor): void {
-    applyProvEvent(provModel, doc, { type: "analysis_created", analysisId, actor });
-}
-function appendInputAdded(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef, derivedFromAnalysisId: string | null): void {
-    applyProvEvent(provModel, doc, { type: "input_added", analysisId, actor, input, derivedFromAnalysisId });
-}
-function appendInputRemoved(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef): void {
-    applyProvEvent(provModel, doc, { type: "input_removed", analysisId, actor, input });
-}
-function appendRunStarted(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvRunRef): void {
-    applyProvEvent(provModel, doc, { type: "run_started", analysisId, actor, run });
-}
-function appendRunCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvRunOutcome): void {
-    applyProvEvent(provModel, doc, { type: "run_completed", analysisId, actor, outcome });
-}
-function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, stepModel: ProvModelId): void {
-    applyProvEvent(provModel, doc, { type: "step_completed", analysisId, actor, outcome, model: stepModel });
-}
-function appendCommandExecuted(
-    doc: ProvDocument,
-    analysisId: string,
-    actor: ProvActor,
-    step: ProvStepRef,
-    command: ProvCommandRef,
-    stepModel: ProvModelId,
-): void {
-    applyProvEvent(provModel, doc, { type: "command_executed", analysisId, actor, step, command, model: stepModel });
-}
-function appendFileWritten(
-    doc: ProvDocument,
-    analysisId: string,
-    actor: ProvActor,
-    file: ProvFileRef,
-    generation: "command" | "step" | "call",
-    call?: ProvCallRef,
-    step?: ProvStepRef,
-): void {
-    applyProvEvent(provModel, doc, {
-        type: "file_written",
-        analysisId,
-        actor,
-        model,
-        file,
-        generation,
-        call,
-        step,
-    });
-}
-function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
-    applyProvEvent(provModel, doc, { type: "input_used", analysisId, actor, step, input });
-}
 
 const analysis: Analysis = {
     id: "a1",
@@ -273,7 +220,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         const doc = freshDocument(analysis);
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
+        appendFileWritten(doc, "a1", system, model, fileRef, stepRef, "step");
         const provn = doc.unified().serialize("provn");
 
         expect(provn).toContain("inflexa:File");
@@ -342,7 +289,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         // Run 1 produces the file.
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
+        appendFileWritten(doc, "a1", system, model, fileRef, stepRef, "step");
         // A later run's step reads it back with source "prior" — same (path, hash) as fileRef.
         const readerStep: ProvStepRef = { runId: "run-002", stepId: "step-model" };
         appendStepCompleted(doc, "a1", system, { runId: "run-002", stepId: "step-model", status: "completed", completedAtMs: 1_700_000_050_000 }, model);
@@ -368,7 +315,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         appendRunStarted(doc, "a1", system, runRef);
         appendRunCompleted(doc, "a1", system, runOutcome);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
+        appendFileWritten(doc, "a1", system, model, fileRef, stepRef, "step");
         appendInputUsed(doc, "a1", system, stepRef, priorInput);
         const unified = doc.unified();
         const parsed = ProvDocument.deserialize(unified.serialize("json"), "json");
@@ -383,11 +330,11 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         const doc = freshDocument(analysis);
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
+        appendFileWritten(doc, "a1", system, model, fileRef, stepRef, "step");
         // Re-apply the same events, as body re-execution on recovery would.
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, fileRef, "step", undefined, stepRef);
+        appendFileWritten(doc, "a1", system, model, fileRef, stepRef, "step");
 
         const unified = doc.unified();
         const ids = unified.getRecords().map((r) => r.identifier?.toString() ?? "");
@@ -454,7 +401,7 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
     test("a call-generation write records an inflexa:FileToolWrite call activity with the tool and no inputs", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendFileWritten(doc, "a1", system, scriptFileRef, "call", scriptWriteCall, stepRef);
+        appendFileWritten(doc, "a1", system, model, scriptFileRef, stepRef, "call", scriptWriteCall);
         const provn = doc.unified().serialize("provn");
 
         expect(provn).toContain("inflexa:FileToolWrite");
@@ -476,8 +423,8 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
         appendCommandExecuted(doc, "a1", system, stepRef, cmdPlotHeatmap, model);
         // The produced-file entities are declared by their file_written events (generation "command").
-        appendFileWritten(doc, "a1", system, deResultsFileRef, "command");
-        appendFileWritten(doc, "a1", system, heatmapFileRef, "command");
+        appendFileWritten(doc, "a1", system, model, deResultsFileRef, undefined, "command");
+        appendFileWritten(doc, "a1", system, model, heatmapFileRef, undefined, "command");
 
         const unified = doc.unified();
         const deQn = fileQName(deResultsKey);
@@ -503,9 +450,9 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
         // Produced file: its command owns the generation; the file event (generation "command") skips its edge.
         appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
-        appendFileWritten(doc, "a1", system, deResultsFileRef, "command");
+        appendFileWritten(doc, "a1", system, model, deResultsFileRef, undefined, "command");
         // Leaf file: no command; the step-level generation is the fallback.
-        appendFileWritten(doc, "a1", system, leafFileRef, "step", undefined, stepRef);
+        appendFileWritten(doc, "a1", system, model, leafFileRef, stepRef, "step");
 
         const provn = doc.unified().serialize("provn");
         // Two generation edges total, one per file — no file accrued a second.
@@ -628,7 +575,7 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
         appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
-        appendFileWritten(doc, "a1", system, scriptFileRef, "call", scriptWriteCall, stepRef);
+        appendFileWritten(doc, "a1", system, model, scriptFileRef, stepRef, "call", scriptWriteCall);
         const unified = doc.unified();
         const parsed = ProvDocument.deserialize(unified.serialize("json"), "json");
         expect(unified.equals(parsed)).toBe(true);

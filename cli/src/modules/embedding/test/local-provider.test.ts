@@ -151,6 +151,89 @@ function startStub(
     };
 }
 
+/**
+ * Drive the no-tokenizer fallback: embed an over-budget input against a stub whose /tokenize
+ * fails in the given way, and assert the 510-code-unit hard cut survived. `tokenizeTimeoutMs`
+ * bounds the per-request wait so a hanging /tokenize degrades to the fallback fast.
+ */
+async function expectHardCutOverBrokenTokenizer(opts: {
+    key: string;
+    stubOpts?: { tokenizeStatus?: number; tokenizeHang?: boolean };
+    tokenizeTimeoutMs?: number;
+}): Promise<void> {
+    if (opts.tokenizeTimeoutMs !== undefined) __setTokenizeTimeoutForTest(opts.tokenizeTimeoutMs);
+    const stub = startStub(opts.key, opts.stubOpts);
+    __setSidecarLauncherForTest(() =>
+        Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key: opts.key, stop: () => Promise.resolve() })),
+    );
+    try {
+        const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
+        const over = "abcd ".repeat(600); // 3000 code units, over budget
+        const vectors = await provider.embed([over], fakeSession).match(
+            (v) => v,
+            () => null,
+        );
+        // The embed succeeds even though measurement failed.
+        expect(vectors).not.toBeNull();
+        const embedded = present(stub.getLastInputs()[0]);
+        // Hard cut at 510 code units (word-boundary-backed) — a provable fit with no tokenizer.
+        expect(over.startsWith(embedded)).toBe(true);
+        expect(embedded.length).toBeLessThanOrEqual(510);
+    } finally {
+        stub.stop();
+    }
+}
+
+/**
+ * Install a launcher whose FIRST sidecar carries a controllable exit and whose replacements
+ * never exit, so their watchers stay dormant. Resolving the returned trigger simulates the
+ * first sidecar crashing after it had already served embeddings.
+ */
+function stubLauncherWithCrashableFirstSidecar(key: string, stub: { readonly origin: string }) {
+    let crashFirst!: () => void;
+    const firstExited = new Promise<number>((resolve) => {
+        crashFirst = (): void => resolve(137);
+    });
+    let launches = 0;
+    __setSidecarLauncherForTest(() => {
+        launches++;
+        const exited = launches === 1 ? firstExited : new Promise<number>(() => {});
+        return Promise.resolve(
+            ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve(), exited }),
+        );
+    });
+    return { crashFirst, launchCount: (): number => launches };
+}
+
+/* oxlint-disable no-restricted-properties -- the ambient proxy env IS the scenario under test;
+   the frozen `env` object deliberately does not expose proxy variables. */
+/**
+ * Poison the ambient proxy env with a dead proxy (nothing listens on port 9, so any fetch
+ * routed through it fails fast) and a NO_PROXY that names only a corp host — never loopback.
+ * Returns the undo. Restore by ASSIGNMENT (`?? ""`, never `delete`): deleting HTTP_PROXY does
+ * not propagate to Bun's fetch proxy resolution and would leave every later fetch in this
+ * test process routed through the dead proxy.
+ */
+function poisonProxyEnv(): () => void {
+    const saved = {
+        HTTP_PROXY: process.env.HTTP_PROXY,
+        http_proxy: process.env.http_proxy,
+        NO_PROXY: process.env.NO_PROXY,
+        no_proxy: process.env.no_proxy,
+    };
+    process.env.HTTP_PROXY = "http://127.0.0.1:9";
+    process.env.http_proxy = "http://127.0.0.1:9";
+    process.env.NO_PROXY = "corp.example.com";
+    process.env.no_proxy = "corp.example.com";
+    return () => {
+        process.env.HTTP_PROXY = saved.HTTP_PROXY ?? "";
+        process.env.http_proxy = saved.http_proxy ?? "";
+        process.env.NO_PROXY = saved.NO_PROXY ?? "";
+        process.env.no_proxy = saved.no_proxy ?? "";
+    };
+}
+/* oxlint-enable no-restricted-properties */
+
 afterEach(() => {
     // Clear the process-wide sidecar cache and restore every seam so one test's
     // stub/toggle can't leak into the next.
@@ -357,51 +440,11 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
     });
 
     test("fallback: /tokenize answering 500 embeds the 510-code-unit hard cut and still succeeds", async () => {
-        const key = "test-key-fallback-500";
-        const stub = startStub(key, { tokenizeStatus: 500 });
-        __setSidecarLauncherForTest(() =>
-            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
-        );
-        try {
-            const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
-            const over = "abcd ".repeat(600); // 3000 code units, over budget
-            const vectors = await provider.embed([over], fakeSession).match(
-                (v) => v,
-                () => null,
-            );
-            // The embed succeeds even though measurement failed.
-            expect(vectors).not.toBeNull();
-            const embedded = present(stub.getLastInputs()[0]);
-            // Hard cut at 510 code units (word-boundary-backed) — a provable fit with no tokenizer.
-            expect(over.startsWith(embedded)).toBe(true);
-            expect(embedded.length).toBeLessThanOrEqual(510);
-        } finally {
-            stub.stop();
-        }
+        await expectHardCutOverBrokenTokenizer({ key: "test-key-fallback-500", stubOpts: { tokenizeStatus: 500 } });
     });
 
     test("fallback: /tokenize hanging past the timeout embeds the 510-code-unit hard cut and still succeeds", async () => {
-        const key = "test-key-fallback-hang";
-        const stub = startStub(key, { tokenizeHang: true });
-        // A short per-request bound so the wedged /tokenize degrades to the fallback fast.
-        __setTokenizeTimeoutForTest(100);
-        __setSidecarLauncherForTest(() =>
-            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
-        );
-        try {
-            const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
-            const over = "abcd ".repeat(600);
-            const vectors = await provider.embed([over], fakeSession).match(
-                (v) => v,
-                () => null,
-            );
-            expect(vectors).not.toBeNull();
-            const embedded = present(stub.getLastInputs()[0]);
-            expect(over.startsWith(embedded)).toBe(true);
-            expect(embedded.length).toBeLessThanOrEqual(510);
-        } finally {
-            stub.stop();
-        }
+        await expectHardCutOverBrokenTokenizer({ key: "test-key-fallback-hang", stubOpts: { tokenizeHang: true }, tokenizeTimeoutMs: 100 });
     });
 
     test("a launch failure surfaces as err(ProviderError) with remediation, never a throw", async () => {
@@ -426,22 +469,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
     test("a sidecar that exits after readiness invalidates the cache so the next embed respawns", async () => {
         const key = "test-key-crash";
         const stub = startStub(key);
-        // A controllable exit for the FIRST sidecar; resolving it simulates a crash
-        // after the sidecar had already served embeddings.
-        let crashFirst!: () => void;
-        const firstExited = new Promise<number>((resolve) => {
-            crashFirst = (): void => resolve(137);
-        });
-        let launches = 0;
-        __setSidecarLauncherForTest(() => {
-            launches++;
-            // Only the first handle carries the resolvable exit; the replacement's exit
-            // never settles, so its watcher stays dormant.
-            const exited = launches === 1 ? firstExited : new Promise<number>(() => {});
-            return Promise.resolve(
-                ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve(), exited }),
-            );
-        });
+        const { crashFirst, launchCount } = stubLauncherWithCrashableFirstSidecar(key, stub);
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
             const first = await provider.embed(["one"], fakeSession).match(
@@ -449,7 +477,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
                 () => null,
             );
             expect(first).not.toBeNull();
-            expect(launches).toBe(1);
+            expect(launchCount()).toBe(1);
 
             // Crash the running sidecar and let the exit watcher run.
             crashFirst();
@@ -461,7 +489,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             );
             expect(second).not.toBeNull();
             // The invalidated cache forced a fresh spawn for the second request.
-            expect(launches).toBe(2);
+            expect(launchCount()).toBe(2);
         } finally {
             stub.stop();
         }
@@ -470,20 +498,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
     test("watcher ABA guard: a superseded sidecar's late crash does not clobber the replacement's cache", async () => {
         const key = "test-key-aba";
         const stub = startStub(key);
-        // Only the FIRST sidecar carries a resolvable exit; the replacement's never
-        // settles, so its own watcher stays dormant for the test.
-        let crashFirst!: () => void;
-        const firstExited = new Promise<number>((resolve) => {
-            crashFirst = (): void => resolve(137);
-        });
-        let launches = 0;
-        __setSidecarLauncherForTest(() => {
-            launches++;
-            const exited = launches === 1 ? firstExited : new Promise<number>(() => {});
-            return Promise.resolve(
-                ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve(), exited }),
-            );
-        });
+        const { crashFirst, launchCount } = stubLauncherWithCrashableFirstSidecar(key, stub);
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
             // Launch 1.
@@ -491,7 +506,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
                 (v) => v,
                 () => null,
             );
-            expect(launches).toBe(1);
+            expect(launchCount()).toBe(1);
 
             // Stop supersedes launch 1: bumps the epoch, clears the cache.
             await stopLocalSidecarAndWait();
@@ -501,7 +516,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
                 (v) => v,
                 () => null,
             );
-            expect(launches).toBe(2);
+            expect(launchCount()).toBe(2);
 
             // NOW crash sidecar 1, LATE. Its exit watcher fires against the current epoch:
             // the epoch guard recognizes it as superseded and leaves launch 2's cache
@@ -514,7 +529,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
                 (v) => v,
                 () => null,
             );
-            expect(launches).toBe(2);
+            expect(launchCount()).toBe(2);
         } finally {
             stub.stop();
         }
@@ -555,23 +570,10 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
     test("loopback embeds succeed despite a poisoned HTTP_PROXY (launch applies a NO_PROXY bypass)", async () => {
         const key = "test-key-proxy";
         const stub = startStub(key);
-        /* oxlint-disable no-restricted-properties -- the ambient proxy env IS the scenario under test;
-           the frozen `env` object deliberately does not expose proxy variables. */
-        const saved = {
-            HTTP_PROXY: process.env.HTTP_PROXY,
-            http_proxy: process.env.http_proxy,
-            NO_PROXY: process.env.NO_PROXY,
-            no_proxy: process.env.no_proxy,
-        };
-        // A dead proxy: nothing listens on port 9 (discard), so any fetch routed
-        // through it fails fast — deterministic, no real proxy needed. NO_PROXY
-        // deliberately names only a corp host (assignment, NOT delete: Bun stops
-        // propagating NO_PROXY to fetch after a delete-then-set), so only the
-        // launch-time bypass can make the loopback stub reachable.
-        process.env.HTTP_PROXY = "http://127.0.0.1:9";
-        process.env.http_proxy = "http://127.0.0.1:9";
-        process.env.NO_PROXY = "corp.example.com";
-        process.env.no_proxy = "corp.example.com";
+        /* oxlint-disable no-restricted-properties -- the ambient proxy env IS the scenario under test. */
+        const restoreProxyEnv = poisonProxyEnv();
+        // NO_PROXY names only a corp host, so only the launch-time bypass can make
+        // the loopback stub reachable.
         __setSidecarLauncherForTest(() =>
             Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
         );
@@ -589,14 +591,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             expect(process.env.no_proxy).toContain("localhost");
         } finally {
             stub.stop();
-            // Restore by ASSIGNMENT (empty string when previously unset): deleting
-            // HTTP_PROXY does not propagate to Bun's fetch proxy resolution, so a
-            // delete here would leave every later fetch in this test process
-            // routed through the dead proxy.
-            process.env.HTTP_PROXY = saved.HTTP_PROXY ?? "";
-            process.env.http_proxy = saved.http_proxy ?? "";
-            process.env.NO_PROXY = saved.NO_PROXY ?? "";
-            process.env.no_proxy = saved.no_proxy ?? "";
+            restoreProxyEnv();
         }
         /* oxlint-enable no-restricted-properties */
     });
@@ -640,20 +635,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
     test("with the loopback bypass suppressed, a loopback embed behind a poisoned proxy fails (bypass is load-bearing)", async () => {
         const key = "test-key-neg-proxy";
         const stub = startStub(key);
-        /* oxlint-disable no-restricted-properties -- the ambient proxy env IS the scenario under test. */
-        const saved = {
-            HTTP_PROXY: process.env.HTTP_PROXY,
-            http_proxy: process.env.http_proxy,
-            NO_PROXY: process.env.NO_PROXY,
-            no_proxy: process.env.no_proxy,
-        };
-        // Same dead-proxy setup as the positive test, but NO_PROXY names only a corp
-        // host (no loopback) AND the launch-time bypass is suppressed — so every
-        // loopback fetch routes through the dead proxy and the embed must fail.
-        process.env.HTTP_PROXY = "http://127.0.0.1:9";
-        process.env.http_proxy = "http://127.0.0.1:9";
-        process.env.NO_PROXY = "corp.example.com";
-        process.env.no_proxy = "corp.example.com";
+        const restoreProxyEnv = poisonProxyEnv();
+        // The launch-time bypass is suppressed, so every loopback fetch routes
+        // through the dead proxy and the embed must fail.
         __setProxyBypassEnabledForTest(false);
         __setSidecarLauncherForTest(() =>
             Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
@@ -668,12 +652,8 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             expect(outcome).toBe("err");
         } finally {
             stub.stop();
-            process.env.HTTP_PROXY = saved.HTTP_PROXY ?? "";
-            process.env.http_proxy = saved.http_proxy ?? "";
-            process.env.NO_PROXY = saved.NO_PROXY ?? "";
-            process.env.no_proxy = saved.no_proxy ?? "";
+            restoreProxyEnv();
         }
-        /* oxlint-enable no-restricted-properties */
     }, 15_000);
 
     test("stopLocalSidecar terminates the running sidecar (shutdown reap)", async () => {

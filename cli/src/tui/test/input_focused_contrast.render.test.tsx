@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { parseColor, rgbToHex, type InputRenderable, type RGBA, type TextareaRenderable } from "@opentui/core";
+import { parseColor, rgbToHex, type InputRenderable, type TextareaRenderable } from "@opentui/core";
 
 import { DEFAULT_THEME_ID, themes } from "../../lib/design_system.ts";
 import { setTheme } from "../theme.ts";
+import { renderUntilPainted, spanFg } from "../../test_support/tui.ts";
 import { TextArea } from "../components/text_area.tsx";
 import { TextInput } from "../components/text_input.tsx";
 
@@ -30,16 +31,6 @@ afterEach(() => {
     setTheme(DEFAULT_THEME_ID);
 });
 
-/** The fg of the FIRST captured span whose text contains `needle`, or undefined if none rendered. */
-function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): RGBA | undefined {
-    for (const line of setup.captureSpans().lines) {
-        for (const span of line.spans) {
-            if (span.text.includes(needle)) return span.fg;
-        }
-    }
-    return undefined;
-}
-
 /**
  * Render `node`, re-asserting focus on the editor each frame (mount focus can race prop application;
  * focus() is idempotent) and driving frames on real timers until the seeded text appears.
@@ -48,16 +39,9 @@ async function renderFocused(
     node: Parameters<typeof testRender>[0],
     getRef: () => TextareaRenderable | InputRenderable | null,
     needle: string,
-    timeoutMs = 3000,
 ): Promise<Awaited<ReturnType<typeof testRender>>> {
-    const setup = await testRender(node, { width: 40, height: 4 });
-    const start = Date.now();
-    for (;;) {
-        getRef()?.focus();
-        await setup.renderOnce();
-        if (setup.captureCharFrame().includes(needle) || Date.now() - start > timeoutMs) return setup;
-        await Promise.sleep(10);
-    }
+    const { setup } = await renderUntilPainted(node, needle, { width: 40, height: 4 }, 3000, () => getRef()?.focus());
+    return setup;
 }
 
 describe("focused-input contrast: focused editor text uses the theme fg, not white", () => {

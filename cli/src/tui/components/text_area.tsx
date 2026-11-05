@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 
 import { theme } from "../theme.ts";
+import { trackEditorFocus } from "./editor_focus.ts";
 import { SUBMIT_CHORD, NEWLINE_CHORD } from "../keymap.ts";
 
 /** Chrome tier for {@link TextArea}: controls border presence and mode indicator placement. */
@@ -95,23 +96,12 @@ export function TextArea(props: TextAreaProps): JSX.Element {
 
     const textarea = (
         <textarea
-            // The `r.on(...)` subscriptions are imperative opentui event registrations, not a Solid
-            // tracked scope: their handlers read props lazily at focus/blur time (staying current),
-            // so no reactive dependency is dropped. An inline ref callback keeps those reads inside
-            // the callback's scope; a named `ref={handleRef}` reads as a reactive variable used in
-            // JSX (which solid/reactivity flags), so the callback stays inline here.
+            // Inline so the props reads stay inside the ref callback's scope; a named `ref={handleRef}`
+            // reads as a reactive variable used in JSX, which solid/reactivity flags. The focus
+            // subscriptions and their event-time reads live in trackEditorFocus.
             ref={(r: TextareaRenderable) => {
                 ref = r;
-                // oxlint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at focus time
-                r.on("focused", () => {
-                    setFocused(true);
-                    props.onFocusChange?.(true);
-                });
-                // oxlint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at blur time
-                r.on("blurred", () => {
-                    setFocused(false);
-                    props.onFocusChange?.(false);
-                });
+                trackEditorFocus(r, setFocused, () => props.onFocusChange);
                 props.onRef?.(r);
             }}
             focused={props.autoFocus ?? true}

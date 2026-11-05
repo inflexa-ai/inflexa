@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { okAsync, errAsync } from "neverthrow";
 
 import { testRender } from "@opentui/solid";
-import { renderFrame } from "../../../test_support/tui.ts";
+import { frameWhenPainted, renderFrame } from "../../../test_support/tui.ts";
 import { GLYPHS } from "../../../lib/design_system.ts";
 import { RunCardBlock } from "../../components/run_card_block.tsx";
 import { MessageBlock, resolveRunCardState } from "../message_block.tsx";
@@ -30,19 +30,8 @@ const READ_FAILED: ClientError = { type: "http", status: 500, body: { error: "in
  * ASYNCHRONOUSLY, so a single `renderOnce` sees an empty body (the same reason
  * `message_block.test.tsx` polls).
  */
-async function frameWith(node: Parameters<typeof testRender>[0], needle: string, timeoutMs = 2000): Promise<string> {
-    const setup = await testRender(node, WIDE);
-    try {
-        const start = Date.now();
-        for (;;) {
-            await setup.renderOnce();
-            const f = setup.captureCharFrame();
-            if (f.includes(needle) || Date.now() - start > timeoutMs) return f;
-            await Promise.sleep(10);
-        }
-    } finally {
-        setup.renderer.destroy();
-    }
+async function frameWith(node: Parameters<typeof testRender>[0], needle: string): Promise<string> {
+    return frameWhenPainted(node, WIDE, needle, 2000);
 }
 
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {

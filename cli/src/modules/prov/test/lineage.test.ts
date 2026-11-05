@@ -1,74 +1,33 @@
 import { describe, expect, test } from "bun:test";
 import { ProvDocument } from "@inflexa-ai/tsprov";
 
-import { applyProvEvent, deriveLineageModel, PROV_UNIFY_OPTIONS, type LineageModel } from "@inflexa-ai/prov-kernel";
+import { deriveLineageModel, PROV_UNIFY_OPTIONS, type LineageModel } from "@inflexa-ai/prov-kernel";
 import { z } from "zod";
 import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE } from "../../../lib/text.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import type { Analysis } from "../../../types/analysis.ts";
-import type {
-    ProvActor,
-    ProvCallRef,
-    ProvCommandRef,
-    ProvFileRef,
-    ProvInputRef,
-    ProvModelId,
-    ProvRunRef,
-    ProvStepOutcome,
-    ProvStepRef,
-    ProvUsedInputRef,
-} from "../../../types/prov.ts";
-import { cliProvDigest, provModel, provSubject } from "../document.ts";
+import type { ProvActor, ProvCallRef, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef } from "../../../types/prov.ts";
+import { cliProvDigest, provModel } from "../document.ts";
 import { computeLineage, formatDot, formatJson, formatMermaid, formatTree, resolveLineageRef, type LineageFileInfo, type LineageRoots } from "../lineage.ts";
 import type { LineageJson } from "../../../api/provenance.ts";
 import { present } from "../../../lib/present.ts";
 import { parsedJson } from "../../../test_support/json.ts";
+import {
+    appendCommandExecuted,
+    appendFileWritten,
+    appendInputAdded,
+    appendInputUsed,
+    appendRunStarted,
+    appendStepCompleted,
+    freshDocument,
+} from "../../../test_support/prov_events.ts";
 
 // The traversal is tested against documents built with the REAL builders — the exact record shapes
 // production writes (deterministic QNames, identified relations, shared (path, hash) entity space)
 // — then round-tripped through PROV-JSON like the stored column, so the walk sees what the CLI sees.
 
 const { fileQName, commandQName } = provModel;
-
-// Statement production goes through `applyProvEvent` (the kernel's sole supported producer); these
-// helpers keep the historical per-builder call shape the fixtures below were written against.
-function freshDocument(a: Analysis): ProvDocument {
-    return provModel.freshDocument(provSubject(a));
-}
-function appendInputAdded(doc: ProvDocument, analysisId: string, actor: ProvActor, input: ProvInputRef, derivedFromAnalysisId: string | null): void {
-    applyProvEvent(provModel, doc, { type: "input_added", analysisId, actor, input, derivedFromAnalysisId });
-}
-function appendRunStarted(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvRunRef): void {
-    applyProvEvent(provModel, doc, { type: "run_started", analysisId, actor, run });
-}
-function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, stepModel: ProvModelId): void {
-    applyProvEvent(provModel, doc, { type: "step_completed", analysisId, actor, outcome, model: stepModel });
-}
-function appendCommandExecuted(
-    doc: ProvDocument,
-    analysisId: string,
-    actor: ProvActor,
-    step: ProvStepRef,
-    command: ProvCommandRef,
-    stepModel: ProvModelId,
-): void {
-    applyProvEvent(provModel, doc, { type: "command_executed", analysisId, actor, step, command, model: stepModel });
-}
-function appendFileWritten(
-    doc: ProvDocument,
-    analysisId: string,
-    actor: ProvActor,
-    file: ProvFileRef,
-    step: ProvStepRef,
-    generation: "command" | "step" | "call",
-    call?: ProvCallRef,
-): void {
-    applyProvEvent(provModel, doc, { type: "file_written", analysisId, actor, model, file, generation, call, step });
-}
-function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
-    applyProvEvent(provModel, doc, { type: "input_used", analysisId, actor, step, input });
-}
 
 const analysis: Analysis = {
     id: "a1",
@@ -124,12 +83,12 @@ function canonicalDoc(): ProvDocument {
     const doc = freshDocument(analysis);
     appendRunStarted(doc, "a1", system, { runId: "run-001", planSummary: "DE analysis", startedAtMs: 1_700_000_000_000 });
     appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1_700_000_001_500 }, model);
-    appendFileWritten(doc, "a1", system, fileRefOf(scriptKey, "file_tool"), stepRef, "call", writeScriptCall);
+    appendFileWritten(doc, "a1", system, model, fileRefOf(scriptKey, "file_tool"), stepRef, "call", writeScriptCall);
     appendCommandExecuted(doc, "a1", system, stepRef, cmdA, model);
-    appendFileWritten(doc, "a1", system, fileRefOf(deResultsKey), stepRef, "command");
+    appendFileWritten(doc, "a1", system, model, fileRefOf(deResultsKey), stepRef, "command");
     appendCommandExecuted(doc, "a1", system, stepRef, cmdB, model);
-    appendFileWritten(doc, "a1", system, fileRefOf(heatmapKey), stepRef, "command");
-    appendFileWritten(doc, "a1", system, leafFileRef, stepRef, "step");
+    appendFileWritten(doc, "a1", system, model, fileRefOf(heatmapKey), stepRef, "command");
+    appendFileWritten(doc, "a1", system, model, leafFileRef, stepRef, "step");
     appendInputUsed(doc, "a1", system, stepRef, { ...countsKey, source: "data", fileId: "file-1" });
     return ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json");
 }
@@ -176,8 +135,8 @@ describe("resolveLineageRef", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, { runId: "run-002", stepId: "step-de", status: "completed", completedAtMs: 2 }, model);
         const rerun = { path: deResultsKey.path, hash: "hashDe0002" };
-        appendFileWritten(doc, "a1", system, fileRefOf(deResultsKey), stepRef, "step");
-        appendFileWritten(doc, "a1", system, fileRefOf(rerun), { runId: "run-002", stepId: "step-de" }, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(deResultsKey), stepRef, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(rerun), { runId: "run-002", stepId: "step-de" }, "step");
         const g = lineageModelOf(doc);
 
         const infos = fileInfos(resolveLineageRef(g, deResultsKey.path)._unsafeUnwrap());
@@ -196,8 +155,8 @@ describe("resolveLineageRef", () => {
         // Two entities whose hashes share a ≥6-char prefix — the resolver must refuse to guess.
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
-        appendFileWritten(doc, "a1", system, fileRefOf({ path: "output/a.csv", hash: "hashXX0001" }), stepRef, "step");
-        appendFileWritten(doc, "a1", system, fileRefOf({ path: "output/b.csv", hash: "hashXX0002" }), stepRef, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf({ path: "output/a.csv", hash: "hashXX0001" }), stepRef, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf({ path: "output/b.csv", hash: "hashXX0002" }), stepRef, "step");
         const g = lineageModelOf(doc);
 
         const err = resolveLineageRef(g, "hashXX")._unsafeUnwrapErr();
@@ -233,8 +192,8 @@ describe("resolveLineageRef search tier", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, { runId: "run-002", stepId: "step-de", status: "completed", completedAtMs: 2 }, model);
         const rerun = { path: deResultsKey.path, hash: "hashDe0002" };
-        appendFileWritten(doc, "a1", system, fileRefOf(deResultsKey), stepRef, "step");
-        appendFileWritten(doc, "a1", system, fileRefOf(rerun), { runId: "run-002", stepId: "step-de" }, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(deResultsKey), stepRef, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(rerun), { runId: "run-002", stepId: "step-de" }, "step");
         const g = lineageModelOf(doc);
 
         const infos = fileInfos(resolveLineageRef(g, "de_results")._unsafeUnwrap());
@@ -264,7 +223,7 @@ describe("resolveLineageRef search tier", () => {
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         for (let i = 1; i <= 12; i++) {
             const n = String(i).padStart(2, "0");
-            appendFileWritten(doc, "a1", system, fileRefOf({ path: `output/f${n}.csv`, hash: `hashFile${n}` }), stepRef, "step");
+            appendFileWritten(doc, "a1", system, model, fileRefOf({ path: `output/f${n}.csv`, hash: `hashFile${n}` }), stepRef, "step");
         }
         const g = lineageModelOf(doc);
 
@@ -304,9 +263,9 @@ describe("resolveLineageRef search tier", () => {
         // mix — the exact-path tier must win before search is ever attempted.
         const reader: ProvCommandRef = { kind: "command", command: "cat data/x.csv", exitCode: 0, outputs: [outKey], inputs: [{ ...key, source: "step" }] };
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(key), stepRef, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(key), stepRef, "step");
         appendCommandExecuted(doc, "a1", system, stepRef, reader, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(outKey), stepRef, "command");
         const g = lineageModelOf(doc);
 
         const infos = fileInfos(resolveLineageRef(g, key.path)._unsafeUnwrap());
@@ -430,7 +389,7 @@ describe("backward lineage", () => {
         };
         appendStepCompleted(doc, "a1", system, { runId: "run-002", stepId: "step-model", status: "completed", completedAtMs: 3 }, model);
         appendCommandExecuted(doc, "a1", system, readerStep, fit, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(modelKey), readerStep, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(modelKey), readerStep, "command");
         const g = lineageModelOf(doc);
 
         const { json } = lineageOf(g, modelKey.path, { forward: false });
@@ -454,7 +413,7 @@ describe("backward lineage", () => {
         const selfRead: ProvCommandRef = { kind: "command", command: "bash gen.sh", exitCode: 0, outputs: [selfKey], inputs: [{ ...selfKey, source: "step" }] };
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, selfRead, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(selfKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(selfKey), stepRef, "command");
         const g = lineageModelOf(doc);
 
         const { json, tree } = lineageOf(g, selfKey.path, { forward: false });
@@ -528,7 +487,7 @@ describe("resolveLineageRef with scheme-prefixed hashes", () => {
     function schemeGraph(): LineageModel {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
-        for (const key of [fileA, fileB, fileC]) appendFileWritten(doc, "a1", system, fileRefOf(key), stepRef, "step");
+        for (const key of [fileA, fileB, fileC]) appendFileWritten(doc, "a1", system, model, fileRefOf(key), stepRef, "step");
         return lineageModelOf(doc);
     }
 
@@ -710,7 +669,7 @@ describe("formatDot", () => {
         const quoting: ProvCommandRef = { kind: "command", command: 'bash -c "echo \\ hi"', exitCode: 0, outputs: [outKey], inputs: [] };
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, quoting, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(outKey), stepRef, "command");
         const g = lineageModelOf(doc);
 
         const roots = resolveLineageRef(g, outKey.path)._unsafeUnwrap();
@@ -748,11 +707,11 @@ describe("identifier resolution tier", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         const firstKey = { path: "output/first.csv", hash: "hashFirst1" };
-        appendFileWritten(doc, "a1", system, fileRefOf(firstKey), stepRef, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(firstKey), stepRef, "step");
         // A second file recorded AT the first entity's localpart as its path — the deliberate collision.
         const collidingPath = fileQName(firstKey).slice("inflexa:".length);
         const secondKey = { path: collidingPath, hash: "hashSecond" };
-        appendFileWritten(doc, "a1", system, fileRefOf(secondKey), stepRef, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(secondKey), stepRef, "step");
         const g = lineageModelOf(doc);
 
         const roots = resolveLineageRef(g, collidingPath)._unsafeUnwrap();
@@ -803,7 +762,7 @@ describe("formatMermaid", () => {
         const selfRead: ProvCommandRef = { kind: "command", command: "bash gen.sh", exitCode: 0, outputs: [selfKey], inputs: [{ ...selfKey, source: "step" }] };
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, selfRead, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(selfKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(selfKey), stepRef, "command");
         const g = lineageModelOf(doc);
 
         const roots = resolveLineageRef(g, selfKey.path)._unsafeUnwrap();
@@ -823,7 +782,7 @@ describe("formatMermaid", () => {
         const tricky: ProvCommandRef = { kind: "command", command: 'grep "x" (a) #tag', exitCode: 0, outputs: [outKey], inputs: [] };
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, tricky, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(outKey), stepRef, "command");
         const g = lineageModelOf(doc);
 
         const roots = resolveLineageRef(g, outKey.path)._unsafeUnwrap();
@@ -854,7 +813,7 @@ describe("attribution gaps and per-kind absence wording", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
         appendCommandExecuted(doc, "a1", system, stepRef, gapCmd, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(gapOutKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(gapOutKey), stepRef, "command");
         appendInputUsed(doc, "a1", system, stepRef, { ...countsKey, source: "data", fileId: "file-1" });
         return lineageModelOf(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
     }
@@ -899,7 +858,7 @@ describe("attribution gaps and per-kind absence wording", () => {
         const bytesOutKey = { path: "runs/run-001/step-de/output/x.csv", hash: "hashXbytes1" };
         const cmd: ProvCommandRef = { kind: "command", command: "echo hi", exitCode: 0, outputs: [bytesOutKey], inputs: [] };
         appendCommandExecuted(doc, "a1", system, stepRef, cmd, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(bytesOutKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(bytesOutKey), stepRef, "command");
         const g = lineageModelOf(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
 
         const { tree } = lineageOf(g, bytesOutKey.path, { forward: false });
@@ -933,9 +892,9 @@ describe("attribution gaps and per-kind absence wording", () => {
             inputs: [{ path: scriptP, hash: "hashScr001", source: "step" }],
         };
         appendCommandExecuted(doc, "a1", system, stepRef, cmd, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(bothOutKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(bothOutKey), stepRef, "command");
         // Declare the script entity so its resolved read renders as a real input file.
-        appendFileWritten(doc, "a1", system, fileRefOf({ path: scriptP, hash: "hashScr001" }, "file_tool"), stepRef, "step");
+        appendFileWritten(doc, "a1", system, model, fileRefOf({ path: scriptP, hash: "hashScr001" }, "file_tool"), stepRef, "step");
         // A mixed old/new re-emission ALSO stamps the attribute onto the same activity — the harmless
         // both-carry case. The resolved `used` edge is the stronger claim, so the note must skip it.
         doc.activity(commandQName(stepRef, cmd.outputs), undefined, undefined, { "inflexa:unresolvedScript": scriptP });
@@ -977,7 +936,7 @@ describe("attribution gaps and per-kind absence wording", () => {
         // beside it would misread as "this command had no inputs at all", contradicting the recorded script.
         const cmd: ProvCommandRef = { kind: "command", command: "Rscript de.R", exitCode: 0, scriptPath: "scripts/de.R", outputs: [outKey], inputs: [] };
         appendCommandExecuted(doc, "a1", system, stepRef, cmd, model);
-        appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
+        appendFileWritten(doc, "a1", system, model, fileRefOf(outKey), stepRef, "command");
         const g = lineageModelOf(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json"));
 
         const { tree } = lineageOf(g, outKey.path, { forward: false });

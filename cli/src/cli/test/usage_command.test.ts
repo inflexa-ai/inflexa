@@ -1,11 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { runCliAsync } from "../../test_support/cli.ts";
-import { freshDb } from "../../test_support/db.ts";
-import { startTestServer, type TestServer } from "../../test_support/server.ts";
+import { cliServerScope } from "../../test_support/server.ts";
 import { getAnalysisUsageTotals, getAnchor } from "../../db/primary_query.ts";
 import { insertAnalysis, insertAnchor, upsertLlmUsage } from "../../db/primary_mutation.ts";
 import { writeMarker } from "../../modules/anchor/marker.ts";
@@ -19,12 +17,10 @@ import { collapseWhitespace } from "../../lib/text.ts";
 // could not pass here at all. `runCliAsync`, because a sync spawn would block the event loop that
 // answers the child.
 
-const created: string[] = [];
+const e2e = cliServerScope();
 
 function tmp(): string {
-    const dir = mkdtempSync(join(tmpdir(), "inflexa-usage-e2e-"));
-    created.push(dir);
-    return dir;
+    return e2e.tmp("inflexa-usage-e2e-");
 }
 
 // Seed an anchor + analysis the command can resolve by name. The subprocess and the server read the
@@ -73,21 +69,8 @@ function seedUsage(): void {
     })._unsafeUnwrap();
 }
 
-let server: TestServer;
-
-beforeEach(() => {
-    freshDb();
-    server = startTestServer();
-});
-
-afterEach(async () => {
-    await server.stop();
-    for (const dir of created) rmSync(dir, { recursive: true, force: true });
-    created.length = 0;
-});
-
 function usage(args: string[], cwd: string): ReturnType<typeof runCliAsync> {
-    return runCliAsync(args, { cwd, env: server.childEnv });
+    return runCliAsync(args, { cwd, env: e2e.server().childEnv });
 }
 
 describe("usage command (e2e)", () => {
