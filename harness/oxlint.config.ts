@@ -298,6 +298,8 @@ const config = typescript({
             // - src/tools/script/file-tools.ts — the `spec` member of `render_chart`, for
             //   the reason of `show_user`: the catalog of `run_script` renders the input
             //   schema as a signature, and a recursive `z.json()` renders as `$ref` noise.
+            // - src/tools/script/test/run-script.test.ts — a union with `z.unknown()`, the
+            //   shape of `add_block`, for the test of how the catalog shows that union.
             files: [
                 "src/execution/run-synthesis.ts",
                 "src/lib/unknown-containers.ts",
@@ -309,6 +311,7 @@ const config = typescript({
                 "src/memory/conversation-display-storage.ts",
                 "src/tools/display/show-user.ts",
                 "src/tools/script/file-tools.ts",
+                "src/tools/script/test/run-script.test.ts",
             ],
             rules: { "@inflexa-ai/no-empty-schema": "off" },
         },
