@@ -135,9 +135,7 @@ the wire order.
 ### Requirement: The tool declares the type of its ok value
 
 The tool MUST declare the schema of its ok value. Thus the catalog of
-`run_script` shows the result type in the signature of the tool. A field of the
-result type MUST NOT have the name `description`, because the catalog removes
-each key of that name as prose.
+`run_script` shows the result type in the signature of the tool.
 
 #### Scenario: The catalog shows the result type
 

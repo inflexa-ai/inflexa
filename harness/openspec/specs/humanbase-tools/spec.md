@@ -71,7 +71,7 @@ The `network` action MUST return
 It takes 1 to 30 Entrez IDs (`entrez`), a context slug (`context`), and
 `nodeSize`, the count of neighbor genes that HumanBase adds (default 10, max 50).
 
-Each gene carries `entrez`, `symbol`, `name`, `ensembl`, `hgnc`, and
+Each gene carries `entrez`, `symbol`, `description`, `ensembl`, `hgnc`, and
 `query`. The value of `query` is false for a neighbor gene. Each edge carries
 `geneA`, `geneB`, and `weight`. The edges are in the order of their weight,
 highest first, and `limit` (default 50) trims them. `totalEdges` gives the count
@@ -185,14 +185,12 @@ and the first 8 IDs.
 
 The tool MUST declare the schema of the ok value of each action. Thus the
 catalog of `run_script` shows the result type in the signature of the tool. The
-ok value of each action MUST obey that schema. A field of the result type MUST
-NOT have the name `description`, because the catalog removes each key of that
-name as prose. Thus the full name of a gene is the field `name`.
+ok value of each action MUST obey that schema.
 
 #### Scenario: The catalog shows the result type
 
 - **WHEN** the catalog of `run_script` is built over the tool
-- **THEN** the signature of `humanbase` shows its result type, not `unknown`, and the type of a gene holds `name`
+- **THEN** the signature of `humanbase` shows its result type, not `unknown`
 
 #### Scenario: Each ok value obeys the schema
 
