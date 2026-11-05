@@ -87,7 +87,8 @@ describe("get_variant_frequencies", () => {
     it("refuses a malformed variant ID, an empty list, and a list past the cap", () => {
         const parse = (variantIds: string[]): boolean => getVariantFrequenciesTool.inputSchema.safeParse({ variantIds }).success;
 
-        for (const id of ["rs527413419", "M-1-A-G", "23-1-A-T", "1-0-A-T", "1-55051215-G", "1-55051215-G-N"]) expect(parse([id])).toBe(false);
+        for (const id of ["rs527413419", "M-1-A-G", "23-1-A-T", "1-0-A-T", "1-1.5-A-T", "1-0.5-A-T", "1-01-A-T", "1-55051215-G", "1-55051215-G-N"])
+            expect(parse([id])).toBe(false);
         expect(parse([])).toBe(false);
         expect(parse(Array.from({ length: GNOMAD_MAX_VARIANTS + 1 }, (_, i) => `1-${i + 1}-A-T`))).toBe(false);
         expect(parse(["chr1:55051215:g:ga", "X-100-A-T"])).toBe(true);

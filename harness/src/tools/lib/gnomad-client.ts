@@ -77,7 +77,8 @@ export function isGnomadVariantId(id: string): boolean {
     const parts = (upper.startsWith("CHR") ? upper.slice("CHR".length) : upper).replaceAll(":", "-").split("-");
     if (parts.length !== 4) return false;
     const [chrom = "", pos = "", ref = "", alt = ""] = parts;
-    return CHROMOSOMES.has(chrom) && String(Number(pos)) === pos && Number(pos) > 0 && isAllele(ref) && isAllele(alt);
+    const position = Number(pos);
+    return CHROMOSOMES.has(chrom) && Number.isSafeInteger(position) && position > 0 && String(position) === pos && isAllele(ref) && isAllele(alt);
 }
 
 const NOT_FOUND_MESSAGE = "Variant not found";
