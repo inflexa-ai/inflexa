@@ -262,7 +262,7 @@ describe("GET /api/v1/fs/list", () => {
 
         const [beta, alpha] = body.entries;
         expect(beta).toMatchObject({ type: "folder", kind: null, size: null, link: null, hidden: false, path: join(root, "beta") });
-        expect(alpha).toMatchObject({ type: "file", kind: "table", size: 5, readable: true, link: null, hidden: false });
+        expect(alpha).toMatchObject({ type: "file", kind: "doc", size: 5, readable: true, link: null, hidden: false });
         expect(typeof alpha?.mode).toBe("number");
         expect(new Date(alpha?.modifiedAt ?? "").toISOString()).toBe(alpha?.modifiedAt ?? "");
     });
@@ -912,8 +912,25 @@ describe("GET /api/v1/fs/preview", () => {
         });
 
         test("gives text for a table file whose header holds no tab and no comma", async () => {
+            writeFileSync(join(root, "counts.tsv"), "hello\nworld\n");
+            expect(await previewBody(join(root, "counts.tsv"))).toEqual({ kind: "text", language: "tsv", code: "hello\nworld\n" });
+        });
+
+        test("gives text for a text note", async () => {
             writeFileSync(join(root, "notes.txt"), "hello\nworld\n");
             expect(await previewBody(join(root, "notes.txt"))).toEqual({ kind: "text", language: "text", code: "hello\nworld\n" });
+        });
+
+        test("gives code, and not a table, for a .txt file whose whole name makes it code", async () => {
+            const text = "project(demo LANGUAGES C, CXX)\n";
+            writeFileSync(join(root, "CMakeLists.txt"), text);
+            expect(await previewBody(join(root, "CMakeLists.txt"))).toEqual({ kind: "text", language: "cmake", code: text });
+        });
+
+        test("gives a table for a .txt file whose header holds a separator", async () => {
+            const text = "gene\tS1\tS2\nTP53\t1\t2\n";
+            writeFileSync(join(root, "GSE78220_counts.txt"), text);
+            expect(await previewBody(join(root, "GSE78220_counts.txt"))).toEqual({ kind: "table", text, separator: "\t", columnCount: 3, rowCount: 1 });
         });
 
         test("gives text, and not a table, for a head that holds no line end", async () => {

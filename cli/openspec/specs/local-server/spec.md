@@ -1122,7 +1122,7 @@ The server MUST run each read of the list off the event loop. A folder on a hung
 - **WHEN** a client lists the folder
 - **THEN** the entries are `beta`, `alpha.txt`, and `Zeta.txt`, in this order, and `total` is 3
 - **AND** `beta` has the type `folder`, the kind `null`, and a `null` size
-- **AND** `alpha.txt` has the kind `table`, its size, its time, its mode, and `readable` true
+- **AND** `alpha.txt` has the kind `doc`, its size, its time, its mode, and `readable` true
 
 #### Scenario: The hidden entries show on request
 
@@ -1473,7 +1473,7 @@ The server MUST hold one map from the extension or the name of a file to the kin
 
 | Kind | Language | Extensions and names |
 | --- | --- | --- |
-| `table` | `text` | `txt`, `xlsx`, `xls`, `parquet` |
+| `table` | `text` | `xlsx`, `xls`, `parquet` |
 | `table` | `csv` | `csv` |
 | `table` | `tsv` | `tsv`, `tab` |
 | `figure` | `text` | `png`, `jpg`, `jpeg`, `gif`, `webp` |
@@ -1483,13 +1483,13 @@ The server MUST hold one map from the extension or the name of a file to the kin
 | `code` | `json` | `ipynb` |
 | `code` | `bash` | `sh`, `bash`, `zsh`, `sbatch`, `slurm` |
 | `code` | `awk` | `awk` |
-| `code` | `perl` | `pl`, `pm` |
+| `code` | `perl` | `pl`, `pm`, `t` |
 | `code` | `julia` | `jl` |
 | `code` | `matlab` | `m` |
 | `code` | `sql` | `sql` |
 | `code` | `nextflow` | `nf`, the name `nextflow.config` |
 | `code` | `groovy` | `groovy` |
-| `code` | `text` | `wdl` |
+| `code` | `text` | `wdl`, `mod`, `pro`, `v` |
 | `code` | `yaml` | `cwl`, `yaml`, `yml` |
 | `code` | `stata` | `do` |
 | `code` | `sas` | `sas` |
@@ -1505,6 +1505,10 @@ The server MUST hold one map from the extension or the name of a file to the kin
 | `code` | `rust` | `rs` |
 | `code` | `go` | `go` |
 | `code` | `java` | `java` |
+| `code` | `javascript` | `js`, `mjs`, `cjs` |
+| `code` | `jsx` | `jsx` |
+| `code` | `typescript` | `ts`, `mts`, `cts` |
+| `code` | `tsx` | `tsx` |
 | `code` | `fortran-fixed-form` | `f` |
 | `code` | `fortran-free-form` | `f90` |
 | `code` | `diff` | `diff`, `patch` |
@@ -1515,10 +1519,10 @@ The server MUST hold one map from the extension or the name of a file to the kin
 | `data` | `text` | `h5ad`, `h5`, `hdf5`, `loom`, `rds`, `rdata`, `rda`, `npy`, `npz`, `pkl`, `feather`, `mtx`, `bam`, `sam`, `cram`, `bai`, `vcf`, `bcf`, `bed`, `gff`, `gff3`, `gtf`, `fa`, `fasta`, `fna`, `faa`, `fastq`, `fq`, `bw`, `bigwig`, `bedgraph`, `fai`, `nwk`, `newick`, `sdf`, `mol2`, `tif`, `tiff`, `zip`, `tar`, `bz2`, `xz`, `zst` |
 | `doc` | `markdown` | `md`, `rmd`, `qmd` |
 | `doc` | `html` | `html`, `htm` |
-| `doc` | `latex` | `tex` |
+| `doc` | `latex` | `tex`, `cls`, `sty` |
 | `doc` | `bibtex` | `bib` |
 | `doc` | `rst` | `rst` |
-| `doc` | `text` | `docx`, `pdf` |
+| `doc` | `text` | `txt`, `docx`, `pdf` |
 | `structure` | `text` | `pdb`, `ent`, `cif`, `mmcif`, `bcif` |
 
 The extension of a file name is the text after its last dot. A file name has no extension in each of these cases:
@@ -1529,9 +1533,32 @@ The extension of a file name is the text after its last dot. A file name has no 
 
 A name entry of the map MUST match the whole file name, and it wins over the extension. The match of an extension and of a name MUST have no regard to case.
 
-A file name that the map does not know MUST give the kind `null` and the language `text`.
+For a file name that the table does not know, the server MUST use the language data of GitHub Linguist. The order of the lookup is:
 
-A file name whose extension is `gz` MUST take the kind of the extension before `.gz`, when the map knows that extension. Otherwise it MUST take the kind `data`. Its language MUST be `text`.
+1. A name entry of the table.
+2. A Linguist language with a grammar whose file names hold the whole file name.
+3. The extension in the table.
+4. A Linguist language whose extensions hold the extension.
+5. A Linguist language with no grammar whose file names hold the whole file name.
+
+The language of a Linguist language is its language id in the highlighter, or `text` when the highlighter has no grammar for it. A Linguist language with a grammar is a language whose id is not `text`. The language id comes from the name or an alias of the Linguist language. FreeMarker and CQL have no language id, because their aliases name the grammars of Fluent and of Cypher.
+
+When an extension has more than one Linguist language, a language with a grammar wins. Then the language whose primary extension it is wins. The primary extension is the first extension of the Linguist language. Otherwise the first language in the order of the Linguist names wins. When a file name has more than one Linguist language with a grammar, the first language in the order of the Linguist names wins.
+
+The kind of a Linguist language comes from its type:
+
+| Linguist type | Kind |
+| --- | --- |
+| `programming` | `code` |
+| `markup` | `code` |
+| `prose` | `doc` |
+| `data` | `data` |
+
+The language ids of the highlighter are the ids and the aliases of shiki 4.5.0, the highlighter of Flamme. A Linguist alias of an id gives the id, not the alias.
+
+A file name that the table and the Linguist data do not know MUST give the kind `null` and the language `text`.
+
+A file name whose extension is `gz` MUST take the kind of the extension before `.gz`, when the table knows that extension. Otherwise it MUST take the kind `data`. Its language MUST be `text`.
 
 The kind and the language MUST come from the file name only. The folder of the file does not change them. Thus the kind can differ from the `fileType` of the artifact ledger, which comes from the folder.
 
@@ -1565,9 +1592,64 @@ The kind and the language MUST come from the file name only. The folder of the f
 - **WHEN** the server takes the kind of `1abc.cif`
 - **THEN** the kind is `structure`
 
+#### Scenario: A script of run_script
+
+- **WHEN** the server takes the kind of `call_1.js` and of `plot.tsx`
+- **THEN** each kind is `code`, and the languages are `javascript` and `tsx`
+
+#### Scenario: A text note
+
+- **WHEN** the server takes the kind of `README.txt`
+- **THEN** the kind is `doc`, and the language is `text`
+
+#### Scenario: A language that only Linguist knows
+
+- **WHEN** the server takes the kind of `build.kts`, `main.swift`, and `Gemfile`
+- **THEN** each kind is `code`, and the languages are `kotlin`, `swift`, and `ruby`
+
+#### Scenario: A Linguist file name
+
+- **WHEN** the server takes the kind of `.bashrc`
+- **THEN** the kind is `code`, and the language is `shellscript`
+
+#### Scenario: A Linguist file name wins over the extension in the table
+
+- **WHEN** the server takes the kind of `CMakeLists.txt`
+- **THEN** the kind is `code`, and the language is `cmake`
+
+#### Scenario: A Linguist alias that names a different grammar
+
+- **WHEN** the server takes the kind of `query.cql`
+- **THEN** the kind is `code`, and the language is `text`
+
+#### Scenario: A Linguist language with no grammar
+
+- **WHEN** the server takes the kind of `model.stan`
+- **THEN** the kind is `code`, and the language is `text`
+
+#### Scenario: A Linguist file name with no grammar
+
+- **WHEN** the server takes the kind of `BUILD` and of `pom.xml`
+- **THEN** the kinds are `code` and `data`, and the languages are `text` and `xml`
+
+#### Scenario: A grammar wins a tie in the Linguist data
+
+- **WHEN** the server takes the kind of `pom.xml` and of `boot.s`
+- **THEN** the languages are `xml` and `asm`
+
+#### Scenario: The reading of an analyst
+
+- **WHEN** the server takes the kind of `cad.mod`, `fit.pro`, `run.t`, and `paper.cls`
+- **THEN** the kinds are `code`, `code`, `code`, and `doc`, and the languages are `text`, `text`, `perl`, and `latex`
+
+#### Scenario: The table wins over Linguist
+
+- **WHEN** the server takes the kind of `fit.m` and of `run.do`
+- **THEN** the languages are `matlab` and `stata`
+
 #### Scenario: A name with no known kind
 
-- **WHEN** the server takes the kind of `notes.xyz`, `README`, `.bashrc`, and `draft.`
+- **WHEN** the server takes the kind of `notes.xyz`, `README`, and `draft.`
 - **THEN** each kind is `null`, and each language is `text`
 
 ### Requirement: The server gives a preview of a file or a folder
@@ -1580,7 +1662,7 @@ The kind of a file comes from the name of the real path, through the kind map of
 
 - `figure`, for a regular file of the kind `figure`: `{kind, src, alt}`. `src` is the URL of the read route for the real path, `/api/v1/fs/read?path=<the encoded real path>`, relative to the origin of the server. `alt` is the name of the file. The server MUST NOT read the bytes of a figure.
 - `folder`, for a folder: `{kind, items, kinds, names}`. `items` is the count of the entries that are not hidden, in one level of the folder. `kinds` gives `{kind, count}` for each kind with a count above 0: `folder` first, then the order of the kind map. An entry whose name has no kind counts in `items` only. `names` gives `{name, dir, kind}` for the first 10 entries in the order of the folder list. `dir` is true for a folder, and `kind` is `null` for a folder. The kind and `dir` come from the folder read. Thus the server takes no `stat` of an entry, and a link to a folder counts as a file.
-- `table`, for a file of the kind `table` whose head holds the full header record, and whose header holds a tab or a comma: `{kind, text, separator, columnCount, rowCount}`. The header record is the text before the first line end outside double quotes. `text` is the text of the head. `separator` is a tab when the header holds one, and a comma otherwise. `columnCount` is the count of the fields of the header. A separator inside double quotes does not split a field. `rowCount` is the count of the records after the header when the head holds the full file, and `null` otherwise. A line end inside double quotes does not end a record. An empty last line does not count.
+- `table`, for a delimited file: `{kind, text, separator, columnCount, rowCount}`. A delimited file has the kind `table`, or it has the kind `doc` and the extension `txt`. Its head holds the full header record, and its header holds a tab or a comma. The header record is the text before the first line end outside double quotes. `text` is the text of the head. `separator` is a tab when the header holds one, and a comma otherwise. `columnCount` is the count of the fields of the header. A separator inside double quotes does not split a field. `rowCount` is the count of the records after the header when the head holds the full file, and `null` otherwise. A line end inside double quotes does not end a record. An empty last line does not count.
 - `text`, for each other file whose head is text: `{kind, language, code}`. `code` is the text of the head. `language` comes from the map of the file system routes. It is `text` for a name that the map does not know.
 - `card`, for a file whose head holds a NUL byte, or a byte sequence that is not UTF-8: `{kind, format, mediaType}`. `format` is the extension of the name in lower case, or `null` for a name with no extension. `mediaType` is the `Content-Type` that `GET /api/v1/fs/read` gives for the name. Thus a client can select a renderer, for example for a PDF file, with no map of its own.
 
@@ -1610,9 +1692,27 @@ The server MUST run each disk operation of the route off the event loop. A file 
 
 #### Scenario: A table file with no separator
 
+- **GIVEN** the file `counts.tsv` whose first line holds no tab and no comma
+- **WHEN** a client asks for its preview
+- **THEN** the member is `text` with the language `tsv`
+
+#### Scenario: A text note
+
 - **GIVEN** the file `notes.txt` whose first line holds no tab and no comma
 - **WHEN** a client asks for its preview
-- **THEN** the member is `text`
+- **THEN** the member is `text` with the language `text`
+
+#### Scenario: A code file with the extension txt
+
+- **GIVEN** the file `CMakeLists.txt` whose first line holds a comma
+- **WHEN** a client asks for its preview
+- **THEN** the member is `text` with the language `cmake`
+
+#### Scenario: A delimited text file
+
+- **GIVEN** the file `GSE78220_counts.txt` with the text `gene\tS1\tS2\nTP53\t1\t2\n`
+- **WHEN** a client asks for its preview
+- **THEN** the member is `table` with the separator tab, `columnCount` 3, and `rowCount` 1
 
 #### Scenario: A binary file
 

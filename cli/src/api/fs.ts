@@ -95,7 +95,7 @@ export type FsSearch = {
 /** Each kind of a file, in the order of the kind map. The count list of a folder preview follows this order. */
 export const FILE_KINDS = ["table", "figure", "code", "log", "data", "doc", "structure"] as const;
 
-/** The kind of a file, from the extension of its name. A client shows it as a badge and keeps no map of its own. */
+/** The kind of a file, from its name or the extension of its name. A client shows it as a badge and keeps no map of its own. */
 export type FileKind = (typeof FILE_KINDS)[number];
 
 /** The preview of a delimited text file: the head of the file and the shape of its header. */
