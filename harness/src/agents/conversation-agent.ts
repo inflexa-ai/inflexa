@@ -48,6 +48,7 @@ import { composeSystemPrompt } from "./system-prompt.js";
 import {
     searchGeneTool,
     searchProteinTool,
+    resolveGeneIdsTool,
     lookupAnnotationTool,
     searchInteractionsTool,
     humanbaseTool,
@@ -291,6 +292,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // UniProt accession that the structure tools take.
         searchGeneTool,
         searchProteinTool,
+        // The mapping across the symbol, Entrez, Ensembl and UniProt spaces — the Entrez ID that humanbase takes.
+        resolveGeneIdsTool,
         // Functional annotation (GO / KEGG / Reactome behind one vocabulary) and
         // STRING networks + gene-set enrichment.
         lookupAnnotationTool,

@@ -23,6 +23,7 @@
 // Identifier resolution
 export * from "./search-gene.js";
 export * from "./search-protein.js";
+export * from "./resolve-gene-ids.js";
 
 // Functional annotation / networks
 export * from "./lookup-annotation.js";

@@ -28,6 +28,8 @@ export type SandboxToolName =
     | "resolve_citation"
     // Identifier resolution.
     | "searchGene"
+    // The mapping across the symbol, Entrez, Ensembl and UniProt spaces (MyGene.info).
+    | "resolveGeneIds"
     // Functional annotation (GO / KEGG / Reactome) and STRING networks + enrichment.
     | "lookupAnnotation"
     | "searchInteractions"

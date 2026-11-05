@@ -1,20 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { requestUrlText } from "../../../lib/test/request-url.js";
 import { presentAt } from "../../../lib/present.js";
+import { restoreFetch, stubFetch, type SentRequest } from "../../__fixtures__/fetch-stub.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { createRunScriptTool } from "../../script/run-script.js";
 import { humanbaseTool, type HumanBaseOutput } from "../humanbase.js";
-
-/** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
-function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
-    return Object.assign(run, { preconnect: fetch.preconnect });
-}
-
-const realFetch = globalThis.fetch;
-
-type SentRequest = { url: string; method: string; body: string | undefined };
 
 /** Each request that the tool sent, in call order. */
 let requests: SentRequest[] = [];
@@ -23,21 +14,11 @@ beforeEach(() => {
     requests = [];
 });
 
-afterEach(() => {
-    globalThis.fetch = realFetch;
-});
-
-function bodyText(init: RequestInit | undefined): string | undefined {
-    return typeof init?.body === "string" ? init.body : undefined;
-}
+afterEach(restoreFetch);
 
 /** Answer each request with one status and one body. */
 function stubAnswer(status: number, body: unknown): void {
-    globalThis.fetch = fetchDouble((input, init) => {
-        requests.push({ url: requestUrlText(input), method: init?.method ?? "GET", body: bodyText(init) });
-        const text = typeof body === "string" ? body : JSON.stringify(body);
-        return Promise.resolve(new Response(text, { status, headers: { "content-type": "application/json" } }));
-    });
+    requests = stubFetch(() => ({ status, body }));
 }
 
 type HumanBaseInput = Parameters<typeof humanbaseTool.execute>[0];

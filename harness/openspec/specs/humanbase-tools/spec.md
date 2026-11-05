@@ -29,8 +29,9 @@ throws an unexpected failure, and the agent loop records it as
 envelope.
 
 HumanBase keys each gene on its NCBI Entrez Gene ID only. Thus the tool takes
-Entrez IDs as numbers, and its description tells the agent that it does not take
-a symbol or an Ensembl ID.
+Entrez IDs as numbers. Its description tells the agent to map a symbol or an
+Ensembl ID with `resolve_gene_ids` first (refer to the mygene-tools capability).
+The `entrez` field of each hit of that tool is the input of this tool.
 
 Module detection (`POST /api/integrations/community/`) and NetWAS
 (`POST /api/netwas/`) are out of scope. Each is an asynchronous job that answers
