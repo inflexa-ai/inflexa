@@ -1,0 +1,230 @@
+{
+    "mincut": null,
+    "genes": [
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/672/",
+            "entrez": "672",
+            "systematic_name": "BRCA1",
+            "standard_name": "BRCA1",
+            "description": "BRCA1 DNA repair associated",
+            "xrefs": [
+                {
+                    "xrid": "672",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "ENSG00000012048",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "113705",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "HGNC:1100",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "BROVCA1",
+                "PPP1R53",
+                "PSCP",
+                "BRCAI",
+                "BRCC1",
+                "PNCA4",
+                "FANCS",
+                "RNF53",
+                "IRIS"
+            ],
+            "id": 672,
+            "query": true
+        },
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/2146/",
+            "entrez": 2146,
+            "systematic_name": "EZH2",
+            "standard_name": "EZH2",
+            "description": "enhancer of zeste 2 polycomb repressive complex 2 subunit",
+            "xrefs": [
+                {
+                    "xrid": "601573",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "ENSG00000106462",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "2146",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "HGNC:3527",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "KMT6A",
+                "WVS2",
+                "ENX1",
+                "KMT6",
+                "ENX-1",
+                "WVS",
+                "EZH2b"
+            ],
+            "id": 2146,
+            "query": false
+        },
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/7112/",
+            "entrez": 7112,
+            "systematic_name": "TMPO",
+            "standard_name": "TMPO",
+            "description": "thymopoietin",
+            "xrefs": [
+                {
+                    "xrid": "ENSG00000120802",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "HGNC:11875",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "7112",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "188380",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "LAP2",
+                "TP",
+                "PRO0868",
+                "LEMD4",
+                "CMD1T"
+            ],
+            "id": 7112,
+            "query": false
+        },
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/81930/",
+            "entrez": 81930,
+            "systematic_name": "KIF18A",
+            "standard_name": "KIF18A",
+            "description": "kinesin family member 18A",
+            "xrefs": [
+                {
+                    "xrid": "HGNC:29441",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "611271",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "81930",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "ENSG00000121621",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "PPP1R99",
+                "MS-KIF18A"
+            ],
+            "id": 81930,
+            "query": false
+        }
+    ],
+    "edges": [
+        {
+            "id": 0,
+            "source": 0,
+            "target": 2,
+            "weight": 0.999976
+        },
+        {
+            "id": 1,
+            "source": 0,
+            "target": 1,
+            "weight": 0.999964
+        },
+        {
+            "id": 2,
+            "source": 0,
+            "target": 3,
+            "weight": 0.999958
+        },
+        {
+            "id": 3,
+            "source": 2,
+            "target": 1,
+            "weight": 0.999887
+        },
+        {
+            "id": 4,
+            "source": 2,
+            "target": 3,
+            "weight": 0.999179
+        },
+        {
+            "id": 5,
+            "source": 1,
+            "target": 3,
+            "weight": 0.999887
+        }
+    ]
+}

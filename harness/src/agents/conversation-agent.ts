@@ -50,6 +50,7 @@ import {
     searchProteinTool,
     lookupAnnotationTool,
     searchInteractionsTool,
+    humanbaseTool,
     alphafoldPredictionTool,
     chemblTool,
     pubchemTool,
@@ -294,6 +295,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // STRING networks + gene-set enrichment.
         lookupAnnotationTool,
         searchInteractionsTool,
+        // GIANT tissue- and process-specific functional networks (network / relevant / contexts behind one action).
+        humanbaseTool,
         // Structural biology — the whole-chain confidence of a predicted 3-D
         // model, and the URLs of its coordinate and per-residue files.
         alphafoldPredictionTool,

@@ -11,7 +11,7 @@
  * (`gene_disease_evidence`, `drug_gene_interactions`, `target_safety`,
  * `lookup_annotation`, `gene_preclinical_profile`); where one database answers
  * several questions, the endpoint is an `action` parameter (`chembl`,
- * `pubchem`, `pubmed`, `comptox`, `opentargets`, `search_interactions`).
+ * `pubchem`, `pubmed`, `comptox`, `opentargets`, `search_interactions`, `humanbase`).
  *
  * Every tool returns a BOUNDED result by default. A default call is sized to be
  * read, not to be complete: limits are small, verbose fields are opt-in, and
@@ -27,6 +27,7 @@ export * from "./search-protein.js";
 // Functional annotation / networks
 export * from "./lookup-annotation.js";
 export * from "./search-interactions.js";
+export * from "./humanbase.js";
 
 // Structural biology
 export * from "./alphafold-prediction.js";
