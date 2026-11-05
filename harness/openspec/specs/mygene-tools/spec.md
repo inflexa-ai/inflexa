@@ -36,7 +36,7 @@ The system MUST give one harness tool, `resolveGeneIdsTool`
 (`harness/src/tools/bio/resolve-gene-ids.ts`), with the on-wire id
 `resolve_gene_ids`, built with `defineTool`. The input is `identifiers`, 1 to
 200 identifiers of any of the four spaces, and `species`, with the default
-`human`. The tool MUST return `ok({ genes, notFound, ambiguous })`.
+`human`. The tool MUST return `ok({ genes, notFound, ambiguous, truncated })`.
 
 Each hit in `genes` carries `query`, `symbol`, `name`, `entrez`, `ensembl`, and
 `uniprot`. `query` is the identifier that the hit answers. `entrez` is a number,
@@ -53,12 +53,30 @@ time. The client MUST send all the identifiers in one request.
 #### Scenario: The batch goes in one request
 
 - **WHEN** the tool is called with `[" BRCA1 ", "BRCA1", "7157"]` and `species: "mouse"`
-- **THEN** the client posts one body with `q: ["BRCA1", "7157"]`, the four scopes, and `species: "mouse"`
+- **THEN** the client posts one body with `q: ["BRCA1", "7157"]`, the four scopes, `species: "mouse"`, the cap, and `with_total`
 
 #### Scenario: An identifier with more than one gene
 
 - **WHEN** an identifier matches more than one gene, as a UniProt accession that a family of histone genes shares
 - **THEN** `ambiguous` lists the identifier, and `genes` holds each of its genes
+
+### Requirement: The hits of one identifier have a cap that the tool reports
+
+The client MUST ask for at most 100 hits for each identifier, and it MUST ask
+for the totals (`size` and `with_total`). MyGene cuts the hits of each
+identifier at 10 by default, and the plain batch answer gives no sign of the
+cut. `truncated` MUST list each identifier whose hits filled the cap when the
+largest total of the batch is more than the cap.
+
+#### Scenario: A gene family past the default cut
+
+- **WHEN** the batch holds `P62805`, a UniProt accession that 14 histone genes share
+- **THEN** `genes` holds 14 hits for `P62805`, and `truncated` is empty
+
+#### Scenario: An identifier past the cap
+
+- **WHEN** MyGene gives 100 hits for one identifier and a largest total of 120
+- **THEN** `truncated` lists that identifier, and `genes` holds its 100 hits
 
 ### Requirement: A miss is a data variant
 
@@ -74,7 +92,7 @@ MUST NOT drop the miss. MyGene marks a miss in the batch answer with
 #### Scenario: No identifier matches
 
 - **WHEN** no identifier of the batch matches a gene
-- **THEN** the tool returns `ok({ genes: [], notFound, ambiguous: [] })`, not an error
+- **THEN** the tool returns `ok({ genes: [], notFound, ambiguous: [], truncated: [] })`, not an error
 
 ### Requirement: An unexpected failure is an error tool result
 

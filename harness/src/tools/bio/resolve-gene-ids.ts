@@ -11,7 +11,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { resolveGeneIds, type GeneIdResolution } from "../lib/mygene-client.js";
+import { MYGENE_HITS_PER_ID, resolveGeneIds, type GeneIdResolution } from "../lib/mygene-client.js";
 
 const MAX_IDENTIFIERS = 200;
 
@@ -36,6 +36,7 @@ const outputSchema = z.object({
     ),
     notFound: z.array(z.string()),
     ambiguous: z.array(z.string()),
+    truncated: z.array(z.string()),
 });
 
 export const resolveGeneIdsTool = defineTool({
@@ -49,7 +50,8 @@ export const resolveGeneIdsTool = defineTool({
         "Each hit carries the `query` that it answers, `symbol`, `name` (the full gene name), `entrez` (a number, or null for a gene with no " +
         "Entrez record), `ensembl` and `uniprot` (arrays: several Ensembl IDs mean copies on alternate haplotypes or strains, and their order " +
         "carries no rank). `notFound` lists each identifier with no gene. `ambiguous` lists each identifier with more than one gene, and each of " +
-        "those genes is in `genes` — a UniProt accession shared by a family of genes gives every member.\n" +
+        "those genes is in `genes` — a UniProt accession shared by a family of genes gives every member. An identifier gives at most " +
+        `${MYGENE_HITS_PER_ID} genes, and \`truncated\` lists each identifier that had more.\n` +
         "`species` takes a common name ('human', the default, 'mouse', 'rat', 'zebrafish') or an NCBI Taxonomy ID as a string ('9606').\n" +
         "notFound is valid no-data — report it and continue, do not retry unchanged.",
     inputSchema: z.object({

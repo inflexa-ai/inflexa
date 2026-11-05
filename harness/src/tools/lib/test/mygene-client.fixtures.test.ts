@@ -1,8 +1,7 @@
 import { expect } from "bun:test";
-import { z } from "zod";
 
 import { fixtureCase, runFixtureSuite } from "../__fixtures__/fixture-runner.js";
-import { MyGeneBatchRowSchema, type MyGeneHit, type MyGeneRow } from "../mygene-client.js";
+import { MyGeneBatchAnswerSchema, type MyGeneHit, type MyGeneRow } from "../mygene-client.js";
 
 function hitsFor(rows: MyGeneRow[], query: string): MyGeneHit[] {
     return rows.flatMap((row) => (row.kind === "hit" && row.hit.query === query ? [row.hit] : []));
@@ -18,12 +17,12 @@ function onlyHit(rows: MyGeneRow[], query: string): MyGeneHit {
 
 runFixtureSuite("mygene golden fixtures", [
     fixtureCase({
-        name: "MyGeneBatchRowSchema — a mixed batch with each row variant",
+        name: "MyGeneBatchAnswerSchema — a mixed batch with each row variant",
         provider: "mygene",
         fixture: "batch-mixed.json",
         drift: "batch-mixed.drift.json",
-        schema: z.array(MyGeneBatchRowSchema),
-        assertOutput: (rows) => {
+        schema: MyGeneBatchAnswerSchema,
+        assertOutput: ({ max_total: maxTotal, hits: rows }) => {
             // A symbol, an Entrez ID, and a UniProt-free gene each map to one hit, and `entrezgene` arrives as a string.
             expect(onlyHit(rows, "BRCA1")).toEqual({
                 query: "BRCA1",
@@ -51,8 +50,9 @@ runFixtureSuite("mygene golden fixtures", [
                 ensembl: ["ENSG00000235872"],
                 uniprot: [],
             });
-            // A UniProt accession that a gene family shares gives each member.
-            expect(hitsFor(rows, "P62805").length).toBeGreaterThan(1);
+            // A UniProt accession that a gene family shares gives each member, past the default cut of 10.
+            expect(hitsFor(rows, "P62805")).toHaveLength(14);
+            expect(maxTotal).toBe(14);
         },
     }),
 ]);

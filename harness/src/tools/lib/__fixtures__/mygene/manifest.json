@@ -2,13 +2,13 @@
     "batch-mixed.json": {
         "url": "https://mygene.info/v3/query",
         "method": "POST",
-        "body": "{\"q\":[\"BRCA1\",\"NOTAGENE123\",\"672\",\"ENSG00000141510\",\"HLA-A\",\"CDKN2A\",\"MIR21\",\"LOC100128288\",\"ENSG00000235872\",\"P62805\"],\"scopes\":\"symbol,entrezgene,ensembl.gene,uniprot\",\"fields\":\"symbol,name,entrezgene,ensembl.gene,uniprot.Swiss-Prot\",\"species\":\"human\"}",
+        "body": "{\"q\":[\"BRCA1\",\"NOTAGENE123\",\"672\",\"ENSG00000141510\",\"HLA-A\",\"CDKN2A\",\"MIR21\",\"LOC100128288\",\"ENSG00000235872\",\"P62805\"],\"scopes\":\"symbol,entrezgene,ensembl.gene,uniprot\",\"fields\":\"symbol,name,entrezgene,ensembl.gene,uniprot.Swiss-Prot\",\"species\":\"human\",\"size\":100,\"with_total\":true}",
         "headers": {
             "content-type": "application/json"
         },
         "capturedAt": "2026-11-05",
         "ignorePaths": [
-            "*._score"
+            "hits.*._score"
         ]
     }
 }

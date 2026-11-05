@@ -15,7 +15,12 @@
  * normalizes both to an array, in the wire order, which carries no rank.
  *
  * A miss is no error: the batch answers HTTP 200, and it marks the miss with
- * `notfound: true`. An unknown species answers HTTP 400 with a message, which the
+ * `notfound: true`.
+ *
+ * MyGene cuts the hits of each identifier at `size`, 10 by default, and the plain
+ * batch answer gives no sign of the cut. Thus the client sends `size` and
+ * `with_total`, and the answer is then an object: `max_total`, the largest hit
+ * count of one identifier before the cut, and `hits`, the rows. An unknown species answers HTTP 400 with a message, which the
  * caller sees as an error.
  */
 
@@ -33,6 +38,9 @@ const MYGENE_QUERY_URL = "https://mygene.info/v3/query";
 const SCOPES = "symbol,entrezgene,ensembl.gene,uniprot";
 
 const FIELDS = "symbol,name,entrezgene,ensembl.gene,uniprot.Swiss-Prot";
+
+/** The most hits that one identifier gives. A UniProt accession that a gene family shares gives a hit for each member. */
+export const MYGENE_HITS_PER_ID = 100;
 
 export type MyGeneHit = {
     /** The identifier of the request that this hit answers. */
@@ -54,6 +62,8 @@ export type GeneIdResolution = {
     notFound: string[];
     /** Each identifier that matched more than one gene. Each of its genes is in `genes`. */
     ambiguous: string[];
+    /** Each identifier whose hits were cut at `MYGENE_HITS_PER_ID`. `genes` holds the first of them only. */
+    truncated: string[];
 };
 
 function asArray<T>(value: T | T[] | undefined): T[] {
@@ -91,6 +101,12 @@ export const MyGeneBatchRowSchema = z.union([MissRowSchema, HitRowSchema]).trans
     };
 });
 
+/** The batch answer of `POST /v3/query` with `with_total`. */
+export const MyGeneBatchAnswerSchema = z.object({
+    max_total: z.number(),
+    hits: z.array(MyGeneBatchRowSchema),
+});
+
 /**
  * Resolve a batch of gene identifiers, mixed freely, in one request. A duplicate
  * identifier is sent one time, and the order of the input is kept.
@@ -100,18 +116,18 @@ export const MyGeneBatchRowSchema = z.union([MissRowSchema, HitRowSchema]).trans
  */
 export async function resolveGeneIds(identifiers: readonly string[], species: string): Promise<GeneIdResolution> {
     const queries = [...new Set(identifiers.map((id) => id.trim()).filter((id) => id !== ""))];
-    if (queries.length === 0) return { genes: [], notFound: [], ambiguous: [] };
-    const res = await apiFetchValidated(MYGENE_QUERY_URL, z.array(MyGeneBatchRowSchema), {
+    if (queries.length === 0) return { genes: [], notFound: [], ambiguous: [], truncated: [] };
+    const res = await apiFetchValidated(MYGENE_QUERY_URL, MyGeneBatchAnswerSchema, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ q: queries, scopes: SCOPES, fields: FIELDS, species }),
+        body: JSON.stringify({ q: queries, scopes: SCOPES, fields: FIELDS, species, size: MYGENE_HITS_PER_ID, with_total: true }),
     });
     if (res.isErr()) throw new Error(describeApiError(res.error));
 
     const genes: MyGeneHit[] = [];
     const notFound: string[] = [];
     const hitCount = new Map<string, number>();
-    for (const row of res.value) {
+    for (const row of res.value.hits) {
         if (row.kind === "miss") {
             notFound.push(row.query);
             continue;
@@ -120,5 +136,8 @@ export async function resolveGeneIds(identifiers: readonly string[], species: st
         hitCount.set(row.hit.query, (hitCount.get(row.hit.query) ?? 0) + 1);
     }
     const ambiguous = [...hitCount].filter(([, count]) => count > 1).map(([query]) => query);
-    return { genes, notFound, ambiguous };
+    // `max_total` is one number for the whole batch. Past the cap, each identifier that filled the cap can be the one
+    // that was cut, thus each such identifier counts as cut.
+    const truncated = res.value.max_total > MYGENE_HITS_PER_ID ? [...hitCount].filter(([, count]) => count >= MYGENE_HITS_PER_ID).map(([query]) => query) : [];
+    return { genes, notFound, ambiguous, truncated };
 }
