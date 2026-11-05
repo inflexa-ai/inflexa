@@ -391,7 +391,11 @@ function kindOfLinguistType(type: string): FileKind | null {
     }
 }
 
-type LinguistMaps = { byName: ReadonlyMap<string, FileType>; byExtension: ReadonlyMap<string, FileType> };
+type LinguistMaps = {
+    byName: ReadonlyMap<string, FileType>;
+    byExtension: ReadonlyMap<string, FileType>;
+    byNameWithoutGrammar: ReadonlyMap<string, FileType>;
+};
 
 let linguistMaps: LinguistMaps | null = null;
 
@@ -408,8 +412,8 @@ function winsTie(candidate: FileType & { primary: boolean }, seen: FileType & { 
  * on the first lookup that the table does not answer.
  *
  * A language with a grammar wins a tie, thus a language with no grammar adds a kind and never takes the highlight of a
- * file. The name map holds only a language with a grammar, because a whole name wins over an extension of the table: the
- * name `pom.xml` of Maven POM, which has no grammar, would take the `xml` of the table.
+ * file. A whole name of a language with no grammar goes in a separate map, which the lookup reads after each extension:
+ * the name `pom.xml` of Maven POM keeps the `xml` of the table, and the name `BUILD` of Starlark still gets its kind.
  */
 function linguistMapsOf(): LinguistMaps {
     if (linguistMaps !== null) return linguistMaps;
@@ -417,6 +421,7 @@ function linguistMapsOf(): LinguistMaps {
     for (const [id, ...names] of HIGHLIGHT_LANGUAGES) for (const name of [id, ...names]) highlightIdOf.set(name, id);
 
     const byName = new Map<string, FileType>();
+    const byNameWithoutGrammar = new Map<string, FileType>();
     const byExtension = new Map<string, FileType & { primary: boolean }>();
     // The keys of a module namespace are in code-unit order, thus the first language of a tie is the first Linguist name.
     const languages: readonly Language[] = Object.values(linguist);
@@ -427,11 +432,10 @@ function linguistMapsOf(): LinguistMaps {
         const candidates = LINGUIST_WITHOUT_GRAMMAR.has(language.name) ? [] : [lower, lower.replaceAll(" ", "-"), ...(language.aliases ?? [])];
         const id = candidates.map((candidate) => highlightIdOf.get(candidate)).find((found) => found !== undefined) ?? "text";
 
-        if (id !== "text") {
-            for (const filename of language.filenames ?? []) {
-                const key = filename.toLowerCase();
-                if (!byName.has(key)) byName.set(key, { kind, language: id });
-            }
+        const names = id === "text" ? byNameWithoutGrammar : byName;
+        for (const filename of language.filenames ?? []) {
+            const key = filename.toLowerCase();
+            if (!names.has(key)) names.set(key, { kind, language: id });
         }
         // Linguist lists the primary extension of a language first. After a grammar, the primary owner of an extension wins a tie.
         for (const [index, extension] of (language.extensions ?? []).entries()) {
@@ -441,7 +445,7 @@ function linguistMapsOf(): LinguistMaps {
             if (seen === undefined || winsTie(candidate, seen)) byExtension.set(key, candidate);
         }
     }
-    linguistMaps = { byName, byExtension };
+    linguistMaps = { byName, byExtension, byNameWithoutGrammar };
     return linguistMaps;
 }
 
@@ -453,8 +457,8 @@ export function extensionOf(name: string): string | null {
 
 /**
  * The kind and the language of a file, or `null` for a name that the map does not know. The argument can be a name or a
- * path: only the part after the last separator counts. The order is a name entry, a Linguist file name, an extension of
- * the table, and a Linguist extension. Thus the table keeps the readings of an analyst, for example `m` is MATLAB, and a
+ * path: only the part after the last separator counts. The order is a name entry, a Linguist file name with a grammar, an
+ * extension of the table, a Linguist extension, and a Linguist file name with no grammar. Thus the table keeps the readings of an analyst, for example `m` is MATLAB, and a
  * whole name such as `CMakeLists.txt` wins over its extension. A `.gz` file takes the kind of the extension before `.gz`
  * when the table knows it, and `data` otherwise, and its language is `text`.
  */
@@ -463,13 +467,14 @@ function fileTypeOf(name: string): FileType | null {
     const lowerBase = base.toLowerCase();
     const byName = TYPE_BY_NAME.get(lowerBase) ?? linguistMapsOf().byName.get(lowerBase);
     if (byName !== undefined) return byName;
+    const nameWithoutGrammar = linguistMapsOf().byNameWithoutGrammar.get(lowerBase) ?? null;
     const extension = extensionOf(base);
-    if (extension === null) return null;
+    if (extension === null) return nameWithoutGrammar;
     if (extension === "gz") {
         const inner = extensionOf(base.slice(0, -".gz".length));
         return { kind: (inner === null ? undefined : TYPE_BY_EXTENSION.get(inner)?.kind) ?? "data", language: "text" };
     }
-    return TYPE_BY_EXTENSION.get(extension) ?? linguistMapsOf().byExtension.get(extension) ?? null;
+    return TYPE_BY_EXTENSION.get(extension) ?? linguistMapsOf().byExtension.get(extension) ?? nameWithoutGrammar;
 }
 
 /**

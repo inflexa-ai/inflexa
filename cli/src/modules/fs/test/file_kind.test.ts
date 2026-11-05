@@ -111,6 +111,12 @@ describe("fileKindOf and languageOf", () => {
         expect([fileKindOf("model.stan"), languageOf("model.stan")]).toEqual(["code", "text"]);
     });
 
+    test("give the kind and the language text to a Linguist file name with no grammar, after each extension", () => {
+        expect([fileKindOf("BUILD"), languageOf("BUILD")]).toEqual(["code", "text"]);
+        expect([fileKindOf("BUILD.bazel"), languageOf("BUILD.bazel")]).toEqual(["code", "text"]);
+        expect([fileKindOf("pom.xml"), languageOf("pom.xml")]).toEqual(["data", "xml"]);
+    });
+
     test("let a Linguist language with a grammar win a tie over a language with no grammar", () => {
         expect([fileKindOf("pom.xml"), languageOf("pom.xml")]).toEqual(["data", "xml"]);
         expect(languageOf("boot.s")).toBe("asm");
