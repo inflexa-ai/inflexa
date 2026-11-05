@@ -67,6 +67,21 @@ describe("get_variant_frequencies", () => {
         expect(out.variants.map((variant) => variant.variantId)).toEqual([FOUND]);
     });
 
+    it("gives a null af for a callset with no called allele, not the 0 that gnomAD sends", async () => {
+        const genome = { ac: 0, an: 0, af: 0, populations: [] };
+        answerWith(200, { data: { v0: { variant_id: MISSING, rsids: [], genome, exome: null } } });
+
+        const out = (await call([MISSING]))._unsafeUnwrap();
+
+        expect(out.variants[0]?.genome).toEqual({ ac: 0, an: 0, af: null, populations: [] });
+    });
+
+    it("throws for an answer without the alias of a variant, and reports no miss", async () => {
+        answerWith(200, { data: {} });
+
+        await expect(call([MISSING])).rejects.toThrow(`gnomAD gave no answer for ${MISSING}`);
+    });
+
     it("gives the reference genome of a GRCh37 dataset", async () => {
         answerWith(200, readFixture("gnomad", "batch-exac.json"));
 

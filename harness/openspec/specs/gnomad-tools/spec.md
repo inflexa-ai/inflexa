@@ -48,6 +48,10 @@ Each record in `variants` carries `query`, `variantId`, `rsids`, `genome`, and
 `ac`, `an`, `af`, and `populations`. Each callset is `null` when the dataset
 has no such callset.
 
+The `af` of a callset MUST be `null` when its `an` is 0. gnomAD answers
+`af: 0` for a callset with no called allele. That value reads as a measured
+frequency of 0, and a rarity filter then accepts a variant with no data.
+
 The client MUST trim each ID, and it MUST send a duplicate ID one time. The
 client MUST send the batch in one request, with one GraphQL alias for each
 variant.
@@ -56,6 +60,11 @@ variant.
 
 - **WHEN** the tool is called with `variantIds: ["1-55051215-G-GA"]`
 - **THEN** the record carries `rsids: ["rs527413419"]`, a `genome` with an `af` of 0.0047727, and an `exome` with an `af` of 0.0006317
+
+#### Scenario: A callset with no called allele
+
+- **WHEN** gnomAD answers a callset with `an: 0` and `af: 0`
+- **THEN** the `af` of that callset is `null`
 
 #### Scenario: The batch goes in one request
 
@@ -128,6 +137,15 @@ that the schema refuses. `execute` MUST also throw when an `errors` entry is not
 the message of a miss. A miss in the same answer does not change that. A rate
 limit answers HTTP 400 with a message, and the error text MUST hold that
 message.
+
+`execute` MUST throw when the answer has no alias for a variant of the batch.
+GraphQL gives an explicit `null` for a miss, thus an absent alias is an invalid
+answer, not a miss.
+
+#### Scenario: An answer without an alias
+
+- **WHEN** gnomAD answers `{ "data": {} }` for a batch of one variant
+- **THEN** `execute` throws, and the tool does not report a miss
 
 #### Scenario: The rate limit is an error
 
