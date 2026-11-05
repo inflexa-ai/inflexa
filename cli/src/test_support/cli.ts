@@ -46,31 +46,34 @@ function runWithCapturedStreams(spawn: (outFd: number, errFd: number) => number 
     // Opened inside the guard, and each closed independently: opening the second can fail once the
     // first has succeeded, and an unguarded pair would leak that descriptor for the life of the test
     // process.
+    // The guard ends before `collect`: `collect` closes the descriptors itself, so a fault inside it
+    // must not reach a second close, whose EBADF would replace the real error.
     let outFd: number | undefined;
     let errFd: number | undefined;
+    let started: { readonly outFd: number; readonly errFd: number; readonly exitCode: number | Promise<number> };
     try {
         outFd = openSync(outPath, "w");
         errFd = openSync(errPath, "w");
-        const opened = { outFd, errFd };
-        const exitCode = spawn(outFd, errFd);
-        if (!(exitCode instanceof Promise)) return collect(outFd, errFd, exitCode);
-        // The async runner's exit code lands after the child exits, so the collect — and the same
-        // no-leak guard for a faulted wait — ride the promise.
-        return exitCode.then(
-            (code) => collect(opened.outFd, opened.errFd, code),
-            (cause: unknown) => {
-                closeSync(opened.outFd);
-                closeSync(opened.errFd);
-                rmSync(dir, { recursive: true, force: true });
-                throw cause;
-            },
-        );
+        started = { outFd, errFd, exitCode: spawn(outFd, errFd) };
     } catch (cause) {
         if (outFd !== undefined) closeSync(outFd);
         if (errFd !== undefined) closeSync(errFd);
         rmSync(dir, { recursive: true, force: true });
         throw cause;
     }
+    const { exitCode } = started;
+    if (!(exitCode instanceof Promise)) return collect(started.outFd, started.errFd, exitCode);
+    // The async runner's exit code lands after the child exits, so the collect — and the same
+    // no-leak guard for a faulted wait — ride the promise.
+    return exitCode.then(
+        (code) => collect(started.outFd, started.errFd, code),
+        (cause: unknown) => {
+            closeSync(started.outFd);
+            closeSync(started.errFd);
+            rmSync(dir, { recursive: true, force: true });
+            throw cause;
+        },
+    );
 }
 
 /**
