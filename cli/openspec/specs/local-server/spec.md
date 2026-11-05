@@ -1539,6 +1539,7 @@ For a file name that the table does not know, the server MUST use the language d
 2. A Linguist language with a grammar whose file names hold the whole file name.
 3. The extension in the table.
 4. A Linguist language whose extensions hold the extension.
+5. A Linguist language with no grammar whose file names hold the whole file name.
 
 The language of a Linguist language is its language id in the highlighter, or `text` when the highlighter has no grammar for it. A Linguist language with a grammar is a language whose id is not `text`. The language id comes from the name or an alias of the Linguist language. FreeMarker and CQL have no language id, because their aliases name the grammars of Fluent and of Cypher.
 
@@ -1625,6 +1626,11 @@ The kind and the language MUST come from the file name only. The folder of the f
 
 - **WHEN** the server takes the kind of `model.stan`
 - **THEN** the kind is `code`, and the language is `text`
+
+#### Scenario: A Linguist file name with no grammar
+
+- **WHEN** the server takes the kind of `BUILD` and of `pom.xml`
+- **THEN** the kinds are `code` and `data`, and the languages are `text` and `xml`
 
 #### Scenario: A grammar wins a tie in the Linguist data
 
