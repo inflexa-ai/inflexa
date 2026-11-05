@@ -1,38 +1,41 @@
 name: "Release: all"
 
-# The full release, with no pull request. Give a target version for each
-# component you want to ship, and the run walks them in dependency order:
-# prov-kernel, then harness, then cli. Each step pushes its bump to main as the
-# release bot and blocks until the package is on npm (or, for the cli, until the
-# GitHub release is live), so the next step only ever builds against something
-# that is really published.
+# The full release, with no pull request. Pick a bump for each component you
+# want to ship, and the run walks them in dependency order: prov-kernel, then
+# harness, then cli. Each step bumps the version on main, pushes it as the
+# release bot, and blocks until the package is on npm (or, for the cli, until
+# the GitHub release is live), so the next step only ever builds against
+# something that is really published.
 #
-# Leave a field empty to leave that component alone. Releasing only the cli is a
-# valid run, and so is releasing only the harness — the jobs below skip on an
-# empty version rather than failing, and a skipped step never blocks the next.
+# Pick none to leave that component alone. Releasing only the cli is a valid
+# run, and so is releasing only the harness — the jobs below skip on none
+# rather than failing, and a skipped step never blocks the next. The run summary
+# reports the version on main and the target for each component.
 #
-# A version field is typed, not picked from a list: workflow_dispatch resolves
-# an input default at parse time, so no default can carry the version that is
-# live right now. The run summary reports what main actually carries for each
-# component, and a version below main's is a hard error, never a silent no-op.
+# If a run fails after a component shipped, use "Re-run failed jobs", or
+# dispatch again with none for each component that shipped. "Re-run all jobs"
+# bumps and releases every component again.
 on:
   workflow_dispatch:
     inputs:
-      prov_kernel_version:
-        description: "prov-kernel target version, bare MAJOR.MINOR.PATCH. Current: the version field of prov-kernel/package.json on main. Empty skips it."
+      prov_kernel_bump:
+        description: "prov-kernel bump, from the version field of prov-kernel/package.json on main. None skips it."
         required: false
-        default: ""
-        type: string
-      harness_version:
-        description: "harness target version, bare MAJOR.MINOR.PATCH. Current: the version field of harness/package.json on main. Empty skips it."
+        default: none
+        type: choice
+        options: [none, patch, minor, major]
+      harness_bump:
+        description: "harness bump, from the version field of harness/package.json on main. None skips it."
         required: false
-        default: ""
-        type: string
-      cli_version:
-        description: "cli target version, bare MAJOR.MINOR.PATCH. Current: the version field of cli/package.json on main. Empty skips it."
+        default: none
+        type: choice
+        options: [none, patch, minor, major]
+      cli_bump:
+        description: "cli bump, from the version field of cli/package.json on main. None skips it."
         required: false
-        default: ""
-        type: string
+        default: none
+        type: choice
+        options: [none, patch, minor, major]
 
 permissions: {}
 
@@ -48,11 +51,11 @@ jobs:
     uses: ./.github/workflows/release-bump.yml
     permissions:
       contents: read
-      actions: write
+      actions: read
     secrets: inherit
     with:
       component: prov-kernel
-      version: ${{ inputs.prov_kernel_version }}
+      bump: ${{ inputs.prov_kernel_bump }}
 
   harness:
     # The harness does not depend on prov-kernel: harness/package.json names no
@@ -68,11 +71,11 @@ jobs:
     uses: ./.github/workflows/release-bump.yml
     permissions:
       contents: read
-      actions: write
+      actions: read
     secrets: inherit
     with:
       component: harness
-      version: ${{ inputs.harness_version }}
+      bump: ${{ inputs.harness_bump }}
 
   cli:
     # A real dependency this time: cli installs both siblings from npm, and
@@ -83,13 +86,13 @@ jobs:
     uses: ./.github/workflows/release-bump.yml
     permissions:
       contents: read
-      actions: write
+      actions: read
     secrets: inherit
     with:
       component: cli
-      version: ${{ inputs.cli_version }}
+      bump: ${{ inputs.cli_bump }}
       # The versions this run just shipped, so the binary bundles them. Each is
       # empty when its component is not part of the run, and an empty pin leaves
       # the existing one in cli/package.json untouched.
-      harness_pin: ${{ inputs.harness_version }}
-      prov_kernel_pin: ${{ inputs.prov_kernel_version }}
+      harness_pin: ${{ needs.harness.outputs.version }}
+      prov_kernel_pin: ${{ needs.prov-kernel.outputs.version }}
