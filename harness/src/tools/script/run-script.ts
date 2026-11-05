@@ -290,7 +290,13 @@ async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, l
     return plainJson(result.value);
 }
 
-/** A JSON schema without its prose: the types and the constraints stay, the descriptions and the examples go. */
+/** The keywords whose value maps a name to a schema. A key of such a map names a field, and it is no keyword. */
+const SCHEMA_MAP_KEYWORDS: ReadonlySet<string> = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+
+/**
+ * A JSON schema without its prose: the types and the constraints stay, the descriptions and the examples go. Only the
+ * keywords of a schema are prose, thus a field with the name `description` stays.
+ */
 function withoutProse(schema: unknown): unknown {
     const array = UnknownArraySchema.safeParse(schema);
     if (array.success) return array.data.map(withoutProse);
@@ -299,8 +305,15 @@ function withoutProse(schema: unknown): unknown {
     return Object.fromEntries(
         Object.entries(record)
             .filter(([key]) => key !== "description" && key !== "examples")
-            .map(([key, value]) => [key, withoutProse(value)]),
+            .map(([key, value]) => [key, SCHEMA_MAP_KEYWORDS.has(key) ? schemaMapWithoutProse(value) : withoutProse(value)]),
     );
+}
+
+/** A map from a name to a schema, with each schema without its prose and each name kept. */
+function schemaMapWithoutProse(map: unknown): unknown {
+    const record = parseUnknownRecord(map);
+    if (record === undefined) return map;
+    return Object.fromEntries(Object.entries(record).map(([name, schema]) => [name, withoutProse(schema)]));
 }
 
 /**
