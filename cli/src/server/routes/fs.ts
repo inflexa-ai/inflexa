@@ -464,6 +464,8 @@ function countRecords(text: string, start: number): number {
 /**
  * The member for the head of a file that is not a figure. `cut` is true when the file is longer than the head. A NUL byte,
  * or a byte sequence that is not UTF-8, gives `card`. A table needs a full line in the head and a separator in the header.
+ * A `.txt` text note is a table only by its content, because the name of a GEO count matrix and of a text note look the same.
+ * A `.txt` file that a whole name makes code, for example `CMakeLists.txt`, stays code.
  */
 function previewHead(name: string, head: Uint8Array, cut: boolean): TablePreview | TextPreview | CardPreview {
     const card: CardPreview = { kind: "card", format: extensionOf(name), mediaType: contentTypeOf(name) };
@@ -478,7 +480,8 @@ function previewHead(name: string, head: Uint8Array, cut: boolean): TablePreview
 
     const headerEnd = recordEnd(text, 0);
     const holdsFullLine = !cut || headerEnd >= 0;
-    if (holdsFullLine && fileKindOf(name) === "table") {
+    const kind = fileKindOf(name);
+    if (holdsFullLine && (kind === "table" || (kind === "doc" && extensionOf(name) === "txt"))) {
         const header = headerEnd < 0 ? text : text.slice(0, headerEnd);
         const separator = header.includes("\t") ? "\t" : header.includes(",") ? "," : null;
         if (separator !== null) {

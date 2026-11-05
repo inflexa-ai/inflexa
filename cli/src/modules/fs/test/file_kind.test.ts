@@ -41,7 +41,7 @@ describe("fileKindOf and languageOf", () => {
     });
 
     test("give null and text for a name with no extension and no name entry", () => {
-        for (const name of ["README", ".bashrc", "draft.", ""]) {
+        for (const name of ["README", "draft.", ""]) {
             expect(fileKindOf(name)).toBeNull();
             expect(languageOf(name)).toBe("text");
         }
@@ -68,6 +68,52 @@ describe("fileKindOf and languageOf", () => {
         expect(fileKindOf("/data/study.csv/counts.csv.gz")).toBe("table");
         expect(fileKindOf("C:\\data\\v1.2\\README")).toBeNull();
         expect(fileKindOf("C:\\data\\v1.2\\counts.csv")).toBe("table");
+    });
+
+    test("give code to a script of run_script, and doc to a text note", () => {
+        expect([fileKindOf("call_1.js"), languageOf("call_1.js")]).toEqual(["code", "javascript"]);
+        expect([fileKindOf("plot.tsx"), languageOf("plot.tsx")]).toEqual(["code", "tsx"]);
+        expect([fileKindOf("README.txt"), languageOf("README.txt")]).toEqual(["doc", "text"]);
+    });
+
+    test("give the shiki id and the kind of a language that only Linguist knows", () => {
+        expect([fileKindOf("build.kts"), languageOf("build.kts")]).toEqual(["code", "kotlin"]);
+        expect([fileKindOf("main.swift"), languageOf("main.swift")]).toEqual(["code", "swift"]);
+        expect([fileKindOf("Gemfile"), languageOf("Gemfile")]).toEqual(["code", "ruby"]);
+    });
+
+    test("give the kind of the Linguist type", () => {
+        expect([fileKindOf("App.vue"), languageOf("App.vue")]).toEqual(["code", "vue"]);
+        expect([fileKindOf("de.po"), languageOf("de.po")]).toEqual(["doc", "po"]);
+        expect([fileKindOf("api.proto"), languageOf("api.proto")]).toEqual(["data", "proto"]);
+    });
+
+    test("read the table only for the extension before .gz", () => {
+        expect([fileKindOf("main.swift.gz"), languageOf("main.swift.gz")]).toEqual(["data", "text"]);
+    });
+
+    test("give the canonical shiki id for a Linguist file name", () => {
+        expect([fileKindOf(".bashrc"), languageOf(".bashrc")]).toEqual(["code", "shellscript"]);
+        expect(languageOf("/home/u/.BASHRC")).toBe("shellscript");
+    });
+
+    test("let a Linguist file name win over the extension in the table", () => {
+        expect([fileKindOf("CMakeLists.txt"), languageOf("CMakeLists.txt")]).toEqual(["code", "cmake"]);
+    });
+
+    test("give no shiki id to a Linguist language whose alias names a different grammar", () => {
+        expect([fileKindOf("query.cql"), languageOf("query.cql")]).toEqual([null, "text"]);
+        expect(languageOf("page.ftlh")).toBe("text");
+        expect(languageOf("messages.ftl")).toBe("fluent");
+    });
+
+    test("let the table win over Linguist for an extension", () => {
+        expect(languageOf("fit.m")).toBe("matlab");
+        expect(languageOf("run.do")).toBe("stata");
+    });
+
+    test("give an extension of more than one Linguist language to the language whose primary extension it is", () => {
+        expect(languageOf("site.pp")).toBe("puppet");
     });
 
     test("does not read an inherited property of the map as a kind", () => {
