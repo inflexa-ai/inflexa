@@ -55,7 +55,11 @@ export type HumanBaseScoredContext = HumanBaseContext & { score: number };
 export type HumanBaseGene = {
     entrez: number;
     symbol: string;
-    description: string;
+    /**
+     * The full name of the gene, from the wire key `description`. A result field named `description` would vanish from
+     * the `run_script` catalog, which drops each key of that name as prose.
+     */
+    name: string;
     ensembl: string | null;
     hgnc: string | null;
     /** True for a gene of the query, false for a neighbor that HumanBase added. */
@@ -161,7 +165,7 @@ export const HumanBaseNetworkSchema = z
         const genes: HumanBaseGene[] = d.genes.map((gene) => ({
             entrez: gene.entrez,
             symbol: gene.standard_name,
-            description: gene.description,
+            name: gene.description,
             ensembl: xrefOf(gene.xrefs, "Ensembl"),
             hgnc: xrefOf(gene.xrefs, "HGNC"),
             query: gene.query,

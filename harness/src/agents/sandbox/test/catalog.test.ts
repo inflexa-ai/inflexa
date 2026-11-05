@@ -80,6 +80,19 @@ describe("createSandboxAgents", () => {
         }
     });
 
+    it("gives the HumanBase network tool to the network agent only, as a script tool", () => {
+        for (const [id, def] of Object.entries(agents)) {
+            expect(
+                def.tools.some((t) => t.id === "humanbase"),
+                `${id} declares humanbase directly`,
+            ).toBe(false);
+            expect(
+                (def.scriptTools ?? []).some((t) => t.id === "humanbase"),
+                `${id} humanbase`,
+            ).toBe(id === "network-agent");
+        }
+    });
+
     it("every AgentDefinition.systemPrompt contains the sandbox layer verbatim", () => {
         for (const [id, def] of Object.entries(agents)) {
             expect(def.systemPrompt.length, `${id} prompt empty`).toBeGreaterThan(100);
