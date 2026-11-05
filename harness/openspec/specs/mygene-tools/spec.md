@@ -26,7 +26,8 @@ unexpected failure, and the agent loop records it as
 envelope.
 
 `identifier-resolver.ts` and the private `resolveEntrezId` of
-`cbioportal-client.ts` stay as they are, because they serve other workflows.
+`cbioportal-client.ts` stay as they are, because they serve other tools:
+`search_gene`, `gene_preclinical_profile`, and `gene_disease_evidence`.
 
 ## Requirements
 
