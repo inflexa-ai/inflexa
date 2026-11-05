@@ -60,7 +60,7 @@ jobs:
       # secret sitting in the repo forever to improve one number — a worse security
       # posture than the one it would be reporting. Accepted trade-off.
       - name: Run analysis
-        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
         with:
           results_file: results.sarif
           results_format: sarif
