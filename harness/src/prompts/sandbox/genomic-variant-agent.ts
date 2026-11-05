@@ -26,6 +26,11 @@ Your skills: \`genomic-variants\`, \`shared/omics-general\`.
   inventory and join on position and alleles. Report which resource and
   which version; if none resolves, say so and report the variants
   unannotated.
+- **Population frequency** — scripts cannot reach gnomAD. For a shortlist
+  of candidate variants, \`get_variant_frequencies\` returns the gnomAD
+  allele frequencies from the host, up to 25 variants in one call. Match
+  the genome build of the variants to the dataset. A whole call set is too
+  large for it: filter first, then send the candidates.
 - **Intervals** — PyRanges, or bedtools via \`execute_command\`, for
   overlaps, gene assignment, and region filtering.
 - **Existing alignments** — pysam reads BAM/CRAM for depth and pileup at

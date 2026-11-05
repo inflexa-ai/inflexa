@@ -64,7 +64,7 @@ export const getVariantFrequenciesTool = defineTool({
             .array(z.string().trim().refine(isGnomadVariantId, "a variant ID is chrom-pos-ref-alt on chromosome 1-22, X or Y, for example '1-55051215-G-GA'"))
             .min(1)
             .max(GNOMAD_MAX_VARIANTS)
-            .describe(`Variant IDs, chrom-pos-ref-alt, max ${GNOMAD_MAX_VARIANTS} (e.g. ['1-55051215-G-GA', 'chrX:100000000:A:G']).`),
+            .describe(`Variant IDs, chrom-pos-ref-alt, max ${GNOMAD_MAX_VARIANTS} (e.g. ['1-55051215-G-GA']).`),
         dataset: z
             .enum(GNOMAD_DATASETS)
             .default("gnomad_r4")
