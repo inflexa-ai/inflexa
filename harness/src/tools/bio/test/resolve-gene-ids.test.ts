@@ -4,6 +4,7 @@ import { restoreFetch, stubFetch, type SentRequest } from "../../__fixtures__/fe
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { createRunScriptTool } from "../../script/run-script.js";
+import { MYGENE_HITS_PER_ID } from "../../lib/mygene-client.js";
 import { humanbaseTool } from "../humanbase.js";
 import { resolveGeneIdsTool } from "../resolve-gene-ids.js";
 
@@ -44,7 +45,7 @@ async function callResolve(identifiers: string[], species = "human"): ReturnType
 
 describe("resolve_gene_ids", () => {
     it("maps a symbol to its Entrez, Ensembl, and UniProt IDs", async () => {
-        stubHosts([[MYGENE, 200, [BRCA1_HIT]]]);
+        stubHosts([[MYGENE, 200, { max_total: 1, hits: [BRCA1_HIT] }]]);
 
         const out = (await callResolve(["BRCA1"]))._unsafeUnwrap();
 
@@ -52,11 +53,12 @@ describe("resolve_gene_ids", () => {
             genes: [{ query: "BRCA1", symbol: "BRCA1", name: "BRCA1 DNA repair associated", entrez: 672, ensembl: ["ENSG00000012048"], uniprot: ["P38398"] }],
             notFound: [],
             ambiguous: [],
+            truncated: [],
         });
     });
 
     it("posts one batch with the fixed scopes and the species, trimmed and without a duplicate", async () => {
-        stubHosts([[MYGENE, 200, [BRCA1_HIT]]]);
+        stubHosts([[MYGENE, 200, { max_total: 1, hits: [BRCA1_HIT] }]]);
 
         (await callResolve([" BRCA1 ", "BRCA1", "7157"], "mouse"))._unsafeUnwrap();
 
@@ -64,7 +66,7 @@ describe("resolve_gene_ids", () => {
             {
                 url: "https://mygene.info/v3/query",
                 method: "POST",
-                body: '{"q":["BRCA1","7157"],"scopes":"symbol,entrezgene,ensembl.gene,uniprot","fields":"symbol,name,entrezgene,ensembl.gene,uniprot.Swiss-Prot","species":"mouse"}',
+                body: '{"q":["BRCA1","7157"],"scopes":"symbol,entrezgene,ensembl.gene,uniprot","fields":"symbol,name,entrezgene,ensembl.gene,uniprot.Swiss-Prot","species":"mouse","size":100,"with_total":true}',
             },
         ]);
     });
@@ -76,13 +78,26 @@ describe("resolve_gene_ids", () => {
 
         expect(out.notFound).toEqual(["NOTAGENE123"]);
         expect(out.ambiguous).toEqual(["P62805"]);
-        expect(out.genes.filter((gene) => gene.query === "P62805").length).toBeGreaterThan(1);
+        expect(out.genes.filter((gene) => gene.query === "P62805")).toHaveLength(14);
+        expect(out.truncated).toEqual([]);
+    });
+
+    it("lists an identifier whose hits filled the cap in truncated", async () => {
+        const member = (i: number): Record<string, unknown> => ({ query: "P62805", _id: String(i), entrezgene: String(i), symbol: `H4C${i}` });
+        const hits = [...Array.from({ length: MYGENE_HITS_PER_ID }, (_, i) => member(i + 1)), BRCA1_HIT];
+        stubHosts([[MYGENE, 200, { max_total: MYGENE_HITS_PER_ID + 20, hits, msg: "1 query terms return > 100 hits" }]]);
+
+        const out = (await callResolve(["P62805", "BRCA1"]))._unsafeUnwrap();
+
+        expect(out.truncated).toEqual(["P62805"]);
+        expect(out.ambiguous).toEqual(["P62805"]);
+        expect(out.genes).toHaveLength(MYGENE_HITS_PER_ID + 1);
     });
 
     it("gives an empty data variant when no identifier matches, not an error", async () => {
-        stubHosts([[MYGENE, 200, [{ query: "NOTAGENE123", notfound: true }]]]);
+        stubHosts([[MYGENE, 200, { max_total: 0, hits: [{ query: "NOTAGENE123", notfound: true }] }]]);
 
-        expect((await callResolve(["NOTAGENE123"]))._unsafeUnwrap()).toEqual({ genes: [], notFound: ["NOTAGENE123"], ambiguous: [] });
+        expect((await callResolve(["NOTAGENE123"]))._unsafeUnwrap()).toEqual({ genes: [], notFound: ["NOTAGENE123"], ambiguous: [], truncated: [] });
     });
 
     it("throws the message of an HTTP 400, such as an unknown species", async () => {
@@ -125,11 +140,12 @@ describe("resolve_gene_ids — in a script", () => {
         expect(entry).toContain("entrez: number | null;");
         expect(entry).toContain("name: string | null;");
         expect(entry).toContain("ambiguous: Array<string>;");
+        expect(entry).toContain("truncated: Array<string>;");
     });
 
     it("gives the Entrez IDs that a script passes on to humanbase in the same script", async () => {
         stubHosts([
-            [MYGENE, 200, [BRCA1_HIT, { query: "NOTAGENE123", notfound: true }]],
+            [MYGENE, 200, { max_total: 1, hits: [BRCA1_HIT, { query: "NOTAGENE123", notfound: true }] }],
             [HUMANBASE, 200, readFixture("humanbase", "network-blood-672.json")],
         ]);
         const runScript = createRunScriptTool([resolveGeneIdsTool, humanbaseTool]);

@@ -1,267 +1,326 @@
-[
-    {
-        "query": "BRCA1",
-        "_id": "672",
-        "_score": 18.130314,
-        "ensembl": "ENSG00000012048",
-        "entrezgene": "672",
-        "name": "BRCA1 DNA repair associated",
-        "symbol": "BRCA1",
-        "uniprot": {
-            "Swiss-Prot": "P38398"
-        }
-    },
-    {
-        "query": "NOTAGENE123",
-        "notfound": true
-    },
-    {
-        "query": "672",
-        "_id": "672",
-        "_score": 27.450886,
-        "ensembl": {
-            "gene": "ENSG00000012048"
-        },
-        "entrezgene": "672",
-        "name": "BRCA1 DNA repair associated",
-        "symbol": "BRCA1",
-        "uniprot": {
-            "Swiss-Prot": "P38398"
-        }
-    },
-    {
-        "query": "ENSG00000141510",
-        "_id": "7157",
-        "_score": 32.490185,
-        "ensembl": {
-            "gene": "ENSG00000141510"
-        },
-        "entrezgene": "7157",
-        "name": "tumor protein p53",
-        "symbol": "TP53",
-        "uniprot": {
-            "Swiss-Prot": "P04637"
-        }
-    },
-    {
-        "query": "HLA-A",
-        "_id": "3105",
-        "_score": 26.699726,
-        "ensembl": [
-            {
-                "gene": "ENSG00000235657"
-            },
-            {
-                "gene": "ENSG00000224320"
-            },
-            {
-                "gene": "ENSG00000229215"
-            },
-            {
-                "gene": "ENSG00000227715"
-            },
-            {
-                "gene": "ENSG00000223980"
-            },
-            {
-                "gene": "ENSG00000231834"
-            },
-            {
-                "gene": "ENSG00000206505"
-            },
-            {
-                "gene": "ENSG00000206503"
+{
+    "max_total": 14,
+    "hits": [
+        {
+            "query": "BRCA1",
+            "_id": "672",
+            "_score": 18.130314,
+            "ensembl": "ENSG00000012048",
+            "entrezgene": "672",
+            "name": "BRCA1 DNA repair associated",
+            "symbol": "BRCA1",
+            "uniprot": {
+                "Swiss-Prot": "P38398"
             }
-        ],
-        "entrezgene": "3105",
-        "name": "major histocompatibility complex, class I, A",
-        "symbol": "HLA-A",
-        "uniprot": {
-            "Swiss-Prot": "P04439"
-        }
-    },
-    {
-        "query": "CDKN2A",
-        "_id": "1029",
-        "_score": 21.501926,
-        "ensembl": {
-            "gene": "ENSG00000147889"
         },
-        "entrezgene": "1029",
-        "name": "cyclin dependent kinase inhibitor 2A",
-        "symbol": "CDKN2A",
-        "uniprot": {
-            "Swiss-Prot": [
-                "P42771",
-                "Q8N726"
-            ]
-        }
-    },
-    {
-        "query": "MIR21",
-        "_id": "406991",
-        "_score": 20.454884,
-        "ensembl": {
-            "gene": "ENSG00000284190"
+        {
+            "query": "NOTAGENE123",
+            "notfound": true
         },
-        "entrezgene": "406991",
-        "name": "microRNA 21",
-        "symbol": "MIR21"
-    },
-    {
-        "query": "LOC100128288",
-        "_id": "100128288",
-        "_score": 27.491507,
-        "entrezgene": "100128288",
-        "name": "uncharacterized LOC100128288",
-        "symbol": "LOC100128288"
-    },
-    {
-        "query": "ENSG00000235872",
-        "_id": "ENSG00000235872",
-        "_score": 32.490185,
-        "ensembl": {
-            "gene": "ENSG00000235872"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "8361",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000274618"
+        {
+            "query": "672",
+            "_id": "672",
+            "_score": 27.450886,
+            "ensembl": {
+                "gene": "ENSG00000012048"
+            },
+            "entrezgene": "672",
+            "name": "BRCA1 DNA repair associated",
+            "symbol": "BRCA1",
+            "uniprot": {
+                "Swiss-Prot": "P38398"
+            }
         },
-        "entrezgene": "8361",
-        "name": "H4 clustered histone 6",
-        "symbol": "H4C6",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "8362",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000273542"
+        {
+            "query": "ENSG00000141510",
+            "_id": "7157",
+            "_score": 32.490185,
+            "ensembl": {
+                "gene": "ENSG00000141510"
+            },
+            "entrezgene": "7157",
+            "name": "tumor protein p53",
+            "symbol": "TP53",
+            "uniprot": {
+                "Swiss-Prot": "P04637"
+            }
         },
-        "entrezgene": "8362",
-        "name": "H4 clustered histone 12",
-        "symbol": "H4C12",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "121504",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000197837"
+        {
+            "query": "HLA-A",
+            "_id": "3105",
+            "_score": 26.699726,
+            "ensembl": [
+                {
+                    "gene": "ENSG00000235657"
+                },
+                {
+                    "gene": "ENSG00000224320"
+                },
+                {
+                    "gene": "ENSG00000229215"
+                },
+                {
+                    "gene": "ENSG00000227715"
+                },
+                {
+                    "gene": "ENSG00000223980"
+                },
+                {
+                    "gene": "ENSG00000231834"
+                },
+                {
+                    "gene": "ENSG00000206505"
+                },
+                {
+                    "gene": "ENSG00000206503"
+                }
+            ],
+            "entrezgene": "3105",
+            "name": "major histocompatibility complex, class I, A",
+            "symbol": "HLA-A",
+            "uniprot": {
+                "Swiss-Prot": "P04439"
+            }
         },
-        "entrezgene": "121504",
-        "name": "H4 histone 16",
-        "symbol": "H4C16",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "8294",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000276180"
+        {
+            "query": "CDKN2A",
+            "_id": "1029",
+            "_score": 21.501926,
+            "ensembl": {
+                "gene": "ENSG00000147889"
+            },
+            "entrezgene": "1029",
+            "name": "cyclin dependent kinase inhibitor 2A",
+            "symbol": "CDKN2A",
+            "uniprot": {
+                "Swiss-Prot": [
+                    "P42771",
+                    "Q8N726"
+                ]
+            }
         },
-        "entrezgene": "8294",
-        "name": "H4 clustered histone 9",
-        "symbol": "H4C9",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "8360",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000277157"
+        {
+            "query": "MIR21",
+            "_id": "406991",
+            "_score": 20.454884,
+            "ensembl": {
+                "gene": "ENSG00000284190"
+            },
+            "entrezgene": "406991",
+            "name": "microRNA 21",
+            "symbol": "MIR21"
         },
-        "entrezgene": "8360",
-        "name": "H4 clustered histone 4",
-        "symbol": "H4C4",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "8366",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000278705"
+        {
+            "query": "LOC100128288",
+            "_id": "100128288",
+            "_score": 27.491507,
+            "entrezgene": "100128288",
+            "name": "uncharacterized LOC100128288",
+            "symbol": "LOC100128288"
         },
-        "entrezgene": "8366",
-        "name": "H4 clustered histone 2",
-        "symbol": "H4C2",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "8367",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000276966"
+        {
+            "query": "ENSG00000235872",
+            "_id": "ENSG00000235872",
+            "_score": 32.490185,
+            "ensembl": {
+                "gene": "ENSG00000235872"
+            }
         },
-        "entrezgene": "8367",
-        "name": "H4 clustered histone 5",
-        "symbol": "H4C5",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "8368",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000275126"
+        {
+            "query": "P62805",
+            "_id": "8361",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000274618"
+            },
+            "entrezgene": "8361",
+            "name": "H4 clustered histone 6",
+            "symbol": "H4C6",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
         },
-        "entrezgene": "8368",
-        "name": "H4 clustered histone 13",
-        "symbol": "H4C13",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "554313",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000270276"
+        {
+            "query": "P62805",
+            "_id": "8362",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000273542"
+            },
+            "entrezgene": "8362",
+            "name": "H4 clustered histone 12",
+            "symbol": "H4C12",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
         },
-        "entrezgene": "554313",
-        "name": "H4 clustered histone 15",
-        "symbol": "H4C15",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
-        }
-    },
-    {
-        "query": "P62805",
-        "_id": "8359",
-        "_score": 16.356596,
-        "ensembl": {
-            "gene": "ENSG00000278637"
+        {
+            "query": "P62805",
+            "_id": "121504",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000197837"
+            },
+            "entrezgene": "121504",
+            "name": "H4 histone 16",
+            "symbol": "H4C16",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
         },
-        "entrezgene": "8359",
-        "name": "H4 clustered histone 1",
-        "symbol": "H4C1",
-        "uniprot": {
-            "Swiss-Prot": "P62805"
+        {
+            "query": "P62805",
+            "_id": "8294",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000276180"
+            },
+            "entrezgene": "8294",
+            "name": "H4 clustered histone 9",
+            "symbol": "H4C9",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8360",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000277157"
+            },
+            "entrezgene": "8360",
+            "name": "H4 clustered histone 4",
+            "symbol": "H4C4",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8366",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000278705"
+            },
+            "entrezgene": "8366",
+            "name": "H4 clustered histone 2",
+            "symbol": "H4C2",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8367",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000276966"
+            },
+            "entrezgene": "8367",
+            "name": "H4 clustered histone 5",
+            "symbol": "H4C5",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8368",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000275126"
+            },
+            "entrezgene": "8368",
+            "name": "H4 clustered histone 13",
+            "symbol": "H4C13",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "554313",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000270276"
+            },
+            "entrezgene": "554313",
+            "name": "H4 clustered histone 15",
+            "symbol": "H4C15",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8359",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000278637"
+            },
+            "entrezgene": "8359",
+            "name": "H4 clustered histone 1",
+            "symbol": "H4C1",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8370",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000270882"
+            },
+            "entrezgene": "8370",
+            "name": "H4 clustered histone 14",
+            "symbol": "H4C14",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8363",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000197238"
+            },
+            "entrezgene": "8363",
+            "name": "H4 clustered histone 11",
+            "symbol": "H4C11",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8364",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000197061"
+            },
+            "entrezgene": "8364",
+            "name": "H4 clustered histone 3",
+            "symbol": "H4C3",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
+        },
+        {
+            "query": "P62805",
+            "_id": "8365",
+            "_score": 16.356596,
+            "ensembl": {
+                "gene": "ENSG00000158406"
+            },
+            "entrezgene": "8365",
+            "name": "H4 clustered histone 8",
+            "symbol": "H4C8",
+            "uniprot": {
+                "Swiss-Prot": "P62805"
+            }
         }
-    }
-]
+    ]
+}
