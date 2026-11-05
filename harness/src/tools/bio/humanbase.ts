@@ -166,7 +166,8 @@ export const humanbaseTool = defineTool({
         "'contexts' — the slugs. Each context has a GIANT version: a slug that ends in '-v3' is a v3 (GIANT 3) network of a tissue or a cell type; " +
         "every other slug is v1, which holds the tissue contexts (with a BRENDA Tissue Ontology term) and the biological-process contexts " +
         "(with a GO term). 'global' and 'global-v3' are the networks with no context. The tool sets the version from the slug.\n" +
-        "IDENTIFIERS: NCBI Entrez Gene IDs only, as numbers (672 = BRCA1). search_gene answers with Ensembl IDs, which this tool does not take. " +
+        "IDENTIFIERS: NCBI Entrez Gene IDs only, as numbers (672 = BRCA1). Map a symbol or an Ensembl ID with resolve_gene_ids first: the `entrez` " +
+        "field of each of its hits is the input here. " +
         "HUMAN genes only.\n" +
         "An empty result (no ranked context, no matched context, found: false) is valid no-data — report it and continue, do not retry.",
     inputSchema,

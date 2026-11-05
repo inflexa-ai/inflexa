@@ -80,16 +80,18 @@ describe("createSandboxAgents", () => {
         }
     });
 
-    it("gives the HumanBase network tool to the network agent only, as a script tool", () => {
+    it("gives the HumanBase network tool and the gene ID mapping to the network agent only, as script tools", () => {
         for (const [id, def] of Object.entries(agents)) {
-            expect(
-                def.tools.some((t) => t.id === "humanbase"),
-                `${id} declares humanbase directly`,
-            ).toBe(false);
-            expect(
-                (def.scriptTools ?? []).some((t) => t.id === "humanbase"),
-                `${id} humanbase`,
-            ).toBe(id === "network-agent");
+            for (const toolId of ["humanbase", "resolve_gene_ids"]) {
+                expect(
+                    def.tools.some((t) => t.id === toolId),
+                    `${id} declares ${toolId} directly`,
+                ).toBe(false);
+                expect(
+                    (def.scriptTools ?? []).some((t) => t.id === toolId),
+                    `${id} ${toolId}`,
+                ).toBe(id === "network-agent");
+            }
         }
     });
 
