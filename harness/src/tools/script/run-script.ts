@@ -34,7 +34,6 @@ import { createSubAgentActivityTracker } from "../../contracts/subagent-activity
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
-import { parseUnknownRecord, UnknownArraySchema } from "../../lib/unknown-containers.js";
 import { computeDetail, computeResultDetail } from "../../loop/tool-detail.js";
 import { buildFileReferenceCardData, MAX_FILES } from "../../memory/card-builders.js";
 import {
@@ -139,8 +138,8 @@ function plainJson(value: unknown): unknown {
     return value === undefined ? null : parseJsonAs(JSON.stringify(value), z.json());
 }
 
-function describeTool(tool: Tool): string {
-    return renderToolSample({ name: tool.id, description: tool.description, inputSchema: inputSchemaOf(tool), outputSchema: tool.outputJsonSchema });
+function describeTool(tool: Tool, schemas: ScriptSchemas): string {
+    return renderToolSample({ name: tool.id, description: tool.description, inputSchema: schemas.input, outputSchema: schemas.output });
 }
 
 function issuesOf(error: z.ZodError): string {
@@ -227,12 +226,12 @@ function collectEffect(state: ScriptState, value: unknown): void {
  * The script gets the JSON of a result, and the JSON has no pictures. Thus a result with pictures is a failed call: the
  * script would otherwise read the result as complete.
  */
-function scriptToolOf(tool: Tool, ctx: ToolContext, state: ScriptState, log: Logger, inCallContext: CallContext): CodemodeTool {
+function scriptToolOf(tool: Tool, schemas: ScriptSchemas, ctx: ToolContext, state: ScriptState, log: Logger, inCallContext: CallContext): CodemodeTool {
     return {
         name: tool.id,
         description: tool.description,
-        inputSchema: inputSchemaOf(tool),
-        outputSchema: tool.outputJsonSchema,
+        inputSchema: schemas.input,
+        outputSchema: schemas.output,
         execute: (args, options) => inCallContext(() => runNestedCall(tool, ctx, state, log, args, options.signal)),
     };
 }
@@ -290,58 +289,51 @@ async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, l
     return plainJson(result.value);
 }
 
-/** The keywords whose value maps a name to a schema. A key of such a map names a field, and it is no keyword. */
-const SCHEMA_MAP_KEYWORDS: ReadonlySet<string> = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+/** The JSON schemas of a script tool as a script reads them. */
+type ScriptSchemas = {
+    readonly input: Record<string, unknown>;
+    readonly output?: Record<string, unknown>;
+};
 
 /**
- * A JSON schema without its prose: the types and the constraints stay, the descriptions and the examples go. Only the
- * keywords of a schema are prose, thus a field with the name `description` stays.
+ * Shape one node of a JSON schema for a script. A tool can union its real shape with the empty schema to keep its
+ * runtime parse permissive (`add_block` does, thus a malformed block reaches its typed refusal). The type of such a
+ * union is `unknown`, which hides the real shape, thus the empty member goes. The VM only renders the schema and
+ * validates nothing, and the tool still parses each input with its own schema. Without prose, the `description` and the
+ * `examples` of the node go too. Zod calls this for each schema node and never for a field name, thus a field with the
+ * name `description` stays.
  */
-function withoutProse(schema: unknown): unknown {
-    const array = UnknownArraySchema.safeParse(schema);
-    if (array.success) return array.data.map(withoutProse);
-    const record = parseUnknownRecord(schema);
-    if (record === undefined) return schema;
-    return Object.fromEntries(
-        Object.entries(record)
-            .filter(([key]) => key !== "description" && key !== "examples")
-            .map(([key, value]) => [key, SCHEMA_MAP_KEYWORDS.has(key) ? schemaMapWithoutProse(value) : withoutProse(value)]),
-    );
-}
-
-/** A map from a name to a schema, with each schema without its prose and each name kept. */
-function schemaMapWithoutProse(map: unknown): unknown {
-    const record = parseUnknownRecord(map);
-    if (record === undefined) return map;
-    return Object.fromEntries(Object.entries(record).map(([name, schema]) => [name, withoutProse(schema)]));
-}
-
-/**
- * A JSON schema as a script reads it. A tool can union its real shape with the empty schema to keep its runtime parse
- * permissive (`add_block` does, thus a malformed block reaches its typed refusal). The type of such a union is
- * `unknown`, which hides the real shape, thus the empty member goes. The VM only renders the schema and validates
- * nothing, and the tool still parses each input with its own schema.
- */
-function printableSchema(schema: unknown): unknown {
-    const array = UnknownArraySchema.safeParse(schema);
-    if (array.success) return array.data.map(printableSchema);
-    const record = parseUnknownRecord(schema);
-    if (record === undefined) return schema;
-    let out: Record<string, unknown> = Object.fromEntries(Object.entries(record).map(([key, value]) => [key, printableSchema(value)]));
-    for (const key of ["anyOf", "oneOf"]) {
-        const members = UnknownArraySchema.safeParse(out[key]);
-        if (!members.success) continue;
-        const shaped = members.data.filter((member) => Object.keys(parseUnknownRecord(member) ?? {}).length > 0);
-        if (shaped.length === 0 || shaped.length === members.data.length) continue;
-        const rest = Object.fromEntries(Object.entries(out).filter(([name]) => name !== key));
-        out = shaped.length > 1 ? { ...rest, [key]: shaped } : { ...rest, ...parseUnknownRecord(shaped[0]) };
+function shapeForScript(jsonSchema: z.core.JSONSchema.BaseSchema, prose: boolean): void {
+    if (!prose) {
+        delete jsonSchema.description;
+        delete jsonSchema.examples;
     }
-    return out;
+    const anyOf = shapedMembers(jsonSchema.anyOf);
+    if (anyOf !== undefined) {
+        delete jsonSchema.anyOf;
+        Object.assign(jsonSchema, anyOf.length > 1 ? { anyOf } : anyOf[0]);
+    }
+    const oneOf = shapedMembers(jsonSchema.oneOf);
+    if (oneOf !== undefined) {
+        delete jsonSchema.oneOf;
+        Object.assign(jsonSchema, oneOf.length > 1 ? { oneOf } : oneOf[0]);
+    }
 }
 
-/** The input schema of a tool as a script reads it. See {@link printableSchema}. */
-function inputSchemaOf(tool: Tool): Record<string, unknown> {
-    return parseUnknownRecord(printableSchema(tool.jsonSchema)) ?? tool.jsonSchema;
+/** The members of a union that are not the empty schema, or `undefined` when the union keeps each member. */
+function shapedMembers(members: readonly z.core.JSONSchema.JSONSchema[] | undefined): z.core.JSONSchema.JSONSchema[] | undefined {
+    if (members === undefined) return undefined;
+    const shaped = members.filter((member) => Object.keys(member).length > 0);
+    return shaped.length === 0 || shaped.length === members.length ? undefined : shaped;
+}
+
+/** The schemas of a tool as a script reads them, built with the same options as the schemas of {@link defineTool}. */
+function scriptSchemasOf(tool: Tool, prose: boolean): ScriptSchemas {
+    const override = ({ jsonSchema }: { jsonSchema: z.core.JSONSchema.BaseSchema }): void => shapeForScript(jsonSchema, prose);
+    const { $schema: _inputDialect, ...input } = z.toJSONSchema(tool.inputSchema, { override });
+    if (tool.outputSchema === undefined) return { input };
+    const { $schema: _outputDialect, ...output } = z.toJSONSchema(tool.outputSchema, { io: "output", unrepresentable: "any", override });
+    return { input, output };
 }
 
 /** The longest result type that the catalog shows. A longer type shows as `unknown`, and `describe()` gives it whole. */
@@ -349,10 +341,10 @@ const MAX_CATALOG_RESULT_TYPE_CHARS = 800;
 
 /** One catalog entry: the first sentence of the description, then the signature with no prose. */
 function catalogEntry(tool: Tool): string {
-    const output = tool.outputJsonSchema === undefined ? undefined : parseUnknownRecord(withoutProse(tool.outputJsonSchema));
+    const { input, output } = scriptSchemasOf(tool, false);
     const resultType = output === undefined ? "unknown" : schemaToType(output, { maxChars: MAX_CATALOG_RESULT_TYPE_CHARS });
     // pi renders a signature with no result schema as `...: Promise<unknown>;`, thus the catalog puts its capped type there.
-    const untyped = renderToolSignature({ name: tool.id, inputSchema: parseUnknownRecord(withoutProse(inputSchemaOf(tool))) ?? {} });
+    const untyped = renderToolSignature({ name: tool.id, inputSchema: input });
     const signature = `${untyped.slice(0, -"unknown>;".length)}${resultType}>;`;
     return `/** ${firstSentence(tool.description)} */\n${signature}`;
 }
@@ -420,7 +412,7 @@ export function createRunScriptTool(
     options: RunScriptOptions = {},
 ): Tool<z.infer<typeof inputSchema>, RunScriptResult> {
     const vm = sandboxRuntimeOf(runtime);
-    const byId = new Map(scriptTools.map((tool) => [tool.id, tool]));
+    const byId = new Map(scriptTools.map((tool) => [tool.id, { tool, schemas: scriptSchemasOf(tool, true) }]));
     const log = (options.logger ?? createNoopLogger()).named("run-script");
     const { scratch } = options;
     return defineTool({
@@ -441,7 +433,7 @@ export function createRunScriptTool(
             if (record.run !== undefined) scratch?.recordRun(record.run);
             for (const entry of record.nested) {
                 try {
-                    byId.get(entry.tool)?.foldCallRecord?.(entry.record);
+                    byId.get(entry.tool)?.tool.foldCallRecord?.(entry.record);
                 } catch (err) {
                     log.error("the call record of a nested call did not fold", { tool: entry.tool, ...log.errorFields(err) });
                 }
@@ -486,14 +478,14 @@ export function createRunScriptTool(
             // example the durable step of the call, which DBOS keeps in an AsyncLocalStorage.
             const inCallContext = AsyncLocalStorage.snapshot();
             const sandbox = new CodemodeSandbox({
-                tools: scriptTools.map((tool) => scriptToolOf(tool, ctx, state, log, inCallContext)),
+                tools: [...byId.values()].map(({ tool, schemas }) => scriptToolOf(tool, schemas, ctx, state, log, inCallContext)),
                 globals: [
                     {
                         name: "describe",
                         execute: (name) => {
-                            const tool = typeof name === "string" ? byId.get(name) : undefined;
-                            if (tool === undefined) throw new Error(`no script tool ${JSON.stringify(name)}; the tools are ${[...byId.keys()].join(", ")}`);
-                            return describeTool(tool);
+                            const entry = typeof name === "string" ? byId.get(name) : undefined;
+                            if (entry === undefined) throw new Error(`no script tool ${JSON.stringify(name)}; the tools are ${[...byId.keys()].join(", ")}`);
+                            return describeTool(entry.tool, entry.schemas);
                         },
                     },
                 ],

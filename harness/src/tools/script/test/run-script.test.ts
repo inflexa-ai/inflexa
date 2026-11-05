@@ -160,17 +160,14 @@ describe("run_script", () => {
     });
 
     test("shows the real shape of an input that a tool unions with the empty schema", async () => {
-        const strict = defineTool({
+        const permissive = defineTool({
             id: "add_item",
             description: "Add one item. A malformed item comes back as a refusal.",
-            inputSchema: z.object({ item: z.object({ kind: z.literal("note"), text: z.string() }) }),
+            inputSchema: z.object({ item: z.union([z.object({ kind: z.literal("note"), text: z.string() }), z.unknown()]) }),
             view: "none",
             describeCall: "none",
             execute: () => Promise.resolve(ok({ applied: true })),
         });
-        // The JSON schema that a union with the empty schema gives, as `add_block` publishes it.
-        const item = parseUnknownRecord(strict.jsonSchema.properties)?.item;
-        const permissive: Tool = { ...strict, jsonSchema: { ...strict.jsonSchema, properties: { item: { anyOf: [item, {}] } } } };
         const catalog = createRunScriptTool([permissive]).description;
         const described = await run(`return await describe("add_item");`, [permissive]);
 
