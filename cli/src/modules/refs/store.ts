@@ -577,9 +577,9 @@ async function readReceipt(path: string, storeRoot: string): Promise<{ readonly 
 /**
  * The per-artifact checks both receipt walks share: hold the artifact path contained against the
  * dataset root, lstat it, and require a regular file at the size the receipt recorded. Returns the
- * checked file with its path, or `null` when the artifact fails — the caller words the outcome.
+ * path of the checked file, or `null` when the artifact fails — the caller words the outcome.
  */
-async function receiptArtifactFile(root: string, artifact: ReferenceReceiptArtifact): Promise<{ readonly path: string; readonly file: Stats } | null> {
+async function receiptArtifactFile(root: string, artifact: ReferenceReceiptArtifact): Promise<string | null> {
     const path = join(root, artifact.path);
     // Contained against the dataset's own root, not the store's: `managed/` and `user/` are
     // siblings, so a store-scoped check would let a receipt path reach into user content or a
@@ -594,7 +594,7 @@ async function receiptArtifactFile(root: string, artifact: ReferenceReceiptArtif
     if (fileResult.isErr()) return null;
     const file = fileResult.value;
     if (file === undefined || file.isSymbolicLink() || !file.isFile() || file.size !== artifact.bytes) return null;
-    return { path, file };
+    return path;
 }
 
 async function receiptFilesPresent(paths: ReferenceStorePaths, root: string, receipt: ReferenceInstallReceipt): Promise<boolean> {
@@ -613,9 +613,9 @@ async function receiptFilesPresent(paths: ReferenceStorePaths, root: string, rec
  */
 async function receiptFilesIntact(paths: ReferenceStorePaths, root: string, receipt: ReferenceInstallReceipt): Promise<boolean> {
     for (const artifact of receipt.artifacts) {
-        const checked = await receiptArtifactFile(root, artifact);
-        if (checked === null) return false;
-        const digest = await sha256File(checked.path);
+        const path = await receiptArtifactFile(root, artifact);
+        if (path === null) return false;
+        const digest = await sha256File(path);
         if (digest.isErr() || digest.value !== artifact.sha256) return false;
     }
     return true;

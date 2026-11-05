@@ -1,14 +1,12 @@
 import type { JSX } from "solid-js";
 import type { BoxRenderable } from "@opentui/core";
 
-import { size, space } from "../../lib/design_system.ts";
+import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { Fg } from "./emphasis.tsx";
 
 /** Props for {@link PromptFrame}. */
 export type PromptFrameProps = {
-    /** The glyph in the fixed-width gutter. */
-    glyph: string;
     /**
      * True for a static gallery exhibit: the frame stays non-focusable, so a click on it cannot take
      * the focus of the gallery pane. Live docks leave it unset so the host can focus the box and the
@@ -54,7 +52,7 @@ export function PromptFrame(props: PromptFrameProps): JSX.Element {
             because a narrow terminal must squeeze the text, never the gutter. */}
             <box width={size.gutter} flexShrink={0}>
                 <text>
-                    <Fg role="warning">{props.glyph}</Fg>
+                    <Fg role="warning">{GLYPHS.warning}</Fg>
                 </text>
             </box>
             <box flexDirection="column" flexGrow={1}>

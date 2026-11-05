@@ -151,7 +151,6 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
 
     return (
         <PromptFrame
-            glyph={GLYPHS.warning}
             inert={props.inert}
             onReady={(r) => {
                 boxRef = r;

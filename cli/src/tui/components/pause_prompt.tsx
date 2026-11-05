@@ -95,7 +95,6 @@ export function PausePrompt(props: PausePromptProps): JSX.Element {
 
     return (
         <PromptFrame
-            glyph={GLYPHS.warning}
             inert={props.inert}
             onReady={(r) => {
                 boxRef = r;
