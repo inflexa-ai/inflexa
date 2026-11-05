@@ -51,7 +51,7 @@ describe("fileKindOf and languageOf", () => {
         expect(fileKindOf("SNAKEFILE")).toBe("code");
         expect(languageOf("dockerfile")).toBe("docker");
         expect(languageOf("Nextflow.Config")).toBe("nextflow");
-        expect(fileKindOf("my.snakefile")).toBeNull();
+        expect(languageOf("my.snakefile")).toBe("text");
         expect(fileKindOf("Dockerfile.dev")).toBeNull();
     });
 
@@ -76,7 +76,7 @@ describe("fileKindOf and languageOf", () => {
         expect([fileKindOf("README.txt"), languageOf("README.txt")]).toEqual(["doc", "text"]);
     });
 
-    test("give the shiki id and the kind of a language that only Linguist knows", () => {
+    test("give the highlighter id and the kind of a language that only Linguist knows", () => {
         expect([fileKindOf("build.kts"), languageOf("build.kts")]).toEqual(["code", "kotlin"]);
         expect([fileKindOf("main.swift"), languageOf("main.swift")]).toEqual(["code", "swift"]);
         expect([fileKindOf("Gemfile"), languageOf("Gemfile")]).toEqual(["code", "ruby"]);
@@ -92,7 +92,7 @@ describe("fileKindOf and languageOf", () => {
         expect([fileKindOf("main.swift.gz"), languageOf("main.swift.gz")]).toEqual(["data", "text"]);
     });
 
-    test("give the canonical shiki id for a Linguist file name", () => {
+    test("give the canonical highlighter id for a Linguist file name", () => {
         expect([fileKindOf(".bashrc"), languageOf(".bashrc")]).toEqual(["code", "shellscript"]);
         expect(languageOf("/home/u/.BASHRC")).toBe("shellscript");
     });
@@ -101,10 +101,20 @@ describe("fileKindOf and languageOf", () => {
         expect([fileKindOf("CMakeLists.txt"), languageOf("CMakeLists.txt")]).toEqual(["code", "cmake"]);
     });
 
-    test("give no shiki id to a Linguist language whose alias names a different grammar", () => {
-        expect([fileKindOf("query.cql"), languageOf("query.cql")]).toEqual([null, "text"]);
+    test("give no highlighter id to a Linguist language whose alias names a different grammar", () => {
+        expect([fileKindOf("query.cql"), languageOf("query.cql")]).toEqual(["code", "text"]);
         expect(languageOf("page.ftlh")).toBe("text");
         expect(languageOf("messages.ftl")).toBe("fluent");
+    });
+
+    test("give the kind and the language text to a Linguist language with no grammar", () => {
+        expect([fileKindOf("model.stan"), languageOf("model.stan")]).toEqual(["code", "text"]);
+    });
+
+    test("let a Linguist language with a grammar win a tie over a language with no grammar", () => {
+        expect([fileKindOf("pom.xml"), languageOf("pom.xml")]).toEqual(["data", "xml"]);
+        expect(languageOf("boot.s")).toBe("asm");
+        expect(languageOf("build.sc")).toBe("scala");
     });
 
     test("let the table win over Linguist for an extension", () => {

@@ -1483,13 +1483,13 @@ The server MUST hold one map from the extension or the name of a file to the kin
 | `code` | `json` | `ipynb` |
 | `code` | `bash` | `sh`, `bash`, `zsh`, `sbatch`, `slurm` |
 | `code` | `awk` | `awk` |
-| `code` | `perl` | `pl`, `pm` |
+| `code` | `perl` | `pl`, `pm`, `t` |
 | `code` | `julia` | `jl` |
 | `code` | `matlab` | `m` |
 | `code` | `sql` | `sql` |
 | `code` | `nextflow` | `nf`, the name `nextflow.config` |
 | `code` | `groovy` | `groovy` |
-| `code` | `text` | `wdl` |
+| `code` | `text` | `wdl`, `mod`, `pro`, `v` |
 | `code` | `yaml` | `cwl`, `yaml`, `yml` |
 | `code` | `stata` | `do` |
 | `code` | `sas` | `sas` |
@@ -1519,7 +1519,7 @@ The server MUST hold one map from the extension or the name of a file to the kin
 | `data` | `text` | `h5ad`, `h5`, `hdf5`, `loom`, `rds`, `rdata`, `rda`, `npy`, `npz`, `pkl`, `feather`, `mtx`, `bam`, `sam`, `cram`, `bai`, `vcf`, `bcf`, `bed`, `gff`, `gff3`, `gtf`, `fa`, `fasta`, `fna`, `faa`, `fastq`, `fq`, `bw`, `bigwig`, `bedgraph`, `fai`, `nwk`, `newick`, `sdf`, `mol2`, `tif`, `tiff`, `zip`, `tar`, `bz2`, `xz`, `zst` |
 | `doc` | `markdown` | `md`, `rmd`, `qmd` |
 | `doc` | `html` | `html`, `htm` |
-| `doc` | `latex` | `tex` |
+| `doc` | `latex` | `tex`, `cls`, `sty` |
 | `doc` | `bibtex` | `bib` |
 | `doc` | `rst` | `rst` |
 | `doc` | `text` | `txt`, `docx`, `pdf` |
@@ -1536,11 +1536,13 @@ A name entry of the map MUST match the whole file name, and it wins over the ext
 For a file name that the table does not know, the server MUST use the language data of GitHub Linguist. The order of the lookup is:
 
 1. A name entry of the table.
-2. A Linguist language whose file names hold the whole file name.
+2. A Linguist language with a grammar whose file names hold the whole file name.
 3. The extension in the table.
 4. A Linguist language whose extensions hold the extension.
 
-The server MUST use only a Linguist language that has a shiki language id. The language id comes from the name or an alias of the Linguist language. FreeMarker and CQL have no shiki language id, because their aliases name the grammars of Fluent and of Cypher. When an extension has more than one such Linguist language, the language whose primary extension it is wins. The primary extension is the first extension of the Linguist language. Otherwise the first language in the order of the Linguist names wins. When a file name has more than one such Linguist language, the first language in the order of the Linguist names wins.
+The language of a Linguist language is its language id in the highlighter, or `text` when the highlighter has no grammar for it. A Linguist language with a grammar is a language whose id is not `text`. The language id comes from the name or an alias of the Linguist language. FreeMarker and CQL have no language id, because their aliases name the grammars of Fluent and of Cypher.
+
+When an extension has more than one Linguist language, a language with a grammar wins. Then the language whose primary extension it is wins. The primary extension is the first extension of the Linguist language. Otherwise the first language in the order of the Linguist names wins. When a file name has more than one Linguist language with a grammar, the first language in the order of the Linguist names wins.
 
 The kind of a Linguist language comes from its type:
 
@@ -1551,7 +1553,7 @@ The kind of a Linguist language comes from its type:
 | `prose` | `doc` |
 | `data` | `data` |
 
-The shiki language ids are the ids and the aliases of shiki 4.5.0, the highlighter of Flamme. A Linguist alias of a shiki id gives the shiki id, not the alias.
+The language ids of the highlighter are the ids and the aliases of shiki 4.5.0, the highlighter of Flamme. A Linguist alias of an id gives the id, not the alias.
 
 A file name that the table and the Linguist data do not know MUST give the kind `null` and the language `text`.
 
@@ -1617,7 +1619,22 @@ The kind and the language MUST come from the file name only. The folder of the f
 #### Scenario: A Linguist alias that names a different grammar
 
 - **WHEN** the server takes the kind of `query.cql`
-- **THEN** the kind is `null`, and the language is `text`
+- **THEN** the kind is `code`, and the language is `text`
+
+#### Scenario: A Linguist language with no grammar
+
+- **WHEN** the server takes the kind of `model.stan`
+- **THEN** the kind is `code`, and the language is `text`
+
+#### Scenario: A grammar wins a tie in the Linguist data
+
+- **WHEN** the server takes the kind of `pom.xml` and of `boot.s`
+- **THEN** the languages are `xml` and `asm`
+
+#### Scenario: The reading of an analyst
+
+- **WHEN** the server takes the kind of `cad.mod`, `fit.pro`, `run.t`, and `paper.cls`
+- **THEN** the kinds are `code`, `code`, `code`, and `doc`, and the languages are `text`, `text`, `perl`, and `latex`
 
 #### Scenario: The table wins over Linguist
 

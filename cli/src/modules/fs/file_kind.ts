@@ -3,13 +3,13 @@ import type { Language } from "linguist-languages";
 
 import type { FileKind } from "../../api/fs.ts";
 
-/** The kind and the highlighter language of a file. A language is a shiki language id, or `text`. */
+/** The kind and the highlighter language of a file. A language is an id of {@link HIGHLIGHT_LANGUAGES}, or `text`. */
 type FileType = { kind: FileKind; language: string };
 
 /**
  * The only map of the server from a file to its kind and its language: `[kind, language, extensions, names]`. A name
- * matches the whole file name, for a file with no useful extension. Shiki has no grammar for WDL, thus it is `text`.
- * A Snakefile is Python with rules, and a CWL file is YAML. A TIFF file is `data`, not `figure`, because a browser does not show it. `m` is MATLAB and `pl` is Perl, the readings of an analyst.
+ * matches the whole file name, for a file with no useful extension. The highlighter has no grammar for WDL, thus it is `text`.
+ * A Snakefile is Python with rules, and a CWL file is YAML. A TIFF file is `data`, not `figure`, because a browser does not show it. `m` is MATLAB, `pl` and `t` are Perl, `mod` is NMODL or NONMEM, `pro` is IDL, and `cls` is LaTeX, the readings of an analyst. `mod`, `pro`, and `v` are `text`, because the highlighter has no grammar for the reading of an analyst.
  */
 const FILE_TYPES: readonly (readonly [FileKind, string, readonly string[], (readonly string[])?])[] = [
     ["table", "text", ["xlsx", "xls", "parquet"]],
@@ -22,13 +22,13 @@ const FILE_TYPES: readonly (readonly [FileKind, string, readonly string[], (read
     ["code", "json", ["ipynb"]],
     ["code", "bash", ["sh", "bash", "zsh", "sbatch", "slurm"]],
     ["code", "awk", ["awk"]],
-    ["code", "perl", ["pl", "pm"]],
+    ["code", "perl", ["pl", "pm", "t"]],
     ["code", "julia", ["jl"]],
     ["code", "matlab", ["m"]],
     ["code", "sql", ["sql"]],
     ["code", "nextflow", ["nf"], ["nextflow.config"]],
     ["code", "groovy", ["groovy"]],
-    ["code", "text", ["wdl"]],
+    ["code", "text", ["wdl", "mod", "pro", "v"]],
     ["code", "yaml", ["cwl", "yaml", "yml"]],
     ["code", "stata", ["do"]],
     ["code", "sas", ["sas"]],
@@ -106,7 +106,7 @@ const FILE_TYPES: readonly (readonly [FileKind, string, readonly string[], (read
     ],
     ["doc", "markdown", ["md", "rmd", "qmd"]],
     ["doc", "html", ["html", "htm"]],
-    ["doc", "latex", ["tex"]],
+    ["doc", "latex", ["tex", "cls", "sty"]],
     ["doc", "bibtex", ["bib"]],
     ["doc", "rst", ["rst"]],
     ["doc", "text", ["txt", "docx", "pdf"]],
@@ -122,11 +122,12 @@ const TYPE_BY_NAME: ReadonlyMap<string, FileType> = new Map(
 );
 
 /**
- * The language ids of shiki 4.5.0, the highlighter of Flamme: `[id, ...names]`, where a name is the display name in lower
- * case or an alias. The list is the `bundledLanguagesInfo` of that version, as text, thus the cli has no shiki dependency.
- * A language that a later shiki adds shows as plain text in Flamme until this list changes.
+ * The language ids that the highlighter of Flamme bundles: `[id, ...names]`, where a name is the display name in lower
+ * case or an alias. The highlighter does not map a file name to a language, thus the server gives the id. The list is a
+ * copy of the `bundledLanguagesInfo` of shiki 4.5.0, as text, thus the cli has no dependency on the highlighter. A
+ * language that a later version adds shows as plain text in Flamme until this list changes.
  */
-const SHIKI_LANGUAGES: readonly (readonly [id: string, ...names: string[]])[] = [
+const HIGHLIGHT_LANGUAGES: readonly (readonly [id: string, ...names: string[]])[] = [
     ["abap"],
     ["actionscript-3", "actionscript", "as3"],
     ["ada"],
@@ -371,8 +372,8 @@ const SHIKI_LANGUAGES: readonly (readonly [id: string, ...names: string[]])[] = 
     ["zig"],
 ];
 
-// The alias `ftl` of FreeMarker is the alias of Fluent in shiki, and the alias `cql` of CQL is the alias of Cypher. Thus
-// the join by alias gives each of them the grammar of a different language.
+// The alias `ftl` of FreeMarker is an alias of Fluent in the highlighter, and the alias `cql` of CQL is an alias of
+// Cypher. Thus the join by alias gives each of them the grammar of a different language.
 const LINGUIST_WITHOUT_GRAMMAR: ReadonlySet<string> = new Set(["CQL", "FreeMarker"]);
 
 /** The kind of a Linguist type, or `null` for a type that Linguist adds later. */
@@ -394,37 +395,50 @@ type LinguistMaps = { byName: ReadonlyMap<string, FileType>; byExtension: Readon
 
 let linguistMaps: LinguistMaps | null = null;
 
+/** True when `candidate` takes an extension from `seen`: a grammar first, then the primary owner. Otherwise the first language keeps it. */
+function winsTie(candidate: FileType & { primary: boolean }, seen: FileType & { primary: boolean }): boolean {
+    const hasGrammar = candidate.language !== "text";
+    if (hasGrammar !== (seen.language !== "text")) return hasGrammar;
+    return candidate.primary && !seen.primary;
+}
+
 /**
- * The maps of the Linguist languages that have a shiki grammar, by whole name and by extension, both in lower case. The
- * maps build on the first lookup, thus a command that reads no kind does not walk the Linguist data.
+ * The maps of the Linguist languages, by whole name and by extension, both in lower case. The kind comes from the
+ * Linguist type, and the language is `text` when the highlighter has no grammar for the Linguist language. The maps build
+ * on the first lookup that the table does not answer.
+ *
+ * A language with a grammar wins a tie, thus a language with no grammar adds a kind and never takes the highlight of a
+ * file. The name map holds only a language with a grammar, because a whole name wins over an extension of the table: the
+ * name `pom.xml` of Maven POM, which has no grammar, would take the `xml` of the table.
  */
 function linguistMapsOf(): LinguistMaps {
     if (linguistMaps !== null) return linguistMaps;
-    const shikiIdOf = new Map<string, string>();
-    for (const [id, ...names] of SHIKI_LANGUAGES) for (const name of [id, ...names]) shikiIdOf.set(name, id);
+    const highlightIdOf = new Map<string, string>();
+    for (const [id, ...names] of HIGHLIGHT_LANGUAGES) for (const name of [id, ...names]) highlightIdOf.set(name, id);
 
     const byName = new Map<string, FileType>();
     const byExtension = new Map<string, FileType & { primary: boolean }>();
     // The keys of a module namespace are in code-unit order, thus the first language of a tie is the first Linguist name.
     const languages: readonly Language[] = Object.values(linguist);
     for (const language of languages) {
-        if (LINGUIST_WITHOUT_GRAMMAR.has(language.name)) continue;
         const kind = kindOfLinguistType(language.type);
+        if (kind === null) continue;
         const lower = language.name.toLowerCase();
-        const id = [lower, lower.replaceAll(" ", "-"), ...(language.aliases ?? [])]
-            .map((candidate) => shikiIdOf.get(candidate))
-            .find((found) => found !== undefined);
-        if (kind === null || id === undefined) continue;
+        const candidates = LINGUIST_WITHOUT_GRAMMAR.has(language.name) ? [] : [lower, lower.replaceAll(" ", "-"), ...(language.aliases ?? [])];
+        const id = candidates.map((candidate) => highlightIdOf.get(candidate)).find((found) => found !== undefined) ?? "text";
 
-        for (const filename of language.filenames ?? []) {
-            const key = filename.toLowerCase();
-            if (!byName.has(key)) byName.set(key, { kind, language: id });
+        if (id !== "text") {
+            for (const filename of language.filenames ?? []) {
+                const key = filename.toLowerCase();
+                if (!byName.has(key)) byName.set(key, { kind, language: id });
+            }
         }
-        // Linguist lists the primary extension of a language first, and the primary owner of an extension wins a tie.
+        // Linguist lists the primary extension of a language first. After a grammar, the primary owner of an extension wins a tie.
         for (const [index, extension] of (language.extensions ?? []).entries()) {
             const key = extension.slice(1).toLowerCase();
+            const candidate = { kind, language: id, primary: index === 0 };
             const seen = byExtension.get(key);
-            if (seen === undefined || (index === 0 && !seen.primary)) byExtension.set(key, { kind, language: id, primary: index === 0 });
+            if (seen === undefined || winsTie(candidate, seen)) byExtension.set(key, candidate);
         }
     }
     linguistMaps = { byName, byExtension };
