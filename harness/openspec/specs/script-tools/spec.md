@@ -50,11 +50,19 @@ A script is one durable step, and each nested call runs inside it. A tool whose 
 
 A tool MAY declare the schema of its ok value. The value MUST then hold each field of the schema. The catalog of `run_script` MUST show the result type of such a tool in its signature, and `unknown` for a tool with no schema or with a type too long for the catalog. `describe` MUST give the full type.
 
+A signature of the catalog MUST NOT hold the prose of a schema: the keywords `description` and `examples`. A field with the name `description` or `examples` is no keyword, and the signature MUST keep it.
+
 #### Scenario: A typed tool in the catalog
 
 - **GIVEN** a script tool `count_genes` whose ok value is `{ count: number }`
 - **WHEN** the loop builds `run_script`
 - **THEN** the catalog holds `count_genes(args: { set: string; }): Promise<{ count: number; }>;`
+
+#### Scenario: A field with the name of a prose keyword
+
+- **GIVEN** a script tool `add_term` whose ok value is `{ description: string }`, with a text on the field
+- **WHEN** the loop builds `run_script`
+- **THEN** the signature of `add_term` holds `Promise<{ description: string; }>`, and the catalog does not hold the text of the field
 
 ### Requirement: The description of run_script is the script API and a catalog of the script tools
 

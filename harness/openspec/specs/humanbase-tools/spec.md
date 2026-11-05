@@ -190,7 +190,7 @@ ok value of each action MUST obey that schema.
 #### Scenario: The catalog shows the result type
 
 - **WHEN** the catalog of `run_script` is built over the tool
-- **THEN** the signature of `humanbase` shows its result type, not `unknown`
+- **THEN** the signature of `humanbase` shows its result type, not `unknown`, and the type of a gene holds `description`
 
 #### Scenario: Each ok value obeys the schema
 

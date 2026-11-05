@@ -125,6 +125,24 @@ describe("run_script", () => {
         expect(createRunScriptTool([typed]).description).toContain("count_genes(args: { set: string; }): Promise<{ count: number; }>;");
     });
 
+    test("keeps a field with the name of a prose keyword in a signature, and drops the prose of the field", () => {
+        const named = defineTool({
+            id: "add_term",
+            description: "Add a term.",
+            inputSchema: z.object({ description: z.string().describe("The text of the term."), examples: z.array(z.string()) }),
+            outputSchema: z.object({ description: z.string().describe("The stored text.") }),
+            view: "none",
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ description: "a term" })),
+        });
+
+        const catalog = createRunScriptTool([named]).description;
+
+        expect(catalog).toContain("add_term(args: { description: string; examples: Array<string>; }): Promise<{ description: string; }>;");
+        expect(catalog).not.toContain("The text of the term.");
+        expect(catalog).not.toContain("The stored text.");
+    });
+
     test("a failed tool call is an Error that the script can catch", async () => {
         const result = await run(`
             try { await tools.pubmed({ query: "fail" }); } catch (e) { text("caught: " + e.message); }
