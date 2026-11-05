@@ -33,6 +33,8 @@ const DEFAULT_LIMITS: Record<string, number> = {
     monarch: 3,
     ema: 2,
     pubchem: 4,
+    // gnomAD limits each IP to 30 requests a minute, thus a script that fans out sends one request at a time.
+    gnomad: 1,
     "annotation-llm": 4,
     default: DEFAULT_HOST_LIMIT,
 };

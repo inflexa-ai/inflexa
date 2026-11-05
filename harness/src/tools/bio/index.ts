@@ -40,6 +40,9 @@ export * from "./pubmed.js";
 export * from "./chembl.js";
 export * from "./pubchem.js";
 
+// Population genetics
+export * from "./get-variant-frequencies.js";
+
 // Target assessment
 export * from "./opentargets.js";
 export * from "./gene-disease-evidence.js";

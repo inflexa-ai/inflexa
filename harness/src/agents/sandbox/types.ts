@@ -42,6 +42,8 @@ export type SandboxToolName =
     // Target assessment.
     | "opentargets"
     | "geneDiseaseEvidence"
+    // Population allele frequencies of short variants (gnomAD).
+    | "getVariantFrequencies"
     | "drugGeneInteractions"
     | "genePreclinicalProfile"
     // Clinical / public-data landscape.

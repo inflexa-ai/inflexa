@@ -52,6 +52,7 @@ import {
     lookupAnnotationTool,
     searchInteractionsTool,
     humanbaseTool,
+    getVariantFrequenciesTool,
     alphafoldPredictionTool,
     chemblTool,
     pubchemTool,
@@ -324,6 +325,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         openTargetsTool,
         // Genetic evidence — GWAS Catalog + DisGeNET + ClinVar behind one `sources`.
         chemDb.geneDiseaseEvidence,
+        // Population allele frequencies of short variants (gnomAD), the filter of rare-variant interpretation.
+        getVariantFrequenciesTool,
         // Drug↔gene interactions — DGIdb + DrugBank + PharmGKB behind one `sources`.
         chemDb.drugGeneInteractions,
         searchFaersTool,
