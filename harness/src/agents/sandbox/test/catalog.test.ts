@@ -95,6 +95,19 @@ describe("createSandboxAgents", () => {
         }
     });
 
+    it("gives the gnomAD frequency tool to the genomic variant agent only, as a script tool", () => {
+        for (const [id, def] of Object.entries(agents)) {
+            expect(
+                def.tools.some((t) => t.id === "get_variant_frequencies"),
+                `${id} declares get_variant_frequencies directly`,
+            ).toBe(false);
+            expect(
+                (def.scriptTools ?? []).some((t) => t.id === "get_variant_frequencies"),
+                `${id} get_variant_frequencies`,
+            ).toBe(id === "genomic-variant-agent");
+        }
+    });
+
     it("every AgentDefinition.systemPrompt contains the sandbox layer verbatim", () => {
         for (const [id, def] of Object.entries(agents)) {
             expect(def.systemPrompt.length, `${id} prompt empty`).toBeGreaterThan(100);

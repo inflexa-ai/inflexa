@@ -1,0 +1,20 @@
+{
+    "batch-r4.json": {
+        "url": "https://gnomad.broadinstitute.org/api",
+        "method": "POST",
+        "body": "{\"query\":\"query VariantFrequencies($dataset: DatasetId!, $v0: String!, $v1: String!) { v0: variant(variantId: $v0, dataset: $dataset) { ...Frequencies } v1: variant(variantId: $v1, dataset: $dataset) { ...Frequencies } } fragment Frequencies on VariantDetails { variant_id rsids genome { ...Callset } exome { ...Callset } } fragment Callset on VariantDetailsSequencingTypeData { ac an af populations { id ac an } }\",\"variables\":{\"dataset\":\"gnomad_r4\",\"v0\":\"1-55051215-G-GA\",\"v1\":\"1-1-A-T\"}}",
+        "headers": {
+            "content-type": "application/json"
+        },
+        "capturedAt": "2026-11-05"
+    },
+    "batch-exac.json": {
+        "url": "https://gnomad.broadinstitute.org/api",
+        "method": "POST",
+        "body": "{\"query\":\"query VariantFrequencies($dataset: DatasetId!, $v0: String!) { v0: variant(variantId: $v0, dataset: $dataset) { ...Frequencies } } fragment Frequencies on VariantDetails { variant_id rsids genome { ...Callset } exome { ...Callset } } fragment Callset on VariantDetailsSequencingTypeData { ac an af populations { id ac an } }\",\"variables\":{\"dataset\":\"exac\",\"v0\":\"1-55516888-G-GA\"}}",
+        "headers": {
+            "content-type": "application/json"
+        },
+        "capturedAt": "2026-11-05"
+    }
+}

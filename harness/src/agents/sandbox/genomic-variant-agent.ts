@@ -12,7 +12,16 @@ export const meta: AgentMeta = {
     capabilities: ["variant calling", "variant annotation", "GWAS", "CNV detection", "structural variant detection", "variant filtering"],
     suitableFor: ["wgs", "wes", "gwas", "cnv-sv", "targeted-panels"],
     skills: ["genomic-variants", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions", "geneDiseaseEvidence", "drugGeneInteractions"],
+    tools: [
+        ...BASE_SANDBOX_TOOLS,
+        "pubmed",
+        "searchGene",
+        "lookupAnnotation",
+        "searchInteractions",
+        "geneDiseaseEvidence",
+        "getVariantFrequencies",
+        "drugGeneInteractions",
+    ],
 };
 
 export function createGenomicVariantAgent(deps: SandboxAgentDeps): AgentDefinition {
