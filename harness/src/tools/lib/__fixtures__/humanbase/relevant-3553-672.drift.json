@@ -1,0 +1,139 @@
+[
+    {
+        "url": "http://hb.flatironinstitute.org/api/integrations/double-strand-break-repair/",
+        "context": {
+            "url": "http://hb.flatironinstitute.org/api/contexts/double-strand-break-repair/",
+            "title": "double-strand break repair",
+            "term": {
+                "url": "http://hb.flatironinstitute.org/api/terms/gene-ontology-bp-go0006302/",
+                "title": "double-strand break repair",
+                "description": "The repair of double-strand breaks in DNA via homologous and nonhomologous mechanisms to reform a continuous DNA helix.",
+                "database": {
+                    "url": "http://hb.flatironinstitute.org/api/databases/gene-ontology-bp/",
+                    "name": "Gene Ontology (BP)",
+                    "slug": "gene-ontology-bp",
+                    "term_version": "releases/2018-05-14",
+                    "annotation_version": ""
+                },
+                "slim_terms": [],
+                "identifier": "GO:0006302",
+                "annotation_count": 140
+            },
+            "version": null
+        },
+        "slug": "double-strand-break-repair",
+        "score": "1.0"
+    },
+    {
+        "url": "http://hb.flatironinstitute.org/api/integrations/nucleotide-excision-repair/",
+        "context": {
+            "url": "http://hb.flatironinstitute.org/api/contexts/nucleotide-excision-repair/",
+            "title": "nucleotide-excision repair",
+            "term": {
+                "url": "http://hb.flatironinstitute.org/api/terms/gene-ontology-bp-go0006289/",
+                "title": "nucleotide-excision repair",
+                "description": "A DNA repair process in which a small region of the strand surrounding the damage is removed from the DNA helix as an oligonucleotide. The small gap left in the DNA helix is filled in by the sequential action of DNA polymerase and DNA ligase. Nucleotide excision repair recognizes a wide range of substrates, including damage caused by UV irradiation (pyrimidine dimers and 6-4 photoproducts) and chemicals (intrastrand cross-links and bulky adducts).",
+                "database": {
+                    "url": "http://hb.flatironinstitute.org/api/databases/gene-ontology-bp/",
+                    "name": "Gene Ontology (BP)",
+                    "slug": "gene-ontology-bp",
+                    "term_version": "releases/2018-05-14",
+                    "annotation_version": ""
+                },
+                "slim_terms": [],
+                "identifier": "GO:0006289",
+                "annotation_count": 35
+            },
+            "version": null
+        },
+        "slug": "nucleotide-excision-repair",
+        "score": 1.0
+    },
+    {
+        "url": "http://hb.flatironinstitute.org/api/integrations/dna-damage-checkpoint/",
+        "context": {
+            "url": "http://hb.flatironinstitute.org/api/contexts/dna-damage-checkpoint/",
+            "title": "DNA damage checkpoint",
+            "term": {
+                "url": "http://hb.flatironinstitute.org/api/terms/gene-ontology-bp-go0000077/",
+                "title": "DNA damage checkpoint",
+                "description": "A cell cycle checkpoint that regulates progression through the cell cycle in response to DNA damage. A DNA damage checkpoint may blocks cell cycle progression (in G1, G2 or metaphase) or slow the rate at which S phase proceeds.",
+                "database": {
+                    "url": "http://hb.flatironinstitute.org/api/databases/gene-ontology-bp/",
+                    "name": "Gene Ontology (BP)",
+                    "slug": "gene-ontology-bp",
+                    "term_version": "releases/2018-05-14",
+                    "annotation_version": ""
+                },
+                "slim_terms": [],
+                "identifier": "GO:0000077",
+                "annotation_count": 70
+            },
+            "version": null
+        },
+        "slug": "dna-damage-checkpoint",
+        "score": 0.999999997204
+    },
+    {
+        "url": "http://hb.flatironinstitute.org/api/integrations/mononuclear-phagocyte/",
+        "context": {
+            "url": "http://hb.flatironinstitute.org/api/contexts/mononuclear-phagocyte/",
+            "title": "mononuclear phagocyte",
+            "term": {
+                "url": "http://hb.flatironinstitute.org/api/terms/brenda-ontology-bto0001433/",
+                "title": "mononuclear phagocyte",
+                "description": "Any cell of the monocyte-macrophage lineage, including macrophages, monocytes, and their precursors in the monocytic series.",
+                "database": {
+                    "url": "http://hb.flatironinstitute.org/api/databases/brenda-ontology/",
+                    "name": "BRENDA Ontology",
+                    "slug": "brenda-ontology",
+                    "term_version": "releases/2021-10-26",
+                    "annotation_version": ""
+                },
+                "slim_terms": [
+                    {
+                        "title": "hematopoietic system",
+                        "description": "The tissues concerned in production of the blood, including the bone marrow, liver, lymph nodes, spleen, and thymus.",
+                        "identifier": "BTO:0000570"
+                    }
+                ],
+                "identifier": "BTO:0001433",
+                "annotation_count": 733
+            },
+            "version": null
+        },
+        "slug": "mononuclear-phagocyte",
+        "score": 0.934423357847
+    },
+    {
+        "url": "http://hb.flatironinstitute.org/api/integrations/artery/",
+        "context": {
+            "url": "http://hb.flatironinstitute.org/api/contexts/artery/",
+            "title": "artery",
+            "term": {
+                "url": "http://hb.flatironinstitute.org/api/terms/brenda-ontology-bto0000573/",
+                "title": "artery",
+                "description": "Any of the tubular branching muscular- and elastic-walled vessels that carry blood from the heart through the body.",
+                "database": {
+                    "url": "http://hb.flatironinstitute.org/api/databases/brenda-ontology/",
+                    "name": "BRENDA Ontology",
+                    "slug": "brenda-ontology",
+                    "term_version": "releases/2021-10-26",
+                    "annotation_version": ""
+                },
+                "slim_terms": [
+                    {
+                        "title": "cardiovascular system",
+                        "description": "The system of heart and blood vessels.",
+                        "identifier": "BTO:0000088"
+                    }
+                ],
+                "identifier": "BTO:0000573",
+                "annotation_count": 398
+            },
+            "version": null
+        },
+        "slug": "artery",
+        "score": 0.101786624149
+    }
+]

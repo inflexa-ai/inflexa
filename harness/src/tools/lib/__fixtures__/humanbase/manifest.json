@@ -1,0 +1,25 @@
+{
+    "contexts-excerpt.json": {
+        "url": "https://hb.flatironinstitute.org/api/integrations/",
+        "capturedAt": "2026-11-05",
+        "replay": false
+    },
+    "network-blood-672.json": {
+        "url": "https://hb.flatironinstitute.org/api/integrations/blood/network/?entrez=672&node_size=5&giant_version=v1",
+        "capturedAt": "2026-11-05"
+    },
+    "network-blood-v3-672.json": {
+        "url": "https://hb.flatironinstitute.org/api/integrations/blood-v3/network/?entrez=672&node_size=3&giant_version=v3",
+        "capturedAt": "2026-11-05"
+    },
+    "relevant-3553-672.json": {
+        "url": "https://hb.flatironinstitute.org/api/integrations/relevant/",
+        "method": "POST",
+        "body": "{\"entrez\":[\"3553\",\"672\"]}",
+        "headers": {
+            "content-type": "application/json"
+        },
+        "capturedAt": "2026-11-05",
+        "replay": false
+    }
+}

@@ -1,0 +1,372 @@
+{
+    "mincut": 0.10665836996387411,
+    "genes": [
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/580/",
+            "entrez": 580,
+            "systematic_name": "BARD1",
+            "standard_name": "BARD1",
+            "description": "BRCA1 associated RING domain 1",
+            "xrefs": [
+                {
+                    "xrid": "ENSG00000138376",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "601593",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "HGNC:952",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "580",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                }
+            ],
+            "aliases": [],
+            "id": 580,
+            "query": false
+        },
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/672/",
+            "entrez": 672,
+            "systematic_name": "BRCA1",
+            "standard_name": "BRCA1",
+            "description": "BRCA1 DNA repair associated",
+            "xrefs": [
+                {
+                    "xrid": "672",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "ENSG00000012048",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "113705",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "HGNC:1100",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "BROVCA1",
+                "PPP1R53",
+                "PSCP",
+                "BRCAI",
+                "BRCC1",
+                "PNCA4",
+                "FANCS",
+                "RNF53",
+                "IRIS"
+            ],
+            "id": 672,
+            "query": true
+        },
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/83990/",
+            "entrez": 83990,
+            "systematic_name": "BRIP1",
+            "standard_name": "BRIP1",
+            "description": "BRCA1 interacting helicase 1",
+            "xrefs": [
+                {
+                    "xrid": "83990",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "ENSG00000136492",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "HGNC:20473",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "605882",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "BACH1",
+                "OF",
+                "FANCJ"
+            ],
+            "id": 83990,
+            "query": false
+        },
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/3014/",
+            "entrez": 3014,
+            "systematic_name": "H2AX",
+            "standard_name": "H2AX",
+            "description": "H2A.X variant histone",
+            "xrefs": [
+                {
+                    "xrid": "ENSG00000188486",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "601772",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "HGNC:4739",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "3014",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "H2AFX",
+                "H2A.X",
+                "H2A/X"
+            ],
+            "id": 3014,
+            "query": false
+        },
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/4436/",
+            "entrez": 4436,
+            "systematic_name": "MSH2",
+            "standard_name": "MSH2",
+            "description": "mutS homolog 2",
+            "xrefs": [
+                {
+                    "xrid": "HGNC:7325",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "ENSG00000095002",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "609309",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "4436",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "HNPCC1",
+                "LCFS2",
+                "HNPCC",
+                "hMSH2",
+                "MSH-2",
+                "COCA1",
+                "FCC1",
+                "MMRCS2"
+            ],
+            "id": 4436,
+            "query": false
+        },
+        {
+            "url": "http://hb.flatironinstitute.org/api/genes/2956/",
+            "entrez": 2956,
+            "systematic_name": "MSH6",
+            "standard_name": "MSH6",
+            "description": "mutS homolog 6",
+            "xrefs": [
+                {
+                    "xrid": "HGNC:7329",
+                    "crossrefdb": {
+                        "name": "HGNC",
+                        "url": "http://www.genenames.org/cgi-bin/gene_symbol_report?hgnc_id=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "ENSG00000116062",
+                    "crossrefdb": {
+                        "name": "Ensembl",
+                        "url": "http://www.ensembl.org/Gene/Summary?g=_REPL_"
+                    }
+                },
+                {
+                    "xrid": "2956",
+                    "crossrefdb": {
+                        "name": "Entrez",
+                        "url": "http://www.ncbi.nlm.nih.gov/gene/_REPL_"
+                    }
+                },
+                {
+                    "xrid": "600678",
+                    "crossrefdb": {
+                        "name": "MIM",
+                        "url": "http://www.omim.org/entry/_REPL_"
+                    }
+                }
+            ],
+            "aliases": [
+                "HNPCC5",
+                "HSAP",
+                "GTBP",
+                "MSH-6",
+                "p160",
+                "GTMBP",
+                "MMRCS3"
+            ],
+            "id": 2956,
+            "query": false
+        }
+    ],
+    "edges": [
+        {
+            "id": 0,
+            "source": 3,
+            "target": 0,
+            "weight": 0.8085307111100529
+        },
+        {
+            "id": 1,
+            "source": 3,
+            "target": 2,
+            "weight": 0.2463275635444375
+        },
+        {
+            "id": 2,
+            "source": 3,
+            "target": 5,
+            "weight": 0.4480700936472008
+        },
+        {
+            "id": 3,
+            "source": 3,
+            "target": 4,
+            "weight": 0.46415357190494705
+        },
+        {
+            "id": 4,
+            "source": 3,
+            "target": 1,
+            "weight": 0.9435512025318218
+        },
+        {
+            "id": 5,
+            "source": 0,
+            "target": 2,
+            "weight": 0.10665836996387411
+        },
+        {
+            "id": 6,
+            "source": 0,
+            "target": 5,
+            "weight": 0.6264378529627453
+        },
+        {
+            "id": 7,
+            "source": 0,
+            "target": 4,
+            "weight": 0.9096329702241887
+        },
+        {
+            "id": 8,
+            "source": 0,
+            "target": 1,
+            "weight": 0.979688618140982
+        },
+        {
+            "id": 9,
+            "source": 2,
+            "target": 5,
+            "weight": 0.26930386406591644
+        },
+        {
+            "id": 10,
+            "source": 2,
+            "target": 4,
+            "weight": 0.32321543983022133
+        },
+        {
+            "id": 11,
+            "source": 2,
+            "target": 1,
+            "weight": 0.9433431170217393
+        },
+        {
+            "id": 12,
+            "source": 5,
+            "target": 4,
+            "weight": 0.9853352847807836
+        },
+        {
+            "id": 13,
+            "source": 5,
+            "target": 1,
+            "weight": 0.9407773192644519
+        },
+        {
+            "id": 14,
+            "source": 4,
+            "target": 1,
+            "weight": 0.9470833398149545
+        }
+    ]
+}
