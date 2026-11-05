@@ -3,9 +3,9 @@ import type { JSX } from "solid-js";
 import { useRenderer } from "@opentui/solid";
 import type { BoxRenderable } from "@opentui/core";
 
-import { GLYPHS, size, space } from "../../lib/design_system.ts";
-import { theme } from "../theme.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { useBindings, KEYS, MODE_BASE } from "../keymap.ts";
+import { PromptFrame } from "./prompt_frame.tsx";
 import { TextInput } from "./text_input.tsx";
 import { Bold, Fg } from "./emphasis.tsx";
 
@@ -150,109 +150,90 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
     }));
 
     return (
-        <box
-            ref={(r: BoxRenderable) => {
+        <PromptFrame
+            inert={props.inert}
+            onReady={(r) => {
                 boxRef = r;
-                // opentui's mousedown-autofocus walks from the clicked child to the nearest focusable
-                // ancestor, so an inert gallery exhibit must stay non-focusable — otherwise any click on
-                // it (an option, the prose) yanks focus off the gallery pane. Live docks opt in so the
-                // host can focus the box and the target-gated key layer engages.
-                r.focusable = !(props.inert ?? false);
                 props.onFocusReady?.(r);
             }}
-            width="100%"
-            flexShrink={0}
-            flexDirection="row"
-            backgroundColor={theme().bgRaised}
-            paddingLeft={space.sm}
-            paddingRight={space.sm}
         >
-            {/* Fixed-width so the content column starts at the same indent on every row and in both
-            modes; flexShrink={0} because a narrow terminal must squeeze the text, never the gutter. */}
-            <box width={size.gutter} flexShrink={0}>
-                <text>
-                    <Fg role="warning">{GLYPHS.warning}</Fg>
-                </text>
-            </box>
-            <box flexDirection="column" flexGrow={1}>
-                <Show
-                    when={mode() === "choice"}
-                    fallback={
-                        <>
-                            <text>
-                                <Fg role="fgMuted">{`Reject ${GLYPHS.emDash} add feedback (optional)`}</Fg>
-                            </text>
-                            <TextInput
-                                chrome="compact"
-                                placeholder="feedback"
-                                autoFocus={!(props.inert ?? false)}
-                                busy={props.busy}
-                                onSubmit={(v: string) => submitFeedback(v)}
-                            />
-                            <text>
-                                <Fg role="fgMuted">{`enter submit ${GLYPHS.middot} esc back`}</Fg>
-                            </text>
-                        </>
-                    }
-                >
-                    {/* The title carries no color of its own — <Bold> is attribute-only, so without an
+            <Show
+                when={mode() === "choice"}
+                fallback={
+                    <>
+                        <text>
+                            <Fg role="fgMuted">{`Reject ${GLYPHS.emDash} add feedback (optional)`}</Fg>
+                        </text>
+                        <TextInput
+                            chrome="compact"
+                            placeholder="feedback"
+                            autoFocus={!(props.inert ?? false)}
+                            busy={props.busy}
+                            onSubmit={(v: string) => submitFeedback(v)}
+                        />
+                        <text>
+                            <Fg role="fgMuted">{`enter submit ${GLYPHS.middot} esc back`}</Fg>
+                        </text>
+                    </>
+                }
+            >
+                {/* The title carries no color of its own — <Bold> is attribute-only, so without an
                     enclosing <Fg> it falls through to opentui's white default and vanishes on a light
                     theme's raised panel. */}
+                <text>
+                    <Fg role="fg">
+                        <Bold>{props.title}</Bold>
+                    </Fg>
+                </text>
+                <text>
+                    <Fg role="tool">
+                        <Bold>{props.command}</Bold>
+                    </Fg>
+                </text>
+                <Show when={props.detail}>
                     <text>
-                        <Fg role="fg">
-                            <Bold>{props.title}</Bold>
-                        </Fg>
+                        <Fg role="fgMuted">{props.detail}</Fg>
                     </text>
-                    <text>
-                        <Fg role="tool">
-                            <Bold>{props.command}</Bold>
-                        </Fg>
-                    </text>
-                    <Show when={props.detail}>
-                        <text>
-                            <Fg role="fgMuted">{props.detail}</Fg>
-                        </text>
-                    </Show>
-                    {/* Each option is its own mouse target because opentui mouse handlers attach to
+                </Show>
+                {/* Each option is its own mouse target because opentui mouse handlers attach to
                     renderables, not inline spans — so the one hint <text> splits into a <text> per
                     option, the middot separators becoming their own muted <text> that carry the spacing.
                     The segments compose one hint line reading "y approve · a always · n reject"; the
                     per-option split exists only to attach mouse handlers, never to change the rendered
                     row. The options are `selectable={false}` — they are buttons, not prose, so a press
                     must not highlight the label as if the click did something other than answer. */}
-                    <box flexDirection="row">
-                        <text selectable={false} onMouseUp={() => onOptionClick("once")}>
-                            <Fg role="accent">
-                                <Bold>y</Bold>
-                            </Fg>
-                            <Fg role="fgMuted"> approve</Fg>
-                        </text>
+                <box flexDirection="row">
+                    <text selectable={false} onMouseUp={() => onOptionClick("once")}>
+                        <Fg role="accent">
+                            <Bold>y</Bold>
+                        </Fg>
+                        <Fg role="fgMuted"> approve</Fg>
+                    </text>
+                    <text>
+                        <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
+                    </text>
+                    <text selectable={false} onMouseUp={() => onOptionClick("always")}>
+                        <Fg role="accent">
+                            <Bold>a</Bold>
+                        </Fg>
+                        <Fg role="fgMuted"> always</Fg>
+                    </text>
+                    <text>
+                        <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
+                    </text>
+                    <text selectable={false} onMouseUp={() => onOptionClick("reject")}>
+                        <Fg role="accent">
+                            <Bold>n</Bold>
+                        </Fg>
+                        <Fg role="fgMuted"> reject</Fg>
+                    </text>
+                    <Show when={props.queuedCount > 0}>
                         <text>
-                            <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
+                            <Fg role="fgSubtle">{`  +${props.queuedCount} more`}</Fg>
                         </text>
-                        <text selectable={false} onMouseUp={() => onOptionClick("always")}>
-                            <Fg role="accent">
-                                <Bold>a</Bold>
-                            </Fg>
-                            <Fg role="fgMuted"> always</Fg>
-                        </text>
-                        <text>
-                            <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
-                        </text>
-                        <text selectable={false} onMouseUp={() => onOptionClick("reject")}>
-                            <Fg role="accent">
-                                <Bold>n</Bold>
-                            </Fg>
-                            <Fg role="fgMuted"> reject</Fg>
-                        </text>
-                        <Show when={props.queuedCount > 0}>
-                            <text>
-                                <Fg role="fgSubtle">{`  +${props.queuedCount} more`}</Fg>
-                            </text>
-                        </Show>
-                    </box>
-                </Show>
-            </box>
-        </box>
+                    </Show>
+                </box>
+            </Show>
+        </PromptFrame>
     );
 }

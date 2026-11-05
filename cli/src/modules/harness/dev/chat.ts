@@ -27,6 +27,7 @@ import { resolveArtifacts } from "../../../client/artifacts.ts";
 import { resolveSingleAnalysisOrFail, type ContextFlags } from "../../../client/commands/analyses.ts";
 import { abortTurn, answerAsk, createChatTurn, fetchThread, fetchTurn } from "../../../client/conversation.ts";
 import { fail } from "../../../lib/cli.ts";
+import { readChatTail } from "../../../lib/chat_tail.ts";
 import { getLogger } from "../../../lib/log.ts";
 import { shutdown } from "../../../lib/shutdown.ts";
 import { isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../chat_printer.ts";
@@ -444,24 +445,10 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 sink.out(`  [tool] ${name}${detail === undefined ? "" : ` ${detail}`} ${outcome}\n`);
                 return;
             }
-            case "iteration":
-            case "finish":
-            case "error":
-            case "message-start":
-                // The REPL reads the summary of the turn after the stream ends, and reports the outcome from it.
-                // Only a sub-agent gives an `iteration`, thus the routing above takes each one. The REPL keeps no
-                // message by its id, thus a `message-start` changes nothing.
-                return;
-            default: {
-                // The one check of a part: each reader past this point trusts the type of the part.
-                const checked = checkChatPart(frame);
-                if (!checked.ok) {
-                    getLogger("chat").warn({ type: frame.type, error: checked.error }, "chat part dropped: it failed the check of its type");
-                    return;
-                }
-                await renderDataPart(checked.frame);
-                return;
-            }
+            // The REPL reads the turn's summary after the stream ends, and keeps no message by its
+            // id — the no-op kinds of the tail carry nothing to print here.
+            default:
+                return readChatTail(frame, renderDataPart);
         }
     };
 

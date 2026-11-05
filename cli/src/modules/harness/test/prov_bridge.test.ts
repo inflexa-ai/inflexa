@@ -12,6 +12,7 @@ import { getAnalysisProvenance } from "../../../db/primary_query.ts";
 import { Bus } from "../../../lib/bus.ts";
 import { env } from "../../../lib/env.ts";
 import { asStr256 } from "../../../lib/types.ts";
+import { captureBusEvents } from "../../../test_support/bus_spy.ts";
 import { buildAgentSession } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { fakeCollector, type FakeProducer } from "../../../test_support/fake_collector.ts";
@@ -36,26 +37,14 @@ import {
 } from "../prov_bridge.ts";
 import { present } from "../../../lib/present.ts";
 
-// Bus-spy harness: capture every `inflexa` event the adapter emits, always detaching in cleanup so
-// the listener never leaks across tests (a lingering spy would double-count later files' events).
-let captured: StampedEvent[] = [];
-function spy(event: StampedEvent): void {
-    captured.push(event);
-}
-beforeEach(() => {
-    captured = [];
-    Bus.on("inflexa", spy);
-});
-afterEach(() => {
-    Bus.off("inflexa", spy);
-});
+const { events: busEvents } = captureBusEvents();
 
 type FileEvent = Extract<StampedEvent, { type: "prov.file_written" }>;
 type CommandEvent = Extract<StampedEvent, { type: "prov.command_executed" }>;
 type InputEvent = Extract<StampedEvent, { type: "prov.input_used" }>;
-const commandEvents = (): CommandEvent[] => captured.filter((e: StampedEvent): e is CommandEvent => e.type === "prov.command_executed");
-const fileEvents = (): FileEvent[] => captured.filter((e: StampedEvent): e is FileEvent => e.type === "prov.file_written");
-const inputEvents = (): InputEvent[] => captured.filter((e: StampedEvent): e is InputEvent => e.type === "prov.input_used");
+const commandEvents = (): CommandEvent[] => busEvents().filter((e: StampedEvent): e is CommandEvent => e.type === "prov.command_executed");
+const fileEvents = (): FileEvent[] => busEvents().filter((e: StampedEvent): e is FileEvent => e.type === "prov.file_written");
+const inputEvents = (): InputEvent[] => busEvents().filter((e: StampedEvent): e is InputEvent => e.type === "prov.input_used");
 
 // The bus adapter addresses no external system, so it ignores the session entirely.
 const noSession = buildAgentSession();
@@ -93,7 +82,7 @@ describe("createBusArtifactRegistry — register", () => {
         const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
         // One command event, then its two file events (declaration-before-reference order).
-        expect(captured.map((e) => e.type)).toEqual(["prov.command_executed", "prov.file_written", "prov.file_written"]);
+        expect(busEvents().map((e) => e.type)).toEqual(["prov.command_executed", "prov.file_written", "prov.file_written"]);
 
         const cmds = commandEvents();
         expect(cmds).toHaveLength(1);
@@ -146,7 +135,7 @@ describe("createBusArtifactRegistry — register", () => {
 
         // No pseudo-command exists for a file-tool write — the call ref rides the file event and the
         // kernel mints the deterministic call activity from it.
-        expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
+        expect(busEvents().map((e) => e.type)).toEqual(["prov.file_written"]);
         const file = present(fileEvents()[0]);
         expect(file.generation).toBe("call");
         expect(file.call).toEqual({ invocationId: "call-9", tool: "write_file" });
@@ -171,7 +160,7 @@ describe("createBusArtifactRegistry — register", () => {
         (await registry.register(input, noSession))._unsafeUnwrap();
 
         // No command activity references a leaf; only the file event fires.
-        expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
+        expect(busEvents().map((e) => e.type)).toEqual(["prov.file_written"]);
         const file = present(fileEvents()[0]);
         // Its generation falls to the step activity; the inotify-only fallback producer is "command".
         expect(file.generation).toBe("step");
@@ -207,7 +196,7 @@ describe("createBusArtifactRegistry — register", () => {
         (await registry.register(input, noSession))._unsafeUnwrap();
 
         // cmdA's group first (command then its file), then cmdB's group (command then its file).
-        expect(captured.map((e) => e.type)).toEqual(["prov.command_executed", "prov.file_written", "prov.command_executed", "prov.file_written"]);
+        expect(busEvents().map((e) => e.type)).toEqual(["prov.command_executed", "prov.file_written", "prov.command_executed", "prov.file_written"]);
 
         const cmdBRef = present(commandEvents()[1]).command;
         // The self-read of the produced de_results.csv resolves to its analysis-scoped path as source
@@ -324,7 +313,7 @@ describe("createBusArtifactRegistry — register", () => {
         (await registry.register(input, noSession))._unsafeUnwrap();
 
         // Only the three non-artifacts reads emit; the `artifacts` read is skipped; no other events.
-        expect(captured.map((e) => e.type)).toEqual(["prov.input_used", "prov.input_used", "prov.input_used"]);
+        expect(busEvents().map((e) => e.type)).toEqual(["prov.input_used", "prov.input_used", "prov.input_used"]);
         const inputs = inputEvents();
         // Container mount prefix stripped to analysis-relative; hash + source pass through; fileId only
         // when present; each carries the pure step ref.
@@ -356,7 +345,7 @@ describe("createBusArtifactRegistry — register", () => {
 
         (await registry.register(input, noSession))._unsafeUnwrap();
 
-        const inputEvent = captured.find((e) => e.type === "prov.input_used");
+        const inputEvent = busEvents().find((e) => e.type === "prov.input_used");
         if (inputEvent?.type !== "prov.input_used") throw new Error("expected a prov.input_used event");
         // Byte-identical to the analysis-scoped path run-001's step-de `prov.file_written` carried, so
         // fileQName resolves both to one entity — the match that chains lineage across runs.
@@ -378,8 +367,10 @@ describe("createBusArtifactRegistry — register", () => {
         const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
         // Two files (the hash-less one is skipped, not emitted); no step event.
-        expect(captured.map((e) => e.type)).toEqual(["prov.file_written", "prov.file_written"]);
-        const emittedPaths = captured.filter((e) => e.type === "prov.file_written").map((e) => e.file.path);
+        expect(busEvents().map((e) => e.type)).toEqual(["prov.file_written", "prov.file_written"]);
+        const emittedPaths = busEvents()
+            .filter((e) => e.type === "prov.file_written")
+            .map((e) => e.file.path);
         expect(emittedPaths).toEqual(["runs/run-001/de-analysis/output/ok1.csv", "runs/run-001/de-analysis/output/ok2.csv"]);
 
         expect(result.registered.map((r) => r.path)).toEqual(["runs/run-001/de-analysis/output/ok1.csv", "runs/run-001/de-analysis/output/ok2.csv"]);
@@ -409,8 +400,10 @@ describe("createBusArtifactRegistry — register", () => {
 
         const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
-        expect(captured.map((e) => e.type)).toEqual(["prov.input_used", "prov.input_used"]);
-        const emittedPaths = captured.filter((e) => e.type === "prov.input_used").map((e) => e.input.path);
+        expect(busEvents().map((e) => e.type)).toEqual(["prov.input_used", "prov.input_used"]);
+        const emittedPaths = busEvents()
+            .filter((e) => e.type === "prov.input_used")
+            .map((e) => e.input.path);
         expect(emittedPaths).toEqual(["data/inputs/ok.csv", "runs/run-000/step-x/output/prior.csv"]);
 
         // The hash-less input fails registration (analysis-relative path), incrementing failedCount.
@@ -433,7 +426,7 @@ describe("createBusArtifactRegistry — register", () => {
 
         const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
-        expect(captured).toEqual([]);
+        expect(busEvents()).toEqual([]);
         expect(result).toEqual({ registered: [], failed: [], failedCount: 0 });
     });
 
@@ -476,8 +469,8 @@ describe("createRunProvenanceEmitter", () => {
 
         emit(event);
 
-        expect(captured).toHaveLength(1);
-        const busEvent = present(captured[0]);
+        expect(busEvents()).toHaveLength(1);
+        const busEvent = present(busEvents()[0]);
         if (busEvent.type !== "prov.run_started") throw new Error("expected prov.run_started");
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
@@ -499,8 +492,8 @@ describe("createRunProvenanceEmitter", () => {
 
         emit(event);
 
-        expect(captured).toHaveLength(1);
-        const busEvent = present(captured[0]);
+        expect(busEvents()).toHaveLength(1);
+        const busEvent = present(busEvents()[0]);
         if (busEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
@@ -524,7 +517,7 @@ describe("createRunProvenanceEmitter", () => {
 
         emit(event);
 
-        const busEvent = present(captured[0]);
+        const busEvent = present(busEvents()[0]);
         if (busEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(busEvent.outcome).toEqual({ runId: "run-001", stepId: "step-err", status: "failed", completedAtMs: 1_700_000_200_000 });
         expect(busEvent.outcome.durationMs).toBeUndefined();
@@ -547,7 +540,7 @@ describe("createRunProvenanceEmitter", () => {
 
         emit(event);
 
-        const busEvent = present(captured[0]);
+        const busEvent = present(busEvents()[0]);
         if (busEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(busEvent.model).toBe("deepseek/some-alias-v2");
     });
@@ -565,8 +558,8 @@ describe("createRunProvenanceEmitter", () => {
 
         emit(event);
 
-        expect(captured).toHaveLength(1);
-        const busEvent = present(captured[0]);
+        expect(busEvents()).toHaveLength(1);
+        const busEvent = present(busEvents()[0]);
         if (busEvent.type !== "prov.run_completed") throw new Error("expected prov.run_completed");
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
@@ -576,7 +569,10 @@ describe("createRunProvenanceEmitter", () => {
 
 describe("createSwappableSandboxEmitters", () => {
     type StepEvent = Extract<StampedEvent, { type: "prov.step_completed" }>;
-    const stepModels = (): string[] => captured.filter((e: StampedEvent): e is StepEvent => e.type === "prov.step_completed").map((e) => e.model);
+    const stepModels = (): string[] =>
+        busEvents()
+            .filter((e: StampedEvent): e is StepEvent => e.type === "prov.step_completed")
+            .map((e) => e.model);
 
     // A step_completed event carrying an ascending `atMs` so successive emits stay distinguishable.
     function stepAt(atMs: number): RunProvenanceEvent {
@@ -637,8 +633,8 @@ const reportThreadId = "thread-report-1";
 
 /** The single captured event, or a test failure when the bridge emitted none or more than one. */
 function onlyEvent(): StampedEvent {
-    expect(captured.length).toBe(1);
-    return present(captured[0]);
+    expect(busEvents().length).toBe(1);
+    return present(busEvents()[0]);
 }
 
 // The emit over a fixed model name — the shape every mapping test drives, except the live-switch one
@@ -677,15 +673,15 @@ describe("createSessionEmit", () => {
         emitSession({ type: "remove-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b3", blockKind: "table" });
         emitSession({ type: "move-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b4", blockKind: "figure" });
 
-        expect(captured.map((e) => e.type)).toEqual([
+        expect(busEvents().map((e) => e.type)).toEqual([
             "prov.report_block_added",
             "prov.report_block_changed",
             "prov.report_block_removed",
             "prov.report_block_moved",
         ]);
-        const kinds = captured.map((e) => (e.type.startsWith("prov.report_block_") && "block" in e ? e.block.blockKind : null));
+        const kinds = busEvents().map((e) => (e.type.startsWith("prov.report_block_") && "block" in e ? e.block.blockKind : null));
         expect(kinds).toEqual(["text", "chart", "table", "figure"]);
-        const moved = present(captured[3]);
+        const moved = present(busEvents()[3]);
         if (moved.type !== "prov.report_block_moved") throw new Error("expected prov.report_block_moved");
         expect(moved.block).toEqual({ threadId: reportThreadId, blockId: "b4", blockKind: "figure" });
     });
@@ -701,7 +697,7 @@ describe("createSessionEmit", () => {
         });
         emitSession({ type: "record-version", analysisId: sessionAnalysisId, threadId: reportThreadId, versionId: "v1", replaced: true });
 
-        const [title, preview, version] = captured;
+        const [title, preview, version] = busEvents();
         if (title?.type !== "prov.report_title_set") throw new Error("expected prov.report_title_set");
         expect(title.title).toEqual({ threadId: reportThreadId, title: "Differential expression" });
         if (preview?.type !== "prov.report_previewed") throw new Error("expected prov.report_previewed");
@@ -841,7 +837,7 @@ describe("createSessionEmit", () => {
         live = "openai/gpt-5";
         emitLive({ type: "add-block", analysisId: sessionAnalysisId, threadId: reportThreadId, blockId: "b2", blockKind: "text" });
 
-        const [first, second] = captured;
+        const [first, second] = busEvents();
         if (first?.type !== "prov.report_block_added" || second?.type !== "prov.report_block_added") throw new Error("expected two block events");
         expect(first.model).toBe("anthropic/claude-sonnet-4-5");
         expect(second.model).toBe("openai/gpt-5");

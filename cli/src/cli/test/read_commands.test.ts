@@ -1,20 +1,16 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { runCliAsync } from "../../test_support/cli.ts";
-import { freshDb } from "../../test_support/db.ts";
-import { startTestServer, type TestServer } from "../../test_support/server.ts";
+import { cliServerScope } from "../../test_support/server.ts";
 import { createProject, insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 
-const created: string[] = [];
+const e2e = cliServerScope();
 
 function tmp(): string {
-    const dir = mkdtempSync(join(tmpdir(), "inflexa-e2e-"));
-    created.push(dir);
-    return dir;
+    return e2e.tmp("inflexa-e2e-");
 }
 
 // Seed an anchor + analysis the read commands can list. Each command is a client of the server of this
@@ -32,44 +28,31 @@ function seedAnalysis(): void {
     })._unsafeUnwrap();
 }
 
-let server: TestServer;
-
-beforeEach(() => {
-    freshDb();
-    server = startTestServer();
-});
-
-afterEach(async () => {
-    await server.stop();
-    for (const dir of created) rmSync(dir, { recursive: true, force: true });
-    created.length = 0;
-});
-
 describe("read commands (e2e)", () => {
     test("inflexa ls lists a seeded analysis", async () => {
         seedAnalysis();
-        const result = await runCliAsync(["ls"], { env: server.childEnv });
+        const result = await runCliAsync(["ls"], { env: e2e.server().childEnv });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("My Analysis");
         expect(result.stdout).toContain("/home/proj");
     });
 
     test("inflexa ls reports when there are no analyses", async () => {
-        const result = await runCliAsync(["ls"], { env: server.childEnv });
+        const result = await runCliAsync(["ls"], { env: e2e.server().childEnv });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("No analyses found");
     });
 
     test("inflexa project ls lists a seeded project", async () => {
         createProject({ name: asStr256("Acme"), description: null, tags: [] })._unsafeUnwrap();
-        const result = await runCliAsync(["project", "ls"], { env: server.childEnv });
+        const result = await runCliAsync(["project", "ls"], { env: e2e.server().childEnv });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Acme");
     });
 
     test("inflexa status in a marker-less directory reports empty context", async () => {
         const dir = tmp();
-        const result = await runCliAsync(["status"], { cwd: dir, env: server.childEnv });
+        const result = await runCliAsync(["status"], { cwd: dir, env: e2e.server().childEnv });
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("context: empty");
     });
@@ -78,7 +61,7 @@ describe("read commands (e2e)", () => {
 describe("no-litter policy (e2e)", () => {
     test("a read-only command writes no anchor marker in the cwd", async () => {
         const dir = tmp();
-        const result = await runCliAsync(["status"], { cwd: dir, env: server.childEnv });
+        const result = await runCliAsync(["status"], { cwd: dir, env: e2e.server().childEnv });
         expect(result.exitCode).toBe(0);
         // The passive flow must leave the directory untouched — no .inflexa/id minted.
         expect(existsSync(join(dir, ".inflexa", "id"))).toBe(false);

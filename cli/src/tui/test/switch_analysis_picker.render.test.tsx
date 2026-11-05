@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { testRender } from "@opentui/solid";
 import { ok } from "neverthrow";
-import type { JSX } from "solid-js";
 
 import type { AnalysisList, AnalysisSummary } from "../../api/analyses.ts";
 import type { UsageTotals } from "../../api/usage.ts";
@@ -12,9 +11,11 @@ import { __setClipboardWriterForTest } from "../../lib/clipboard.ts";
 import { contractHome } from "../../lib/paths.ts";
 import { fakeClient } from "../../test_support/fake_client.ts";
 import { __resetNoticesForTest } from "../hooks/notice.ts";
-import { useKeymapRoot } from "../keymap.ts";
-import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
-import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
+import { dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
+import type { Workspace } from "../contexts/workspace.ts";
+import { buildWorkspace } from "../../test_support/builders.ts";
+import { dialogHostNode } from "../../test_support/dialog_harness.tsx";
+import { settleFrame } from "../../test_support/tui.ts";
 import { DEFAULT_ANALYSIS_DIALOG_OPTS, openSwitchAnalysis, type AnalysisDialogOpts } from "../commands.tsx";
 import type { Analysis } from "../../types/analysis.ts";
 import { isAsciiDigits } from "../../lib/text.ts";
@@ -99,45 +100,15 @@ function dialogOpts(open: AnalysisDialogOpts["openAnalysis"] = DEFAULT_ANALYSIS_
 }
 
 function ws(): Workspace {
-    return {
-        analysis: null,
-        sessionId: null,
-        workingDir: dirA,
-        project: null,
-        anchor: null,
-        inputCount: null,
-        openDialog: () => {},
-        closeDialog: () => {},
-        openSession: () => {},
-        refreshScope: () => {},
-        quit: async () => {},
-    };
-}
-
-/** The dialog host under a given workspace — closed over rather than passed as a prop, so the
- *  Provider's value is a plain constant (the shape `sidebar.render.test.tsx` uses). */
-function harnessNode(workspace: Workspace): () => JSX.Element {
-    return () => {
-        useKeymapRoot();
-        return (
-            <WorkspaceContext.Provider value={workspace}>
-                <box width="100%" height="100%">
-                    <DialogOverlay />
-                </box>
-            </WorkspaceContext.Provider>
-        );
-    };
+    return buildWorkspace({ workingDir: dirA });
 }
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
-// A real-clock settle: the dialog host applies focus on a microtask and the list's seeded scroll
-// retries on a macrotask, so a bare render pair is too early for both.
+// The settle waits on a real clock (see `settleFrame`): the host's focus lands on a microtask and the
+// list's seeded scroll retries on a macrotask, so a bare render pair is too early for both.
 async function settle(setup: Setup): Promise<string> {
-    await Promise.sleep(20);
-    await setup.renderOnce();
-    await setup.renderOnce();
-    return setup.captureCharFrame();
+    return settleFrame(setup, 20);
 }
 
 /** Run the real `analysis.switch` flow against the fake server and push the dialog it opens onto the host. */
@@ -152,7 +123,7 @@ describe("Switch analysis picker figures", () => {
         analysisIn(dirB, "atac-seq", { calls: 0 });
 
         const workspace = ws();
-        const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
+        const setup = await testRender(dialogHostNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
             await openSwitchPicker(workspace);
@@ -187,7 +158,7 @@ describe("Switch analysis picker figures", () => {
             return Promise.resolve();
         });
         const workspace = ws();
-        const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
+        const setup = await testRender(dialogHostNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
             await openSwitchPicker(workspace, opts);
@@ -226,7 +197,7 @@ describe("Switch analysis picker identity", () => {
         const inB = analysisIn(dirB, "A1");
 
         const workspace = ws();
-        const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
+        const setup = await testRender(dialogHostNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
             await openSwitchPicker(workspace);
@@ -252,7 +223,7 @@ describe("Switch analysis picker identity", () => {
         const only = analysisIn(dirA, "rna-seq");
 
         const workspace = ws();
-        const setup = await testRender(harnessNode(workspace), { width: 110, height: 24 });
+        const setup = await testRender(dialogHostNode(workspace), { width: 110, height: 24 });
         try {
             await settle(setup);
             await openSwitchPicker(workspace);
@@ -280,7 +251,7 @@ describe("Switch analysis picker identity", () => {
         });
 
         const workspace = ws();
-        const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
+        const setup = await testRender(dialogHostNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
             await openSwitchPicker(workspace);
@@ -305,7 +276,7 @@ describe("Switch analysis picker identity", () => {
         });
 
         const workspace = ws();
-        const setup = await testRender(harnessNode(workspace), { width: 100, height: 24 });
+        const setup = await testRender(dialogHostNode(workspace), { width: 100, height: 24 });
         try {
             await settle(setup);
             await openSwitchPicker(workspace);

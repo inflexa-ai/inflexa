@@ -1,15 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { testRender } from "@opentui/solid";
-import { err, errAsync, okAsync } from "neverthrow";
+import { okAsync } from "neverthrow";
 
 import type { ThreadList, ThreadSummary } from "../../api/conversation.ts";
-import { useKeymapRoot, __resetKeybindCache } from "../keymap.ts";
-import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
-import { WorkspaceContext } from "../contexts/workspace.ts";
+import { __resetKeybindCache } from "../keymap.ts";
+import { dialogClear } from "../components/dialog/dialog_host.tsx";
 import { openRestoreSession, type SessionOpts } from "../commands.tsx";
-import { __setBootStateForTest, __resetBootForTest } from "../hooks/boot.ts";
+import { __resetBootForTest } from "../hooks/boot.ts";
 import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
-import { buildAnalysis, buildWorkspace } from "../../test_support/builders.ts";
+import { buildAnalysis } from "../../test_support/builders.ts";
+import { withSessionDialog, type SessionDialogScope } from "../../test_support/session_dialogs.tsx";
+import { sessionOptsDouble } from "../../test_support/session_doubles.ts";
+import type { RenderSetup } from "../../test_support/tui.ts";
 import type { Notice } from "../theme.ts";
 
 // The restore picker's rows are the only place the archived listing becomes visible, and the server
@@ -35,80 +36,30 @@ function threadRow(over: Partial<ThreadSummary> = {}): ThreadSummary {
     return conversationSummary({ id: "thread-1", resourceId: ANALYSIS.id, title: "Cohort survival", ...over });
 }
 
+const SCOPE: SessionDialogScope = { analysis: ANALYSIS, sessionId: "thread-open", closeDialog: dialogClear };
+
 /** Session options over a fixed widened listing, recording every thread id the picker asks to restore. */
 function sessionOpts(page: ThreadList, notices: Notice[], restored: string[]): SessionOpts {
-    return {
-        ready: () => true,
-        listThreads: () => okAsync(threadListOf([])),
-        listReportChildren: () => okAsync(threadListOf([])),
+    return sessionOptsDouble({
         getThread: () => okAsync(null),
-        updateTitle: () => okAsync(null),
         listThreadsWithArchived: () => okAsync(page),
-        archiveThread: () => okAsync(undefined),
-        unarchiveThread: (_analysisId, threadId) => {
+        unarchiveThread: (_analysisId: string, threadId: string) => {
             restored.push(threadId);
             return okAsync(undefined);
         },
-        purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
-        chatBusy: () => false,
         resolveThreadId: () => Promise.resolve(null),
-        workingDirFor: () => "/work",
-        refreshThread: () => {},
-        mintReportPageAccess: () => errAsync({ type: "aborted" }),
-        openUrl: () => err({ type: "open_failed", code: null, cause: null }),
         notify: (n) => notices.push(n),
-    };
+    }).opts;
 }
 
-/**
- * Mount the dialog host under a keymap root and drive the real `openRestoreSession` through it, then
- * hand the caller the live harness so a case can keep typing into it.
- */
-async function openRestorePicker(page: ThreadList) {
-    const notices: Notice[] = [];
+/** Open the restore picker for `page`, act through the live harness, and always destroy the renderer. */
+async function onPicker(page: ThreadList, act: (h: { setup: RenderSetup; notices: Notice[]; restored: string[] }) => Promise<void> | void): Promise<void> {
     const restored: string[] = [];
-    const ws = buildWorkspace({
-        analysis: ANALYSIS,
-        sessionId: "thread-open",
-        // The workspace capability App wires to `dialogPush`; supplying the same wiring is what makes
-        // the dialog under assertion the one production mounts.
-        openDialog: dialogPush,
-        closeDialog: dialogClear,
-    });
-
-    const setup = await testRender(
-        () => {
-            useKeymapRoot();
-            return (
-                <WorkspaceContext.Provider value={ws}>
-                    <box width="100%" height="100%">
-                        <DialogOverlay />
-                    </box>
-                </WorkspaceContext.Provider>
-            );
-        },
-        { width: 90, height: 30 },
+    await withSessionDialog(
+        SCOPE,
+        ({ ws, notices }) => openRestoreSession(ws, sessionOpts(page, notices, restored)),
+        (h) => act({ setup: h.setup, notices: h.notices, restored }),
     );
-
-    __setBootStateForTest({ phase: "ready", model: "claude-test", connection: { provider: "anthropic", mode: "cliproxy" } });
-    await openRestoreSession(ws, sessionOpts(page, notices, restored));
-    await Promise.resolve();
-    await setup.renderOnce();
-    return { setup, notices, restored };
-}
-
-/**
- * Open, act, and ALWAYS destroy the renderer. An undisposed renderer outlives its test and corrupts
- * every later render suite in the same process (opentui installs process-level handlers per renderer),
- * so disposal is not tidiness here — it is what keeps this file from failing other files.
- */
-async function onPicker(page: ThreadList, act: (h: Awaited<ReturnType<typeof openRestorePicker>>) => Promise<void> | void): Promise<void> {
-    const harness = await openRestorePicker(page);
-    try {
-        await act(harness);
-    } finally {
-        harness.setup.renderer.destroy();
-    }
 }
 
 describe("the restore picker offers exactly the archived conversations", () => {

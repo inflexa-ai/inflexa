@@ -4,6 +4,9 @@ import type { FileKind } from "../api/fs.ts";
  * The map of the file system routes as the `local-server` spec writes it: one file name for each key, with its kind and
  * its language, and the cases of the `.gz` rule. A test copy, not an import of the map, thus a test fails when the map and the spec disagree.
  */
+// jscpd:ignore-start
+// The deliberate test copy the header documents: this table is the oracle that fails when the map
+// and the spec disagree, and an import of the map would make that test tautological.
 export const SPEC_FILE_TYPES: readonly (readonly [name: string, kind: FileKind, language: string])[] = [
     ...rows("table", "text", ["txt", "xlsx", "xls", "parquet"]),
     ...rows("table", "csv", ["csv"]),
@@ -103,6 +106,7 @@ export const SPEC_FILE_TYPES: readonly (readonly [name: string, kind: FileKind, 
     ["counts.csv.gz", "table", "text"],
     ["reads.gz", "data", "text"],
 ];
+// jscpd:ignore-end
 
 function rows(kind: FileKind, language: string, extensions: readonly string[]): (readonly [string, FileKind, string])[] {
     return extensions.map((extension) => [`sample.${extension}`, kind, language] as const);

@@ -1,9 +1,9 @@
-import { createSignal, onCleanup, For, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 
 import { GLYPHS, MARKERS, space } from "../../lib/design_system.ts";
-import { runEvery } from "../../lib/timer.ts";
 import { theme } from "../theme.ts";
+import { useSpinnerClock } from "./spinner_clock.ts";
 import { Bold, Fg } from "./emphasis.tsx";
 
 /** Props for {@link BootIndicator}. */
@@ -29,19 +29,9 @@ export type BootIndicatorProps = {
  * `hooks/`/`modules/` import). Both states enter the design gallery.
  */
 export function BootIndicator(props: BootIndicatorProps): JSX.Element {
-    const [frame, setFrame] = createSignal(0);
-    const [age, setAge] = createSignal("0s");
-    // Captured at mount: the host mounts this for each boot phase, and unmounts it when the runtime is ready.
-    const start = Date.now();
-    // The timer keeps ticking while the boot is FAILED (message set) — harmless: the failed branch
-    // ignores frame()/age(), and onCleanup clears the interval on unmount. Kept identical to
-    // ThinkingIndicator rather than special-casing a stop.
-    onCleanup(
-        runEvery(80, () => {
-            setFrame((f) => (f + 1) % GLYPHS.spinner.length);
-            setAge(Date.relativeAge(start));
-        }),
-    );
+    const { frame, age } = useSpinnerClock();
+    // The clock keeps ticking while the boot is FAILED (message set) — harmless: the failed branch
+    // ignores frame()/age(), and the clock's cleanup clears the interval on unmount.
     return (
         <Show
             when={props.message}

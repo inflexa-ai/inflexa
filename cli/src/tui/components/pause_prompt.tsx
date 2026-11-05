@@ -3,9 +3,9 @@ import type { JSX } from "solid-js";
 import { useRenderer } from "@opentui/solid";
 import type { BoxRenderable } from "@opentui/core";
 
-import { GLYPHS, size, space } from "../../lib/design_system.ts";
-import { theme } from "../theme.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { chordLabel, useBindings, MODE_BASE, type Chord } from "../keymap.ts";
+import { PromptFrame } from "./prompt_frame.tsx";
 import { Bold, Fg } from "./emphasis.tsx";
 
 /** The key that resumes paused work, or ends the wait of its timer. Bare: legal only on the focus-gated layer. */
@@ -94,80 +94,66 @@ export function PausePrompt(props: PausePromptProps): JSX.Element {
     }));
 
     return (
-        <box
-            ref={(r: BoxRenderable) => {
+        <PromptFrame
+            inert={props.inert}
+            onReady={(r) => {
                 boxRef = r;
-                // An inert exhibit stays non-focusable, thus a click on it never takes the focus of the gallery pane.
-                r.focusable = !(props.inert ?? false);
                 props.onFocusReady?.(r);
             }}
-            width="100%"
-            flexShrink={0}
-            flexDirection="row"
-            backgroundColor={theme().bgRaised}
-            paddingLeft={space.sm}
-            paddingRight={space.sm}
         >
-            <box width={size.gutter} flexShrink={0}>
+            <text>
+                <Fg role="fg">
+                    <Bold>{title()}</Bold>
+                </Fg>
+            </text>
+            <text>
+                <Fg role="warning">{props.cause}</Fg>
+            </text>
+            <Show when={props.remedy}>
                 <text>
-                    <Fg role="warning">{GLYPHS.warning}</Fg>
+                    <Fg role="fg">{props.remedy}</Fg>
                 </text>
-            </box>
-            <box flexDirection="column" flexGrow={1}>
+            </Show>
+            <Show when={props.state === "retrying" ? props.nextRetry : undefined}>
                 <text>
-                    <Fg role="fg">
-                        <Bold>{title()}</Bold>
-                    </Fg>
+                    <Fg role="fgMuted">{`next: ${props.nextRetry ?? ""}`}</Fg>
                 </text>
-                <text>
-                    <Fg role="warning">{props.cause}</Fg>
-                </text>
-                <Show when={props.remedy}>
-                    <text>
-                        <Fg role="fg">{props.remedy}</Fg>
-                    </text>
-                </Show>
-                <Show when={props.state === "retrying" ? props.nextRetry : undefined}>
-                    <text>
-                        <Fg role="fgMuted">{`next: ${props.nextRetry ?? ""}`}</Fg>
-                    </text>
-                </Show>
-                {/* One mouse target for each action, as in the ask prompt: opentui attaches a mouse handler to a
+            </Show>
+            {/* One mouse target for each action, as in the ask prompt: opentui attaches a mouse handler to a
                 renderable, not to an inline span. The segments compose one hint line. */}
-                <box flexDirection="row">
-                    <text selectable={false} onMouseUp={() => onActionClick("resume")}>
-                        <Fg role="accent">
-                            <Bold>{chordLabel(RESUME_KEY)}</Bold>
-                        </Fg>
-                        <Fg role="fgMuted">{` ${resumeLabel()}`}</Fg>
-                    </text>
-                    <Show when={props.state === "retrying"}>
-                        <text>
-                            <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
-                        </text>
-                        <text selectable={false} onMouseUp={() => onActionClick("hold")}>
-                            <Fg role="accent">
-                                <Bold>{chordLabel(HOLD_KEY)}</Bold>
-                            </Fg>
-                            <Fg role="fgMuted"> hold</Fg>
-                        </text>
-                    </Show>
+            <box flexDirection="row">
+                <text selectable={false} onMouseUp={() => onActionClick("resume")}>
+                    <Fg role="accent">
+                        <Bold>{chordLabel(RESUME_KEY)}</Bold>
+                    </Fg>
+                    <Fg role="fgMuted">{` ${resumeLabel()}`}</Fg>
+                </text>
+                <Show when={props.state === "retrying"}>
                     <text>
                         <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
                     </text>
-                    <text selectable={false} onMouseUp={() => onActionClick("stop")}>
+                    <text selectable={false} onMouseUp={() => onActionClick("hold")}>
                         <Fg role="accent">
-                            <Bold>{chordLabel(STOP_KEY)}</Bold>
+                            <Bold>{chordLabel(HOLD_KEY)}</Bold>
                         </Fg>
-                        <Fg role="fgMuted"> stop</Fg>
+                        <Fg role="fgMuted"> hold</Fg>
                     </text>
-                    <Show when={props.othersWaiting > 0}>
-                        <text>
-                            <Fg role="fgMuted">{`  +${props.othersWaiting} more waiting`}</Fg>
-                        </text>
-                    </Show>
-                </box>
+                </Show>
+                <text>
+                    <Fg role="fgMuted">{` ${GLYPHS.middot} `}</Fg>
+                </text>
+                <text selectable={false} onMouseUp={() => onActionClick("stop")}>
+                    <Fg role="accent">
+                        <Bold>{chordLabel(STOP_KEY)}</Bold>
+                    </Fg>
+                    <Fg role="fgMuted"> stop</Fg>
+                </text>
+                <Show when={props.othersWaiting > 0}>
+                    <text>
+                        <Fg role="fgMuted">{`  +${props.othersWaiting} more waiting`}</Fg>
+                    </text>
+                </Show>
             </box>
-        </box>
+        </PromptFrame>
     );
 }

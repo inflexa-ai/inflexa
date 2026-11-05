@@ -1,7 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { ok } from "neverthrow";
@@ -9,14 +7,8 @@ import { ok } from "neverthrow";
 import { __setCompiledBinaryForTest } from "../../../lib/install_context.ts";
 import { env } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
-import {
-    __resetLlamaRuntimeForTest,
-    __setLlamaAcquireForTest,
-    __setLlamaPinForTest,
-    ensureLlamaServer,
-    materializedLlamaServer,
-    type ResolvedPin,
-} from "../llama_runtime.ts";
+import { llamaFixtureArchive, llamaFixturePin } from "../../../test_support/llama_fixture.ts";
+import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, ensureLlamaServer, materializedLlamaServer } from "../llama_runtime.ts";
 
 // Drives the materialization pipeline through its public surface against the sandboxed
 // env.llamaServerDir, using the module's test seams (forced pin + stubbed acquisition) so no test
@@ -27,23 +19,7 @@ const TEST_TAG = "test-tag";
 
 // A valid nested fixture archive (`runtime/llama-server`, matching the real macOS/Linux layout), plus
 // its true SHA-256 so an injected pin can pass verification. Built once — the bytes are immutable.
-async function buildFixtureArchive(): Promise<{ readonly bytes: Uint8Array; readonly sha256: string }> {
-    const work = mkdtempSync(join(tmpdir(), "inflexa-llama-fixture-"));
-    await mkdir(join(work, "runtime"), { recursive: true });
-    await Bun.write(join(work, "runtime", "llama-server"), "#!/bin/sh\necho inflexa-fixture-llama-server\n");
-    const tarPath = join(work, "fixture.tar.gz");
-    const proc = Bun.spawn(["tar", "czf", tarPath, "-C", work, "runtime"], { stdout: "ignore", stderr: "ignore" });
-    await proc.exited;
-    const bytes = await Bun.file(tarPath).bytes();
-    rmSync(work, { recursive: true, force: true });
-    return { bytes, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
-}
-
-const fixture = await buildFixtureArchive();
-
-function pinWith(sha256: string): ResolvedPin {
-    return { tag: TEST_TAG, target: "darwin-arm64", artifact: "fixture.tar.gz", sha256 };
-}
+const fixture = await llamaFixtureArchive("inflexa-llama-fixture-", "#!/bin/sh\necho inflexa-fixture-llama-server\n");
 
 /** An acquire stub that writes `bytes` to the staging path and records how many times / from which source. */
 function stubAcquire(bytes: Uint8Array): { calls: number; sources: string[] } {
@@ -73,7 +49,7 @@ afterEach(() => {
 
 describe("ensureLlamaServer — materialization", () => {
     test("materializes a verified archive and returns the server binary path", async () => {
-        __setLlamaPinForTest(pinWith(fixture.sha256));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, fixture.sha256));
         stubAcquire(fixture.bytes);
 
         const result = await ensureLlamaServer();
@@ -89,7 +65,7 @@ describe("ensureLlamaServer — materialization", () => {
 
     test("hash mismatch is fatal and leaves nothing at the final path", async () => {
         // Pin claims a hash the fixture does not have, so verification must reject it.
-        __setLlamaPinForTest(pinWith("0".repeat(64)));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, "0".repeat(64)));
         stubAcquire(fixture.bytes);
 
         const result = await ensureLlamaServer();
@@ -105,7 +81,7 @@ describe("ensureLlamaServer — materialization", () => {
         // Bytes that pass the hash gate but are NOT a valid archive → tar fails → extract_failed.
         const notAnArchive = new TextEncoder().encode("this is not a tar or zip archive");
         const sha256 = new Bun.CryptoHasher("sha256").update(notAnArchive).digest("hex");
-        __setLlamaPinForTest(pinWith(sha256));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, sha256));
         stubAcquire(notAnArchive);
 
         const result = await ensureLlamaServer();
@@ -118,7 +94,7 @@ describe("ensureLlamaServer — materialization", () => {
     });
 
     test("re-running after success does no acquisition work (idempotent)", async () => {
-        __setLlamaPinForTest(pinWith(fixture.sha256));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, fixture.sha256));
         const spy = stubAcquire(fixture.bytes);
 
         const first = await ensureLlamaServer();
@@ -139,7 +115,7 @@ describe("ensureLlamaServer — materialization", () => {
 describe("ensureLlamaServer — source selection", () => {
     test("compiled context acquires from the embedded asset path", async () => {
         __setCompiledBinaryForTest(true);
-        __setLlamaPinForTest(pinWith(fixture.sha256));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, fixture.sha256));
         const spy = stubAcquire(fixture.bytes);
 
         const result = await ensureLlamaServer();
@@ -149,7 +125,7 @@ describe("ensureLlamaServer — source selection", () => {
 
     test("from-source context acquires via download", async () => {
         __setCompiledBinaryForTest(false);
-        __setLlamaPinForTest(pinWith(fixture.sha256));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, fixture.sha256));
         const spy = stubAcquire(fixture.bytes);
 
         const result = await ensureLlamaServer();
@@ -160,7 +136,7 @@ describe("ensureLlamaServer — source selection", () => {
 
 describe("materializedLlamaServer", () => {
     test("is null before materialization and the binary path after", async () => {
-        __setLlamaPinForTest(pinWith(fixture.sha256));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, fixture.sha256));
         stubAcquire(fixture.bytes);
 
         expect(materializedLlamaServer()).toBeNull();

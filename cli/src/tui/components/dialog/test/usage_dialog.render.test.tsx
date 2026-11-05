@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { err, ok, type Result } from "neverthrow";
 import { testRender } from "@opentui/solid";
-import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
-import type { JSX } from "solid-js";
+import { parseColor, rgbToHex } from "@opentui/core";
 
 import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../../../lib/design_system.ts";
 import { contrast } from "../../../../test_support/contrast.ts";
+import { dialogHostNode } from "../../../../test_support/dialog_harness.tsx";
+import { settleFrame, spanFg } from "../../../../test_support/tui.ts";
 import { setTheme } from "../../../theme.ts";
-import { useKeymapRoot } from "../../../keymap.ts";
-import { DialogOverlay, dialogClear, dialogClose, dialogPush } from "../dialog_host.tsx";
+import { dialogClear, dialogClose, dialogPush } from "../dialog_host.tsx";
 import { UsageDialog, type SessionUsageSnapshot } from "../usage_dialog.tsx";
 import type { ClientError } from "../../../../client/api.ts";
 import { present } from "../../../../lib/present.ts";
@@ -45,24 +45,12 @@ function snapshot(over: Partial<SessionUsageSnapshot> = {}): SessionUsageSnapsho
     };
 }
 
-function Harness(): JSX.Element {
-    useKeymapRoot();
-    return (
-        <box width="100%" height="100%">
-            <DialogOverlay />
-        </box>
-    );
-}
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
 // A real-clock settle: the dialog host applies focus on a microtask and the scroll pane retries on a
 // macrotask, so a bare render pair is too early for both.
 async function settle(setup: Setup): Promise<string> {
-    await Promise.sleep(20);
-    await setup.renderOnce();
-    await setup.renderOnce();
-    return setup.captureCharFrame();
+    return settleFrame(setup, 20);
 }
 
 function pushUsage(load: () => Result<SessionUsageSnapshot, ClientError>): void {
@@ -91,16 +79,6 @@ function insets(frame: string, needle: string): { left: number; right: number } 
     return { left: start - line.indexOf(GLYPHS.lineVertical), right: line.lastIndexOf(GLYPHS.lineVertical) - (start + needle.length - 1) };
 }
 
-/** The fg of the FIRST captured span whose text contains `needle`, or undefined if none rendered. */
-function spanFg(setup: Setup, needle: string): RGBA | undefined {
-    for (const line of setup.captureSpans().lines) {
-        for (const span of line.spans) {
-            if (span.text.includes(needle)) return span.fg;
-        }
-    }
-    return undefined;
-}
-
 describe("UsageDialog", () => {
     afterEach(() => {
         dialogClear();
@@ -108,7 +86,7 @@ describe("UsageDialog", () => {
     });
 
     test("writes the headline LABELLED and the grouping rows COMPACT, and never paints a summed figure", async () => {
-        const setup = await testRender(() => <Harness />, { width: 100, height: 34 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 34 });
         try {
             await settle(setup);
             pushUsage(() => ok(snapshot()));
@@ -161,7 +139,7 @@ describe("UsageDialog", () => {
     // cannot tell an edge-anchored figure from a half-anchored one, which is why this sweeps.
     for (const width of [70, 84, 100, 120]) {
         test(`at ${width} columns the headline's two figures sit at opposite panel edges`, async () => {
-            const setup = await testRender(() => <Harness />, { width, height: 34 });
+            const setup = await testRender(dialogHostNode(), { width, height: 34 });
             try {
                 await settle(setup);
                 // No reasoning count: with nothing nested under it the output arm IS its figure, so the
@@ -185,7 +163,7 @@ describe("UsageDialog", () => {
     }
 
     test("a quantity nested under the trailing arm is indented under that arm, not pushed to the panel edge", async () => {
-        const setup = await testRender(() => <Harness />, { width: 100, height: 34 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 34 });
         try {
             await settle(setup);
             pushUsage(() => ok(snapshot()));
@@ -210,7 +188,7 @@ describe("UsageDialog", () => {
     });
 
     test("carries none of the grains their own entities now report, and nothing drills", async () => {
-        const setup = await testRender(() => <Harness />, { width: 100, height: 34 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 34 });
         try {
             await settle(setup);
             pushUsage(() => ok(snapshot()));
@@ -228,7 +206,7 @@ describe("UsageDialog", () => {
     });
 
     test("an arm the provider never reported renders the absent word, never a zero", async () => {
-        const setup = await testRender(() => <Harness />, { width: 100, height: 34 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 34 });
         try {
             await settle(setup);
             pushUsage(() =>
@@ -257,7 +235,7 @@ describe("UsageDialog", () => {
 
     test("a failed ledger read renders an unavailable state inside the dialog, which still opens and closes", async () => {
         let closed = false;
-        const setup = await testRender(() => <Harness />, { width: 100, height: 34 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 34 });
         try {
             await settle(setup);
             dialogPush(() => (
@@ -286,7 +264,7 @@ describe("UsageDialog", () => {
     });
 
     test("a conversation with no recorded calls says so, with no zeroed figures and no table", async () => {
-        const setup = await testRender(() => <Harness />, { width: 100, height: 34 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 34 });
         try {
             await settle(setup);
             pushUsage(() => ok(snapshot({ totals: { calls: 0 }, byModel: [], byAgent: [] })));
@@ -303,7 +281,7 @@ describe("UsageDialog", () => {
     test("on a light theme every information-bearing span resolves a foreground, never the white default", async () => {
         setTheme(LIGHT);
         const colors = themes[LIGHT].colors;
-        const setup = await testRender(() => <Harness />, { width: 100, height: 34 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 34 });
         try {
             await settle(setup);
             pushUsage(() => ok(snapshot()));

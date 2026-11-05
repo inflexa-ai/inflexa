@@ -75,6 +75,12 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # The copy detector is a source-validity gate like the typecheck above: it
+      # fails the job when a change adds a copy at or above the floor committed
+      # in .jscpd.json.
+      - name: Copy detection
+        run: bun run dupes
+
       # Same category as oxlint: a source-validity gate. Generation fails on a
       # visible command/argument/option registered without a description, or a
       # registry that stops being importable standalone — catching it here keeps

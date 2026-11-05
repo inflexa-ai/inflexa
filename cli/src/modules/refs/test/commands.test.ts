@@ -50,7 +50,8 @@ import {
 } from "../store.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { awaitOk } from "../../../test_support/result.ts";
-import { describeCause, errorOf } from "../../../lib/cause.ts";
+import { errorOf } from "../../../lib/cause.ts";
+import { captureConsole } from "../../../test_support/console_capture.ts";
 
 // Loose objects keep each key that the schema does not name, so `not.toHaveProperty` still sees an absent key as absent.
 const listedDatasetSchema = z.looseObject({
@@ -133,35 +134,6 @@ function seedIntactInstall(): void {
             artifacts,
         }),
     );
-}
-
-/**
- * Run `fn` with stdout (console.log) and stderr (console.error) captured as strings, modeling the
- * trailing newline the real streams add per call so byte-stability can be asserted on the exact bytes.
- * Restores both and clears process.exitCode so a captured failure code never leaks to sibling tests.
- */
-async function capture(fn: () => Promise<void>): Promise<{ stdout: string; stderr: string; exitCode: typeof process.exitCode }> {
-    const origLog = console.log;
-    const origError = console.error;
-    const origExitCode = process.exitCode;
-    let stdout = "";
-    let stderr = "";
-    console.log = (msg?: unknown) => {
-        stdout += `${describeCause(msg)}\n`;
-    };
-    console.error = (msg?: unknown) => {
-        stderr += `${describeCause(msg)}\n`;
-    };
-    try {
-        await fn();
-        return { stdout, stderr, exitCode: process.exitCode };
-    } finally {
-        console.log = origLog;
-        console.error = origError;
-        // Bun ignores an `undefined` assignment (Node treats it as a reset), so a captured failure code
-        // must be cleared with an explicit 0 — otherwise it fails the whole single-process `bun test` run.
-        process.exitCode = origExitCode ?? 0;
-    }
 }
 
 afterEach(() => {
@@ -424,7 +396,7 @@ describe("reference json output", () => {
             resolveInstallPlan: () => ok({ catalogVersion: twoDatasetCatalog.version, datasets: [] }),
         };
 
-        const { stdout, stderr, exitCode } = await capture(() => runRefsList({ json: true, source: twoDatasetSource }));
+        const { stdout, stderr, exitCode } = await captureConsole(() => runRefsList({ json: true, source: twoDatasetSource }));
         expect(stderr).toBe("");
         expect(exitCode ?? 0).toBe(0);
         const document = parsedJson(stdout, refsListSchema);
@@ -473,7 +445,7 @@ describe("reference json output", () => {
             `  ],\n` +
             `  "userContent": []\n` +
             `}`;
-        const { stdout, stderr, exitCode } = await capture(() => runRefsList({ json: true, source: singleFileSource }));
+        const { stdout, stderr, exitCode } = await captureConsole(() => runRefsList({ json: true, source: singleFileSource }));
         expect(stdout).toBe(`${expected}\n`);
         expect(stderr).toBe("");
         expect(exitCode ?? 0).toBe(0);
@@ -481,16 +453,16 @@ describe("reference json output", () => {
 
     test("list --json --urls is byte-identical to --json alone", async () => {
         seedIntactInstall();
-        const plain = await capture(() => runRefsList({ json: true, source: singleFileSource }));
-        const withUrls = await capture(() => runRefsList({ json: true, urls: true, source: singleFileSource }));
+        const plain = await captureConsole(() => runRefsList({ json: true, source: singleFileSource }));
+        const withUrls = await captureConsole(() => runRefsList({ json: true, urls: true, source: singleFileSource }));
         expect(withUrls.stdout).toBe(plain.stdout);
         expect(plain.stdout.length).toBeGreaterThan(0);
     });
 
     test("list --json before the store exists is byte-stable and creates nothing", async () => {
         assertTestSandbox(env.refsDir);
-        const first = await capture(() => runRefsList({ json: true, source: singleFileSource }));
-        const second = await capture(() => runRefsList({ json: true, source: singleFileSource }));
+        const first = await captureConsole(() => runRefsList({ json: true, source: singleFileSource }));
+        const second = await captureConsole(() => runRefsList({ json: true, source: singleFileSource }));
         expect(first.stdout).toBe(second.stdout);
         expect(first.stderr).toBe("");
         expect(parsedJson(first.stdout, z.json())).toMatchObject({ exists: false });
@@ -503,7 +475,7 @@ describe("reference json output", () => {
         // A store root that is a plain file, not a directory, is a genuine inspection failure.
         mkdirSync(dirname(env.refsDir), { recursive: true });
         writeFileSync(env.refsDir, "not a directory");
-        const { stdout, stderr, exitCode } = await capture(() => runRefsList({ json: true, source: singleFileSource }));
+        const { stdout, stderr, exitCode } = await captureConsole(() => runRefsList({ json: true, source: singleFileSource }));
         expect(stdout).toBe("");
         expect(stderr).toContain("Reference-data inspection failed");
         expect(exitCode).toBe(1);
@@ -513,7 +485,7 @@ describe("reference json output", () => {
         assertTestSandbox(env.refsDir);
         mkdirSync(dirname(env.refsDir), { recursive: true });
         writeFileSync(env.refsDir, "not a directory");
-        const { stdout, stderr, exitCode } = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        const { stdout, stderr, exitCode } = await captureConsole(() => runRefsVerify([], { json: true, source: singleFileSource }));
         expect(stdout).toBe("");
         expect(stderr).toContain("Reference-data verification failed");
         expect(exitCode).toBe(1);
@@ -524,7 +496,7 @@ describe("reference json output", () => {
         // Same-size, different-bytes overwrite: the size still matches the receipt, the digest does not,
         // so verification finds the file modified rather than missing.
         writeFileSync(join(referenceStorePaths(env.refsDir).managed, "demo", "1", "file"), "ALPHA");
-        const { stdout, stderr, exitCode } = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        const { stdout, stderr, exitCode } = await captureConsole(() => runRefsVerify([], { json: true, source: singleFileSource }));
         expect(exitCode).toBe(1);
         // The damaged states live in the document, so stderr stays reserved for genuine failures.
         expect(stderr).toBe("");
@@ -535,7 +507,7 @@ describe("reference json output", () => {
 
     test("verify --json on an intact store reports valid states and exits zero", async () => {
         seedIntactInstall();
-        const { stdout, stderr, exitCode } = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        const { stdout, stderr, exitCode } = await captureConsole(() => runRefsVerify([], { json: true, source: singleFileSource }));
         expect(exitCode ?? 0).toBe(0);
         expect(stderr).toBe("");
         expect(parsedJson(stdout, z.json())).toEqual({
@@ -546,7 +518,7 @@ describe("reference json output", () => {
     test("verify --json surfaces a verification failure on stderr with an empty stdout", async () => {
         // Explicit ids skip the no-ids selection guard and reach `verifyReferenceDatasets`; the fixture
         // source rejects any id but "demo", so this exercises the JSON branch's own err handler.
-        const { stdout, stderr, exitCode } = await capture(() => runRefsVerify(["unknown"], { json: true, source: singleFileSource }));
+        const { stdout, stderr, exitCode } = await captureConsole(() => runRefsVerify(["unknown"], { json: true, source: singleFileSource }));
         expect(stdout).toBe("");
         expect(stderr).toContain("Reference-data verification failed");
         expect(exitCode).toBe(1);
@@ -554,8 +526,8 @@ describe("reference json output", () => {
 
     test("verify --json is byte-stable across two runs of an intact store", async () => {
         seedIntactInstall();
-        const first = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
-        const second = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        const first = await captureConsole(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        const second = await captureConsole(() => runRefsVerify([], { json: true, source: singleFileSource }));
         expect(second.stdout).toBe(first.stdout);
         expect(first.stdout.length).toBeGreaterThan(0);
     });
@@ -882,7 +854,7 @@ describe("progress readout teardown", () => {
         };
 
         let thrown: unknown;
-        const { stdout } = await capture(async () => {
+        const { stdout } = await captureConsole(async () => {
             try {
                 await awaitOk(downloadReferences({ ids: ["demo"], yes: true, interactive: false, source: explodingSource, fetch: declaring(64) }));
             } catch (cause) {
@@ -899,7 +871,7 @@ describe("progress readout teardown", () => {
 
 describe("progress readout without a terminal", () => {
     test("paints one line per completed artifact and never an escape sequence", async () => {
-        const { stdout } = await capture(() =>
+        const { stdout } = await captureConsole(() =>
             Promise.try(() => {
                 const readout = createReferenceDownloadProgress(2, { sink: plainProgressSink() });
                 if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { parseColor, type RGBA } from "@opentui/core";
+import { parseColor } from "@opentui/core";
 
 import { DEFAULT_THEME_ID, GLYPHS, themes } from "../../../lib/design_system.ts";
 import { setTheme } from "../../theme.ts";
 import { MessageBlock } from "../message_block.tsx";
 import { formatTokenFigure } from "../../../lib/usage_format.ts";
+import { spanFg } from "../../../test_support/tui.ts";
 import type { TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
 import type { Part } from "../../../types/session.ts";
 
@@ -14,16 +15,6 @@ import type { Part } from "../../../types/session.ts";
 // mechanism from theme_contrast.render.test.tsx) on github-light, whose pure-#ffffff bg is the sharpest
 // case for an accidentally-white span.
 const LIGHT = "github-light";
-
-/** The fg of the first captured span whose text contains `needle`, or undefined if none rendered. */
-function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): RGBA | undefined {
-    for (const line of setup.captureSpans().lines) {
-        for (const span of line.spans) {
-            if (span.text.includes(needle)) return span.fg;
-        }
-    }
-    return undefined;
-}
 
 /** An assistant turn with one body part; the header props under test are passed straight through. */
 function renderAssistant(header: { interrupted?: boolean; durationMs?: number; turnUsage?: TokenUsageRollup } = {}): ReturnType<typeof testRender> {

@@ -3,10 +3,12 @@ import { For } from "solid-js";
 import { testRender, useRenderer } from "@opentui/solid";
 import type { ScrollBoxRenderable, TextRenderable, TextareaRenderable } from "@opentui/core";
 
-import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "../keymap.ts";
+import { useBindings, useKeymapRoot, __resetKeybindCache } from "../keymap.ts";
 import { selectionClearLayer } from "../app.tsx";
 import { ScrollPane } from "../components/scroll_pane.tsx";
 import { DialogOverlay, dialogPush, dialogClear, dialogIsOpen } from "../components/dialog/dialog_host.tsx";
+import { usePaneFocusCompanions } from "../../test_support/keymap_harness.tsx";
+import { makeSettle } from "../../test_support/tui.ts";
 
 // End-to-end verification of app.tsx's "esc clears the active text selection" layer through the
 // REAL engine: a headless selection over selectable text arms the layer, then mockInput drives
@@ -43,18 +45,12 @@ function Harness(props: { onRefs: (refs: Refs) => void }) {
     // than a copy that could drift.
     useBindings(() => selectionClearLayer(renderer));
 
-    // app.tsx's INSERT→NORMAL fall-through: esc while the textarea is focused FOCUSES the pane; i
-    // returns. Present so the "no selection → esc flips to NORMAL" case has a real destination.
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: ta,
-        bindings: [{ chord: KEYS.escape, run: () => sb?.focus() }],
-    }));
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: sb,
-        bindings: [{ chord: { key: "i" }, run: () => ta?.focus() }],
-    }));
+    // app.tsx's INSERT→NORMAL fall-through is what the "no selection → esc flips to NORMAL" case
+    // needs a real destination for.
+    usePaneFocusCompanions(
+        () => sb,
+        () => ta,
+    );
 
     return (
         <box flexDirection="column" width="100%" height="100%">
@@ -81,17 +77,6 @@ function Harness(props: { onRefs: (refs: Refs) => void }) {
     );
 }
 
-// A lone ESC byte is an ambiguous escape-sequence prefix: opentui's StdinParser holds it for
-// timeoutMs (20ms) before flushing it as a standalone "escape" key — so yield real time, not just
-// renderOnce spins, for esc to reach the dispatcher. (Same helper as the other keymap render tests.)
-function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
-    return async () => {
-        await Promise.sleep(35);
-        await setup.renderOnce();
-        await setup.renderOnce();
-    };
-}
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
 // Create a persistent, non-empty selection across the selectable text via the renderer's own
@@ -110,7 +95,7 @@ describe("esc clears the active text selection (rendered, real keyboard bus)", (
     test("selection + open dialog: esc clears the selection and leaves the dialog open; a second esc closes it", async () => {
         let refs!: Refs;
         const setup = await testRender(() => <Harness onRefs={(r) => (refs = r)} />, { width: 80, height: 24 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
 
@@ -143,7 +128,7 @@ describe("esc clears the active text selection (rendered, real keyboard bus)", (
     test("selection + focused textarea: esc clears the selection and the textarea keeps focus (stays INSERT)", async () => {
         let refs!: Refs;
         const setup = await testRender(() => <Harness onRefs={(r) => (refs = r)} />, { width: 80, height: 24 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             // Textarea holds focus on mount = INSERT; the pane is not focused.
@@ -168,7 +153,7 @@ describe("esc clears the active text selection (rendered, real keyboard bus)", (
     test("no selection, focused textarea: esc falls through and flips INSERT→NORMAL (focuses the pane)", async () => {
         let refs!: Refs;
         const setup = await testRender(() => <Harness onRefs={(r) => (refs = r)} />, { width: 80, height: 24 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(selectedText(setup)).toBe("");
@@ -188,7 +173,7 @@ describe("esc clears the active text selection (rendered, real keyboard bus)", (
     test("no selection, open dialog: esc falls through and cancels the dialog", async () => {
         let refs!: Refs;
         const setup = await testRender(() => <Harness onRefs={(r) => (refs = r)} />, { width: 80, height: 24 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(refs).toBeDefined();

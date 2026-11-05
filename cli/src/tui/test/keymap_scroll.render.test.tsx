@@ -3,9 +3,11 @@ import { For, createSignal } from "solid-js";
 import { testRender } from "@opentui/solid";
 import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 
-import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "../keymap.ts";
+import { useKeymapRoot, __resetKeybindCache } from "../keymap.ts";
 import { ScrollPane } from "../components/scroll_pane.tsx";
 import { DialogOverlay, dialogPush, dialogClear } from "../components/dialog/dialog_host.tsx";
+import { usePaneFocusCompanions } from "../../test_support/keymap_harness.tsx";
+import { makeSettle } from "../../test_support/tui.ts";
 import { present } from "../../lib/present.ts";
 
 // End-to-end verification of the REAL ScrollPane through the REAL engine: mockInput drives
@@ -29,19 +31,11 @@ function Harness(props: { sticky?: boolean; lines?: () => string[]; onRefs: (sb:
     let sb: ScrollBoxRenderable | null = null;
     let ta: TextareaRenderable | null = null;
 
-    // Mirrors app.tsx: esc (textarea-targeted) FOCUSES the pane — never a bare blur — and the
-    // pane-targeted companion layer returns to the input. The scroll keys themselves come from
-    // ScrollPane's internal layer, not from this harness.
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: ta,
-        bindings: [{ chord: KEYS.escape, run: () => sb?.focus() }],
-    }));
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: sb,
-        bindings: [{ chord: { key: "i" }, run: () => ta?.focus() }],
-    }));
+    // The scroll keys themselves come from ScrollPane's internal layer, not from this harness.
+    usePaneFocusCompanions(
+        () => sb,
+        () => ta,
+    );
 
     return (
         <box flexDirection="column" height={10}>
@@ -66,23 +60,12 @@ function Harness(props: { sticky?: boolean; lines?: () => string[]; onRefs: (sb:
     );
 }
 
-// A lone ESC byte is an ambiguous escape-sequence prefix: opentui's StdinParser holds it for
-// timeoutMs (20ms, armTimeouts on a real clock) before flushing it as a standalone "escape" key.
-// So we must yield real time, not just spin renderOnce, for esc to reach the dispatcher.
-function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
-    return async () => {
-        await Promise.sleep(35);
-        await setup.renderOnce();
-        await setup.renderOnce();
-    };
-}
-
 describe("ScrollPane (rendered, real keyboard bus)", () => {
     test("esc focuses the pane → canonical key steps → i refocuses → typing is gated", async () => {
         let sb!: ScrollBoxRenderable;
         let ta!: TextareaRenderable;
         const setup = await testRender(() => <Harness onRefs={(s, t) => ((sb = s), (ta = t))} />, { width: 30, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
 
         try {
             await settle();
@@ -178,7 +161,7 @@ describe("ScrollPane (rendered, real keyboard bus)", () => {
         let sb!: ScrollBoxRenderable;
         const [lines, setLines] = createSignal(LINES);
         const setup = await testRender(() => <Harness sticky lines={lines} onRefs={(s) => (sb = s)} />, { width: 30, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
 
         try {
             await settle();
@@ -210,7 +193,7 @@ describe("ScrollPane (rendered, real keyboard bus)", () => {
     test("dialog close restores focus to the NORMAL-mode pane", async () => {
         let sb!: ScrollBoxRenderable;
         const setup = await testRender(() => <Harness onRefs={(s) => (sb = s)} />, { width: 30, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
 
         try {
             await settle();

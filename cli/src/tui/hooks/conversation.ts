@@ -30,6 +30,7 @@ import {
     type ChatTurnStream,
 } from "../../client/conversation.ts";
 import { describeCause } from "../../lib/cause.ts";
+import { readChatTail } from "../../lib/chat_tail.ts";
 import { getLogger } from "../../lib/log.ts";
 import { runAfter } from "../../lib/timer.ts";
 import { isKnownPart, isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
@@ -502,21 +503,8 @@ export function applyServerFrame(frame: ChatFrame): void {
             applyFrame(frame.durationMs === undefined && startedAt !== undefined ? { ...frame, durationMs: Date.now() - startedAt } : frame);
             return;
         }
-        case "iteration":
-        case "finish":
-        case "error":
-        case "message-start":
-            return;
-        default: {
-            // The one check of a part: each reader past this point trusts the type of the part.
-            const checked = checkChatPart(frame);
-            if (!checked.ok) {
-                getLogger("chat").warn({ type: frame.type, error: checked.error }, "chat part dropped: it failed the check of its type");
-                return;
-            }
-            applyDataFrame(checked.frame);
-            return;
-        }
+        default:
+            return readChatTail(frame, applyDataFrame);
     }
 }
 

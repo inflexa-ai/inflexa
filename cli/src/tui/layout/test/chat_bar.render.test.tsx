@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { parseColor, type RGBA } from "@opentui/core";
+import { parseColor } from "@opentui/core";
 
 import { DEFAULT_THEME_ID, themes } from "../../../lib/design_system.ts";
 import { setTheme } from "../../theme.ts";
@@ -8,6 +8,7 @@ import { RECALL_LABEL } from "../../keymap.ts";
 import { sessionScopeOf } from "../../app.tsx";
 import type { ThreadSnapshot } from "../../hooks/thread.ts";
 import { conversationSummary, reportSummary } from "../../../test_support/threads.ts";
+import { spanFg } from "../../../test_support/tui.ts";
 import { ChatBar } from "../chat_bar.tsx";
 
 // The footer interrupt hint carries its OWN color: muted for the resting esc / one-press abort forms, warn
@@ -17,16 +18,6 @@ import { ChatBar } from "../chat_bar.tsx";
 // the sharpest case for an accidentally-white span. autoFocus seeds the footer mode word without a real
 // focus-grab (see ChatBar.autoFocus), so an isolated render pins each mode's footer directly.
 const LIGHT = "github-light";
-
-/** The fg of the first captured span whose text contains `needle`, or undefined if none rendered. */
-function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): RGBA | undefined {
-    for (const line of setup.captureSpans().lines) {
-        for (const span of line.spans) {
-            if (span.text.includes(needle)) return span.fg;
-        }
-    }
-    return undefined;
-}
 
 /** Render a ChatBar with a distinct hint label so the span search never collides with the mode/newline words. */
 function renderChatBar(opts: { autoFocus: boolean; label: string; armed: boolean }): Promise<Awaited<ReturnType<typeof testRender>>> {

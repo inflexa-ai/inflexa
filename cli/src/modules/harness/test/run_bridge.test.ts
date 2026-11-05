@@ -1,26 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { RunObservation, RunProvenanceEvent } from "@inflexa-ai/harness";
 
-import { Bus } from "../../../lib/bus.ts";
-import type { StampedEvent } from "../../../types/events.ts";
+import { captureBusEvents } from "../../../test_support/bus_spy.ts";
 import type { ProvModelId } from "../../../types/prov.ts";
 import { createRunProvenanceEmitter } from "../prov_bridge.ts";
 import { emitRunObservation } from "../run_bridge.ts";
 import { present } from "../../../lib/present.ts";
 
-// Bus-spy harness, matching `prov_bridge.test.ts`: capture every `inflexa` event and always detach
-// in cleanup so a lingering listener never double-counts a later test's events.
-let captured: StampedEvent[] = [];
-function spy(event: StampedEvent): void {
-    captured.push(event);
-}
-beforeEach(() => {
-    captured = [];
-    Bus.on("inflexa", spy);
-});
-afterEach(() => {
-    Bus.off("inflexa", spy);
-});
+const { events: busEvents, reset: resetBusEvents } = captureBusEvents();
 
 function observation(overrides: Partial<RunObservation> = {}): RunObservation {
     return {
@@ -40,8 +27,8 @@ describe("run observation bridge", () => {
     test("maps an observation onto a run.observed bus event", () => {
         emitRunObservation(observation());
 
-        expect(captured.length).toBe(1);
-        const event = present(captured[0]);
+        expect(busEvents().length).toBe(1);
+        const event = present(busEvents()[0]);
         if (event.type !== "run.observed") throw new Error(`expected run.observed, got ${event.type}`);
         expect(event.analysisId).toBe("analysis-1");
         expect(event.snapshot.runId).toBe("run-1");
@@ -56,7 +43,7 @@ describe("run observation bridge", () => {
     test("omits absent optional step fields rather than emitting undefined keys", () => {
         emitRunObservation(observation());
 
-        const event = present(captured[0]);
+        const event = present(busEvents()[0]);
         if (event.type !== "run.observed") throw new Error("expected run.observed");
         const running = present(event.snapshot.steps.find((s) => s.id === "T1S2"));
         expect("durationMs" in running).toBe(false);
@@ -72,7 +59,7 @@ describe("run observation bridge", () => {
             observation({ steps: [{ id: "T1S1", name: "quality control", agent: "bio-analyst", status: "failed", error: "the sandbox ran out of memory" }] }),
         );
 
-        const event = captured[0];
+        const event = busEvents()[0];
         if (event?.type !== "run.observed") throw new Error("expected run.observed");
         const failed = event.snapshot.steps[0];
         if (failed === undefined) throw new Error("expected a step");
@@ -84,7 +71,7 @@ describe("run observation bridge", () => {
         const source = observation();
         emitRunObservation(source);
 
-        const event = present(captured[0]);
+        const event = present(busEvents()[0]);
         if (event.type !== "run.observed") throw new Error("expected run.observed");
         // Nothing mutable from the runtime reaches a subscriber: mutating the source afterwards
         // must not be visible on the emitted snapshot.
@@ -100,12 +87,12 @@ describe("run observation bridge", () => {
 
         emitRunObservation(observation({ status: "completed" }));
         // Only `run.observed` — observing a run emits no provenance whatsoever.
-        expect(captured.every((e) => e.type === "run.observed")).toBe(true);
+        expect(busEvents().every((e) => e.type === "run.observed")).toBe(true);
 
-        captured = [];
+        resetBusEvents();
         emitProv({ type: "run_completed", analysisId: "analysis-1", runId: "run-1", status: "completed", atMs: 1, durationMs: 1 });
         // And the reverse: the provenance emitter produces no `run.*` event.
-        expect(captured.every((e) => e.type === "prov.run_completed")).toBe(true);
+        expect(busEvents().every((e) => e.type === "prov.run_completed")).toBe(true);
         expect(provEvents.length).toBe(0);
     });
 });

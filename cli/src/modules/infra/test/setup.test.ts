@@ -1624,6 +1624,40 @@ describe("setup() — batch orchestration", () => {
         return { auth: true, start: false, force: false, postgres: false, yes: true, flags, ...over };
     }
 
+    /**
+     * Stub the prompt functions of an interactive run so a question that was reached shows up as a
+     * recorded label rather than a hung suite. `promptText` accepts the pre-fill wherever there is
+     * one (what "press Enter" does) and types `openai` where there is not — the only such prompt
+     * these flows reach is the provider slug, and an openai-compatible connection keeps the
+     * anthropic-only credential-helper offer (which reads the developer's REAL ~/.claude settings)
+     * out of the run. `promptTextOptional` declines, `confirm` declines, and `select` takes
+     * `answerFor`, by default each select's first option — its documented default ("infer",
+     * "cliproxy").
+     */
+    function stubRecordedPrompts(
+        prompts: string[],
+        selects: string[],
+        answerFor: (message: string, firstOptionValue: string) => string = (_message, firstOptionValue) => firstOptionValue,
+    ): { mockRestore: () => void }[] {
+        return [
+            spyOn(cliPrompts, "promptText").mockImplementation((message: string, opts?: { defaultValue?: string }) => {
+                prompts.push(message);
+                return Promise.resolve(opts?.defaultValue ?? "openai");
+            }),
+            spyOn(cliPrompts, "promptTextOptional").mockImplementation((message: string) => {
+                prompts.push(message);
+                return Promise.resolve(null);
+            }),
+            spyOn(cliPrompts, "select").mockImplementation((message: string, options: { value: string; label: string }[]) =>
+                Promise.try(() => {
+                    selects.push(message);
+                    return answerFor(message, present(options[0]).value);
+                }),
+            ),
+            spyOn(cliPrompts, "confirm").mockImplementation(() => Promise.resolve(false)),
+        ];
+    }
+
     /** A direct connection answered end to end, plus a token-free credential source to validate. */
     const directFlags = {
         connection: "direct",
@@ -2148,28 +2182,7 @@ describe("setup() — batch orchestration", () => {
             replaceProperty(process.stdin, "isTTY", true);
             prompts = [];
             selects = [];
-            spies.push(
-                spyOn(cliPrompts, "promptText").mockImplementation((message: string, opts?: { defaultValue?: string }) => {
-                    prompts.push(message);
-                    // Accept the pre-fill wherever there is one (what "press Enter" does), and type
-                    // `openai` where there is not — the only such prompt these flows reach is the provider
-                    // slug, and an openai-compatible connection keeps the anthropic-only credential-helper
-                    // offer (which reads the developer's REAL ~/.claude settings) out of the run.
-                    return Promise.resolve(opts?.defaultValue ?? "openai");
-                }),
-                spyOn(cliPrompts, "promptTextOptional").mockImplementation((message: string) => {
-                    prompts.push(message);
-                    return Promise.resolve(null);
-                }),
-                spyOn(cliPrompts, "select").mockImplementation((message: string, options: { value: string; label: string }[]) =>
-                    Promise.try(() => {
-                        selects.push(message);
-                        // The first option is each of these selects' documented default ("infer", "cliproxy").
-                        return present(options[0]).value;
-                    }),
-                ),
-                spyOn(cliPrompts, "confirm").mockImplementation(() => Promise.resolve(false)),
-            );
+            spies.push(...stubRecordedPrompts(prompts, selects));
             // The interactive default-model step lists models off the proxy; every route 404s, so the
             // candidate list is empty and the optional manual-entry fallback is declined by the seam above.
             globalThis.fetch = fakeFetch(respondWith(null, { status: 404 }));
@@ -2671,26 +2684,15 @@ describe("setup() — batch orchestration", () => {
             selects = [];
             continueChoice = "continue";
             spies.push(
-                spyOn(cliPrompts, "promptText").mockImplementation((message: string, opts?: { defaultValue?: string }) => {
-                    prompts.push(message);
-                    return Promise.resolve(opts?.defaultValue ?? "openai");
-                }),
-                spyOn(cliPrompts, "promptTextOptional").mockImplementation((message: string) => {
-                    prompts.push(message);
-                    return Promise.resolve(null);
-                }),
-                spyOn(cliPrompts, "select").mockImplementation((message: string, options: { value: string; label: string }[]) =>
-                    Promise.try(() => {
-                        selects.push(message);
-                        // Only the continue offer is steered per test; every other select takes its first
-                        // option, which is each one's documented default.
-                        return message.includes(CONTINUE_QUESTION) ? continueChoice : present(options[0]).value;
-                    }),
+                // Only the continue offer is steered per test; every other select takes its
+                // first option, which is each one's documented default.
+                ...stubRecordedPrompts(prompts, selects, (message, firstOptionValue) =>
+                    message.includes(CONTINUE_QUESTION) ? continueChoice : firstOptionValue,
                 ),
                 spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 })),
                 spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(() => Promise.resolve(ok({ type: "started" as const, pid: 4243 }))),
-                // The transfers consent is the one confirm on this path; a decline keeps the checkpoint flow itself under test.
-                spyOn(cliPrompts, "confirm").mockImplementation(() => Promise.resolve(false)),
+                // The transfers consent is the one confirm on this path; the shared stubs decline
+                // it, which keeps the checkpoint flow itself under test.
                 spyOn(compose, "composeAvailable").mockImplementation(() => Promise.resolve(true)),
                 spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
             );

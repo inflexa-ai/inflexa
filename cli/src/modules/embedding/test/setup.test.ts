@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -13,11 +12,12 @@ import { readConfig, writeConfig, type Config } from "../../../lib/config.ts";
 import { EMBEDDING_API_KEY_VAR, env } from "../../../lib/env.ts";
 import { __setCompiledBinaryForTest } from "../../../lib/install_context.ts";
 import { embeddingsRequestSchema, tokenizeRequestSchema } from "../../../test_support/embedding_requests.ts";
+import { llamaFixtureArchive, llamaFixturePin } from "../../../test_support/llama_fixture.ts";
 import { fakeFetch, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { replaceProperty } from "../../../test_support/replace_property.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import type { SetupAnswers } from "../../infra/setup_answers.ts";
-import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, materializedLlamaServer, type ResolvedPin } from "../llama_runtime.ts";
+import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, materializedLlamaServer } from "../llama_runtime.ts";
 import { __resetLocalRuntimeForTest, __setSidecarLauncherForTest, LOCAL_EMBEDDING_DIMENSIONS } from "../local-provider.ts";
 import { DEFAULT_API_EMBEDDING_DIMENSIONS } from "../resolve.ts";
 import {
@@ -69,23 +69,7 @@ afterEach(() => {
 
 const TEST_TAG = "setup-test-tag";
 
-async function buildFixtureArchive(): Promise<{ readonly bytes: Uint8Array; readonly sha256: string }> {
-    const work = mkdtempSync(join(tmpdir(), "inflexa-embed-setup-fixture-"));
-    await mkdir(join(work, "runtime"), { recursive: true });
-    await Bun.write(join(work, "runtime", "llama-server"), "#!/bin/sh\necho fixture\n");
-    const tarPath = join(work, "fixture.tar.gz");
-    const proc = Bun.spawn(["tar", "czf", tarPath, "-C", work, "runtime"], { stdout: "ignore", stderr: "ignore" });
-    await proc.exited;
-    const bytes = await Bun.file(tarPath).bytes();
-    rmSync(work, { recursive: true, force: true });
-    return { bytes, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
-}
-
-const fixture = await buildFixtureArchive();
-
-function pinWith(sha256: string): ResolvedPin {
-    return { tag: TEST_TAG, target: "darwin-arm64", artifact: "fixture.tar.gz", sha256 };
-}
+const fixture = await llamaFixtureArchive("inflexa-embed-setup-fixture-", "#!/bin/sh\necho fixture\n");
 
 /** Acquire stub that writes `bytes` to the staging path, counting invocations. */
 function stubAcquire(bytes: Uint8Array): { calls: number } {
@@ -109,7 +93,7 @@ function placeFakeModel(): void {
  * sha is irrelevant: a materialized tag dir short-circuits before any acquisition or hashing runs.
  */
 function placeMaterializedRuntime(): void {
-    __setLlamaPinForTest(pinWith("0".repeat(64)));
+    __setLlamaPinForTest(llamaFixturePin(TEST_TAG, "0".repeat(64)));
     mkdirSync(join(env.llamaServerDir, TEST_TAG), { recursive: true });
     writeFileSync(join(env.llamaServerDir, TEST_TAG, "llama-server"), "#!/bin/sh\n");
 }
@@ -243,7 +227,7 @@ describe("ensureEmbedderReady", () => {
         writeConfigWith({ mode: "local", modelPath: customPath, dimensions: 512 });
         expect(existsSync(env.embeddingModelPath)).toBe(false);
         // Pre-materialize the runtime so the gate returns on the model-present + runtime-present short-circuit.
-        __setLlamaPinForTest(pinWith("0".repeat(64)));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, "0".repeat(64)));
         mkdirSync(join(env.llamaServerDir, TEST_TAG), { recursive: true });
         writeFileSync(join(env.llamaServerDir, TEST_TAG, "llama-server"), "#!/bin/sh\n");
 
@@ -269,7 +253,7 @@ describe("ensureEmbedderReady", () => {
         placeFakeModel();
         // Pre-materialize the pinned tag dir; the sha is irrelevant because a
         // materialized runtime must short-circuit before any hashing.
-        __setLlamaPinForTest(pinWith("0".repeat(64)));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, "0".repeat(64)));
         mkdirSync(join(env.llamaServerDir, TEST_TAG), { recursive: true });
         writeFileSync(join(env.llamaServerDir, TEST_TAG, "llama-server"), "#!/bin/sh\n");
         const spy = stubAcquire(fixture.bytes);
@@ -283,7 +267,7 @@ describe("ensureEmbedderReady", () => {
     test("local mode + model present + runtime absent → the gate materializes it and returns ok", async () => {
         writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath });
         placeFakeModel();
-        __setLlamaPinForTest(pinWith(fixture.sha256));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, fixture.sha256));
         const spy = stubAcquire(fixture.bytes);
         expect(materializedLlamaServer()).toBeNull();
 
@@ -298,7 +282,7 @@ describe("ensureEmbedderReady", () => {
     test("local mode + model present + acquisition fails → err runtime_unavailable with remediation", async () => {
         writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath });
         placeFakeModel();
-        __setLlamaPinForTest(pinWith(fixture.sha256));
+        __setLlamaPinForTest(llamaFixturePin(TEST_TAG, fixture.sha256));
         // The offline source-checkout case: the download is the only byte source
         // from source, and it is unreachable.
         __setLlamaAcquireForTest(() => Promise.resolve(err({ type: "download_failed", message: "network unreachable" })));

@@ -8,42 +8,15 @@ import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from 
 import { __resetRunCompletionsForTest, completionNoticeText, watchRunCompletions, type RunCompletionOpts } from "../run_completion.ts";
 import { present } from "../../../lib/present.ts";
 import { withRootAsync } from "../../../test_support/solid.ts";
+import { runDetailFixture, runRowFixture } from "../../../test_support/runs.ts";
 
+/** This file's runs are bound to the open conversation `thread-1`, unless a case says otherwise. */
 function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
-    return {
-        threadId: "thread-1",
-        planId: null,
-        workflowName: "executeAnalysis",
-        workflowId: over.runId,
-        status: "running",
-        startedAt: "2026-07-28T10:00:00.000Z",
-        completedAt: null,
-        error: null,
-        ...over,
-    };
+    return runRowFixture({ threadId: "thread-1", ...over });
 }
 
 /** The detail of an active run: one running step, so the progress entry carries a label and counts. */
-function runDetail(run: RunSummary): RunDetail {
-    return {
-        ...run,
-        steps: [
-            {
-                stepId: "T1S1",
-                agentId: "bioinformatician",
-                status: "running",
-                startedAt: "2026-07-28T10:00:01.000Z",
-                completedAt: null,
-                durationMs: null,
-                error: null,
-                attempts: 1,
-                blockedReason: null,
-            },
-        ],
-        plan: null,
-        unattributedUsage: null,
-    };
-}
+const runDetail = (run: RunSummary): RunDetail => runDetailFixture(run);
 
 /** Refresh options whose reads all answer from `runs`, with no profile and a ready runtime. */
 function optsFor(runs: RunSummary[]): RefreshOpts {

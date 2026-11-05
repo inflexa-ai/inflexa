@@ -574,22 +574,32 @@ async function readReceipt(path: string, storeRoot: string): Promise<{ readonly 
     }
 }
 
+/**
+ * The per-artifact checks both receipt walks share: hold the artifact path contained against the
+ * dataset root, lstat it, and require a regular file at the size the receipt recorded. Returns the
+ * path of the checked file, or `null` when the artifact fails — the caller words the outcome.
+ */
+async function receiptArtifactFile(root: string, artifact: ReferenceReceiptArtifact): Promise<string | null> {
+    const path = join(root, artifact.path);
+    // Contained against the dataset's own root, not the store's: `managed/` and `user/` are
+    // siblings, so a store-scoped check would let a receipt path reach into user content or a
+    // neighbouring dataset. The receipt schema already refuses traversal segments — this is the
+    // second lock on the same door, because the receipt is a file on disk that anyone can edit.
+    const owned = await assertOwnedPath(root, path);
+    if (owned.isErr()) return null;
+    // Cheap state deliberately treats unreadable content as damaged/partial: it must never claim
+    // an installation is usable when the sandbox cannot read it. Explicit verify retains the
+    // file-level invalid outcome while top-level I/O failures still use the Result channel.
+    const fileResult = await pathLstat(path);
+    if (fileResult.isErr()) return null;
+    const file = fileResult.value;
+    if (file === undefined || file.isSymbolicLink() || !file.isFile() || file.size !== artifact.bytes) return null;
+    return path;
+}
+
 async function receiptFilesPresent(paths: ReferenceStorePaths, root: string, receipt: ReferenceInstallReceipt): Promise<boolean> {
     for (const artifact of receipt.artifacts) {
-        const path = join(root, artifact.path);
-        // Contained against the dataset's own root, not the store's: `managed/` and `user/` are
-        // siblings, so a store-scoped check would let a receipt path reach into user content or a
-        // neighbouring dataset. The receipt schema already refuses traversal segments — this is the
-        // second lock on the same door, because the receipt is a file on disk that anyone can edit.
-        const owned = await assertOwnedPath(root, path);
-        if (owned.isErr()) return false;
-        const fileResult = await pathLstat(path);
-        // Cheap state deliberately treats unreadable content as damaged/partial: it must never claim
-        // an installation is usable when the sandbox cannot read it. Explicit verify retains the
-        // file-level invalid outcome while top-level I/O failures still use the Result channel.
-        if (fileResult.isErr()) return false;
-        const file = fileResult.value;
-        if (file === undefined || file.isSymbolicLink() || !file.isFile() || file.size !== artifact.bytes) return false;
+        if ((await receiptArtifactFile(root, artifact)) === null) return false;
     }
     return true;
 }
@@ -603,13 +613,8 @@ async function receiptFilesPresent(paths: ReferenceStorePaths, root: string, rec
  */
 async function receiptFilesIntact(paths: ReferenceStorePaths, root: string, receipt: ReferenceInstallReceipt): Promise<boolean> {
     for (const artifact of receipt.artifacts) {
-        const path = join(root, artifact.path);
-        const owned = await assertOwnedPath(root, path);
-        if (owned.isErr()) return false;
-        const fileResult = await pathLstat(path);
-        if (fileResult.isErr()) return false;
-        const file = fileResult.value;
-        if (file === undefined || file.isSymbolicLink() || !file.isFile() || file.size !== artifact.bytes) return false;
+        const path = await receiptArtifactFile(root, artifact);
+        if (path === null) return false;
         const digest = await sha256File(path);
         if (digest.isErr() || digest.value !== artifact.sha256) return false;
     }

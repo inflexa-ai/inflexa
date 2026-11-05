@@ -1,0 +1,14 @@
+{
+    "//": "The copy floor is 60 tokens and 15 lines. Measured counts over the code formats of src and scripts with jscpd 5.4.2 on 56dc6568, the ladder that this floor came from: 349 clones at 60 tokens with 5 lines, 129 at 60/10, 45 at 60/15, 39 at 70/15, 11 at 100/20. Each report at 60/15 names a real repeated block; below the line floor the set holds parameter tables, builder chains, and short setup blocks whose repetition carries no name. Thus the reason carries the ladder, so a future calibration re-runs the same measurement instead of a new judgment.\n\nIgnored trees: node_modules, dist, and dist-docs hold dependencies and build output, not cli code.\n\nThe data formats stay outside the scan: fixtures repeat data by design. A data gate would force destructured test payloads and give no gain. The package-store fixtures under src/modules/libs/test-fixtures/ hold third-party package payloads, among them Python modules; the format list keeps them outside, because they are fixture data and not cli code.",
+    "minTokens": 60,
+    "minLines": 15,
+    "formats": [
+        "typescript",
+        "tsx"
+    ],
+    "ignore": [
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/dist-docs/**"
+    ]
+}

@@ -3,9 +3,11 @@ import { createSignal } from "solid-js";
 import { testRender } from "@opentui/solid";
 import type { TextareaRenderable } from "@opentui/core";
 
-import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "../../keymap.ts";
+import { useBindings, useKeymapRoot, KEYS, __resetKeybindCache } from "../../keymap.ts";
 import { retractLayer } from "../../app.tsx";
 import { historyRecallLayer, type RecallPosition } from "../prompt_recall.ts";
+import { FocusedComposer, useFallThroughProbe } from "../../../test_support/keymap_harness.tsx";
+import { makeSettle } from "../../../test_support/tui.ts";
 
 // End-to-end verification of the prompt-history recall layer through the REAL engine: mockInput
 // drives opentui's keyboard bus → useKeymapRoot → dispatchKey → the winning layer. Same contract as
@@ -21,13 +23,6 @@ afterEach(() => {
 
 // Newest first, exactly as `conversation.promptHistory` returns them.
 const ENTRIES = ["newest", "middle", "oldest"];
-
-function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
-    return async () => {
-        await setup.renderOnce();
-        await setup.renderOnce();
-    };
-}
 
 type RecallControls = {
     readonly entries: () => string[];
@@ -59,25 +54,21 @@ function RecallHarness(props: RecallControls) {
         }),
     );
 
-    // `preventDefault: false` so the key ALSO reaches the textarea's own caret handling — these stand-ins
-    // observe the fall-through without suppressing what falls through, which is what lets the multi-line
-    // cases below assert real caret movement rather than only the absence of a history step.
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: ta,
-        priority: -10,
-        bindings: [
-            { chord: KEYS.up, run: () => props.onFallthrough("up"), preventDefault: false },
-            { chord: KEYS.down, run: () => props.onFallthrough("down"), preventDefault: false },
+    // These stand-ins observe the fall-through; the multi-line cases below assert real caret movement
+    // rather than only the absence of a history step.
+    useFallThroughProbe(
+        () => ta,
+        [
+            { chord: KEYS.up, run: () => props.onFallthrough("up") },
+            { chord: KEYS.down, run: () => props.onFallthrough("down") },
         ],
-    }));
+    );
 
     return (
         <box flexDirection="column" width="100%" height="100%">
-            <textarea
-                ref={(r: TextareaRenderable) => {
+            <FocusedComposer
+                onRef={(r) => {
                     ta = r;
-                    queueMicrotask(() => r.focus());
                     props.onRef(r);
                 }}
             />
@@ -102,7 +93,8 @@ async function mount(opts: { entries?: string[]; canRetract?: boolean } = {}) {
         onRef: (r) => (ta = r),
     };
     const setup = await testRender(() => <RecallHarness {...controls} />, { width: 40, height: 10 });
-    const settle = makeSettle(setup);
+    // No ESC is in play here — only rendered arrow dispatches — so the settle needs no real-clock wait.
+    const settle = makeSettle(setup, 0);
     await settle();
     return { setup, settle, fell, composer: () => ta, entryReads: () => entryReads };
 }
@@ -198,7 +190,8 @@ describe("prompt-history recall layer (rendered, real keyboard bus)", () => {
         }
     });
 
-    test("down walks back toward the newest before leaving recall", async () => {
+    /** Two ups recall the middle entry; the down walk steps back to the newest one. */
+    async function expectDownWalkReturnsToNewest(): Promise<void> {
         const { setup, settle, composer } = await mount();
         try {
             setup.mockInput.pressArrow("up");
@@ -214,7 +207,9 @@ describe("prompt-history recall layer (rendered, real keyboard bus)", () => {
         } finally {
             setup.renderer.destroy();
         }
-    });
+    }
+
+    test("down walks back toward the newest before leaving recall", () => expectDownWalkReturnsToNewest());
 
     test("down outside a recall is left to the editor", async () => {
         const { setup, settle, fell, composer } = await mount();
@@ -366,24 +361,9 @@ describe("prompt-history recall layer (rendered, real keyboard bus)", () => {
         }
     });
 
-    test("a single-line entry recalls in both directions with no extra keystrokes", async () => {
-        // A one-row buffer is the first AND last row at once, so the caret rule costs nothing in the common
-        // case — this is what keeps single-line recall a single press in each direction.
-        const { setup, settle, composer } = await mount();
-        try {
-            setup.mockInput.pressArrow("up");
-            await settle();
-            setup.mockInput.pressArrow("up");
-            await settle();
-            expect(composer().plainText).toBe("middle");
-
-            setup.mockInput.pressArrow("down");
-            await settle();
-            expect(composer().plainText).toBe("newest");
-        } finally {
-            setup.renderer.destroy();
-        }
-    });
+    // A one-row buffer is the first AND last row at once, so the caret rule costs nothing in the common
+    // case — this is what keeps single-line recall a single press in each direction.
+    test("a single-line entry recalls in both directions with no extra keystrokes", () => expectDownWalkReturnsToNewest());
 
     test("an abandoned recall does not leave the transcript walk armed on every keystroke", async () => {
         // `activeLayers` re-invokes every layer's thunk on EVERY key, before filtering on `enabled`. A
@@ -492,7 +472,7 @@ describe("recall and retract never both claim the composer's up", () => {
         }
 
         const setup = await testRender(() => <BothHarness />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 0);
         try {
             await settle();
 

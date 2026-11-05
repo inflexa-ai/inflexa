@@ -65,28 +65,45 @@ function captureProv(): { types: string[]; stop: () => void } {
     return { types, stop: () => Bus.off("inflexa", handler) };
 }
 
-describe("manage_inputs tool", () => {
+/**
+ * Suite fixture for the manage_inputs describes: one tool instance, a fresh database, and a
+ * temp directory holding one analysis row for every test, with the instance lock released
+ * and the directory removed after it. Read `dir` and `analysisId` inside the tests — the
+ * beforeEach of each test replaces them.
+ */
+function useInputsAnalysis() {
     const tool = createManageInputsTool();
     let dir = "";
     let analysisId = "";
-
     beforeEach(async () => {
         freshDb();
         dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-mi-")));
         analysisId = (await createAnalysis({ cwd: dir, name: str256("mi")._unsafeUnwrap() }))._unsafeUnwrap().id;
     });
-
     afterEach(() => {
         releaseInstanceLock(analysisId);
         rmSync(dir, { recursive: true, force: true });
     });
+    return {
+        tool,
+        get dir(): string {
+            return dir;
+        },
+        get analysisId(): string {
+            return analysisId;
+        },
+    };
+}
+
+describe("manage_inputs tool", () => {
+    const inputs = useInputsAnalysis();
 
     test("add registers an existing file, asks first, and emits prov.input_added", async () => {
-        writeFileSync(join(dir, "data.csv"), "x,y\n1,2\n");
-        acquireInstanceLock(analysisId);
+        writeFileSync(join(inputs.dir, "data.csv"), "x,y\n1,2\n");
+        acquireInstanceLock(inputs.analysisId);
         const ask = recordingAsk();
         const prov = captureProv();
-        const result = (await runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(inputs.tool, { action: "add", paths: ["data.csv"] }, inputs.analysisId, ask.fn))._unsafeUnwrap();
         prov.stop();
 
         expect(result.status).toBe("added");
@@ -96,10 +113,10 @@ describe("manage_inputs tool", () => {
     });
 
     test("add rejects a non-existent path before asking or mutating", async () => {
-        acquireInstanceLock(analysisId);
+        acquireInstanceLock(inputs.analysisId);
         const ask = recordingAsk();
         const prov = captureProv();
-        const result = (await runCall(tool, { action: "add", paths: ["ghost.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(inputs.tool, { action: "add", paths: ["ghost.csv"] }, inputs.analysisId, ask.fn))._unsafeUnwrap();
         prov.stop();
 
         expect(result.status).toBe("not_found");
@@ -109,23 +126,23 @@ describe("manage_inputs tool", () => {
     });
 
     test("mutating without the analysis lock is refused — the single-writer guard", async () => {
-        writeFileSync(join(dir, "data.csv"), "x\n");
+        writeFileSync(join(inputs.dir, "data.csv"), "x\n");
         // Deliberately do NOT acquire the lock.
         const ask = recordingAsk();
-        const result = (await runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(inputs.tool, { action: "add", paths: ["data.csv"] }, inputs.analysisId, ask.fn))._unsafeUnwrap();
 
         expect(result.status).toBe("error");
         expect(ask.calls).toHaveLength(0);
     });
 
     test("remove drops a current input and emits prov.input_removed", async () => {
-        writeFileSync(join(dir, "data.csv"), "x\n");
-        acquireInstanceLock(analysisId);
+        writeFileSync(join(inputs.dir, "data.csv"), "x\n");
+        acquireInstanceLock(inputs.analysisId);
         const ask = recordingAsk();
-        await awaitOk(runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn));
+        await awaitOk(runCall(inputs.tool, { action: "add", paths: ["data.csv"] }, inputs.analysisId, ask.fn));
 
         const prov = captureProv();
-        const result = (await runCall(tool, { action: "remove", paths: ["data.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(inputs.tool, { action: "remove", paths: ["data.csv"] }, inputs.analysisId, ask.fn))._unsafeUnwrap();
         prov.stop();
 
         expect(result.status).toBe("removed");
@@ -138,15 +155,15 @@ describe("manage_inputs tool", () => {
 
     test("remove tries each input after a failed removal, and names each failed and each removed input", async () => {
         const names = ["one.csv", "two.csv", "three.csv", "four.csv"];
-        const anchorId = (await createAnalysis({ cwd: dir, name: str256("mi2")._unsafeUnwrap() }))._unsafeUnwrap().anchorId;
-        for (const path of names) insertAnalysisInput({ path, isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        const anchorId = (await createAnalysis({ cwd: inputs.dir, name: str256("mi2")._unsafeUnwrap() }))._unsafeUnwrap().anchorId;
+        for (const path of names) insertAnalysisInput({ path, isDir: false, analysisId: inputs.analysisId, anchorId })._unsafeUnwrap();
         const failing = new Set(["two.csv", "three.csv"]);
         const failingTool = createManageInputsTool({
             removeInput: (input) => (failing.has(input.path) ? err({ type: "mutation_failed", op: "delete input", cause: "disk full" }) : removeInput(input)),
         });
-        acquireInstanceLock(analysisId);
+        acquireInstanceLock(inputs.analysisId);
 
-        const result = (await runCall(failingTool, { action: "remove", paths: names }, analysisId, recordingAsk().fn))._unsafeUnwrap();
+        const result = (await runCall(failingTool, { action: "remove", paths: names }, inputs.analysisId, recordingAsk().fn))._unsafeUnwrap();
 
         expect(result.status).toBe("error");
         if (result.status === "error") {
@@ -154,7 +171,7 @@ describe("manage_inputs tool", () => {
             expect(result.message).toContain("one.csv, four.csv");
         }
         expect(
-            listAnalysisInputs(analysisId)
+            listAnalysisInputs(inputs.analysisId)
                 ._unsafeUnwrap()
                 .map((i) => i.path)
                 .toSorted(),
@@ -162,9 +179,9 @@ describe("manage_inputs tool", () => {
     });
 
     test("remove reports a path that is not a current input as a no-op", async () => {
-        acquireInstanceLock(analysisId);
+        acquireInstanceLock(inputs.analysisId);
         const ask = recordingAsk();
-        const result = (await runCall(tool, { action: "remove", paths: ["never-added.csv"] }, analysisId, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(inputs.tool, { action: "remove", paths: ["never-added.csv"] }, inputs.analysisId, ask.fn))._unsafeUnwrap();
 
         expect(result.status).toBe("removed");
         if (result.status === "removed") {
@@ -175,13 +192,13 @@ describe("manage_inputs tool", () => {
     });
 
     test("list returns the current registered inputs without needing the lock", async () => {
-        writeFileSync(join(dir, "data.csv"), "x\n");
-        acquireInstanceLock(analysisId);
+        writeFileSync(join(inputs.dir, "data.csv"), "x\n");
+        acquireInstanceLock(inputs.analysisId);
         const ask = recordingAsk();
-        await awaitOk(runCall(tool, { action: "add", paths: ["data.csv"] }, analysisId, ask.fn));
-        releaseInstanceLock(analysisId);
+        await awaitOk(runCall(inputs.tool, { action: "add", paths: ["data.csv"] }, inputs.analysisId, ask.fn));
+        releaseInstanceLock(inputs.analysisId);
 
-        const result = (await runCall(tool, { action: "list" }, analysisId, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(inputs.tool, { action: "list" }, inputs.analysisId, ask.fn))._unsafeUnwrap();
         expect(result.status).toBe("listed");
         if (result.status === "listed") expect(result.inputs.map((i) => i.path)).toContain("data.csv");
     });
@@ -190,7 +207,7 @@ describe("manage_inputs tool", () => {
         // A well-formed id with no DB row: findAnalysis returns ok(null) — nothing to act on, which is
         // no_analysis. no_anchor is reserved for an existing analysis whose anchor folder moved.
         const ask = recordingAsk();
-        const result = (await runCall(tool, { action: "list" }, randomUUIDv7(), ask.fn))._unsafeUnwrap();
+        const result = (await runCall(inputs.tool, { action: "list" }, randomUUIDv7(), ask.fn))._unsafeUnwrap();
         expect(result.status).toBe("no_analysis");
     });
 });
@@ -243,30 +260,17 @@ describe("manage_inputs — describeCall", () => {
 });
 
 describe("manage_inputs — view", () => {
-    const tool = createManageInputsTool();
-    let dir = "";
-    let analysisId = "";
-
-    beforeEach(async () => {
-        freshDb();
-        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-mi-")));
-        analysisId = (await createAnalysis({ cwd: dir, name: str256("mi")._unsafeUnwrap() }))._unsafeUnwrap().id;
-    });
-
-    afterEach(() => {
-        releaseInstanceLock(analysisId);
-        rmSync(dir, { recursive: true, force: true });
-    });
+    const inputs = useInputsAnalysis();
 
     test("an add call shows its input and its result, and the view declares the error", async () => {
-        writeFileSync(join(dir, "data.csv"), "x,y\n1,2\n");
-        acquireInstanceLock(analysisId);
+        writeFileSync(join(inputs.dir, "data.csv"), "x,y\n1,2\n");
+        acquireInstanceLock(inputs.analysisId);
         const input = { action: "add" as const, paths: ["data.csv"] };
-        const result = (await runCall(tool, input, analysisId, recordingAsk().fn))._unsafeUnwrap();
+        const result = (await runCall(inputs.tool, input, inputs.analysisId, recordingAsk().fn))._unsafeUnwrap();
 
         expect(result).toEqual({ status: "added", added: ["data.csv"] });
-        expect(tool.view?.input?.(input)).toEqual(input);
-        expect(tool.view?.result?.(input, result)).toEqual({ status: "added", added: ["data.csv"] });
-        expect(tool.view?.error).toBe(true);
+        expect(inputs.tool.view?.input?.(input)).toEqual(input);
+        expect(inputs.tool.view?.result?.(input, result)).toEqual({ status: "added", added: ["data.csv"] });
+        expect(inputs.tool.view?.error).toBe(true);
     });
 });
