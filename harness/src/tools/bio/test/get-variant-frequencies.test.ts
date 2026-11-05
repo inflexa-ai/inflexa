@@ -4,7 +4,7 @@ import { z } from "zod";
 import { restoreFetch, stubFetch, type SentRequest } from "../../__fixtures__/fetch-stub.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
-import { GNOMAD_MAX_VARIANTS, type GnomadDataset } from "../../lib/gnomad-client.js";
+import { GNOMAD_MAX_VARIANTS, GnomadVariantSchema, type GnomadDataset } from "../../lib/gnomad-client.js";
 import { createRunScriptTool } from "../../script/run-script.js";
 import { getVariantFrequenciesTool } from "../get-variant-frequencies.js";
 
@@ -55,6 +55,16 @@ describe("get_variant_frequencies", () => {
         answerWith(200, { errors: [{ message: "Variant not found" }], data: { v0: null } });
 
         expect((await call([MISSING]))._unsafeUnwrap()).toEqual({ dataset: "gnomad_r4", referenceGenome: "GRCh38", variants: [], notFound: [MISSING] });
+    });
+
+    it("lists a variant outside a subset in notFound, and keeps the other records of the batch", async () => {
+        const found = z.object({ data: z.object({ v0: GnomadVariantSchema }) }).parse(readFixture("gnomad", "batch-r4.json")).data.v0;
+        answerWith(200, { errors: [{ message: "Variant not found in selected subset." }], data: { v0: found, v1: null } });
+
+        const out = (await call([FOUND, MISSING], "gnomad_r4_non_ukb"))._unsafeUnwrap();
+
+        expect(out.notFound).toEqual([MISSING]);
+        expect(out.variants.map((variant) => variant.variantId)).toEqual([FOUND]);
     });
 
     it("gives the reference genome of a GRCh37 dataset", async () => {

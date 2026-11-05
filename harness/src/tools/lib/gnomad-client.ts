@@ -11,7 +11,9 @@
  * callset, the rsIDs, and the population list.
  *
  * A miss is no HTTP error. gnomAD answers HTTP 200, a `null` variant, and an
- * `errors` entry "Variant not found". gnomAD strips each error to its message,
+ * `errors` entry "Variant not found". A subset dataset answers "Variant not
+ * found in selected subset." for a variant of the cohort that the subset leaves
+ * out, and that is a miss too. gnomAD strips each error to its message,
  * with no `path`, thus a batch cannot tie an entry to its variant. The client
  * ties a miss to its variant through the `null` alias, and it throws on each
  * other message. The input pattern is stricter than the parser of gnomAD, thus
@@ -81,7 +83,8 @@ export function isGnomadVariantId(id: string): boolean {
     return CHROMOSOMES.has(chrom) && Number.isSafeInteger(position) && position > 0 && String(position) === pos && isAllele(ref) && isAllele(alt);
 }
 
-const NOT_FOUND_MESSAGE = "Variant not found";
+/** The error messages of a miss: a variant that the dataset does not hold, or that only the cohort outside a subset holds. */
+const MISS_MESSAGES: ReadonlySet<string> = new Set(["Variant not found", "Variant not found in selected subset."]);
 
 export type GnomadPopulation = {
     /** The genetic ancestry group, for example `afr` or `nfe`. */
@@ -177,7 +180,7 @@ function toCallset(callset: z.infer<typeof CallsetSchema> | null): GnomadCallset
  */
 export function mapGnomadAnswer(answer: z.infer<typeof GnomadAnswerSchema>, queries: readonly string[], dataset: GnomadDataset): GnomadFrequencies {
     // A rate limit, a query that costs too much, and an invalid query each answer with a message that is not a miss.
-    const failure = answer.errors?.find((error) => error.message !== NOT_FOUND_MESSAGE);
+    const failure = answer.errors?.find((error) => !MISS_MESSAGES.has(error.message));
     if (failure !== undefined) throw new Error(`gnomAD: ${failure.message}`);
     const data = answer.data;
     if (data === null || data === undefined) throw new Error("gnomAD returned no data");
