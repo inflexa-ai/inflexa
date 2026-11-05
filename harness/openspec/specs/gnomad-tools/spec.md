@@ -12,7 +12,9 @@ network access. Thus this tool is the path to a population frequency.
 
 The API is GraphQL, and its errors do not obey the contract of a REST API.
 gnomAD answers a miss with HTTP 200, a `null` variant, and an `errors` entry
-"Variant not found". gnomAD keeps only the message of an error, thus an error
+"Variant not found". A subset dataset answers "Variant not found in selected
+subset." when only the cohort outside the subset holds the variant, and that
+answer is also a miss. gnomAD keeps only the message of an error, thus an error
 has no `path`. Thus the client ties a miss to its variant through the `null`
 field of that variant. Each other error message stops the call.
 
@@ -101,11 +103,18 @@ coordinates to the dataset.
 
 The tool MUST list each variant ID that the dataset does not hold in `notFound`,
 and it MUST NOT drop the miss. The tool MUST NOT return an error for a miss.
+The two error messages of a miss are "Variant not found" and "Variant not found
+in selected subset.".
 
 #### Scenario: A partial batch reports its misses
 
 - **WHEN** the batch holds `1-55051215-G-GA` and `1-1-A-T`
 - **THEN** `variants` holds the record of `1-55051215-G-GA`, and `notFound` is `["1-1-A-T"]`
+
+#### Scenario: A variant outside a subset is a miss
+
+- **WHEN** a subset dataset answers "Variant not found in selected subset." for one variant of a batch
+- **THEN** that variant is in `notFound`, and `variants` keeps the records of the other variants
 
 #### Scenario: No variant is found
 
@@ -116,7 +125,7 @@ and it MUST NOT drop the miss. The tool MUST NOT return an error for a miss.
 
 `execute` MUST throw an HTTP error, a timeout, an exhausted retry, and a payload
 that the schema refuses. `execute` MUST also throw when an `errors` entry is not
-"Variant not found", and a miss in the same answer does not change that. A rate
+the message of a miss. A miss in the same answer does not change that. A rate
 limit answers HTTP 400 with a message, and the error text MUST hold that
 message.
 

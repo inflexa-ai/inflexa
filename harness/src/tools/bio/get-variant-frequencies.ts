@@ -56,7 +56,7 @@ export const getVariantFrequenciesTool = defineTool({
         "`populations` gives the genetic ancestry groups (afr, nfe, eas, …), each with af = ac / an (null when an is 0). " +
         "`notFound` lists each ID that the dataset does not hold: gnomAD saw no such allele, or the site has no coverage. It is not proof that " +
         "the frequency is 0.\n" +
-        "`dataset` defaults to gnomad_r4. A subset dataset (non_ukb, non_cancer, non_neuro, non_topmed, controls) leaves one cohort out.\n" +
+        "`dataset` defaults to gnomad_r4. A subset dataset (non_ukb, non_cancer, non_neuro, non_topmed, controls) leaves one cohort out, and a variant that only that cohort carries is in notFound.\n" +
         "RATE LIMIT: gnomAD allows each IP 30 requests a minute. Put the variants of one dataset into one call, not one call for each variant.\n" +
         "notFound is valid no-data — report it and continue, do not retry unchanged.",
     inputSchema: z.object({
