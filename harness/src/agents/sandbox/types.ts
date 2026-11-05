@@ -31,6 +31,8 @@ export type SandboxToolName =
     // Functional annotation (GO / KEGG / Reactome) and STRING networks + enrichment.
     | "lookupAnnotation"
     | "searchInteractions"
+    // GIANT tissue- and process-specific functional networks (network / relevant / contexts behind one action).
+    | "humanbase"
     // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
     | "chembl"
     // PubChem (compound / crossrefs / assays behind one action).

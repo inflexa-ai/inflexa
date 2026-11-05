@@ -38,6 +38,41 @@ export type HumanBaseOutput =
     | { contexts: HumanBaseScoredContext[]; totalFound: number }
     | { contexts: HumanBaseContext[]; totalFound: number };
 
+const ContextOutputSchema = z.object({
+    slug: z.string(),
+    title: z.string(),
+    giantVersion: z.enum(["v1", "v3"]),
+    term: z.object({ id: z.string(), ontology: z.string() }).nullable(),
+});
+
+/** The ok value of each action. A script reads it as data, thus the catalog of `run_script` shows this type. */
+const outputSchema = z.union([
+    z
+        .object({
+            found: z.literal(true),
+            context: z.string(),
+            giantVersion: z.enum(["v1", "v3"]),
+            mincut: z.number().nullable(),
+            genes: z.array(
+                z.object({
+                    entrez: z.number(),
+                    symbol: z.string(),
+                    name: z.string(),
+                    ensembl: z.string().nullable(),
+                    hgnc: z.string().nullable(),
+                    query: z.boolean(),
+                }),
+            ),
+            edges: z.array(z.object({ geneA: z.string(), geneB: z.string(), weight: z.number() })),
+            totalEdges: z.number(),
+            notFound: z.array(z.number()),
+        })
+        .describe("action 'network'"),
+    z.object({ found: z.literal(false), context: z.string() }).describe("action 'network', no network for the request"),
+    z.object({ contexts: z.array(ContextOutputSchema.extend({ score: z.number() })), totalFound: z.number() }).describe("action 'relevant'"),
+    z.object({ contexts: z.array(ContextOutputSchema), totalFound: z.number() }).describe("action 'contexts'"),
+]);
+
 function listIds(ids: readonly number[] | undefined): string {
     if (ids === undefined) return "";
     if (ids.length <= IDS_LISTED_IN_FULL) return ids.join(", ");
@@ -122,7 +157,7 @@ export const humanbaseTool = defineTool({
         "biological process, a genome-wide network whose edge weight is the posterior probability that two genes work together IN THAT CONTEXT, " +
         "integrated from the expression, interaction and other data of about 14,000 publications. It answers 'which genes act with my genes in the liver?' and " +
         "'which tissues does my gene set point to?' — questions that the context-free STRING network of search_interactions cannot.\n" +
-        "'network' — the subnetwork of the query genes in one context, plus nodeSize neighbor genes. Each gene carries its Entrez ID, symbol, " +
+        "'network' — the subnetwork of the query genes in one context, plus nodeSize neighbor genes. Each gene carries its Entrez ID, symbol, full name, " +
         "Ensembl ID, HGNC ID, and `query` (false for an added neighbor). Each edge is { geneA, geneB, weight }, highest weight first; " +
         "`totalEdges` gives the count before limit (one edge per gene pair, thus it grows with the square of the gene count). `notFound` lists " +
         "the query IDs that the network does not hold. found: false means HumanBase holds no network for the request: an unknown context slug, " +
@@ -135,6 +170,7 @@ export const humanbaseTool = defineTool({
         "HUMAN genes only.\n" +
         "An empty result (no ranked context, no matched context, found: false) is valid no-data — report it and continue, do not retry.",
     inputSchema,
+    outputSchema,
     view: "none",
     // One tool, three jobs: each action names its own subject — the context and
     // the genes, the genes, or the filter of the list.

@@ -70,7 +70,7 @@ The `network` action MUST return
 It takes 1 to 30 Entrez IDs (`entrez`), a context slug (`context`), and
 `nodeSize`, the count of neighbor genes that HumanBase adds (default 10, max 50).
 
-Each gene carries `entrez`, `symbol`, `description`, `ensembl`, `hgnc`, and
+Each gene carries `entrez`, `symbol`, `name`, `ensembl`, `hgnc`, and
 `query`. The value of `query` is false for a neighbor gene. Each edge carries
 `geneA`, `geneB`, and `weight`. The edges are in the order of their weight,
 highest first, and `limit` (default 50) trims them. `totalEdges` gives the count
@@ -179,3 +179,49 @@ and the first 8 IDs.
 
 - **WHEN** the tool is called with `action: "network"`, `context: "blood"`, and `entrez: [672, 3553]`
 - **THEN** the call detail is `network blood: 672, 3553`
+
+### Requirement: The tool declares the type of its ok value
+
+The tool MUST declare the schema of the ok value of each action. Thus the
+catalog of `run_script` shows the result type in the signature of the tool. The
+ok value of each action MUST obey that schema. A field of the result type MUST
+NOT have the name `description`, because the catalog removes each key of that
+name as prose. Thus the full name of a gene is the field `name`.
+
+#### Scenario: The catalog shows the result type
+
+- **WHEN** the catalog of `run_script` is built over the tool
+- **THEN** the signature of `humanbase` shows its result type, not `unknown`, and the type of a gene holds `name`
+
+#### Scenario: Each ok value obeys the schema
+
+- **WHEN** each action gives an ok value, the found and the absent network included
+- **THEN** the output schema of the tool accepts the value
+
+### Requirement: The conversation agent and the network agent get the humanbase tool
+
+The conversation agent MUST have `humanbase` as a script tool, thus it calls the
+tool from `run_script` (refer to the script-tools capability).
+
+`SandboxToolName` MUST have `humanbase`, and the sandbox registry MUST map that
+name to the tool. The network agent MUST list `humanbase` in `meta.tools`. A
+sandbox script cannot reach the web. Thus the tool on the host is the only path
+of the network agent to a network of one tissue. The prompt
+of the network agent MUST tell it when to use `humanbase`: for the network of
+hub genes in one tissue or cell type, and for the tissues that a module points
+to.
+
+#### Scenario: The conversation agent has the tool in a script
+
+- **WHEN** the conversation agent is made
+- **THEN** its script tools include `humanbase`, and its tools do not
+
+#### Scenario: The network agent has the tool in a script
+
+- **WHEN** the network agent is made
+- **THEN** its script tools include `humanbase`
+
+#### Scenario: A different sandbox agent does not get the tool
+
+- **WHEN** a sandbox agent does not list `humanbase` in `meta.tools`
+- **THEN** its tools and its script tools do not include `humanbase`

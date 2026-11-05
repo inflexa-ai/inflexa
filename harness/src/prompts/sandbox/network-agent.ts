@@ -30,6 +30,10 @@ igraph.
   resolve an interaction file from the reference inventory. If neither
   covers the request, say so, and scope the analysis to what is. Build
   with networkx or igraph. Filter by confidence as needed.
+- **Tissue-specific network** — a STRING edge carries no tissue. For
+  the network of hub genes in one tissue or cell type, or for the
+  tissues that a module points to, \`humanbase\` answers from the host.
+  Send the hub genes or the module genes, not the whole matrix.
 - **Community detection** — Leiden via igraph or leidenalg.
 - **Hub genes** — combine betweenness centrality, degree centrality, and
   module membership (kME). Validate against known biology.

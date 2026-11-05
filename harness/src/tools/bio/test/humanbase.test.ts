@@ -4,6 +4,7 @@ import { requestUrlText } from "../../../lib/test/request-url.js";
 import { presentAt } from "../../../lib/present.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
+import { createRunScriptTool } from "../../script/run-script.js";
 import { humanbaseTool, type HumanBaseOutput } from "../humanbase.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
@@ -230,5 +231,33 @@ describe("humanbase — describeCall", () => {
     it("names the filter of a contexts call", () => {
         expect(humanbaseTool.describeCall?.({ action: "contexts", query: "liver" })).toBe("contexts liver");
         expect(humanbaseTool.describeCall?.({ action: "contexts" })).toBe("contexts");
+    });
+});
+
+describe("humanbase — the result type in a script", () => {
+    it("gives an ok value of each action that the output schema accepts", async () => {
+        const outputs: HumanBaseOutput[] = [];
+        stubAnswer(200, readFixture("humanbase", "network-blood-672.json"));
+        outputs.push(await callHumanBase({ action: "network", entrez: [672], context: "blood" }));
+        stubAnswer(404, NOT_FOUND);
+        outputs.push(await callHumanBase({ action: "network", entrez: [999999999], context: "blood" }));
+        stubAnswer(200, readFixture("humanbase", "relevant-3553-672.json"));
+        outputs.push(await callHumanBase({ action: "relevant", entrez: [3553, 672] }));
+        stubAnswer(200, readFixture("humanbase", "contexts-excerpt.json"));
+        outputs.push(await callHumanBase({ action: "contexts" }));
+
+        for (const out of outputs) {
+            expect(humanbaseTool.outputSchema?.safeParse(out).success, JSON.stringify(out).slice(0, 200)).toBe(true);
+        }
+    });
+
+    it("shows the whole result type in the catalog of run_script, the full name of a gene included", () => {
+        const catalog = createRunScriptTool([humanbaseTool]).description;
+        const entry = catalog.slice(catalog.indexOf("humanbase(args:"));
+
+        expect(entry).not.toContain("Promise<unknown>");
+        expect(entry).toContain("edges: Array<{ geneA: string; geneB: string; weight: number; }>");
+        expect(entry).toContain("name: string;");
+        expect(entry).toContain("score: number;");
     });
 });
