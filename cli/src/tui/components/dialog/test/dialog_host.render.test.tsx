@@ -14,6 +14,7 @@ import { SelectDialog } from "../select_dialog.tsx";
 import { ConfigApp } from "../../../app_config.tsx";
 import type { ServerSettings } from "../../../../api/machine.ts";
 import { present } from "../../../../lib/present.ts";
+import { makeSettle } from "../../../../test_support/tui.ts";
 
 // End-to-end verification of the dialog host STATE MACHINE through the real keyboard bus: close
 // reasons per gesture, the busy veto, stacked-entry state survival + key inertness, the
@@ -39,20 +40,10 @@ function Harness(props: { onTa?: (ta: TextareaRenderable) => void }) {
     );
 }
 
-// A lone ESC byte is an ambiguous escape-sequence prefix: opentui's StdinParser holds it for
-// timeoutMs (20ms) before flushing it as a standalone "escape" key, so settle on a real clock.
-function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
-    return async () => {
-        await Promise.sleep(35);
-        await setup.renderOnce();
-        await setup.renderOnce();
-    };
-}
-
 describe("dialog host state machine (rendered, real keyboard bus)", () => {
     test("close reasons: esc → cancel, programmatic → commit, sweep → dismiss", async () => {
         const setup = await testRender(() => <Harness />, { width: 60, height: 20 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         const reasons: CloseReason[] = [];
         try {
             await settle();
@@ -109,7 +100,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
 
     test("busy prompt vetoes every dismissal; clearing busy re-enables cancel (fired once)", async () => {
         const setup = await testRender(() => <Harness />, { width: 80, height: 20 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         const [busy, setBusy] = createSignal(true);
         let cancels = 0;
         try {
@@ -137,7 +128,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
 
     test("single-line prompt: typing lands in the input, enter submits, commit skips onCancel", async () => {
         const setup = await testRender(() => <Harness />, { width: 80, height: 20 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         let submitted = "";
         let cancels = 0;
         try {
@@ -168,7 +159,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
 
     test("prompt validate: a rejected submit keeps the dialog open with an inline error; editing clears it and a valid submit lands the value", async () => {
         const setup = await testRender(() => <Harness />, { width: 80, height: 20 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         const submissions: string[] = [];
         const frame = () =>
             setup
@@ -215,7 +206,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
 
     test("stacking: covered dialog keeps its state and focus, its keys go inert, reveal restores both", async () => {
         const setup = await testRender(() => <Harness />, { width: 80, height: 24 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         let spyA = 0;
 
         function DialogA() {
@@ -281,7 +272,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
             ...Array.from({ length: 14 }, (_, i) => ({ value: `b${i}`, title: `beta item ${i}`, category: "Beta" })),
         ];
         const setup = await testRender(() => <Harness />, { width: 80, height: 18 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         const frame = () => setup.captureCharFrame();
         try {
             await settle();
@@ -318,7 +309,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
             category: "All",
         }));
         const setup = await testRender(() => <Harness />, { width: 80, height: 20 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         const frame = () => setup.captureCharFrame();
         try {
             await settle();
@@ -369,7 +360,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
         let ta: TextareaRenderable | undefined;
         let probeInput: InputRenderable | undefined;
         const setup = await testRender(() => <Harness onTa={(r) => (ta = r)} />, { width: 60, height: 20 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(setup.renderer.currentFocusedRenderable?.id).toBe(present(ta).id); // app focus = chat textarea
@@ -412,7 +403,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
         // Wider than the other cases: the multi footer leads with its mode word, and at 80 columns the
         // trailing "N selected" wraps mid-phrase, which no assertion about the COUNT should trip over.
         const setup = await testRender(() => <Harness />, { width: 110, height: 20 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         const frame = () => setup.captureCharFrame();
         try {
             await settle();
@@ -463,7 +454,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
 
     test("click model: press inside + release outside does NOT dismiss; full outside click dismisses", async () => {
         const setup = await testRender(() => <Harness />, { width: 100, height: 30 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         const mouse = createMockMouse(setup.renderer);
         const reasons: CloseReason[] = [];
         try {
@@ -497,7 +488,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
     test("focus returns to the app widget at N→0", async () => {
         let ta!: TextareaRenderable;
         const setup = await testRender(() => <Harness onTa={(t) => (ta = t)} />, { width: 60, height: 20 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(ta.focused).toBe(true);
@@ -533,7 +524,7 @@ describe("config screen over the dialog host (the swallowed-keystroke regression
         // Standalone ConfigApp: installs its own keymap root and DialogOverlay. The test never saves, thus
         // fixed settings need no server.
         const setup = await testRender(() => <ConfigApp settings={settings} />, { width: 90, height: 34 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         const frame = () =>
             setup
                 .captureCharFrame()

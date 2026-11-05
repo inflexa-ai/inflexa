@@ -3,14 +3,14 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { testRender } from "@opentui/solid";
-import type { JSX } from "solid-js";
 
-import { useKeymapRoot } from "../../../keymap.ts";
-import { DialogOverlay, dialogClear, dialogPush } from "../dialog_host.tsx";
-import { FilePicker } from "../file_picker.tsx";
 import { GLYPHS } from "../../../../lib/design_system.ts";
+import { dialogClear, dialogPush } from "../dialog_host.tsx";
+import { FilePicker } from "../file_picker.tsx";
 import { isAsciiDigits, isWhitespace } from "../../../../lib/text.ts";
 import { wordTokens } from "../../../../test_support/text_shapes.ts";
+import { dialogHostNode } from "../../../../test_support/dialog_harness.tsx";
+import { settleFrame } from "../../../../test_support/tui.ts";
 
 // FilePicker behavior through the real dialog host + keyboard bus: the INSERT/NORMAL esc
 // layering runs on the close-guard veto, which only exists inside a real dialog entry — so
@@ -33,24 +33,12 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-function Harness(): JSX.Element {
-    useKeymapRoot();
-    return (
-        <box width="100%" height="100%">
-            <DialogOverlay />
-        </box>
-    );
-}
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
-// A lone ESC byte is an ambiguous escape-sequence prefix: opentui's StdinParser holds it ~20ms
-// before flushing, so settle on a real clock (the dialog_host test's pattern).
+// The settle is a real-clock wait because the dialog host applies initial focus on a microtask and
+// StdinParser holds a lone ESC ~20ms before flushing; 35 covers both.
 async function settle(setup: Setup): Promise<string> {
-    await Promise.sleep(35);
-    await setup.renderOnce();
-    await setup.renderOnce();
-    return setup.captureCharFrame();
+    return settleFrame(setup, 35);
 }
 
 /**
@@ -142,7 +130,7 @@ function holdsSize(text: string): boolean {
 
 describe("FilePicker", () => {
     test("lists dirs first with a trailing slash, hides dotfiles, prepends ..", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             const frame = await openPicker(setup);
@@ -158,7 +146,7 @@ describe("FilePicker", () => {
     });
 
     test("enter descends into a dir and resets the filter; left ascends", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             await openPicker(setup);
@@ -177,7 +165,7 @@ describe("FilePicker", () => {
     });
 
     test(".. is never toggleable; space toggles real rows and survives navigation", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             await openPicker(setup);
@@ -209,7 +197,7 @@ describe("FilePicker", () => {
     });
 
     test("INSERT vs NORMAL: i focuses the filter, space types there, esc blurs, then space toggles", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             await openPicker(setup);
@@ -237,7 +225,7 @@ describe("FilePicker", () => {
     });
 
     test("esc in NORMAL cancels; requireSelection refuses an empty confirm", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         const confirmed: string[][] = [];
         let cancelled = 0;
         try {
@@ -270,7 +258,7 @@ describe("FilePicker", () => {
     });
 
     test("review mode lists root-relative selections; enter removes; esc returns to browsing", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             await openPicker(setup, { seed: [join(root, "alpha.txt"), join(root, "beta", "inner.txt")] });
@@ -298,7 +286,7 @@ describe("FilePicker", () => {
     });
 
     test("c confirms the batch even when the cursor sits on a directory row", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         const confirmed: string[][] = [];
         try {
             await settle(setup);
@@ -317,7 +305,7 @@ describe("FilePicker", () => {
     });
 
     test("enter confirms the accumulated batch when a filter matches nothing", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         const confirmed: string[][] = [];
         try {
             await settle(setup);
@@ -344,7 +332,7 @@ describe("FilePicker", () => {
         const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-picker-ext-")));
         writeFileSync(join(outside, "payload.txt"), "x");
         symlinkSync(outside, join(root, "ext"));
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             // The seed is what classifyInputPath records: the symlink's canonical TARGET.
@@ -360,7 +348,7 @@ describe("FilePicker", () => {
     test("a seed through a link renders the row of its canonical path checked", async () => {
         const links = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-picker-links-")));
         symlinkSync(root, join(links, "to-root"));
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             const frame = await openPicker(setup, { seed: [join(links, "to-root", "alpha.txt")] });
@@ -376,7 +364,7 @@ describe("FilePicker", () => {
         const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-picker-ext-")));
         writeFileSync(join(outside, "payload.txt"), "x");
         symlinkSync(outside, join(root, "ext"));
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             let frame = await openPicker(setup);
@@ -397,7 +385,7 @@ describe("FilePicker", () => {
 
     test(".. renders no selection gutter even when the parent dir is selected", async () => {
         mkdirSync(join(root, "beta", "ml"));
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             await openPicker(setup);
@@ -421,7 +409,7 @@ describe("FilePicker", () => {
     });
 
     test("an unreadable directory degrades to the error line and left still ascends", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         const locked = join(root, "locked");
         mkdirSync(locked);
         chmodSync(locked, 0o000);
@@ -452,7 +440,7 @@ describe("FilePicker entry metadata", () => {
     }
 
     test("a file row carries its permissions, its size, and an absolute date", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         writeFileSync(join(root, "sized.txt"), "x".repeat(2048));
         try {
             await settle(setup);
@@ -472,7 +460,7 @@ describe("FilePicker entry metadata", () => {
     test("the size and date land in aligned columns across rows", async () => {
         // The whole point of the facts: comparing them down a column. Ragged fields defeat it, and
         // the two causes are independent — an unpadded size, and a date whose parts are not zero-padded.
-        const setup = await testRender(() => <Harness />, { width: 100, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 26 });
         writeFileSync(join(root, "small.txt"), "x".repeat(600));
         writeFileSync(join(root, "large.txt"), "x".repeat(140_000));
         try {
@@ -490,7 +478,7 @@ describe("FilePicker entry metadata", () => {
     });
 
     test("a directory keeps the date column despite carrying no size", async () => {
-        const setup = await testRender(() => <Harness />, { width: 100, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 100, height: 26 });
         writeFileSync(join(root, "sized.txt"), "x".repeat(2048));
         try {
             await settle(setup);
@@ -503,7 +491,7 @@ describe("FilePicker entry metadata", () => {
     });
 
     test("a directory row carries a date but no size", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             const frame = await openPicker(setup);
@@ -517,7 +505,7 @@ describe("FilePicker entry metadata", () => {
     });
 
     test("an unreadable file paints its row in the theme's warning color", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         const denied = join(root, "denied.txt");
         writeFileSync(denied, "x");
         chmodSync(denied, 0o000);
@@ -540,7 +528,7 @@ describe("FilePicker entry metadata", () => {
     });
 
     test("an unreadable file is still selectable — the mark warns, it does not refuse", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         const denied = join(root, "denied.txt");
         writeFileSync(denied, "x");
         chmodSync(denied, 0o000);
@@ -565,7 +553,7 @@ describe("FilePicker entry metadata", () => {
     test("a broken symlink lists with no metadata rather than dropping out", async () => {
         // The deterministic stand-in for a stat that loses its race with a deletion: statSync
         // follows the link and throws, which is exactly the path `entryDetails` degrades on.
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         symlinkSync(join(root, "gone.txt"), join(root, "dangling.txt"));
         try {
             await settle(setup);
@@ -584,7 +572,7 @@ describe("FilePicker entry metadata", () => {
     test("a listing whose every stat fails is not reported as a large folder", async () => {
         // The footer states a CAUSE. Inferring "no row has metadata" from the rows cannot tell the
         // ceiling from a folder holding one broken symlink, and it names the wrong one.
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         const onlyBroken = join(root, "broken");
         mkdirSync(onlyBroken);
         symlinkSync(join(onlyBroken, "gone.txt"), join(onlyBroken, "dangling.txt"));
@@ -604,7 +592,7 @@ describe("FilePicker entry metadata", () => {
     });
 
     test("a folder over the ceiling lists names only and says so in the footer", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         const big = join(root, "big");
         mkdirSync(big);
         for (let i = 0; i < 2001; i++) writeFileSync(join(big, `f${i}.txt`), "x");
@@ -631,7 +619,7 @@ describe("FilePicker entry metadata", () => {
         mkdirSync(big);
         for (let i = 0; i < 2001; i++) writeFileSync(join(big, `f${i}.txt`), "x");
         symlinkSync(outside, join(big, "aa-link"));
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             await openPicker(setup);
@@ -663,7 +651,7 @@ describe("FilePicker entry metadata", () => {
         mkdirSync(big);
         for (let i = 0; i < 1001; i++) writeFileSync(join(big, `f${i}.txt`), "x");
         for (let i = 0; i < 1000; i++) writeFileSync(join(big, `.h${i}`), "x");
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             await openPicker(setup);
@@ -680,7 +668,7 @@ describe("FilePicker entry metadata", () => {
     });
 
     test("the listing sets no description, so no detail line grows under it", async () => {
-        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
             const frame = await openPicker(setup);

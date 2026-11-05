@@ -1,8 +1,7 @@
-import { createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 
 import { GLYPHS, MARKERS, space } from "../../lib/design_system.ts";
-import { runEvery } from "../../lib/timer.ts";
+import { useSpinnerClock } from "./spinner_clock.ts";
 import { Fg } from "./emphasis.tsx";
 
 /**
@@ -15,16 +14,7 @@ import { Fg } from "./emphasis.tsx";
  * spin and `onCleanup` clears it when the turn ends. No props: the elapsed clock starts at mount.
  */
 export function ThinkingIndicator(): JSX.Element {
-    const [frame, setFrame] = createSignal(0);
-    const [age, setAge] = createSignal("0s");
-    // Captured at mount: callers mount this when the turn goes busy, unmount it when it settles.
-    const start = Date.now();
-    onCleanup(
-        runEvery(80, () => {
-            setFrame((f) => (f + 1) % GLYPHS.spinner.length);
-            setAge(Date.relativeAge(start));
-        }),
-    );
+    const { frame, age } = useSpinnerClock();
     return (
         <box flexDirection="row" paddingBottom={space.sm}>
             <text>

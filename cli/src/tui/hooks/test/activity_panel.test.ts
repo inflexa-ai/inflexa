@@ -3,11 +3,12 @@ import { createStore } from "solid-js/store";
 import { okAsync, errAsync, ResultAsync } from "neverthrow";
 import type { StepActivityPart } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { CancelRunResult, DataProfileState, DataProfileView, RunDetail, RunSummary } from "../../../api/runs.ts";
+import type { CancelRunResult, DataProfileState, DataProfileView, RunSummary } from "../../../api/runs.ts";
 import { describeClientError, type ClientError } from "../../../client/api.ts";
 import type { Workspace } from "../../contexts/workspace.ts";
 import { buildAnalysis, buildWorkspace } from "../../../test_support/builders.ts";
 import { withRootAsync } from "../../../test_support/solid.ts";
+import { runDetailFixture, runRowFixture } from "../../../test_support/runs.ts";
 import type { Notice } from "../../theme.ts";
 import { __pendingNoticeCountForTest, __resetNoticesForTest, currentNotice } from "../notice.ts";
 import { __resetRunCompletionsForTest, watchRunCompletions } from "../run_completion.ts";
@@ -38,42 +39,6 @@ import {
 // the two kinds differ in what they carry (a profile has no steps and no denominator) and in how their
 // activity stream is addressed (a run's stream is its run id; a profile's is the workflow id its ledger
 // row records), so a behaviour that holds for a run is not thereby proven for a profile.
-
-function runRow(over: Partial<RunSummary> & { runId: string }): RunSummary {
-    return {
-        threadId: null,
-        planId: null,
-        workflowName: "executeAnalysis",
-        workflowId: over.runId,
-        status: "running",
-        startedAt: "2026-07-28T10:00:00.000Z",
-        completedAt: null,
-        error: null,
-        ...over,
-    };
-}
-
-/** The run as `GET {A}/run/:runId` gives it: one running step. */
-function runDetail(run: RunSummary): RunDetail {
-    return {
-        ...run,
-        steps: [
-            {
-                stepId: "T1S1",
-                agentId: "bioinformatician",
-                status: "running",
-                startedAt: "2026-07-28T10:00:01.000Z",
-                completedAt: null,
-                durationMs: null,
-                error: null,
-                attempts: 1,
-                blockedReason: null,
-            },
-        ],
-        plan: null,
-        unattributedUsage: null,
-    };
-}
 
 /**
  * The workflow id a profile's ledger row records — the stream the panel subscribes to for a profile.
@@ -115,7 +80,7 @@ function optsFor(runs: RunSummary[], opts: { failRunFor?: Set<string>; profile?:
         loadActiveRuns: () => okAsync(runs),
         loadRun: (_analysisId, runId) => {
             const run = runs.find((r) => r.runId === runId);
-            return run === undefined || opts.failRunFor?.has(runId) ? errAsync(READ_FAILED) : okAsync(runDetail(run));
+            return run === undefined || opts.failRunFor?.has(runId) ? errAsync(READ_FAILED) : okAsync(runDetailFixture(run));
         },
     };
 }
@@ -253,7 +218,7 @@ describe("activity panel focus", () => {
     });
 
     test("with one active run it focuses that run without being asked", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
         expect(focusedRunSubject()?.runId).toBe("run-a");
         expect(activityPanelVisible()).toBe(true);
         expect(activeSubjectCount()).toBe(1);
@@ -261,7 +226,10 @@ describe("activity panel focus", () => {
     });
 
     test("navigation cycles across concurrent runs and wraps past the last", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" }), runRow({ runId: "run-c" })]));
+        await refreshSidebarData(
+            "analysis-1",
+            optsFor([runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b" }), runRowFixture({ runId: "run-c" })]),
+        );
         expect(focusedRunSubject()?.runId).toBe("run-a");
         expect(focusedSubjectPosition()).toBe(1);
 
@@ -280,7 +248,7 @@ describe("activity panel focus", () => {
     });
 
     test("runs of different plans are both reachable", async () => {
-        const runs = [runRow({ runId: "run-a", planTitle: "Plan one" }), runRow({ runId: "run-b", planTitle: "Plan two" })];
+        const runs = [runRowFixture({ runId: "run-a", planTitle: "Plan one" }), runRowFixture({ runId: "run-b", planTitle: "Plan two" })];
         await refreshSidebarData("analysis-1", optsFor(runs));
         expect(activeSubjectCount()).toBe(2);
         focusNextSubject();
@@ -288,28 +256,28 @@ describe("activity panel focus", () => {
     });
 
     test("the focused run terminating auto-advances to the run still active", async () => {
-        const both = [runRow({ runId: "run-a" }), runRow({ runId: "run-b" })];
+        const both = [runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b" })];
         await refreshSidebarData("analysis-1", optsFor(both));
         expect(focusedRunSubject()?.runId).toBe("run-a");
 
         // run-a completes; the next refresh drops it from the active set. No user action, no effect —
         // the derived focus simply stops resolving and falls through to the survivor.
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" }), runRow({ runId: "run-b" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", status: "completed" }), runRowFixture({ runId: "run-b" })]));
         expect(focusedRunSubject()?.runId).toBe("run-b");
         expect(activeSubjectCount()).toBe(1);
         expect(activityPanelVisible()).toBe(true);
     });
 
     test("the last run finishing empties the panel", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
         expect(activityPanelVisible()).toBe(true);
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", status: "completed" })]));
         expect(focusedRunSubject()).toBeNull();
         expect(activityPanelVisible()).toBe(false);
     });
 
     test("advancing steps from the run on screen, not from a stale preference", async () => {
-        const three = [runRow({ runId: "run-a" }), runRow({ runId: "run-b" }), runRow({ runId: "run-c" })];
+        const three = [runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b" }), runRowFixture({ runId: "run-c" })];
         await refreshSidebarData("analysis-1", optsFor(three));
         focusNextSubject(); // → run-b, the stored preference
         expect(focusedRunSubject()?.runId).toBe("run-b");
@@ -317,14 +285,17 @@ describe("activity panel focus", () => {
         // run-b terminates. The panel shows run-a (first survivor); the STORED preference is still
         // run-b. Advancing must go to run-c — the run after the one being looked at — rather than to
         // whatever follows the dead preference.
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b", status: "failed" }), runRow({ runId: "run-c" })]));
+        await refreshSidebarData(
+            "analysis-1",
+            optsFor([runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b", status: "failed" }), runRowFixture({ runId: "run-c" })]),
+        );
         expect(focusedRunSubject()?.runId).toBe("run-a");
         focusNextSubject();
         expect(focusedRunSubject()?.runId).toBe("run-c");
     });
 
     test("a run-read blip keeps the run focused and marks it stale rather than advancing", async () => {
-        const both = [runRow({ runId: "run-a" }), runRow({ runId: "run-b" })];
+        const both = [runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b" })];
         await refreshSidebarData("analysis-1", optsFor(both));
         expect(focusedRunSubject()?.stale).toBe(false);
 
@@ -342,7 +313,7 @@ describe("activity panel focus", () => {
 
 describe("activity panel focus across subject kinds", () => {
     test("navigation moves between a run and the profile, wrapping past the last", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })], { profile: profileRow() }));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })], { profile: profileRow() }));
         expect(activeSubjectCount()).toBe(2);
         // The run leads the set by kind, not by recency — a profile can enter without the user having
         // asked for anything, so it is reachable without ever being the thing on screen.
@@ -364,7 +335,7 @@ describe("activity panel focus across subject kinds", () => {
     });
 
     test("the focused profile terminating auto-advances to the run still active", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })], { profile: profileRow() }));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })], { profile: profileRow() }));
         focusNextSubject();
         expect(focusedSubject()?.kind).toBe("profile");
 
@@ -374,7 +345,7 @@ describe("activity panel focus across subject kinds", () => {
         // survivor, so auto-advance has no code of its own to get wrong.
         await refreshSidebarData(
             "analysis-1",
-            optsFor([runRow({ runId: "run-a" })], { profile: profileRow({ status: "completed", completedAt: "2026-07-28T10:01:00.000Z" }) }),
+            optsFor([runRowFixture({ runId: "run-a" })], { profile: profileRow({ status: "completed", completedAt: "2026-07-28T10:01:00.000Z" }) }),
         );
         expect(focusedSubject()?.kind).toBe("run");
         expect(focusedRunSubject()?.runId).toBe("run-a");
@@ -402,7 +373,7 @@ describe("activity panel focus across subject kinds", () => {
 
 describe("activity panel dismissal", () => {
     test("dismissing hides the panel while leaving the run untouched", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
         toggleActivityPanel();
         expect(activityPanelVisible()).toBe(false);
         // The run itself is untouched: it is still active, still focused, still in the rail's snapshot.
@@ -415,7 +386,7 @@ describe("activity panel dismissal", () => {
         // palette precisely because they lost the panel; if the command toggled, a second invocation
         // (or one issued while the panel was already back) would hide it again and read as the
         // command having done nothing.
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
         toggleActivityPanel();
         expect(activityPanelVisible()).toBe(false);
         restoreActivityPanel();
@@ -425,7 +396,7 @@ describe("activity panel dismissal", () => {
     });
 
     test("restore brings it back, and is idempotent when already visible", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
         toggleActivityPanel();
         expect(activityPanelVisible()).toBe(false);
         restoreActivityPanel();
@@ -437,14 +408,14 @@ describe("activity panel dismissal", () => {
     test("a dismissal expires once no run is active, so a later run is not silently invisible", async () => {
         await withRootAsync(async () => {
             watchActivityPanel(WS, panelOpts(null));
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             toggleActivityPanel();
             expect(activityPanelVisible()).toBe(false);
 
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", status: "completed" })]));
             // Nothing active → the dismissal has no referent left, so it clears.
             expect(activityPanelVisible()).toBe(false); // still nothing to show
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-b" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-b" })]));
             expect(activityPanelVisible()).toBe(true);
         });
     });
@@ -454,7 +425,7 @@ describe("activity panel activity label", () => {
     test("the focused run's activity is published verbatim", async () => {
         await withRootAsync(async () => {
             watchActivityPanel(WS, panelOpts("Running script deseq2.R"));
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             // Delivery is async; let its microtask settle.
             await Promise.resolve();
             await Promise.resolve();
@@ -471,7 +442,7 @@ describe("activity panel activity label", () => {
         await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBe("Running script deseq2.R");
@@ -489,7 +460,7 @@ describe("activity panel activity label", () => {
     test("an unresolvable label is null, never a fabricated placeholder", async () => {
         await withRootAsync(async () => {
             watchActivityPanel(WS, panelOpts(null));
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBeNull();
@@ -500,7 +471,7 @@ describe("activity panel activity label", () => {
         await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBe("Running script deseq2.R");
@@ -517,7 +488,7 @@ describe("activity panel activity label", () => {
         await withRootAsync(async () => {
             const panel = panelOpts(null);
             watchActivityPanel(WS, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
 
@@ -541,12 +512,12 @@ describe("activity panel activity label", () => {
         await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             await Promise.resolve();
             await Promise.resolve();
             expect(focusedSubjectActivity()).toBe("Running script deseq2.R");
 
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", status: "completed" })]));
             expect(focusedSubjectActivity()).toBeNull();
             // The run terminating is a teardown edge, not just a focus one.
             expect(panel.subscribed()).toBeNull();
@@ -559,7 +530,7 @@ describe("activity panel activity subscription", () => {
         await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
-            const runs = [runRow({ runId: "run-a" })];
+            const runs = [runRowFixture({ runId: "run-a" })];
             await refreshSidebarData("analysis-1", optsFor(runs));
             await Promise.resolve();
             expect(panel.opened()).toHaveLength(1);
@@ -579,7 +550,7 @@ describe("activity panel activity subscription", () => {
             const panel = panelOpts(null);
             const { ws, open } = workspaceOn("analysis-1");
             watchActivityPanel(ws, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             await Promise.resolve();
             expect(panel.opened().map((s) => [s.analysisId, s.runId])).toEqual([["analysis-1", "run-a"]]);
 
@@ -597,7 +568,7 @@ describe("activity panel activity subscription", () => {
         await withRootAsync(async () => {
             const panel = panelOpts("Running script deseq2.R");
             watchActivityPanel(WS, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b" })]));
             await Promise.resolve();
             expect(panel.subscribed()).toBe("run-a");
 
@@ -618,7 +589,7 @@ describe("activity panel activity subscription", () => {
         await withRootAsync(async () => {
             const panel = panelOpts(null);
             watchActivityPanel(WS, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b" })]));
             await Promise.resolve();
             const stale = panel.opened()[0];
 
@@ -635,7 +606,7 @@ describe("activity panel activity subscription", () => {
         const panel = panelOpts("Running script deseq2.R");
         await withRootAsync(async () => {
             watchActivityPanel(WS, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             await Promise.resolve();
             expect(panel.subscribed()).toBe("run-a");
         });
@@ -646,7 +617,7 @@ describe("activity panel activity subscription", () => {
         await withRootAsync(async () => {
             const panel: FakePanelOpts = { ...panelOpts("Running script deseq2.R"), ready: () => false };
             watchActivityPanel(WS, panel);
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
             await Promise.resolve();
             expect(panel.opened()).toHaveLength(0);
             expect(focusedSubjectActivity()).toBeNull();
@@ -794,7 +765,7 @@ function newRecord(): AbortRecord {
 
 describe("activity panel abort", () => {
     test("a confirmed abort cancels the run, reads the runs again, and shows no second notice", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
         const record = newRecord();
         await abortFocusedRun("analysis-1", abortOpts(record));
 
@@ -807,7 +778,7 @@ describe("activity panel abort", () => {
     });
 
     test("a canceled run with a ledger that did not settle gets a warning that names the ledger", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
         const record = newRecord();
         await abortFocusedRun(
             "analysis-1",
@@ -823,7 +794,7 @@ describe("activity panel abort", () => {
 
     test("the names of the unsettled ledgers read as prose for one, two, and three names", async () => {
         const text = async (converged: CancelRunResult["converged"]): Promise<string | undefined> => {
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
             const record = newRecord();
             await abortFocusedRun("analysis-1", abortOpts(record, { cancel: (runId) => okAsync(cancelResult(runId, { converged })) }));
             return record.notices[0]?.text;
@@ -839,7 +810,7 @@ describe("activity panel abort", () => {
     });
 
     test("a cancel that stopped the workflow but left the run row running reports an unsettled row, not a finished run", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
         const record = newRecord();
         await abortFocusedRun(
             "analysis-1",
@@ -855,12 +826,12 @@ describe("activity panel abort", () => {
     });
 
     test("a canceled run that the refreshed runs do not hold gets no notice from the abort", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
 
         const record = newRecord();
         await abortFocusedRun(
             "analysis-1",
-            abortOpts(record, { refresh: (analysisId) => refreshSidebarData(analysisId, optsFor([runRow({ runId: "run-newer" })])) }),
+            abortOpts(record, { refresh: (analysisId) => refreshSidebarData(analysisId, optsFor([runRowFixture({ runId: "run-newer" })])) }),
         );
 
         expect(record.refreshed).toEqual(["analysis-1"]);
@@ -875,20 +846,22 @@ describe("activity panel abort", () => {
                 loadRun: (analysisId, runId) => {
                     reads.push([analysisId, runId]);
                     return okAsync(
-                        runDetail(runRow({ runId, status: "canceled", completedAt: "2026-07-28T10:01:00.000Z", planTitle: "Differential expression" })),
+                        runDetailFixture(
+                            runRowFixture({ runId, status: "canceled", completedAt: "2026-07-28T10:01:00.000Z", planTitle: "Differential expression" }),
+                        ),
                     );
                 },
             });
             // The watcher sees the run active, as the panel does.
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
 
             const record = newRecord();
             await abortFocusedRun(
                 "analysis-1",
-                abortOpts(record, { refresh: (analysisId) => refreshSidebarData(analysisId, optsFor([runRow({ runId: "run-newer" })])) }),
+                abortOpts(record, { refresh: (analysisId) => refreshSidebarData(analysisId, optsFor([runRowFixture({ runId: "run-newer" })])) }),
             );
             // A later poll refreshes again and still misses the run.
-            await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-newer" })]));
+            await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-newer" })]));
             for (let i = 0; i < 8; i++) await Promise.resolve();
 
             expect(record.notices).toEqual([]);
@@ -900,7 +873,7 @@ describe("activity panel abort", () => {
     });
 
     test("a declined confirmation sends nothing and changes nothing", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
         const record = newRecord();
         await abortFocusedRun("analysis-1", abortOpts(record, { answer: false }));
 
@@ -912,7 +885,7 @@ describe("activity panel abort", () => {
     });
 
     test("a run that finished before the cancel is reported as finished with its status, not as aborted", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
         const record = newRecord();
         await abortFocusedRun(
             "analysis-1",
@@ -933,7 +906,7 @@ describe("activity panel abort", () => {
     });
 
     test("a cancel that left the run in a status other than canceled is reported as finished with that status", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
         const record = newRecord();
         await abortFocusedRun(
             "analysis-1",
@@ -945,7 +918,7 @@ describe("activity panel abort", () => {
     });
 
     test("the abort goes to the run the confirmation named, also after the panel moved to another run", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b" })]));
         expect(focusedRunSubject()?.runId).toBe("run-a");
 
         const record = newRecord();
@@ -960,7 +933,7 @@ describe("activity panel abort", () => {
         );
 
         // While the dialog is open run-a ends, and the panel advances to run-b.
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", status: "completed" }), runRow({ runId: "run-b" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", status: "completed" }), runRowFixture({ runId: "run-b" })]));
         expect(focusedRunSubject()?.runId).toBe("run-b");
 
         answers[0]?.(true);
@@ -971,7 +944,7 @@ describe("activity panel abort", () => {
     });
 
     test("a failed request shows an error notice with the cause, then reads the runs again", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a", planTitle: "Differential expression" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a", planTitle: "Differential expression" })]));
         const record = newRecord();
         await abortFocusedRun("analysis-1", abortOpts(record, { cancel: () => errAsync(READ_FAILED) }));
 
@@ -994,13 +967,13 @@ describe("activity panel abort", () => {
         await abortFocusedRun("analysis-1", abortOpts(record));
         expect(record).toEqual(newRecord());
 
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" })]));
         await abortFocusedRun(null, abortOpts(record));
         expect(record).toEqual(newRecord());
     });
 
     test("an open request for one run blocks a second confirmation for that run, not for a different run", async () => {
-        await refreshSidebarData("analysis-1", optsFor([runRow({ runId: "run-a" }), runRow({ runId: "run-b" })]));
+        await refreshSidebarData("analysis-1", optsFor([runRowFixture({ runId: "run-a" }), runRowFixture({ runId: "run-b" })]));
 
         // The cancel of run-a stays open until the test releases it.
         const held = Promise.withResolvers<undefined>();

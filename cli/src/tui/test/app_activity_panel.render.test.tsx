@@ -1,7 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, spyOn, test } from "bun:test";
 import { okAsync } from "neverthrow";
 import { parseColor } from "@opentui/core";
 import { testRender } from "@opentui/solid";
@@ -12,17 +9,15 @@ import { asStr256 } from "../../lib/types.ts";
 import { fakeClient } from "../../test_support/fake_client.ts";
 import { until } from "../../test_support/until.ts";
 import { App } from "../app.tsx";
-import { dialogClear, dialogIsOpen } from "../components/dialog/dialog_host.tsx";
-import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
+import { dialogIsOpen } from "../components/dialog/dialog_host.tsx";
 import { __resetNoticesForTest, currentNotice } from "../hooks/notice.ts";
-import { __resetActivityPanelForTest, focusedSubject, activityPanelVisible, toggleActivityPanel } from "../hooks/activity_panel.ts";
-import { __resetRunCompletionsForTest } from "../hooks/run_completion.ts";
-import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from "../hooks/sidebar_live.ts";
-import { resetHotState } from "../hooks/conversation.ts";
+import { focusedSubject, activityPanelVisible, toggleActivityPanel } from "../hooks/activity_panel.ts";
+import { refreshSidebarData, type RefreshOpts } from "../hooks/sidebar_live.ts";
 import { dispatchKey, leaderKeybind, reachableKeys, resolveKeybind, type KeyLike } from "../keymap.ts";
 import { theme } from "../theme.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { present } from "../../lib/present.ts";
+import { appRenderLifecycle } from "../../test_support/app_render.ts";
 
 // Every piece of the run-observability work is unit-tested in isolation; what nothing covered is
 // `App`'s own COMPOSITION — that it mounts the panel between the stream and the input, that it calls
@@ -35,7 +30,9 @@ import { present } from "../../lib/present.ts";
 // with fake reads of the run endpoints — the same door production uses. No server runs: each read
 // that `App` makes on its own fails to find one, and degrades.
 
-let dir = "";
+// `ready` is what opens the input gate and stops the boot indicator claiming rows of its own; the
+// lifecycle's cleanup stops any of the stores or singletons from leaking into a sibling file.
+const { dir } = appRenderLifecycle("inflexa-app-panel-");
 
 /** The open analysis: a plain row, because `App` reads its fields and the server keeps the rest. */
 const analysis: Analysis = {
@@ -94,24 +91,6 @@ function optsFor(runs: RunSummary[], profile?: DataProfileState): RefreshOpts {
     };
 }
 
-beforeEach(() => {
-    dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-app-panel-")));
-    // `ready` is what opens the input gate and stops the boot indicator claiming rows of its own.
-    __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
-    __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m", utility: "m" }, efforts: null, pending: new Map() });
-});
-
-afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-    dialogClear();
-    resetHotState();
-    __resetSidebarLiveForTest();
-    __resetActivityPanelForTest();
-    __resetRunCompletionsForTest();
-    __resetNoticesForTest();
-    __setBootStateForTest({ phase: "idle" });
-});
-
 /**
  * Mount the real `App`, then hand back a `seed` + `frame` pair.
  *
@@ -124,7 +103,7 @@ async function mountApp(size = { width: 100, height: 26 }) {
     // No sessionId prop: App binds its thread only at the boot-ready edge, and with no server that
     // bind fails — the scope stays unbound and the transcript stays empty, which is the blank-chat
     // baseline these frames assert against.
-    const setup = await testRender(() => <App workingDir={dir} analysis={analysis} />, size);
+    const setup = await testRender(() => <App workingDir={dir()} analysis={analysis} />, size);
     const settle = async (): Promise<string> => {
         for (let i = 0; i < 3; i++) {
             await Promise.sleep(20);

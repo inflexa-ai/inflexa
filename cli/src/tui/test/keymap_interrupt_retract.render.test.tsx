@@ -3,9 +3,11 @@ import { For } from "solid-js";
 import { testRender } from "@opentui/solid";
 import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 
-import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "../keymap.ts";
+import { useBindings, useKeymapRoot, KEYS, __resetKeybindCache } from "../keymap.ts";
 import { askDrainRefocusTarget, interruptLayer, paneRetractLayer, retractLayer } from "../app.tsx";
 import { ScrollPane } from "../components/scroll_pane.tsx";
+import { FocusedComposer, useFallThroughProbe } from "../../test_support/keymap_harness.tsx";
+import { makeSettle } from "../../test_support/tui.ts";
 
 // End-to-end verification of app.tsx's two chat key layers — up-arrow RETRACT and double-press INTERRUPT
 // — through the REAL engine: mockInput drives opentui's keyboard bus → useKeymapRoot → dispatchKey → the
@@ -25,18 +27,7 @@ afterEach(() => {
     __resetKeybindCache();
 });
 
-// A lone ESC byte is an ambiguous escape-sequence prefix: opentui's StdinParser holds it for timeoutMs
-// (20ms) before flushing it as a standalone "escape" key — so yield real time, not just renderOnce spins,
-// for esc to reach the dispatcher. (Same helper as the other keymap render tests; harmless for arrows.)
-function makeSettle(setup: { renderOnce: () => Promise<void> }): () => Promise<void> {
-    return async () => {
-        await Promise.sleep(35);
-        await setup.renderOnce();
-        await setup.renderOnce();
-    };
-}
-
-// ── up-arrow RETRACT ──────────────────────────────────────────────────────────────────────────────
+// ── up-arrow RETRACT ──────────────────────────────────────────────────────────────────────────────────────
 
 /** The retract seam a test injects: a controllable `canRetract` gate + a `retract` spy that seeds. */
 type RetractControls = {
@@ -54,21 +45,14 @@ function RetractHarness(props: RetractControls) {
     useBindings(() => retractLayer({ target: ta, conversation: props.conversation }));
 
     // A minimal stand-in for `up`'s real fall-through destination (the textarea's own cursor movement in
-    // production): a lower-priority up binding that records it was reached, so a DISABLED retract layer
-    // proves the key fell through rather than merely not firing.
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: ta,
-        priority: -10,
-        bindings: [{ chord: KEYS.up, run: () => props.onFallthrough() }],
-    }));
+    // production): a DISABLED retract layer proves the key fell through rather than merely not firing.
+    useFallThroughProbe(() => ta, [{ chord: KEYS.up, run: () => props.onFallthrough() }]);
 
     return (
         <box flexDirection="column" width="100%" height="100%">
-            <textarea
-                ref={(r: TextareaRenderable) => {
+            <FocusedComposer
+                onRef={(r) => {
                     ta = r;
-                    queueMicrotask(() => r.focus());
                     props.onRef(r);
                 }}
             />
@@ -94,7 +78,7 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
             onRef: (r) => (ta = r),
         };
         const setup = await testRender(() => <RetractHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(ta.focused).toBe(true);
@@ -131,7 +115,7 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
             onRef: (r) => (ta = r),
         };
         const setup = await testRender(() => <RetractHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(ta.plainText).toBe("");
@@ -163,7 +147,7 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
             onRef: (r) => (ta = r),
         };
         const setup = await testRender(() => <RetractHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             await setup.mockInput.typeText("hello");
@@ -196,7 +180,7 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
             onRef: () => {},
         };
         const setup = await testRender(() => <RetractHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
 
@@ -261,7 +245,7 @@ describe("pane-focused up-arrow retract layer (rendered, real keyboard bus)", ()
             onComposerRef: (r) => (composer = r),
         };
         const setup = await testRender(() => <PaneRetractHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             // The pane, not the composer, holds focus — the post-submit resting state.
@@ -295,7 +279,7 @@ describe("pane-focused up-arrow retract layer (rendered, real keyboard bus)", ()
             onComposerRef: () => {},
         };
         const setup = await testRender(() => <PaneRetractHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(pane.focused).toBe(true);
@@ -338,7 +322,7 @@ describe("pane-focused up-arrow retract layer (rendered, real keyboard bus)", ()
             onComposerRef: () => {},
         };
         const setup = await testRender(() => <PaneRetractHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(pane.focused).toBe(true);
@@ -400,14 +384,8 @@ function InterruptHarness(props: InterruptControls) {
     );
 
     // A minimal stand-in for esc's real destination in NORMAL mode (the deliberate no-op in production): a
-    // lower-priority pane-targeted esc that records it was reached, so a DISABLED interrupt layer proves
-    // esc fell through rather than merely not arming.
-    useBindings(() => ({
-        mode: MODE_BASE,
-        target: pane,
-        priority: -10,
-        bindings: [{ chord: KEYS.escape, run: () => props.onFallthrough() }],
-    }));
+    // DISABLED interrupt layer proves esc fell through rather than merely not arming.
+    useFallThroughProbe(() => pane, [{ chord: KEYS.escape, run: () => props.onFallthrough() }]);
 
     return (
         <box flexDirection="column" width="100%" height="100%">
@@ -437,7 +415,7 @@ describe("double-press interrupt layer (rendered, real keyboard bus)", () => {
             onRef: (r) => (pane = r),
         };
         const setup = await testRender(() => <InterruptHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
             expect(pane.focused).toBe(true);
@@ -460,59 +438,41 @@ describe("double-press interrupt layer (rendered, real keyboard bus)", () => {
         }
     });
 
-    test("a live selection excludes the interrupt: esc does not arm", async () => {
+    /** Esc under the given signals: the layer must decline it — no arm, no abort, one fall-through. */
+    async function expectEscFallsThrough(signals: { busy: boolean; selectedText: string }): Promise<void> {
         let armCalls = 0;
         let abortCalls = 0;
         let fallthroughCalls = 0;
         const controls: InterruptControls = {
             conversation: { interruptArmed: () => false, armInterrupt: () => (armCalls += 1), abort: () => (abortCalls += 1) },
-            busy: () => true,
-            selectedText: () => "SELECTED", // a live selection is present
+            busy: () => signals.busy,
+            selectedText: () => signals.selectedText,
             onFallthrough: () => (fallthroughCalls += 1),
             onRef: () => {},
         };
         const setup = await testRender(() => <InterruptHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
+        const settle = makeSettle(setup, 35);
         try {
             await settle();
 
             setup.mockInput.pressEscape();
             await settle();
 
-            // enabled excludes it while text is selected → no arm, no abort; esc falls through.
             expect(armCalls).toBe(0);
             expect(abortCalls).toBe(0);
             expect(fallthroughCalls).toBe(1);
         } finally {
             setup.renderer.destroy();
         }
+    }
+
+    test("a live selection excludes the interrupt: esc does not arm", async () => {
+        // A live selection is present, so the layer's `enabled` excludes itself: no arm, no abort; esc falls through.
+        await expectEscFallsThrough({ busy: true, selectedText: "SELECTED" });
     });
 
     test("idle: the layer is inert and esc falls through", async () => {
-        let armCalls = 0;
-        let abortCalls = 0;
-        let fallthroughCalls = 0;
-        const controls: InterruptControls = {
-            conversation: { interruptArmed: () => false, armInterrupt: () => (armCalls += 1), abort: () => (abortCalls += 1) },
-            busy: () => false, // no turn in flight
-            selectedText: () => "",
-            onFallthrough: () => (fallthroughCalls += 1),
-            onRef: () => {},
-        };
-        const setup = await testRender(() => <InterruptHarness {...controls} />, { width: 40, height: 10 });
-        const settle = makeSettle(setup);
-        try {
-            await settle();
-
-            setup.mockInput.pressEscape();
-            await settle();
-
-            // Idle → disabled → esc is the deliberate no-op, reaching only the fall-through stand-in.
-            expect(armCalls).toBe(0);
-            expect(abortCalls).toBe(0);
-            expect(fallthroughCalls).toBe(1);
-        } finally {
-            setup.renderer.destroy();
-        }
+        // No turn in flight — idle → disabled → esc is the deliberate no-op, reaching only the fall-through stand-in.
+        await expectEscFallsThrough({ busy: false, selectedText: "" });
     });
 });

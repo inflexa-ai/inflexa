@@ -63,6 +63,40 @@ function scripted(answers: (() => ResultAsync<ServerState, ClientError>)[]): { o
     };
 }
 
+/**
+ * Recovery opts over a scripted watch, with a log of the sign-in, the boot request, the server
+ * start, and each read, in order. `requestBoot` and `startServer` default to their success
+ * answers — a boot that takes (`starting`) and a start that completes — so a test logs the
+ * steps it does not steer.
+ */
+function loggedRecoveryOpts(
+    answers: (() => ResultAsync<ServerState, ClientError>)[],
+    steered: { requestBoot?: BootRecoveryOpts["requestBoot"]; startServer?: BootRecoveryOpts["startServer"] } = {},
+) {
+    const calls: string[] = [];
+    const watch = scripted(answers);
+    const opts: BootRecoveryOpts = {
+        ...watch.opts,
+        readState: () => {
+            calls.push("read");
+            return watch.opts.readState();
+        },
+        signIn: () => {
+            calls.push("sign-in");
+            return Promise.resolve();
+        },
+        requestBoot: () => {
+            calls.push("boot");
+            return steered.requestBoot === undefined ? okAsync(starting) : steered.requestBoot();
+        },
+        startServer: () => {
+            calls.push("start");
+            return steered.startServer === undefined ? Promise.resolve(ok(undefined)) : steered.startServer();
+        },
+    };
+    return { opts, calls };
+}
+
 describe("boot store transitions", () => {
     test("starts idle", () => {
         expect(bootState().phase).toBe("idle");
@@ -152,39 +186,9 @@ describe("the recovery of a failed boot", () => {
         ...failedAt,
     };
 
-    /** Recovery opts over `answers`, with a log of the sign-in, the boot request, the server start, and each read, in order. */
-    function recovery(
-        answers: (() => ResultAsync<ServerState, ClientError>)[],
-        requestBoot?: BootRecoveryOpts["requestBoot"],
-        startServer?: BootRecoveryOpts["startServer"],
-    ) {
-        const calls: string[] = [];
-        const watch = scripted(answers);
-        const opts: BootRecoveryOpts = {
-            ...watch.opts,
-            readState: () => {
-                calls.push("read");
-                return watch.opts.readState();
-            },
-            signIn: () => {
-                calls.push("sign-in");
-                return Promise.resolve();
-            },
-            requestBoot: () => {
-                calls.push("boot");
-                return requestBoot === undefined ? okAsync({ ...identity, phase: "starting", boot: noBoot }) : requestBoot();
-            },
-            startServer: () => {
-                calls.push("start");
-                return startServer === undefined ? Promise.resolve(ok(undefined)) : startServer();
-            },
-        };
-        return { opts, calls };
-    }
-
     test("the sign-in runs, then the store reads the server again until it is ready", async () => {
         await watchServerBoot(scripted([() => okAsync(failed)]).opts);
-        const { opts, calls } = recovery([() => okAsync(starting), () => okAsync(ready("claude-after"))]);
+        const { opts, calls } = loggedRecoveryOpts([() => okAsync(starting), () => okAsync(ready("claude-after"))]);
         await recoverServerBoot("sign_in", opts);
         // `inflexa up` sends the boot request itself, thus the store sends none.
         expect(calls).toEqual(["sign-in", "read", "read"]);
@@ -193,7 +197,7 @@ describe("the recovery of a failed boot", () => {
 
     test("a new boot is requested, then the store reads the server again until it settles", async () => {
         await watchServerBoot(scripted([() => okAsync(failed)]).opts);
-        const { opts, calls } = recovery([() => okAsync(starting), () => okAsync(failed)]);
+        const { opts, calls } = loggedRecoveryOpts([() => okAsync(starting), () => okAsync(failed)]);
         await recoverServerBoot("boot_again", opts);
         expect(calls).toEqual(["boot", "read", "read"]);
         expect(bootState()).toEqual({ phase: "failed", message: "no provider login", recovery: "sign_in" });
@@ -202,7 +206,7 @@ describe("the recovery of a failed boot", () => {
     test("a boot request that the server did not take settles as failed with nothing more to offer, and reads nothing", async () => {
         await watchServerBoot(scripted([() => okAsync(failed)]).opts);
         const refused: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:8436", cause: null };
-        const { opts, calls } = recovery([() => okAsync(ready("never"))], () => errAsync(refused));
+        const { opts, calls } = loggedRecoveryOpts([() => okAsync(ready("never"))], { requestBoot: () => errAsync(refused) });
         await recoverServerBoot("boot_again", opts);
         expect(calls).toEqual(["boot"]);
         const settled = bootState();
@@ -214,35 +218,9 @@ describe("the recovery of a failed boot", () => {
 describe("the start of a server from the chat", () => {
     const unreachable: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: "http://127.0.0.1:8436", cause: new Error("ECONNREFUSED") };
 
-    /** Recovery opts over `answers`, with a log of the server start and each read, in order. */
-    function startOpts(answers: (() => ResultAsync<ServerState, ClientError>)[], startServer: BootRecoveryOpts["startServer"]) {
-        const calls: string[] = [];
-        const watch = scripted(answers);
-        const opts: BootRecoveryOpts = {
-            ...watch.opts,
-            readState: () => {
-                calls.push("read");
-                return watch.opts.readState();
-            },
-            signIn: () => {
-                calls.push("sign-in");
-                return Promise.resolve();
-            },
-            requestBoot: () => {
-                calls.push("boot");
-                return okAsync(starting);
-            },
-            startServer: () => {
-                calls.push("start");
-                return startServer();
-            },
-        };
-        return { opts, calls };
-    }
-
     test("the start after a crash runs the spawn path, then the store reads the server until it is ready", async () => {
         await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
-        const { opts, calls } = startOpts([() => okAsync(ready("claude-after"))], () => Promise.resolve(ok(undefined)));
+        const { opts, calls } = loggedRecoveryOpts([() => okAsync(ready("claude-after"))], { startServer: () => Promise.resolve(ok(undefined)) });
 
         await recoverServerBoot("restart_server", opts);
 
@@ -252,7 +230,9 @@ describe("the start of a server from the chat", () => {
 
     test("the start runs the spawn path of an instance command, then the store reads the server until it is ready", async () => {
         await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
-        const { opts, calls } = startOpts([() => okAsync(starting), () => okAsync(ready("claude-after"))], () => Promise.resolve(ok(undefined)));
+        const { opts, calls } = loggedRecoveryOpts([() => okAsync(starting), () => okAsync(ready("claude-after"))], {
+            startServer: () => Promise.resolve(ok(undefined)),
+        });
 
         const pending = recoverServerBoot("start_server", opts);
         // The start can take seconds, and the header must not keep saying that no server runs.
@@ -266,7 +246,7 @@ describe("the start of a server from the chat", () => {
     test("a start that failed offers the start again, with its reason, and reads nothing", async () => {
         await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
         const reason = "Could not start the Inflexa server: `inflexa serve --detach` exited with code 1. See its log: /logs/server.log";
-        const { opts, calls } = startOpts([() => okAsync(ready("never"))], () => Promise.resolve(err(reason)));
+        const { opts, calls } = loggedRecoveryOpts([() => okAsync(ready("never"))], { startServer: () => Promise.resolve(err(reason)) });
 
         await recoverServerBoot("start_server", opts);
 

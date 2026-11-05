@@ -5,6 +5,7 @@ import type { ThreadSummary } from "../../api/conversation.ts";
 import type { ClientError } from "../../client/api.ts";
 import { mintReportSessionAccess } from "../../client/conversation.ts";
 import { buildAnalysis, buildWorkspace } from "../../test_support/builders.ts";
+import { sessionOptsDouble, sessionScopeDouble } from "../../test_support/session_doubles.ts";
 import { fakeClient, type FakeResponse } from "../../test_support/fake_client.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { conversationSummary, reportSummary, threadListOf, FIXTURE_ANALYSIS_ID } from "../../test_support/threads.ts";
@@ -22,9 +23,6 @@ import {
     type SessionOpts,
 } from "../commands.tsx";
 import { shortSessionId } from "../hooks/sidebar_live.ts";
-import type { Workspace } from "../contexts/workspace.ts";
-import type { Notice } from "../theme.ts";
-import type { Analysis } from "../../types/analysis.ts";
 import { stringContaining } from "../../test_support/matchers.ts";
 
 // The three report-session flows reach the server and the toast channel through `SessionOpts`, thus
@@ -55,63 +53,6 @@ describe("report session flows", () => {
     const CHILD = reportSummary({ id: "thread-report-1", parentThreadId: PARENT.id, parentSeq: 4 });
 
     /**
-     * A workspace stand-in recording the two writes a flow can make: dialogs and scope swaps.
-     *
-     * `swapTo` moves the open scope the way the analysis-switch keys of the user would. Each flow reads
-     * the scope one time, awaits the server, then acts, and nothing is modal across that await. To drive
-     * the swap from inside a fake read is how a case lands in that window with no timing.
-     */
-    function sessionScope(
-        analysis: Analysis | null,
-        sessionId: string | null,
-    ): {
-        ws: Workspace;
-        dialogs: () => number;
-        closes: () => number;
-        opened: { threadId: string | null; analysisId: string }[];
-        swapTo: (next: { analysis?: Analysis; sessionId?: string | null }) => void;
-    } {
-        const opened: { threadId: string | null; analysisId: string }[] = [];
-        let dialogs = 0;
-        let closes = 0;
-        const scope: { analysis: Analysis | null; sessionId: string | null } = { analysis, sessionId };
-        // The getters read the scope at each access, which a spread of `buildWorkspace` would freeze.
-        const ws: Workspace = {
-            get analysis() {
-                return scope.analysis;
-            },
-            get sessionId() {
-                return scope.sessionId;
-            },
-            workingDir: "/work",
-            project: null,
-            anchor: null,
-            inputCount: null,
-            openDialog: () => {
-                dialogs += 1;
-            },
-            closeDialog: () => {
-                closes += 1;
-            },
-            openSession: (threadId: string | null, _workingDir: string, next: Analysis) => {
-                opened.push({ threadId, analysisId: next.id });
-            },
-            refreshScope: () => {},
-            quit: async () => {},
-        };
-        return {
-            ws,
-            dialogs: () => dialogs,
-            closes: () => closes,
-            opened,
-            swapTo: (next) => {
-                if (next.analysis !== undefined) scope.analysis = next.analysis;
-                if (next.sessionId !== undefined) scope.sessionId = next.sessionId;
-            },
-        };
-    }
-
-    /**
      * A `getThread` read over a fixed set of rows, keyed by thread id as the server keys them. The back
      * flow reads the open thread and then its parent through this one read, thus an id-blind fake would
      * hand the parent read the child row and hide a wrong lookup.
@@ -121,37 +62,11 @@ describe("report session flows", () => {
         return (_analysisId, threadId) => okAsync(table.get(threadId) ?? null);
     }
 
-    /** Session options plus a recorder for the notices raised. */
-    function makeOpts(over: Partial<SessionOpts> = {}): { opts: SessionOpts; notices: Notice[] } {
-        const notices: Notice[] = [];
-        const base: SessionOpts = {
-            ready: () => true,
-            listThreads: () => okAsync(threadListOf([])),
-            listReportChildren: () => okAsync(threadListOf([])),
-            getThread: () => okAsync(null),
-            updateTitle: () => okAsync(null),
-            listThreadsWithArchived: () => okAsync(threadListOf([])),
-            archiveThread: () => okAsync(undefined),
-            unarchiveThread: () => okAsync(undefined),
-            purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
-            chatBusy: () => false,
-            resolveThreadId: () => Promise.resolve("thread-resolved"),
-            workingDirFor: () => "/work",
-            refreshThread: () => {},
-            mintReportPageAccess: () => errAsync({ type: "aborted" }),
-            openUrl: () => err({ type: "open_failed", code: null, cause: null }),
-            notify: (n) => {
-                notices.push(n);
-            },
-        };
-        return { opts: { ...base, ...over }, notices };
-    }
-
     describe("the back chord", () => {
         test("a report child opens the conversation that spawned it, in place and with no dialog", async () => {
             __setBootStateForTest(READY);
-            const t = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT]) });
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = sessionOptsDouble({ getThread: rowsByThreadId([CHILD, PARENT]) });
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openParentSession(w.ws, t.opts);
 
@@ -174,8 +89,8 @@ describe("report session flows", () => {
             ];
 
             for (const c of cases) {
-                const t = makeOpts({ getThread: c.getThread });
-                const w = sessionScope(ANALYSIS, c.bound);
+                const t = sessionOptsDouble({ getThread: c.getThread });
+                const w = sessionScopeDouble(ANALYSIS, c.bound);
 
                 await openParentSession(w.ws, t.opts);
 
@@ -190,8 +105,8 @@ describe("report session flows", () => {
             // A failed read folded into the no-parent arm would tell a user whose server blinked a fact
             // about the shape of their data that is not true.
             __setBootStateForTest(READY);
-            const t = makeOpts({ getThread: () => errAsync(serverErr) });
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = sessionOptsDouble({ getThread: () => errAsync(serverErr) });
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openParentSession(w.ws, t.opts);
 
@@ -206,8 +121,8 @@ describe("report session flows", () => {
             // A normal state and never a fault: the read hides an archived row, and the chat scope can name
             // a thread that another client moved.
             __setBootStateForTest(READY);
-            const t = makeOpts({ getThread: rowsByThreadId([CHILD]) });
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = sessionOptsDouble({ getThread: rowsByThreadId([CHILD]) });
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openParentSession(w.ws, t.opts);
 
@@ -219,10 +134,10 @@ describe("report session flows", () => {
 
         test("a failed parent read surfaces the error rather than a claim about the parent", async () => {
             __setBootStateForTest(READY);
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 getThread: (_analysisId, threadId) => (threadId === CHILD.id ? okAsync(CHILD) : errAsync(serverErr)),
             });
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openParentSession(w.ws, t.opts);
 
@@ -237,8 +152,8 @@ describe("report session flows", () => {
             // The chord dispatches by id and consults no palette predicate, thus this path IS reachable
             // while the runtime still boots.
             __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
-            const failed = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT]) });
-            const wf = sessionScope(ANALYSIS, CHILD.id);
+            const failed = sessionOptsDouble({ getThread: rowsByThreadId([CHILD, PARENT]) });
+            const wf = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openParentSession(wf.ws, failed.opts);
 
@@ -251,8 +166,8 @@ describe("report session flows", () => {
             expect(failed.notices[0]?.text).not.toContain("booting");
 
             __setBootStateForTest({ phase: "booting" });
-            const booting = makeOpts({ getThread: rowsByThreadId([CHILD, PARENT]) });
-            const wb = sessionScope(ANALYSIS, CHILD.id);
+            const booting = sessionOptsDouble({ getThread: rowsByThreadId([CHILD, PARENT]) });
+            const wb = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openParentSession(wb.ws, booting.opts);
 
@@ -268,8 +183,8 @@ describe("report session flows", () => {
             // A picker over one row asks the user to confirm what the keystroke already said.
             __setBootStateForTest(READY);
             const only = reportSummary({ id: "thread-report-only", parentThreadId: PARENT.id });
-            const t = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([only])) });
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const t = sessionOptsDouble({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([only])) });
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openReportSession(w.ws, t.opts);
 
@@ -282,8 +197,8 @@ describe("report session flows", () => {
             __setBootStateForTest(READY);
             const first = reportSummary({ id: "thread-report-1", parentThreadId: PARENT.id });
             const second = reportSummary({ id: "thread-report-2", parentThreadId: PARENT.id });
-            const t = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([first, second])) });
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const t = sessionOptsDouble({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([first, second])) });
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openReportSession(w.ws, t.opts);
 
@@ -303,8 +218,8 @@ describe("report session flows", () => {
             ];
 
             for (const c of cases) {
-                const t = makeOpts({ getThread: c.getThread });
-                const w = sessionScope(ANALYSIS, c.bound);
+                const t = sessionOptsDouble({ getThread: c.getThread });
+                const w = sessionScopeDouble(ANALYSIS, c.bound);
 
                 await openReportSession(w.ws, t.opts);
 
@@ -320,8 +235,8 @@ describe("report session flows", () => {
             // Two different facts about the data of the user. A dead key reads as a broken key, thus each
             // direction speaks its own reason.
             __setBootStateForTest(READY);
-            const t = makeOpts({ getThread: rowsByThreadId([CHILD]) });
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const t = sessionOptsDouble({ getThread: rowsByThreadId([CHILD]) });
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openReportSession(w.ws, t.opts);
 
@@ -335,8 +250,8 @@ describe("report session flows", () => {
 
         test("an unreadable open thread says the read failed and lists nothing", async () => {
             __setBootStateForTest(READY);
-            const t = makeOpts({ getThread: () => errAsync(serverErr), listReportChildren: () => errAsync(serverErr) });
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const t = sessionOptsDouble({ getThread: () => errAsync(serverErr), listReportChildren: () => errAsync(serverErr) });
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openReportSession(w.ws, t.opts);
 
@@ -348,8 +263,8 @@ describe("report session flows", () => {
 
         test("a failed listing warns and opens NO picker, thus no empty state claims there is no child", async () => {
             __setBootStateForTest(READY);
-            const t = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => errAsync(serverErr) });
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const t = sessionOptsDouble({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => errAsync(serverErr) });
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openReportSession(w.ws, t.opts);
 
@@ -363,8 +278,8 @@ describe("report session flows", () => {
         test("dispatched before ready it speaks the boot refusal in both of its forms", async () => {
             __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
             const child = reportSummary({ parentThreadId: PARENT.id });
-            const failed = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([child])) });
-            const wf = sessionScope(ANALYSIS, PARENT.id);
+            const failed = sessionOptsDouble({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([child])) });
+            const wf = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openReportSession(wf.ws, failed.opts);
 
@@ -375,8 +290,8 @@ describe("report session flows", () => {
             expect(failed.notices[0]?.text).not.toContain("booting");
 
             __setBootStateForTest({ phase: "booting" });
-            const booting = makeOpts({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([child])) });
-            const wb = sessionScope(ANALYSIS, PARENT.id);
+            const booting = sessionOptsDouble({ getThread: rowsByThreadId([PARENT]), listReportChildren: () => okAsync(threadListOf([child])) });
+            const wb = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openReportSession(wb.ws, booting.opts);
 
@@ -455,16 +370,16 @@ describe("report session flows", () => {
             // about the population it lists.
             __setBootStateForTest(READY);
             const child = reportSummary({ parentThreadId: PARENT.id });
-            const reportBroken = makeOpts({ listThreads: () => okAsync(threadListOf([PARENT])), listReportChildren: () => errAsync(serverErr) });
-            const wr = sessionScope(ANALYSIS, PARENT.id);
+            const reportBroken = sessionOptsDouble({ listThreads: () => okAsync(threadListOf([PARENT])), listReportChildren: () => errAsync(serverErr) });
+            const wr = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openSwitchSession(wr.ws, reportBroken.opts);
 
             expect(wr.dialogs()).toBe(1);
             expect(reportBroken.notices).toEqual([]);
 
-            const switchBroken = makeOpts({ listThreads: () => errAsync(serverErr), listReportChildren: () => okAsync(threadListOf([child])) });
-            const ws = sessionScope(ANALYSIS, PARENT.id);
+            const switchBroken = sessionOptsDouble({ listThreads: () => errAsync(serverErr), listReportChildren: () => okAsync(threadListOf([child])) });
+            const ws = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openSwitchReportSession(ws.ws, switchBroken.opts);
 
@@ -478,8 +393,8 @@ describe("report session flows", () => {
             __setBootStateForTest(READY);
             const only = reportSummary({ parentThreadId: PARENT.id });
             for (const rows of [[only], []]) {
-                const t = makeOpts({ listReportChildren: () => okAsync(threadListOf(rows)) });
-                const w = sessionScope(ANALYSIS, PARENT.id);
+                const t = sessionOptsDouble({ listReportChildren: () => okAsync(threadListOf(rows)) });
+                const w = sessionScopeDouble(ANALYSIS, PARENT.id);
 
                 await openSwitchReportSession(w.ws, t.opts);
 
@@ -498,8 +413,8 @@ describe("report session flows", () => {
             expect(entry).toBeDefined();
             expect(entry?.enabled?.(buildWorkspace({ analysis: ANALYSIS }))).toBe(true);
 
-            const t = makeOpts();
-            const w = sessionScope(ANALYSIS, null);
+            const t = sessionOptsDouble();
+            const w = sessionScopeDouble(ANALYSIS, null);
 
             await openSwitchReportSession(w.ws, t.opts);
 
@@ -511,8 +426,8 @@ describe("report session flows", () => {
 
         test("a dispatch with no open analysis names the reason and opens nothing", async () => {
             __setBootStateForTest(READY);
-            const t = makeOpts();
-            const w = sessionScope(null, null);
+            const t = sessionOptsDouble();
+            const w = sessionScopeDouble(null, null);
 
             await openSwitchReportSession(w.ws, t.opts);
 
@@ -529,14 +444,14 @@ describe("report session flows", () => {
             __setBootStateForTest(READY);
             const sibling = reportSummary({ id: "thread-report-2", parentThreadId: PARENT.id });
             const listedParents: string[] = [];
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 getThread: rowsByThreadId([CHILD, PARENT]),
                 listReportChildren: (_analysisId, parentThreadId) => {
                     listedParents.push(parentThreadId);
                     return okAsync(threadListOf([CHILD, sibling]));
                 },
             });
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openSwitchReportSession(w.ws, t.opts);
 
@@ -551,14 +466,14 @@ describe("report session flows", () => {
             // The conversation side is unchanged by the sibling rule: the open thread is the parent.
             __setBootStateForTest(READY);
             const listedParents: string[] = [];
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 getThread: rowsByThreadId([PARENT]),
                 listReportChildren: (_analysisId, parentThreadId) => {
                     listedParents.push(parentThreadId);
                     return okAsync(threadListOf([CHILD]));
                 },
             });
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             await openSwitchReportSession(w.ws, t.opts);
 
@@ -571,14 +486,14 @@ describe("report session flows", () => {
             __setBootStateForTest(READY);
             const orphan = reportSummary({ id: "thread-orphan", parentThreadId: undefined, parentSeq: undefined });
             const listedParents: string[] = [];
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 getThread: rowsByThreadId([orphan]),
                 listReportChildren: (_analysisId, parentThreadId) => {
                     listedParents.push(parentThreadId);
                     return okAsync(threadListOf([]));
                 },
             });
-            const w = sessionScope(ANALYSIS, orphan.id);
+            const w = sessionScopeDouble(ANALYSIS, orphan.id);
 
             await openSwitchReportSession(w.ws, t.opts);
 
@@ -591,14 +506,14 @@ describe("report session flows", () => {
             // empty picker this rule exists to remove, under a claim the flow cannot back up.
             __setBootStateForTest(READY);
             let listings = 0;
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 getThread: () => errAsync(serverErr),
                 listReportChildren: () => {
                     listings += 1;
                     return okAsync(threadListOf([CHILD]));
                 },
             });
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             await openSwitchReportSession(w.ws, t.opts);
 
@@ -612,7 +527,7 @@ describe("report session flows", () => {
         test("a pick of the OPEN session closes the dialog and swaps nothing", () => {
             // A re-open would reset the chat's hot state and reload the transcript the user is already
             // reading, for a session they never left.
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             selectReportSession(w.ws, CHILD, ANALYSIS);
 
@@ -624,7 +539,7 @@ describe("report session flows", () => {
             // The handler carries the whole behavior of a pick, and nothing reaches it through a mounted
             // dialog. The analysis is the one captured when the picker opened, thus the swap moves the
             // thread alone and never the scope.
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
 
             selectReportSession(w.ws, CHILD, ANALYSIS);
 
@@ -639,8 +554,8 @@ describe("report session flows", () => {
         // are real, thus nothing downstream refuses them and the user simply lands somewhere else.
         test("the back chord refuses the swap", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
-            const t = makeOpts({
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
+            const t = sessionOptsDouble({
                 getThread: (_analysisId, threadId) => {
                     if (threadId === CHILD.id) return okAsync(CHILD);
                     w.swapTo({ sessionId: "thread-elsewhere" });
@@ -657,9 +572,9 @@ describe("report session flows", () => {
 
         test("the forward chord refuses the swap and opens no dialog", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
             const only = reportSummary({ parentThreadId: PARENT.id });
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 getThread: rowsByThreadId([PARENT]),
                 listReportChildren: () => {
                     w.swapTo({ sessionId: "thread-elsewhere" });
@@ -677,8 +592,8 @@ describe("report session flows", () => {
 
         test("the palette command refuses the picker it built for the session that was left", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, PARENT.id);
-            const t = makeOpts({
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
+            const t = sessionOptsDouble({
                 listReportChildren: () => {
                     w.swapTo({ sessionId: "thread-elsewhere" });
                     return okAsync(threadListOf([reportSummary({ parentThreadId: PARENT.id })]));
@@ -699,8 +614,8 @@ describe("report session flows", () => {
         // analysis that is open now: one scope naming two analyses.
         test("the back chord refuses the swap and opens no dialog", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
-            const t = makeOpts({
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
+            const t = sessionOptsDouble({
                 getThread: (_analysisId, threadId) => {
                     if (threadId === CHILD.id) return okAsync(CHILD);
                     w.swapTo({ analysis: OTHER });
@@ -718,9 +633,9 @@ describe("report session flows", () => {
 
         test("the forward chord refuses the swap and opens no dialog", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
             const only = reportSummary({ parentThreadId: PARENT.id });
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 getThread: rowsByThreadId([PARENT]),
                 listReportChildren: () => {
                     w.swapTo({ analysis: OTHER });
@@ -738,9 +653,9 @@ describe("report session flows", () => {
 
         test("the palette command refuses the picker it built for the analysis that was left", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
             const only = reportSummary({ parentThreadId: PARENT.id });
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 listReportChildren: () => {
                     w.swapTo({ analysis: OTHER });
                     return okAsync(threadListOf([only]));
@@ -767,7 +682,7 @@ describe("report session flows", () => {
         function pageOpts(answer: FakeResponse, over: Partial<SessionOpts> = {}, openerFails = false) {
             const client = fakeClient(() => answer);
             const urls: string[] = [];
-            const t = makeOpts({
+            const t = sessionOptsDouble({
                 getThread: rowsByThreadId([PARENT, CHILD]),
                 mintReportPageAccess: (analysisId, threadId) => mintReportSessionAccess(analysisId, threadId, client.opts),
                 openUrl: (url) => {
@@ -781,7 +696,7 @@ describe("report session flows", () => {
 
         test("a report session opens the URL of the server in the browser, and no file path", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
             const t = pageOpts(GRANT);
 
             await openReportPage(w.ws, t.opts);
@@ -799,7 +714,7 @@ describe("report session flows", () => {
 
         test("each open asks the server for a new grant", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
             const t = pageOpts(GRANT);
 
             await openReportPage(w.ws, t.opts);
@@ -811,7 +726,7 @@ describe("report session flows", () => {
 
         test("a conversation has no page: a notice names the reason and nothing opens", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, PARENT.id);
+            const w = sessionScopeDouble(ANALYSIS, PARENT.id);
             const t = pageOpts(GRANT);
 
             await openReportPage(w.ws, t.opts);
@@ -825,7 +740,7 @@ describe("report session flows", () => {
 
         test("a thread with no row is no report session, and it opens nothing", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, "thread-without-row");
+            const w = sessionScopeDouble(ANALYSIS, "thread-without-row");
             const t = pageOpts(GRANT);
 
             await openReportPage(w.ws, t.opts);
@@ -838,7 +753,7 @@ describe("report session flows", () => {
 
         test("an unbound scope is no report session, and it reads nothing", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, null);
+            const w = sessionScopeDouble(ANALYSIS, null);
             let reads = 0;
             const t = pageOpts(GRANT, {
                 getThread: () => {
@@ -857,7 +772,7 @@ describe("report session flows", () => {
 
         test("an unreadable thread raises the error notice and opens nothing", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
             const t = pageOpts(GRANT, { getThread: () => errAsync(serverErr) });
 
             await openReportPage(w.ws, t.opts);
@@ -871,7 +786,7 @@ describe("report session flows", () => {
 
         test("a session with no page yet gets a notice and nothing opens", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
             const t = pageOpts({ status: 404, body: { error: "not_found", message: "no page" } });
 
             await openReportPage(w.ws, t.opts);
@@ -884,7 +799,7 @@ describe("report session flows", () => {
 
         test("any other failure of the request is a warning that describes it", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
             const t = pageOpts({ status: 409, body: { error: "conflict", message: "workspace folder is lost" } });
 
             await openReportPage(w.ws, t.opts);
@@ -898,7 +813,7 @@ describe("report session flows", () => {
 
         test("an opener that fails gives a warning that carries the URL", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
             const t = pageOpts(GRANT, {}, true);
 
             await openReportPage(w.ws, t.opts);
@@ -911,7 +826,7 @@ describe("report session flows", () => {
 
         test("a dispatch with no open analysis names the reason and opens nothing", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(null, null);
+            const w = sessionScopeDouble(null, null);
             const t = pageOpts(GRANT);
 
             await openReportPage(w.ws, t.opts);
@@ -925,7 +840,7 @@ describe("report session flows", () => {
         });
 
         test("a dispatch before the runtime is ready names the state and opens nothing", async () => {
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
 
             __setBootStateForTest({ phase: "booting" });
             const booting = pageOpts(GRANT);
@@ -946,7 +861,7 @@ describe("report session flows", () => {
 
         test("a session that changes across the mint opens nothing", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
             const t = pageOpts(GRANT, {
                 mintReportPageAccess: () => {
                     w.swapTo({ sessionId: "thread-elsewhere" });
@@ -963,7 +878,7 @@ describe("report session flows", () => {
 
         test("an analysis that changes across the mint opens nothing", async () => {
             __setBootStateForTest(READY);
-            const w = sessionScope(ANALYSIS, CHILD.id);
+            const w = sessionScopeDouble(ANALYSIS, CHILD.id);
             const t = pageOpts(GRANT, {
                 mintReportPageAccess: () => {
                     w.swapTo({ analysis: OTHER });

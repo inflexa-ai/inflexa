@@ -397,6 +397,12 @@ describe("initial cursor seeding", () => {
         }
     });
 
+    /** The captured frame shows the seeded row's chevron title, and no row above the fold. */
+    function expectSeededRowVisible(frame: string): void {
+        expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
+        expect(frame).not.toContain("row-00");
+    }
+
     // The seeded row's scroll can only land once the first frame has laid the tree out (the geometry
     // scrollChildIntoView compares is all zeros before it), so this settles on a real clock — the same
     // reason the dialog render tests do.
@@ -416,9 +422,7 @@ describe("initial cursor seeding", () => {
             await setup.renderOnce();
             await Promise.sleep(5);
             await setup.renderOnce();
-            const frame = setup.captureCharFrame();
-            expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
-            expect(frame).not.toContain("row-00");
+            expectSeededRowVisible(setup.captureCharFrame());
         } finally {
             setup.renderer.destroy();
         }
@@ -456,9 +460,7 @@ describe("initial cursor seeding", () => {
             await setup.renderOnce(); // the list's first layout, only now
             await Promise.sleep(20); // a later poll tick sees real geometry
             await setup.renderOnce();
-            const frame = setup.captureCharFrame();
-            expect(frame).toContain(`${GLYPHS.chevronRight} row-27`);
-            expect(frame).not.toContain("row-00");
+            expectSeededRowVisible(setup.captureCharFrame());
         } finally {
             setup.renderer.destroy();
         }

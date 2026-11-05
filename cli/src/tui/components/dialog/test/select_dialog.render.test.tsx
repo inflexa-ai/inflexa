@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { JSX } from "solid-js";
 import { testRender } from "@opentui/solid";
 
 import { GLYPHS } from "../../../../lib/design_system.ts";
-import { useKeymapRoot } from "../../../keymap.ts";
-import { DialogOverlay, dialogClear, dialogPush } from "../dialog_host.tsx";
+import { dialogClear, dialogPush } from "../dialog_host.tsx";
 import { SelectDialog } from "../select_dialog.tsx";
 import type { SelectItem } from "../../list_core.tsx";
+import { dialogHostNode } from "../../../../test_support/dialog_harness.tsx";
+import { settleFrame } from "../../../../test_support/tui.ts";
 
 // SelectDialog forwards `initialValue` and `onCursorChange` to its FixedList and does nothing else with
 // them — but "forwards" is only observable through a render, because the list is an implementation
@@ -20,24 +20,12 @@ const FRUIT: SelectItem<string>[] = [
     { value: "carrot", title: "carrot" },
 ];
 
-function Harness(): JSX.Element {
-    useKeymapRoot();
-    return (
-        <box width="100%" height="100%">
-            <DialogOverlay />
-        </box>
-    );
-}
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
 // A real-clock settle: the dialog host applies initial focus on a microtask and the list's seeded
 // scroll retries on a macrotask, so a pure render pair is too early for both.
 async function settle(setup: Setup): Promise<string> {
-    await Promise.sleep(20);
-    await setup.renderOnce();
-    await setup.renderOnce();
-    return setup.captureCharFrame();
+    return settleFrame(setup, 20);
 }
 
 describe("SelectDialog cursor seams", () => {
@@ -47,7 +35,7 @@ describe("SelectDialog cursor seams", () => {
 
     test("opens on the seeded row, reports moves, and reports undefined once the filter empties the list", async () => {
         const reported: (string | undefined)[] = [];
-        const setup = await testRender(() => <Harness />, { width: 80, height: 24 });
+        const setup = await testRender(dialogHostNode(), { width: 80, height: 24 });
         try {
             await settle(setup);
             dialogPush(() => (
@@ -87,7 +75,7 @@ describe("SelectDialog cursor seams", () => {
     });
 
     test("without the seams the dialog behaves as before: cursor on row 0, no callback required", async () => {
-        const setup = await testRender(() => <Harness />, { width: 80, height: 24 });
+        const setup = await testRender(dialogHostNode(), { width: 80, height: 24 });
         try {
             await settle(setup);
             dialogPush(() => <SelectDialog title="Pick a fruit" items={FRUIT} emptyText="No fruit" onCancel={() => {}} />);

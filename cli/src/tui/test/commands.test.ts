@@ -33,6 +33,7 @@ import {
 import type { ThreadList, ThreadSummary } from "../../api/conversation.ts";
 import type { PausedWork, ResumedWork } from "../../api/paused_work.ts";
 import { buildAnalysis, buildWorkspace } from "../../test_support/builders.ts";
+import { sessionOptsDouble, sessionScopeDouble } from "../../test_support/session_doubles.ts";
 import { conversationSummary, threadListOf } from "../../test_support/threads.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { DEFAULT_CLIENT_OPTS, type ClientOpts } from "../../client/api.ts";
@@ -270,86 +271,16 @@ describe("session flows", () => {
         return conversationSummary({ id: "thread-1", resourceId: ANALYSIS.id, ...over });
     }
 
-    /**
-     * A workspace stand-in recording the two writes a session flow can make: dialogs and scope swaps.
-     *
-     * `swapTo` moves the open scope the way the user's own switch keys would. Each flow reads the scope
-     * once, awaits the server, then acts — and nothing is modal across that await, so the switch keys stay
-     * live. Driving the swap from inside a fake read is how a test lands in that window deterministically.
-     */
-    function sessionScope(
-        analysis: Analysis | null,
-        sessionId: string | null,
-    ): {
-        ws: Workspace;
-        dialogs: () => number;
-        opened: { threadId: string | null; analysisId: string }[];
-        swapTo: (next: { analysis?: Analysis; sessionId?: string | null }) => void;
-    } {
-        const opened: { threadId: string | null; analysisId: string }[] = [];
-        let dialogs = 0;
-        const scope: { analysis: Analysis | null; sessionId: string | null } = { analysis, sessionId };
-        // The getters read the scope at each access, which a spread of `buildWorkspace` would freeze.
-        const ws: Workspace = {
-            get analysis() {
-                return scope.analysis;
-            },
-            get sessionId() {
-                return scope.sessionId;
-            },
-            workingDir: "/work",
-            project: null,
-            anchor: null,
-            inputCount: null,
-            openDialog: () => {
-                dialogs += 1;
-            },
-            closeDialog: () => {},
-            openSession: (threadId: string | null, _workingDir: string, next: Analysis) => {
-                opened.push({ threadId, analysisId: next.id });
-            },
-            refreshScope: () => {},
-            quit: async () => {},
-        };
-        return {
-            ws,
-            dialogs: () => dialogs,
-            opened,
-            swapTo: (next) => {
-                if (next.analysis !== undefined) scope.analysis = next.analysis;
-                if (next.sessionId !== undefined) scope.sessionId = next.sessionId;
-            },
-        };
-    }
-
-    /** Session options plus recorders for the notices raised and the snapshot pokes issued. */
+    /** The shared session double plus this file's snapshot-poke recorder. */
     function makeOpts(over: Partial<SessionOpts> = {}): { opts: SessionOpts; notices: Notice[]; refreshed: string[] } {
-        const notices: Notice[] = [];
         const refreshed: string[] = [];
-        const base: SessionOpts = {
-            ready: () => true,
-            listThreads: () => okAsync(threadListOf([])),
-            listReportChildren: () => okAsync(threadListOf([])),
-            getThread: () => okAsync(null),
-            updateTitle: () => okAsync(null),
-            listThreadsWithArchived: () => okAsync(threadListOf([])),
-            archiveThread: () => okAsync(undefined),
-            unarchiveThread: () => okAsync(undefined),
-            // The files stay by default: a case that is not about the files says so by leaving this alone.
-            purgeThread: () => okAsync({ purged: [], pages: { kind: "kept" } }),
-            chatBusy: () => false,
-            resolveThreadId: () => Promise.resolve("thread-resolved"),
-            workingDirFor: () => "/work",
+        const { opts, notices } = sessionOptsDouble({
             refreshThread: (_analysisId, threadId) => {
                 refreshed.push(threadId);
             },
-            mintReportPageAccess: () => errAsync({ type: "aborted" }),
-            openUrl: () => err({ type: "open_failed", code: null, cause: null }),
-            notify: (n) => {
-                notices.push(n);
-            },
-        };
-        return { opts: { ...base, ...over }, notices, refreshed };
+            ...over,
+        });
+        return { opts, notices, refreshed };
     }
 
     test("switch refuses before boot reaches ready, speaking rather than no-op'ing, and lists nothing", async () => {
@@ -363,7 +294,7 @@ describe("session flows", () => {
                 return okAsync(threadListOf([]));
             },
         });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openSwitchSession(w.ws, t.opts);
 
@@ -379,7 +310,7 @@ describe("session flows", () => {
         // failure the status bar is already showing.
         __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
         const t = makeOpts();
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openSwitchSession(w.ws, t.opts);
 
@@ -393,7 +324,7 @@ describe("session flows", () => {
     test("a failed listing warns and still opens the picker — a degrade, never a crash", async () => {
         __setBootStateForTest(READY);
         const t = makeOpts({ listThreads: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openSwitchSession(w.ws, t.opts);
 
@@ -408,7 +339,7 @@ describe("session flows", () => {
         // The row is the first turn's job, so there is nothing to retitle until then — refusing up front
         // costs nothing, where refusing on submit spends the user's typing on a write that cannot land.
         const t = makeOpts({ getThread: () => okAsync(null) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openRenameSession(w.ws, t.opts);
 
@@ -424,7 +355,7 @@ describe("session flows", () => {
         // beside the CURRENT analysis's working directory — one scope naming two analyses.
         __setBootStateForTest(READY);
         const OTHER = buildAnalysis({ id: "a2", name: asStr256("Beta") });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
         const t = makeOpts({
             listThreads: () => {
                 w.swapTo({ analysis: OTHER });
@@ -442,7 +373,7 @@ describe("session flows", () => {
     test("rename refuses to open a prompt for the session the user has since left", async () => {
         // "Rename session" means the one in front of you. A prompt pre-filled from the conversation just
         // navigated away from would retitle THAT one under a heading claiming to be about this one.
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
         const t = makeOpts({
             getThread: () => {
                 w.swapTo({ sessionId: "thread-2" });
@@ -461,7 +392,7 @@ describe("session flows", () => {
         // The costliest of the three: the confirmation would name the conversation just left, and
         // confirming it tombstones that one AND re-lands the chat — yanking the user off the session
         // they switched to, for a removal they never asked for there.
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
         let archives = 0;
         const t = makeOpts({
             getThread: () => {
@@ -487,7 +418,7 @@ describe("session flows", () => {
         // the read failure into the branch above would tell a user whose server blinked that they have
         // no saved conversation, and hand them a remedy ("send a message first") that cannot help.
         const t = makeOpts({ getThread: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openRenameSession(w.ws, t.opts);
 
@@ -500,7 +431,7 @@ describe("session flows", () => {
 
     test("rename opens the prompt on a live row, pre-filled from the thread title", async () => {
         const t = makeOpts({ getThread: () => okAsync(threadRow()) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openRenameSession(w.ws, t.opts);
 
@@ -512,7 +443,7 @@ describe("session flows", () => {
         // The concurrent-delete backstop: `PATCH {T}` finds no row (404, read as `null`), so a silent
         // success would claim a title the sidebar will never show.
         const t = makeOpts({ updateTitle: () => okAsync(null) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await commitSessionRename(w.ws, ANALYSIS.id, "thread-1", "Variant burden sweep", t.opts);
 
@@ -523,7 +454,7 @@ describe("session flows", () => {
 
     test("a committed rename pokes the open-thread snapshot, since the bound id never changed", async () => {
         const t = makeOpts({ updateTitle: (_analysisId, threadId, title) => okAsync(threadRow({ id: threadId, title })) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await commitSessionRename(w.ws, ANALYSIS.id, "thread-1", "  Variant burden sweep  ", t.opts);
 
@@ -537,7 +468,7 @@ describe("session flows", () => {
         // Poking the snapshot for the renamed thread would then load it over the conversation the user
         // actually has open — the exact cross-thread repaint the snapshot's id check exists to stop.
         const t = makeOpts({ updateTitle: (_analysisId, threadId, title) => okAsync(threadRow({ id: threadId, title })) });
-        const w = sessionScope(ANALYSIS, "thread-moved-on");
+        const w = sessionScopeDouble(ANALYSIS, "thread-moved-on");
 
         await commitSessionRename(w.ws, ANALYSIS.id, "thread-1", "Variant burden sweep", t.opts);
 
@@ -549,7 +480,7 @@ describe("session flows", () => {
 
     test("a rename write failure surfaces the error and leaves the rail alone", async () => {
         const t = makeOpts({ updateTitle: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await commitSessionRename(w.ws, ANALYSIS.id, "thread-1", "Variant burden sweep", t.opts);
 
@@ -560,7 +491,7 @@ describe("session flows", () => {
     test("delete says there is nothing to remove when the conversation has no saved row", async () => {
         // Confirming against a name we do not have would ask the user to type a fiction.
         const t = makeOpts({ getThread: () => okAsync(null) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await deleteSessionFlow(w.ws, t.opts);
 
@@ -572,7 +503,7 @@ describe("session flows", () => {
 
     test("delete distinguishes a FAILED read from an absent row, and says nothing was removed", async () => {
         const t = makeOpts({ getThread: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await deleteSessionFlow(w.ws, t.opts);
 
@@ -585,7 +516,7 @@ describe("session flows", () => {
 
     test("a confirmed delete re-lands the chat on the analysis's surviving thread", async () => {
         const t = makeOpts({ resolveThreadId: () => Promise.resolve("thread-survivor") });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionDelete(w.ws, ANALYSIS, "thread-1", t.opts);
 
@@ -612,7 +543,7 @@ describe("session flows", () => {
             release = r;
         });
         const t = makeOpts({ resolveThreadId: async () => (await gate, "thread-survivor") });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         const flow = confirmSessionDelete(w.ws, ANALYSIS, "thread-1", t.opts);
         await Promise.resolve(); // let the delete settle and the unbind land
@@ -626,7 +557,7 @@ describe("session flows", () => {
 
     test("a failed delete surfaces the error and leaves the user where they were", async () => {
         const t = makeOpts({ archiveThread: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionDelete(w.ws, ANALYSIS, "thread-1", t.opts);
 
@@ -652,7 +583,7 @@ describe("session flows", () => {
                 return okAsync(undefined);
             },
         });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "keep", t.opts);
 
@@ -672,7 +603,7 @@ describe("session flows", () => {
     test("delete refuses to confirm against the session the user has since left", async () => {
         // The costliest window in the app: the confirmation would name the conversation just left, and
         // typing that name would erase it — with no restore to undo it.
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
         let purges = 0;
         const t = makeOpts({
             getThread: () => {
@@ -697,7 +628,7 @@ describe("session flows", () => {
         // Confirming against a name we do not have would ask the user to type a fiction — and for the
         // one action where a mistyped confirmation is unrecoverable.
         const t = makeOpts({ getThread: () => okAsync(null) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await purgeSessionFlow(w.ws, t.opts);
 
@@ -709,7 +640,7 @@ describe("session flows", () => {
 
     test("delete distinguishes a FAILED read from an absent row, and says nothing was deleted", async () => {
         const t = makeOpts({ getThread: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await purgeSessionFlow(w.ws, t.opts);
 
@@ -739,7 +670,7 @@ describe("session flows", () => {
                 return okAsync({ purged: [], pages: { kind: "kept" } });
             },
         });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await purgeSessionFlow(w.ws, t.opts);
 
@@ -756,7 +687,7 @@ describe("session flows", () => {
         // tombstoned row, and Restore brings the thread back with them intact — so blocking the action
         // would cost the user a working command to protect against nothing.
         const t = makeOpts({ chatBusy: () => true, getThread: () => okAsync(threadRow()) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await deleteSessionFlow(w.ws, t.opts);
 
@@ -770,7 +701,7 @@ describe("session flows", () => {
         // there reads to the user as a dead key on a command the palette lists.
         for (const flow of [deleteSessionFlow, purgeSessionFlow]) {
             const t = makeOpts({ ready: () => false, getThread: () => okAsync(threadRow()) });
-            const w = sessionScope(ANALYSIS, "thread-1");
+            const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
             await flow(w.ws, t.opts);
 
@@ -783,7 +714,7 @@ describe("session flows", () => {
 
     test("delete opens the confirmation on a live row, naming the conversation to type back", async () => {
         const t = makeOpts({ getThread: () => okAsync(threadRow()) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await purgeSessionFlow(w.ws, t.opts);
 
@@ -793,7 +724,7 @@ describe("session flows", () => {
 
     test("a failed delete surfaces the error and leaves the user on the conversation", async () => {
         const t = makeOpts({ purgeThread: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "keep", t.opts);
 
@@ -818,7 +749,7 @@ describe("session flows", () => {
                 return okAsync({ purged: [], pages: { kind: "kept" } });
             },
         });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await purgeSessionFlow(w.ws, t.opts);
 
@@ -835,7 +766,7 @@ describe("session flows", () => {
                 return okAsync({ purged: [threadId], pages: files === "keep" ? { kind: "kept" } : { kind: "removed" } });
             },
         });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "remove", t.opts);
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "keep", t.opts);
@@ -850,7 +781,7 @@ describe("session flows", () => {
         // The common delete is a conversation that owns no page, and a forced removal cannot report
         // whether a folder was there. Thus the notice must claim no work that never ran.
         const t = makeOpts({ purgeThread: () => okAsync({ purged: ["thread-1"], pages: { kind: "removed" } }) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "remove", t.opts);
 
@@ -864,7 +795,7 @@ describe("session flows", () => {
 
     test("the decline says no report page was removed", async () => {
         const t = makeOpts({ purgeThread: () => okAsync({ purged: ["thread-1", "report-a"], pages: { kind: "kept" } }) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "keep", t.opts);
 
@@ -876,7 +807,7 @@ describe("session flows", () => {
         // A tree can be there, and the server never named it. The user has no folder to act on, thus the
         // cause is the whole of what the notice can give them.
         const t = makeOpts({ purgeThread: () => okAsync({ purged: ["thread-1", "report-a"], pages: { kind: "unlocatable" } }) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "remove", t.opts);
 
@@ -889,7 +820,7 @@ describe("session flows", () => {
     test("a failed erase leaves the user on the conversation, even where they asked to remove the files", async () => {
         // The rows survive a failed erase, thus each page is still reachable from them.
         const t = makeOpts({ purgeThread: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "remove", t.opts);
 
@@ -904,7 +835,7 @@ describe("session flows", () => {
         // name it for them.
         const stubborn = "/root/report-sessions/report-b";
         const t = makeOpts({ purgeThread: () => okAsync({ purged: ["thread-1", "report-b"], pages: { kind: "stayed", dirs: [stubborn] } }) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "remove", t.opts);
 
@@ -921,7 +852,7 @@ describe("session flows", () => {
 
     test("a page that stayed with no name says that nothing can name it, and does not blame the workspace", async () => {
         const t = makeOpts({ purgeThread: () => okAsync({ purged: ["thread-1"], pages: { kind: "stayed", dirs: [] } }) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await confirmSessionPurge(w.ws, ANALYSIS, "thread-1", "remove", t.opts);
 
@@ -945,7 +876,7 @@ describe("session flows", () => {
                 return okAsync(threadListOf([]));
             },
         });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openRestoreSession(w.ws, t.opts);
 
@@ -959,7 +890,7 @@ describe("session flows", () => {
     test("restore on a FAILED boot says the harness did not start, not that it is still booting", async () => {
         __setBootStateForTest({ phase: "failed", message: "postgres unreachable" });
         const t = makeOpts();
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openRestoreSession(w.ws, t.opts);
 
@@ -977,7 +908,7 @@ describe("session flows", () => {
         // analysis the user is no longer looking at.
         __setBootStateForTest(READY);
         const OTHER = buildAnalysis({ id: "a2", name: asStr256("Beta") });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
         const t = makeOpts({
             listThreadsWithArchived: () => {
                 w.swapTo({ analysis: OTHER });
@@ -995,7 +926,7 @@ describe("session flows", () => {
     test("a failed archived listing warns and opens NO picker, so no empty state claims nothing was archived", async () => {
         __setBootStateForTest(READY);
         const t = makeOpts({ listThreadsWithArchived: () => errAsync(serverErr) });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openRestoreSession(w.ws, t.opts);
 
@@ -1022,7 +953,7 @@ describe("session flows", () => {
                 return okAsync(present(pages[page]));
             },
         });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openRestoreSession(w.ws, t.opts);
 
@@ -1042,7 +973,7 @@ describe("session flows", () => {
                 return okAsync({ threads: [threadRow({ archivedAt: ARCHIVED_AT })], total: 9999, page: 0, perPage: 1, hasMore: true });
             },
         });
-        const w = sessionScope(ANALYSIS, "thread-1");
+        const w = sessionScopeDouble(ANALYSIS, "thread-1");
 
         await openRestoreSession(w.ws, t.opts);
 
@@ -1091,7 +1022,7 @@ describe("session flows", () => {
         });
         const slow = makeOpts({ resolveThreadId: async () => gate.then(() => "thread-alpha") });
         const fast = makeOpts({ resolveThreadId: () => Promise.resolve("thread-bravo") });
-        const w = sessionScope(ANALYSIS, null);
+        const w = sessionScopeDouble(ANALYSIS, null);
 
         const stale = openAnalysis(w.ws, ANALYSIS, slow.opts); // parks on its gate
         await openAnalysis(w.ws, OTHER, fast.opts); // starts later, settles first

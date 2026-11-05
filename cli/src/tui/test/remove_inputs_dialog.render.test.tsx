@@ -3,16 +3,17 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { testRender } from "@opentui/solid";
-import type { JSX } from "solid-js";
 import { z } from "zod";
 
 import type { InputList, InputsChange, InputView } from "../../api/analyses.ts";
 import type { ClientOpts } from "../../client/api.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { fakeClient, type FakeRequest } from "../../test_support/fake_client.ts";
-import { useKeymapRoot } from "../keymap.ts";
-import { DialogOverlay, dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
-import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
+import { buildWorkspace } from "../../test_support/builders.ts";
+import { dialogHostNode } from "../../test_support/dialog_harness.tsx";
+import { settleFrame } from "../../test_support/tui.ts";
+import { dialogClear, dialogPush } from "../components/dialog/dialog_host.tsx";
+import type { Workspace } from "../contexts/workspace.ts";
 import { openRemoveInputs } from "../commands.tsx";
 import type { Analysis } from "../../types/analysis.ts";
 import { isWhitespace } from "../../lib/text.ts";
@@ -75,41 +76,13 @@ function server(): { opts: ClientOpts; removals: () => FakeRequest[] } {
 }
 
 function ws(): Workspace {
-    return {
-        analysis,
-        sessionId: null,
-        workingDir: anchorDir,
-        project: null,
-        anchor: null,
-        inputCount: null,
-        openDialog: () => {},
-        closeDialog: () => {},
-        openSession: () => {},
-        refreshScope: () => {},
-        quit: async () => {},
-    };
-}
-
-function harnessNode(workspace: Workspace): () => JSX.Element {
-    return () => {
-        useKeymapRoot();
-        return (
-            <WorkspaceContext.Provider value={workspace}>
-                <box width="100%" height="100%">
-                    <DialogOverlay />
-                </box>
-            </WorkspaceContext.Provider>
-        );
-    };
+    return buildWorkspace({ analysis, workingDir: anchorDir });
 }
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
 async function settle(setup: Setup): Promise<string> {
-    await Promise.sleep(20);
-    await setup.renderOnce();
-    await setup.renderOnce();
-    return setup.captureCharFrame();
+    return settleFrame(setup, 20);
 }
 
 /**
@@ -131,7 +104,7 @@ async function openList(workspace: Workspace, opts: ClientOpts): Promise<void> {
 describe("the flat inputs list", () => {
     test("names each input by its absolute path, marking a directory", async () => {
         const s = server();
-        const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
+        const setup = await testRender(dialogHostNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
             await openList(ws(), s.opts);
@@ -152,7 +125,7 @@ describe("the flat inputs list", () => {
         // The reason this surface exists at all: the picker seeds a far input into its selection but
         // renders no row for it until the user browses to that folder.
         const s = server();
-        const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
+        const setup = await testRender(dialogHostNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
             await openList(ws(), s.opts);
@@ -167,7 +140,7 @@ describe("the flat inputs list", () => {
         // The state a user actually meets. Mounting focused made space type a character into the
         // filter with nothing on screen explaining why the row would not select.
         const s = server();
-        const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
+        const setup = await testRender(dialogHostNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
             await openList(ws(), s.opts);
@@ -192,7 +165,7 @@ describe("the flat inputs list", () => {
 
     test("two inputs leave in one request", async () => {
         const s = server();
-        const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
+        const setup = await testRender(dialogHostNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
             await openList(ws(), s.opts);
@@ -215,7 +188,7 @@ describe("the flat inputs list", () => {
     test("an input whose file is gone still lists and still removes", async () => {
         rmSync(join(outsideDir, "matrix.mtx"));
         const s = server();
-        const setup = await testRender(harnessNode(ws()), { width: 120, height: 26 });
+        const setup = await testRender(dialogHostNode(ws()), { width: 120, height: 26 });
         try {
             await settle(setup);
             await openList(ws(), s.opts);

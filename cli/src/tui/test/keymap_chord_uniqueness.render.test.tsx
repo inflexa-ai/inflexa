@@ -1,23 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
 import { okAsync } from "neverthrow";
 import { testRender } from "@opentui/solid";
 
 import type { RunDetail, RunSummary } from "../../api/runs.ts";
 import { asStr256 } from "../../lib/types.ts";
 import { App } from "../app.tsx";
-import { dialogClear } from "../components/dialog/dialog_host.tsx";
-import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
-import { __resetNoticesForTest } from "../hooks/notice.ts";
-import { __resetActivityPanelForTest } from "../hooks/activity_panel.ts";
-import { __resetRunCompletionsForTest } from "../hooks/run_completion.ts";
-import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshOpts } from "../hooks/sidebar_live.ts";
-import { resetHotState } from "../hooks/conversation.ts";
+import { refreshSidebarData, type RefreshOpts } from "../hooks/sidebar_live.ts";
 import { dispatchKey, leaderKeybind, reachableKeys, resolveKeybind, type KeyLike } from "../keymap.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { present } from "../../lib/present.ts";
+import { appRenderLifecycle } from "../../test_support/app_render.ts";
 
 // The keymap dispatches the FIRST full match of a chord, and `reachableKeys`
 // dedupes on stroke plus desc. Thus two bindings on one chord ship silently:
@@ -28,7 +20,9 @@ import { present } from "../../lib/present.ts";
 // from the sweep, thus the test seeds an active run, which enables the abort
 // layer of the activity panel.
 
-let dir = "";
+// `ready` opens every gated layer, thus the sweep sees the full table; the lifecycle's cleanup stops
+// any of the stores or singletons from leaking into a sibling file.
+const { dir } = appRenderLifecycle("inflexa-chords-");
 
 /** The open analysis: a plain row, because `App` reads its fields and the server keeps the rest. */
 const analysis: Analysis = {
@@ -67,27 +61,9 @@ const seedOpts: RefreshOpts = {
     loadRun: () => okAsync<RunDetail>({ ...activeRun, steps: [], plan: null, unattributedUsage: null }),
 };
 
-beforeEach(() => {
-    dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-chords-")));
-    // `ready` opens every gated layer, thus the sweep sees the full table.
-    __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
-    __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m", utility: "m" }, efforts: null, pending: new Map() });
-});
-
-afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-    dialogClear();
-    resetHotState();
-    __resetSidebarLiveForTest();
-    __resetActivityPanelForTest();
-    __resetRunCompletionsForTest();
-    __resetNoticesForTest();
-    __setBootStateForTest({ phase: "idle" });
-});
-
 describe("the chord table of App", () => {
     test("each stroke reachable from the leader is unique", async () => {
-        const setup = await testRender(() => <App workingDir={dir} analysis={analysis} />, { width: 100, height: 26 });
+        const setup = await testRender(() => <App workingDir={dir()} analysis={analysis} />, { width: 100, height: 26 });
         try {
             // After the mount: the first refresh of `App` uses the production reads, and it would wipe an earlier seed.
             await refreshSidebarData(analysis.id, seedOpts);

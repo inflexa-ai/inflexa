@@ -2,26 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 
 import { MAX_NESTED_ROWS, ToolBlock } from "../tool_block.tsx";
+import { frameWhenPainted } from "../../../test_support/tui.ts";
 import { isWhitespace } from "../../../lib/text.ts";
 
 // Frame coverage for the inline-vs-completion-line status placement. captureCharFrame gives characters
 // only, which is all these assertions need: the invariant is WHICH ROW the status sits on, and (for the
 // narrow case) that a soft-wrap keeps it on screen rather than dropping it.
 
-/** Render `node` at `{width,height}`, driving frames until `needle` appears (the <code> panel parses async). */
-async function frameWith(node: Parameters<typeof testRender>[0], width: number, height: number, needle: string, timeoutMs = 2500): Promise<string> {
-    const setup = await testRender(node, { width, height });
-    try {
-        const start = Date.now();
-        for (;;) {
-            await setup.renderOnce();
-            const f = setup.captureCharFrame();
-            if (f.includes(needle) || Date.now() - start > timeoutMs) return f;
-            await Promise.sleep(10);
-        }
-    } finally {
-        setup.renderer.destroy();
-    }
+/** Render `node` at `{width,height}` and poll frames until `needle` paints (the <code> panel parses async). */
+async function frameWith(node: Parameters<typeof testRender>[0], width: number, height: number, needle: string): Promise<string> {
+    return frameWhenPainted(node, { width, height }, needle, 2500);
 }
 
 /** Index of the first frame row containing `needle`, or -1. */

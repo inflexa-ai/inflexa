@@ -97,7 +97,7 @@ afterEach(() => {
 
 // A minimal static Workspace: the test never swaps sessions, so a plain object (not the reactive
 // store) is sufficient — the sidebar reads it like any props object.
-function wsFor(analysis: Analysis, workingDir: string, scope: { anchor?: AnchorView; inputCount?: number; refreshScope?: () => void } = {}): Workspace {
+function wsFor(analysis: Analysis | null, workingDir: string, scope: { anchor?: AnchorView; inputCount?: number; refreshScope?: () => void } = {}): Workspace {
     return {
         analysis,
         sessionId: "no-such-session", // no thread snapshot is seeded, so the SESSION detail row stays a placeholder
@@ -114,11 +114,11 @@ function wsFor(analysis: Analysis, workingDir: string, scope: { anchor?: AnchorV
 }
 
 // A full-height sidebar mounted under a given workspace — the shared shape the responsive cases render.
-function sidebarNode(ws: Workspace) {
+function sidebarNode(ws: Workspace, props: { onOpenRuns?: () => void } = {}) {
     return () => (
         <WorkspaceContext.Provider value={ws}>
             <box width="100%" height="100%">
-                <Sidebar messageCount={() => 0} />
+                <Sidebar messageCount={() => 0} onOpenRuns={props.onOpenRuns} />
             </box>
         </WorkspaceContext.Provider>
     );
@@ -234,26 +234,7 @@ function runRow(over: Partial<RunSummary>): RunSummary {
 }
 
 function liveNode() {
-    const ws: Workspace = {
-        analysis: null,
-        sessionId: "no-such-session",
-        workingDir: "/x",
-        project: null,
-        anchor: null,
-        inputCount: null,
-        openDialog: () => {},
-        closeDialog: () => {},
-        openSession: () => {},
-        refreshScope: () => {},
-        quit: async () => {},
-    };
-    return () => (
-        <WorkspaceContext.Provider value={ws}>
-            <box width="100%" height="100%">
-                <Sidebar messageCount={() => 0} />
-            </box>
-        </WorkspaceContext.Provider>
-    );
+    return sidebarNode(wsFor(null, "/x"));
 }
 
 describe("Sidebar DATA PROFILE / RUNS live sections", () => {
@@ -921,26 +902,7 @@ describe("Sidebar RUNS progress embed — window scroll containment", () => {
     }
 
     function runsNode(onOpenRuns: () => void) {
-        const ws: Workspace = {
-            analysis: null,
-            sessionId: "no-such-session",
-            workingDir: "/x",
-            project: null,
-            anchor: null,
-            inputCount: null,
-            openDialog: () => {},
-            closeDialog: () => {},
-            openSession: () => {},
-            refreshScope: () => {},
-            quit: async () => {},
-        };
-        return () => (
-            <WorkspaceContext.Provider value={ws}>
-                <box width="100%" height="100%">
-                    <Sidebar messageCount={() => 0} onOpenRuns={onOpenRuns} />
-                </box>
-            </WorkspaceContext.Provider>
-        );
+        return sidebarNode(wsFor(null, "/x"), { onOpenRuns });
     }
 
     test("clicking an elision marker scrolls the window and does NOT open the runs picker", async () => {
