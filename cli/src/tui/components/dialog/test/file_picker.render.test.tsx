@@ -65,7 +65,8 @@ async function openPicker(
             onCancel={opts.onCancel ?? (() => {})}
         />
     ));
-    return settle(setup);
+    // Each test root holds `beta/`, thus the frame with it is the first one with the rows of the listing.
+    return settleUntil(setup, "beta/");
 }
 
 /**
@@ -152,12 +153,12 @@ describe("FilePicker", () => {
             await openPicker(setup);
             setup.mockInput.pressArrow("down"); // .. → beta/
             setup.mockInput.pressEnter();
-            let frame = await settle(setup);
+            let frame = await settleUntil(setup, "inner.txt");
             expect(frame).toContain("inner.txt");
             expect(frame).not.toContain("alpha.txt");
 
             setup.mockInput.pressArrow("left");
-            frame = await settle(setup);
+            frame = await settleUntil(setup, "alpha.txt");
             expect(frame).toContain("alpha.txt");
         } finally {
             setup.renderer.destroy();
@@ -183,12 +184,12 @@ describe("FilePicker", () => {
             // Walk into beta and back: the toggle must survive both listings.
             setup.mockInput.pressArrow("up");
             setup.mockInput.pressEnter();
-            frame = await settle(setup);
+            frame = await settleUntil(setup, "inner.txt");
             expect(frame).toContain("inner.txt");
             expect(frame).toContain("1 selected");
 
             setup.mockInput.pressArrow("left");
-            frame = await settle(setup);
+            frame = await settleUntil(setup, "alpha.txt");
             expect(gutterOf(frame, "alpha.txt")).toBe(GLYPHS.circle);
             expect(frame).toContain("1 selected");
         } finally {
@@ -336,7 +337,8 @@ describe("FilePicker", () => {
         try {
             await settle(setup);
             // The seed is what classifyInputPath records: the symlink's canonical TARGET.
-            const frame = await openPicker(setup, { seed: [outside] });
+            await openPicker(setup, { seed: [outside] });
+            const frame = await settleUntil(setup, "ext/");
             expect(gutterOf(frame, "ext/")).toBe(GLYPHS.circle);
             expect(frame).toContain("1 selected");
         } finally {
@@ -367,14 +369,15 @@ describe("FilePicker", () => {
         const setup = await testRender(dialogHostNode(), { width: 90, height: 26 });
         try {
             await settle(setup);
-            let frame = await openPicker(setup);
+            await openPicker(setup);
+            let frame = await settleUntil(setup, "ext/");
             const order = ["beta/", "alpha.txt", "ext/", "zeta.txt"].map((name) => frame.indexOf(name));
             expect(order.every((index) => index >= 0)).toBe(true);
             expect(order).toEqual([...order].sort((a, b) => a - b));
 
             for (let i = 0; i < 3; i += 1) setup.mockInput.pressArrow("down"); // .. → beta/ → alpha.txt → ext/
             setup.mockInput.pressEnter();
-            frame = await settle(setup);
+            frame = await settleUntil(setup, "payload.txt");
             expect(frame).toContain("payload.txt");
             expect(frame).not.toContain("alpha.txt");
         } finally {
@@ -392,7 +395,7 @@ describe("FilePicker", () => {
             setup.mockInput.pressArrow("down"); // beta/
             setup.mockInput.pressKey(" "); // select beta
             setup.mockInput.pressEnter(); // descend into beta
-            let frame = await settle(setup);
+            let frame = await settleUntil(setup, "ml/");
             expect(frame).toContain("1 selected");
 
             setup.mockInput.pressArrow("down"); // .. → ml/
@@ -420,11 +423,11 @@ describe("FilePicker", () => {
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressEnter();
-            let frame = await settle(setup);
+            let frame = await settleUntil(setup, "permission denied");
             expect(frame.toLowerCase()).toContain("permission denied");
 
             setup.mockInput.pressArrow("left");
-            frame = await settle(setup);
+            frame = await settleUntil(setup, "alpha.txt");
             expect(frame).toContain("alpha.txt");
         } finally {
             chmodSync(locked, 0o755);
@@ -583,7 +586,7 @@ describe("FilePicker entry metadata", () => {
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressArrow("down");
             setup.mockInput.pressEnter();
-            const frame = await settle(setup);
+            const frame = await settleUntil(setup, "dangling.txt");
             expect(frame).toContain("dangling.txt");
             expect(frame).not.toContain("details off (large folder)");
         } finally {
