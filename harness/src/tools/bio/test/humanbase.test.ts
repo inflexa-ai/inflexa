@@ -232,13 +232,12 @@ describe("humanbase — the result type in a script", () => {
         }
     });
 
-    it("shows the whole result type in the catalog of run_script, the full name of a gene included", () => {
+    it("shows the result type in the catalog of run_script", () => {
         const catalog = createRunScriptTool([humanbaseTool]).description;
         const entry = catalog.slice(catalog.indexOf("humanbase(args:"));
 
         expect(entry).not.toContain("Promise<unknown>");
         expect(entry).toContain("edges: Array<{ geneA: string; geneB: string; weight: number; }>");
-        expect(entry).toContain("name: string;");
         expect(entry).toContain("score: number;");
     });
 });

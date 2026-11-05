@@ -56,7 +56,7 @@ runFixtureSuite("humanbase golden fixtures", [
             expect(network.genes.find((gene) => gene.entrez === 672)).toEqual({
                 entrez: 672,
                 symbol: "BRCA1",
-                name: "BRCA1 DNA repair associated",
+                description: "BRCA1 DNA repair associated",
                 ensembl: "ENSG00000012048",
                 hgnc: "HGNC:1100",
                 query: true,

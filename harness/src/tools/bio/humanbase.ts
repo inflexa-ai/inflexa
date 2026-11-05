@@ -57,7 +57,7 @@ const outputSchema = z.union([
                 z.object({
                     entrez: z.number(),
                     symbol: z.string(),
-                    name: z.string(),
+                    description: z.string(),
                     ensembl: z.string().nullable(),
                     hgnc: z.string().nullable(),
                     query: z.boolean(),
