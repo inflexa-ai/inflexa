@@ -100,7 +100,7 @@ export type GnomadCallset = {
     ac: number | null;
     /** The allele number: the count of called alleles at the site. */
     an: number | null;
-    /** The allele frequency. */
+    /** The allele frequency, or null when `an` is 0: no called allele gives no frequency, not a frequency of 0. */
     af: number | null;
     populations: GnomadPopulation[];
 };
@@ -171,7 +171,8 @@ function toCallset(callset: z.infer<typeof CallsetSchema> | null): GnomadCallset
     const populations = (callset.populations ?? []).flatMap((group) =>
         group !== null && isAncestryGroup(group.id) ? [{ ...group, af: group.an > 0 ? group.ac / group.an : null }] : [],
     );
-    return { ac: callset.ac, an: callset.an, af: callset.af, populations };
+    // gnomAD answers `af: 0` for a callset with no called allele, and that reads as a measured frequency of 0.
+    return { ac: callset.ac, an: callset.an, af: callset.an === 0 ? null : callset.af, populations };
 }
 
 /**
@@ -189,7 +190,9 @@ export function mapGnomadAnswer(answer: z.infer<typeof GnomadAnswerSchema>, quer
     const notFound: string[] = [];
     for (const [i, query] of queries.entries()) {
         const variant = data[`v${i}`];
-        if (variant === null || variant === undefined) {
+        // GraphQL gives an explicit null for a miss, thus an alias that is absent is an invalid answer.
+        if (variant === undefined) throw new Error(`gnomAD gave no answer for ${query}`);
+        if (variant === null) {
             notFound.push(query);
             continue;
         }

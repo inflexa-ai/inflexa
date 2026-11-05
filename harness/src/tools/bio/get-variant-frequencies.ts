@@ -51,7 +51,7 @@ export const getVariantFrequenciesTool = defineTool({
         "The coordinates must be on the reference genome of the dataset: the gnomad_r4 and gnomad_r3 datasets are GRCh38, the gnomad_r2_1 datasets " +
         "and exac are GRCh37. An ID on the other genome comes back in notFound, not as an error — lift it over first.\n" +
         "Each found variant carries the `query` that it answers, the normalized `variantId`, the `rsids`, and two callsets, `genome` and `exome`, each " +
-        "{ ac (allele count), an (allele number), af (allele frequency), populations } or null when the dataset has no such callset or no call there " +
+        "{ ac (allele count), an (allele number), af (allele frequency, null when an is 0), populations } or null when the dataset has no such callset or no call there " +
         "(gnomad_r3 holds genomes only, exac exomes only). The two callsets are different samples: report each one, and do not add them. " +
         "`populations` gives the genetic ancestry groups (afr, nfe, eas, …), each with af = ac / an (null when an is 0). " +
         "`notFound` lists each ID that the dataset does not hold: gnomAD saw no such allele, or the site has no coverage. It is not proof that " +
