@@ -209,7 +209,17 @@ describe("createConversationAgent", () => {
     test("the lookups are script tools, and the agent declares none of them directly", () => {
         const agent = buildAgent();
         const scriptIds = (agent.scriptTools ?? []).map((tool) => tool.id);
-        for (const id of ["search_gene", "pubmed", "resolve_citation", "chembl", "humanbase", "resolve_gene_ids", "get_variant_frequencies", "web_fetch"])
+        for (const id of [
+            "search_gene",
+            "pubmed",
+            "resolve_citation",
+            "chembl",
+            "humanbase",
+            "resolve_gene_ids",
+            "get_variant_frequencies",
+            "get_protein_domains",
+            "web_fetch",
+        ])
             expect(scriptIds).toContain(id);
         expect(agent.tools.map((tool) => tool.id).filter((id) => scriptIds.includes(id))).toEqual([]);
         for (const tool of agent.scriptTools ?? []) {

@@ -54,6 +54,7 @@ import {
     humanbaseTool,
     getVariantFrequenciesTool,
     alphafoldPredictionTool,
+    getProteinDomainsTool,
     chemblTool,
     pubchemTool,
     openTargetsTool,
@@ -304,6 +305,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // Structural biology — the whole-chain confidence of a predicted 3-D
         // model, and the URLs of its coordinate and per-residue files.
         alphafoldPredictionTool,
+        // InterPro — the families, domains, repeats, and sites of a protein, with their residue ranges.
+        getProteinDomainsTool,
         // Literature (search / details / fulltext behind one action).
         ncbi.pubmed,
         // Verification of one caller-supplied citation (distinct from discovery).
