@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
-import { readToolCallRecord } from "../../define-tool.js";
+import { readToolCallRecord, withToolCallRecord } from "../../define-tool.js";
 import { runLoop } from "../../../loop/run-loop.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../../testing.js";
@@ -431,7 +431,7 @@ describe("the release pin of one plan", () => {
         const { ctx } = makeToolContext();
         const out = (await check.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx))._unsafeUnwrap();
         expect(fake.calls.check[0]?.expected_snapshot).toBeUndefined();
-        expect(out).toEqual(mismatch);
+        expect(out).toEqual(withToolCallRecord(mismatch, { checked: true }));
         expect(check.describeResult?.({ ...SITUATION, steps: [] }, out)).toBe("snapshot_mismatch");
     });
 
@@ -545,11 +545,17 @@ describe("knowledge_check", () => {
         expect("not_assessed" in out && out.not_assessed).toEqual(notAssessedCheckAnswer().not_assessed);
         expect(tool.describeResult?.(input, out)).toBe("ok, 1 not assessed");
         expect(
-            tool.describeResult?.(input, {
-                ...notAssessedCheckAnswer(),
-                ok: false,
-                violations: [{ step_type: "differential_expression", severity: "violation", rule: "R-0004@aaaa", message: "forbidden" }],
-            }),
+            tool.describeResult?.(
+                input,
+                withToolCallRecord(
+                    {
+                        ...notAssessedCheckAnswer(),
+                        ok: false,
+                        violations: [{ step_type: "differential_expression", severity: "violation", rule: "R-0004@aaaa", message: "forbidden" }],
+                    },
+                    { checked: true } as const,
+                ),
+            ),
         ).toBe("1 violation(s), 0 warning(s), 1 not assessed");
     });
 

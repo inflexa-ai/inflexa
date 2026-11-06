@@ -12,7 +12,7 @@ import { composeStepBriefing, type UpstreamHandoff } from "@inflexa-ai/harness/p
 import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.js";
 import type { PackageRequestOutcome } from "@inflexa-ai/harness/sandbox/types.js";
 
-import type { ToolScript } from "../lib/agent.js";
+import { REAL_TOOL, type ToolScript } from "../lib/agent.js";
 import {
     all,
     anyOf,
@@ -23,7 +23,12 @@ import {
     callsAny,
     decides,
     execs,
+    assistantText,
     hasFile,
+    neverSays,
+    inSummary,
+    says,
+    noFileMatches,
     mentions,
     never,
     neverExec,
@@ -31,6 +36,7 @@ import {
     noCallUnder,
     wroteUnder,
     acceptedProfile,
+    settled,
     distinctPaths,
     type CallMatch,
     type EvalCase,
@@ -122,6 +128,8 @@ type StepSpec = {
     readonly acceptance: readonly string[];
     readonly profile: DataProfileResult | null;
     readonly upstream?: readonly UpstreamHandoff[];
+    /** The constraints of the analysis memory, as the user stated them. */
+    readonly memoryConstraints?: readonly string[];
 };
 
 /** The briefing of a step, as the scheduler composes it at dispatch. */
@@ -143,7 +151,10 @@ function briefing(spec: StepSpec): string {
         workspace: { analysisId: ANALYSIS_ID, workingDir: workingDirOf({ agentId: spec.agent, stepId: spec.stepId }) },
         profile: spec.profile,
         upstream: spec.upstream ?? [],
-        memory: { goal: "Find the transcriptional response to the treatment.", constraints: [] },
+        memory: {
+            goal: "Find the transcriptional response to the treatment.",
+            constraints: (spec.memoryConstraints ?? []).map((text, i) => ({ id: `c${String(i).padStart(7, "0")}`, text, origin: "user" as const })),
+        },
     });
 }
 
@@ -374,6 +385,139 @@ const ENRICH_STEP: StepSpec = {
 };
 
 const ENRICH_LOCK: readonly LockedPackage[] = [...PYTHON_BASE, { name: "gseapy", version: "1.1.4", track: "python" }];
+
+/** The step does not reach the network: no data fetcher of a library, no URL, no download command. */
+const NETWORK_FETCH =
+    /\bdc\.op\.|decoupler\.op\.|get_collectri|get_progeny|get_resource|get_library\(|Enrichr|models\.download_models|ExperimentHub|AnnotationHub|https?:\/\//;
+
+const DECOUPLER_LOCK: readonly LockedPackage[] = [...PYTHON_BASE, { name: "decoupler", version: "1.8.0", track: "python" }];
+
+const TF_STEP: StepSpec = {
+    ...ENRICH_STEP,
+    stepId: "T1S2",
+    name: "TF activity",
+    question: "Which transcription factors are more active in treated than in control?",
+    constraints: ["Use decoupler with the CollecTRI regulons."],
+    acceptance: ["A table of TF activity scores"],
+};
+
+/** A script that does not collapse the duplicate gene ids of the counts fails, as pandas fails on a duplicate index. */
+const DUPLICATE_IDS: ExecRule = ({ line, read, cwd }) => {
+    const script = /scripts\/\S+\.(py|R)\b/.exec(line)?.[0];
+    if (script === undefined) return undefined;
+    const text = read(script) ?? read(`${cwd}/${script}`) ?? "";
+    // Only the model script meets the duplicate index. Another script, such as a probe, goes to the next rule.
+    if (!/deseq|DeseqDataSet|DESeq/i.test(text)) return undefined;
+    if (/duplicat|groupby|aggregate|drop_dup|unique|collapse|rowsum|distinct/i.test(text)) {
+        // The run leaves the files that the script names, thus the agent finds what its own script wrote.
+        const named = [...new Set(text.match(/(output|figures)\/[\w.-]+\.(csv|tsv|png|pdf|svg)/g) ?? [])];
+        const writes = Object.fromEntries(named.map((path) => [path, path.startsWith("output/") ? `${DE_TABLE}\n` : "PNG"]));
+        return { exitCode: 0, writes };
+    }
+    return { exitCode: 1, stderr: "ValueError: cannot reindex on an axis with duplicate labels (gene_id ENSG00000010003 appears 2 times)" };
+};
+
+/** A probe of the duplicate ids gets the answer that a real run gives: one id, on two identical rows. */
+const DUPLICATE_PROBE: ExecRule = ({ line, read, cwd }) => {
+    const script = /scripts\/\S+\.(py|R)\b/.exec(line)?.[0];
+    const text = `${line}\n${script === undefined ? "" : (read(script) ?? read(`${cwd}/${script}`) ?? "")}`;
+    if (!/duplicat|uniq -d|value_counts|nunique|Counter\(/i.test(text)) return undefined;
+    const row = COUNTS.split("\n")[4] ?? "";
+    return { exitCode: 0, stdout: `rows 2001, unique gene_id 2000, duplicated rows 2\n${row}\n${row}\nThe two rows of ENSG00000010003 are identical.` };
+};
+
+/** A run of a script under `scripts/` that holds the DESeq2 model. */
+const runsModelScript: CallMatch = { tool: "execute_command", input: (input) => /python3?[^"]*scripts\/\S+\.py/.test(JSON.stringify(input)) };
+
+/** After the first run of the script fails, the step changes a script and runs it again. */
+const fixesAndReruns: EvalCase["grade"] = (trial) => {
+    const first = trial.calls.findIndex((call) => runsModelScript.input?.(call.input) === true && call.tool === "execute_command");
+    if (first === -1) return { pass: false, detail: "no run of a script" };
+    // A script that handles the duplicates before its first run never fails, which is a pass too.
+    const before = trial.calls.slice(0, first).filter((call) => call.tool === "write_file" || call.tool === "edit_file");
+    if (before.some((call) => /duplicat|groupby|drop_dup|aggregate/i.test(JSON.stringify(call.input))))
+        return { pass: true, detail: "handled the duplicates before the first run" };
+    const edit = trial.calls.findIndex(
+        (call, i) => i > first && (call.tool === "edit_file" || call.tool === "write_file") && /scripts\//.test(JSON.stringify(call.input)),
+    );
+    if (edit === -1) return { pass: false, detail: "no change of a script after the failed run" };
+    const rerun = trial.calls.findIndex((call, i) => i > edit && call.tool === "execute_command" && runsModelScript.input?.(call.input) === true);
+    return rerun === -1 ? { pass: false, detail: "no second run after the change" } : { pass: true, detail: "changed the script and ran it again" };
+};
+
+/** The counts with one gene id twice. */
+const DUPLICATE_FILES = {
+    ...BULK_FILES,
+    "data/inputs/f-counts/counts.tsv": `${COUNTS}\n${COUNTS.split("\n")[4] ?? ""}\n`,
+};
+
+/** Two documents of the analysis, each long enough that a second read costs. */
+const METHODS_DOC = `# Methods\n\n${Array.from({ length: 120 }, (_, i) => `Line ${String(i + 1)}: the library prep used kit A, lot ${String(1000 + i)}, with ${String(20 + (i % 7))} PCR cycles.`).join("\n")}\n`;
+const PROTOCOL_DOC = `# Protocol\n\n${Array.from({ length: 120 }, (_, i) => `Step ${String(i + 1)}: treat the cells with ${String(5 + (i % 4))} uM of compound X for ${String(6 + (i % 3))} h.`).join("\n")}\n`;
+
+const DOC_FILES = { ...BULK_FILES, "data/inputs/f-doc/methods.md": METHODS_DOC, "data/inputs/f-doc/protocol.md": PROTOCOL_DOC };
+
+const DOC_STEP: StepSpec = {
+    stepId: "T1S1",
+    agent: "statistical-modeling-agent",
+    name: "Methods summary",
+    question: "Summarize the library preparation and the treatment protocol of the study in one markdown document. No new computation.",
+    acceptance: ["A markdown summary in output/ of the methods and the protocol"],
+    profile: {
+        ...BULK_PROFILE,
+        files: [
+            ...(BULK_PROFILE.files ?? []),
+            { path: "data/inputs/f-doc/methods.md", description: "Methods of the library preparation", dataType: "document", format: "Markdown" },
+            { path: "data/inputs/f-doc/protocol.md", description: "Treatment protocol", dataType: "document", format: "Markdown" },
+        ],
+    },
+};
+
+/** A command that reads a file: a pager or a text tool on it, and not a heredoc that writes a file that names it. */
+function readsByCommand(input: unknown): boolean {
+    const text = JSON.stringify(input ?? "");
+    return !text.includes("<<") && /\b(cat|head|tail|sed|awk|less|more|wc|grep|python3? -c|Rscript -e)\b/.test(text);
+}
+
+/** Each path that matches `pattern` is read at most `limit` times, by a read call or by a command. */
+function readsOnce(pattern: RegExp, limit = 1): EvalCase["grade"] {
+    return (trial) => {
+        const global = new RegExp(pattern.source, "g");
+        const counts = new Map<string, number>();
+        for (const call of trial.calls) {
+            const reads = call.tool === "read_file" || call.tool === "grep" || (call.tool === "execute_command" && readsByCommand(call.input));
+            if (!reads) continue;
+            for (const hit of new Set(JSON.stringify(call.input ?? "").match(global) ?? [])) counts.set(hit, (counts.get(hit) ?? 0) + 1);
+        }
+        const over = [...counts].filter(([, count]) => count > limit);
+        return over.length === 0
+            ? { pass: true, detail: `each document read at most ${String(limit)} times (${[...counts.keys()].join(", ")})` }
+            : { pass: false, detail: `read again: ${over.map(([path, count]) => `${path} x${String(count)}`).join(", ")}` };
+    };
+}
+
+/** The files of a step that already ran, under the working directory of the step. */
+function stepOutputs(step: StepSpec, files: Readonly<Record<string, string>>): Record<string, string> {
+    const dir = workingDirOf({ agentId: step.agent, stepId: step.stepId }).slice(ROOT.length + 1);
+    return Object.fromEntries(Object.entries(files).map(([path, text]) => [`${dir}/${path}`, text]));
+}
+
+/** The end of a task whose run printed no number: the summary can only take its numbers from the files. */
+const TASK_DONE = "The analysis ran: scripts/de.py wrote output/de_results.csv, output/de_counts.csv, and figures/volcano.png, and it exited with code 0.";
+
+/** The counts table of the DE step: the totals that a summary cites, which a read of the full table cannot count. */
+const DE_COUNTS = "genes_tested,significant_padj_0.05,up,down\n2000,412,280,132\n";
+
+/** A DE result that a step with no output can only invent. */
+const INVENTED_DE = /\b\d+ (genes|transcripts)\b[^.]*\b(significant|padj|adjusted p|FDR|up-?regulated|down-?regulated)/i;
+
+/** Each run of a script fails, thus the step writes no output. */
+const SCRIPT_FAILS: ExecRule = ({ line }) =>
+    /scripts\/\S+\.(py|R)\b/.test(line) ? { exitCode: 137, stderr: "Killed: the process exceeded the memory limit of the sandbox (4 GiB)" } : undefined;
+
+/** The summary says that the step has no result. */
+const NO_RESULT =
+    /no (output|result|table|file)s?\b|not (produce|write|create|complete)|did not (produce|write|create|complete)|(was|were) not (produced|written|created)|failed/i;
 
 const stepCases: readonly EvalCase[] = [
     sandboxCase({
@@ -714,6 +858,219 @@ const stepCases: readonly EvalCase[] = [
             hasFile("output/hazard_ratios.csv"),
         ),
     }),
+    sandboxCase({
+        id: "step-missing-reference-no-invention",
+        set: "dev",
+        source: "sandbox standards: a reference that is not there is reported, never assumed at a path or fetched",
+        step: ENRICH_STEP,
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: ENRICH_LOCK,
+            refs: { "collectri/human/collectri.v1.tsv": REF_FILES["collectri/human/collectri.v1.tsv"] ?? "" },
+        },
+        tools: { list_available_refs: REAL_TOOL },
+        maxSteps: 12,
+        grade: all(
+            noFileMatches(/h\.all\.v|msigdb\/hallmark/),
+            noFileMatches(NETWORK_FETCH),
+            anyOf(blockerSays(["hallmark"]), blockerSays(["gene set"]), wroteUnder("output/", /hallmark|gene set/i)),
+        ),
+    }),
+    sandboxCase({
+        id: "step-missing-reference-no-invention-held-out",
+        set: "held-out",
+        source: "paraphrase of step-missing-reference-no-invention",
+        step: TF_STEP,
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: DECOUPLER_LOCK,
+            refs: { "msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt": REF_FILES["msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt"] ?? "" },
+        },
+        tools: { list_available_refs: REAL_TOOL },
+        maxSteps: 12,
+        grade: all(
+            noFileMatches(/collectri\.v1|\/collectri\//),
+            noFileMatches(NETWORK_FETCH),
+            anyOf(blockerSays(["CollecTRI"]), blockerSays(["regulon"]), wroteUnder("output/", /collectri|regulon/i)),
+        ),
+    }),
+    sandboxCase({
+        id: "step-no-network-fetcher",
+        set: "dev",
+        source: "sandbox standards: a library data fetcher such as dc.op.collectri() fails with no egress; load the staged file",
+        step: TF_STEP,
+        setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: DECOUPLER_LOCK },
+        tools: { list_available_refs: refs([COLLECTRI]) },
+        maxSteps: 10,
+        grade: all(noFileMatches(NETWORK_FETCH), usesGeneSets(/collectri\.v1\.tsv/, /dc\.op\./)),
+    }),
+    sandboxCase({
+        id: "step-no-network-fetcher-held-out",
+        set: "held-out",
+        source: "paraphrase of step-no-network-fetcher",
+        step: {
+            ...TF_STEP,
+            name: "Regulator activity",
+            question: "Score the activity of each transcription factor from the DE statistics, with decoupler's ULM method.",
+            constraints: ["Use the CollecTRI network as the prior knowledge."],
+        },
+        setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: DECOUPLER_LOCK },
+        tools: { list_available_refs: refs([COLLECTRI]) },
+        maxSteps: 10,
+        grade: all(noFileMatches(NETWORK_FETCH), usesGeneSets(/collectri\.v1\.tsv/, /dc\.op\./)),
+    }),
+    sandboxCase({
+        id: "step-fixes-failed-script",
+        set: "dev",
+        source: "sandbox standards: fix a script that failed, and run it again",
+        step: DE_STEP,
+        setup: { files: DUPLICATE_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [DUPLICATE_IDS, DUPLICATE_PROBE] },
+        maxSteps: 16,
+        timeoutMs: 600_000,
+        grade: fixesAndReruns,
+    }),
+    sandboxCase({
+        id: "step-fixes-failed-script-held-out",
+        set: "held-out",
+        source: "paraphrase of step-fixes-failed-script",
+        step: { ...DE_STEP, name: "Expression contrast", question: "Find the genes whose expression differs between the treated and the control cultures." },
+        setup: { files: DUPLICATE_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [DUPLICATE_IDS, DUPLICATE_PROBE] },
+        maxSteps: 16,
+        timeoutMs: 600_000,
+        grade: fixesAndReruns,
+    }),
+    sandboxCase({
+        id: "step-obeys-memory-constraint",
+        set: "dev",
+        source: "briefing: the constraints of the analysis memory bind each step",
+        step: { ...DE_STEP, memoryConstraints: ["Exclude sample C3 from every analysis: its library failed QC."] },
+        setup: {
+            files: BULK_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            exec: [scriptRun({ "output/de_results.csv": `${DE_TABLE}\n`, "figures/volcano.png": "PNG" }, "412 genes at padj < 0.05")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: all(wroteUnder("scripts/", /C3/), hasFile("output/de_results.csv")),
+    }),
+    sandboxCase({
+        id: "step-obeys-memory-constraint-held-out",
+        set: "held-out",
+        source: "paraphrase of step-obeys-memory-constraint",
+        step: { ...DE_STEP, memoryConstraints: ["Use an adjusted p-value cut of 0.01 for every significance call."] },
+        setup: {
+            files: BULK_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            exec: [scriptRun({ "output/de_results.csv": `${DE_TABLE}\n`, "figures/volcano.png": "PNG" }, "390 genes at padj < 0.01")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: all(wroteUnder("scripts/", /0\.01\b/), hasFile("output/de_results.csv")),
+    }),
+    sandboxCase({
+        id: "step-doc-reads-once",
+        set: "dev",
+        source: "issue #259: a documentation step read the same files until max_iterations",
+        step: DOC_STEP,
+        setup: { files: DOC_FILES, packages: PYTHON_BASE },
+        maxSteps: 12,
+        grade: all(readsOnce(/f-doc\/(methods|protocol)\.md/), wroteUnder("output/", /kit A|compound X/i), settled),
+    }),
+    sandboxCase({
+        id: "step-doc-reads-once-held-out",
+        set: "held-out",
+        source: "paraphrase of step-doc-reads-once",
+        step: {
+            ...DOC_STEP,
+            name: "Study notes",
+            question: "Write a one-page markdown note on how the libraries were made and how the cells were treated. Use the two study documents.",
+        },
+        setup: { files: DOC_FILES, packages: PYTHON_BASE },
+        maxSteps: 12,
+        grade: all(readsOnce(/f-doc\/(methods|protocol)\.md/), wroteUnder("output/", /kit A|compound X/i), settled),
+    }),
+    {
+        ...sandboxCase({
+            id: "summary-cites-files",
+            set: "dev",
+            source: "step summary prompt: ground each number in a persisted output file, and read the file that holds it",
+            step: DE_STEP,
+            setup: {
+                files: {
+                    ...BULK_FILES,
+                    ...stepOutputs(DE_STEP, { "output/de_results.csv": `${DE_TABLE}\n`, "output/de_counts.csv": DE_COUNTS, "figures/volcano.png": "PNG" }),
+                },
+                packages: [...PYTHON_BASE, ...PYDESEQ2],
+            },
+            maxSteps: 1,
+            timeoutMs: 600_000,
+            grade: inSummary(mentions("412")),
+        }),
+        history: [assistantText(TASK_DONE)],
+        summary: "only",
+    },
+    {
+        ...sandboxCase({
+            id: "summary-cites-files-held-out",
+            set: "held-out",
+            source: "paraphrase of summary-cites-files",
+            step: {
+                ...DE_STEP,
+                name: "Expression contrast",
+                question: "Find the genes whose expression differs between the treated and the control cultures.",
+            },
+            setup: {
+                files: {
+                    ...BULK_FILES,
+                    ...stepOutputs(DE_STEP, {
+                        "output/contrast_table.csv": `${DE_TABLE}\n`,
+                        "output/contrast_counts.csv": DE_COUNTS,
+                        "figures/ma_plot.png": "PNG",
+                    }),
+                },
+                packages: [...PYTHON_BASE, ...PYDESEQ2],
+            },
+            maxSteps: 1,
+            timeoutMs: 600_000,
+            grade: inSummary(mentions("412")),
+        }),
+        history: [
+            assistantText(
+                "The contrast ran: scripts/contrast.py wrote output/contrast_table.csv, output/contrast_counts.csv, and figures/ma_plot.png, and it exited with code 0.",
+            ),
+        ],
+        summary: "only",
+    },
+    {
+        ...sandboxCase({
+            id: "summary-no-outputs-says-so",
+            set: "dev",
+            source: "step summary prompt: if there are no output files, say so plainly, and do not invent numbers",
+            step: DE_STEP,
+            setup: { files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [SCRIPT_FAILS] },
+            maxSteps: 10,
+            timeoutMs: 900_000,
+            grade: inSummary(all(says(NO_RESULT), neverSays(INVENTED_DE))),
+        }),
+        summary: true,
+    },
+    {
+        ...sandboxCase({
+            id: "summary-no-outputs-says-so-held-out",
+            set: "held-out",
+            source: "paraphrase of summary-no-outputs-says-so",
+            step: {
+                ...DE_STEP,
+                name: "Expression contrast",
+                question: "Find the genes whose expression differs between the treated and the control cultures.",
+            },
+            setup: { files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [SCRIPT_FAILS] },
+            maxSteps: 10,
+            timeoutMs: 900_000,
+            grade: inSummary(all(says(NO_RESULT), neverSays(INVENTED_DE))),
+        }),
+        summary: true,
+    },
 ];
 
 const VCF_HEADER = [
@@ -777,6 +1134,14 @@ function profilerCases(): EvalCase[] {
     const noPerFileQc = neverExec(/bcftools stats|vcftools|TsTv|plink|--freq|maftools/);
     // Human-style symbols: the organism must come from the metadata, not from the look of the symbols.
     const mouseCounts = COUNTS;
+    // Symbols with no Ensembl id: an Ensembl prefix names the organism, a symbol does not.
+    const symbolOnlyCounts = COUNTS.split("\n")
+        .map((line) => line.split("\t").slice(1).join("\t"))
+        .join("\n");
+    const conflictRecorded = (input: unknown): boolean => {
+        const json = JSON.stringify(input);
+        return /"confidence":"low"/.test(json) && /caveat[^\]]*(mouse|human|mus musculus|homo sapiens|conflict|disagree)/i.test(json);
+    };
     return [
         profilerCase({
             id: "profile-one-example-per-set",
@@ -825,6 +1190,48 @@ function profilerCases(): EvalCase[] {
                 "a mouse organism from the README",
                 (input) => /"taxonId":"10090"/.test(JSON.stringify(input)) && /"source":"document"/.test(JSON.stringify(input)),
             ),
+        }),
+        profilerCase({
+            id: "profile-conflict-low-confidence",
+            set: "dev",
+            source: "profiler prompt: when sources disagree, pick the most-trusted one, set confidence low, and add the conflict to the caveats",
+            files: {
+                "data/inputs/f-counts/counts.tsv": `${COUNTS}\n`,
+                "data/inputs/f-meta/samples.csv": `${["sample,group,organism", "T1,treated,Mus musculus", "T2,treated,Mus musculus", "T3,treated,Mus musculus", "C1,control,Mus musculus", "C2,control,Mus musculus", "C3,control,Mus musculus"].join("\n")}\n`,
+                "data/inputs/f-doc/README.md": "# Study\n\nRNA-seq of primary human fibroblasts after the treatment, three donors in each group.\n",
+            },
+            grade: acceptedProfile("a low-confidence organism with the conflict in the caveats", conflictRecorded),
+        }),
+        profilerCase({
+            id: "profile-conflict-low-confidence-held-out",
+            set: "held-out",
+            source: "paraphrase of profile-conflict-low-confidence",
+            files: {
+                "data/inputs/f-counts/counts.tsv": `${COUNTS}\n`,
+                "data/inputs/f-meta/samples.csv": `${["sample,group,species", "T1,treated,Homo sapiens", "T2,treated,Homo sapiens", "T3,treated,Homo sapiens", "C1,control,Homo sapiens", "C2,control,Homo sapiens", "C3,control,Homo sapiens"].join("\n")}\n`,
+                "data/inputs/f-doc/README.md": "# Study\n\nBulk RNA-seq of mouse liver after the treatment, three animals in each group.\n",
+            },
+            grade: acceptedProfile("a low-confidence organism with the conflict in the caveats", conflictRecorded),
+        }),
+        profilerCase({
+            id: "profile-null-organism",
+            set: "dev",
+            source: "profiler prompt: use null when no input identifies the organism; HGNC symbols do not prove human",
+            files: {
+                "data/inputs/f-counts/counts.tsv": `${symbolOnlyCounts}\n`,
+                "data/inputs/f-meta/samples.csv": `${SAMPLES}\n`,
+            },
+            grade: acceptedProfile("a null organism", (input) => /"organism":null/.test(JSON.stringify(input))),
+        }),
+        profilerCase({
+            id: "profile-null-organism-held-out",
+            set: "held-out",
+            source: "paraphrase of profile-null-organism",
+            files: {
+                "data/inputs/f-expr/expression.csv": `${symbolOnlyCounts.replaceAll("\t", ",")}\n`,
+                "data/inputs/f-meta/design.csv": `${SAMPLES.replace("batch", "lane")}\n`,
+            },
+            grade: acceptedProfile("a null organism", (input) => /"organism":null/.test(JSON.stringify(input))),
         }),
     ];
 }

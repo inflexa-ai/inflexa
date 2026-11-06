@@ -71,6 +71,9 @@ const SITUATION = {
     batch: "none",
 };
 
+/** A check of a drafted DE step, with the situation of the recommend answer. */
+const CHECKED_DRAFT = { ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald test" }] };
+
 /**
  * The planner outcome, parsed with the schema the tool itself declares. The
  * tool's `execute` returns its output as `unknown`, so the parse is the check
@@ -418,6 +421,50 @@ describe("generatePlan loop-driving tool", () => {
         expect(JSON.stringify(refused.value.issues)).toContain("T9S9");
     });
 
+    describe("the packages of a plan against the census (#512)", () => {
+        /** A pool that holds `igraph` in both tracks, and the Python `scikit-learn`. */
+        const census: GeneratePlanDeps["readPoolInventory"] = () =>
+            Promise.resolve({
+                kind: "sections",
+                sections: [
+                    { title: "R packages", track: "r", packages: [{ name: "DESeq2" }, { name: "igraph" }] },
+                    { title: "Python packages", track: "python", packages: [{ name: "pydeseq2" }, { name: "igraph" }, { name: "scikit-learn" }] },
+                ],
+            });
+
+        async function refusedIssues(analysisId: string, packages: readonly string[], fixed: readonly string[]): Promise<string> {
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const model = scriptedModel([
+                callTools(submitPlan("t1", validCandidate({ packages }))),
+                callTools(submitPlan("t2", validCandidate({ packages: fixed }))),
+                submitted,
+            ]);
+            const result = planResultOf((await toolFor(model.provider, { readPoolInventory: census }).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
+            expect(result.event).toBe("plan_complete");
+            return JSON.stringify(toolResultIn(presentAt(model.calls, 1), "t1"));
+        }
+
+        it("refuses a bare name that both tracks hold, and names the two prefixed forms", async () => {
+            const refused = await refusedIssues("an-both-tracks", ["pydeseq2", "igraph"], ["pydeseq2", "python:igraph"]);
+            expect(refused).toContain('\\"python:igraph\\" or \\"r:igraph\\"');
+        });
+
+        it("refuses a name that the pool does not hold", async () => {
+            const refused = await refusedIssues("an-not-in-pool", ["sklearn"], ["scikit-learn"]);
+            expect(refused).toContain("The pool holds no package");
+            expect(refused).toContain("sklearn");
+        });
+
+        it("accepts a plan whose packages each resolve to one package", async () => {
+            await seedAnalysis(pool, "an-resolved", { dpStatus: null });
+            const model = scriptedModel([callTools(submitPlan("t1", validCandidate({ packages: ["pydeseq2", "r:igraph", "DESeq2"] }))), submitted]);
+            const result = planResultOf(
+                (await toolFor(model.provider, { readPoolInventory: census }).execute(INPUT, toolContext("an-resolved")))._unsafeUnwrap(),
+            );
+            expect(result.event).toBe("plan_complete");
+        });
+    });
+
     it("shows the card of a completed plan to the user, and a blocker shows none", async () => {
         const analysisId = "an-card";
         await seedAnalysis(pool, analysisId, { dpStatus: null });
@@ -516,12 +563,35 @@ describe("generatePlan loop-driving tool", () => {
             const { client } = fakeKnowledgeClient();
             const script: ScriptStep[] = [
                 callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(toolCall("k1", "knowledge_check", CHECKED_DRAFT)),
                 ...candidates.map((plan, i) => callTools(submitPlan(`s${i + 1}`, plan))),
                 submitted,
             ];
             const model = scriptedModel(script);
             return planResultOf((await toolFor(model.provider, { knowledge: client, logger }).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
         }
+
+        it("refuses a plan after a recommend answer until a knowledge_check reviews the draft", async () => {
+            await seedAnalysis(pool, "an-unchecked", { dpStatus: null });
+            const { client, calls } = fakeKnowledgeClient();
+            const plan = validCandidate({
+                id: "T1S2",
+                grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" },
+            });
+            const model = scriptedModel([
+                callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(submitPlan("s1", plan)),
+                callTools(toolCall("k1", "knowledge_check", CHECKED_DRAFT)),
+                callTools(submitPlan("s2", plan)),
+                submitted,
+            ]);
+
+            const result = planResultOf((await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext("an-unchecked")))._unsafeUnwrap());
+
+            expect(result.event).toBe("plan_complete");
+            expect(calls.check).toHaveLength(1);
+            expect(JSON.stringify(model.calls[2]?.prompt)).toContain("No knowledge_check reviewed this draft");
+        });
 
         async function storedStepsOf(analysisId: string, result: PlanningAgentOutput) {
             expect(result.event).toBe("plan_complete");

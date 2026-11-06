@@ -29,6 +29,21 @@ it.
   sandbox, and no network takes part, except the model provider.
 - A call of `run_script` is followed in the trial by the calls of its script.
   These nested calls have no input.
+- A sandbox case with `summary` asks the step agent for its step summary after
+  the task, with the request of the step workflow. With `summary: "only"`, the
+  task does not run. The history of the case is the transcript of the task, and
+  only the summary request runs. Use it when the scripted exec cannot give a
+  result that the agent trusts.
+- A conversation case with `compact` runs the compaction exchange of a chat
+  turn on the history of the case, and not the turn.
+- The `planner-knowledge` agent is the planner with `knowledge_recommend` and
+  `knowledge_check`, as when the embedder binds a knowledge endpoint. A case
+  scripts both tools.
+- `--exposure` moves the plain file tools of each agent that runs scripts.
+  `base` is production. `read-both` adds the read tools to the script tools and
+  keeps them direct. `read-write-both` also adds `write_file`. `read-script`
+  removes the read tools from the direct tools. The prompt digest changes with
+  the exposure.
 
 ## Run the evals
 
