@@ -28,7 +28,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { createConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
 import { createThreadHistory } from "../memory/thread-history.js";
-import type { ThreadType } from "../memory/thread-store.js";
+import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import type { PromptCachePolicy } from "../providers/types.js";
 import { claimThreadForTurn, closeOpenTurnRecords, releaseThreadOfTurn, turnOfAsk } from "../state/active-turns.js";
@@ -341,7 +341,8 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
                 logger: deps.logger,
                 throughSeq: endSeq,
             });
-            return { endSeq, userMessage: assembled.userMessage, contextRecords: assembled.contextRecords };
+            const thread = unwrapOrThrow(await createThreadStore(deps.pool).getThread(input.threadId));
+            return { endSeq, userMessage: assembled.userMessage, contextRecords: assembled.contextRecords, model: thread?.model ?? null };
         },
         { name: "chat-turn.prepare" },
     );
@@ -406,7 +407,14 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
     const ran = await runOpenTurn(
         deps,
         { analysisId: input.analysisId, threadId: input.threadId, userInput: input.userText },
-        { kind: "ok", threadType: input.threadType, history: view, userMessage: opening.userMessage, contextRecords: opening.contextRecords },
+        {
+            kind: "ok",
+            threadType: input.threadType,
+            model: opening.model,
+            history: view,
+            userMessage: opening.userMessage,
+            contextRecords: opening.contextRecords,
+        },
         agent.value,
         { session, author: input.author, startedAtMs: input.startedAtMs, promptCache: input.promptCache },
         transport,

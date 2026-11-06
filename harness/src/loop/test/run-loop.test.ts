@@ -14,7 +14,9 @@ import { makeSession } from "../../providers/__fixtures__/session.js";
 import { defineTool, withToolCallRecord, withToolResultImages, type Tool, type ToolError } from "../../tools/define-tool.js";
 import { viewCode, viewFields, viewJson, viewText, type ToolCallView } from "../../tools/tool-view.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedReply, type ScriptStep } from "../../testing.js";
-import { continueLoop, runLoop, runWithSalvage, type AgentRound, type LoopOptions, type LoopStep } from "../run-loop.js";
+import type { ChatProvider } from "../../providers/types.js";
+import { presentAt } from "../../lib/present.js";
+import { CONTINUE_DECLINED_REQUEST, continueLoop, runLoop, runWithSalvage, type AgentRound, type LoopOptions, type LoopStep } from "../run-loop.js";
 import type { AgentDefinition, EmitEvent, EmitFn, LoopMessage } from "../types.js";
 
 function echoTool(calls: string[] = []): Tool {
@@ -240,6 +242,153 @@ describe("runLoop — a request that the model declined", () => {
         const { parts } = await refusalsOf(reply([text("done")]));
 
         expect(parts).toEqual([]);
+    });
+});
+
+describe("runLoop — the model of a run", () => {
+    const PRIMARY = "claude-opus-5-5";
+    const FALLBACK = "claude-opus-5";
+    const HOP = {
+        anthropic: {
+            iterations: [
+                { type: "message", model: PRIMARY },
+                { type: "fallback_message", model: FALLBACK },
+            ],
+        },
+    };
+
+    /** One scripted provider for each model, each one able to give the others, as the configured provider does. */
+    function modelFamily(scripts: Readonly<Record<string, readonly ScriptStep[]>>, refusalFallbackModel?: string) {
+        const scripted = new Map(Object.entries(scripts).map(([modelId, script]) => [modelId, scriptedModel(script, { modelId })]));
+        const family = new Map<string, ChatProvider>();
+        const providerOf = (modelId: string): ChatProvider => {
+            const known = family.get(modelId);
+            if (known !== undefined) return known;
+            const base = scripted.get(modelId);
+            if (base === undefined) throw new Error(`the family has no model ${modelId}`);
+            const made: ChatProvider = { ...base.provider, refusalFallbackModel, withModel: providerOf };
+            family.set(modelId, made);
+            return made;
+        };
+        const callsOf = (modelId: string): LanguageModelV4CallOptions[] => scripted.get(modelId)?.calls ?? [];
+        return { providerOf, callsOf };
+    }
+
+    async function run(provider: ChatProvider, tools: readonly Tool[] = []) {
+        const refusals: unknown[] = [];
+        const changes: string[] = [];
+        const emit: EmitFn = (event) => {
+            if (event.type === "data-model-refusal") refusals.push(event.data);
+        };
+        const onModelChange = (modelId: string): Promise<void> => {
+            changes.push(modelId);
+            return Promise.resolve();
+        };
+        const result = await runLoop(agentWith(tools), [user("go")], makeSession(), options(provider, emit, { onModelChange }));
+        return { result, refusals, changes };
+    }
+
+    const promptText = (call: LanguageModelV4CallOptions | undefined): string => JSON.stringify(call?.prompt ?? []);
+
+    it("sends each request after a fallback to the fallback model", async () => {
+        const echoed: string[] = [];
+        const { providerOf, callsOf } = modelFamily({
+            [PRIMARY]: [{ ...callTools(toolCall("c1", "echo", { text: "hi" })), providerMetadata: HOP }],
+            [FALLBACK]: [reply([text("done")])],
+        });
+
+        const { result, changes } = await run(providerOf(PRIMARY), [echoTool(echoed)]);
+
+        expect(echoed).toEqual(["hi"]);
+        expect(result.finish.reason).toBe("stop");
+        expect(callsOf(PRIMARY)).toHaveLength(1);
+        expect(callsOf(FALLBACK)).toHaveLength(1);
+        expect(changes).toEqual([FALLBACK]);
+        expect(result.provider).toBe(providerOf(FALLBACK));
+    });
+
+    it("keeps the model of a provider that cannot give another model", async () => {
+        const { provider, calls } = scriptedModel([{ ...callTools(toolCall("c1", "echo", { text: "hi" })), providerMetadata: HOP }, reply([text("done")])]);
+
+        const { result, changes } = await run(provider, [echoTool()]);
+
+        expect(calls).toHaveLength(2);
+        expect(changes).toEqual([]);
+        expect(result.provider).toBe(provider);
+    });
+
+    it("sends a declined request again to the refusal fallback model, with the declined text as an interrupted reply", async () => {
+        const echoed: string[] = [];
+        const { providerOf, callsOf } = modelFamily(
+            {
+                [PRIMARY]: [{ ...reply([text("Part 2"), toolCall("c1", "echo", { text: "cut" })], "content-filter"), responseId: "msg_d" }],
+                [FALLBACK]: [reply([text("done")])],
+            },
+            FALLBACK,
+        );
+
+        const { result, refusals, changes } = await run(providerOf(PRIMARY), [echoTool(echoed)]);
+
+        expect(result.finish.reason).toBe("stop");
+        expect(echoed).toEqual([]);
+        expect(refusals).toEqual([{ id: "msg_d", outcome: "fallback", model: FALLBACK }]);
+        expect(changes).toEqual([FALLBACK]);
+        const declined = result.messages[1];
+        expect(declined).toMatchObject({ role: "assistant", content: [{ type: "text", text: "Part 2" }] });
+        expect(declined !== undefined && isInterruptedMessage(declined)).toBe(true);
+        expect(lastPromptUserText(callsOf(FALLBACK)[0])).toBe(CONTINUE_DECLINED_REQUEST);
+        expect(promptText(callsOf(FALLBACK)[0])).not.toContain("tool-call");
+    });
+
+    it("sends a declined request to the recommended model of the refusal before the refusal fallback model", async () => {
+        const recommended = "claude-opus-4-8";
+        const { providerOf, callsOf } = modelFamily(
+            {
+                [PRIMARY]: [
+                    { ...reply([], "content-filter"), providerMetadata: { anthropic: { stopDetails: { type: "refusal", recommendedModel: recommended } } } },
+                ],
+                [FALLBACK]: [],
+                [recommended]: [reply([text("done")])],
+            },
+            FALLBACK,
+        );
+
+        const { result, changes } = await run(providerOf(PRIMARY));
+
+        expect(result.finish.reason).toBe("stop");
+        expect(callsOf(recommended)).toHaveLength(1);
+        expect(callsOf(FALLBACK)).toHaveLength(0);
+        expect(changes).toEqual([recommended]);
+    });
+
+    it("ends the series when the fallback model declines the request", async () => {
+        const { providerOf, callsOf } = modelFamily({ [FALLBACK]: [{ ...reply([], "content-filter"), responseId: "msg_s" }] }, FALLBACK);
+
+        const { result, refusals, changes } = await run(providerOf(FALLBACK));
+
+        expect(result.finish.reason).toBe("content-filter");
+        expect(refusals).toEqual([{ id: "msg_s", outcome: "stopped" }]);
+        expect(callsOf(FALLBACK)).toHaveLength(1);
+        expect(changes).toEqual([]);
+    });
+
+    it("sends the same view again after a declined request with no text", async () => {
+        const { providerOf, callsOf } = modelFamily({ [PRIMARY]: [reply([], "content-filter")], [FALLBACK]: [reply([text("done")])] }, FALLBACK);
+
+        const { result } = await run(providerOf(PRIMARY));
+
+        expect(result.finish.reason).toBe("stop");
+        expect(callsOf(FALLBACK)[0]?.prompt).toEqual(presentAt(callsOf(PRIMARY), 0, "the declined request").prompt);
+    });
+
+    it("counts a declined request against the request cap of the run", async () => {
+        const { providerOf, callsOf } = modelFamily({ [PRIMARY]: [reply([], "content-filter")], [FALLBACK]: [reply([text("done")])] }, FALLBACK);
+        const emit: EmitFn = () => undefined;
+
+        const result = await runLoop(agentWith([], 1), [user("go")], makeSession(), options(providerOf(PRIMARY), emit));
+
+        expect(result.finish.reason).toBe("content-filter");
+        expect(callsOf(FALLBACK)).toHaveLength(0);
     });
 });
 

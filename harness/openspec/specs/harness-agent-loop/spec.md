@@ -355,3 +355,71 @@ When the model calls a tool that the request does not declare, and the name is o
 
 - **WHEN** the model calls `art_write_file`, and no tool `write_file` is declared
 - **THEN** the call stays a call of an unknown tool
+
+### Requirement: The loop moves a run to the model that answered a fallback
+
+The loop MUST hold the model of each run. The run starts on the model of `LoopOptions.provider`.
+
+When a completed step reports a `fallback_message` iteration, the loop MUST move the run to the model that the iteration names. Each later request of the run MUST go to that model, also inside the same series. The loop MUST NOT move the run when the iteration names no model, when the named model is the model of the step, or when the current provider has no `withModel` member.
+
+The loop MUST call `LoopOptions.onModelChange` with the model id at each move, and it MUST wait for the call before the next request.
+
+#### Scenario: The request after a fallback goes to the fallback model
+
+- **GIVEN** a provider with a `withModel` member, on the model `claude-opus-5-5`
+- **AND** a first step that calls a tool and reports a `fallback_message` iteration for `claude-opus-5`
+- **WHEN** the loop sends the request after the tool result
+- **THEN** the request goes to the provider of `claude-opus-5`
+- **AND** `onModelChange` received `claude-opus-5` one time
+
+#### Scenario: A provider with no other model keeps its model
+
+- **GIVEN** a provider with no `withModel` member
+- **WHEN** a step reports a `fallback_message` iteration
+- **THEN** each later request goes to the same provider, and `onModelChange` receives no call
+
+### Requirement: The loop sends a declined request again to a fallback model
+
+When a step ends with the finish reason `content-filter` and reports no `fallback_message` iteration, the loop MUST select a fallback model. The model is `stop_details.recommended_model` of the response when present, or else the `refusalFallbackModel` of the current provider. The loop MUST send the request again when a model is selected, the model is not the model of the step, and the current provider has a `withModel` member.
+
+For a retry, the loop MUST NOT record the declined step as a completed reply. It MUST keep the text of the declined reply as an interrupted reply, with no thinking and no tool call. When it kept text, a harness request MUST ask the model to continue the reply from where it stopped. The loop MUST then move the run to the selected model, as the move after a fallback does, and it MUST send the next request to that model. The retry MUST count against the request cap of the series.
+
+The loop MUST emit a `data-model-refusal` part with the outcome `fallback` and the selected model for a declined step that it sends again. A declined step that the loop does not send again keeps the outcome `stopped`, and the series ends with `content-filter`.
+
+#### Scenario: A decline with no fallback goes to the refusal fallback model
+
+- **GIVEN** a provider on the model `claude-opus-5-5` whose `refusalFallbackModel` is `claude-opus-5`
+- **AND** a first step that ends with `content-filter` after the text `Part 2`, with a cut tool call, and no fallback iteration
+- **WHEN** the loop runs
+- **THEN** the second request goes to the provider of `claude-opus-5`
+- **AND** the conversation holds the text `Part 2` as an interrupted reply, followed by the harness request to continue, and no tool call of the declined step
+- **AND** the loop emitted one `data-model-refusal` part with the outcome `fallback` and the model `claude-opus-5`
+
+#### Scenario: The recommended model of the refusal wins
+
+- **GIVEN** a declined step whose `stop_details.recommended_model` is `claude-opus-4-8`
+- **AND** a provider whose `refusalFallbackModel` is `claude-opus-5`
+- **WHEN** the loop sends the request again
+- **THEN** the request goes to the provider of `claude-opus-4-8`
+
+#### Scenario: A decline on the fallback model ends the series
+
+- **GIVEN** a run on the model `claude-opus-5` whose `refusalFallbackModel` is `claude-opus-5`
+- **WHEN** a step ends with `content-filter`
+- **THEN** the loop sends no other request, the run finishes with `content-filter`, and the refusal part has the outcome `stopped`
+
+#### Scenario: A decline with no text sends the same view again
+
+- **GIVEN** a declined step with no text
+- **WHEN** the loop sends the request again
+- **THEN** the second request sends the same messages as the first request
+
+### Requirement: The loop records a fallback reply as the provider documents it
+
+The loop MUST record the reply of a step that a fallback model answered with each part after the last `fallback` part. It MUST remove each reasoning part before the last `fallback` part, and it MUST keep the `fallback` part in its position. A reply with no `fallback` part keeps its reasoning parts.
+
+#### Scenario: The thinking after the switch stays
+
+- **GIVEN** a step whose reply holds a reasoning part, a `fallback` part, a second reasoning part, and a tool call, with a `fallback_message` iteration
+- **WHEN** the loop records the step
+- **THEN** the recorded reply holds the `fallback` part, the second reasoning part, and the tool call, in that order

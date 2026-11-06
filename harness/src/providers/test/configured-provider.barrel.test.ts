@@ -601,9 +601,9 @@ describe("the refusal fallback of the anthropic arm", () => {
         ]);
     }
 
-    it("asks for the default fallback, with its beta header, when the config opts in", async () => {
+    it("asks for the default fallback, with its beta header, when the config names no fallback", async () => {
         const cap = capturingFetch(anthropicSse);
-        const provider = createConfiguredAiSdkProvider({ config: { ...BASE, fetch: cap.fetch, fallbacks: "default" } });
+        const provider = createConfiguredAiSdkProvider({ config: { ...BASE, fetch: cap.fetch } });
 
         expect((await drive(provider)).failure).toBeUndefined();
 
@@ -611,9 +611,9 @@ describe("the refusal fallback of the anthropic arm", () => {
         expect(cap.requests[0]?.headers["anthropic-beta"]).toContain("server-side-fallback-2026-07-01");
     });
 
-    it("asks for no fallback when the config does not opt in", async () => {
+    it("asks for no fallback when the config turns it off", async () => {
         const cap = capturingFetch(anthropicSse);
-        const provider = createConfiguredAiSdkProvider({ config: { ...BASE, fetch: cap.fetch } });
+        const provider = createConfiguredAiSdkProvider({ config: { ...BASE, fetch: cap.fetch, fallbacks: "off" } });
 
         expect((await drive(provider)).failure).toBeUndefined();
 

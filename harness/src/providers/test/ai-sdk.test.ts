@@ -28,6 +28,7 @@ import {
     createConfiguredAiSdkProvider,
     DEFAULT_MAX_OUTPUT_TOKENS,
     fallbackModelOf,
+    recommendedModelOf,
     RETRY_BACKOFF_FACTOR,
     RETRY_INITIAL_DELAY_MS,
     RETRY_MAX_DELAY_MS,
@@ -43,7 +44,7 @@ import type { LogFields, Logger } from "../../lib/logger.js";
 import type { GateFailure } from "../../lib/hooks.js";
 import { runLoop, type LoopOptions } from "../../loop/run-loop.js";
 import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
-import { reasoning, scriptedModel, text, type ScriptedReply } from "../../testing.js";
+import { fallback, reasoning, scriptedModel, text, type ScriptedReply } from "../../testing.js";
 import { defineTool } from "../../tools/define-tool.js";
 import { findProviderError, type ProviderError } from "../errors.js";
 import type { ChatProvider, ReasoningPolicy } from "../types.js";
@@ -673,6 +674,52 @@ describe("createConfiguredAiSdkProvider", () => {
             { type: "text", text: "the page" },
             { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
         ]);
+    });
+});
+
+describe("the provider of another model", () => {
+    const anthropic = { kind: "anthropic", apiKey: "test-key", model: "claude-opus-5-5" } as const;
+
+    it("binds the named model over the same connection, and gives one instance for each model", () => {
+        const provider = createConfiguredAiSdkProvider({ config: anthropic });
+
+        const other = provider.withModel?.("claude-opus-5");
+
+        expect(other?.bind({ session: makeSession(), live: false }).model.modelId).toBe("claude-opus-5");
+        expect(provider.withModel?.("claude-opus-5")).toBe(other);
+        expect(provider.withModel?.("claude-opus-5-5")).toBe(provider);
+        expect(other?.withModel?.("claude-opus-5-5")).toBe(provider);
+    });
+
+    it("names the refusal fallback model of its own model, because the fallback of the API is on by default", () => {
+        const provider = createConfiguredAiSdkProvider({ config: anthropic });
+
+        expect(provider.refusalFallbackModel).toBe("claude-opus-5");
+        expect(provider.withModel?.("claude-opus-5").refusalFallbackModel).toBe("claude-opus-4-8");
+        expect(provider.withModel?.("claude-haiku-4-5").refusalFallbackModel).toBeUndefined();
+    });
+
+    it("names no refusal fallback model when the config turns the fallback of the API off", () => {
+        expect(createConfiguredAiSdkProvider({ config: { ...anthropic, fallbacks: "off" } }).refusalFallbackModel).toBeUndefined();
+    });
+
+    it("gives no other model for a model that the embedder supplied", () => {
+        const provider = createAiSdkProvider({ model: replyingModel(["done"], finishPart({})) });
+
+        expect("withModel" in provider).toBe(false);
+    });
+});
+
+describe("recommendedModelOf", () => {
+    it("reads the recommended model of a refusal", () => {
+        const metadata = { anthropic: { stopDetails: { type: "refusal", category: "bio", recommendedModel: "claude-opus-5" } } };
+
+        expect(recommendedModelOf(metadata)).toBe("claude-opus-5");
+    });
+
+    it("gives nothing for a refusal with no recommended model", () => {
+        expect(recommendedModelOf({ anthropic: { stopDetails: { type: "refusal", category: "bio" } } })).toBeUndefined();
+        expect(recommendedModelOf(undefined)).toBeUndefined();
     });
 });
 
@@ -1335,10 +1382,9 @@ describe("dropped thinking blocks", () => {
 describe("a reply that a fallback model served", () => {
     /**
      * A model can refuse a request by category, and the API then re-serves it on another
-     * model. The `fallback` content block that reports the hop inside the turn never reaches
-     * the harness, because the package drops it. Thus the harness cannot echo that turn as
-     * the API produced it, and each signed thinking block of the turn is refused from the
-     * next request on, with a 400 that no retry can pass.
+     * model. A hop inside the call leaves a `fallback` block in the reply. The API refuses
+     * a thinking block from before that block on the next request, and it reads the
+     * thinking of the fallback model after it.
      */
     const HOP = {
         anthropic: {
@@ -1351,8 +1397,7 @@ describe("a reply that a fallback model served", () => {
     const NO_HOP = { anthropic: { iterations: [{ type: "message", model: "claude-opus-5-5" }] } };
     const THINKING = reasoning("weigh the two sets", "signed-by-the-api");
 
-    const hopRecords = (records: readonly LogRecord[]) =>
-        records.filter((record) => record.msg === "reply served by a fallback model, thus the harness drops the thinking of that turn");
+    const hopRecords = (records: readonly LogRecord[]) => records.filter((record) => record.msg === "reply served by a fallback model");
 
     /**
      * The reply reports `claude-opus-5-5` as its own served id, because that is what the
@@ -1375,10 +1420,10 @@ describe("a reply that a fallback model served", () => {
         return typeof message.content === "string" ? ["text"] : message.content.map((part) => part.type);
     };
 
-    it("records the turn with no thinking, keeps every other part, and names the model that answered", async () => {
-        const { messages, record } = await runOne(servedReply([THINKING, text("done")], HOP));
+    it("records the turn without the thinking before the switch, keeps every other part, and names the model that answered", async () => {
+        const { messages, record } = await runOne(servedReply([THINKING, fallback("claude-opus-5-5", "claude-opus-4-8"), THINKING, text("done")], HOP));
 
-        expect(partTypesOf(messages.at(-1))).toEqual(["text"]);
+        expect(partTypesOf(messages.at(-1))).toEqual(["custom", "reasoning", "text"]);
         // The ledger of an embedder reads this field, thus the hop must reach it.
         expect(record.servedModelId).toBe("claude-opus-4-8");
         expect(record.requestedModelId).toBe("scripted-model");
@@ -1387,9 +1432,9 @@ describe("a reply that a fallback model served", () => {
     it("keeps the served model of the response when the hop names no model", async () => {
         const unnamedHop = { anthropic: { iterations: [{ type: "message", model: "claude-opus-5-5" }, { type: "fallback_message" }] } };
 
-        const { messages, record } = await runOne(servedReply([THINKING, text("done")], unnamedHop));
+        const { messages, record } = await runOne(servedReply([THINKING, fallback("claude-opus-5-5", "claude-opus-4-8"), text("done")], unnamedHop));
 
-        expect(partTypesOf(messages.at(-1))).toEqual(["text"]);
+        expect(partTypesOf(messages.at(-1))).toEqual(["custom", "text"]);
         expect(record.servedModelId).toBe("claude-opus-5-5");
     });
 
@@ -1400,10 +1445,10 @@ describe("a reply that a fallback model served", () => {
         expect(record.servedModelId).toBe("claude-opus-5-5");
     });
 
-    it("records no assistant message for a reply of nothing but thinking, because no part of it can be echoed", async () => {
-        const { messages } = await runOne(servedReply([THINKING], HOP));
+    it("keeps the thinking of a turn that the API sent straight to the fallback model", async () => {
+        const { messages } = await runOne(servedReply([THINKING, text("done")], HOP));
 
-        expect(messages.map((message) => message.role)).toEqual(["user"]);
+        expect(partTypesOf(messages.at(-1))).toEqual(["reasoning", "text"]);
     });
 
     it("logs the hop on a live call and on a buffered call, and names the model that answered", async () => {

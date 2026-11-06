@@ -24,6 +24,7 @@ import {
     wrapLanguageModel,
     type AssistantModelMessage,
     type ModelMessage,
+    type LanguageModel,
     type StepResult,
     type ToolCallPart,
     type ToolResultPart,
@@ -50,13 +51,13 @@ import {
     withRequestInputTokens,
     type CompactionTrigger,
 } from "../memory/ai-sdk-message-storage.js";
-import { conversationView, lastRequestInputTokens, withoutReasoning } from "../memory/conversation-view.js";
+import { conversationView, lastRequestInputTokens } from "../memory/conversation-view.js";
 import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { aliasedToolName } from "./tool-name-repair.js";
-import { fallbackModelOf } from "../providers/ai-sdk.js";
+import { fallbackModelOf, isFallbackPart, recommendedModelOf } from "../providers/ai-sdk.js";
 import { extractStatus, findProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
-import type { ChatProvider, PromptCachePolicy, ProviderOptions, ReasoningPolicy } from "../providers/types.js";
+import type { BoundModel, ChatProvider, PromptCachePolicy, ProviderOptions, ReasoningPolicy } from "../providers/types.js";
 import type { AskRequest } from "../tools/approval/contract.js";
 import { accountingMiddleware, rollupMiddleware } from "./accounting.js";
 import { createCallPolicy, type CallPolicy, type CallPolicyState, type ToolMask } from "./call-policy.js";
@@ -124,6 +125,8 @@ export type LoopResult = {
     readonly finish: AgentFinish;
     /** Each completed request of the run, in order. A selector reads the outcome of a run from them. */
     readonly steps: readonly LoopStep[];
+    /** The provider of the last request: the provider of the options, or the provider of a model that a fallback moved the run to. */
+    readonly provider: ChatProvider;
 };
 
 /** A request that the provider refused for its content: the HTTP status and the text of the provider error. */
@@ -221,10 +224,18 @@ export type LoopOptions = {
      * workflow gives the pause of its work. A loop with no pause throws each failure.
      */
     readonly pause?: (failure: unknown, attempt: number, signal: AbortSignal) => Promise<"retry" | "resume" | "abort" | undefined>;
+    /**
+     * Receives the id of each model that a fallback moved the run to. The loop waits for it before the next request.
+     * A chat turn pins its thread to the model here.
+     */
+    readonly onModelChange?: (modelId: string) => Promise<void>;
 };
 
 /** The harness request after a reply that a failed request cut. The model reads its partial reply, and continues it. */
 export const CONTINUE_REQUEST = "[The model request failed during your reply above. Continue the reply from where it stopped.]";
+
+/** The harness request after a reply that the model provider declined. The fallback model reads the partial reply, and continues it. */
+export const CONTINUE_DECLINED_REQUEST = "[The model provider stopped your reply above. Continue the reply from where it stopped.]";
 
 /** A run that receives no turn accumulator is the turn's root. See `LoopOptions.turnUsage`. */
 export const isTurnRoot = (opts: Pick<LoopOptions, "turnUsage">): boolean => opts.turnUsage === undefined;
@@ -354,10 +365,14 @@ export async function runWithSalvage(
         salvageTools: salvage.tools,
         salvageMaxRequests: maxRequests,
     });
-    const salvaged = await continueLoop(agent, first.messages, { text: salvage.nudge, mask: { allow: salvage.tools }, maxRequests }, session, opts);
+    const salvaged = await continueLoop(agent, first.messages, { text: salvage.nudge, mask: { allow: salvage.tools }, maxRequests }, session, {
+        ...opts,
+        provider: first.provider,
+    });
     return {
         messages: [...first.messages, ...salvaged.messages],
         steps: [...first.steps, ...salvaged.steps],
+        provider: salvaged.provider,
         finish: {
             ...salvaged.finish,
             ...sumUsage("usage", first.finish, salvaged.finish),
@@ -410,7 +425,20 @@ type SeriesEnd =
     | { readonly kind: "stopped" }
     | { readonly kind: "denied" }
     | { readonly kind: "aborted" }
-    | { readonly kind: "refused"; readonly refusal: RequestRefusal };
+    | { readonly kind: "refused"; readonly refusal: RequestRefusal }
+    /** The provider declined the last request, and the model can answer it. `continued`: the conversation holds the text of the declined reply. */
+    | { readonly kind: "declined"; readonly model: string; readonly continued: boolean; readonly rawFinishReason?: string };
+
+/** How a run of series ended: `series` answers a decline again on the fallback model, thus no run ends with one. */
+type RunEnd = Exclude<SeriesEnd, { readonly kind: "declined" }>;
+
+/** The model of a run. A fallback moves the run to another model, and each later request goes to it. */
+type ModelRoute = {
+    current(): ChatProvider;
+    /** The provider of a model that the run can move to: another model that the current provider can give. */
+    providerFor(modelId: string): ChatProvider | undefined;
+    moveTo(modelId: string): Promise<void>;
+};
 
 /** The facts of one series that a request of the series reads. */
 type SeriesTarget = {
@@ -505,18 +533,41 @@ function openConversation(
     // The first request after a summary shows if the summary brought the conversation under the budget.
     let summarizedLast = false;
 
+    let runProvider = provider;
+    const route: ModelRoute = {
+        current: () => runProvider,
+        providerFor: (modelId) => {
+            const next = runProvider.withModel?.(modelId);
+            return next === runProvider ? undefined : next;
+        },
+        moveTo: async (modelId) => {
+            const next = route.providerFor(modelId);
+            if (next === undefined) return;
+            runProvider = next;
+            log.warn("run moved to a fallback model", { model: modelId });
+            await opts.onModelChange?.(modelId);
+        },
+    };
+
     /**
      * Run one series, and wait out a failure that pauses. After the wait, the series runs again with the requests
      * that it did not use. A partial reply of the failed request stays as an interrupted reply, and one harness
      * request asks the model to continue it. A failure with no partial reply changes no message, thus the next
      * request sends the same view.
      */
-    const series = async (target: SeriesTarget, spec: RequestSeries): Promise<SeriesEnd> => {
+    const series = async (target: SeriesTarget, spec: RequestSeries): Promise<RunEnd> => {
         let current = spec;
         let attempt = 0;
         for (;;) {
             const stepsBefore = target.steps.length;
-            const ended = await runSeries(agent, opts, calls, log, target, current);
+            const ended = await runSeries(agent, opts, calls, log, target, current, route);
+            if (ended.kind === "declined") {
+                const left = current.maxRequests - (target.steps.length - stepsBefore);
+                if (left <= 0) return { kind: "reply", finishReason: "content-filter", rawFinishReason: ended.rawFinishReason };
+                await route.moveTo(ended.model);
+                current = { ...current, maxRequests: left, requestText: ended.continued ? CONTINUE_DECLINED_REQUEST : undefined };
+                continue;
+            }
             if (ended.kind !== "failed") return ended;
             const used = target.steps.length - stepsBefore;
             // A request that completed ends the outage, thus the timer of the next pause starts again.
@@ -555,7 +606,7 @@ function openConversation(
         log.warn("unanswered tool calls answered at run exit", { toolCallIds: answered.map((d) => d.toolCallId), tools: answered.map((d) => d.toolName) });
     };
 
-    const end = async (seriesEnd: SeriesEnd): Promise<FollowUpResult> => {
+    const end = async (seriesEnd: RunEnd): Promise<FollowUpResult> => {
         settleTranscript();
         const toolCalls = steps.reduce((n, step) => n + step.calls.length, 0);
         const toolErrors = steps.reduce(
@@ -567,7 +618,7 @@ function openConversation(
         const level = finish.cappedOut || finish.reason === "denied" || seriesEnd.kind === "refused" ? "warn" : "info";
         log[level]("run finished", { iterations: steps.length, reason: finish.reason, cappedOut: finish.cappedOut, toolCalls, toolErrors, usage });
         await giveRound();
-        return { messages, finish, steps, refusal: seriesEnd.kind === "refused" ? seriesEnd.refusal : undefined };
+        return { messages, finish, steps, provider: runProvider, refusal: seriesEnd.kind === "refused" ? seriesEnd.refusal : undefined };
     };
 
     const mainTarget = (beforeRequest: (() => Promise<void>) | undefined): SeriesTarget => ({
@@ -702,7 +753,7 @@ function openConversation(
     };
 }
 
-function finishOf(seriesEnd: SeriesEnd, rollups: Pick<AgentFinish, "usage" | "turnUsage">): AgentFinish {
+function finishOf(seriesEnd: RunEnd, rollups: Pick<AgentFinish, "usage" | "turnUsage">): AgentFinish {
     switch (seriesEnd.kind) {
         case "reply":
             return { reason: seriesEnd.finishReason, rawFinishReason: seriesEnd.rawFinishReason, cappedOut: false, ...rollups };
@@ -759,6 +810,7 @@ async function runSeries(
     log: Logger,
     target: SeriesTarget,
     spec: RequestSeries,
+    route: ModelRoute,
 ): Promise<SeriesEnd | SeriesFailure> {
     const { messages, session } = target;
     const startIndex = messages.length;
@@ -766,38 +818,44 @@ async function runSeries(
 
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
     const source = sourceOf(session, opts.invocationId);
-    const bound = opts.provider.bind({
-        session,
-        reasoning: opts.reasoning,
-        live: target.onText !== undefined,
-        // A reader sees the retries of a request, thus a wait of the envelope is no silence. The part is transient,
-        // and a failed write of it changes nothing of the request.
-        onRetry: (retry) => {
-            const part = {
-                id: retry.requestId,
-                attempt: retry.attempt,
-                maxRetries: retry.maxRetries,
-                retryAt: new Date(Date.now() + retry.delayMs).toISOString(),
-                status: retry.status,
-            };
-            void Promise.resolve(opts.emit({ type: "data-model-retry", source, data: part })).catch(() => undefined);
-        },
-    });
-    const model = wrapLanguageModel({
-        model: bound.model,
-        middleware: [
-            rollupMiddleware(target.rollups),
-            durableCalls({ name: modelStepName(agent.id), retriesAllowed: false, durableStream: target.textStream }),
-            accountingMiddleware({
-                session,
-                agentId: target.metricAgentId,
-                invocationId: opts.invocationId,
-                usageRecorder: opts.usageRecorder ?? createNoopUsageRecorder(),
-                logger: log,
-            }),
-            ...(opts.modelMiddleware ?? []),
-        ],
-    });
+    const modelOf = (provider: ChatProvider): { readonly bound: BoundModel; readonly model: LanguageModel } => {
+        const bound = provider.bind({
+            session,
+            reasoning: opts.reasoning,
+            live: target.onText !== undefined,
+            // A reader sees the retries of a request, thus a wait of the envelope is no silence. The part is transient,
+            // and a failed write of it changes nothing of the request.
+            onRetry: (retry) => {
+                const part = {
+                    id: retry.requestId,
+                    attempt: retry.attempt,
+                    maxRetries: retry.maxRetries,
+                    retryAt: new Date(Date.now() + retry.delayMs).toISOString(),
+                    status: retry.status,
+                };
+                void Promise.resolve(opts.emit({ type: "data-model-retry", source, data: part })).catch(() => undefined);
+            },
+        });
+        const model = wrapLanguageModel({
+            model: bound.model,
+            middleware: [
+                rollupMiddleware(target.rollups),
+                durableCalls({ name: modelStepName(agent.id), retriesAllowed: false, durableStream: target.textStream }),
+                accountingMiddleware({
+                    session,
+                    agentId: target.metricAgentId,
+                    invocationId: opts.invocationId,
+                    usageRecorder: opts.usageRecorder ?? createNoopUsageRecorder(),
+                    logger: log,
+                }),
+                ...(opts.modelMiddleware ?? []),
+            ],
+        });
+        return { bound, model };
+    };
+    // The provider of the requests of the series. A fallback in the series moves the next request to another model.
+    let active = route.current();
+    const { bound, model } = modelOf(active);
 
     // The work before the current request, which an abort of the stream does not wait for.
     let preparing: Promise<void> | undefined;
@@ -814,7 +872,7 @@ async function runSeries(
         source,
         emit: opts.emit,
         turnUsage: target.rollups.at(-1) ?? {},
-        capabilities: opts.provider.capabilities,
+        capabilities: active.capabilities,
         // Only the read tool of the agent can read a kept text, thus an agent without it keeps nothing.
         store: agent.tools.some((tool) => tool.id === READ_TOOL_OUTPUT_TOOL_ID) ? opts.toolOutputStore : undefined,
         invocationId: opts.invocationId,
@@ -884,6 +942,10 @@ async function runSeries(
     const seriesSteps: LoopStep[] = [];
     let open = openStep();
     let failure: unknown;
+    // The decline that ends the series, when a fallback model can answer the request again.
+    let declined: Omit<Extract<SeriesEnd, { kind: "declined" }>, "kind"> | undefined;
+    // The model of the next request: the model of the series, until a fallback moves the run.
+    let stepModel = { bound, model };
     const requestView = (): ModelMessage[] => [...withPromptCacheBreakpoint(sanitizeMessages(target.viewOf(messages)), promptCache)];
     const stops = (): boolean =>
         seriesSteps.length >= spec.maxRequests ||
@@ -939,7 +1001,20 @@ async function runSeries(
             const before = target.beforeRequest?.();
             preparing = before;
             await before;
-            return { messages: requestView() };
+            if (route.current() !== active) {
+                active = route.current();
+                stepModel = modelOf(active);
+            }
+            // The override holds for one step only, thus each step after a move gives the model again.
+            if (stepModel.model === model) return { messages: requestView() };
+            const { settings } = stepModel.bound;
+            return {
+                messages: requestView(),
+                model: stepModel.model,
+                maxOutputTokens: settings.maxOutputTokens,
+                reasoning: settings.reasoning,
+                providerOptions: mergeProviderOptions(settings.providerOptions, agent.providerOptions),
+            };
         },
         onChunk: async ({ chunk }) => {
             switch (chunk.type) {
@@ -967,6 +1042,20 @@ async function runSeries(
         onStepEnd: async (step) => {
             open = openStep();
             const loopStep = loopStepOf(step, deniedByTheUser);
+            const retryModel = retryModelOf(step, loopStep, route);
+            if (retryModel !== undefined) {
+                // The SDK runs no tool of a declined reply, thus the series ends here. The text of the reply stays as an
+                // interrupted reply, because the display of the round takes its text from the recorded messages.
+                const kept = declinedReplyOf(step);
+                if (kept !== undefined) messages.push(kept);
+                declined = { model: retryModel, continued: kept !== undefined, rawFinishReason: loopStep.rawFinishReason };
+                const declinedStep: LoopStep = { ...loopStep, calls: [] };
+                seriesSteps.push(declinedStep);
+                target.steps.push(declinedStep);
+                await opts.emit({ type: "data-model-refusal", source, data: { id: step.response.id, outcome: "fallback", model: retryModel } });
+                await opts.emit({ type: "iteration", source, index: seriesSteps.length - 1, final: false });
+                return;
+            }
             messages.push(...recordedMessagesOf(step, loopStep));
             foldCallRecords(agent.tools, loopStep.calls, log);
             seriesSteps.push(loopStep);
@@ -974,6 +1063,8 @@ async function runSeries(
             if (loopStep.calls.length > 0) log.debug("iteration", { iteration: seriesSteps.length - 1, tools: loopStep.calls.map((call) => call.toolName) });
             const refusal = refusalOf(step, loopStep);
             if (refusal !== undefined) await opts.emit({ type: "data-model-refusal", source, data: refusal });
+            const servedBy = fallbackModelOf(step.providerMetadata);
+            if (servedBy !== undefined && servedBy !== "" && loopStep.finishReason !== "content-filter") await route.moveTo(servedBy);
             await opts.emit({ type: "iteration", source, index: seriesSteps.length - 1, final: !continuesAfter(loopStep) || stops() });
         },
     });
@@ -1006,6 +1097,7 @@ async function runSeries(
         return { kind: "failed", failure, partial: openStepMessages(open) };
     }
 
+    if (declined !== undefined) return { kind: "declined", ...declined };
     const last = seriesSteps.at(-1);
     if (last === undefined) throw new Error(`The run of the agent "${agent.id}" ended with no completed request.`);
     if (!continuesAfter(last)) return { kind: "reply", finishReason: last.finishReason, rawFinishReason: last.rawFinishReason };
@@ -1083,12 +1175,43 @@ function refusalOf(step: StepResult<ToolSet>, loopStep: LoopStep): ModelRefusal 
 }
 
 /**
+ * The model that answers a declined step again: the recommended model of the refusal, or else the refusal fallback
+ * model of the provider. `undefined` when the step was not declined, when a fallback model already declined it too, or
+ * when the run cannot move to the model.
+ */
+function retryModelOf(step: StepResult<ToolSet>, loopStep: LoopStep, route: ModelRoute): string | undefined {
+    if (loopStep.finishReason !== "content-filter" || fallbackModelOf(step.providerMetadata) !== undefined) return undefined;
+    const modelId = recommendedModelOf(step.providerMetadata) ?? route.current().refusalFallbackModel;
+    if (modelId === undefined || route.providerFor(modelId) === undefined) return undefined;
+    return modelId;
+}
+
+/** The text of a declined reply as an interrupted reply, with no thinking and no tool call. `undefined` for a reply with no text. */
+function declinedReplyOf(step: StepResult<ToolSet>): LoopMessage | undefined {
+    if (step.text.trim().length === 0) return undefined;
+    const reply: AssistantModelMessage = { role: "assistant", content: [{ type: "text", text: step.text }] };
+    const inputTokens = step.usage.inputTokens;
+    return markInterruptedMessage(inputTokens === undefined ? reply : withRequestInputTokens(reply, inputTokens));
+}
+
+/**
+ * The parts of a reply without each reasoning part before the last `fallback` part. The provider documents this
+ * record of a fallback reply: the declining model wrote the thinking before the switch, and the fallback model reads
+ * only its own thinking after it. The `fallback` part keeps its position, because the API checks the thinking around it.
+ */
+function withoutReasoningBeforeFallback<T extends { readonly type: string; readonly kind?: string }>(parts: readonly T[]): T[] {
+    let boundary = -1;
+    for (const [index, part] of parts.entries()) if (isFallbackPart(part)) boundary = index;
+    return parts.filter((part, index) => index >= boundary || (part.type !== "reasoning" && part.type !== "reasoning-file"));
+}
+
+/**
  * The messages of one step as the transcript records them. The request after
  * them sends them as they are recorded, thus the record is the prefix of the
  * next request.
  *
  * - The assistant message holds the input tokens of its request, which the
- *   budget checks read, and it holds no thinking after a fallback hop.
+ *   budget checks read, and it holds no thinking from before a fallback switch.
  * - A refusal of the policy reads as the error result of the call. A denial
  *   reads as a decision of the user, and the reload of a thread reports the
  *   outcome of each call from its result.
@@ -1096,18 +1219,16 @@ function refusalOf(step: StepResult<ToolSet>, loopStep: LoopStep): ModelRefusal 
  */
 function recordedMessagesOf(step: StepResult<ToolSet>, loopStep: LoopStep): LoopMessage[] {
     const refused = new Set(loopStep.calls.filter((call) => call.refused).map((call) => call.toolCallId));
-    const servedByFallback = fallbackModelOf(step.providerMetadata) !== undefined;
     const inputTokens = step.usage.inputTokens;
     const recorded: LoopMessage[] = [];
     for (const message of step.response.messages) {
         if (message.role === "assistant") {
-            const content = typeof message.content === "string" ? message.content : message.content.filter((part) => part.type !== "tool-approval-request");
-            let assistant: AssistantModelMessage | undefined = { ...message, content };
-            if (servedByFallback) {
-                const stripped = withoutReasoning(assistant);
-                assistant = stripped?.role === "assistant" ? stripped : undefined;
-            }
-            if (assistant === undefined) continue;
+            const content =
+                typeof message.content === "string"
+                    ? message.content
+                    : withoutReasoningBeforeFallback(message.content.filter((part) => part.type !== "tool-approval-request"));
+            if (content.length === 0) continue;
+            const assistant: AssistantModelMessage = { ...message, content };
             recorded.push(inputTokens === undefined ? assistant : withRequestInputTokens(assistant, inputTokens));
             continue;
         }

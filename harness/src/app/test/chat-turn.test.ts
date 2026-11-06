@@ -38,7 +38,7 @@ import { isUnknownArray } from "../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { MEMORY_COMPACTION_REQUEST, SUMMARY_COMPACTION_REQUEST } from "../../prompts/compaction.js";
-import type { ChatUsage } from "../../providers/types.js";
+import type { ChatProvider, ChatUsage } from "../../providers/types.js";
 import type { ThreadAgentResolver } from "../../runtime/assemble.js";
 import { insertRun, updateRunStatus } from "../../state/index.js";
 import { createToolOutputStore } from "../../state/tool-outputs.js";
@@ -643,6 +643,73 @@ describe("the run of a chat turn", () => {
             { type: "text", text: "the groups differ" },
             { type: "data-model-refusal", id: "msg_served", outcome: "fallback", model: "claude-opus-5" },
         ]);
+    });
+
+    describe("the model of the thread", () => {
+        const PRIMARY = "claude-opus-5-5";
+        const FALLBACK = "claude-opus-5";
+        const HOP = {
+            anthropic: {
+                iterations: [
+                    { type: "message", model: PRIMARY },
+                    { type: "fallback_message", model: FALLBACK },
+                ],
+            },
+        };
+
+        /** A provider for each scripted model, each one able to give the others, as the configured provider does. */
+        function familyOf(models: Readonly<Record<string, ScriptedModel>>): (modelId: string) => ChatProvider {
+            const family = new Map<string, ChatProvider>();
+            const providerOf = (modelId: string): ChatProvider => {
+                const known = family.get(modelId);
+                if (known !== undefined) return known;
+                const model = models[modelId];
+                if (model === undefined) throw new Error(`the family has no model ${modelId}`);
+                const made: ChatProvider = { ...model.provider, withModel: providerOf };
+                family.set(modelId, made);
+                return made;
+            };
+            return providerOf;
+        }
+
+        async function threadModel(): Promise<string | null | undefined> {
+            return (await createThreadStore(pool).getThread(THREAD))._unsafeUnwrap()?.model;
+        }
+
+        it("starts a turn on the model of its thread", async () => {
+            (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_A }))._unsafeUnwrap();
+            (await createThreadStore(pool).setModel(THREAD, FALLBACK))._unsafeUnwrap();
+            const primary = scriptedModel([], { modelId: PRIMARY });
+            const fallback = scriptedModel([reply([text("the groups differ")])], { modelId: FALLBACK });
+            const providerOf = familyOf({ [PRIMARY]: primary, [FALLBACK]: fallback });
+
+            await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), primary, { provider: providerOf(PRIMARY) }), params());
+
+            expect(primary.calls).toHaveLength(0);
+            expect(fallback.calls).toHaveLength(1);
+        });
+
+        it("pins the thread to the model that answered a fallback", async () => {
+            const primary = scriptedModel([{ ...echoCall("tu-1"), providerMetadata: HOP }], { modelId: PRIMARY });
+            const fallback = scriptedModel([reply([text("the groups differ")])], { modelId: FALLBACK });
+            const providerOf = familyOf({ [PRIMARY]: primary, [FALLBACK]: fallback });
+
+            await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), primary, { provider: providerOf(PRIMARY) }), params());
+
+            expect(fallback.calls).toHaveLength(1);
+            expect(await threadModel()).toBe(FALLBACK);
+        });
+
+        it("keeps the pin of a turn that fails after the move", async () => {
+            const primary = scriptedModel([{ ...echoCall("tu-1"), providerMetadata: HOP }], { modelId: PRIMARY });
+            const fallback = scriptedModel([{ fail: apiFailure(400, "Bad Request") }], { modelId: FALLBACK });
+            const providerOf = familyOf({ [PRIMARY]: primary, [FALLBACK]: fallback });
+
+            await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), primary, { provider: providerOf(PRIMARY) }), params());
+
+            expect((await turnRecords()).map((record) => record.status)).toEqual(["failed"]);
+            expect(await threadModel()).toBe(FALLBACK);
+        });
     });
 
     it("reads a stored turn back as one user message and one assistant message", async () => {

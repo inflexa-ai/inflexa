@@ -624,3 +624,37 @@ The harness MUST give the outcome of a turn by its id when the workflow of the t
 
 - **WHEN** a turn ends with a reply
 - **THEN** the outcome is `done` with the stop reason of the root loop, the usage of the turn, and the final text
+
+### Requirement: A turn runs on the model of its thread
+
+A chat turn MUST read the `model` of its thread before its run. A turn workflow MUST read it in its `chat-turn.prepare` step, thus a replay uses the recorded value. When the thread names a model, the root loop of the turn MUST run on the provider that `withModel` of the turn provider gives for that model. The compaction rules of the turn MUST read the context window of that provider.
+
+When the thread names no model, the turn MUST run on the provider of the host. When the provider of the host has no `withModel` member, the turn MUST run on the provider of the host, and it MUST log a warning that names the model of the thread.
+
+#### Scenario: A pinned thread starts on its model
+
+- **GIVEN** a thread whose model is `claude-opus-5`
+- **AND** a turn provider on the model `claude-opus-5-5` with a `withModel` member
+- **WHEN** a turn runs on the thread
+- **THEN** the first request of the turn goes to the provider of `claude-opus-5`
+
+#### Scenario: A thread with no model starts on the model of the host
+
+- **WHEN** a turn runs on a thread whose model is null
+- **THEN** the first request goes to the provider of the host
+
+### Requirement: A turn records a move to another model on its thread
+
+When the root loop of a chat turn moves the run to another model, the turn MUST write that model to its thread with `setModel`. A turn workflow MUST run the write as the step `chat-turn.model`. The write MUST occur at the move, thus a turn that fails or stops later keeps the pin. A failed write MUST NOT stop the turn, and the turn MUST log a warning.
+
+#### Scenario: A fallback pins the thread
+
+- **GIVEN** a thread whose model is null
+- **WHEN** a step of the turn reports a fallback to `claude-opus-5`
+- **THEN** the thread reads the model `claude-opus-5` after the turn
+
+#### Scenario: The pin survives a failed turn
+
+- **GIVEN** a turn whose run moves to `claude-opus-5` and then fails
+- **WHEN** the turn ends
+- **THEN** the thread reads the model `claude-opus-5`

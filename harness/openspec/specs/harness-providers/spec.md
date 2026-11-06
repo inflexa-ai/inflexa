@@ -481,3 +481,57 @@ The classification MUST treat a connection that the endpoint refuses or resets a
 - **AND** the fetch error has the code `ECONNRESET` and no status
 - **WHEN** the failure is classified
 - **THEN** the `ProviderError` has `type: "provider"` and `retryable: true`
+
+### Requirement: A provider can give the provider of another model
+
+A `ChatProvider` can give a `withModel(modelId)` member. The member MUST return a provider over the same connection and the same host policy, with the named model in place of its own model. Each value that depends on the model MUST come from the named model, for example the thinking binding of the Anthropic arm.
+
+The configured provider MUST give the member for each arm. It MUST build the returned provider from its own configuration with the model id replaced. It MUST give the same instance for the same model id.
+
+A provider over a model that the embedder supplied MUST NOT give the member, because it has no configuration to copy.
+
+#### Scenario: The configured provider gives the provider of another model
+
+- **GIVEN** a provider made from an `anthropic` configuration with the model `claude-opus-5-5`
+- **WHEN** a caller calls `withModel("claude-opus-5")`
+- **THEN** the returned provider binds the model `claude-opus-5` over the same connection
+- **AND** a second call with `claude-opus-5` returns the same instance
+
+#### Scenario: A provider over a supplied model gives no other model
+
+- **WHEN** an embedder makes a provider with `createAiSdkProvider` over its own model
+- **THEN** the provider has no `withModel` member
+
+### Requirement: The Anthropic arm sends the fallback of the API by default
+
+The `anthropic` arm MUST send `fallbacks: "default"` and its beta header on each request, also when the configuration names no `fallbacks` value. The value `off` MUST send no `fallbacks` parameter and no fallback beta header. The value exists for an endpoint behind `baseURL` that is not the Anthropic API and rejects the parameter.
+
+#### Scenario: A configuration with no value asks for the fallback
+
+- **WHEN** a request goes out from an `anthropic` configuration with no `fallbacks` value
+- **THEN** the body carries `fallbacks: "default"`, and the header `anthropic-beta` holds `server-side-fallback-2026-07-01`
+
+#### Scenario: The value off asks for no fallback
+
+- **WHEN** a request goes out from an `anthropic` configuration with `fallbacks: "off"`
+- **THEN** the body carries no `fallbacks`, and no header names a fallback beta
+
+### Requirement: A provider names its refusal fallback model
+
+The configured provider MUST give a `refusalFallbackModel` for an `anthropic` configuration that does not set `fallbacks: "off"`. The value MUST come from a table of the harness, which maps each Anthropic model to a permitted fallback target that Anthropic documents. A provider that the `withModel` member returned MUST give the value of its own model.
+
+The provider configuration MUST NOT carry the value, because the harness knows the model. A model with no row of the table, an arm other than `anthropic`, and a configuration with `fallbacks: "off"` MUST give no value.
+
+The loop reads the value when the provider declines a request and the API names no fallback model for it. With no value, the declined request ends the series.
+
+#### Scenario: The configured provider names the fallback model of its model
+
+- **GIVEN** an `anthropic` configuration with the model `claude-opus-5-5` and no `fallbacks` value
+- **WHEN** the provider is made
+- **THEN** its `refusalFallbackModel` is `claude-opus-5`
+- **AND** the provider that `withModel("claude-opus-5")` gives names `claude-opus-4-8`
+
+#### Scenario: A configuration with the fallback off names no fallback model
+
+- **WHEN** a provider is made from an `anthropic` configuration with `fallbacks: "off"`
+- **THEN** its `refusalFallbackModel` is absent
