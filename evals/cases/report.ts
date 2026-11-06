@@ -31,7 +31,7 @@ const DE_ROWS = Array.from({ length: 610 }, (_, i) => {
     return {
         gene_id: `ENSG${String(100_000 + i * 13).padStart(11, "0")}`,
         symbol,
-        log2FoldChange: (up ? 1 : -1) * (1.1 + ((i * 37) % 200) / 100),
+        log2FoldChange: (up ? 1 : -1) * (i < 3 ? 4 - i * 0.45 : 1.1 + ((i * 37) % 200) / 100),
         padj: 1e-38 * 1.12 ** i,
     };
 });
