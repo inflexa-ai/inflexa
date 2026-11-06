@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 
 import { presentAt } from "../../../lib/present.js";
 import { restoreFetch, stubFetch, type SentRequest } from "../../__fixtures__/fetch-stub.js";
@@ -7,14 +7,13 @@ import { readFixture } from "../../lib/__fixtures__/fixture-runner.js";
 import { createRunScriptTool } from "../../script/run-script.js";
 import { getProteinDomainsTool, type GetProteinDomainsOutput } from "../get-protein-domains.js";
 
-/** Each request that the tool sent, in call order. */
+/** Each request that the tool sent, in call order. `stubAnswer` makes a new list, and each test ends with an empty list. */
 let requests: SentRequest[] = [];
 
-beforeEach(() => {
+afterEach(() => {
+    restoreFetch();
     requests = [];
 });
-
-afterEach(restoreFetch);
 
 /** Answer each request with one status and one body. A string body goes as it is. */
 function stubAnswer(status: number, body: unknown): void {
