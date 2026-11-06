@@ -105,6 +105,8 @@ export type Thread = {
      * fall through and render a tombstoned conversation as live.
      */
     readonly deletedAt: Date | null;
+    /** The id of the model that the thread runs on. `null`: the model of the host. */
+    readonly model: string | null;
 };
 
 export type CreateThreadInput = {
@@ -243,6 +245,11 @@ export type ThreadStore = {
      */
     setAutoTitle(threadId: string, title: string): ResultAsync<Thread | null, DbError>;
     /**
+     * Set the model of the thread, or `null` for the model of the host. A change of the model is no activity of the
+     * thread, thus `updated_at` stays. `null` when the row is missing or archived.
+     */
+    setModel(threadId: string, model: string | null): ResultAsync<Thread | null, DbError>;
+    /**
      * Soft-delete the subtree: stamp `deleted_at` on the named thread and on
      * every descendant reachable through `parent_thread_id`, at any depth, so a
      * hidden thread never leaves a visible child behind. Every row and every one
@@ -316,6 +323,7 @@ type ThreadRow = {
     readonly created_at: Date;
     readonly updated_at: Date;
     readonly deleted_at: Date | null;
+    readonly model: string | null;
 };
 
 /**
@@ -324,7 +332,8 @@ type ThreadRow = {
  * column `toThread` reads — a gap that would surface as an `undefined` field on
  * a `Thread`, not as a failure.
  */
-const THREAD_COLUMNS = "thread_id, analysis_id, title, thread_type, parent_thread_id, parent_seq::text AS parent_seq, created_at, updated_at, deleted_at";
+const THREAD_COLUMNS =
+    "thread_id, analysis_id, title, thread_type, parent_thread_id, parent_seq::text AS parent_seq, created_at, updated_at, deleted_at, model";
 
 /**
  * The named thread plus every descendant reachable through `parent_thread_id`,
@@ -356,6 +365,7 @@ function toThread(row: ThreadRow): Thread {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         deletedAt: row.deleted_at,
+        model: row.model,
     };
 }
 
@@ -525,6 +535,18 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
          WHERE thread_id = $1 AND deleted_at IS NULL AND NOT title_set_by_user
          RETURNING ${THREAD_COLUMNS}`,
                 [threadId, title],
+            ),
+        ).map(({ rows }) => (rows[0] ? toThread(rows[0]) : null));
+    }
+
+    function setModel(threadId: string, model: string | null): ResultAsync<Thread | null, DbError> {
+        return tryMutation("thread-store.setModel", () =>
+            pool.query<ThreadRow>(
+                `UPDATE cortex_analysis_threads
+         SET model = $2
+         WHERE thread_id = $1 AND deleted_at IS NULL
+         RETURNING ${THREAD_COLUMNS}`,
+                [threadId, model],
             ),
         ).map(({ rows }) => (rows[0] ? toThread(rows[0]) : null));
     }
@@ -752,5 +774,5 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
         ).map(({ rows }) => rows.map(toThread));
     }
 
-    return { createThread, getThread, updateTitle, setAutoTitle, archiveThread, unarchiveThread, purgeThread, listThreads, listRecentThreads };
+    return { createThread, getThread, updateTitle, setAutoTitle, setModel, archiveThread, unarchiveThread, purgeThread, listThreads, listRecentThreads };
 }

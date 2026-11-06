@@ -267,6 +267,43 @@ describe("setAutoTitle", () => {
     });
 });
 
+describe("setModel", () => {
+    it("starts a thread on the model of the host", async () => {
+        const created = (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A }))._unsafeUnwrap();
+
+        expect(created.model).toBeNull();
+    });
+
+    it("sets the model and leaves the activity clock", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A }))._unsafeUnwrap();
+        const before = await readStamps("t1");
+
+        expect((await store.setModel("t1", "claude-opus-5"))._unsafeUnwrap()?.model).toBe("claude-opus-5");
+
+        expect((await store.getThread("t1"))._unsafeUnwrap()?.model).toBe("claude-opus-5");
+        expect((await readStamps("t1")).updatedAt).toBe(before.updatedAt);
+    });
+
+    it("clears the model with null", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A }))._unsafeUnwrap();
+        (await store.setModel("t1", "claude-opus-5"))._unsafeUnwrap();
+
+        (await store.setModel("t1", null))._unsafeUnwrap();
+
+        expect((await store.getThread("t1"))._unsafeUnwrap()?.model).toBeNull();
+    });
+
+    it("changes no missing or archived thread", async () => {
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A }))._unsafeUnwrap();
+        (await store.archiveThread("t1"))._unsafeUnwrap();
+
+        expect((await store.setModel("missing", "claude-opus-5"))._unsafeUnwrap()).toBeNull();
+        expect((await store.setModel("t1", "claude-opus-5"))._unsafeUnwrap()).toBeNull();
+        const { rows } = await pool.query<{ model: string | null }>("SELECT model FROM cortex_analysis_threads WHERE thread_id = $1", ["t1"]);
+        expect(presentAt(rows, 0).model).toBeNull();
+    });
+});
+
 describe("archiveThread (soft delete)", () => {
     it("excludes the thread from get/list while the row and messages persist (2.2, 2.3)", async () => {
         (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Archived" }))._unsafeUnwrap();

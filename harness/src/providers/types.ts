@@ -161,7 +161,17 @@ export type ChatProvider = {
      * value from the provider instance, not from a harness constant.
      */
     readonly requestTimeoutMs?: number;
+    /**
+     * The model that the loop sends a declined request to again, when the endpoint named no fallback model for it.
+     * Absent: a declined request ends the series.
+     */
+    readonly refusalFallbackModel?: string;
     bind(binding: ModelBinding): BoundModel;
+    /**
+     * The provider of another model over the same connection and host policy. Absent: the provider cannot serve
+     * another model, thus a run stays on this model.
+     */
+    withModel?(modelId: string): ChatProvider;
 };
 
 /**

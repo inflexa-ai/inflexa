@@ -12,7 +12,7 @@ Authorization is not this store's job. The store's detail, title-update, and del
 
 ### Requirement: Thread metadata is stored in a harness-native table
 
-Conversation thread metadata SHALL be persisted in the harness-owned `cortex_analysis_threads` table. Each row SHALL carry `thread_id` (primary key, the UI-generated thread UUID), `analysis_id`, `title`, `created_at`, `updated_at`, a nullable `deleted_at` (soft-delete tombstone; `NULL` means live), `thread_type` (not null, defaulting to `conversation`), a nullable `parent_thread_id` referencing `cortex_analysis_threads(thread_id)` with `ON DELETE CASCADE`, and a nullable `parent_seq` holding the parent thread's `messages.seq` at the moment the child was spawned. Each row SHALL also carry `title_set_by_user` (not null, defaulting to `false`), which records whether a person set the title. The table SHALL be indexed by `analysis_id` (live rows only) to support listing, and by `parent_thread_id` over every row, live and archived alike, to support child listing and the subtree walk. An index on `updated_at` descending and `thread_id`, over the live rows only, MUST serve the listing of the newest threads over each analysis. A versioned migration MUST add that index. The `parent_thread_id` index SHALL carry no `deleted_at` predicate: the subtree walk must reach archived descendants and the referential trigger behind `ON DELETE CASCADE` is the database's own query, so neither can supply one, and Postgres uses a partial index only where it can prove the predicate holds. The three columns beyond the tombstone SHALL be introduced additively, so an existing row acquires `thread_type = 'conversation'` with a null parent and a null anchor and no backfill runs. The `title_set_by_user` column SHALL arrive through a versioned migration. The table SHALL NOT carry a free-form `metadata` column — working memory lives in `cortex_working_memory`, and nothing else reads thread metadata.
+Conversation thread metadata SHALL be persisted in the harness-owned `cortex_analysis_threads` table. Each row SHALL carry `thread_id` (primary key, the UI-generated thread UUID), `analysis_id`, `title`, `created_at`, `updated_at`, a nullable `deleted_at` (soft-delete tombstone; `NULL` means live), `thread_type` (not null, defaulting to `conversation`), a nullable `parent_thread_id` referencing `cortex_analysis_threads(thread_id)` with `ON DELETE CASCADE`, and a nullable `parent_seq` holding the parent thread's `messages.seq` at the moment the child was spawned. Each row SHALL also carry `title_set_by_user` (not null, defaulting to `false`), which records whether a person set the title. Each row MUST also carry a nullable `model`. The column holds the id of the model that the thread runs on, and null means the model of the host. A versioned migration MUST add the column, and an existing row gets null. The table SHALL be indexed by `analysis_id` (live rows only) to support listing, and by `parent_thread_id` over every row, live and archived alike, to support child listing and the subtree walk. An index on `updated_at` descending and `thread_id`, over the live rows only, MUST serve the listing of the newest threads over each analysis. A versioned migration MUST add that index. The `parent_thread_id` index SHALL carry no `deleted_at` predicate: the subtree walk must reach archived descendants and the referential trigger behind `ON DELETE CASCADE` is the database's own query, so neither can supply one, and Postgres uses a partial index only where it can prove the predicate holds. The three columns beyond the tombstone SHALL be introduced additively, so an existing row acquires `thread_type = 'conversation'` with a null parent and a null anchor and no backfill runs. The `title_set_by_user` column SHALL arrive through a versioned migration. The table SHALL NOT carry a free-form `metadata` column — working memory lives in `cortex_working_memory`, and nothing else reads thread metadata.
 
 #### Scenario: A thread row round-trips
 
@@ -42,6 +42,11 @@ Conversation thread metadata SHALL be persisted in the harness-owned `cortex_ana
 
 - **WHEN** the migrations ran
 - **THEN** an index on `cortex_analysis_threads(updated_at DESC, thread_id)` for the live rows exists
+
+#### Scenario: A new thread runs on the model of the host
+
+- **WHEN** a thread is created
+- **THEN** its `model` reads null
 
 ### Requirement: The thread store exposes thread operations via a DI factory
 
@@ -463,3 +468,25 @@ The read MUST run as one SQL statement. It MUST walk the live threads through th
 
 - **WHEN** `listRecentThreads` runs over threads of 20 analyses
 - **THEN** it sends one query
+
+### Requirement: The store sets the model of a thread
+
+The thread store MUST give `setModel(threadId, model)`. The operation MUST write the model id, or null, to the `model` column of the live thread. It MUST NOT change `updated_at`, because a change of the model is no activity of the thread. It MUST NOT change an archived row. It MUST return the thread, or null when no live thread has the id. Each returned `Thread` MUST carry `model`.
+
+#### Scenario: A set model reads back
+
+- **GIVEN** a live thread
+- **WHEN** a caller sets the model `claude-opus-5`
+- **THEN** `getThread` returns the model `claude-opus-5`, and `updated_at` did not change
+
+#### Scenario: A null model clears the pin
+
+- **GIVEN** a thread with the model `claude-opus-5`
+- **WHEN** a caller sets the model null
+- **THEN** `getThread` returns a null model
+
+#### Scenario: An archived thread keeps its model
+
+- **GIVEN** an archived thread
+- **WHEN** a caller sets its model
+- **THEN** the operation returns null, and the row does not change

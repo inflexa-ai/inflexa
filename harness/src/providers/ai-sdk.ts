@@ -175,11 +175,12 @@ export type AiSdkProviderConfig =
            */
           readonly thinkingBinding?: "drop_block" | "error" | "off";
           /**
-           * `default`: when a safety classifier declines a request, the API sends it again to the model that it
-           * recommends for the category of the refusal, inside the same call. When the field is absent, a declined
-           * request ends with the content filter. A model with no fallback target keeps its refusal.
+           * `default`, also when the field is absent: when a safety classifier declines a request, the API sends it
+           * again to the model that it recommends for the category of the refusal, inside the same call, and the loop
+           * retries a decline that the API did not send on. A model with no fallback target keeps its refusal. `off`
+           * sends no `fallbacks` parameter, for an endpoint behind `baseURL` that is not the Anthropic API and rejects it.
            */
-          readonly fallbacks?: "default";
+          readonly fallbacks?: "default" | "off";
       }
     | {
           readonly kind: "openai";
@@ -348,17 +349,11 @@ type InputTransformation = {
  * reported without one, and `undefined` when no hop happened.
  *
  * A model can refuse a request by category — a biology prompt is one such category —
- * and the API then re-serves it on another model. It reports the hop TWICE: as a
- * `fallback` content block inside the assistant turn, and on
- * `providerMetadata.anthropic.iterations`. `@ai-sdk/anthropic` keeps the block as a
- * custom part and sends it back on the next request, but it keeps each thinking block
- * before it too. The API accepts no thinking block from before the hop, and a turn
- * whose thinking blocks changed earns `thinking ... blocks in the latest assistant
- * message cannot be modified`, which is a 400 that no retry can pass.
- *
- * A thinking block is optional on the way back, thus the loop records the reply of a
- * hop with no thinking block, and the next request continues. The cost is the
- * reasoning of this one turn and the cache write that its new prefix pays for.
+ * and the API then re-serves it on another model. It reports the hop on
+ * `providerMetadata.anthropic.iterations`. A hop inside the call also leaves a
+ * `fallback` content block in the reply, which `@ai-sdk/anthropic` keeps as a custom
+ * part in its position. A turn that the API sent straight to the fallback model, after
+ * an earlier hop of the same request, has the iteration and no block.
  *
  * The response metadata of the package carries `message_start.message.model`, and
  * after a hop in the middle of a reply that field keeps the REQUESTED model. The
@@ -374,6 +369,21 @@ export function fallbackModelOf(metadata: ProviderMetadata | undefined): string 
         return "model" in record && typeof record["model"] === "string" ? record["model"] : "";
     }
     return undefined;
+}
+
+/** Whether a part of a reply is the `fallback` block that marks where a fallback model continued the reply. */
+export function isFallbackPart(part: { readonly type: string; readonly kind?: string }): boolean {
+    return part.type === "custom" && part.kind === "anthropic.fallback";
+}
+
+/**
+ * The model that a refusal names for a direct retry: `stop_details.recommended_model`, which the API sets when it
+ * skipped the fallback attempt, for example for a rate limit of the fallback model. `undefined` for each other case.
+ */
+export function recommendedModelOf(metadata: ProviderMetadata | undefined): string | undefined {
+    const details = parseUnknownRecord(metadata?.["anthropic"]?.["stopDetails"]);
+    const model = details?.["recommendedModel"];
+    return typeof model === "string" && model.length > 0 ? model : undefined;
 }
 
 /** Reads `providerMetadata.anthropic.inputTransformations`; empty for another vendor. */
@@ -728,7 +738,7 @@ function retryEnvelope(options: EnvelopeOptions): LanguageModelMiddleware {
         }
         const servedBy = fallbackModelOf(part.providerMetadata);
         if (servedBy !== undefined) {
-            logger.warn("reply served by a fallback model, thus the harness drops the thinking of that turn", {
+            logger.warn("reply served by a fallback model", {
                 workload,
                 servedBy: servedBy === "" ? undefined : servedBy,
             });
@@ -957,8 +967,9 @@ export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
 /**
  * Realize an `AiSdkProviderConfig` into a `ChatProvider` bound to that config's
  * connection and model. The model is closed into the returned provider here, so
- * N models require N provider instances over one shared connection
- * configuration — one instance serves the single model it was built with.
+ * one instance serves the single model it was built with. `withModel` gives the
+ * instance of another model, built from the same config with the model replaced,
+ * and each provider of the family gives one instance for each model id.
  *
  * When the config sets `requestTimeoutMs`, the provider wraps the effective fetch
  * (`config.fetch ?? globalThis.fetch`) with the response-start guard, the retry
@@ -967,6 +978,36 @@ export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
  * absent, it installs no wrapper, it bounds nothing, and it advertises no value.
  */
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
+    const family = new Map<string, ChatProvider>();
+    const providerOf = (modelId: string): ChatProvider => {
+        const known = family.get(modelId);
+        if (known !== undefined) return known;
+        const config = { ...deps.config, model: modelId };
+        const made: ChatProvider = { ...providerOfConfig({ ...deps, config }), refusalFallbackModel: refusalFallbackModelOf(config), withModel: providerOf };
+        family.set(modelId, made);
+        return made;
+    };
+    return providerOf(deps.config.model);
+}
+
+/**
+ * The fallback model of each Anthropic model whose classifier can decline a request, from the permitted targets that
+ * Anthropic documents for it. The API names no model for a streamed decline inside an open tool-use block, thus the
+ * loop sends that request again to this model. A model with no row keeps the decline.
+ */
+const ANTHROPIC_REFUSAL_FALLBACKS: Readonly<Record<string, string>> = {
+    "claude-fable-5-1": "claude-opus-5",
+    "claude-opus-5-5": "claude-opus-5",
+    "claude-opus-5": "claude-opus-4-8",
+    "claude-sonnet-5-5": "claude-sonnet-5",
+};
+
+/** The refusal fallback model of a config: only an Anthropic config that keeps the fallback of the API on has one. */
+function refusalFallbackModelOf(config: AiSdkProviderConfig): string | undefined {
+    return config.kind === "anthropic" && config.fallbacks !== "off" ? ANTHROPIC_REFUSAL_FALLBACKS[config.model] : undefined;
+}
+
+function providerOfConfig(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
     const requestTimeoutMs = config.requestTimeoutMs;
     const effectiveFetch = requestTimeoutMs === undefined ? config.fetch : wrapFetchWithRequestTimeout(config.fetch ?? globalThis.fetch, requestTimeoutMs);
@@ -1003,7 +1044,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
                 anthropic: {
                     metadata: { userId: sessionKeyDigestOf(session) },
                     thinking: binding === undefined ? undefined : thinkingWithBinding(reasoning, binding),
-                    fallbacks: config.fallbacks,
+                    fallbacks: config.fallbacks === "off" ? undefined : "default",
                 } satisfies AnthropicLanguageModelOptions,
             }),
         });

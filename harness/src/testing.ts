@@ -19,7 +19,8 @@ import type { ChatProvider, ChatUsage, ProviderCapabilities } from "./providers/
 export type ScriptedPart =
     | { readonly type: "text"; readonly text: string }
     | { readonly type: "reasoning"; readonly text: string; readonly signature?: string }
-    | { readonly type: "tool-call"; readonly toolCallId: string; readonly toolName: string; readonly input: unknown };
+    | { readonly type: "tool-call"; readonly toolCallId: string; readonly toolName: string; readonly input: unknown }
+    | { readonly type: "fallback"; readonly from: string; readonly to: string };
 
 export type ScriptedReply = {
     readonly content: readonly ScriptedPart[];
@@ -59,6 +60,11 @@ export function toolCall(toolCallId: string, toolName: string, input: unknown): 
     return { type: "tool-call", toolCallId, toolName, input };
 }
 
+/** The `fallback` block of the Anthropic wire: the model `to` continued the reply that the model `from` declined. */
+export function fallback(from: string, to: string): ScriptedPart {
+    return { type: "fallback", from, to };
+}
+
 export function reply(content: readonly ScriptedPart[], finishReason: ScriptedReply["finishReason"] = "stop", usage?: ChatUsage): ScriptedReply {
     return usage === undefined ? { content, finishReason } : { content, finishReason, usage };
 }
@@ -91,15 +97,22 @@ function contentParts(content: readonly ScriptedPart[]): LanguageModelV4StreamPa
             case "tool-call":
                 parts.push({ type: "tool-call", toolCallId: part.toolCallId, toolName: part.toolName, input: JSON.stringify(part.input) });
                 break;
+            case "fallback":
+                parts.push({
+                    type: "custom",
+                    kind: "anthropic.fallback",
+                    providerMetadata: { anthropic: { type: "fallback", from: { model: part.from }, to: { model: part.to } } },
+                });
+                break;
         }
     }
     return parts;
 }
 
-function streamOf(entry: ScriptedReply, index: number): LanguageModelV4StreamPart[] {
+function streamOf(entry: ScriptedReply, index: number, modelId: string): LanguageModelV4StreamPart[] {
     return [
         { type: "stream-start", warnings: [] },
-        { type: "response-metadata", id: entry.responseId ?? `response-${index}`, modelId: entry.modelId ?? "scripted-model", timestamp: new Date(0) },
+        { type: "response-metadata", id: entry.responseId ?? `response-${index}`, modelId: entry.modelId ?? modelId, timestamp: new Date(0) },
         ...contentParts(entry.content),
         {
             type: "finish",
@@ -117,12 +130,15 @@ export function scriptedModel(
         readonly capabilities?: Partial<ProviderCapabilities>;
         readonly maxRetries?: number;
         readonly resolveRequestHeaders?: ResolveRequestHeaders;
+        /** The id of the model. Defaults to `scripted-model`. */
+        readonly modelId?: string;
     } = {},
 ): ScriptedModel {
     const calls: LanguageModelV4CallOptions[] = [];
+    const modelId = options.modelId ?? "scripted-model";
     const model = new MockLanguageModelV4({
         provider: "scripted",
-        modelId: "scripted-model",
+        modelId,
         doStream: async (call) => {
             const index = calls.length;
             calls.push(call);
@@ -139,7 +155,7 @@ export function scriptedModel(
                     ]),
                 };
             }
-            return { stream: convertArrayToReadableStream(streamOf(entry, index)) };
+            return { stream: convertArrayToReadableStream(streamOf(entry, index, modelId)) };
         },
     });
     const provider = createAiSdkProvider({

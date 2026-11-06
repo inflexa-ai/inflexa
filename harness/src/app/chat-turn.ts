@@ -61,7 +61,14 @@ export type PrepareChatTurnParams = {
     readonly userInput: string;
 };
 
-export type PrepareChatTurnResult = ({ readonly kind: "ok"; readonly threadType: ThreadType } & AssembledMessages) | { readonly kind: "not_found" };
+export type PrepareChatTurnResult =
+    | ({
+          readonly kind: "ok";
+          readonly threadType: ThreadType;
+          /** The model that the thread runs on. `null`: the model of the host. */
+          readonly model: string | null;
+      } & AssembledMessages)
+    | { readonly kind: "not_found" };
 
 /** A prepared turn: the type of its thread, the view of the thread, and the opening. */
 export type PreparedChatTurn = Extract<PrepareChatTurnResult, { kind: "ok" }>;
@@ -87,7 +94,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         logger: deps.logger,
     });
 
-    return { kind: "ok", threadType: opened.threadType, ...assembled };
+    return { kind: "ok", threadType: opened.threadType, model: opened.model, ...assembled };
 }
 
 /**
@@ -99,7 +106,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
 export async function openThread(
     deps: PrepareChatTurnDeps,
     params: PrepareChatTurnParams,
-): Promise<{ readonly kind: "ok"; readonly threadType: ThreadType } | { readonly kind: "not_found" }> {
+): Promise<{ readonly kind: "ok"; readonly threadType: ThreadType; readonly model: string | null } | { readonly kind: "not_found" }> {
     const { pool } = deps;
     const { analysisId, threadId, userInput } = params;
     const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
@@ -140,7 +147,7 @@ export async function openThread(
         if (created.threadType === "conversation") {
             observe({ type: "create-session", analysisId, threadId, sessionKind: created.threadType });
         }
-        return { kind: "ok", threadType: created.threadType };
+        return { kind: "ok", threadType: created.threadType, model: created.model };
     }
 
     // Seed the thread title from the first user message. Best-effort.
@@ -151,7 +158,7 @@ export async function openThread(
             logger.warn("title-seed failed (non-fatal)", logger.errorFields(err));
         }
     }
-    return { kind: "ok", threadType: existing.threadType };
+    return { kind: "ok", threadType: existing.threadType, model: existing.model };
 }
 
 /** The analysis context and the run activity of a turn. A failed read gives the fallback of its kind. */
@@ -329,12 +336,29 @@ export async function runOpenTurn(
         if (recorder.assistantMessageId() !== assistantBefore) await transport.announce?.(recorder.assistantMessageId());
     };
 
-    const compaction = compactionPolicy(deps, turn.analysisId, prepared.threadType, agent);
+    const provider = providerOfThread(deps.provider, prepared.model, turn.threadId, logger);
+    const store = createThreadStore(deps.pool);
+    // The pin lands when the run moves, thus a turn that fails or stops later keeps it.
+    const pinModel = async (modelId: string): Promise<void> => {
+        await transport.durably("chat-turn.model", async () => {
+            const written = await store.setModel(turn.threadId, modelId);
+            if (written.isErr()) {
+                logger.warn("chat turn model pin failed", {
+                    threadId: turn.threadId,
+                    model: modelId,
+                    op: written.error.op,
+                    ...logger.errorFields(written.error.cause),
+                });
+            }
+            return written.isOk();
+        });
+    };
+    const compaction = compactionPolicy(deps, provider, turn.analysisId, prepared.threadType, agent);
     let outcome: ChatTurnOutcome;
     let fallbackText: string | undefined;
     try {
         const run = await runLoop(agent, prepared.history, session, {
-            provider: deps.provider,
+            provider,
             signal: transport.signal,
             emit: transport.emit,
             onText: transport.onText,
@@ -350,6 +374,7 @@ export async function runOpenTurn(
             approve: transport.approve,
             pause: transport.pause,
             onRound: storeRound,
+            onModelChange: pinModel,
         });
         outcome = run.finish.reason === "aborted" ? { status: "aborted", finish: run.finish } : { status: "done", finish: run.finish };
         // An abort can end the run inside an exchange, and the text of an exchange is a summary, and no reply.
@@ -396,14 +421,29 @@ export function userTextOf(message: ModelMessage): string {
 
 const WORKING_MEMORY_TOOL_ID = "update_working_memory";
 
-function compactionPolicy(deps: RunChatTurnDeps, analysisId: string, threadType: ThreadType, agent: AgentDefinition): CompactionPolicy | undefined {
+/** The provider of the model of a thread. A thread with no model, or a host provider that serves one model only, keeps the host provider. */
+function providerOfThread(hostProvider: ChatProvider, model: string | null, threadId: string, logger: Logger): ChatProvider {
+    if (model === null) return hostProvider;
+    const pinned = hostProvider.withModel?.(model);
+    if (pinned !== undefined) return pinned;
+    logger.warn("the provider of the host cannot run the model of the thread, thus the turn runs on the model of the host", { threadId, model });
+    return hostProvider;
+}
+
+function compactionPolicy(
+    deps: RunChatTurnDeps,
+    provider: ChatProvider,
+    analysisId: string,
+    threadType: ThreadType,
+    agent: AgentDefinition,
+): CompactionPolicy | undefined {
     if (agent.compaction === undefined) return undefined;
     // A report thread reads a frozen copy of the working memory, thus its agent declares no memory tool.
     const remembers = agent.tools.some((tool) => tool.id === WORKING_MEMORY_TOOL_ID);
     const workingMemory = createWorkingMemory(deps.pool);
     return {
         // The capabilities are read for each turn, because a host can switch the model of the conversation between turns.
-        ...rulesForContextWindow(agent.compaction, deps.provider.capabilities.contextWindow),
+        ...rulesForContextWindow(agent.compaction, provider.capabilities.contextWindow),
         request: remembers ? MEMORY_COMPACTION_REQUEST : SUMMARY_COMPACTION_REQUEST,
         mask: remembers ? { allow: [WORKING_MEMORY_TOOL_ID] } : "none",
         keepFirstTurn: threadType === "report",
