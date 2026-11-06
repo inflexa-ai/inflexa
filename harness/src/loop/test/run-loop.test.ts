@@ -16,6 +16,7 @@ import { viewCode, viewFields, viewJson, viewText, type ToolCallView } from "../
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedReply, type ScriptStep } from "../../testing.js";
 import type { ChatProvider } from "../../providers/types.js";
 import { presentAt } from "../../lib/present.js";
+import { metricReader } from "./metric-reader.js";
 import { CONTINUE_DECLINED_REQUEST, continueLoop, runLoop, runWithSalvage, type AgentRound, type LoopOptions, type LoopStep } from "../run-loop.js";
 import type { AgentDefinition, EmitEvent, EmitFn, LoopMessage } from "../types.js";
 
@@ -389,6 +390,67 @@ describe("runLoop — the model of a run", () => {
 
         expect(result.finish.reason).toBe("content-filter");
         expect(callsOf(FALLBACK)).toHaveLength(0);
+    });
+});
+
+describe("runLoop — the refusal counter", () => {
+    const PRIMARY = "claude-opus-5-5";
+    const FALLBACK = "claude-opus-5";
+    const HOP = {
+        anthropic: {
+            iterations: [
+                { type: "message", model: PRIMARY },
+                { type: "fallback_message", model: FALLBACK },
+            ],
+        },
+    };
+
+    /** The data points of the refusal counter after one run of the loop over `provider`. */
+    async function refusalPointsOf(provider: ChatProvider) {
+        const capture = metricReader();
+        try {
+            await runLoop(
+                agentWith([]),
+                [user("go")],
+                makeSession(),
+                options(provider, () => undefined),
+            );
+            const metric = (await capture.collect()).find((m) => m.descriptor.name === "cortex.harness.agent.model_refusals");
+            return (metric?.dataPoints ?? []).map((point) => ({ attributes: point.attributes, value: point.value }));
+        } finally {
+            await capture.stop();
+        }
+    }
+
+    it("counts a request that the provider answered with a fallback model", async () => {
+        const { provider } = scriptedModel([{ ...reply([text("done")]), providerMetadata: HOP }], { modelId: PRIMARY });
+
+        expect(await refusalPointsOf(provider)).toEqual([
+            { attributes: { agent_id: "test-agent", outcome: "fallback", model: PRIMARY, fallback_model: FALLBACK }, value: 1 },
+        ]);
+    });
+
+    it("counts a declined request that the loop sent again to the refusal fallback model", async () => {
+        const fallback = scriptedModel([reply([text("done")])], { modelId: FALLBACK });
+        const primary = scriptedModel([reply([], "content-filter")], { modelId: PRIMARY });
+        const withModel = (modelId: string): ChatProvider => (modelId === FALLBACK ? fallback.provider : primary.provider);
+        const provider: ChatProvider = { ...primary.provider, refusalFallbackModel: FALLBACK, withModel };
+
+        expect(await refusalPointsOf(provider)).toEqual([
+            { attributes: { agent_id: "test-agent", outcome: "retry", model: PRIMARY, fallback_model: FALLBACK }, value: 1 },
+        ]);
+    });
+
+    it("counts a declined request that no model answered", async () => {
+        const { provider } = scriptedModel([reply([], "content-filter")], { modelId: PRIMARY });
+
+        expect(await refusalPointsOf(provider)).toEqual([{ attributes: { agent_id: "test-agent", outcome: "stopped", model: PRIMARY }, value: 1 }]);
+    });
+
+    it("counts nothing for a request that the model answered", async () => {
+        const { provider } = scriptedModel([reply([text("done")])], { modelId: PRIMARY });
+
+        expect(await refusalPointsOf(provider)).toEqual([]);
     });
 });
 

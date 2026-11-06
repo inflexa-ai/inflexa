@@ -63,7 +63,7 @@ import { accountingMiddleware, rollupMiddleware } from "./accounting.js";
 import { createCallPolicy, type CallPolicy, type CallPolicyState, type ToolMask } from "./call-policy.js";
 import { createRunScriptTool } from "../tools/script/run-script.js";
 import { COMPACTION_MAX_REQUESTS, type CompactionPolicy } from "./compaction.js";
-import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
+import { addChatUsage, hasReportedUsage, recordAgentRun, recordModelRefusal, type AgentRunUsage } from "./metrics.js";
 import {
     adaptTools,
     deniedReason,
@@ -1052,6 +1052,7 @@ async function runSeries(
                 const declinedStep: LoopStep = { ...loopStep, calls: [] };
                 seriesSteps.push(declinedStep);
                 target.steps.push(declinedStep);
+                recordModelRefusal({ agentId: target.metricAgentId, outcome: "retry", model: step.model.modelId, fallbackModel: retryModel });
                 await opts.emit({ type: "data-model-refusal", source, data: { id: step.response.id, outcome: "fallback", model: retryModel } });
                 await opts.emit({ type: "iteration", source, index: seriesSteps.length - 1, final: false });
                 return;
@@ -1062,7 +1063,15 @@ async function runSeries(
             target.steps.push(loopStep);
             if (loopStep.calls.length > 0) log.debug("iteration", { iteration: seriesSteps.length - 1, tools: loopStep.calls.map((call) => call.toolName) });
             const refusal = refusalOf(step, loopStep);
-            if (refusal !== undefined) await opts.emit({ type: "data-model-refusal", source, data: refusal });
+            if (refusal !== undefined) {
+                recordModelRefusal({
+                    agentId: target.metricAgentId,
+                    outcome: refusal.outcome,
+                    model: step.model.modelId,
+                    fallbackModel: refusal.outcome === "fallback" ? refusal.model : undefined,
+                });
+                await opts.emit({ type: "data-model-refusal", source, data: refusal });
+            }
             const servedBy = fallbackModelOf(step.providerMetadata);
             if (servedBy !== undefined && servedBy !== "" && loopStep.finishReason !== "content-filter") await route.moveTo(servedBy);
             await opts.emit({ type: "iteration", source, index: seriesSteps.length - 1, final: !continuesAfter(loopStep) || stops() });

@@ -18,6 +18,12 @@
  *   - cortex.harness.agent.cap_hits — counter, incremented once per run that
  *     reached its step cap.
  *
+ * Each model request that the provider declined records
+ * cortex.harness.agent.model_refusals, with `agent_id`, `outcome`, the
+ * declined `model`, and the `fallback_model` that answered it. The loop records
+ * it as it reads the reply, thus a recovery that replays the turn counts the
+ * refusal again, as it records the run again.
+ *
  * The two cache counters are what make prompt caching *observable*: the hit
  * rate for an agent type is `cache_read_tokens / input_tokens` (the harness's
  * `inputTokens` is the total billed prefix, cache reads included). A flat-zero
@@ -46,6 +52,7 @@ type Instruments = {
     readonly cacheReadTokens: Counter;
     readonly cacheWriteTokens: Counter;
     readonly reasoningTokens: Counter;
+    readonly modelRefusals: Counter;
 };
 
 let instruments: Instruments | undefined;
@@ -80,6 +87,9 @@ function getInstruments(): Instruments {
             reasoningTokens: meter.createCounter("cortex.harness.agent.reasoning_tokens", {
                 description: "Reasoning tokens of each completed LLM call, as the provider reports them",
                 unit: "{token}",
+            }),
+            modelRefusals: meter.createCounter("cortex.harness.agent.model_refusals", {
+                description: "Model requests that the provider declined, by what became of each one",
             }),
         };
     }
@@ -161,6 +171,24 @@ export function recordAgentRun(run: { readonly agentId: string; readonly iterati
     const attributes = { agent_id: run.agentId };
     iterations.record(run.iterations, attributes);
     if (run.cappedOut) capHits.add(1, attributes);
+}
+
+/**
+ * What became of a declined request: `fallback`, the provider answered it with another model; `retry`, the loop sent
+ * it again to another model; `stopped`, no model answered it.
+ */
+export type RefusalOutcome = "fallback" | "retry" | "stopped";
+
+/** Record one model request that the provider declined. */
+export function recordModelRefusal(refusal: {
+    readonly agentId: string;
+    readonly outcome: RefusalOutcome;
+    readonly model: string;
+    readonly fallbackModel?: string;
+}): void {
+    const attributes: Attributes = { agent_id: refusal.agentId, outcome: refusal.outcome, model: refusal.model };
+    if (refusal.fallbackModel !== undefined) attributes.fallback_model = refusal.fallbackModel;
+    getInstruments().modelRefusals.add(1, attributes);
 }
 
 /**

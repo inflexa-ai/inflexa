@@ -414,6 +414,20 @@ The loop MUST emit a `data-model-refusal` part with the outcome `fallback` and t
 - **WHEN** the loop sends the request again
 - **THEN** the second request sends the same messages as the first request
 
+### Requirement: The loop counts each declined request
+
+The loop MUST count each model request that the provider declined on the counter `cortex.harness.agent.model_refusals`. The count carries the agent id, the declined model, and the outcome. The outcome is `fallback` when the provider answered with another model, `retry` when the loop sent the request again to another model, and `stopped` when no model answered. A `fallback` or a `retry` count also carries the model that answered.
+
+#### Scenario: The loop sends a declined request again
+
+- **WHEN** the provider declines a request on `claude-opus-5-5` with no fallback, and the loop sends it again to `claude-opus-5`
+- **THEN** the counter grows by one with the outcome `retry`, the model `claude-opus-5-5`, and the fallback model `claude-opus-5`
+
+#### Scenario: No model answers
+
+- **WHEN** the provider declines a request, and the loop has no model to send it to
+- **THEN** the counter grows by one with the outcome `stopped`, and the count carries no fallback model
+
 ### Requirement: The loop records a fallback reply as the provider documents it
 
 The loop MUST record the reply of a step that a fallback model answered with each part after the last `fallback` part. It MUST remove each reasoning part before the last `fallback` part, and it MUST keep the `fallback` part in its position. A reply with no `fallback` part keeps its reasoning parts.
