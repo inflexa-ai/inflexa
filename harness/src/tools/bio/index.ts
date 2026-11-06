@@ -33,6 +33,9 @@ export * from "./humanbase.js";
 // Structural biology
 export * from "./alphafold-prediction.js";
 
+// Protein domain architecture
+export * from "./get-protein-domains.js";
+
 // Literature
 export * from "./pubmed.js";
 

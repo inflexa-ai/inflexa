@@ -1,0 +1,550 @@
+{
+    "count": 9,
+    "next": null,
+    "previous": null,
+    "results": [
+        {
+            "metadata": {
+                "accession": "IPR001357",
+                "name": "BRCT domain",
+                "source_database": "interpro",
+                "type": "domain",
+                "integrated": null,
+                "member_databases": {
+                    "pfam": {
+                        "PF12738": "twin BRCT domain",
+                        "PF16770": "Regulator of Ty1 transposition protein 107 BRCT domain",
+                        "PF16589": "BRCT domain",
+                        "PF00533": "BRCA1 C Terminus (BRCT) domain"
+                    },
+                    "profile": {
+                        "PS50172": "BRCT domain profile"
+                    },
+                    "smart": {
+                        "SM00292": "breast cancer carboxy-terminal domain"
+                    }
+                },
+                "go_terms": null
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": "1642",
+                                    "end": 1736,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1756,
+                                    "end": 1855,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "accession": "IPR001841",
+                "name": "Zinc finger, RING-type",
+                "source_database": "interpro",
+                "type": "domain",
+                "integrated": null,
+                "member_databases": {
+                    "profile": {
+                        "PS50089": "Zinc finger RING-type profile"
+                    },
+                    "pfam": {
+                        "PF14634": "zinc-RING finger domain",
+                        "PF17121": "Zinc finger, C3HC4 type (RING finger)",
+                        "PF17122": "Zinc-finger",
+                        "PF17123": "RING-like zinc finger",
+                        "PF13923": "Zinc finger, C3HC4 type (RING finger)",
+                        "PF13639": "Ring finger domain"
+                    },
+                    "smart": {
+                        "SM00184": "Ring finger"
+                    }
+                },
+                "go_terms": null
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": 24,
+                                    "end": 65,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "accession": "IPR011364",
+                "name": "Breast cancer type 1 susceptibility protein (BRCA1)",
+                "source_database": "interpro",
+                "type": "family",
+                "integrated": null,
+                "member_databases": {
+                    "prints": {
+                        "PR00493": "BRSTCANCERI"
+                    }
+                },
+                "go_terms": [
+                    {
+                        "identifier": "GO:0003677",
+                        "name": "DNA binding",
+                        "category": {
+                            "code": "F",
+                            "name": "molecular_function"
+                        }
+                    },
+                    {
+                        "identifier": "GO:0004842",
+                        "name": "ubiquitin-protein transferase activity",
+                        "category": {
+                            "code": "F",
+                            "name": "molecular_function"
+                        }
+                    },
+                    {
+                        "identifier": "GO:0008270",
+                        "name": "zinc ion binding",
+                        "category": {
+                            "code": "F",
+                            "name": "molecular_function"
+                        }
+                    },
+                    {
+                        "identifier": "GO:0006281",
+                        "name": "DNA repair",
+                        "category": {
+                            "code": "P",
+                            "name": "biological_process"
+                        }
+                    },
+                    {
+                        "identifier": "GO:0005634",
+                        "name": "nucleus",
+                        "category": {
+                            "code": "C",
+                            "name": "cellular_component"
+                        }
+                    }
+                ]
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": 55,
+                                    "end": 71,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 760,
+                                    "end": 780,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1030,
+                                    "end": 1047,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1180,
+                                    "end": 1200,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1430,
+                                    "end": 1446,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1632,
+                                    "end": 1652,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1699,
+                                    "end": 1719,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1771,
+                                    "end": 1794,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "accession": "IPR013083",
+                "name": "Zinc finger, RING/FYVE/PHD-type",
+                "source_database": "interpro",
+                "type": "homologous_superfamily",
+                "integrated": null,
+                "member_databases": {
+                    "cathgene3d": {
+                        "G3DSA:3.30.40.10": "Zinc/RING finger domain, C3HC4 (zinc finger)"
+                    }
+                },
+                "go_terms": null
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1,
+                                    "end": 112,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "accession": "IPR017907",
+                "name": "Zinc finger, RING-type, conserved site",
+                "source_database": "interpro",
+                "type": "conserved_site",
+                "integrated": null,
+                "member_databases": {
+                    "prosite": {
+                        "PS00518": "Zinc finger RING-type signature"
+                    }
+                },
+                "go_terms": null
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": 39,
+                                    "end": 48,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "accession": "IPR018957",
+                "name": "Zinc finger, C3HC4 RING-type",
+                "source_database": "interpro",
+                "type": "domain",
+                "integrated": null,
+                "member_databases": {
+                    "pfam": {
+                        "PF00097": "Zinc finger, C3HC4 type (RING finger)"
+                    }
+                },
+                "go_terms": [
+                    {
+                        "identifier": "GO:0046872",
+                        "name": "metal ion binding",
+                        "category": {
+                            "code": "F",
+                            "name": "molecular_function"
+                        }
+                    }
+                ]
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": 24,
+                                    "end": 64,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "accession": "IPR025994",
+                "name": "BRCA1, serine-rich domain",
+                "source_database": "interpro",
+                "type": "domain",
+                "integrated": null,
+                "member_databases": {
+                    "pfam": {
+                        "PF12820": "Serine-rich domain associated with BRCT"
+                    }
+                },
+                "go_terms": null
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": 345,
+                                    "end": 508,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "accession": "IPR031099",
+                "name": "BRCA1-associated",
+                "source_database": "interpro",
+                "type": "family",
+                "integrated": null,
+                "member_databases": {
+                    "pirsf": {
+                        "PIRSF001734": "Transcriptional regulator, BRCA1 type"
+                    },
+                    "panther": {
+                        "PTHR13763": "BREAST CANCER TYPE 1 SUSCEPTIBILITY PROTEIN BRCA1"
+                    }
+                },
+                "go_terms": [
+                    {
+                        "identifier": "GO:0006281",
+                        "name": "DNA repair",
+                        "category": {
+                            "code": "P",
+                            "name": "biological_process"
+                        }
+                    },
+                    {
+                        "identifier": "GO:0006974",
+                        "name": "DNA damage response",
+                        "category": {
+                            "code": "P",
+                            "name": "biological_process"
+                        }
+                    }
+                ]
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1,
+                                    "end": 1858,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "accession": "IPR036420",
+                "name": "BRCT domain superfamily",
+                "source_database": "interpro",
+                "type": "homologous_superfamily",
+                "integrated": null,
+                "member_databases": {
+                    "cathgene3d": {
+                        "G3DSA:3.40.50.10190": "BRCT domain"
+                    },
+                    "ssf": {
+                        "SSF52113": "BRCT domain"
+                    }
+                },
+                "go_terms": null
+            },
+            "proteins": [
+                {
+                    "accession": "p38398",
+                    "protein_length": 1863,
+                    "source_database": "reviewed",
+                    "organism": "9606",
+                    "in_alphafold": true,
+                    "entry_protein_locations": [
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1608,
+                                    "end": 1755,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        },
+                        {
+                            "fragments": [
+                                {
+                                    "start": 1756,
+                                    "end": 1859,
+                                    "dc-status": "CONTINUOUS"
+                                }
+                            ],
+                            "representative": false,
+                            "model": null,
+                            "score": null
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
