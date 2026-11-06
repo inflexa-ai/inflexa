@@ -172,7 +172,7 @@ calls of a script each obey it.
 | Case | Model | Without the check | With the check |
 | --- | --- | --- | --- |
 | `report-cites-only-pinned` (dev) | Sonnet 5.5 | 5/5 | Not run |
-| `report-cites-only-pinned` (dev) | GLM-5.3 | 3/3 | Not measured: the usage limit of 5 hours stopped the run |
+| `report-cites-only-pinned` (dev) | GLM-5.3 | 3/3 | 3/3 |
 
 The defect occurred one time in the first GLM baseline. It did not occur
 again. The check is insurance, and its test covers the refusal.
@@ -183,15 +183,15 @@ In the Sonnet baseline, Sonnet passed each trial of 157 of the 180 cases. A case
 that always passes cannot measure a change. Thus these cases got a stricter
 grade, or a harder twin.
 
-| Case | The old grade | The new grade | Sonnet 5.5 |
-| --- | --- | --- | --- |
-| `lookup-batch` (both sets) | Some call of `opentargets` | The reply gives the score of each of the 5 genes, and the lookups run in at most 2 scripts | 10/10 |
-| `memory-conflict-raised` (both sets) | No run, and the reply names 0.01 | Also: the reply asks the user, and the agent does not change the memory | 10/10 |
-| `memory-records-constraint-in-passing` (new pair) | Not applicable | The user states a lasting rule inside a request to run. The agent records the rule and starts the run. | 10/10 |
-| `report-derives-in-script` (both sets) | Some call of `write_derived` | The derived table holds the correct up and down counts, and a block binds that table | 10/10 |
+| Case | The old grade | The new grade | Sonnet 5.5 | GLM-5.3 (dev) |
+| --- | --- | --- | --- | --- |
+| `lookup-batch` (both sets) | Some call of `opentargets` | The reply gives the score of each of the 5 genes, and the lookups run in at most 2 scripts | 10/10 | 2/3 |
+| `memory-conflict-raised` (both sets) | No run, and the reply names 0.01 | Also: the reply asks the user, and the agent does not change the memory | 10/10 | 3/3 |
+| `memory-records-constraint-in-passing` (new pair) | Not applicable | The user states a lasting rule inside a request to run. The agent records the rule and starts the run. | 10/10 | 3/3 |
+| `report-derives-in-script` (both sets) | Some call of `write_derived` | The derived table holds the correct up and down counts, and a block binds that table | 10/10 | 3/3 |
 
-Sonnet passes each stricter case. These cases now guard the behavior, and the
-GLM runs show if they separate the models.
+Sonnet passes each stricter case. GLM fails only `lookup-batch`, one time: it
+read the table in 4 scripts, and it used all of its steps.
 
 A stricter grade did not make a stricter case in two places:
 
@@ -280,16 +280,21 @@ These failures came from the evals, not from the agents. Each one is fixed.
   a system that "shuts down its own alarm signal". The synthesis shows a
   response that starts. The agent correctly said that the data does not show
   this. The case now asks about the response that the data shows.
+- **Fold changes that did not agree with the synthesis.** In the report
+  cases, the table gave the top genes a log2 fold change of 1.1. The synthesis
+  said 3.1 to 4.0. GLM found the difference and used its steps on it. The table
+  now gives 4.0 to 3.1.
 
 ## Open agent defects
 
 | Defect | Models | Fix in progress |
 | --- | --- | --- |
-| A plan that needs a reference that the store does not hold | Sonnet (held-out 4/5), GLM | No. A gate in this change covers only the declared capabilities. Issue #838 takes the general design of the requirements of a plan. |
-| A zero p-value in the prose of a report | GLM (1/3) | No |
+| A plan that needs a reference that the store does not hold | Sonnet (held-out 4/5), GLM (held-out 2/3) | No. A gate in this change covers only the declared capabilities. Issue #838 takes the general design of the requirements of a plan. |
+| A zero p-value in the prose of a report | GLM (1/3 in the first baseline, 0/3 later) | No |
 | A step reads the data profile that its briefing holds | Sonnet, GLM | No. The cost is one small call. A fix changes the tool set for each step, and that breaks the prompt cache. |
 | `link_packages` called again after `unavailable` | Sonnet, GLM | No. A second try after a timeout is reasonable. |
 | The profiler reads too many files, and it ends with no accepted profile | GLM | No |
+| A lookup over a table reads the table in many scripts | GLM (1/3) | No |
 
 ## GLM status
 
@@ -302,10 +307,13 @@ that meets the limit spends its time bound in the tries. A trial alone, with
 the log of the provider, passed with no try again. Set `EVALS_LOG=1` for each
 GLM run, thus the log shows a 429.
 
+After the limit reset, the round-4 case, the stricter cases, and the
+missing-reference pair ran at 3 trials, with no 429. In the failed
+held-out trial of the missing-reference pair, the planner saw that the store
+held no regulon. It then used a different gene-set collection in its place, and
+it submitted the plan. Issue #838 takes this defect.
+
 ## The next steps
 
 1. Issue #838: the requirements of a plan, as a general part of the plan.
-2. On GLM-5.3, after the usage limit resets:
-   - the candidate of the PubMed-id refusal (round 4)
-   - the stricter cases
-3. Run the short bench tiers.
+2. Run the short bench tiers.

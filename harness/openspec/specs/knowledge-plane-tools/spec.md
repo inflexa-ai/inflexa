@@ -53,6 +53,28 @@ Each operation of the client MUST answer a typed value and MUST NOT throw on a s
 - **WHEN** the planner drafts a differential expression step with `outcome: "descriptive_only"`, or with a method text that says the step is descriptive
 - **THEN** the check reports no violation for that step
 
+### Requirement: A plan after a recommend answer waits for a check
+
+After a `knowledge_recommend` answer in one plan generation, `submit_plan` MUST refuse a plan until a `knowledge_check` of the draft ran after that answer. A later recommend answer MUST reset the state. `knowledge_check` MUST record its run in the call record of its result, thus a replay of the generation restores the state. A plan generation with no recommend answer MUST submit as before.
+
+#### Scenario: A submit with no check refuses
+
+- **GIVEN** a plan generation in which `knowledge_recommend` answered
+- **WHEN** the planner calls `submit_plan` before any `knowledge_check`
+- **THEN** the submit is refused, and the issue tells the planner to check the draft first
+
+#### Scenario: A submit after a check passes
+
+- **GIVEN** a plan generation in which `knowledge_check` ran after the last `knowledge_recommend` answer
+- **WHEN** the planner calls `submit_plan`
+- **THEN** the gate does not refuse the plan
+
+#### Scenario: No knowledge client
+
+- **GIVEN** an embedder that binds no knowledge client
+- **WHEN** the planner calls `submit_plan`
+- **THEN** the gate does not refuse the plan
+
 ### Requirement: The recommend answer carries the environment and a plan skeleton
 
 When the host binds a farm lock or a reference store, `knowledge_recommend` MUST join each step of the procedure with the environment. The environment says whether the farm holds the package of the step, and at which version. It says whether the reference store holds the collection the step names, and at which path. The tool MUST NOT fill a gap and MUST NOT name a path it did not read.
