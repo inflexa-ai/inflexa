@@ -283,6 +283,19 @@ describe("addBlock", () => {
         expect(draft).toEqual(before);
     });
 
+    it("refuses a PubMed id in the prose that the pinned evidence does not hold, and lands a pinned one", () => {
+        const pinned: ReportSnapshot = { ...snapshot, citations: ["pmid:25516281"] };
+        const prose = (text: string) => ({ block: { kind: "text", id: "text-p", content: { prose: text } }, destination: { parentId: "sec-2" } });
+
+        const failure = addBlock(baseDraft(), prose("ISG15 is an interferon effector (PMID: 31501552)."), pinned)._unsafeUnwrapErr();
+        expect(failure.reason).toBe("unresolved-reference");
+        if (failure.reason === "unresolved-reference") {
+            expect(failure.unresolved.map((entry) => entry.reference)).toEqual([{ kind: "citation", idKind: "pmid", id: "31501552", raw: "PMID: 31501552" }]);
+        }
+
+        expect(addBlock(baseDraft(), prose("DESeq2 fits the model (PMID 25516281)."), pinned).isOk()).toBe(true);
+    });
+
     it("refuses an unresolvable reference inside a child with unresolved-reference", () => {
         const draft = baseDraft();
         const before = structuredClone(draft);

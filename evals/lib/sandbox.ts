@@ -19,7 +19,7 @@ import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
 import { unusedChatProvider } from "@inflexa-ai/harness/providers/__fixtures__/chat-provider.js";
 import { leaseOverClient } from "@inflexa-ai/harness/sandbox/__fixtures__/leases.js";
 import { FARM_LOCK_FILE } from "@inflexa-ai/harness/sandbox/farm.js";
-import { createFileMetadataCell } from "@inflexa-ai/harness/tools/sandbox/submit-file-metadata.js";
+import { createFileMetadataCell, type FileMetadataCell } from "@inflexa-ai/harness/tools/sandbox/submit-file-metadata.js";
 import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.js";
 import type { ExecRequest, ExecResult, PackageRequestOutcome } from "@inflexa-ai/harness/sandbox/types.js";
 import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/data-profile.js";
@@ -101,6 +101,8 @@ export type SandboxTrial = {
     /** The first message of a profiler trial, which the scan of the tree of the trial composes. */
     readonly seed?: string;
     readonly unscripted: readonly string[];
+    /** The cell of `submit_file_metadata` of a step agent, for the file-metadata request after the task. */
+    readonly fileMetadata?: FileMetadataCell;
     /** The text of each file under the working directory, by working-directory-relative path. */
     files(): Readonly<Record<string, string>>;
     dispose(): void;
@@ -440,6 +442,8 @@ export async function openSandboxTrial(
         skillsDir: join(REPO, "skills"),
         farmLockFile: lockFile,
         imagePackagesFile: join(dir, "env", "image-packages.json"),
+        // The reference store of the trial. A case that scripts `list_available_refs` never reads it.
+        refStorePath: refsRoot,
         extendAnalysisFarm: (_analysisId, queries) =>
             okAsync(
                 queries.map((query): PackageRequestOutcome => setup.link?.(query) ?? { kind: "absent", spelling: query.spelling, acquisitionPossible: false }),
@@ -491,6 +495,7 @@ export async function openSandboxTrial(
         agent,
         seed,
         unscripted,
+        fileMetadata: deps.fileMetadata,
         files: () => textsUnder(workingDir),
         dispose: () => rmSync(dir, { recursive: true, force: true }),
     };

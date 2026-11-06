@@ -40,6 +40,8 @@ export type KnowledgeToolsDeps = {
     readonly refStorePath?: string;
     /** Receives each recommend answer the planner sees; see `KnowledgeRecommendDeps.onAnswer`. */
     readonly onRecommend?: KnowledgeRecommendDeps["onAnswer"];
+    /** Called for each answer of `knowledge_check`; see `KnowledgeCheckDeps.onCheck`. */
+    readonly onCheck?: () => void;
 };
 
 /**
@@ -59,7 +61,7 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
             refStorePath: deps.refStorePath,
             onAnswer: deps.onRecommend,
         }),
-        createKnowledgeCheckTool({ client: deps.client, pin }),
+        createKnowledgeCheckTool({ client: deps.client, pin, onCheck: deps.onCheck }),
     ];
 }
 
