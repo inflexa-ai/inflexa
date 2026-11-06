@@ -171,6 +171,28 @@ not re-litigate it.
 - **WHEN** the link pass parses the entries
 - **THEN** the queries carry the tracks `python`, `r`, none, and none, with the spellings `igraph`, `decoupleR`, `scanpy`, and `numpy`
 
+### Requirement: submit_plan resolves each package against the census
+
+`submit_plan` MUST resolve each `packages` entry against the package census of the session with `resolveQuery`, the ladder of the link pass. It MUST refuse a bare name that both tracks hold, and the issue MUST name the two prefixed forms. It MUST refuse a name that the pool does not hold, and the issue MUST name the spelling that the pool holds when the ladder finds one. A census that the planner cannot read MUST refuse no entry, because the link pass judges each entry at launch.
+
+#### Scenario: A name of both tracks is refused
+
+- **GIVEN** a census whose pool holds `igraph` in the Python track and in the R track
+- **WHEN** the planner submits a step whose packages include `igraph`
+- **THEN** the submit is refused, and the issue names `python:igraph` and `r:igraph`
+
+#### Scenario: A name that the pool does not hold is refused
+
+- **GIVEN** a census whose pool does not hold `sklearn`
+- **WHEN** the planner submits a step whose packages include `sklearn`
+- **THEN** the submit is refused, and the issue names the entry
+
+#### Scenario: An unreadable census refuses nothing
+
+- **GIVEN** a census that the planner cannot read
+- **WHEN** the planner submits a plan
+- **THEN** no package issue is reported
+
 ### Requirement: The plan validation refuses a package location
 
 The shared plan validation MUST parse each package entry with `parseQuery`,

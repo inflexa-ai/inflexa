@@ -98,6 +98,11 @@ The tool SHALL distinguish an unavailable store, a present but empty store, and 
 - **WHEN** the read root exists and contains no reference data
 - **THEN** the tool returns an available-but-empty result rather than a missing-store result
 
+#### Scenario: A query that matches nothing names the store as the only source
+
+- **WHEN** the store is populated, and a query matches no reference beneath the requested path
+- **THEN** the content says that no reference matches, that the store is the only reference data that the sandbox can read, and that the sandbox has no network
+
 #### Scenario: Store is not mounted
 
 - **WHEN** the read root does not exist or is not a directory
