@@ -44,7 +44,9 @@ export const getProteinDomainsTool = defineTool({
         "Each row is one InterPro entry: `accession` ('IPR001357'), `name` ('BRCT domain'), `type` (domain, family, homologous_superfamily, repeat, " +
         "conserved_site, active_site, binding_site, ptm), `memberDatabases` (database, then signature accession, then signature name: pfam, " +
         "PF00533, 'BRCA1 C Terminus (BRCT) domain'), and `locations`, the residue ranges of the match, 1-based and inclusive, in sequence order. " +
-        "A discontinuous match gives one range for each fragment. To place a variant, compare its residue position with the ranges.\n" +
+        "A discontinuous match gives one range for each fragment. The ranges are on the canonical UniProt sequence of the accession. To place a " +
+        "variant, compare its residue position with the ranges only when its transcript encodes that canonical sequence: another isoform numbers " +
+        "the residues differently, and the same gene or the same length does not prove the same sequence.\n" +
         "The rows are in the order of their first residue. `limit` is the size of the one page that InterPro serves, in the order of the InterPro accession, " +
         "and the tool sorts that page; `totalFound` gives the true count. `maxLocations` trims " +
         "the ranges of each row, and `locationCount` gives the true count: a repeat can match hundreds of times on a large protein such as titin.\n" +

@@ -44,6 +44,8 @@ export type SandboxToolName =
     | "geneDiseaseEvidence"
     // Population allele frequencies of short variants (gnomAD).
     | "getVariantFrequencies"
+    // The InterPro domains of one protein, with their residue ranges.
+    | "getProteinDomains"
     | "drugGeneInteractions"
     | "genePreclinicalProfile"
     // Clinical / public-data landscape.
