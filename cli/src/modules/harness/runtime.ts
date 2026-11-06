@@ -44,22 +44,49 @@ import {
 } from "@inflexa-ai/harness";
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
-import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
-import { env, KNOWLEDGE_API_KEY_VAR, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
-import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
-import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, releaseInstanceLock } from "../../lib/lock.ts";
+import {
+    resolveEngineSocket,
+    type ContainerRuntime,
+    type ContainerRuntimeError,
+} from "../../lib/container.ts";
+import {
+    env,
+    KNOWLEDGE_API_KEY_VAR,
+    providerApiKeyVar,
+    resolveModelApiKey,
+} from "../../lib/env.ts";
+import {
+    createCredentialSource,
+    credentialErrorMessage,
+    type Credential,
+    type CredentialSource,
+} from "../../lib/credential.ts";
+import {
+    acquireInstanceLock,
+    HARNESS_RUNTIME_LOCK_KEY,
+    releaseInstanceLock,
+} from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { withinDeadline } from "../../lib/timer.ts";
 import { notifyProfileSettledActivity } from "../analysis/activity.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
-import { analysisFarmPath, linkPackagesIntoFarm, resolveAnalysisFarm } from "../libs/composition.ts";
+import {
+    analysisFarmPath,
+    linkPackagesIntoFarm,
+    resolveAnalysisFarm,
+} from "../libs/composition.ts";
 import { readPoolInventorySections } from "../libs/packages.ts";
 import { classifyPoolMiss } from "../libs/store_flight.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
-import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
+import {
+    modelMatchesProvider,
+    readApiKey,
+    resolveModelId,
+    type ChatSetupError,
+} from "../proxy/models.ts";
 import {
     resolveHarnessConfig,
     resolveKnowledgeConfig,
@@ -82,15 +109,30 @@ import { createEphemeralEyes } from "./eyes.ts";
 import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
-import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "./prov_bridge.ts";
-import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
+import {
+    createProvenanceSeam,
+    createSwappableSandboxEmitters,
+    installProvenanceSeam,
+} from "./prov_bridge.ts";
+import {
+    buildExecuteAnalysisDeps,
+    buildSandboxStepDeps,
+    type RunEngineComposition,
+    type AgentBackend,
+} from "./run_deps.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
 // The QuickJS VM of `run_script`. A compiled binary has no node_modules on disk, thus it embeds this wasm, and the build
 // embeds the worker entry of the harness (scripts/build.ts). A source run gives no runtime, and the VM loads from
 // node_modules.
 import quickjsWasm from "@inflexa-ai/harness/tools/script/quickjs.wasm" with { type: "file" };
 import type { ScriptRuntime } from "@inflexa-ai/harness/tools/script/run-script.js";
-import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch, type AgentSelection } from "./agent_switch.ts";
+import {
+    clearAgentSwitch,
+    createSwappableProvider,
+    currentAgentModels,
+    installAgentSwitch,
+    type AgentSelection,
+} from "./agent_switch.ts";
 import { messageOf } from "../../lib/cause.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
@@ -247,9 +289,10 @@ export function describeBootError(e: HarnessBootError): string {
         case "model_connection_invalid":
             return `Your \`models.connection\` config is invalid — ${e.issues}. Fix it in config.json and re-run.`;
         case "embedding_unresolved":
-            return ["Profiling's vector indexing requires an embedder, and none could be resolved from the `embedding` config key.", e.cause.message].join(
-                "\n",
-            );
+            return [
+                "Profiling's vector indexing requires an embedder, and none could be resolved from the `embedding` config key.",
+                e.cause.message,
+            ].join("\n");
         case "embedding_probe_failed":
             return [
                 `The configured embedder failed a probe embedding (${e.detail}) — profiling would otherwise fail after the sandbox run already spent its work.`,
@@ -318,7 +361,9 @@ export function describeBootError(e: HarnessBootError): string {
 }
 
 /** Why the embedding probe failed — a failed/hung embed call vs. a working-but-wrong-width model. */
-export type EmbeddingProbeError = { kind: "embed_failed"; detail: string } | { kind: "dimension_mismatch"; expected: number; actual: number };
+export type EmbeddingProbeError =
+    | { kind: "embed_failed"; detail: string }
+    | { kind: "dimension_mismatch"; expected: number; actual: number };
 
 /** Ceiling on the probe embed. Generous for both realizations: an endpoint round-trip and the local GGUF's one-time model load. */
 const PROBE_TIMEOUT_MS = 15_000;
@@ -336,7 +381,9 @@ const PROBE_TIMEOUT_MS = 15_000;
  * round-trip; for `local` it loads the GGUF and warms the provider's cached
  * runtime (same process), so the cost is not wasted.
  */
-async function probeEmbeddingProvider(provider: EmbeddingProvider): Promise<Result<void, EmbeddingProbeError>> {
+async function probeEmbeddingProvider(
+    provider: EmbeddingProvider,
+): Promise<Result<void, EmbeddingProbeError>> {
     // A minimal local session: the probe is identity-less work and no request
     // headers hook is wired, but the provider (correctly) refuses calls without
     // a session.
@@ -346,19 +393,27 @@ async function probeEmbeddingProvider(provider: EmbeddingProvider): Promise<Resu
         provenance: { agentId: "embedding-boot-probe", callPath: ["embedding-boot-probe"] },
         auth: makeLocalAuth(),
     };
-    const checked: Promise<Result<void, EmbeddingProbeError>> = provider.embed(["ping"], probeSession).match(
-        (vectors): Result<void, EmbeddingProbeError> => {
-            const actual = vectors[0]?.length ?? 0;
-            return actual === provider.dimensions ? ok(undefined) : err({ kind: "dimension_mismatch", expected: provider.dimensions, actual });
-        },
-        (e): Result<void, EmbeddingProbeError> => err({ kind: "embed_failed", detail: e.message }),
-    );
+    const checked: Promise<Result<void, EmbeddingProbeError>> = provider
+        .embed(["ping"], probeSession)
+        .match(
+            (vectors): Result<void, EmbeddingProbeError> => {
+                const actual = vectors[0]?.length ?? 0;
+                return actual === provider.dimensions
+                    ? ok(undefined)
+                    : err({ kind: "dimension_mismatch", expected: provider.dimensions, actual });
+            },
+            (e): Result<void, EmbeddingProbeError> =>
+                err({ kind: "embed_failed", detail: e.message }),
+        );
     // `EmbeddingProvider.embed` takes no AbortSignal, so a hung call can only be
     // raced, not cancelled — the loser is abandoned, which is fine at boot: on
     // timeout we fail the boot, and on success the process runs long past it.
     const outcome = await withinDeadline(checked, PROBE_TIMEOUT_MS);
     if (outcome.kind === "timeout") {
-        return err({ kind: "embed_failed", detail: `no embedding after ${PROBE_TIMEOUT_MS / 1000}s` });
+        return err({
+            kind: "embed_failed",
+            detail: `no embedding after ${PROBE_TIMEOUT_MS / 1000}s`,
+        });
     }
     return outcome.value;
 }
@@ -381,7 +436,9 @@ export type ResolvedSandboxEngine = {
  * macOS compat socket moves across machine restarts), so it is returned, never
  * persisted.
  */
-async function resolveSandboxEngineOnce(): Promise<Result<ResolvedSandboxEngine, ContainerRuntimeError>> {
+async function resolveSandboxEngineOnce(): Promise<
+    Result<ResolvedSandboxEngine, ContainerRuntimeError>
+> {
     const rtResult = await ensureRuntime();
     if (rtResult.isErr()) return err(rtResult.error);
     const runtime = rtResult.value;
@@ -399,7 +456,9 @@ export type BootSeams = {
      * socket off the runtime descriptor; injected so the sequencing test stays
      * offline (no runtime binaries spawned).
      */
-    readonly resolveSandboxEngine: () => Promise<Result<ResolvedSandboxEngine, ContainerRuntimeError>>;
+    readonly resolveSandboxEngine: () => Promise<
+        Result<ResolvedSandboxEngine, ContainerRuntimeError>
+    >;
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
     /** Construct the sandbox client — a seam so boot tests can inspect the engine config it is wired with. */
     readonly createSandbox: typeof createSandboxClient;
@@ -542,12 +601,22 @@ export async function resolveChatCredential(
 ): Promise<Result<ChatCredential, HarnessBootError>> {
     if (connection.mode === "cliproxy") {
         const keyResult = await seams.readKey();
-        return keyResult.isErr() ? err({ type: "proxy_key_missing", cause: keyResult.error }) : ok({ apiKey: keyResult.value });
+        return keyResult.isErr()
+            ? err({ type: "proxy_key_missing", cause: keyResult.error })
+            : ok({ apiKey: keyResult.value });
     }
-    if (connection.auth !== undefined) return ok({ apiKey: CREDENTIAL_PLACEHOLDER_API_KEY, source: createCredentialSource(connection.auth) });
+    if (connection.auth !== undefined)
+        return ok({
+            apiKey: CREDENTIAL_PLACEHOLDER_API_KEY,
+            source: createCredentialSource(connection.auth),
+        });
     const key = seams.readModelApiKey(connection.provider);
     // Name the provider-conventional variable tried alongside the override, so the failure names both env vars.
-    if (!key) return err({ type: "model_api_key_missing", providerVar: providerApiKeyVar(connection.provider) });
+    if (!key)
+        return err({
+            type: "model_api_key_missing",
+            providerVar: providerApiKeyVar(connection.provider),
+        });
     return ok({ apiKey: key });
 }
 
@@ -576,8 +645,15 @@ export function createAgentModelResolver(
         cliproxyAutoDefault = resolveModel(apiKey).then((resolved) =>
             resolved.match(
                 (m): Result<string, HarnessBootError> =>
-                    modelMatchesProvider(connection.provider, m) ? ok(m) : err({ type: "model_provider_mismatch", provider: connection.provider, model: m }),
-                (e): Result<string, HarnessBootError> => err({ type: "model_unresolved", cause: e }),
+                    modelMatchesProvider(connection.provider, m)
+                        ? ok(m)
+                        : err({
+                              type: "model_provider_mismatch",
+                              provider: connection.provider,
+                              model: m,
+                          }),
+                (e): Result<string, HarnessBootError> =>
+                    err({ type: "model_unresolved", cause: e }),
             ),
         );
         return cliproxyAutoDefault;
@@ -609,6 +685,7 @@ export function agentProviderConfig(args: {
     // limit. The helper spreads a field only when it is present, so an absent config field yields an
     // absent provider field, and the harness then keeps its own default.
     const requestBounds = pickRequestBounds(connection);
+    const fallbacks = connection.fallbacks === undefined ? {} : { fallbacks: connection.fallbacks };
     // `imageToolResults` is a fact about the endpoint, thus each arm states its own value. The proxy
     // translates each request onto the account that `inflexa setup` authenticated. That account can be
     // a model of a different vendor, and such a wire carries no picture inside a tool result. A direct
@@ -626,6 +703,7 @@ export function agentProviderConfig(args: {
             reasoning: effort,
             capabilities: { toolCalling: true, imageToolResults: false },
             ...requestBounds,
+            ...fallbacks,
         };
     }
     // A direct endpoint can serve a model with a small window. The configured value wins over the probed one.
@@ -641,6 +719,7 @@ export function agentProviderConfig(args: {
               fetch,
               capabilities: { toolCalling: true, imageToolResults: true, ...contextWindow },
               ...requestBounds,
+              ...fallbacks,
           }
         : connection.protocol === "openai"
           ? {
@@ -691,19 +770,30 @@ function applyCredential(headers: Headers, cred: Credential): void {
  * failure surfaces unchanged. A resolution failure REJECTS the fetch (its throwing contract), which the
  * harness maps to a provider error with the actionable message. `underlying` is injectable for tests.
  */
-export function buildAuthInjectingFetch(source: CredentialSource, underlying: InjectingFetch = fetch): InjectingFetch & Pick<typeof fetch, "preconnect"> {
-    const attempt = (input: string | URL | Request, init: RequestInit | undefined, cred: Credential): Promise<Response> => {
+export function buildAuthInjectingFetch(
+    source: CredentialSource,
+    underlying: InjectingFetch = fetch,
+): InjectingFetch & Pick<typeof fetch, "preconnect"> {
+    const attempt = (
+        input: string | URL | Request,
+        init: RequestInit | undefined,
+        cred: Credential,
+    ): Promise<Response> => {
         // A fresh Headers per attempt, seeded from the ORIGINAL init, so a retry never inherits the prior
         // attempt's rewrite — each attempt applies the (possibly refreshed) credential from a clean base.
         const headers = new Headers(init?.headers);
         applyCredential(headers, cred);
         return underlying(input, { ...init, headers });
     };
-    const inject = async (input: string | URL | Request, init: RequestInit | undefined): Promise<Response> => {
+    const inject = async (
+        input: string | URL | Request,
+        init: RequestInit | undefined,
+    ): Promise<Response> => {
         const first = await source.get();
         // A failed credential resolution can only surface through fetch's throwing contract; the harness's
         // provider-error mapping wraps it into the chat error path with this actionable message.
-        if (first.isErr()) throw new Error(`model credential unavailable: ${credentialErrorMessage(first.error)}`);
+        if (first.isErr())
+            throw new Error(`model credential unavailable: ${credentialErrorMessage(first.error)}`);
         const response = await attempt(input, init, first.value);
         if (response.status !== 401) return response;
         const refreshed = await source.forceRefresh();
@@ -734,7 +824,8 @@ export function makeReportPageAssetLookup(assetsDir: string): ResolvePageAsset {
         // A throw, and not a Result: the preview tool wraps each call to this seam in its own guard, and it
         // turns the throw into a typed outcome of the tool. Thus the throw is the protocol of the seam. A
         // specifier that the manifest does not carry is a fault of the build, not a condition of the run.
-        if (file === undefined) throw new Error(`unknown report page asset specifier: ${specifier}`);
+        if (file === undefined)
+            throw new Error(`unknown report page asset specifier: ${specifier}`);
         return join(assetsDir, file);
     };
 }
@@ -754,10 +845,15 @@ export function makeReportPageAssetLookup(assetsDir: string): ResolvePageAsset {
  * identity of the pool folds onto the query: the pool holds the package under
  * another spelling, thus an acquisition would be wasted work.
  */
-export function withPoolMissRemedy(outcome: PackageRequestOutcome, query: PackageQuery): PackageRequestOutcome {
+export function withPoolMissRemedy(
+    outcome: PackageRequestOutcome,
+    query: PackageQuery,
+): PackageRequestOutcome {
     if (outcome.kind !== "absent") return outcome;
     const classified = classifyPoolMiss(query);
-    const ask = outcome.acquisitionPossible ? `the pool does not hold it — run \`inflexa store add ${outcome.spelling}\` to acquire it` : undefined;
+    const ask = outcome.acquisitionPossible
+        ? `the pool does not hold it — run \`inflexa store add ${outcome.spelling}\` to acquire it`
+        : undefined;
     const unknown = [outcome.detail, ask].filter((part) => part !== undefined).join("; ");
     const detail = classified ?? (unknown === "" ? undefined : unknown);
     return detail === undefined ? outcome : { ...outcome, detail };
@@ -785,10 +881,12 @@ async function bootHarnessRuntimeOnce(
     // A `harness` config block that was present but failed validation: report the
     // offending fields, not a misleading downstream error. Checked first so a bad
     // `skillsDir` type never surfaces as "embedding not configured".
-    if (cfg.configError) return err({ type: "harness_config_invalid", issues: cfg.configError.issues });
+    if (cfg.configError)
+        return err({ type: "harness_config_invalid", issues: cfg.configError.issues });
     // Likewise a malformed `models.connection` block: report it rather than booting
     // against the silently-substituted default connection.
-    if (connection.configError) return err({ type: "model_connection_invalid", issues: connection.configError.issues });
+    if (connection.configError)
+        return err({ type: "model_connection_invalid", issues: connection.configError.issues });
 
     // A release binary ships skills/assets embedded, not on disk: materialize them (idempotent) to
     // the hash-keyed content dir that cfg.skillsDir already resolves to in a release build,
@@ -803,7 +901,8 @@ async function bootHarnessRuntimeOnce(
     if (!env.isDevelopment) {
         const { ensureBundledContent } = await import("./content.ts");
         const materialized = ensureBundledContent();
-        if (materialized.isErr()) return err({ type: "content_materialize_failed", cause: materialized.error });
+        if (materialized.isErr())
+            return err({ type: "content_materialize_failed", cause: materialized.error });
         assetsDir = materialized.value.assetsDir;
     }
 
@@ -816,7 +915,8 @@ async function bootHarnessRuntimeOnce(
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
     }
     const embedderResult = seams.resolveEmbedding();
-    if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
+    if (embedderResult.isErr())
+        return err({ type: "embedding_unresolved", cause: embedderResult.error });
     const embedding = embedderResult.value;
 
     // The chat credential is mode-specific: cliproxy discovers the minted proxy client key (and contacts the
@@ -849,11 +949,18 @@ async function bootHarnessRuntimeOnce(
     // unresolvable. Enumerate them into ONE actionable `model_required` naming every failing agent,
     // before touching the proxy — direct users name the model their endpoint serves.
     if (connection.mode === "direct") {
-        const unresolved = AGENT_NAMES.filter((agent) => connection.agents[agent] === undefined && cfg.model === null);
+        const unresolved = AGENT_NAMES.filter(
+            (agent) => connection.agents[agent] === undefined && cfg.model === null,
+        );
         if (unresolved.length > 0) return err({ type: "model_required", agents: unresolved });
     }
 
-    const resolveAgentModel = createAgentModelResolver(connection, cfg.model, providerApiKey, seams.resolveModel);
+    const resolveAgentModel = createAgentModelResolver(
+        connection,
+        cfg.model,
+        providerApiKey,
+        seams.resolveModel,
+    );
 
     const conversationResolved = await resolveAgentModel("conversation");
     if (conversationResolved.isErr()) return err(conversationResolved.error);
@@ -876,7 +983,8 @@ async function bootHarnessRuntimeOnce(
     // resolve the engine through this same pin, so pull, gate, and create target
     // ONE engine by construction.
     const engineResult = await seams.resolveSandboxEngine();
-    if (engineResult.isErr()) return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
+    if (engineResult.isErr())
+        return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
     const { runtime: pinnedRuntime, socketPath: engineSocketPath } = engineResult.value;
 
     const pgResult = await seams.ensurePostgres();
@@ -887,7 +995,8 @@ async function bootHarnessRuntimeOnce(
     // of that analysis can import. One runtime serves each analysis of the machine, thus
     // the harness resolves the path with the analysis id of each session. The tool
     // re-reads the file per call, so a farm that grows mid-session reaches the next call.
-    const farmLockFile = (id: string): string => join(analysisFarmPath(env.packageStoreDir, id), "inflexa.lock");
+    const farmLockFile = (id: string): string =>
+        join(analysisFarmPath(env.packageStoreDir, id), "inflexa.lock");
 
     // The image inventory record the catalog build packs at the store root, beside the graph.
     // The path is static, thus the boot stats nothing: the tool re-reads the file per call, so a
@@ -932,7 +1041,11 @@ async function bootHarnessRuntimeOnce(
             workspaceRootForAnalysisId(analysisId).match(
                 (root) => root,
                 (e) => {
-                    throw new Error(e.type === "workspace_unavailable" ? e.message : `workspace root for ${analysisId}: ${e.type}`);
+                    throw new Error(
+                        e.type === "workspace_unavailable"
+                            ? e.message
+                            : `workspace root for ${analysisId}: ${e.type}`,
+                    );
                 },
             );
 
@@ -961,14 +1074,21 @@ async function bootHarnessRuntimeOnce(
         // instance serves each per-model provider over this connection. Thus each agent shares the same
         // cached token and the same refresh. cliproxy and the static env key install nothing, because the
         // SDK sends that key as it is.
-        const authFetch = credentialSource !== undefined ? buildAuthInjectingFetch(credentialSource) : undefined;
+        const authFetch =
+            credentialSource !== undefined ? buildAuthInjectingFetch(credentialSource) : undefined;
         const providerConfigFor = (selection: AgentSelection): AiSdkProviderConfig =>
-            agentProviderConfig({ connection, selection, apiKey: providerApiKey, fetch: authFetch });
+            agentProviderConfig({
+                connection,
+                selection,
+                apiKey: providerApiKey,
+                fetch: authFetch,
+            });
         // The logger is what makes the retry envelope visible. It backs off up to 10 times
         // at up to 30s a wait, so a provider outage shows up as minutes of apparent silence
         // inside one tool call — indistinguishable, without these records, from a model
         // thinking hard about a hard question.
-        const buildProvider = (selection: AgentSelection): ChatProvider => createConfiguredAiSdkProvider({ config: providerConfigFor(selection), logger });
+        const buildProvider = (selection: AgentSelection): ChatProvider =>
+            createConfiguredAiSdkProvider({ config: providerConfigFor(selection), logger });
         // Coincident role selections share one INNER instance. The effort is part of the key, because
         // the provider bakes it in at construction. Each role still gets
         // its own swappable handle below, so switching one never repoints another.
@@ -981,7 +1101,10 @@ async function bootHarnessRuntimeOnce(
             providerBySelection.set(key, created);
             return created;
         };
-        const conversationSelection: AgentSelection = { model: conversationModel, effort: efforts.conversation };
+        const conversationSelection: AgentSelection = {
+            model: conversationModel,
+            effort: efforts.conversation,
+        };
         const sandboxSelection: AgentSelection = { model: sandboxModel, effort: efforts.sandbox };
         const utilitySelection: AgentSelection = { model: utilityModel, effort: efforts.utility };
         const conversationInner = innerFor(conversationSelection);
@@ -994,13 +1117,17 @@ async function bootHarnessRuntimeOnce(
         const conversationProvider = createSwappableProvider(conversationInner);
         const sandboxProvider = createSwappableProvider(sandboxInner);
         const utilityProvider = createSwappableProvider(utilityInner);
-        const conversationBackend: AgentBackend = { provider: conversationProvider, model: conversationModel };
+        const conversationBackend: AgentBackend = {
+            provider: conversationProvider,
+            model: conversationModel,
+        };
         const sandboxBackend: AgentBackend = { provider: sandboxProvider, model: sandboxModel };
         const utilityBackend: AgentBackend = { provider: utilityProvider, model: utilityModel };
         // Docker resolves to no socket path and no ownership fact. For a docker pin each key stays absent,
         // so dockerode keeps its default socket resolution (including any DOCKER_HOST the user relies on)
         // and the harness leaves the modes of the step tree untouched.
-        const engineOptions: { engineSocketPath?: string; engineBindOwnership?: "host-preserved" } = {};
+        const engineOptions: { engineSocketPath?: string; engineBindOwnership?: "host-preserved" } =
+            {};
         // Pull (`ensureSandboxImage`) and create must target the SAME engine, so dial the socket resolved
         // for the pinned runtime.
         if (engineSocketPath !== undefined) engineOptions.engineSocketPath = engineSocketPath;
@@ -1033,7 +1160,10 @@ async function bootHarnessRuntimeOnce(
             // pre-release discriminator, and the resolver is the heal backstop: it
             // composes the FULL farm from the catalog closure, thus a pre-release
             // analysis keeps the everything-available reach of the old images.
-            farmSource: { kind: "per-analysis", resolve: (id) => resolveAnalysisFarm(env.packageStoreDir, id) },
+            farmSource: {
+                kind: "per-analysis",
+                resolve: (id) => resolveAnalysisFarm(env.packageStoreDir, id),
+            },
             // The published image owns the interpreters, conda, and Node. The declared
             // value keys the resolver env and the orient-core prompt text of the harness.
             toolchainSource: "image",
@@ -1089,7 +1219,8 @@ async function bootHarnessRuntimeOnce(
         // is the connection's, and a swap changes only the model half.
         const provenance = createProvenanceSeam({
             emitters,
-            sessionModel: () => `${connection.provider}/${currentAgentModels().conversation || conversationModel}`,
+            sessionModel: () =>
+                `${connection.provider}/${currentAgentModels().conversation || conversationModel}`,
         });
         // Install it before the cohort assembles. The run-engine deps read the installed seam as they
         // are built, and the chat turn reads it at each turn, thus one object answers each surface and
@@ -1103,14 +1234,20 @@ async function bootHarnessRuntimeOnce(
         // tool, and runs from the prose skills as it does today.
         const knowledgeConfig = resolveKnowledgeConfig();
         if (knowledgeConfig?.kind === "missing_key") {
-            logger.warn("the knowledge endpoint is configured but the key is absent; the run continues without the knowledge service", {
-                baseUrl: knowledgeConfig.baseUrl,
-                variable: KNOWLEDGE_API_KEY_VAR,
-            });
+            logger.warn(
+                "the knowledge endpoint is configured but the key is absent; the run continues without the knowledge service",
+                {
+                    baseUrl: knowledgeConfig.baseUrl,
+                    variable: KNOWLEDGE_API_KEY_VAR,
+                },
+            );
         }
         const knowledge =
             knowledgeConfig?.kind === "configured"
-                ? createHttpKnowledgeClient({ baseUrl: knowledgeConfig.baseUrl, apiKey: knowledgeConfig.apiKey })
+                ? createHttpKnowledgeClient({
+                      baseUrl: knowledgeConfig.baseUrl,
+                      apiKey: knowledgeConfig.apiKey,
+                  })
                 : undefined;
 
         const composition: RunEngineComposition = {
@@ -1142,7 +1279,8 @@ async function bootHarnessRuntimeOnce(
             // reads, thus a step reaches a package that the plan did not name. It
             // acquires nothing: this call runs in the harness host process, and an
             // acquisition is a host action behind its own approval.
-            extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
+            extendAnalysisFarm: (id, queries) =>
+                ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
             bioKeys: cfg.bioKeys,
             knowledge,
             scriptRuntime: codemodeRuntime(),
@@ -1158,7 +1296,8 @@ async function bootHarnessRuntimeOnce(
         // registered name, so nothing the cli can trigger may register after.
         const workflows: CoreWorkflowDeps = {
             sandboxStep: buildSandboxStepDeps(composition),
-            buildExecuteAnalysis: (sandboxStep) => buildExecuteAnalysisDeps(composition, sandboxStep, runAuthorizer),
+            buildExecuteAnalysis: (sandboxStep) =>
+                buildExecuteAnalysisDeps(composition, sandboxStep, runAuthorizer),
             // The data-profile deps stay an inline bundle: every field is a shared
             // backend plus the shared authorizer, so there is no reusable builder to
             // extract (unlike the two run-engine bundles). Data profiling is a SANDBOX-agent
@@ -1181,7 +1320,10 @@ async function bootHarnessRuntimeOnce(
                 // emptiest, and `link_packages` is how it reads an input whose
                 // reader the farm does not hold yet. The link runs without an
                 // ask — the analysis consent covered the store at setup.
-                extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
+                extendAnalysisFarm: (id, queries) =>
+                    ResultAsync.fromSafePromise(
+                        linkPackagesIntoFarm(env.packageStoreDir, id, queries),
+                    ),
                 notifyDataProfileSettled: notifyProfileSettledActivity,
                 scriptRuntime: codemodeRuntime(),
             },
@@ -1240,7 +1382,9 @@ async function bootHarnessRuntimeOnce(
             extendAnalysisFarm: (id, queries) =>
                 // The seam answers one outcome for each query, in the order of
                 // the queries, thus the index pairs them.
-                ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)).map((outcomes) =>
+                ResultAsync.fromSafePromise(
+                    linkPackagesIntoFarm(env.packageStoreDir, id, queries),
+                ).map((outcomes) =>
                     outcomes.map((outcome, index) => {
                         const query = queries[index];
                         return query === undefined ? outcome : withPoolMissRemedy(outcome, query);
@@ -1295,18 +1439,27 @@ async function bootHarnessRuntimeOnce(
             await seams.sweepEphemeral({ pool: composition.pool, logger, executorId: "local" });
             await seams.sweepAsks(sweepGateway);
             installAgentSwitch({
-                swappable: { conversation: conversationProvider, sandbox: sandboxProvider, utility: utilityProvider },
+                swappable: {
+                    conversation: conversationProvider,
+                    sandbox: sandboxProvider,
+                    utility: utilityProvider,
+                },
                 rebuildProvider: buildProvider,
                 swapSandboxEmitters,
                 modelProvider: connection.provider,
-                initialSelections: { conversation: conversationSelection, sandbox: sandboxSelection, utility: utilitySelection },
+                initialSelections: {
+                    conversation: conversationSelection,
+                    sandbox: sandboxSelection,
+                    utility: utilitySelection,
+                },
             });
             seams.registerNotificationSweep({ pool: composition.pool, logger });
         };
 
         // A runtime that no server holds binds no publisher, and its core bag then has no such key.
         const sessionPageOptions: { makeSessionPagePublisher?: MakeSessionPagePublisher } = {};
-        if (makeSessionPagePublisher) sessionPageOptions.makeSessionPagePublisher = makeSessionPagePublisher;
+        if (makeSessionPagePublisher)
+            sessionPageOptions.makeSessionPagePublisher = makeSessionPagePublisher;
 
         // Hand the harness the resolved inputs and let it own the ordered boot
         // tail — validate skills → init state → assert the connection budget →
@@ -1327,7 +1480,9 @@ async function bootHarnessRuntimeOnce(
                 sandbox: { client: sandboxClient },
                 resourcePolicy: cfg.resourcePolicy,
                 usageRecorder,
-                resolveReportPageAsset: assetsDir ? makeReportPageAssetLookup(assetsDir) : undefined,
+                resolveReportPageAsset: assetsDir
+                    ? makeReportPageAssetLookup(assetsDir)
+                    : undefined,
                 ...sessionPageOptions,
                 // The eyes of a report session. A spawn refuses outright without them, thus this binding is
                 // what makes the report path exist here at all. The realization runs on the same pinned
@@ -1381,7 +1536,12 @@ async function bootHarnessRuntimeOnce(
             pool,
             askGateway: core.askGateway,
             triggerDeps: { pool, runAuthorizer, runLauncher, workflow: core.workflows.dataProfile },
-            runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer },
+            runTriggerDeps: {
+                pool,
+                executeAnalysis: core.workflows.executeAnalysis,
+                runLauncher,
+                runAuthorizer,
+            },
             agents: core.agents,
             approvePlan: core.approvePlan,
             chatTurns: core.chatTurns,

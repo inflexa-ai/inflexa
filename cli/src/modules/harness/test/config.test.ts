@@ -43,7 +43,10 @@ function writeConfigWithModels(models: unknown): void {
     writeFileSync(env.configPath, JSON.stringify({ telemetry: false, models }));
 }
 
-const onDiskConfigSchema = z.looseObject({ telemetry: z.boolean().optional(), models: unknownRecordSchema.optional() });
+const onDiskConfigSchema = z.looseObject({
+    telemetry: z.boolean().optional(),
+    models: unknownRecordSchema.optional(),
+});
 
 /** The config file as written to disk, read back without the config reader, thus the test sees the exact bytes. */
 function readOnDiskConfig(): z.infer<typeof onDiskConfigSchema> {
@@ -80,28 +83,46 @@ describe("resolveHarnessConfig — retired ephemeral resources", () => {
 describe("resolveModelConnection — defaults", () => {
     test("an absent models block resolves to cliproxy mode with provider anthropic and no agent overrides (today's behavior)", () => {
         writeConfigWithModels(undefined);
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: {} });
+        expect(resolveModelConnection()).toEqual({
+            mode: "cliproxy",
+            provider: "anthropic",
+            agents: {},
+        });
     });
 
     test("a models block with no connection keeps the default connection (forward-compatible with agents-only blocks)", () => {
         writeConfigWithModels({});
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: {} });
+        expect(resolveModelConnection()).toEqual({
+            mode: "cliproxy",
+            provider: "anthropic",
+            agents: {},
+        });
     });
 
     test("a cliproxy connection with no provider defaults the provider to anthropic", () => {
         writeConfigWithModels({ connection: { mode: "cliproxy" } });
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: {} });
+        expect(resolveModelConnection()).toEqual({
+            mode: "cliproxy",
+            provider: "anthropic",
+            agents: {},
+        });
     });
 
     test("a cliproxy connection records the configured provider slug verbatim", () => {
         writeConfigWithModels({ connection: { mode: "cliproxy", provider: "openai" } });
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "openai", agents: {} });
+        expect(resolveModelConnection()).toEqual({
+            mode: "cliproxy",
+            provider: "openai",
+            agents: {},
+        });
     });
 });
 
 describe("resolveModelConnection — direct protocol implication", () => {
     test("provider anthropic with no explicit protocol implies the anthropic wire kind", () => {
-        writeConfigWithModels({ connection: { mode: "direct", provider: "anthropic", baseURL: "https://gw.example/v1" } });
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "anthropic", baseURL: "https://gw.example/v1" },
+        });
         expect(resolveModelConnection()).toEqual({
             mode: "direct",
             provider: "anthropic",
@@ -112,7 +133,13 @@ describe("resolveModelConnection — direct protocol implication", () => {
     });
 
     test("any non-anthropic provider with no explicit protocol implies openai-compatible", () => {
-        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" } });
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+            },
+        });
         expect(resolveModelConnection()).toEqual({
             mode: "direct",
             provider: "deepseek",
@@ -123,22 +150,49 @@ describe("resolveModelConnection — direct protocol implication", () => {
     });
 
     test("provider openai at the OpenAI API implies the Responses wire, and at a different host openai-compatible", () => {
-        writeConfigWithModels({ connection: { mode: "direct", provider: "openai", baseURL: "https://api.openai.com/v1" } });
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "openai",
+                baseURL: "https://api.openai.com/v1",
+            },
+        });
         expect(resolveModelConnection()).toMatchObject({ mode: "direct", protocol: "openai" });
 
-        writeConfigWithModels({ connection: { mode: "direct", provider: "openai", baseURL: "https://gw.corp/v1" } });
-        expect(resolveModelConnection()).toMatchObject({ mode: "direct", protocol: "openai-compatible" });
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "openai", baseURL: "https://gw.corp/v1" },
+        });
+        expect(resolveModelConnection()).toMatchObject({
+            mode: "direct",
+            protocol: "openai-compatible",
+        });
     });
 
     test("the multipart tool content flag of a direct connection rides through", () => {
         writeConfigWithModels({
-            connection: { mode: "direct", provider: "gateway", baseURL: "https://gw.corp/v1", supportsMultiPartToolContent: true },
+            connection: {
+                mode: "direct",
+                provider: "gateway",
+                baseURL: "https://gw.corp/v1",
+                supportsMultiPartToolContent: true,
+            },
         });
-        expect(resolveModelConnection()).toMatchObject({ mode: "direct", protocol: "openai-compatible", supportsMultiPartToolContent: true });
+        expect(resolveModelConnection()).toMatchObject({
+            mode: "direct",
+            protocol: "openai-compatible",
+            supportsMultiPartToolContent: true,
+        });
     });
 
     test("an explicit protocol overrides the provider implication (an anthropic-fronting gateway that speaks openai)", () => {
-        writeConfigWithModels({ connection: { mode: "direct", provider: "anthropic", baseURL: "https://gw.example/v1", protocol: "openai-compatible" } });
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "anthropic",
+                baseURL: "https://gw.example/v1",
+                protocol: "openai-compatible",
+            },
+        });
         expect(resolveModelConnection()).toEqual({
             mode: "direct",
             provider: "anthropic",
@@ -153,43 +207,77 @@ describe("resolveModelConnection — agent overrides ride through", () => {
     test("a full agents map is carried verbatim onto the resolved connection", () => {
         writeConfigWithModels({
             connection: { mode: "cliproxy", provider: "anthropic" },
-            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-haiku-4-5" },
+            agents: {
+                conversation: "claude-opus-4-8",
+                sandbox: "claude-sonnet-4-5",
+                utility: "claude-haiku-4-5",
+            },
         });
         expect(resolveModelConnection()).toEqual({
             mode: "cliproxy",
             provider: "anthropic",
-            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-haiku-4-5" },
+            agents: {
+                conversation: "claude-opus-4-8",
+                sandbox: "claude-sonnet-4-5",
+                utility: "claude-haiku-4-5",
+            },
         });
     });
 
     test("a partial agents map carries only the stated agent (the other falls through at boot)", () => {
-        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic" }, agents: { sandbox: "claude-sonnet-4-5" } });
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: { sandbox: "claude-sonnet-4-5" } });
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic" },
+            agents: { sandbox: "claude-sonnet-4-5" },
+        });
+        expect(resolveModelConnection()).toEqual({
+            mode: "cliproxy",
+            provider: "anthropic",
+            agents: { sandbox: "claude-sonnet-4-5" },
+        });
     });
 
     test("an agents-only block (no connection) resolves to the default connection carrying the overrides", () => {
         writeConfigWithModels({ agents: { conversation: "claude-opus-4-8" } });
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: { conversation: "claude-opus-4-8" } });
+        expect(resolveModelConnection()).toEqual({
+            mode: "cliproxy",
+            provider: "anthropic",
+            agents: { conversation: "claude-opus-4-8" },
+        });
     });
 
     test("a direct connection carries its agent overrides beside the endpoint facts", () => {
         writeConfigWithModels({
-            connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" },
-            agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-chat" },
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+            },
+            agents: {
+                conversation: "deepseek-chat",
+                sandbox: "deepseek-reasoner",
+                utility: "deepseek-chat",
+            },
         });
         expect(resolveModelConnection()).toEqual({
             mode: "direct",
             provider: "deepseek",
             baseURL: "https://api.deepseek.com/v1",
             protocol: "openai-compatible",
-            agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-chat" },
+            agents: {
+                conversation: "deepseek-chat",
+                sandbox: "deepseek-reasoner",
+                utility: "deepseek-chat",
+            },
         });
     });
 
     test("a malformed agent value fails closed to the default connection, dropping the overrides, carrying a configError", () => {
         // A non-string agent id fails the whole `models` parse — the overrides cannot be trusted past a
         // parse failure, so they drop with the rest of the block and boot reports the precise field.
-        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic" }, agents: { conversation: 123 } });
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic" },
+            agents: { conversation: 123 },
+        });
         const resolved = resolveModelConnection();
         expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic", agents: {} });
         expect(resolved.configError?.issues).toContain("models.agents.conversation");
@@ -222,7 +310,13 @@ describe("resolveModelConnection — direct-mode auth (credential source) round-
                 mode: "direct",
                 provider: "deepseek",
                 baseURL: "https://api.deepseek.com/v1",
-                auth: { kind: "command", command: "mint-token --json", scheme: "x-api-key", format: "exec-credential", ttlMs: 300000 },
+                auth: {
+                    kind: "command",
+                    command: "mint-token --json",
+                    scheme: "x-api-key",
+                    format: "exec-credential",
+                    ttlMs: 300000,
+                },
             },
         });
         expect(resolveModelConnection()).toEqual({
@@ -230,13 +324,25 @@ describe("resolveModelConnection — direct-mode auth (credential source) round-
             provider: "deepseek",
             baseURL: "https://api.deepseek.com/v1",
             protocol: "openai-compatible",
-            auth: { kind: "command", command: "mint-token --json", scheme: "x-api-key", format: "exec-credential", ttlMs: 300000 },
+            auth: {
+                kind: "command",
+                command: "mint-token --json",
+                scheme: "x-api-key",
+                format: "exec-credential",
+                ttlMs: 300000,
+            },
             agents: {},
         });
     });
 
     test("a direct connection with no auth block resolves without an auth field (env-key path)", () => {
-        writeConfigWithModels({ connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1" } });
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "anthropic",
+                baseURL: "https://api.anthropic.com/v1",
+            },
+        });
         const resolved = resolveModelConnection();
         expect(resolved).not.toHaveProperty("auth");
     });
@@ -265,7 +371,13 @@ describe("resolveModelConnection — direct-mode auth (credential source) round-
     });
 
     test("a direct connection that sets none of the optional fields carries none of the keys", () => {
-        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" } });
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+            },
+        });
         const resolved = resolveModelConnection();
 
         for (const key of ["auth", "contextWindow", "supportsMultiPartToolContent"]) {
@@ -275,7 +387,12 @@ describe("resolveModelConnection — direct-mode auth (credential source) round-
 
     test("an invalid auth scheme fails the whole models parse closed, naming the offending field", () => {
         writeConfigWithModels({
-            connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1", auth: { kind: "env", var: "X", scheme: "basic" } },
+            connection: {
+                mode: "direct",
+                provider: "anthropic",
+                baseURL: "https://api.anthropic.com/v1",
+                auth: { kind: "env", var: "X", scheme: "basic" },
+            },
         });
         const resolved = resolveModelConnection();
         expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic", agents: {} });
@@ -284,14 +401,24 @@ describe("resolveModelConnection — direct-mode auth (credential source) round-
 
     test("an unknown auth kind fails closed with a config error", () => {
         writeConfigWithModels({
-            connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1", auth: { kind: "aws-sso", scheme: "bearer" } },
+            connection: {
+                mode: "direct",
+                provider: "anthropic",
+                baseURL: "https://api.anthropic.com/v1",
+                auth: { kind: "aws-sso", scheme: "bearer" },
+            },
         });
         expect(resolveModelConnection().configError).toBeDefined();
     });
 
     test("a command auth block missing its command fails closed", () => {
         writeConfigWithModels({
-            connection: { mode: "direct", provider: "openai", baseURL: "https://api.openai.com/v1", auth: { kind: "command", scheme: "bearer" } },
+            connection: {
+                mode: "direct",
+                provider: "openai",
+                baseURL: "https://api.openai.com/v1",
+                auth: { kind: "command", scheme: "bearer" },
+            },
         });
         expect(resolveModelConnection().configError).toBeDefined();
     });
@@ -319,18 +446,69 @@ describe("resolveModelConnection — fail closed", () => {
 // integer. maxRetries is a non-negative integer, so zero is a valid no-retries setting. A valid value
 // rides through, an absent value is omitted, and an out-of-range or non-integer value fails the models
 // parse closed (the same fail-closed pattern as a malformed connection above).
+// The fallback of the Anthropic API is on in the harness by default. The connection carries only an explicit
+// value, thus a person turns it off by editing the config, and setup never writes it.
+describe("resolveModelConnection — the Anthropic fallback", () => {
+    test("an explicit off rides onto each arm", () => {
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic", fallbacks: "off" },
+        });
+        const cliproxy = resolveModelConnection();
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "anthropic",
+                baseURL: "https://models.local",
+                fallbacks: "off",
+            },
+        });
+        const direct = resolveModelConnection();
+
+        for (const resolved of [cliproxy, direct]) {
+            expect(resolved.fallbacks).toBe("off");
+            expect(resolved.configError).toBeUndefined();
+        }
+    });
+
+    test("an absent value leaves no key, thus the harness keeps its default", () => {
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic" } });
+
+        expect(Object.hasOwn(resolveModelConnection(), "fallbacks")).toBe(false);
+    });
+
+    test("an unknown value fails the models parse closed", () => {
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic", fallbacks: "on" },
+        });
+
+        expect(resolveModelConnection().configError?.issues).toContain("fallbacks");
+    });
+});
+
 describe("resolveModelConnection — request timeout and retry count", () => {
     test("a valid requestTimeoutMs and maxRetries ride onto a direct connection", () => {
         writeConfigWithModels({
-            connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", requestTimeoutMs: 1_800_000, maxRetries: 3 },
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+                requestTimeoutMs: 1_800_000,
+                maxRetries: 3,
+            },
         });
         const resolved = resolveModelConnection();
-        expect(resolved).toMatchObject({ mode: "direct", requestTimeoutMs: 1_800_000, maxRetries: 3 });
+        expect(resolved).toMatchObject({
+            mode: "direct",
+            requestTimeoutMs: 1_800_000,
+            maxRetries: 3,
+        });
         expect(resolved.configError).toBeUndefined();
     });
 
     test("a valid requestTimeoutMs rides onto a cliproxy connection", () => {
-        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", requestTimeoutMs: 1_800_000 } });
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic", requestTimeoutMs: 1_800_000 },
+        });
         const resolved = resolveModelConnection();
         expect(resolved).toMatchObject({ mode: "cliproxy", requestTimeoutMs: 1_800_000 });
         expect(resolved.maxRetries).toBeUndefined();
@@ -338,7 +516,13 @@ describe("resolveModelConnection — request timeout and retry count", () => {
     });
 
     test("an absent requestTimeoutMs and maxRetries resolve to a connection without them", () => {
-        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" } });
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+            },
+        });
         const resolved = resolveModelConnection();
         expect(resolved.requestTimeoutMs).toBeUndefined();
         expect(resolved.maxRetries).toBeUndefined();
@@ -346,10 +530,23 @@ describe("resolveModelConnection — request timeout and retry count", () => {
     });
 
     test("a set requestTimeoutMs and maxRetries are keys of each arm, and a zero maxRetries stays a key", () => {
-        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", requestTimeoutMs: 1_800_000, maxRetries: 0 } });
+        writeConfigWithModels({
+            connection: {
+                mode: "cliproxy",
+                provider: "anthropic",
+                requestTimeoutMs: 1_800_000,
+                maxRetries: 0,
+            },
+        });
         const cliproxy = resolveModelConnection();
         writeConfigWithModels({
-            connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", requestTimeoutMs: 1_800_000, maxRetries: 0 },
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+                requestTimeoutMs: 1_800_000,
+                maxRetries: 0,
+            },
         });
         const direct = resolveModelConnection();
 
@@ -364,7 +561,13 @@ describe("resolveModelConnection — request timeout and retry count", () => {
     test("an absent requestTimeoutMs and maxRetries leave no key on either arm", () => {
         writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic" } });
         const cliproxy = resolveModelConnection();
-        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" } });
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+            },
+        });
         const direct = resolveModelConnection();
 
         for (const resolved of [cliproxy, direct]) {
@@ -385,26 +588,39 @@ describe("resolveModelConnection — request timeout and retry count", () => {
     });
 
     test("a zero requestTimeoutMs fails closed to the default connection, carrying a configError", () => {
-        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", requestTimeoutMs: 0 } });
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic", requestTimeoutMs: 0 },
+        });
         const resolved = resolveModelConnection();
         expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic" });
         expect(resolved.configError?.issues).toContain("models.connection");
     });
 
     test("a zero maxRetries parses and rides onto the connection as a no-retries setting", () => {
-        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", maxRetries: 0 } });
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic", maxRetries: 0 },
+        });
         const resolved = resolveModelConnection();
         expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic", maxRetries: 0 });
         expect(resolved.configError).toBeUndefined();
     });
 
     test("a negative maxRetries fails closed, carrying a configError", () => {
-        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic", maxRetries: -1 } });
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic", maxRetries: -1 },
+        });
         expect(resolveModelConnection().configError).toBeDefined();
     });
 
     test("a non-integer requestTimeoutMs fails closed, carrying a configError", () => {
-        writeConfigWithModels({ connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", requestTimeoutMs: 1.5 } });
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+                requestTimeoutMs: 1.5,
+            },
+        });
         expect(resolveModelConnection().configError).toBeDefined();
     });
 });
@@ -446,8 +662,16 @@ describe("writeAgentModel — persists models.agents spread-preserving", () => {
     });
 
     test.each([
-        ["a models block that is not an object", "oops", { agents: { conversation: "claude-opus-4-8" } }],
-        ["an agents block that is not an object", { agents: ["oops"] }, { agents: { conversation: "claude-opus-4-8" } }],
+        [
+            "a models block that is not an object",
+            "oops",
+            { agents: { conversation: "claude-opus-4-8" } },
+        ],
+        [
+            "an agents block that is not an object",
+            { agents: ["oops"] },
+            { agents: { conversation: "claude-opus-4-8" } },
+        ],
         [
             "an agents block that is null",
             { connection: { mode: "cliproxy" }, agents: null },
@@ -471,13 +695,21 @@ describe("writeAgentModel — persists models.agents spread-preserving", () => {
 describe("resolveAgentEfforts — defaults and overrides", () => {
     test("no models block gives the defaults: the conversation agent deeper than sandbox and utility", () => {
         writeConfigWithModels(undefined);
-        expect(resolveAgentEfforts()).toEqual({ conversation: "high", sandbox: "medium", utility: "medium" });
+        expect(resolveAgentEfforts()).toEqual({
+            conversation: "high",
+            sandbox: "medium",
+            utility: "medium",
+        });
         expect(resolveAgentEfforts()).toEqual({ ...DEFAULT_AGENT_EFFORTS });
     });
 
     test("a configured effort overrides its role only", () => {
         writeConfigWithModels({ efforts: { sandbox: "xhigh" } });
-        expect(resolveAgentEfforts()).toEqual({ conversation: "high", sandbox: "xhigh", utility: "medium" });
+        expect(resolveAgentEfforts()).toEqual({
+            conversation: "high",
+            sandbox: "xhigh",
+            utility: "medium",
+        });
     });
 
     test("a malformed models block gives the defaults", () => {
@@ -489,10 +721,19 @@ describe("resolveAgentEfforts — defaults and overrides", () => {
 describe("writeAgentSelection — persists the model and the effort in one write, spread-preserving", () => {
     test("writes the agent's model and effort and round-trips through the resolvers", () => {
         writeConfigWithModels(undefined);
-        expect(writeAgentSelection("utility", { model: "claude-haiku-4-5", effort: "low" }).isOk()).toBe(true);
-        expect(readModelsBlock()).toEqual({ agents: { utility: "claude-haiku-4-5" }, efforts: { utility: "low" } });
+        expect(
+            writeAgentSelection("utility", { model: "claude-haiku-4-5", effort: "low" }).isOk(),
+        ).toBe(true);
+        expect(readModelsBlock()).toEqual({
+            agents: { utility: "claude-haiku-4-5" },
+            efforts: { utility: "low" },
+        });
         expect(resolveModelConnection().agents).toEqual({ utility: "claude-haiku-4-5" });
-        expect(resolveAgentEfforts()).toEqual({ conversation: "high", sandbox: "medium", utility: "low" });
+        expect(resolveAgentEfforts()).toEqual({
+            conversation: "high",
+            sandbox: "medium",
+            utility: "low",
+        });
     });
 
     test("keeps the connection, the OTHER selections, and unrelated top-level keys", () => {
@@ -501,7 +742,9 @@ describe("writeAgentSelection — persists the model and the effort in one write
             agents: { conversation: "claude-opus-4-8" },
             efforts: { conversation: "xhigh", sandbox: "low" },
         });
-        expect(writeAgentSelection("sandbox", { model: "claude-sonnet-4-5", effort: "high" }).isOk()).toBe(true);
+        expect(
+            writeAgentSelection("sandbox", { model: "claude-sonnet-4-5", effort: "high" }).isOk(),
+        ).toBe(true);
         expect(readModelsBlock()).toEqual({
             connection: { mode: "cliproxy", provider: "anthropic" },
             agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
@@ -543,12 +786,19 @@ describe("resolveKnowledgeConfig", () => {
     test("an endpoint with the key in the environment resolves to a configured client", () => {
         writeConfigWithKnowledge({ baseUrl: "https://knowledge.example.test/" });
         Bun.env[KEY_VAR] = "secret";
-        expect(resolveKnowledgeConfig()).toEqual({ kind: "configured", baseUrl: "https://knowledge.example.test/", apiKey: "secret" });
+        expect(resolveKnowledgeConfig()).toEqual({
+            kind: "configured",
+            baseUrl: "https://knowledge.example.test/",
+            apiKey: "secret",
+        });
     });
 
     test("an endpoint without the key resolves to missing_key, never to a keyless client", () => {
         writeConfigWithKnowledge({ baseUrl: "https://knowledge.example.test" });
-        expect(resolveKnowledgeConfig()).toEqual({ kind: "missing_key", baseUrl: "https://knowledge.example.test" });
+        expect(resolveKnowledgeConfig()).toEqual({
+            kind: "missing_key",
+            baseUrl: "https://knowledge.example.test",
+        });
     });
 
     test("a malformed block degrades to null instead of failing the whole config", () => {

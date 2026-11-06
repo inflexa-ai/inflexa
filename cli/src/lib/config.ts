@@ -4,12 +4,25 @@ import { Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
-import { ContainerRuntimeError, ensureReady, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
+import {
+    ContainerRuntimeError,
+    ensureReady,
+    firstReadyRuntime,
+    runtimeIds,
+    runtimes,
+    type ContainerRuntime,
+} from "./container.ts";
 import { env, isReservedPostgresPort } from "./env.ts";
 import { getLogger } from "./log.ts";
 import { unknownRecordSchema } from "./json_record.ts";
 import { isMember } from "./types.ts";
-import { DEFAULT_DATABASE, DEFAULT_HOST, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
+import {
+    DEFAULT_DATABASE,
+    DEFAULT_HOST,
+    DEFAULT_PASSWORD,
+    DEFAULT_USER,
+    type PostgresConnection,
+} from "../modules/infra/postgres_types.ts";
 
 const configSchema = z.object({
     telemetry: z.boolean(),
@@ -125,7 +138,13 @@ const configSchema = z.object({
         .default({})
         .transform((e) => ({
             ...e,
-            mode: e.mode ?? (e.apiKey !== undefined ? ("api-key" as const) : e.modelPath !== undefined ? ("local" as const) : ("off" as const)),
+            mode:
+                e.mode ??
+                (e.apiKey !== undefined
+                    ? ("api-key" as const)
+                    : e.modelPath !== undefined
+                      ? ("local" as const)
+                      : ("off" as const)),
         })),
 });
 export type Config = z.infer<typeof configSchema>;
@@ -177,6 +196,9 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
         // the two values into the provider config. An absent field keeps the current behavior.
         requestTimeoutMs: z.number().int().positive().optional(),
         maxRetries: z.number().int().nonnegative().optional(),
+        // The fallback of the Anthropic API for a request that its safety classifier declined. An absent value keeps the
+        // harness default, which is on. "off" is for an Anthropic endpoint that rejects the parameter.
+        fallbacks: z.enum(["default", "off"]).optional(),
     }),
     z.object({
         mode: z.literal("direct"),
@@ -196,6 +218,9 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
         // the two values into the provider config. An absent field keeps the current behavior.
         requestTimeoutMs: z.number().int().positive().optional(),
         maxRetries: z.number().int().nonnegative().optional(),
+        // The fallback of the Anthropic API for a request that its safety classifier declined. An absent value keeps the
+        // harness default, which is on. "off" is for an Anthropic endpoint that rejects the parameter.
+        fallbacks: z.enum(["default", "off"]).optional(),
     }),
 ]);
 
@@ -223,8 +248,20 @@ const agentEffortSchema = z.enum(AGENT_EFFORTS);
  */
 export const modelsConfigSchema = z.object({
     connection: modelConnectionSchema.optional(),
-    agents: z.object({ conversation: z.string().optional(), sandbox: z.string().optional(), utility: z.string().optional() }).optional(),
-    efforts: z.object({ conversation: agentEffortSchema.optional(), sandbox: agentEffortSchema.optional(), utility: agentEffortSchema.optional() }).optional(),
+    agents: z
+        .object({
+            conversation: z.string().optional(),
+            sandbox: z.string().optional(),
+            utility: z.string().optional(),
+        })
+        .optional(),
+    efforts: z
+        .object({
+            conversation: agentEffortSchema.optional(),
+            sandbox: agentEffortSchema.optional(),
+            utility: agentEffortSchema.optional(),
+        })
+        .optional(),
 });
 
 export type ConfigError = { type: "config_write_failed"; cause: unknown };
@@ -236,7 +273,12 @@ export function readConfig(): Config {
     } catch {
         // Missing or unreadable config fails closed: consent not granted.
     }
-    return { telemetry: false, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } };
+    return {
+        telemetry: false,
+        theme: DEFAULT_THEME_ID,
+        leaderTimeout: 2000,
+        embedding: { mode: "off" },
+    };
 }
 
 /**
@@ -317,10 +359,14 @@ function canonicalKeyOrder(value: unknown, schema: z.core.$ZodType | null): unkn
     // Own keys only — `in` walks the prototype chain and would invent `toString` & friends.
     const own = Object.keys(record);
     const ownSet = new Set(own);
-    const ordered = [...declared.filter((key) => ownSet.has(key)), ...own.filter((key) => !declaredSet.has(key)).sort()];
+    const ordered = [
+        ...declared.filter((key) => ownSet.has(key)),
+        ...own.filter((key) => !declaredSet.has(key)).sort(),
+    ];
 
     const canonical: Record<string, unknown> = {};
-    for (const key of ordered) canonical[key] = canonicalKeyOrder(record[key], shape?.[key] ?? null);
+    for (const key of ordered)
+        canonical[key] = canonicalKeyOrder(record[key], shape?.[key] ?? null);
     return canonical;
 }
 
@@ -333,7 +379,10 @@ export function writeConfig(config: Config): Result<void, ConfigError> {
     return Result.fromThrowable(
         () => {
             mkdirSync(dirname(env.configPath), { recursive: true });
-            writeFileSync(env.configPath, JSON.stringify(canonicalKeyOrder(config, configSchema), null, 4) + "\n");
+            writeFileSync(
+                env.configPath,
+                JSON.stringify(canonicalKeyOrder(config, configSchema), null, 4) + "\n",
+            );
         },
         (cause): ConfigError => ({ type: "config_write_failed", cause }),
     )();
@@ -392,7 +441,12 @@ export async function resolveRuntime(
         // fallback, which must not tell you to run setup) nor in setup itself.
         return (await probe(selected))
             .map((): ResolvedRuntime => ({ runtime: selected, detected: false }))
-            .mapErr((e) => new ContainerRuntimeError(`${e.message}\n  To switch container runtimes, run \`inflexa setup\`.`));
+            .mapErr(
+                (e) =>
+                    new ContainerRuntimeError(
+                        `${e.message}\n  To switch container runtimes, run \`inflexa setup\`.`,
+                    ),
+            );
     }
 
     return (
@@ -508,13 +562,15 @@ function warnDiscardedReservedPort(persisted: number, resolved: number): void {
  */
 export function resolvePostgresConfig(): PostgresConnection {
     const pg = readConfig().postgres;
-    const port = pg?.port !== undefined && !isReservedPostgresPort(pg.port) ? pg.port : env.postgresPort;
+    const port =
+        pg?.port !== undefined && !isReservedPostgresPort(pg.port) ? pg.port : env.postgresPort;
     // The discard above is deliberate freeze-bug healing but otherwise silent — a user who set a reserved
     // port on purpose (e.g. a prod-only user picking the dev default 8434 to dodge a local conflict) would
     // see it stop working with no explanation. Surface it, but ONLY when the discard actually changes the
     // resolved port: a reserved pin equal to THIS channel's own default resolves to itself, so warning then
     // would be pure noise.
-    if (pg?.port !== undefined && isReservedPostgresPort(pg.port) && pg.port !== port) warnDiscardedReservedPort(pg.port, port);
+    if (pg?.port !== undefined && isReservedPostgresPort(pg.port) && pg.port !== port)
+        warnDiscardedReservedPort(pg.port, port);
     return {
         host: pg?.host ?? DEFAULT_HOST,
         port,
