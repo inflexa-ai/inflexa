@@ -7,6 +7,7 @@ import { GLYPHS } from "../../../lib/design_system.ts";
 import { MessageBlock } from "../message_block.tsx";
 import { WorkspaceContext } from "../../contexts/workspace.ts";
 import { buildWorkspace } from "../../../test_support/builders.ts";
+import { WithTerminalSize } from "../../../test_support/terminal_size.tsx";
 import type { LiveTextPart, Part } from "../../../types/session.ts";
 
 // Guards the streaming-vs-finalized markdown bug: @opentui/core's `<markdown streaming={false}>`
@@ -19,7 +20,7 @@ function textPart(text: string): LiveTextPart {
 }
 
 async function frameWith(node: Parameters<typeof testRender>[0], needle: string, size = { width: 40, height: 6 }, timeoutMs = 2000): Promise<string> {
-    const setup = await testRender(node, size);
+    const setup = await testRender(() => <WithTerminalSize>{node()}</WithTerminalSize>, size);
     try {
         const start = Date.now();
         for (;;) {

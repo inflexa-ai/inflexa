@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderFrame } from "../../../test_support/tui.ts";
+import { WithTerminalSize } from "../../../test_support/terminal_size.tsx";
 
 import { PlanCardBlock } from "../plan_card_block.tsx";
 import type { PlanCardStepView } from "../../../types/session.ts";
@@ -23,7 +24,11 @@ describe("PlanCardBlock", () => {
     for (const width of [80, 100, 120]) {
         test(`renders a branching graph without overlap at width ${width}`, async () => {
             const frame = await renderFrame(
-                () => <PlanCardBlock planId="plan-1" title="Branching plan" steps={[step("A"), step("B", ["A"]), step("C", ["A"])]} />,
+                () => (
+                    <WithTerminalSize>
+                        <PlanCardBlock planId="plan-1" title="Branching plan" steps={[step("A"), step("B", ["A"]), step("C", ["A"])]} />
+                    </WithTerminalSize>
+                ),
                 { width, height: 14 },
             );
             expect(frame).toContain("Branching plan");
@@ -33,7 +38,14 @@ describe("PlanCardBlock", () => {
     }
 
     test("an empty plan degrades to the flat empty state", async () => {
-        const frame = await renderFrame(() => <PlanCardBlock planId="plan-empty" title="Empty plan" steps={[]} />, { width: 80, height: 6 });
+        const frame = await renderFrame(
+            () => (
+                <WithTerminalSize>
+                    <PlanCardBlock planId="plan-empty" title="Empty plan" steps={[]} />
+                </WithTerminalSize>
+            ),
+            { width: 80, height: 6 },
+        );
         expect(frame).toContain("Empty plan");
         expect(frame).not.toContain("┌");
     });
@@ -44,7 +56,14 @@ describe("PlanCardBlock", () => {
         broken.map = (): never => {
             throw new Error("render failed");
         };
-        const frame = await renderFrame(() => <PlanCardBlock planId="plan-broken" title="Broken plan" steps={broken} />, { width: 80, height: 6 });
+        const frame = await renderFrame(
+            () => (
+                <WithTerminalSize>
+                    <PlanCardBlock planId="plan-broken" title="Broken plan" steps={broken} />
+                </WithTerminalSize>
+            ),
+            { width: 80, height: 6 },
+        );
         expect(frame).toContain("Fallback step");
         expect(frame).toContain("[scientific-executor]");
     });

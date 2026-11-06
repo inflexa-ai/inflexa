@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
+import { For } from "solid-js";
 
 import { MAX_NESTED_ROWS, ToolBlock } from "../tool_block.tsx";
 import { frameWhenPainted } from "../../../test_support/tui.ts";
+import { WithTerminalSize } from "../../../test_support/terminal_size.tsx";
 import { isWhitespace } from "../../../lib/text.ts";
 
 // Frame coverage for the inline-vs-completion-line status placement. captureCharFrame gives characters
@@ -11,7 +13,7 @@ import { isWhitespace } from "../../../lib/text.ts";
 
 /** Render `node` at `{width,height}` and poll frames until `needle` paints (the <code> panel parses async). */
 async function frameWith(node: Parameters<typeof testRender>[0], width: number, height: number, needle: string): Promise<string> {
-    return frameWhenPainted(node, { width, height }, needle, 2500);
+    return frameWhenPainted(() => <WithTerminalSize>{node()}</WithTerminalSize>, { width, height }, needle, 2500);
 }
 
 /** Index of the first frame row containing `needle`, or -1. */
@@ -203,5 +205,32 @@ describe("ToolBlock nested calls", () => {
         expect(frame).toContain("5 earlier calls");
         expect(frame).not.toContain("lookup_3 ");
         expect(frame).toContain("lookup_4");
+    });
+});
+
+// The renderer is one EventEmitter with the default limit of 10 listeners. A conversation shows one block for
+// each tool call, thus a subscription for each block crosses that limit and prints a warning over the TUI.
+describe("ToolBlock resize subscription", () => {
+    async function resizeListeners(blocks: number): Promise<number> {
+        const ids = Array.from({ length: blocks }, (_, i) => i);
+        const setup = await testRender(
+            () => (
+                <WithTerminalSize>
+                    <For each={ids}>{(i) => <ToolBlock name={`tool${i}`} status="ok" durationMs={1} />}</For>
+                </WithTerminalSize>
+            ),
+            {
+                width: 60,
+                height: 40,
+            },
+        );
+        await setup.renderOnce();
+        const count = setup.renderer.listenerCount("resize");
+        setup.renderer.destroy();
+        return count;
+    }
+
+    test("the resize listener count does not grow with the number of blocks", async () => {
+        expect(await resizeListeners(12)).toBe(await resizeListeners(1));
     });
 });

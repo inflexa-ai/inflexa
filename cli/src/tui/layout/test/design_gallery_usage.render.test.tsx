@@ -7,6 +7,7 @@ import type { JSX } from "solid-js";
 import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../../lib/design_system.ts";
 import { formatTokenFigure, formatTokenFigureLabelled, tokenFigureDetail } from "../../../lib/usage_format.ts";
 import { contrast } from "../../../test_support/contrast.ts";
+import { WithTerminalSize } from "../../../test_support/terminal_size.tsx";
 import { setTheme } from "../../theme.ts";
 import { useKeymapRoot } from "../../keymap.ts";
 import { DialogOverlay, DialogShowcase, dialogClear, dialogPush } from "../../components/dialog/dialog_host.tsx";
@@ -237,7 +238,9 @@ describe("design gallery — token figures are legible on a light theme", () => 
                 useKeymapRoot();
                 return (
                     <box width="100%" height="100%">
-                        <DialogOverlay />
+                        <WithTerminalSize>
+                            <DialogOverlay />
+                        </WithTerminalSize>
                     </box>
                 );
             },

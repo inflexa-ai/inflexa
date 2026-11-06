@@ -68,6 +68,7 @@ import { ActivityPanel } from "./layout/activity_panel.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
+import { TerminalSizeContext } from "./contexts/terminal_size.ts";
 import { watchProfileParity, gatedForceReprofile } from "./hooks/profile_parity.ts";
 import { watchFarmHeal } from "./hooks/farm_heal.tsx";
 import { fetchInputs } from "../client/analyses.ts";
@@ -1347,177 +1348,186 @@ export function App(props: AppProps): JSX.Element {
 
     return (
         <WorkspaceContext.Provider value={workspace}>
-            <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg} onMouseDown={applySelectionColors} onMouseUp={copySelection}>
-                {/* Header */}
-                <StatusBar
-                    title="inflexa"
-                    subtitle={workspace.analysis?.name}
-                    // The header names the ANALYSIS, and a report session is not it — so the segment
-                    // rides only on a report row. The analysis scope needs no segment here: the subtitle
-                    // beside it already is that statement.
-                    scope={sessionScope() === "report" ? "report" : undefined}
-                    state={statusState()}
-                    // The working directory is a wide-terminal-only affordance: at/above the breakpoint the
-                    // rail and a comfortable chat both fit, so the path earns its space; below it the sidebar
-                    // carries the path instead, so gating here keeps it on exactly one surface at any width.
-                    path={dims().width >= size.breakpointWide ? contractHome(workspace.workingDir) : undefined}
-                    hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}
-                />
+            <TerminalSizeContext.Provider value={dims}>
+                <box
+                    flexDirection="column"
+                    width="100%"
+                    height="100%"
+                    backgroundColor={theme().bg}
+                    onMouseDown={applySelectionColors}
+                    onMouseUp={copySelection}
+                >
+                    {/* Header */}
+                    <StatusBar
+                        title="inflexa"
+                        subtitle={workspace.analysis?.name}
+                        // The header names the ANALYSIS, and a report session is not it — so the segment
+                        // rides only on a report row. The analysis scope needs no segment here: the subtitle
+                        // beside it already is that statement.
+                        scope={sessionScope() === "report" ? "report" : undefined}
+                        state={statusState()}
+                        // The working directory is a wide-terminal-only affordance: at/above the breakpoint the
+                        // rail and a comfortable chat both fit, so the path earns its space; below it the sidebar
+                        // carries the path instead, so gating here keeps it on exactly one surface at any width.
+                        path={dims().width >= size.breakpointWide ? contractHome(workspace.workingDir) : undefined}
+                        hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}
+                    />
 
-                {/* Main row: the chat column beside the full-height sidebar. Showing the sidebar
+                    {/* Main row: the chat column beside the full-height sidebar. Showing the sidebar
                 shrinks the chat column (stream + input together) — the opencode layout. */}
-                <box flexDirection="row" flexGrow={1} minHeight={0} width="100%">
-                    <box flexDirection="column" flexGrow={1} minHeight={0}>
-                        {/* The live conversation: stream + error banner, all state in hooks/conversation.ts.
+                    <box flexDirection="row" flexGrow={1} minHeight={0} width="100%">
+                        <box flexDirection="column" flexGrow={1} minHeight={0}>
+                            {/* The live conversation: stream + error banner, all state in hooks/conversation.ts.
                         Live run progress renders in the sidebar RUNS section (not chat chrome) — a hidden
                         sidebar deliberately shows no live progress. */}
-                        <Chat onScrollPaneRef={(r: ScrollBoxRenderable) => (scrollPaneRef = r)} />
+                            <Chat onScrollPaneRef={(r: ScrollBoxRenderable) => (scrollPaneRef = r)} />
 
-                        {/* The run-activity panel: the focused active run's frontier, at chat width.
+                            {/* The run-activity panel: the focused active run's frontier, at chat width.
                         Sits between the stream and the input, and contributes ZERO rows when no run is
                         active or the user dismissed it — an idle chat composes exactly as it did before
                         the panel existed. It paints its own full-width flexShrink={0} background row
                         (the 1-cell scrollbox-bleed rule). Complements the sidebar RUNS section rather
                         than repeating it: the rail owns the step list, this owns the frontier detail the
                         rail's 40 columns cannot hold. */}
-                        <Show when={activityPanelVisible()}>
-                            <ActivityPanel
-                                subject={focusedSubject() ?? undefined}
-                                activity={focusedSubjectActivity()}
-                                activeCount={activeSubjectCount()}
-                                position={focusedSubjectPosition()}
-                                nextKeyLabel={keybindLabel("app.activity-panel-next")}
-                                dismissKeyLabel={keybindLabel("app.activity-panel-toggle")}
-                                abortKeyLabel={sequenceLabel(leaderKeybind("app.activity-panel-abort"))}
-                                onNext={focusNextSubject}
-                            />
-                        </Show>
+                            <Show when={activityPanelVisible()}>
+                                <ActivityPanel
+                                    subject={focusedSubject() ?? undefined}
+                                    activity={focusedSubjectActivity()}
+                                    activeCount={activeSubjectCount()}
+                                    position={focusedSubjectPosition()}
+                                    nextKeyLabel={keybindLabel("app.activity-panel-next")}
+                                    dismissKeyLabel={keybindLabel("app.activity-panel-toggle")}
+                                    abortKeyLabel={sequenceLabel(leaderKeybind("app.activity-panel-abort"))}
+                                    onNext={focusNextSubject}
+                                />
+                            </Show>
 
-                        {/* Boot animation / failed-boot message, shown until the runtime is ready. A
+                            {/* Boot animation / failed-boot message, shown until the runtime is ready. A
                         full-width box painted with the app background and flexShrink={0}: it sits
                         directly below the Chat stream's flexGrow scrollbox, so it must opaquely reclaim
                         its rows (the documented 1-cell scrollbox bleed) and keep them on a short
                         terminal — the Chat stream yields the squeeze instead. paddingLeft aligns it with
                         the stream content. Keyed on the phase, thus a new boot after a failure mounts a
                         fresh indicator whose age starts at 0. */}
-                        <Show when={bootState().phase === "booting" || bootState().phase === "failed" ? bootState().phase : undefined} keyed>
-                            <box width="100%" flexShrink={0} backgroundColor={theme().bg} paddingLeft={1} paddingRight={1}>
-                                <BootIndicator message={bootFailureMessage()} />
-                            </box>
-                        </Show>
+                            <Show when={bootState().phase === "booting" || bootState().phase === "failed" ? bootState().phase : undefined} keyed>
+                                <box width="100%" flexShrink={0} backgroundColor={theme().bg} paddingLeft={1} paddingRight={1}>
+                                    <BootIndicator message={bootFailureMessage()} />
+                                </box>
+                            </Show>
 
-                        {/* Docked approval prompt — mounted only while an ask is pending, directly below the
+                            {/* Docked approval prompt — mounted only while an ask is pending, directly below the
                         Chat stream's flexGrow scrollbox. AskPrompt paints its own full-width flexShrink={0}
                         background row (the 1-cell scrollbox-bleed rule), so it opaquely reclaims its rows. It
                         docks here, never as a modal over the transcript, so the user can see what they are
                         approving. `keyed` mounts a FRESH prompt per head ask (choice/feedback mode resets and
                         the focus target is re-handed) as the queue advances. */}
-                        <Show when={activeAsk()} keyed>
-                            {(ask: PendingAsk) => (
-                                <AskPrompt
-                                    title={ask.title}
-                                    command={ask.command}
-                                    detail={ask.detail}
-                                    queuedCount={queuedCount()}
-                                    busy={answerBusy()}
-                                    onApprove={(kind: "once" | "always") => answerAsk(ask.askId, { kind })}
-                                    onReject={(feedback?: string) => answerAsk(ask.askId, { kind: "reject", feedback: feedback || undefined })}
-                                    onFocusReady={(r: BoxRenderable) => (promptRef = r)}
-                                />
-                            )}
-                        </Show>
+                            <Show when={activeAsk()} keyed>
+                                {(ask: PendingAsk) => (
+                                    <AskPrompt
+                                        title={ask.title}
+                                        command={ask.command}
+                                        detail={ask.detail}
+                                        queuedCount={queuedCount()}
+                                        busy={answerBusy()}
+                                        onApprove={(kind: "once" | "always") => answerAsk(ask.askId, { kind })}
+                                        onReject={(feedback?: string) => answerAsk(ask.askId, { kind: "reject", feedback: feedback || undefined })}
+                                        onFocusReady={(r: BoxRenderable) => (promptRef = r)}
+                                    />
+                                )}
+                            </Show>
 
-                        {/* Docked pause prompt — mounted while a workflow of the turn of the open thread waits in a
+                            {/* Docked pause prompt — mounted while a workflow of the turn of the open thread waits in a
                         pause, in the slot of the ask prompt and in its form. NON-keyed: each frame of the pause mints a
                         fresh value, and a keyed mount would tear the prompt down and drop its focus at each one. */}
-                        <Show when={shownPause()}>
-                            {(pause: Accessor<NonNullable<ReturnType<typeof dockedPause>>>) => (
-                                <PausePrompt
-                                    state={pause().wait.state}
-                                    cause={describePauseCause(pause().wait.cause)}
-                                    remedy={remedyFor(pause())}
-                                    nextRetry={nextRetryOf(pause().wait) ?? undefined}
-                                    othersWaiting={pause().others}
-                                    busy={pauseBusy()}
-                                    onResume={() => resumePause(pause())}
-                                    onHold={() => holdPause(pause())}
-                                    onStop={() => conversation.stopPausedTurn(pause())}
-                                    onFocusReady={(r: BoxRenderable) => (pausePromptRef = r)}
-                                />
-                            )}
-                        </Show>
+                            <Show when={shownPause()}>
+                                {(pause: Accessor<NonNullable<ReturnType<typeof dockedPause>>>) => (
+                                    <PausePrompt
+                                        state={pause().wait.state}
+                                        cause={describePauseCause(pause().wait.cause)}
+                                        remedy={remedyFor(pause())}
+                                        nextRetry={nextRetryOf(pause().wait) ?? undefined}
+                                        othersWaiting={pause().others}
+                                        busy={pauseBusy()}
+                                        onResume={() => resumePause(pause())}
+                                        onHold={() => holdPause(pause())}
+                                        onStop={() => conversation.stopPausedTurn(pause())}
+                                        onFocusReady={(r: BoxRenderable) => (pausePromptRef = r)}
+                                    />
+                                )}
+                            </Show>
 
-                        {/* Input area — gated (submits refused, gate shown in the affordance) until boot is ready.
+                            {/* Input area — gated (submits refused, gate shown in the affordance) until boot is ready.
                         The gate reason distinguishes still-booting from a terminal boot failure so the
                         placeholder is honest; `ready` passes no gate (input open). */}
-                        <ChatBar
-                            gate={bootState().phase === "ready" ? undefined : bootState().phase === "failed" ? "failed" : "booting"}
-                            onTextareaRef={(r: TextareaRenderable) => {
-                                textareaRef = r;
-                                queueMicrotask(() => r.focus());
-                            }}
-                            onSubmit={() => void handleSubmit()}
-                            // Mirror the composer's focus (INSERT ↔ NORMAL) so `interruptHint` can pick the
-                            // INSERT vs NORMAL variant — the SAME `onFocusChange` seam the ChatBar footer reads
-                            // for its mode word.
-                            onFocusChange={setComposerFocused}
-                            scope={scopeWord()}
-                            interruptHint={interruptHint()}
-                            canRecall={recall.canRecall()}
-                        />
+                            <ChatBar
+                                gate={bootState().phase === "ready" ? undefined : bootState().phase === "failed" ? "failed" : "booting"}
+                                onTextareaRef={(r: TextareaRenderable) => {
+                                    textareaRef = r;
+                                    queueMicrotask(() => r.focus());
+                                }}
+                                onSubmit={() => void handleSubmit()}
+                                // Mirror the composer's focus (INSERT ↔ NORMAL) so `interruptHint` can pick the
+                                // INSERT vs NORMAL variant — the SAME `onFocusChange` seam the ChatBar footer reads
+                                // for its mode word.
+                                onFocusChange={setComposerFocused}
+                                scope={scopeWord()}
+                                interruptHint={interruptHint()}
+                                canRecall={recall.canRecall()}
+                            />
 
-                        {/* Transient toast (single slot, auto-dismissed). Inside the chat column, not the
+                            {/* Transient toast (single slot, auto-dismissed). Inside the chat column, not the
                         root box, so it floats over the conversation and never the sidebar — opentui absolute
                         positioning is parent-relative. zIndex keeps it above an open modal. */}
-                        <Show when={currentNotice()} keyed>
-                            {(n: Notice) => (
-                                <box
-                                    position="absolute"
-                                    top={1}
-                                    right={2}
-                                    zIndex={zIndex.toast}
-                                    // A DEFINITE width (not maxWidth) so a long line wraps instead of clipping —
-                                    // opentui only wraps text whose box has a resolved width; maxWidth sizes to the
-                                    // text's single-line length and then clips the overflow (hiding a long export
-                                    // path mid-string). Size to the text so short toasts stay snug, capped so a long
-                                    // path wraps within the cap. +6 = border (2) + padding (2) + glyph and its space (2).
-                                    width={Math.min(60, dims().width - 6, n.text.length + 6)}
-                                    backgroundColor={theme().bgRaised}
-                                    border
-                                    borderColor={noticeColor(n.kind)}
-                                    paddingLeft={1}
-                                    paddingRight={1}
-                                >
-                                    <text fg={noticeColor(n.kind)}>
-                                        {n.kind === "error" ? GLYPHS.cross : n.kind === "warn" ? GLYPHS.warning : GLYPHS.circle} {n.text}
-                                    </text>
-                                </box>
-                            )}
+                            <Show when={currentNotice()} keyed>
+                                {(n: Notice) => (
+                                    <box
+                                        position="absolute"
+                                        top={1}
+                                        right={2}
+                                        zIndex={zIndex.toast}
+                                        // A DEFINITE width (not maxWidth) so a long line wraps instead of clipping —
+                                        // opentui only wraps text whose box has a resolved width; maxWidth sizes to the
+                                        // text's single-line length and then clips the overflow (hiding a long export
+                                        // path mid-string). Size to the text so short toasts stay snug, capped so a long
+                                        // path wraps within the cap. +6 = border (2) + padding (2) + glyph and its space (2).
+                                        width={Math.min(60, dims().width - 6, n.text.length + 6)}
+                                        backgroundColor={theme().bgRaised}
+                                        border
+                                        borderColor={noticeColor(n.kind)}
+                                        paddingLeft={1}
+                                        paddingRight={1}
+                                    >
+                                        <text fg={noticeColor(n.kind)}>
+                                            {n.kind === "error" ? GLYPHS.cross : n.kind === "warn" ? GLYPHS.warning : GLYPHS.circle} {n.text}
+                                        </text>
+                                    </box>
+                                )}
+                            </Show>
+                        </box>
+
+                        {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
+                        <Show when={sidebarOpen()}>
+                            <Sidebar
+                                messageCount={conversation.messageCount}
+                                onOpenProfile={openProfileFromSidebar}
+                                onOpenRuns={openRunsFromSidebar}
+                                onOpenUsage={openUsageFromSidebar}
+                                onOpenFailedFlight={(flightId) => void openFailedFlightFromSidebar(flightId)}
+                            />
                         </Show>
                     </box>
 
-                    {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
-                    <Show when={sidebarOpen()}>
-                        <Sidebar
-                            messageCount={conversation.messageCount}
-                            onOpenProfile={openProfileFromSidebar}
-                            onOpenRuns={openRunsFromSidebar}
-                            onOpenUsage={openUsageFromSidebar}
-                            onOpenFailedFlight={(flightId) => void openFailedFlightFromSidebar(flightId)}
-                        />
-                    </Show>
-                </box>
-
-                {/* which-key: while a leader sequence is pending, lists the reachable next keys.
+                    {/* which-key: while a leader sequence is pending, lists the reachable next keys.
                 Base-mode only, so it never overlaps a modal (a dialog suppresses base bindings). */}
-                <WhichKey />
+                    <WhichKey />
 
-                {/* Dialog host: the module-level stack + overlay, extracted to dialog_host.tsx.
+                    {/* Dialog host: the module-level stack + overlay, extracted to dialog_host.tsx.
                 A direct child of the full-screen root box (not a Portal — see dialog_host).
                 Focus restore is uniform: some widget (textarea or scroll pane) is always focused
                 when a dialog opens, so the saved focus is never null. */}
-                <DialogOverlay />
-            </box>
+                    <DialogOverlay />
+                </box>
+            </TerminalSizeContext.Provider>
         </WorkspaceContext.Provider>
     );
 }

@@ -1,10 +1,10 @@
-import { useTerminalDimensions } from "@opentui/solid";
 import { For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 
 import { syntaxStyle, theme } from "../theme.ts";
 import { GLYPHS, size, space, stroke, MARKERS } from "../../lib/design_system.ts";
 import { Fg } from "./emphasis.tsx";
+import { useTerminalSize } from "../contexts/terminal_size.ts";
 
 /**
  * Floor for the measured content width, so a very narrow terminal still yields a usable
@@ -116,7 +116,7 @@ function statusText(status: ToolBlockProps["status"], durationMs: number | undef
  * its middle intelligently.
  */
 export function ToolBlock(props: ToolBlockProps): JSX.Element {
-    const dims = useTerminalDimensions();
+    const dims = useTerminalSize();
     const inline = (): boolean => props.inlineStatus ?? props.result === undefined;
     // The leading ` · ` glues the duration onto the outcome label; the value is delegated to
     // Date.formatDuration so this line shares one ms/s/m vocabulary with every other readout.
