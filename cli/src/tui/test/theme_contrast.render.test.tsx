@@ -7,6 +7,7 @@ import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../../lib/design_system.
 import { readPlanCard } from "../../modules/harness/chat_printer.ts";
 import { contrast } from "../../test_support/contrast.ts";
 import { renderUntilPainted, spanFg } from "../../test_support/tui.ts";
+import { WithTerminalSize } from "../../test_support/terminal_size.tsx";
 import { setTheme, syntaxStyle, theme } from "../theme.ts";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { PausePrompt } from "../components/pause_prompt.tsx";
@@ -73,7 +74,7 @@ async function renderUntil(
     size: { width: number; height: number } = { width: 60, height: 12 },
     timeoutMs = RENDER_TIMEOUT_MS,
 ): Promise<{ setup: Awaited<ReturnType<typeof testRender>>; rendered: boolean }> {
-    return renderUntilPainted(node, needle, size, timeoutMs);
+    return renderUntilPainted(() => <WithTerminalSize>{node()}</WithTerminalSize>, needle, size, timeoutMs);
 }
 
 // These two cases carry their own precondition and so read `rendered` for nothing: each asserts on ONE

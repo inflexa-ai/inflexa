@@ -1,12 +1,12 @@
 import { createMemo, For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
-import { useTerminalDimensions } from "@opentui/solid";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { planToDag } from "../../modules/harness/plan_dag.ts";
 import { Fg } from "./emphasis.tsx";
 import { ScrollPane } from "./scroll_pane.tsx";
+import { useTerminalSize } from "../contexts/terminal_size.ts";
 import type { PlanCardStepView } from "../../types/session.ts";
 
 // Label widths tried from roomiest to tightest when fitting the DAG to the terminal. The first that
@@ -33,7 +33,7 @@ export type PlanCardBlockProps = {
  * the primitive fields the harness `readPlanCard` reader extracts; it never holds a harness object.
  */
 export function PlanCardBlock(props: PlanCardBlockProps): JSX.Element {
-    const dims = useTerminalDimensions();
+    const dims = useTerminalSize();
     const heading = (): string => props.title || props.planId;
     // Columns the DAG may occupy: the terminal width less the (possibly open) sidebar rail, this
     // card's own indent, and the stream gutter. Reserved conservatively so a graph that would overflow
