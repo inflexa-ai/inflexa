@@ -94,6 +94,17 @@ Phosphoproteomics workflow:
 │       is blocked — so Omnipath/PhosphoSitePlus retrieval fails outright.
 │       If none is available, report it and deliver site-level DE without
 │       kinase activity; never invent a path or substitute a TF regulon.
+├── Site context: put each regulated site on its protein
+│   ├── Resource: the UniProt protein features of the human proteome — domains,
+│   │   regions, active and binding sites, and known modified residues, keyed by
+│   │   UniProt accession, as residue ranges on the canonical sequence
+│   ├── Join on the accession, then find the ranges that hold the site position
+│   │   (a site in the kinase domain, a site that UniProt already lists)
+│   ├── Compare only a site numbered on the canonical accession. A site table can
+│   │   number a site on an isoform of the protein group ('-N' suffix): report
+│   │   such a site without context
+│   └── If the resource is not in the reference inventory, report it and deliver
+│       the sites without context
 └── Critical: Do NOT roll up phospho-sites to protein level — this loses site-specific information
 ```
 

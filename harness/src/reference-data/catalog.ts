@@ -354,6 +354,29 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                // UniProt publishes no per-organism feature file on its FTP, and InterPro publishes its residue
+                // ranges only as one all-species table (13.8 GB). The stream of the REST API is the download that
+                // the UniProt website serves for this query, thus it is the upstream file, not a local derivation.
+                id: "uniprot-features-human",
+                version: "current",
+                title: "UniProt human protein features",
+                description:
+                    "Sequence features of the reviewed human proteome (UniProtKB/Swiss-Prot, reference proteome UP000005640, about 20,400 proteins): domains, regions, repeats, zinc fingers, motifs, active and binding sites, modified residues such as phosphosites, and topology and secondary-structure features, each a residue range on the canonical sequence. The table for asking, across a whole protein list, whether a residue — a regulated phosphosite, a variant — falls in a domain or at a known site. UniProt curates these features; they are not InterPro entries. UniProt rebuilds the stream each release (~13 MB gzipped), so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "human",
+                sourceUrl: "https://www.uniprot.org/proteomes/UP000005640",
+                license: { identifier: "CC-BY-4.0", url: "https://www.uniprot.org/help/license" },
+                recommendation: { group: "protein-annotation", recommended: true },
+                artifacts: [
+                    {
+                        path: "uniprot_human_reviewed_features.gff.gz",
+                        url: "https://rest.uniprot.org/uniprotkb/stream?compressed=true&format=gff&query=%28proteome%3AUP000005640%29%20AND%20%28reviewed%3Atrue%29",
+                        format: "gff",
+                        contents:
+                            "Gzipped GFF3, one row per feature, one '##gff-version 3' header line, and each row ends in a tab (a tenth empty field). Column 1 is the UniProtKB accession of the canonical isoform (no '-N' suffix); column 3 the feature type ('Domain', 'Region', 'Repeat', 'Zinc finger', 'Motif', 'Active site', 'Binding site', 'Modified residue', 'Chain', 'Transmembrane'); columns 4 and 5 the start and end residue, 1-based inclusive, on the canonical sequence. Column 9 holds percent-encoded attributes: Note= (the feature name: 'Protein kinase', 'BRCT 1', 'Phosphoserine') and evidence= (ECO codes, with the source such as PROSITE-ProRule or a PubMed ID). A site numbered on another isoform does not match these positions.",
+                    },
+                ],
+            },
+            {
                 // Two species in one table: no organism field, like omnipath-interactions.
                 id: "mgi-mouse-human-homology",
                 version: "current",

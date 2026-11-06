@@ -57,6 +57,7 @@ describe("reference-data catalog", () => {
             "uniprot-idmapping-human",
             "uniprot-idmapping-mouse",
             "uniprot-idmapping-rat",
+            "uniprot-features-human",
             "mgi-mouse-human-homology",
             "reactome-pathways",
             "reactome-mappings",
@@ -186,6 +187,9 @@ describe("reference-data catalog", () => {
         const officialHosts = new Set([
             "ftp.ncbi.nlm.nih.gov",
             "ftp.uniprot.org",
+            // The REST stream of UniProt serves the per-organism feature download, and the website names its provenance.
+            "rest.uniprot.org",
+            "www.uniprot.org",
             "reactome.org",
             "data.wikipathways.org",
             "data.broadinstitute.org",
@@ -429,6 +433,7 @@ describe("reference-data catalog", () => {
                 "ucsc-chrom-sizes-mouse",
                 "ucsc-liftover-chains-human",
                 "ucsc-liftover-chains-mouse",
+                "uniprot-features-human",
                 "uniprot-idmapping-human",
                 "uniprot-idmapping-mouse",
                 "uniprot-idmapping-rat",
