@@ -3,7 +3,14 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { type Result } from "neverthrow";
-import { AGENT_EFFORTS, modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
+import {
+    AGENT_EFFORTS,
+    modelsConfigSchema,
+    readConfig,
+    writeConfig,
+    type ConfigError,
+    type ModelAuthConfig,
+} from "../../lib/config.ts";
 import { env, resolveKnowledgeApiKey } from "../../lib/env.ts";
 import { recordOrEmpty } from "../../lib/json_record.ts";
 import { SANDBOX_IMAGE } from "../libs/images.ts";
@@ -146,7 +153,10 @@ function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): Re
 }
 
 /** All-defaults resolved config, used when the `harness` key is absent or when it failed validation. */
-function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, configError?: { issues: string }): ResolvedHarnessConfig {
+function defaultsWith(
+    cfg: z.infer<typeof harnessConfigSchema> | undefined,
+    configError?: { issues: string },
+): ResolvedHarnessConfig {
     const resourcePolicy = resolvePolicy(cfg);
     return {
         model: cfg?.model ?? null,
@@ -161,7 +171,8 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         },
         sandboxImage: cfg?.sandboxImage ?? SANDBOX_IMAGE,
         resourcePolicy,
-        skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
+        skillsDir:
+            cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
         configError,
     };
 }
@@ -178,7 +189,9 @@ export function resolveHarnessConfig(): ResolvedHarnessConfig {
     if (raw === undefined) return defaultsWith(undefined);
     const parsed = harnessConfigSchema.safeParse(raw);
     if (parsed.success) return defaultsWith(parsed.data);
-    const issues = parsed.error.issues.map((i) => `harness.${i.path.join(".")}: ${i.message}`).join("; ");
+    const issues = parsed.error.issues
+        .map((i) => `harness.${i.path.join(".")}: ${i.message}`)
+        .join("; ");
     return defaultsWith(undefined, { issues });
 }
 
@@ -195,7 +208,12 @@ const OPENAI_API_HOST = "api.openai.com";
  */
 export function impliedWireProtocol(provider: string, baseURL: string): ModelWireProtocol {
     if (provider === "anthropic") return "anthropic";
-    if (provider === "openai" && URL.canParse(baseURL) && new URL(baseURL).hostname === OPENAI_API_HOST) return "openai";
+    if (
+        provider === "openai" &&
+        URL.canParse(baseURL) &&
+        new URL(baseURL).hostname === OPENAI_API_HOST
+    )
+        return "openai";
     return "openai-compatible";
 }
 
@@ -212,7 +230,11 @@ export type AgentName = keyof NonNullable<z.infer<typeof modelsConfigSchema>["ag
  * The closed agent set as a runtime list — the source boot iterates for its per-agent resolution. The
  * `satisfies` guard rejects any element that is not a {@link AgentName}, keeping the list honest.
  */
-export const AGENT_NAMES = ["conversation", "sandbox", "utility"] as const satisfies readonly AgentName[];
+export const AGENT_NAMES = [
+    "conversation",
+    "sandbox",
+    "utility",
+] as const satisfies readonly AgentName[];
 
 /**
  * Per-agent model-id overrides from `models.agents`, each optional. An absent agent falls through the
@@ -246,7 +268,11 @@ export type AgentEffort = (typeof AGENT_EFFORTS)[number];
  * plans the analysis, thus it reasons deeper. The sandbox and utility agents do many bounded calls, where
  * `medium` costs less for each call.
  */
-export const DEFAULT_AGENT_EFFORTS: Readonly<Record<AgentName, AgentEffort>> = { conversation: "high", sandbox: "medium", utility: "medium" };
+export const DEFAULT_AGENT_EFFORTS: Readonly<Record<AgentName, AgentEffort>> = {
+    conversation: "high",
+    sandbox: "medium",
+    utility: "medium",
+};
 
 /**
  * Each agent's reasoning effort: `models.efforts.<agent>`, else {@link DEFAULT_AGENT_EFFORTS}. A malformed
@@ -265,7 +291,10 @@ export function resolveAgentEfforts(): Record<AgentName, AgentEffort> {
  * other agent, stay as they are. One write, because a failed second write would leave the model changed
  * and the effort not.
  */
-export function writeAgentSelection(agent: AgentName, selection: { readonly model: string; readonly effort: AgentEffort }): Result<void, ConfigError> {
+export function writeAgentSelection(
+    agent: AgentName,
+    selection: { readonly model: string; readonly effort: AgentEffort },
+): Result<void, ConfigError> {
     const config = readConfig();
     // `config.models` is `unknown` in lib/config.ts, thus spread it and its nested `agents` and `efforts` as
     // plain records, the same as `writeAgentModel`.
@@ -295,6 +324,8 @@ export type ResolvedModelConnection =
           readonly requestTimeoutMs?: number;
           /** The retry limit of the harness envelope. Absent means the harness keeps its default of 10. */
           readonly maxRetries?: number;
+          /** The fallback of the Anthropic API. Absent means the harness default, which is on. */
+          readonly fallbacks?: "default" | "off";
           readonly configError?: { issues: string };
       }
     | {
@@ -318,6 +349,8 @@ export type ResolvedModelConnection =
           readonly requestTimeoutMs?: number;
           /** The retry limit of the harness envelope. Absent means the harness keeps its default of 10. */
           readonly maxRetries?: number;
+          /** The fallback of the Anthropic API. Absent means the harness default, which is on. */
+          readonly fallbacks?: "default" | "off";
           readonly configError?: { issues: string };
       };
 
@@ -340,16 +373,24 @@ export type ModelConnectionIdentity = {
  * install without a `models` block boots on, with every role resolving to the
  * one auto-resolved model.
  */
-const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = { mode: "cliproxy", provider: "anthropic", agents: {} };
+const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = {
+    mode: "cliproxy",
+    provider: "anthropic",
+    agents: {},
+};
 
 /**
  * Pick the optional request bounds from a connection. An absent field spreads nothing, so the result
  * omits it, and the consumer keeps the current provider behavior. The resolver and boot both spread the
  * result into their provider config, thus the two sites share one rule.
  */
-export function pickRequestBounds(connection: { requestTimeoutMs?: number; maxRetries?: number }): { requestTimeoutMs?: number; maxRetries?: number } {
+export function pickRequestBounds(connection: { requestTimeoutMs?: number; maxRetries?: number }): {
+    requestTimeoutMs?: number;
+    maxRetries?: number;
+} {
     const bounds: { requestTimeoutMs?: number; maxRetries?: number } = {};
-    if (connection.requestTimeoutMs !== undefined) bounds.requestTimeoutMs = connection.requestTimeoutMs;
+    if (connection.requestTimeoutMs !== undefined)
+        bounds.requestTimeoutMs = connection.requestTimeoutMs;
     if (connection.maxRetries !== undefined) bounds.maxRetries = connection.maxRetries;
     return bounds;
 }
@@ -374,7 +415,9 @@ export function resolveModelConnection(): ResolvedModelConnection {
     if (raw === undefined) return DEFAULT_MODEL_CONNECTION;
     const parsed = modelsConfigSchema.safeParse(raw);
     if (!parsed.success) {
-        const issues = parsed.error.issues.map((i) => `models.${i.path.join(".")}: ${i.message}`).join("; ");
+        const issues = parsed.error.issues
+            .map((i) => `models.${i.path.join(".")}: ${i.message}`)
+            .join("; ");
         return { ...DEFAULT_MODEL_CONNECTION, configError: { issues } };
     }
     const agents: AgentModelOverrides = parsed.data.agents ?? {};
@@ -383,15 +426,29 @@ export function resolveModelConnection(): ResolvedModelConnection {
     // The request timeout and the retry count ride through in both modes: an absent field spreads
     // nothing, so the resolved connection omits it and boot keeps the current provider behavior.
     const requestBounds = pickRequestBounds(connection);
+    const fallbacks = connection.fallbacks === undefined ? {} : { fallbacks: connection.fallbacks };
     if (connection.mode === "cliproxy") {
-        return { mode: "cliproxy", provider: connection.provider ?? "anthropic", agents, ...requestBounds };
+        return {
+            mode: "cliproxy",
+            provider: connection.provider ?? "anthropic",
+            agents,
+            ...requestBounds,
+            ...fallbacks,
+        };
     }
-    const protocol: ModelWireProtocol = connection.protocol ?? impliedWireProtocol(connection.provider, connection.baseURL);
+    const protocol: ModelWireProtocol =
+        connection.protocol ?? impliedWireProtocol(connection.provider, connection.baseURL);
     // Carry the optional token-free `auth` source verbatim (present only on a well-formed direct block).
-    const directOptions: { auth?: ModelAuthConfig; contextWindow?: number; supportsMultiPartToolContent?: boolean } = {};
+    const directOptions: {
+        auth?: ModelAuthConfig;
+        contextWindow?: number;
+        supportsMultiPartToolContent?: boolean;
+    } = {};
     if (connection.auth !== undefined) directOptions.auth = connection.auth;
-    if (connection.contextWindow !== undefined) directOptions.contextWindow = connection.contextWindow;
-    if (connection.supportsMultiPartToolContent !== undefined) directOptions.supportsMultiPartToolContent = connection.supportsMultiPartToolContent;
+    if (connection.contextWindow !== undefined)
+        directOptions.contextWindow = connection.contextWindow;
+    if (connection.supportsMultiPartToolContent !== undefined)
+        directOptions.supportsMultiPartToolContent = connection.supportsMultiPartToolContent;
     return {
         mode: "direct",
         provider: connection.provider,
@@ -400,6 +457,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
         agents,
         ...directOptions,
         ...requestBounds,
+        ...fallbacks,
     };
 }
 
@@ -412,7 +470,9 @@ export function resolveModelConnection(): ResolvedModelConnection {
  * unauthenticated client.
  */
 export type ResolvedKnowledgeConfig =
-    { readonly kind: "configured"; readonly baseUrl: string; readonly apiKey: string } | { readonly kind: "missing_key"; readonly baseUrl: string } | null;
+    | { readonly kind: "configured"; readonly baseUrl: string; readonly apiKey: string }
+    | { readonly kind: "missing_key"; readonly baseUrl: string }
+    | null;
 
 export function resolveKnowledgeConfig(): ResolvedKnowledgeConfig {
     const baseUrl = readConfig().knowledge?.baseUrl?.trim();

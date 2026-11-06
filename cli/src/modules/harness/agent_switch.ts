@@ -52,7 +52,7 @@ export type SwappableChatProvider = ChatProvider & {
  */
 export function createSwappableProvider(initial: ChatProvider): SwappableChatProvider {
     let inner = initial;
-    return {
+    const handle: SwappableChatProvider = {
         get capabilities() {
             return inner.capabilities;
         },
@@ -65,13 +65,25 @@ export function createSwappableProvider(initial: ChatProvider): SwappableChatPro
         get current() {
             return inner;
         },
+        // The fallback model of a declined request and the provider of another model read through to the current
+        // inner, thus the loop moves a run to a fallback model over the connection of the live selection.
+        get refusalFallbackModel() {
+            return inner.refusalFallbackModel;
+        },
         bind(binding) {
             return inner.bind(binding);
+        },
+        // The handle stands for the model of the current inner, thus that model, or an inner that serves one model
+        // only, gives the handle back, and the loop sees no move.
+        withModel(modelId) {
+            const other = inner.withModel?.(modelId);
+            return other === undefined || other === inner ? handle : other;
         },
         swap(next) {
             inner = next;
         },
     };
+    return handle;
 }
 
 /**
@@ -313,13 +325,17 @@ export function clearAgentSwitch(): void {
  * no live runtime is reported `scheduled`: nothing runs to apply it to, and the next boot reads the
  * persisted config.
  */
-export function requestAgentModelChange(agent: AgentName, selection: AgentSelection): { status: "applied" } | { status: "scheduled" } {
+export function requestAgentModelChange(
+    agent: AgentName,
+    selection: AgentSelection,
+): { status: "applied" } | { status: "scheduled" } {
     const state = active;
     if (!state) return { status: "scheduled" };
 
     // Already on this selection: clear any stale pending for the agent and report applied — the runtime
     // needs no work, and a lingering pending would misreport the agent as mid-switch.
-    if (sameSelection(state.current[agent], selection) && !state.pending.has(agent)) return { status: "applied" };
+    if (sameSelection(state.current[agent], selection) && !state.pending.has(agent))
+        return { status: "applied" };
     if (sameSelection(state.current[agent], selection)) {
         state.pending.delete(agent);
         notifyStateChange();

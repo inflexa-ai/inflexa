@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { AgentDefinition, AgentSession, ChatProvider, ChatTurns, RunProvenanceEvent } from "@inflexa-ai/harness";
+import type {
+    AgentDefinition,
+    AgentSession,
+    ChatProvider,
+    ChatTurns,
+    RunProvenanceEvent,
+} from "@inflexa-ai/harness";
 
 import { Bus } from "../../../lib/bus.ts";
 import type { StampedEvent } from "../../../types/events.ts";
@@ -42,7 +48,8 @@ function fakeProvider({ model, effort }: AgentSelection): ChatProvider {
 
 function tagOf(handle: SwappableChatProvider): AgentSelection {
     const tag = TAGS.get(agentProviderInner(handle));
-    if (tag === undefined) throw new Error("the handle does not delegate to a provider of fakeProvider");
+    if (tag === undefined)
+        throw new Error("the handle does not delegate to a provider of fakeProvider");
     return tag;
 }
 
@@ -103,10 +110,21 @@ function setup(
             emitters.swap(name);
         },
         modelProvider: "anthropic",
-        initialSelections: { conversation: sel(models.conversation), sandbox: sel(models.sandbox), utility: sel(models.utility) },
+        initialSelections: {
+            conversation: sel(models.conversation),
+            sandbox: sel(models.sandbox),
+            utility: sel(models.utility),
+        },
     });
 
-    const runStarted = (runId: string): RunProvenanceEvent => ({ type: "run_started", analysisId: "an-1", runId, planSummary: "p", stepCount: 1, atMs: 1 });
+    const runStarted = (runId: string): RunProvenanceEvent => ({
+        type: "run_started",
+        analysisId: "an-1",
+        runId,
+        planSummary: "p",
+        stepCount: 1,
+        atMs: 1,
+    });
     const runCompleted = (runId: string): RunProvenanceEvent => ({
         type: "run_completed",
         analysisId: "an-1",
@@ -115,7 +133,14 @@ function setup(
         atMs: 9,
         durationMs: 8,
     });
-    const stepCompleted: RunProvenanceEvent = { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 5 };
+    const stepCompleted: RunProvenanceEvent = {
+        type: "step_completed",
+        analysisId: "an-1",
+        runId: "run-1",
+        stepId: "step-1",
+        status: "completed",
+        atMs: 5,
+    };
 
     return {
         swappable,
@@ -185,11 +210,38 @@ describe("agent-work gauge", () => {
 describe("the swappable provider", () => {
     test("binds through the inner that it holds at the time of the call, thus a held handle follows a swap", () => {
         const handle = createSwappableProvider(fakeProvider(sel("claude-before")));
-        const session: AgentSession = { ...buildChatSession("an-1", "t-1"), provenance: { agentId: "conv", callPath: ["conv"] } };
+        const session: AgentSession = {
+            ...buildChatSession("an-1", "t-1"),
+            provenance: { agentId: "conv", callPath: ["conv"] },
+        };
 
         handle.swap(fakeProvider(sel("claude-after")));
 
         expect(() => handle.bind({ session, live: true })).toThrow("bind reached claude-after");
+    });
+    test("gives the provider of another model and the fallback model of its current inner", () => {
+        const other = fakeProvider(sel("claude-other"));
+        const inner: ChatProvider = {
+            ...fakeProvider(sel("claude-before")),
+            refusalFallbackModel: "claude-other",
+            withModel: (modelId) => (modelId === "claude-other" ? other : inner),
+        };
+        const handle = createSwappableProvider(inner);
+
+        expect(handle.refusalFallbackModel).toBe("claude-other");
+        expect(handle.withModel?.("claude-other")).toBe(other);
+    });
+
+    test("gives itself back for the model of its inner and for an inner that serves one model only", () => {
+        const inner: ChatProvider = {
+            ...fakeProvider(sel("claude-before")),
+            withModel: () => inner,
+        };
+        const handle = createSwappableProvider(inner);
+        const single = createSwappableProvider(fakeProvider(sel("claude-before")));
+
+        expect(handle.withModel?.("claude-before")).toBe(handle);
+        expect(single.withModel?.("claude-other")).toBe(single);
     });
 });
 
@@ -208,7 +260,11 @@ describe("agent switch — idle applies immediately", () => {
     });
 
     test("switching the chat model while idle re-points only the conversation agent (not sandbox, no emitter swap)", () => {
-        const h = setup({ conversation: "same-model", sandbox: "same-model", utility: "same-model" });
+        const h = setup({
+            conversation: "same-model",
+            sandbox: "same-model",
+            utility: "same-model",
+        });
         const sandboxInnerBefore = agentProviderInner(h.swappable.sandbox);
 
         const result = requestAgentModelChange("conversation", sel("claude-chat-new"));
@@ -222,11 +278,17 @@ describe("agent switch — idle applies immediately", () => {
     });
 
     test("switching utility while idle repoints only utility and never swaps sandbox provenance emitters", () => {
-        const h = setup({ conversation: "same-model", sandbox: "same-model", utility: "same-model" });
+        const h = setup({
+            conversation: "same-model",
+            sandbox: "same-model",
+            utility: "same-model",
+        });
         const conversationBefore = agentProviderInner(h.swappable.conversation);
         const sandboxBefore = agentProviderInner(h.swappable.sandbox);
 
-        expect(requestAgentModelChange("utility", sel("claude-utility-new"))).toEqual({ status: "applied" });
+        expect(requestAgentModelChange("utility", sel("claude-utility-new"))).toEqual({
+            status: "applied",
+        });
 
         expect(agentModel(h.swappable.utility)).toBe("claude-utility-new");
         expect(agentProviderInner(h.swappable.conversation)).toBe(conversationBefore);
@@ -251,7 +313,11 @@ describe("agent switch — idle applies immediately", () => {
         expect(h.rebuildCount()).toBe(1);
         expect(agentModel(h.swappable.sandbox)).toBe("claude-sand");
         expect(agentEffort(h.swappable.sandbox)).toBe("high");
-        expect(currentAgentEfforts()).toEqual({ conversation: "medium", sandbox: "high", utility: "medium" });
+        expect(currentAgentEfforts()).toEqual({
+            conversation: "medium",
+            sandbox: "high",
+            utility: "medium",
+        });
         // The provenance name carries the model only, thus the emitters stay.
         expect(h.emitterSwapNames).toEqual([]);
     });
@@ -301,7 +367,9 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const h = setup();
         const leaveTurn = enterChatTurn();
 
-        expect(requestAgentModelChange("utility", sel("claude-utility-next"))).toEqual({ status: "scheduled" });
+        expect(requestAgentModelChange("utility", sel("claude-utility-next"))).toEqual({
+            status: "scheduled",
+        });
         expect(agentModel(h.swappable.utility)).toBe("claude-utility");
         expect(pendingAgentSelections().get("utility")).toEqual(sel("claude-utility-next"));
 
@@ -332,23 +400,44 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         // turn is genuinely mid-flight, inside `runChatTurn`'s gauge bracket.
         const chunks = ["Each ", "analysis ", "row ", "carries ", "a slug."];
         const source = { agentId: "conv", callPath: ["conv"] };
-        const conversationAgent: AgentDefinition = { id: "conv", systemPrompt: "", model: "claude-conv", tools: [], maxIterations: 1 };
+        const conversationAgent: AgentDefinition = {
+            id: "conv",
+            systemPrompt: "",
+            model: "claude-conv",
+            tools: [],
+            maxIterations: 1,
+        };
         const chatTurns: ChatTurns = {
-            open: () => Promise.resolve({ kind: "started", turnId: "turn-1", agent: conversationAgent }),
+            open: () =>
+                Promise.resolve({ kind: "started", turnId: "turn-1", agent: conversationAgent }),
             async *read() {
                 for (let i = 0; i < chunks.length; i++) {
                     await Promise.resolve();
                     yield { type: "text-delta", text: present(chunks[i]), source };
                     emitted.push(present(chunks[i]));
                     if (i === 2) {
-                        const result = requestAgentModelChange("conversation", sel("claude-mid-stream"));
-                        midStream.push({ status: result.status, idle: isAgentWorkIdle(), innerModel: agentModel(h.swappable.conversation) });
+                        const result = requestAgentModelChange(
+                            "conversation",
+                            sel("claude-mid-stream"),
+                        );
+                        midStream.push({
+                            status: result.status,
+                            idle: isAgentWorkIdle(),
+                            innerModel: agentModel(h.swappable.conversation),
+                        });
                     }
                 }
             },
             stop: () => Promise.resolve(),
             answer: () => Promise.resolve("not_found"),
-            outcome: () => Promise.resolve({ status: "done", finishReason: "stop", opened: true, durationMs: 0, fallbackText: chunks.join("") }),
+            outcome: () =>
+                Promise.resolve({
+                    status: "done",
+                    finishReason: "stop",
+                    opened: true,
+                    durationMs: 0,
+                    fallbackText: chunks.join(""),
+                }),
         };
 
         const outcome = await runChatTurn(
@@ -370,7 +459,9 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         expect(outcome.kind).toBe("ok");
         // Mid-stream: the gauge was BUSY (the real bracket held), so the switch was SCHEDULED and the
         // in-flight provider inner was NEVER re-pointed — no request observed a mid-flight model change.
-        expect(midStream).toEqual([{ status: "scheduled", idle: false, innerModel: "claude-conv" }]);
+        expect(midStream).toEqual([
+            { status: "scheduled", idle: false, innerModel: "claude-conv" },
+        ]);
         // The swap lands only once the turn's bracket settles, before any next turn.
         expect(isAgentWorkIdle()).toBe(true);
         expect(agentModel(h.swappable.conversation)).toBe("claude-mid-stream");
@@ -401,7 +492,9 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const h = setup();
         noteDataProfileState("an-1", true);
 
-        expect(requestAgentModelChange("sandbox", sel("claude-after-profile"))).toEqual({ status: "scheduled" });
+        expect(requestAgentModelChange("sandbox", sel("claude-after-profile"))).toEqual({
+            status: "scheduled",
+        });
         expect(agentModel(h.swappable.sandbox)).toBe("claude-sand");
 
         noteDataProfileState("an-1", false);
@@ -412,7 +505,9 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const h = setup();
         const leaveTurn = enterChatTurn();
 
-        expect(requestAgentModelChange("conversation", sel("claude-conv", "xhigh"))).toEqual({ status: "scheduled" });
+        expect(requestAgentModelChange("conversation", sel("claude-conv", "xhigh"))).toEqual({
+            status: "scheduled",
+        });
         expect(pendingAgentSelections().get("conversation")).toEqual(sel("claude-conv", "xhigh"));
         expect(agentEffort(h.swappable.conversation)).toBe("medium");
 
@@ -444,7 +539,9 @@ describe("agent switch — state notifications + no active runtime", () => {
 
     test("a change requested with no live runtime reports scheduled (config persists it for next boot)", () => {
         // No `installAgentSwitch` this test — the beforeEach cleared any prior controller.
-        expect(requestAgentModelChange("sandbox", sel("whatever"))).toEqual({ status: "scheduled" });
+        expect(requestAgentModelChange("sandbox", sel("whatever"))).toEqual({
+            status: "scheduled",
+        });
         expect(currentAgentModels()).toEqual({ conversation: "", sandbox: "", utility: "" });
         expect(currentAgentEfforts()).toBeNull();
         expect(pendingAgentSelections().size).toBe(0);
