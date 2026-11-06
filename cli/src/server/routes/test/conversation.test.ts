@@ -76,6 +76,7 @@ function memoryStore(rows: Thread[]): ThreadStore & { listed: unknown[]; purged:
     const store: ThreadStore = {
         createThread: () => errAsync(UNUSED),
         setAutoTitle: () => errAsync(UNUSED),
+        setModel: () => errAsync(UNUSED),
         getThread: (id) => okAsync(live(id) ?? null),
         updateTitle: (id, title) => {
             const row = live(id);

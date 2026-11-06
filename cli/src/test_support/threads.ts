@@ -33,6 +33,7 @@ export function conversationThread(over: Partial<Thread> = {}): Thread {
         // Live by default. A tombstone is what an archived row carries, and the report surfaces read the
         // live rows alone.
         deletedAt: null,
+        model: null,
         ...over,
     };
 }
@@ -58,6 +59,7 @@ export function reportThread(over: Partial<Thread> = {}): Thread {
         createdAt: new Date("2026-07-08T02:00:00.000Z"),
         updatedAt: new Date("2026-07-08T03:00:00.000Z"),
         deletedAt: null,
+        model: null,
         ...over,
     };
 }
