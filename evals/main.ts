@@ -3,7 +3,7 @@
  * The command line of the decision evals.
  *
  *   bun run evals run [--provider <file>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3]
- *                     [--concurrency 4] [--timeout 180] [--out <file>]
+ *                     [--concurrency 4] [--timeout 180] [--exposure base] [--out <file>]
  *   bun run evals compare <baseline.json> <candidate.json> [--fail-on-regression]
  *
  * Each trial makes real model calls, thus the evals never run under `bun test`.
@@ -18,10 +18,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 
-import { createNoopLogger } from "@inflexa-ai/harness/lib/console-logger.js";
+import { createConsoleLogger, createNoopLogger } from "@inflexa-ai/harness/lib/console-logger.js";
 import { parseJsonAs } from "@inflexa-ai/harness/lib/parse-json.js";
 import { allCases } from "./cases/index.js";
-import { evalAgents, synthesisAgent } from "./lib/agent.js";
+import { evalAgents, exposed, synthesisAgent, TOOL_EXPOSURES, type StaticAgentKind, type ToolExposure } from "./lib/agent.js";
 import type { EvalCase } from "./lib/case.js";
 import { cliProvider, identityOf, providerOf, readProviderFile } from "./lib/provider.js";
 import { buildReport, compareReports, comparisonTable, regressions, reportTable, ReportSchema, type Report } from "./lib/report.js";
@@ -31,7 +31,7 @@ import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
 import { okAsync } from "neverthrow";
 
 const USAGE = `usage:
-  bun run evals run [--provider <file>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--out <file>]
+  bun run evals run [--provider <file>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--exposure base|read-both|read-write-both|read-script] [--out <file>]
   bun run evals compare <baseline.json> <candidate.json> [--fail-on-regression]
 
 With no --provider, the run uses the conversation model that the CLI configures.
@@ -83,14 +83,18 @@ async function run(args: readonly string[]): Promise<void> {
             concurrency: { type: "string" },
             timeout: { type: "string" },
             out: { type: "string" },
+            exposure: { type: "string", default: "base" },
         },
     });
+    const exposure = TOOL_EXPOSURES.find((name) => name === values.exposure);
+    if (exposure === undefined) fail(`--exposure must be one of ${TOOL_EXPOSURES.join(", ")}`);
     const trials = positiveInt(values.trials, 5, "trials");
     const k = positiveInt(values.k, Math.min(3, trials), "k");
     if (k > trials) fail("--k cannot be above --trials");
     const cases = selectCases(values.set, values.case);
 
-    const logger = createNoopLogger();
+    // EVALS_LOG=1 shows the log of the harness, for example the retries of a provider that stalls.
+    const logger = process.env["EVALS_LOG"] === "1" ? createConsoleLogger() : createNoopLogger();
     const { provider, identity } =
         values.provider === undefined
             ? await cliProvider(logger)
@@ -100,7 +104,10 @@ async function run(args: readonly string[]): Promise<void> {
     const sandbox = sandboxCases.length === 0 || values.provider !== undefined ? undefined : await cliProvider(logger, "sandbox");
     const agents = evalAgents();
     const startedAt = new Date().toISOString();
-    const digest = promptDigest(agents, [...(await sandboxAgentsOf(sandboxCases)), synthesisAgent([])]);
+    const digest = promptDigest(
+        exposedAgents(agents, exposure),
+        [...(await sandboxAgentsOf(sandboxCases)), synthesisAgent([])].map((agent) => exposed(agent, exposure)),
+    );
 
     process.stderr.write(
         `${cases.length} cases x ${trials} trials on ${identity.model}${sandbox === undefined ? "" : ` (sandbox ${sandbox.identity.model})`}, prompt ${digest}\n`,
@@ -112,6 +119,7 @@ async function run(args: readonly string[]): Promise<void> {
         trials,
         concurrency: positiveInt(values.concurrency, 4, "concurrency"),
         trialTimeoutMs: positiveInt(values.timeout, 180, "timeout") * 1000,
+        exposure,
         onTrial: (_case, result) => process.stderr.write(result.kind === "error" ? "E" : result.pass ? "." : "F"),
     });
     process.stderr.write("\n");
@@ -126,6 +134,17 @@ async function run(args: readonly string[]): Promise<void> {
     await mkdir(dirname(out), { recursive: true });
     await writeFile(out, `${JSON.stringify(report, null, 2)}\n`);
     process.stdout.write(`${reportTable(report)}\n\nreport: ${out}\n`);
+}
+
+/** The static agents as a trial of `exposure` holds them, for the prompt digest. */
+function exposedAgents(agents: Readonly<Record<StaticAgentKind, AgentDefinition>>, exposure: ToolExposure): Readonly<Record<StaticAgentKind, AgentDefinition>> {
+    return {
+        conversation: exposed(agents.conversation, exposure),
+        planner: exposed(agents.planner, exposure),
+        "planner-knowledge": exposed(agents["planner-knowledge"], exposure),
+        report: exposed(agents.report, exposure),
+        analogy: exposed(agents.analogy, exposure),
+    };
 }
 
 /** One composition of each sandbox agent that a case names, for the prompt digest. */

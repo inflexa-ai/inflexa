@@ -6,6 +6,7 @@
  * No model judges a trial.
  */
 
+import type { PoolInventorySection } from "@inflexa-ai/harness/config/environment-stores.js";
 import type { StepSummary } from "@inflexa-ai/harness/schemas/step-summary.js";
 import { isDeepStrictEqual } from "node:util";
 
@@ -27,7 +28,7 @@ export type TrialCall = {
     readonly refused: boolean;
     /** The call ran, and its result is ok. Absent for a nested call of a script. */
     readonly ok?: boolean;
-    /** The ok value of a terminal `submit_` call, which a grader reads. Absent for each other call. */
+    /** The ok value of a terminal `submit_` call, or of a call of a script, which a grader reads. Absent for each other call. */
     readonly value?: unknown;
 };
 
@@ -52,6 +53,10 @@ export type Trial = {
     readonly files?: Readonly<Record<string, string>>;
     /** A sandbox trial: each command that no exec rule answered. */
     readonly unscripted?: readonly string[];
+    /** A sandbox trial of a case with `summary`: the markdown of the step summary that the agent wrote after the task. */
+    readonly summary?: string;
+    /** The warnings of a step summary that gave no markdown. */
+    readonly summaryError?: string;
 };
 
 export type Grade = { readonly pass: boolean; readonly detail: string };
@@ -87,12 +92,24 @@ export type EvalCase = {
     readonly tools?: Readonly<Record<string, ToolScript>>;
     /** The model requests of a trial. A trial also ends when a reply calls no tool. */
     readonly maxSteps: number;
+    /** A planner case: the package pool that `submit_plan` resolves the packages against. It matches the census of the seed. */
+    readonly pool?: readonly PoolInventorySection[];
     /** The tree, the farm, and the exec rules of a sandbox case. */
     readonly sandbox?: SandboxSetup;
     /** The narrative of the plan and the step summaries of a synthesis case. They make the seed of the synthesizer. */
     readonly synthesis?: { readonly narrative: string; readonly summaries: readonly StepSummary[] };
-    /** The bound of one trial, in milliseconds. Absent: the bound of the run. */
+    /** The bound of one trial, in milliseconds. The run bound wins when it is larger, for a slow provider. */
     readonly timeoutMs?: number;
+    /**
+     * A sandbox case: after the task, the step agent writes its step summary, as the step workflow asks for it. With
+     * `only`, the task does not run: `history` is the transcript of the task, and only the summary request runs.
+     */
+    readonly summary?: boolean | "only";
+    /**
+     * A conversation case: the turn does not run. The conversation of `history` and the turn input gets the compaction
+     * request of a chat turn, and the trial is that exchange.
+     */
+    readonly compact?: boolean;
     /** The answer of the user to each approval that a call asks for. Absent: the user approves. */
     readonly approve?: "approve" | "deny";
     readonly grade: Grader;
@@ -133,7 +150,7 @@ export function priorCall(toolName: string, input: unknown, value: unknown, text
 const ScriptCallsSchema = z.object({ calls: z.array(z.object({ tool: z.string() })) });
 
 /** The calls of each script of a trial, by the id of its `run_script` call, from the frames that the script emitted. */
-export type ScriptCallInputs = ReadonlyMap<string, ReadonlyArray<{ readonly tool: string; readonly input: unknown }>>;
+export type ScriptCallInputs = ReadonlyMap<string, ReadonlyArray<{ readonly tool: string; readonly input: unknown; readonly value?: unknown }>>;
 
 /**
  * The calls of a trial, in the order that the model made them. A call of `run_script` is followed by the tool calls of
@@ -145,7 +162,7 @@ export function trialOf(
     asks: readonly TrialAsk[],
     text: string,
     finishReason: string,
-    extra: Pick<Trial, "files" | "unscripted"> & { readonly maxSteps?: number; readonly scriptCalls?: ScriptCallInputs } = {},
+    extra: Pick<Trial, "files" | "unscripted" | "summary" | "summaryError"> & { readonly maxSteps?: number; readonly scriptCalls?: ScriptCallInputs } = {},
 ): Trial {
     const calls = steps.flatMap((step, index) =>
         step.calls.flatMap((call) => {
@@ -162,7 +179,7 @@ export function trialOf(
             const started = call.toolName === "run_script" ? extra.scriptCalls?.get(call.toolCallId) : undefined;
             const nested =
                 started !== undefined
-                    ? started.map((inner) => ({ step: index, tool: inner.tool, input: inner.input, refused: false }))
+                    ? started.map((inner) => ({ step: index, tool: inner.tool, input: inner.input, refused: false, value: inner.value }))
                     : script?.success === true
                       ? script.data.calls.map((inner) => ({ step: index, tool: inner.tool, input: undefined, refused: false }))
                       : [];
@@ -173,7 +190,18 @@ export function trialOf(
         step.rawFinishReason === undefined || step.rawFinishReason === step.finishReason ? step.finishReason : `${step.finishReason} (${step.rawFinishReason})`,
     );
     const capped = extra.maxSteps !== undefined && steps.length >= extra.maxSteps && (steps.at(-1)?.calls.length ?? 0) > 0;
-    return { calls, asks, text, finishReason, stepFinishes, capped, files: extra.files, unscripted: extra.unscripted };
+    return {
+        calls,
+        asks,
+        text,
+        finishReason,
+        stepFinishes,
+        capped,
+        files: extra.files,
+        unscripted: extra.unscripted,
+        summary: extra.summary,
+        summaryError: extra.summaryError,
+    };
 }
 
 /** An input matches when each key of `expected` has the same value in the input. Other keys are free. */
@@ -289,6 +317,9 @@ export type PlanStepView = {
     readonly name: string;
     readonly question: string;
     readonly depends_on: readonly string[];
+    readonly packages: readonly string[];
+    readonly capability: string;
+    readonly status: string;
 };
 
 const PlanViewSchema = z.object({
@@ -300,6 +331,9 @@ const PlanViewSchema = z.object({
                 name: z.string().catch(""),
                 question: z.string().catch(""),
                 depends_on: z.array(z.string()).catch([]),
+                packages: z.array(z.string()).catch([]),
+                capability: z.string().catch(""),
+                status: z.string().catch(""),
             }),
         ),
     }),
@@ -318,6 +352,15 @@ export function plans(describe: string, check: (steps: readonly PlanStepView[]) 
         const steps = parsed.data.plan.steps;
         const shape = steps.map((step) => `${step.id}:${step.agent}`).join(", ");
         return check(steps) ? { pass: true, detail: `${describe} (${shape})` } : { pass: false, detail: `not ${describe} (${shape})` };
+    };
+}
+
+/** `grader` reads the step summary of the trial as its text. A trial with no summary fails. */
+export function inSummary(grader: Grader): Grader {
+    return (trial) => {
+        if (trial.summary === undefined) return { pass: false, detail: `no step summary${trial.summaryError === undefined ? "" : `: ${trial.summaryError}`}` };
+        const grade = grader({ ...trial, text: trial.summary });
+        return { pass: grade.pass, detail: `summary: ${grade.detail}` };
     };
 }
 
@@ -341,6 +384,63 @@ export function anyOf(...graders: readonly Grader[]): Grader {
 /** The text of the replies does not hold `text`. */
 export function notMentions(text: string): Grader {
     return (trial) => (trial.text.includes(text) ? { pass: false, detail: `the reply mentions ${text}` } : { pass: true, detail: `no mention of ${text}` });
+}
+
+/** The text of the replies matches `pattern`. */
+export function says(pattern: RegExp): Grader {
+    return (trial) => {
+        const hit = pattern.exec(trial.text);
+        return hit === null ? { pass: false, detail: `the reply does not match ${String(pattern)}` } : { pass: true, detail: `the reply says "${hit[0]}"` };
+    };
+}
+
+/** The text of the replies does not match `pattern`. */
+export function neverSays(pattern: RegExp): Grader {
+    return (trial) => {
+        const hit = pattern.exec(trial.text);
+        return hit === null ? { pass: true, detail: `the reply does not match ${String(pattern)}` } : { pass: false, detail: `the reply says "${hit[0]}"` };
+    };
+}
+
+/** No call of `tool` has an input that holds one of `words`, in any case. */
+export function inputLacks(tool: string, words: readonly string[]): Grader {
+    return (trial) => {
+        for (const call of trial.calls.filter((c) => c.tool === tool)) {
+            const text = JSON.stringify(call.input ?? "").toLowerCase();
+            const hit = words.find((word) => text.includes(word.toLowerCase()));
+            if (hit !== undefined) return { pass: false, detail: `${tool} input holds ${hit}` };
+        }
+        return { pass: true, detail: `no ${tool} input holds ${words.join(", ")}` };
+    };
+}
+
+/** At most `limit` calls in the trial, the calls of a script included. */
+export function atMostCalls(limit: number): Grader {
+    return (trial) => ({ pass: trial.calls.length <= limit, detail: `${trial.calls.length} calls (${describeCalls(trial.calls)})` });
+}
+
+/** A number of the reply text, outside a word such as ISG15, with the thousands separators removed. */
+const REPLY_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])|(?<![\w.,])\d+(?:\.\d+)?(?![\w])/g;
+
+/**
+ * Each number of the reply above `floor` is one of `allowed`. A number that no source of the trial gave is an
+ * invented value. The small numbers are free, because a count of steps or of sentences has no source.
+ */
+export function numbersGrounded(allowed: readonly string[], floor = 10, opts: { readonly fromCalls?: boolean } = {}): Grader {
+    const normal = (value: string): string => String(Number(value.replaceAll(",", "")));
+    return (trial) => {
+        // The inputs of the calls of the trial, for example the scripts that the agent wrote, are a source too.
+        const own =
+            opts.fromCalls === true
+                ? trial.calls.flatMap((call) => [...JSON.stringify(call.input ?? "").matchAll(REPLY_NUMBER)].map((hit) => normal(hit[0])))
+                : [];
+        const known = new Set([...allowed.map(normal), ...own]);
+        const numbers = [...trial.text.matchAll(REPLY_NUMBER)].map((hit) => String(Number(hit[0].replaceAll(",", ""))));
+        const invented = [...new Set(numbers.filter((value) => Number(value) > floor && !known.has(value)))];
+        return invented.length === 0
+            ? { pass: true, detail: `${numbers.length} numbers, each from a source` }
+            : { pass: false, detail: `numbers with no source: ${invented.join(", ")}` };
+    };
 }
 
 const CommandInputSchema = z.object({ command: z.array(z.string()) });
@@ -394,6 +494,21 @@ export function atMost(match: CallMatch, limit: number): Grader {
     return (trial) => {
         const count = trial.calls.filter((call) => matches(call, match)).length;
         return { pass: count <= limit, detail: `${count} calls of ${match.tool}` };
+    };
+}
+
+/** The calls of `tool` run in at most `limit` scripts. A direct call counts as one script. */
+export function inScripts(tool: string, limit: number): Grader {
+    return (trial) => {
+        let script = -1;
+        const holders = new Set<number>();
+        trial.calls.forEach((call, index) => {
+            if (call.ok !== undefined) script = call.tool === "run_script" ? index : -1;
+            if (call.tool !== tool) return;
+            holders.add(call.ok === undefined && script !== -1 ? script : index);
+        });
+        if (holders.size === 0) return { pass: false, detail: `no call of ${tool}` };
+        return { pass: holders.size <= limit, detail: `the calls of ${tool} ran in ${holders.size} scripts` };
     };
 }
 

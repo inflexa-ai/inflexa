@@ -10,7 +10,7 @@
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import type { CheckResponse, KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable } from "./client.js";
 import type { SnapshotPin } from "./pin.js";
 import { SituationFieldsSchema, toSituation } from "./situation.js";
@@ -19,9 +19,14 @@ export type KnowledgeCheckDeps = {
     readonly client: KnowledgeClient;
     /** The release the plan pinned on its first recommend answer. The check sends it, thus another release refuses the call. */
     readonly pin?: SnapshotPin;
+    /** Called for each answer of the tool, a refusal too. The loop folds it after the round, thus a replay calls it again. */
+    readonly onCheck?: () => void;
 };
 
-export type KnowledgeCheckOutput = CheckResponse | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
+export type KnowledgeCheckOutput = WithToolCallRecord<
+    CheckResponse | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch,
+    { readonly checked: true }
+>;
 
 /** The checks one plan generation may run. Two is a draft and one revision; the third is slack. */
 export const CHECK_CALL_LIMIT = 3;
@@ -90,12 +95,15 @@ const KnowledgeCheckInputSchema = SituationFieldsSchema.extend({
     steps: z.array(DraftedStepSchema).min(1).describe("The drafted method steps, one entry per step type."),
 });
 
+const CHECKED = { checked: true } as const;
+
 export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps): Tool<z.infer<typeof KnowledgeCheckInputSchema>, KnowledgeCheckOutput> {
     let calls = 0;
     return defineTool({
         id: "knowledge_check",
         description:
-            "Check the method steps you drafted for an expression analysis against the rules of the Inflexa knowledge service, once, after the draft and before `submit_plan`. " +
+            "Check the method steps you drafted for an expression analysis against the rules of the Inflexa knowledge service. " +
+            "After a `knowledge_recommend` answer, `submit_plan` takes a plan only when a check of the draft ran. " +
             "Send the same situation you sent to `knowledge_recommend` and the drafted steps: the step type, the method as the step names it, its package, and its key parameters. " +
             "The answer lists `violations` (a forbidden method, or an inferential test on a design that a flag limits) and `warnings` (a method outside the set the rules name, a parameter that differs from a sourced default, or a required parameter that the step does not state), each with the rule id and the permitted alternatives. " +
             "Revise a violated step once, then submit. A warning is advice: keep the step when the data gives a reason, and state the reason in the step. `ok: true` means no finding on the assessed steps. " +
@@ -109,15 +117,21 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps): Tool<z.infer
         execute: async (input): Promise<Result<KnowledgeCheckOutput, ToolError>> => {
             calls += 1;
             if (calls > CHECK_CALL_LIMIT) {
-                return ok({
-                    match: "rejected",
-                    message: `The host accepts ${CHECK_CALL_LIMIT} checks per plan, and this is call ${calls}. Submit the plan with the findings of the last check.`,
-                    issues: [],
-                });
+                return ok(
+                    withToolCallRecord(
+                        {
+                            match: "rejected" as const,
+                            message: `The host accepts ${CHECK_CALL_LIMIT} checks per plan, and this is call ${calls}. Submit the plan with the findings of the last check.`,
+                            issues: [],
+                        },
+                        CHECKED,
+                    ),
+                );
             }
             const { steps, ...fields } = input;
             const answer = await deps.client.check(toSituation(fields), steps, deps.pin?.get());
-            return ok(answer);
+            return ok(withToolCallRecord(answer, CHECKED));
         },
+        foldCallRecord: () => deps.onCheck?.(),
     });
 }

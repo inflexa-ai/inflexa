@@ -760,6 +760,15 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
             };
 
             let response = build(boundedEntries, requested.path);
+            // An empty answer to a query reads as "look elsewhere" unless it says that there is nowhere else.
+            if (needleGiven && total === 0 && raw.state === "populated") {
+                response = {
+                    ...response,
+                    content:
+                        `No reference beneath ${requested.path} matches "${query?.trim() ?? ""}". ` +
+                        `The store at ${REFS_ROOT} is the only reference data that the sandbox can read, and the sandbox has no network.`,
+                };
+            }
             while (Buffer.byteLength(JSON.stringify(response), "utf8") > MAX_ENVELOPE_BYTES && boundedEntries.length > 0) {
                 boundedEntries = boundedEntries.slice(0, -1);
                 response = build(boundedEntries, requested.path);

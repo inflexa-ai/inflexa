@@ -23,7 +23,13 @@ import { analogyAgentOf } from "@inflexa-ai/harness/tools/research/generate-anal
 import { synthesizerAgentOf } from "@inflexa-ai/harness/execution/run-synthesis.js";
 import type { StepSummary } from "@inflexa-ai/harness/schemas/step-summary.js";
 import { createSynthesisLookupTools } from "@inflexa-ai/harness/tools/research/synthesis-lookups.js";
-import { buildPlannerSearchTools, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "@inflexa-ai/harness/tools/research/generate-plan.js";
+import {
+    buildPlannerSearchTools,
+    plannerAgentOf,
+    plannerOfInvocation,
+    plannerTerminalTools,
+    type GeneratePlanDeps,
+} from "@inflexa-ai/harness/tools/research/generate-plan.js";
 import { makeFakeWorkspaceFs } from "@inflexa-ai/harness/agents/sandbox/__fixtures__/deps.js";
 import { createLocalRunAuthorizer } from "@inflexa-ai/harness/auth/local-run-authorizer.js";
 import { unusedCitationResolver } from "@inflexa-ai/harness/citations/__fixtures__/resolver.js";
@@ -40,6 +46,8 @@ import type { EmbeddingProvider } from "@inflexa-ai/harness/providers/types.js";
 import type { AskRequest } from "@inflexa-ai/harness/tools/approval/contract.js";
 import type { Tool } from "@inflexa-ai/harness/tools/define-tool.js";
 import type { WebSearchEngine } from "@inflexa-ai/harness/tools/research/web-search.js";
+import type { KnowledgeClient } from "@inflexa-ai/harness/tools/knowledge/client.js";
+import type { PoolInventorySection } from "@inflexa-ai/harness/config/environment-stores.js";
 
 import { createRunInflexaTool } from "../../cli/src/modules/harness/inflexa_tool.ts";
 import { createManageInputsTool } from "../../cli/src/modules/harness/inputs_tool.ts";
@@ -55,7 +63,7 @@ export const REAL_TOOL = "real";
 export type ToolScript = ScriptedResult | ((input: unknown) => ScriptedResult) | typeof REAL_TOOL;
 
 /** The agents that a case can run. A sandbox agent is built for each trial, over the tree of the trial. */
-export type AgentKind = "conversation" | "planner" | "report" | "analogy" | "synthesis" | "sandbox";
+export type AgentKind = "conversation" | "planner" | "planner-knowledge" | "report" | "analogy" | "synthesis" | "sandbox";
 
 /** The agents that one composition serves for the whole run. */
 export type StaticAgentKind = Exclude<AgentKind, "sandbox" | "synthesis">;
@@ -128,6 +136,31 @@ export function conversationAgent(): AgentDefinition {
     });
 }
 
+/**
+ * The knowledge service of the eval: one procedure for a bulk RNA-seq comparison of two groups, and a check with no
+ * finding. The answers carry no claim, thus no plan can cite one.
+ */
+const SNAPSHOT = { date: "2026-10-01", digest: "sha256:eval-knowledge" };
+const evalKnowledgeClient: KnowledgeClient = {
+    recommend: () =>
+        Promise.resolve({
+            match: "applicable" as const,
+            snapshot: SNAPSHOT,
+            procedure: [
+                { step: "filter", method: { id: "M-0001", label: "filterByExpr (edgeR)" }, rules: [], package: { name: "edgeR" } },
+                { step: "model", method: { id: "M-0002", label: "DESeq2 Wald test" }, rules: [], package: { name: "DESeq2" } },
+                { step: "shrinkage", method: { id: "M-0003", label: "apeglm" }, rules: [], package: { name: "apeglm" } },
+                { step: "enrichment", method: { id: "M-0004", label: "fgsea on the shrunken ranking" }, rules: [], package: { name: "fgsea" } },
+            ],
+            uncovered: [],
+            flags: [],
+            claims: [],
+        }),
+    check: () => Promise.resolve({ ok: true, snapshot: SNAPSHOT, violations: [], warnings: [] }),
+    render: refuse,
+    contract: refuse,
+};
+
 /** The planner that `generate_plan` runs, with the terminal tools of a run with no knowledge answer. */
 export function plannerAgent(): AgentDefinition {
     const deps: GeneratePlanDeps = {
@@ -141,6 +174,29 @@ export function plannerAgent(): AgentDefinition {
         workspace: evalWorkspace(),
     };
     return plannerAgentOf(deps, buildPlannerSearchTools(deps), plannerTerminalTools(createNoopLogger()));
+}
+
+/**
+ * The planner of one `generate_plan` call, as the tool builds it for each call: its `submit_plan` reads the package
+ * census of `pool`, and with `knowledge` it holds the knowledge tools over the knowledge service of the eval. The
+ * memory of the call lives in the tools, thus a trial builds its own.
+ */
+export function plannerTrialAgent(pool: readonly PoolInventorySection[], knowledge: boolean): AgentDefinition {
+    return plannerOfInvocation(
+        {
+            conversation: { provider: unusedChatProvider(), model: "eval" },
+            pool: unconnectedPool(),
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            refStorePath: "/eval/refs",
+            farmLockFile: "/eval/farm.lock",
+            imagePackagesFile: "/eval/image-packages.json",
+            readPoolInventory: () => Promise.resolve({ kind: "sections", sections: pool }),
+            toolOutputStore: unusedToolOutputStore,
+            workspace: evalWorkspace(),
+            ...(knowledge ? { knowledge: evalKnowledgeClient } : {}),
+        },
+        createNoopLogger(),
+    ).agent;
 }
 
 /** The report agent of a report session. Each tool is scripted, thus no dependency below is reached. */
@@ -189,7 +245,13 @@ export function synthesisAgent(summaries: readonly StepSummary[]): AgentDefiniti
 
 /** The agent of each kind. */
 export function evalAgents(): Readonly<Record<StaticAgentKind, AgentDefinition>> {
-    return { conversation: conversationAgent(), planner: plannerAgent(), report: reportAgent(), analogy: analogyAgent() };
+    return {
+        conversation: conversationAgent(),
+        planner: plannerAgent(),
+        "planner-knowledge": plannerTrialAgent([], true),
+        report: reportAgent(),
+        analogy: analogyAgent(),
+    };
 }
 
 /**
@@ -250,12 +312,16 @@ const SANDBOX_REAL_TOOLS = new Set([
 
 /** A sandbox agent with each tool that the case scripts, and each tool outside {@link SANDBOX_REAL_TOOLS}, scripted. */
 export function withSandboxScripts(agent: AgentDefinition, scripts: Readonly<Record<string, ToolScript>>): AgentDefinition {
-    const ids = new Set(agent.tools.map((tool) => tool.id));
+    const scriptTools = agent.scriptTools ?? [];
+    const ids = new Set([...agent.tools, ...scriptTools].map((tool) => tool.id));
     const unknown = Object.keys(scripts).filter((id) => !ids.has(id));
     if (unknown.length > 0) throw new Error(`the agent ${agent.id} has no tool ${unknown.join(", ")}`);
+    const sandboxed = (tool: Tool): Tool => (scripts[tool.id] === undefined && SANDBOX_REAL_TOOLS.has(tool.id) ? tool : scriptedTool(tool, scripts[tool.id]));
     return {
         ...agent,
-        tools: agent.tools.map((tool) => (scripts[tool.id] === undefined && SANDBOX_REAL_TOOLS.has(tool.id) ? tool : scriptedTool(tool, scripts[tool.id]))),
+        tools: agent.tools.map(sandboxed),
+        // A file tool that the exposure moved into the scripts keeps the rule of its direct copy.
+        scriptTools: scriptTools.map((tool) => (READ_TOOLS.has(tool.id) || scripts[tool.id] !== undefined ? sandboxed(tool) : tool)),
     };
 }
 
@@ -263,7 +329,48 @@ export function withSandboxScripts(agent: AgentDefinition, scripts: Readonly<Rec
  * The agent with each tool and each script tool scripted. A script for a tool that the agent does not hold is a fault
  * of the case.
  */
-export function withScriptedTools(agent: AgentDefinition, scripts: Readonly<Record<string, ToolScript>>): AgentDefinition {
+/** One call of a script tool, with its input, in the order that the scripts made them. */
+export type ScriptToolCall = { readonly tool: string; readonly input: unknown; value?: unknown };
+
+/**
+ * Where an agent holds its plain file tools. `base` is production. `read-both` and `read-write-both` add the read tools,
+ * and then `write_file` too, to the script tools, and keep them direct. `read-script` moves the read tools into the
+ * scripts. `edit_file` stays direct: it runs as its own step, and a script is one step.
+ */
+export type ToolExposure = "base" | "read-both" | "read-write-both" | "read-script";
+
+export const TOOL_EXPOSURES: readonly ToolExposure[] = ["base", "read-both", "read-write-both", "read-script"];
+
+const READ_TOOLS = new Set(["read_file", "grep", "list_files", "file_stat", "workspace_search"]);
+
+/** The agent with its file tools where `exposure` puts them. An agent that runs no script keeps its tools. */
+export function exposed(agent: AgentDefinition, exposure: ToolExposure): AgentDefinition {
+    if (exposure === "base" || (agent.scriptTools ?? []).length === 0) return agent;
+    const moved = (tool: Tool): boolean => READ_TOOLS.has(tool.id) || (exposure === "read-write-both" && tool.id === "write_file");
+    const copies = agent.tools.filter(moved);
+    if (copies.length === 0) return agent;
+    return {
+        ...agent,
+        tools: exposure === "read-script" ? agent.tools.filter((tool) => !moved(tool)) : agent.tools,
+        scriptTools: [...(agent.scriptTools ?? []), ...copies],
+    };
+}
+
+/** The tool with a record of each input that reaches it. A frame of a nested call carries no input, thus the trial keeps them here. */
+function recorded(tool: Tool, record: ScriptToolCall[]): Tool {
+    return {
+        ...tool,
+        execute: async (input, ctx) => {
+            const call: ScriptToolCall = { tool: tool.id, input };
+            record.push(call);
+            const result = await tool.execute(input, ctx);
+            if (result.isOk()) call.value = result.value;
+            return result;
+        },
+    };
+}
+
+export function withScriptedTools(agent: AgentDefinition, scripts: Readonly<Record<string, ToolScript>>, record: ScriptToolCall[] = []): AgentDefinition {
     const scriptTools = agent.scriptTools ?? [];
     const ids = new Set([...agent.tools, ...scriptTools].map((tool) => tool.id));
     const unknown = Object.keys(scripts).filter((id) => !ids.has(id));
@@ -271,6 +378,6 @@ export function withScriptedTools(agent: AgentDefinition, scripts: Readonly<Reco
     return {
         ...agent,
         tools: agent.tools.map((tool) => scriptedTool(tool, scripts[tool.id])),
-        scriptTools: scriptTools.map((tool) => scriptedTool(tool, scripts[tool.id])),
+        scriptTools: scriptTools.map((tool) => recorded(scriptedTool(tool, scripts[tool.id]), record)),
     };
 }
