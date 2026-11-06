@@ -157,7 +157,7 @@ larger batch, the detail MUST give the count and the first 8 identifiers.
 - **WHEN** the tool is called with 10 identifiers, `G1` to `G10`
 - **THEN** the call detail is `10 genes: G1, G2, G3, G4, G5, G6, G7, G8, …`
 
-### Requirement: The conversation agent and the network agent get the tool
+### Requirement: The conversation agent, the network agent, and the genomic variant agent get the tool
 
 The conversation agent MUST have `resolve_gene_ids` as a script tool, thus it
 calls the tool from `run_script` (refer to the script-tools capability).
@@ -165,7 +165,9 @@ calls the tool from `run_script` (refer to the script-tools capability).
 `SandboxToolName` MUST have `resolveGeneIds`, and the sandbox registry MUST map
 that name to the tool. The network agent MUST list `resolveGeneIds` in
 `meta.tools`, because it holds `humanbase`, and `humanbase` takes Entrez IDs
-only.
+only. The genomic variant agent MUST list `resolveGeneIds` in `meta.tools`,
+because it holds `get_protein_domains`, and `get_protein_domains` takes a
+UniProt accession only.
 
 #### Scenario: The conversation agent has the tool in a script
 
@@ -175,6 +177,11 @@ only.
 #### Scenario: The network agent has the tool in a script
 
 - **WHEN** the network agent is made
+- **THEN** its script tools include `resolve_gene_ids`
+
+#### Scenario: The genomic variant agent has the tool in a script
+
+- **WHEN** the genomic variant agent is made
 - **THEN** its script tools include `resolve_gene_ids`
 
 #### Scenario: A different sandbox agent does not get the tool

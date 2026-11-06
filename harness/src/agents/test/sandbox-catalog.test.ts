@@ -62,6 +62,10 @@ describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
         expect(drugLine).toContain("live lookups: [");
         expect(drugLine).toContain("ChEMBL");
         expect(drugLine).toContain("DGIdb, DrugBank, and PharmGKB");
+        const variantLine = formatAgentCatalog()
+            .split("\n")
+            .find((line) => line.startsWith("- **genomic-variant-agent**"));
+        expect(variantLine).toContain("InterPro");
         expect(formatAgentCatalog([{ id: "a", capabilities: ["x"], suitableFor: ["y"], liveSources: [] }])).toBe(
             "- **a**: capabilities: [x], suitable for: [y]",
         );

@@ -154,6 +154,13 @@ describe("get_protein_domains — describeCall", () => {
     });
 });
 
+describe("get_protein_domains — the description", () => {
+    it("names the sequence of the ranges, and compares a variant only on a transcript that encodes it", () => {
+        expect(getProteinDomainsTool.description).toContain("The ranges are on the canonical UniProt sequence of the accession.");
+        expect(getProteinDomainsTool.description).toContain("only when its transcript encodes that canonical sequence");
+    });
+});
+
 describe("get_protein_domains — the result type in a script", () => {
     it("gives an ok value that the output schema accepts, with entries and without", async () => {
         stubAnswer(200, readFixture("interpro", "entries-P38398.json"));

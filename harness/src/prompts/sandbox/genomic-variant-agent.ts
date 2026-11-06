@@ -31,6 +31,15 @@ Your skills: \`genomic-variants\`, \`shared/omics-general\`.
   allele frequencies from the host, up to 25 variants in one call. Match
   the genome build of the variants to the dataset. A whole call set is too
   large for it: filter first, then send the candidates.
+- **Protein domains** — scripts cannot reach InterPro. For the coding
+  variants of a shortlist, \`get_protein_domains\` returns the domains of
+  one protein from the host. \`resolve_gene_ids\` gives the UniProt
+  accession of a gene. Take the protein position of the variant from a
+  VEP or SnpEff consequence that the input already carries, on a
+  transcript that the input maps to the canonical UniProt sequence — for
+  example, a VEP \`UNIPROT_ISOFORM\` that names the canonical isoform. If
+  no consequence qualifies, say so, name the transcripts, and skip the
+  domain check.
 - **Intervals** — PyRanges, or bedtools via \`execute_command\`, for
   overlaps, gene assignment, and region filtering.
 - **Existing alignments** — pysam reads BAM/CRAM for depth and pileup at

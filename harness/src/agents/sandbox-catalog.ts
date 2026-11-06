@@ -33,6 +33,7 @@ const LIVE_SOURCES: Partial<Record<SandboxToolName, string>> = {
     pubchem: "PubChem",
     opentargets: "Open Targets",
     geneDiseaseEvidence: "GWAS Catalog, DisGeNET, and ClinVar",
+    getProteinDomains: "InterPro",
     drugGeneInteractions: "DGIdb, DrugBank, and PharmGKB",
     genePreclinicalProfile: "Bgee expression and IMPC knockouts",
     searchFaers: "FAERS",

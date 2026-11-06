@@ -20,6 +20,8 @@ export const meta: AgentMeta = {
         "searchInteractions",
         "geneDiseaseEvidence",
         "getVariantFrequencies",
+        "resolveGeneIds",
+        "getProteinDomains",
         "drugGeneInteractions",
     ],
 };

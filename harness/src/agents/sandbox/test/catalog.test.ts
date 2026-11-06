@@ -80,9 +80,15 @@ describe("createSandboxAgents", () => {
         }
     });
 
-    it("gives the HumanBase network tool and the gene ID mapping to the network agent only, as script tools", () => {
+    it("gives each host lookup only to the agents that need it, as script tools", () => {
+        const holders: Record<string, readonly string[]> = {
+            humanbase: ["network-agent"],
+            // The network agent maps genes to the Entrez IDs of HumanBase, the genomic variant agent to the UniProt accessions of InterPro.
+            resolve_gene_ids: ["network-agent", "genomic-variant-agent"],
+            get_protein_domains: ["genomic-variant-agent"],
+        };
         for (const [id, def] of Object.entries(agents)) {
-            for (const toolId of ["humanbase", "resolve_gene_ids"]) {
+            for (const [toolId, agentIds] of Object.entries(holders)) {
                 expect(
                     def.tools.some((t) => t.id === toolId),
                     `${id} declares ${toolId} directly`,
@@ -90,7 +96,7 @@ describe("createSandboxAgents", () => {
                 expect(
                     (def.scriptTools ?? []).some((t) => t.id === toolId),
                     `${id} ${toolId}`,
-                ).toBe(id === "network-agent");
+                ).toBe(agentIds.includes(id));
             }
         }
     });

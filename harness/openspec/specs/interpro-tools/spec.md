@@ -31,9 +31,9 @@ HTTP/2 fetch of Node 26 refuses the header as a protocol error before it gives
 a status. On that runtime, the call fails as a transport failure, and the tool
 reports an error. The client never reads a transport failure as an absence.
 
-The tool is a script tool of the conversation agent, and an agent calls it
-through `run_script`. Thus the tool declares an output schema, and the catalog
-of `run_script` shows its result type.
+The tool is a script tool of the conversation agent and of the genomic variant
+agent, and an agent calls it through `run_script`. Thus the tool declares an
+output schema, and the catalog of `run_script` shows its result type.
 
 ## Requirements
 
@@ -151,6 +151,21 @@ The `describeCall` hook MUST return the accession of the call.
 - **WHEN** an agent calls the tool with `uniprotAccession: "P38398"`
 - **THEN** the call detail is `P38398`
 
+### Requirement: The description names the sequence of the ranges
+
+The description of the tool MUST tell the caller that the ranges are on the
+canonical UniProt sequence of the accession. The description MUST tell the
+caller to compare the residue position of a variant only when its transcript
+encodes that sequence. A different isoform numbers the residues differently,
+and the same gene or the same length does not prove the same sequence. Each
+agent that holds the tool reads the description, thus the condition MUST be
+in the description, not only in the prompt of one agent.
+
+#### Scenario: The description gives the condition
+
+- **WHEN** an agent reads the description of `get_protein_domains`
+- **THEN** the description names the canonical UniProt sequence, and it tells the caller to compare a position only when the transcript encodes that sequence
+
 ### Requirement: A script reads the result type
 
 The tool MUST declare an `outputSchema`. The catalog of `run_script` MUST show
@@ -160,3 +175,35 @@ the result type of the tool, not `unknown`.
 
 - **WHEN** the catalog of `run_script` lists `get_protein_domains`
 - **THEN** the result type of the signature holds `locations: Array<{ end: number; start: number; }>`
+
+### Requirement: The conversation agent and the genomic variant agent get the tool
+
+The conversation agent MUST have `get_protein_domains` as a script tool, thus it
+calls the tool from `run_script` (refer to the script-tools capability).
+
+`SandboxToolName` MUST have `getProteinDomains`, and the sandbox registry MUST
+map that name to the tool. The genomic variant agent MUST list
+`getProteinDomains` in `meta.tools`, because variant annotation is one of its
+capabilities. The agent also MUST list `resolveGeneIds`, because the tool takes
+a UniProt accession only.
+
+The prompt of the genomic variant agent MUST tell it to take the protein
+position of a variant from a consequence that the input carries. A genomic
+position is not a residue position. The consequence MUST be on a transcript
+that the input maps to the canonical UniProt sequence. If no position
+qualifies, the agent MUST report it, and it MUST NOT compare the ranges.
+
+#### Scenario: The conversation agent has the tool in a script
+
+- **WHEN** the conversation agent is made
+- **THEN** its script tools include `get_protein_domains`, and its tools do not
+
+#### Scenario: Only the genomic variant agent gets the tool
+
+- **WHEN** each sandbox agent is made
+- **THEN** only the genomic variant agent has `get_protein_domains`, and it has the tool as a script tool
+
+#### Scenario: The planner sees InterPro as a live lookup
+
+- **WHEN** the planner catalog lists the genomic variant agent
+- **THEN** its live lookups include `InterPro`
