@@ -42,7 +42,7 @@ fields `id`, `capabilities`, `suitableFor`, `skills`, `tools`, optional
 
 ### Requirement: The plannable catalog excludes non-plannable agents
 
-`PLANNABLE_AGENT_CATALOG` SHALL project `{ id, capabilities, suitableFor }` from
+`PLANNABLE_AGENT_CATALOG` SHALL project `{ id, capabilities, suitableFor, liveSources }` from
 every meta whose `plannable` flag is not `false`. `PLANNABLE_AGENT_IDS` SHALL be
 the non-empty id tuple used as the `z.enum` domain for the plan step's `agent`
 field, so the planner and ad hoc utility router can only assign a plannable
@@ -58,6 +58,26 @@ agent.
 - **WHEN** the metas for `data-profiler` and `scientific-executor` are inspected
 - **THEN** each declares `plannable: false`
 - **AND** neither appears in `PLANNABLE_AGENT_CATALOG` or `PLANNABLE_AGENT_IDS`
+
+### Requirement: The plannable catalog names the live lookups of each agent
+
+The `liveSources` of a plannable agent MUST name the public database behind each
+lookup tool in its `meta.tools`. The planner reads a live lookup as a database
+that a step queries at run time, thus the step needs no staged copy of it.
+`LIVE_SOURCES` (`src/agents/sandbox-catalog.ts`) MUST hold an entry for each
+`SandboxToolName`, and the entry is `null` for a tool that queries no public
+database. Thus the typecheck refuses a new tool that has no entry.
+
+#### Scenario: A database that no store stages is a live lookup
+
+- **WHEN** the planner catalog lists the genomic variant agent and the network agent
+- **THEN** the line of the genomic variant agent names `gnomAD`
+- **AND** the line of the network agent names `HumanBase tissue networks` and `MyGene.info`
+
+#### Scenario: A tool that queries no public database adds no live lookup
+
+- **WHEN** the planner catalog lists an agent that holds only the base tools
+- **THEN** its line has no live lookups
 
 ### Requirement: Modality specialists own method selection
 

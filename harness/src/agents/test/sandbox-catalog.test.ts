@@ -70,6 +70,19 @@ describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
             "- **a**: capabilities: [x], suitable for: [y]",
         );
     });
+
+    it("names the live lookups that no reference store stages, thus the planner does not ask for a copy of them", () => {
+        const lineOf = (id: string) =>
+            formatAgentCatalog()
+                .split("\n")
+                .find((line) => line.startsWith(`- **${id}**`));
+
+        expect(lineOf("genomic-variant-agent")).toContain("gnomAD");
+        expect(lineOf("network-agent")).toContain("HumanBase tissue networks");
+        expect(lineOf("network-agent")).toContain("MyGene.info");
+        // The base tools read the environment and the library documentation, thus an agent with only those has no live lookup.
+        expect(lineOf("mdv-preparation-agent")).not.toContain("live lookups");
+    });
 });
 
 /**

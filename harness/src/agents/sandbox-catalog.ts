@@ -21,18 +21,29 @@ export type PlannerAgentMeta = {
 };
 
 /**
- * The public database behind each lookup tool of a sandbox agent. A tool that reads the environment or the run, and
- * not a public database, has no entry.
+ * The public database behind each lookup tool of a sandbox agent. `null` marks a tool that queries no public
+ * database: a read of the environment or the run, the library documentation, or the knowledge template. The record
+ * holds every tool name, thus a new tool cannot reach an agent without a decision here. A lookup that the planner
+ * does not see makes it ask for a staged copy that no store holds.
  */
-const LIVE_SOURCES: Partial<Record<SandboxToolName, string>> = {
+const LIVE_SOURCES: Record<SandboxToolName, string | null> = {
+    listAvailablePackages: null,
+    listAvailableRefs: null,
+    scanInputs: null,
+    resolveLibraryId: null,
+    queryDocs: null,
     pubmed: "PubMed",
+    resolve_citation: "Crossref, PubMed, arXiv, and Semantic Scholar",
     searchGene: "Ensembl and NCBI Gene",
+    resolveGeneIds: "MyGene.info",
     lookupAnnotation: "GO, KEGG, and Reactome annotation",
     searchInteractions: "STRING",
+    humanbase: "HumanBase tissue networks",
     chembl: "ChEMBL",
     pubchem: "PubChem",
     opentargets: "Open Targets",
     geneDiseaseEvidence: "GWAS Catalog, DisGeNET, and ClinVar",
+    getVariantFrequencies: "gnomAD",
     getProteinDomains: "InterPro",
     drugGeneInteractions: "DGIdb, DrugBank, and PharmGKB",
     genePreclinicalProfile: "Bgee expression and IMPC knockouts",
@@ -42,6 +53,7 @@ const LIVE_SOURCES: Partial<Record<SandboxToolName, string>> = {
     searchRegulatoryApprovals: "FDA and EMA approvals",
     targetSafety: "a curated target safety panel",
     comptox: "EPA CompTox",
+    knowledgeTemplate: null,
 };
 
 /** The sandbox agents the planner may assign to analysis-plan steps. */
@@ -53,7 +65,7 @@ export const PLANNABLE_AGENT_CATALOG: readonly PlannerAgentMeta[] = Object.value
         suitableFor: [...meta.suitableFor],
         liveSources: meta.tools.flatMap((tool) => {
             const source = LIVE_SOURCES[tool];
-            return source === undefined ? [] : [source];
+            return source === null ? [] : [source];
         }),
     }));
 
