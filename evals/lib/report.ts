@@ -60,9 +60,7 @@ export type ReportMeta = {
  * A passing trial keeps its grade, its usage, and the names of its calls, which show the path that its cost paid for.
  * A name ends with `!` when its call gave an error result.
  */
-function trialRecord(
-    result: TrialResult,
-):
+function trialRecord(result: TrialResult):
     | TrialResult
     | (Pick<Extract<TrialResult, { kind: "graded" }>, "kind" | "pass" | "detail" | "finishReason" | "capped" | "usage"> & {
           readonly tools: readonly string[];

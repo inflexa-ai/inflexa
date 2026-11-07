@@ -14,7 +14,10 @@ import type { DataProfileResult } from "@inflexa-ai/harness/contracts/data-profi
 import { SANDBOX_AGENT_META } from "@inflexa-ai/harness/agents/sandbox/index.js";
 import { composePlannerSeed, formatPriorPlan, renderDataContext } from "@inflexa-ai/harness/tools/research/generate-plan.js";
 
-import { REAL_TOOL, type ToolScript } from "../lib/agent.js";
+import type { KnowledgeClient, RecommendResponse } from "@inflexa-ai/harness/tools/knowledge/client.js";
+import { z } from "zod";
+
+import { EVAL_SNAPSHOT, evalKnowledgeClient, REAL_TOOL, type ToolScript } from "../lib/agent.js";
 import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 
 import {
@@ -365,6 +368,258 @@ function scSeed(researchQuestion: string): string {
 
 const PLANNER: Pick<EvalCase, "agent" | "tools" | "maxSteps" | "pool"> = { agent: "planner", tools: PLANNER_TOOLS, maxSteps: 10, pool: BASE_POOL };
 
+/** The question of the hypothesis cases, as the conversation agent passes it after a completed DE run. */
+const FEEDBACK_QUESTION =
+    "Test whether negative regulators of interferon signaling (for example SOCS1, SOCS3, USP18, and ISG15) go up with the treatment compared with control. The earlier differential expression run found an interferon response: 412 genes up and 198 down at FDR 0.05.";
+
+/** The same question with the analogy that the user chose to pursue, explained in biology. */
+const FEEDBACK_WITH_ANALOGY = `${FEEDBACK_QUESTION} The hypothesis comes from an analogy with thermostat negative feedback: the signal that switches on the interferon response also switches on its own dampers.`;
+
+/** The plan tests the hypothesis on the data, and no step models the analogy itself. */
+const TESTS_HYPOTHESIS = plans("a step that tests the negative regulators, and no step that models the analogy", (steps) => {
+    const text = (step: PlanStepView): string => `${step.name} ${step.question} ${step.description}`;
+    const tests = steps.some((step) => /SOCS|USP18|negative (regulator|feedback)/i.test(text(step)));
+    const speculative = steps.some((step) =>
+        /thermostat|control (theory|engineering|model)|feedback (control )?model|\bODE\b|dynamical model|circuit/i.test(`${step.name} ${step.question}`),
+    );
+    return tests && !speculative;
+});
+
+const COHORT_PROFILE: DataProfileResult = {
+    ...PROFILE,
+    summary: "Bulk RNA-seq of 60 tumor biopsies before treatment, with the response of each patient to the therapy.",
+    files: [
+        {
+            path: "data/inputs/f-counts/counts.tsv",
+            description: "Raw gene-level count matrix",
+            dataType: "count-matrix",
+            format: "TSV",
+            rows: 58_302,
+            cols: 60,
+        },
+        {
+            path: "data/inputs/f-clin/clinical.csv",
+            description: "Clinical table: patient, response (responder or non-responder), age, stage",
+            dataType: "clinical-metadata",
+            format: "CSV",
+            rows: 60,
+            cols: 4,
+        },
+    ],
+    condition: "responders vs non-responders",
+    experimentalDesign: "One biopsy of each of 60 patients before the therapy: 24 responders and 36 non-responders.",
+    qualityAssessment: { concerns: [] },
+};
+
+function cohortSeed(researchQuestion: string): string {
+    return composePlannerSeed({
+        priorPlanBlock: null,
+        dataContextBlock: renderDataContext({ kind: "ready", result: COHORT_PROFILE }, ANALYSIS_ID),
+        groundingBlock: [REFS_WITH_GENE_SETS, PACKAGES].join("\n\n"),
+        input: { researchQuestion },
+    });
+}
+
+/** The census of the routing cases: the references and the packages that an immune and a repurposing step need. */
+const ROUTING_REFS = [
+    REFS_WITH_GENE_SETS,
+    "- immune/lm22/LM22.txt (file, 112340 bytes; LM22 leukocyte signature matrix, CIBERSORT, signatures, Homo sapiens)",
+    "    TSV — 547 genes by 22 human immune cell types",
+    "- lincs/l1000/cp_signatures.gmt (file, 48211340 bytes; LINCS L1000 compound signatures, 2020, gene-sets, Homo sapiens)",
+    "    GMT — the up and the down genes of each compound perturbation, by drug name",
+].join("\n");
+const ROUTING_R = [...R_BASE, "immunedeconv", "GSVA"];
+const ROUTING_PACKAGES = [
+    "## Available Packages",
+    "",
+    "## R packages",
+    `  ${ROUTING_R.join(", ")}`,
+    "",
+    "## Python packages",
+    `  ${PYTHON_BASE.join(", ")}`,
+].join("\n");
+const ROUTING_POOL = poolOf(ROUTING_R, PYTHON_BASE);
+
+/** The listings of the routing cases agree with their census. */
+const ROUTING_TOOLS: Readonly<Record<string, ToolScript>> = {
+    ...PLANNER_TOOLS,
+    list_available_refs: { ok: { available: true, content: ROUTING_REFS.split("\n").slice(2).join("\n") } },
+    list_available_packages: {
+        ok: { available: true, total: 17, returned: 17, hasMore: false, content: ROUTING_PACKAGES.split("\n").slice(2).join("\n") },
+    },
+};
+
+function routingSeed(profile: DataProfileResult, researchQuestion: string): string {
+    return composePlannerSeed({
+        priorPlanBlock: null,
+        dataContextBlock: renderDataContext({ kind: "ready", result: profile }, ANALYSIS_ID),
+        groundingBlock: [ROUTING_REFS, ROUTING_PACKAGES].join("\n\n"),
+        input: { researchQuestion },
+    });
+}
+
+/**
+ * A modeling step selects the features inside the cross-validation, or it reports its estimate as optimistic. A
+ * signature from the DE genes of the same samples is already a selection, thus a model on it alone overstates its
+ * accuracy.
+ */
+const SELECTS_INSIDE_CV = plans("a modeling step that selects inside the cross-validation, or calls its estimate optimistic", (steps) =>
+    steps.some(
+        (step) =>
+            step.agent === "statistical-modeling-agent" &&
+            /cross-?validat|nested|\bCV\b/i.test(`${step.question} ${step.description}`) &&
+            /(inside|within|in each|in every|nested)[^.]{0,60}(fold|cross-?validat|\bCV\b|loop)|optimistic/i.test(`${step.question} ${step.description}`),
+    ),
+);
+
+const GroundedStepSchema = z.object({
+    id: z.string(),
+    grounding: z
+        .object({
+            status: z.string(),
+            snapshot: z.string().catch(""),
+            template: z.string().optional(),
+            claims: z.array(z.string()).catch([]),
+            settings: z.array(z.object({ name: z.string(), value: z.unknown() })).catch([]),
+        })
+        .optional(),
+});
+type GroundedStep = z.infer<typeof GroundedStepSchema>;
+
+const AcceptedPlanSchema = z.object({ plan: z.object({ steps: z.array(GroundedStepSchema) }) });
+
+/** The plan of the last `submit_plan` that the host accepted meets `check`. Its whole input is the text that `text` reads. */
+function acceptedPlan(describe: string, check: (steps: readonly GroundedStep[], text: string) => boolean): (trial: Trial) => Grade {
+    return (trial) => {
+        const accepted = trial.calls.findLast((call) => call.tool === "submit_plan" && parseUnknownRecord(call.value)?.accepted === true);
+        if (accepted === undefined) return { pass: false, detail: "no accepted submit_plan" };
+        const parsed = AcceptedPlanSchema.safeParse(accepted.input);
+        if (!parsed.success) return { pass: false, detail: "the accepted submit_plan holds no plan with steps" };
+        const grounding = parsed.data.plan.steps.map((step) => `${step.id}:${step.grounding?.status ?? "-"}:${step.grounding?.template ?? "-"}`).join(", ");
+        return check(parsed.data.plan.steps, JSON.stringify(accepted.input))
+            ? { pass: true, detail: `${describe} (${grounding})` }
+            : { pass: false, detail: `not ${describe} (${grounding})` };
+    };
+}
+
+const DraftedStepViewSchema = z.object({
+    steps: z.array(z.object({ step_type: z.string(), method: z.string().catch(""), method_id: z.string().optional(), outcome: z.string().optional() })),
+});
+type DraftedStepView = z.infer<typeof DraftedStepViewSchema>["steps"][number];
+
+/** The drafted steps of each `knowledge_check` call, in the order of the calls. */
+function checkedDrafts(trial: Trial): (readonly DraftedStepView[])[] {
+    return trial.calls.filter((call) => call.tool === "knowledge_check").map((call) => DraftedStepViewSchema.safeParse(call.input).data?.steps ?? []);
+}
+
+/** The knowledge service of the eval with its recommendation changed by `change`. */
+function recommendWith(change: (answer: RecommendResponse) => RecommendResponse): () => Partial<KnowledgeClient> {
+    return () => ({
+        recommend: async (...args) => {
+            const answer = await evalKnowledgeClient.recommend(...args);
+            return "procedure" in answer ? change(answer) : answer;
+        },
+    });
+}
+
+/** The DE step keeps the template and the settings of the skeleton. `submit_plan` repairs a claim id by its rule, thus the grade reads no claim. */
+const KEEPS_SKELETON = acceptedPlan("a step keeps the template and the alpha setting of the skeleton", (steps) =>
+    steps.some(
+        (step) =>
+            step.grounding?.template === "tpl-deseq2-two-group@1.2.0" &&
+            step.grounding.settings.some((setting) => setting.name === "alpha" && setting.value === 0.05),
+    ),
+);
+
+const DESCRIPTIVE_FLAG = {
+    rule: "R-0050",
+    severity: "blocking",
+    message: "With two samples in a group, the dispersion estimate has no power: report the fold changes only, with no test.",
+    outcome: "descriptive_only",
+};
+
+/** Two samples in each group: the service flags the test, and the outcome of the step is descriptive. */
+const FLAGGED_KNOWLEDGE = recommendWith((answer) => ({
+    ...answer,
+    match: "flag",
+    flags: [DESCRIPTIVE_FLAG],
+    procedure: answer.procedure.map((step) => (step.step === "differential_expression" ? { ...step, flags: [DESCRIPTIVE_FLAG] } : step)),
+}));
+
+/** The drafted test step carries the outcome of the flag, and the accepted plan marks a step as flagged. */
+const STATES_FLAG = all(
+    (trial: Trial): Grade => {
+        const drafts = checkedDrafts(trial).flat();
+        return drafts.some((step) => step.outcome === "descriptive_only")
+            ? { pass: true, detail: "a drafted step states descriptive_only" }
+            : {
+                  pass: false,
+                  detail: `no drafted step states descriptive_only (${drafts.map((step) => `${step.step_type}:${step.outcome ?? "-"}`).join(", ") || "no check"})`,
+              };
+    },
+    acceptedPlan("a step is flagged", (steps) => steps.some((step) => step.grounding?.status === "flagged")),
+);
+
+/** The first check refuses the shrinkage of the draft, and names the permitted method. A later check passes. */
+function refusingFirstCheck(): Partial<KnowledgeClient> {
+    let checks = 0;
+    return {
+        check: () => {
+            checks += 1;
+            if (checks > 1) return Promise.resolve({ ok: true, snapshot: EVAL_SNAPSHOT, violations: [], warnings: [] });
+            return Promise.resolve({
+                ok: false,
+                snapshot: EVAL_SNAPSHOT,
+                warnings: [],
+                violations: [
+                    {
+                        step_type: "shrink_lfc",
+                        severity: "error",
+                        rule: "R-0035",
+                        message: "apeglm shrinks one coefficient of the model, and this contrast is not one: use ashr (M-0006).",
+                        permitted: ["M-0006"],
+                    },
+                ],
+            });
+        },
+    };
+}
+
+/** The accepted plan follows a check, and it uses the method that the violation permits. A second check is optional. */
+const REVISES_AFTER_VIOLATION = all(
+    acceptedAfterCheck,
+    acceptedPlan("the plan names ashr", (_steps, text) => /ashr/i.test(text)),
+);
+
+/** The census and the pool of the revision case hold ashr, the method that the check permits. */
+const ASHR_PACKAGES = [
+    "## Available Packages",
+    "",
+    "## R packages",
+    `  ${[...R_BASE, "ashr"].join(", ")}`,
+    "",
+    "## Python packages",
+    `  ${PYTHON_BASE.join(", ")}`,
+].join("\n");
+
+function ashrSeed(researchQuestion: string): string {
+    return composePlannerSeed({
+        priorPlanBlock: null,
+        dataContextBlock: DATA_CONTEXT,
+        groundingBlock: [REFS_WITH_GENE_SETS, ASHR_PACKAGES].join("\n\n"),
+        input: { researchQuestion },
+    });
+}
+
+/** The service did not answer: the planner plans from the prose skills, and it claims no grounding. */
+const UNAVAILABLE_KNOWLEDGE = (): Partial<KnowledgeClient> => ({
+    recommend: () => Promise.resolve({ match: "unavailable", reason: "the knowledge service did not answer after 3 tries" }),
+});
+
+const PLANS_UNGROUNDED = acceptedPlan("a plan with no grounded step", (steps) =>
+    steps.every((step) => step.grounding === undefined || (step.grounding.status !== "grounded" && step.grounding.snapshot !== EVAL_SNAPSHOT.digest)),
+);
+
 export const plannerCases: readonly EvalCase[] = [
     {
         id: "plan-de-enrichment",
@@ -381,6 +636,104 @@ export const plannerCases: readonly EvalCase[] = [
         user: seed("Infer the transcription factor activity of treated against control with a curated TF-target regulon."),
         ...PLANNER,
         grade: decides("request_clarification", ["submit_plan", "report_blocker"]),
+    },
+    {
+        id: "plan-optional-reference-plans",
+        set: "dev",
+        source: "planner prompt: an optional reference that is absent is a plan with its fallback stated, not a clarification (counter-case of plan-missing-reference)",
+        user: seed(
+            "Which genes change between treated and control, and which hallmark pathways do they point to? If the data allows it, a TF activity estimate would be nice too, but it is optional.",
+        ),
+        ...PLANNER,
+        grade: decides("submit_plan", ["request_clarification", "report_blocker"]),
+    },
+    {
+        id: "plan-optional-reference-plans-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-optional-reference-plans",
+        user: seed("Give me the differential expression and a hallmark enrichment. Regulator activity is a bonus if you have what it needs, not a must."),
+        ...PLANNER,
+        grade: decides("submit_plan", ["request_clarification", "report_blocker"]),
+    },
+    {
+        id: "plan-biomarker-selection-in-cv",
+        set: "dev",
+        source: "planner prompt: a biomarker model selects its features inside the cross-validation, or reports its estimate as optimistic",
+        user: cohortSeed(
+            "Find the genes that differ between responders and non-responders, then build a signature from those genes that predicts response. How accurate is it?",
+        ),
+        ...PLANNER,
+        grade: SELECTS_INSIDE_CV,
+    },
+    {
+        id: "plan-biomarker-selection-in-cv-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-biomarker-selection-in-cv",
+        user: cohortSeed("Use the DE genes of response to train a classifier of responders, and give me its accuracy."),
+        ...PLANNER,
+        grade: SELECTS_INSIDE_CV,
+    },
+    {
+        id: "plan-routes-immune-profiling",
+        set: "dev",
+        source: "planner prompt: immune cell composition and the tumor microenvironment go to the immune-profiling agent",
+        user: routingSeed(COHORT_PROFILE, "What is the immune cell composition of these tumors, and does it differ between responders and non-responders?"),
+        ...PLANNER,
+        pool: ROUTING_POOL,
+        tools: ROUTING_TOOLS,
+        grade: plans("an immune-profiling step", (steps) => steps.some((step) => step.agent === "immune-profiling-agent")),
+    },
+    {
+        id: "plan-routes-immune-profiling-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-routes-immune-profiling",
+        user: routingSeed(
+            COHORT_PROFILE,
+            "Estimate the infiltrating immune cells of each biopsy, and compare the T cell signals of responders and non-responders.",
+        ),
+        ...PLANNER,
+        pool: ROUTING_POOL,
+        tools: ROUTING_TOOLS,
+        grade: plans("an immune-profiling step", (steps) => steps.some((step) => step.agent === "immune-profiling-agent")),
+    },
+    {
+        id: "plan-routes-drug-repurposing",
+        set: "dev",
+        source: "planner prompt: a question of which existing drugs could reverse a signature goes to the drug-repurposing agent, not to cheminformatics",
+        user: routingSeed(PROFILE, "Which approved drugs could reverse the transcriptional signature of the treatment?"),
+        ...PLANNER,
+        pool: ROUTING_POOL,
+        tools: ROUTING_TOOLS,
+        grade: plans("a drug-repurposing step", (steps) => steps.some((step) => step.agent === "drug-repurposing-agent")),
+    },
+    {
+        id: "plan-routes-drug-repurposing-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-routes-drug-repurposing",
+        user: routingSeed(
+            PROFILE,
+            "Find existing therapeutics whose expression profile is the opposite of the response to the treatment, as repositioning candidates.",
+        ),
+        ...PLANNER,
+        pool: ROUTING_POOL,
+        tools: ROUTING_TOOLS,
+        grade: plans("a drug-repurposing step", (steps) => steps.some((step) => step.agent === "drug-repurposing-agent")),
+    },
+    {
+        id: "plan-hypothesis-plain",
+        set: "dev",
+        source: "analogy experiment: the planner gets the hypothesis with no analogy",
+        user: seed(FEEDBACK_QUESTION),
+        ...PLANNER,
+        grade: TESTS_HYPOTHESIS,
+    },
+    {
+        id: "plan-hypothesis-with-analogy",
+        set: "dev",
+        source: "analogy experiment: the planner gets the hypothesis with the analogy that it came from, explained in biology",
+        user: seed(FEEDBACK_WITH_ANALOGY),
+        ...PLANNER,
+        grade: TESTS_HYPOTHESIS,
     },
     {
         id: "plan-revision-keeps-ids",
@@ -594,6 +947,84 @@ export const plannerCases: readonly EvalCase[] = [
             list_available_packages: { ok: { available: true, total: 20, returned: 20, hasMore: false, content: SC_PACKAGES.split("\n").slice(2).join("\n") } },
         },
         grade: all(callsAny(["submit_plan"]), never(["knowledge_recommend"])),
+    },
+    {
+        id: "plan-knowledge-keeps-skeleton",
+        set: "dev",
+        source: "knowledge_recommend description and the grounding schema: copy the skeleton step, its template, its settings, and its claim ids",
+        user: seed("Which genes change between treated and control, and which pathways do they point to?"),
+        ...KNOWLEDGE,
+        grade: KEEPS_SKELETON,
+    },
+    {
+        id: "plan-knowledge-keeps-skeleton-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-knowledge-keeps-skeleton",
+        user: seed("Give me the differentially expressed genes of the treatment, with the pathways that they enrich."),
+        ...KNOWLEDGE,
+        grade: KEEPS_SKELETON,
+    },
+    {
+        id: "plan-knowledge-flag-descriptive",
+        set: "dev",
+        source: "knowledge_recommend description: obey the outcome of a flag; knowledge_check: the drafted step states the outcome",
+        user: seed("Which genes change between treated and control?", {
+            userConstraints: "C3 and T3 failed the library QC and are excluded, thus two samples in each group remain.",
+        }),
+        ...KNOWLEDGE,
+        knowledge: FLAGGED_KNOWLEDGE,
+        grade: STATES_FLAG,
+    },
+    {
+        id: "plan-knowledge-flag-descriptive-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-knowledge-flag-descriptive",
+        user: seed("Find the genes that respond to the treatment.", {
+            userConstraints: "Drop C3 and T3: their libraries failed. Two replicates per condition are left.",
+        }),
+        ...KNOWLEDGE,
+        knowledge: FLAGGED_KNOWLEDGE,
+        grade: STATES_FLAG,
+    },
+    {
+        id: "plan-knowledge-check-revises",
+        set: "dev",
+        source: "knowledge_check description: revise a violation once, with the permitted method, then check again",
+        user: ashrSeed("Which genes change between treated and control, and which pathways do they point to?"),
+        ...KNOWLEDGE,
+        pool: poolOf([...R_BASE, "ashr"], PYTHON_BASE),
+        maxSteps: 14,
+        knowledge: refusingFirstCheck,
+        grade: REVISES_AFTER_VIOLATION,
+    },
+    {
+        id: "plan-knowledge-check-revises-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-knowledge-check-revises",
+        user: ashrSeed("Plan the differential expression of the treatment and a hallmark enrichment of the result."),
+        ...KNOWLEDGE,
+        pool: poolOf([...R_BASE, "ashr"], PYTHON_BASE),
+        maxSteps: 14,
+        knowledge: refusingFirstCheck,
+        grade: REVISES_AFTER_VIOLATION,
+    },
+    {
+        id: "plan-knowledge-unavailable-plans",
+        set: "dev",
+        source: "knowledge client: an unavailable service is a normal state, and the plan states its steps as ungrounded",
+        user: seed("Which genes change between treated and control, and which pathways do they point to?"),
+        ...KNOWLEDGE,
+        knowledge: UNAVAILABLE_KNOWLEDGE,
+        grade: PLANS_UNGROUNDED,
+    },
+    {
+        id: "plan-knowledge-unavailable-plans-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-knowledge-unavailable-plans",
+        user: seed("Find the differentially expressed genes, then test them for pathway enrichment."),
+        ...KNOWLEDGE,
+        knowledge: UNAVAILABLE_KNOWLEDGE,
+        grade: PLANS_UNGROUNDED,
     },
     {
         id: "plan-packages-habitual-absent",

@@ -137,26 +137,64 @@ export function conversationAgent(): AgentDefinition {
 }
 
 /**
- * The knowledge service of the eval: one procedure for a bulk RNA-seq comparison of two groups, and a check with no
- * finding. The answers carry no claim, thus no plan can cite one.
+ * The knowledge service of the eval: one procedure for a bulk RNA-seq comparison of two groups, a claim for its test,
+ * and a check with no finding. The procedure steps carry the step names of the skeleton fold, thus the planner gets
+ * the quality control, the differential expression, and the enrichment step with their templates and settings. A
+ * case overrides an operation with `knowledge`.
  */
-const SNAPSHOT = { date: "2026-10-01", digest: "sha256:eval-knowledge" };
-const evalKnowledgeClient: KnowledgeClient = {
+export const EVAL_SNAPSHOT = { date: "2026-10-01", digest: "sha256:eval-knowledge" };
+export const evalKnowledgeClient: KnowledgeClient = {
     recommend: () =>
         Promise.resolve({
             match: "applicable" as const,
-            snapshot: SNAPSHOT,
+            snapshot: EVAL_SNAPSHOT,
             procedure: [
-                { step: "filter", method: { id: "M-0001", label: "filterByExpr (edgeR)" }, rules: [], package: { name: "edgeR" } },
-                { step: "model", method: { id: "M-0002", label: "DESeq2 Wald test" }, rules: [], package: { name: "DESeq2" } },
-                { step: "shrinkage", method: { id: "M-0003", label: "apeglm" }, rules: [], package: { name: "apeglm" } },
-                { step: "enrichment", method: { id: "M-0004", label: "fgsea on the shrunken ranking" }, rules: [], package: { name: "fgsea" } },
+                { step: "qc_sample_structure", method: { id: "M-0101", label: "PCA and sample correlation" }, rules: ["R-0011"], package: { name: "DESeq2" } },
+                {
+                    step: "filter_low_counts",
+                    method: { id: "M-0001", label: "filterByExpr (edgeR)" },
+                    rules: ["R-0021"],
+                    package: { name: "edgeR" },
+                    parameters: [{ name: "min_count", value: 10 }],
+                },
+                {
+                    step: "differential_expression",
+                    method: { id: "M-0002", label: "DESeq2 Wald test" },
+                    template: "tpl-deseq2-two-group@1.2.0",
+                    rules: ["R-0031"],
+                    package: { name: "DESeq2" },
+                    parameters: [{ name: "alpha", value: 0.05 }],
+                },
+                { step: "shrink_lfc", method: { id: "M-0003", label: "apeglm" }, rules: ["R-0032"], package: { name: "apeglm" } },
+                { step: "multiple_testing", method: { id: "M-0005", label: "Benjamini-Hochberg" }, rules: ["R-0031"] },
+                {
+                    step: "enrichment",
+                    method: { id: "M-0004", label: "fgsea on the shrunken ranking" },
+                    template: "tpl-fgsea-ranked@1.0.0",
+                    rules: ["R-0041"],
+                    package: { name: "fgsea" },
+                },
             ],
             uncovered: [],
             flags: [],
-            claims: [],
+            claims: [
+                {
+                    id: "R-0031@e7d0",
+                    statement:
+                        "For a two-group comparison of bulk counts with three or more replicates, a negative binomial Wald test controls the error rate.",
+                    strength: "strong",
+                    evidence: [
+                        {
+                            doi: "10.1186/s13059-014-0550-8",
+                            title: "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2",
+                            year: 2014,
+                            direction: "supports",
+                        },
+                    ],
+                },
+            ],
         }),
-    check: () => Promise.resolve({ ok: true, snapshot: SNAPSHOT, violations: [], warnings: [] }),
+    check: () => Promise.resolve({ ok: true, snapshot: EVAL_SNAPSHOT, violations: [], warnings: [] }),
     render: refuse,
     contract: refuse,
 };
@@ -178,10 +216,10 @@ export function plannerAgent(): AgentDefinition {
 
 /**
  * The planner of one `generate_plan` call, as the tool builds it for each call: its `submit_plan` reads the package
- * census of `pool`, and with `knowledge` it holds the knowledge tools over the knowledge service of the eval. The
+ * census of `pool`, and with `knowledge` it holds the knowledge tools over that client. The
  * memory of the call lives in the tools, thus a trial builds its own.
  */
-export function plannerTrialAgent(pool: readonly PoolInventorySection[], knowledge: boolean): AgentDefinition {
+export function plannerTrialAgent(pool: readonly PoolInventorySection[], knowledge: KnowledgeClient | undefined): AgentDefinition {
     return plannerOfInvocation(
         {
             conversation: { provider: unusedChatProvider(), model: "eval" },
@@ -193,7 +231,7 @@ export function plannerTrialAgent(pool: readonly PoolInventorySection[], knowled
             readPoolInventory: () => Promise.resolve({ kind: "sections", sections: pool }),
             toolOutputStore: unusedToolOutputStore,
             workspace: evalWorkspace(),
-            ...(knowledge ? { knowledge: evalKnowledgeClient } : {}),
+            ...(knowledge === undefined ? {} : { knowledge }),
         },
         createNoopLogger(),
     ).agent;
@@ -248,7 +286,7 @@ export function evalAgents(): Readonly<Record<StaticAgentKind, AgentDefinition>>
     return {
         conversation: conversationAgent(),
         planner: plannerAgent(),
-        "planner-knowledge": plannerTrialAgent([], true),
+        "planner-knowledge": plannerTrialAgent([], evalKnowledgeClient),
         report: reportAgent(),
         analogy: analogyAgent(),
     };
@@ -286,8 +324,8 @@ function scriptedTool(tool: Tool, script: ToolScript | undefined): Tool {
 
 /**
  * The tools of a sandbox agent that stay real in a trial. They read and write the tree of the trial, the lock of its
- * farm, and the skills of the repository, and a lease and an exec reach only the scripted client. Each other tool reads a
- * database or the network, thus it is scripted.
+ * farm, and the skills of the repository, and a lease, an exec, and a knowledge template reach only the scripted clients
+ * of the case. Each other tool reads a database or the network, thus it is scripted.
  */
 const SANDBOX_REAL_TOOLS = new Set([
     "acquire_sandbox",
@@ -304,6 +342,7 @@ const SANDBOX_REAL_TOOLS = new Set([
     "skill_search",
     "skill_read",
     "report_blocker",
+    "knowledge_template",
     "read_tool_output",
     "submit_file_metadata",
     "scan_inputs",
