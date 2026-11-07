@@ -243,6 +243,28 @@ The failed Sonnet trials made the same three calls in both arms, and then they
 reported the blocker. Only the third call changed: it did not reach the farm.
 No decision changed, thus the change was reverted.
 
+### Round 8: the standards say when to read the skills
+
+The defect: the step agents wrote the script of a method before they read its
+skill. Only the bulk agent read its skill, because its prompt names one skill
+file to read.
+
+The change: the skills paragraph of the step standards now gives a time.
+Before the agent writes the first script of a method, it finds the guidance
+with `skill_search` and reads the reference of that method with `skill_read`.
+
+| Arm | `step-consults-skills` (dev) | The other step cases | Token volume |
+| --- | --- | --- | --- |
+| Baseline | 1/3 | | |
+| The time, plus "a call from memory fails on the version of the pool" | 3/3 | Two regressions: the agents read the skill, and then they ran with no other check | +12 % (gate fails) |
+| Only a line in the enrichment prompt, as the bulk prompt has | Not changed: the enrichment twin stays 0/3 | No change | No change |
+| The time, with no clause (kept) | 3/3 | No regression | dev +10 % (95 % CI 0 to +20), held-out +4 % |
+
+The kept arm costs more tokens, because each step reads one skill file. A step
+that renders a template also reads a skill, and the template already gives the
+script. The enrichment twin stays at 0/3, thus the enrichment agent is still an
+open defect.
+
 ## The knowledge service in the evals
 
 The knowledge service is not in this repository. The client in
@@ -297,6 +319,19 @@ The first runs found defects in these cases, and not in the agents:
 | `step-consults-skills` | The step reads its skills before it writes the script of its method. |
 | `plan-routes-immune-profiling` | An immune composition question goes to the immune-profiling agent. |
 | `plan-routes-drug-repurposing` | A question about existing drugs that reverse a signature goes to the drug-repurposing agent. |
+| `plan-organism-matches` | The gene-set step of a mouse study names the mouse sets. No step names a human resource. |
+| `plan-organism-absent-no-silent-human` | With only human gene sets for a mouse study, the planner asks, or it states an ortholog map. It is the counter-case of `plan-organism-matches`. |
+| `plan-dependencies-follow-data` | The enrichment step depends on the DE step. The immune step does not wait for the enrichment, and it waits for the DE step only when it reads a matrix of that step. |
+| `step-keeps-request-deliverable` | A deliverable that the request describes keeps its file name and its fields, and it goes to `output/`. |
+| `step-links-missing-package` | The farm does not hold the package, but the pool does. The step links it, installs nothing, and runs its script after the link. It replaces `step-package-lookup`. |
+
+On Sonnet 5.5, each new planner case and the deliverable pair pass. The
+planner cases need no prompt change.
+
+`step-package-lookup` graded a lookup of a package that the farm always held.
+Thus it graded a ritual: a script that imports a present package runs, and an
+absent import gives an error that names the package. The new pair grades the
+decision that costs a run when it is wrong.
 
 In the first run of the routing cases, the planner asked for a signature matrix
 and for a drug-signature compendium, because the census held neither. This was
@@ -498,6 +533,13 @@ These failures came from the evals, not from the agents. Each one is fixed.
 - **A standard library that was not complete.** The scripted sandbox refused
   `import importlib`, because its list of standard modules was typed by hand.
   The list is now `sys.stdlib_module_names`.
+- **An exec with no latency.** The scripted exec answered at once. A real
+  exec submits over HTTP and polls, thus a host write of the same message lands
+  first. The agents often send the write of a script and its run in one
+  message. In the eval, the run then found no script, and the agent lost turns
+  to a race that production does not show. The exec now waits 300 ms.
+- **A link that changed nothing.** A link answered `linked`, but the scripted
+  imports still read only the lock. The links of a trial now add to the farm.
 - **Step limits that were too low.** A path that records the constraints of the
   user in the memory before the plan needs more than 3 steps.
 
@@ -510,7 +552,7 @@ These failures came from the evals, not from the agents. Each one is fixed.
 | A step reads the data profile that its briefing holds | Sonnet, GLM | No. The cost is one small call. A fix changes the tool set for each step, and that breaks the prompt cache. |
 | `link_packages` called again after `unavailable` | Sonnet, Opus, GLM | No. A code limit did not change a decision (round 7). GLM also does not report the blocker: it tries the R track, the store paths, and a wait. |
 | The profiler reads more than one file of a set | GLM | No |
-| The enrichment agent does not read its skills before it writes its script | Sonnet (0/3) | No. The bulk agent reads its skills, because its prompt names one skill file to read. |
+| The enrichment agent does not read its skills before it writes its script | Sonnet (0/3) | No. Round 8 fixed the other agents. A line in the enrichment prompt changed nothing. |
 | A lookup over a table reads the table in many scripts | GLM (1/3) | No |
 
 ## GLM status
