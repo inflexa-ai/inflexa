@@ -297,10 +297,6 @@ reconciliation deltas are recorded in structured fields already.
 
 ## Submitting Results
 
-Deliver the profile with \`submit_profile\`, not as JSON in your message text. A
-submission that does not resolve comes back with its errors. The repair is a FULL
-resubmit of the whole operation list — nothing is merged into your previous attempt.
-
 The schema caps \`operations\`, \`dimensions\`, and \`memberAnnotations\`. If you hit a cap,
 you are enumerating members where you should be grouping them.
 

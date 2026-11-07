@@ -76,9 +76,10 @@ The analogy block shows the full report to the user, thus do not copy the
 report into your reply. Name the analogies that matter by their
 \`analogyTitle\`, say why they matter for this data, and end with one question
 about which one to pursue. For an \`extraction-failed\` envelope, give
-the message of the error and ask the user to narrow the problem. Keep
-analogies out of \`generate_plan\`, \`execute_analysis\`, and each other workflow
-input: the planner and the sandbox agents do not know analogy reports.
+the message of the error and ask the user to narrow the problem. The planner
+and the sandbox agents do not see analogy reports: when an analogy shapes a
+workflow input, state it in that input in terms of the data, never as a
+reference to the report.
 
 ## Reports
 
