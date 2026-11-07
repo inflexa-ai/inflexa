@@ -323,28 +323,33 @@ function scriptRun(writes: Readonly<Record<string, string>>, stdout = "done"): E
 /** A command that runs a script of the step. */
 const runsScript: CallMatch = { tool: "execute_command", input: (input) => /scripts\//.test(JSON.stringify(input)) };
 
-/**
- * The step makes sure that `pkg` is present before a script of the step runs: a package listing or a link that names
- * it, or an inline import of it, which fails when the package is absent.
- */
-function checksBeforeUse(pkg: RegExp): EvalCase["grade"] {
-    const importProbe: CallMatch = {
-        tool: "execute_command",
-        input: (input) => /python3? -c/.test(commandLine(input) ?? "") && new RegExp(`import ${pkg.source}`, "i").test(commandLine(input) ?? ""),
-    };
-    return anyOf(
-        before({ tool: "list_available_packages", input: names(pkg) }, runsScript),
-        before({ tool: "link_packages", input: names(pkg) }, runsScript),
-        before(importProbe, runsScript),
-    );
-}
-
 function names(word: RegExp): CallMatch["input"] {
     return (input) => word.test(JSON.stringify(input));
 }
 
 function absentLink(query: PackageQuery): PackageRequestOutcome {
     return { kind: "absent", spelling: query.spelling, acquisitionPossible: false, detail: "no staged distribution matches" };
+}
+
+function linkedLink(version: string): (query: PackageQuery) => PackageRequestOutcome {
+    return (query) => ({ kind: "linked", spelling: query.spelling, version });
+}
+
+/**
+ * The farm lacks `pkg`, and the pool holds it: the step links it, installs nothing, and runs a script after the link.
+ * A first run that fails on the import is permitted, as the error names the package. The case has no rule of its own
+ * for a run, thus the default rule checks each import against the farm and the links of the trial.
+ */
+function linksThenRuns(pkg: RegExp): EvalCase["grade"] {
+    const link: CallMatch = { tool: "link_packages", input: names(pkg) };
+    return (trial) => {
+        const linkAt = trial.calls.findIndex((call) => call.tool === link.tool && link.input?.(call.input) === true);
+        if (linkAt === -1) return { pass: false, detail: `no link of ${String(pkg)} (calls: ${trial.calls.map((call) => call.tool).join(", ")})` };
+        const install = neverExec(INSTALL)(trial);
+        if (!install.pass) return install;
+        const ranAfter = trial.calls.some((call, i) => i > linkAt && call.tool === "execute_command" && runsScript.input?.(call.input) === true);
+        return ranAfter ? { pass: true, detail: "linked, then ran a script" } : { pass: false, detail: "no run of a script after the link" };
+    };
 }
 
 function unavailableLink(reason: string): (query: PackageQuery) => PackageRequestOutcome {
@@ -930,22 +935,26 @@ const stepCases: readonly EvalCase[] = [
         ),
     }),
     sandboxCase({
-        id: "step-package-lookup",
+        id: "step-links-missing-package",
         set: "dev",
-        source: "sandbox standards: look a package up before an import of a package that is not certain to be present",
+        source: "link_packages description: a package that the farm lacks and the pool holds is linked, never installed, and the script runs after the link",
         step: { ...ENRICH_STEP, constraints: ["Run a preranked GSEA with gseapy."] },
-        setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: ENRICH_LOCK },
-        maxSteps: 10,
-        grade: checksBeforeUse(/gseapy/i),
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: PYTHON_BASE,
+            link: linkedLink("1.1.4"),
+        },
+        maxSteps: 12,
+        grade: linksThenRuns(/gseapy/i),
     }),
     sandboxCase({
-        id: "step-package-lookup-held-out",
+        id: "step-links-missing-package-held-out",
         set: "held-out",
-        source: "paraphrase of step-package-lookup",
+        source: "paraphrase of step-links-missing-package",
         step: { ...DE_STEP, constraints: ["Use PyDESeq2 for the model."] },
-        setup: { files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2] },
-        maxSteps: 10,
-        grade: checksBeforeUse(/pydeseq2/i),
+        setup: { files: BULK_FILES, packages: PYTHON_BASE, link: linkedLink("0.4.12") },
+        maxSteps: 12,
+        grade: linksThenRuns(/pydeseq2/i),
     }),
     sandboxCase({
         id: "step-absent-package-blocks",
