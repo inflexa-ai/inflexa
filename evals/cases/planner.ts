@@ -472,6 +472,81 @@ const SELECTS_INSIDE_CV = plans("a modeling step that selects inside the cross-v
     ),
 );
 
+const MOUSE_PROFILE: DataProfileResult = {
+    ...PROFILE,
+    summary: "Bulk RNA-seq of mouse liver, 6 samples, treated against control.",
+    organism: { scientificName: "Mus musculus", taxonId: "10090", source: "metadata", confidence: "high" },
+};
+
+const MOUSE_REFS = [
+    "- msigdb/hallmark/mh.all.v2024.1.Mm.symbols.gmt (file, 171230 bytes; MSigDB mouse hallmark, 2024.1, gene-sets, Mus musculus)",
+    "    GMT — 50 hallmark gene sets of mouse gene symbols",
+    "- gencode/vM35/gencode.vM35.annotation.gtf.gz (file, 31220114 bytes; GENCODE, M35, annotation, Mus musculus)",
+    "    GTF — the gene annotation of the mouse genome",
+].join("\n");
+
+/** The reference census of a mouse study: the human sets come first, and the mouse sets of the same collection follow. */
+const BOTH_ORGANISM_REFS = [REFS_WITH_GENE_SETS, MOUSE_REFS].join("\n");
+
+function organismSeed(refs: string, researchQuestion: string): string {
+    return composePlannerSeed({
+        priorPlanBlock: null,
+        dataContextBlock: renderDataContext({ kind: "ready", result: MOUSE_PROFILE }, ANALYSIS_ID),
+        groundingBlock: [refs, PACKAGES].join("\n\n"),
+        input: { researchQuestion },
+    });
+}
+
+function refsTools(refs: string): Readonly<Record<string, ToolScript>> {
+    return { ...PLANNER_TOOLS, list_available_refs: { ok: { available: true, content: refs.split("\n").slice(2).join("\n") } } };
+}
+
+const MOUSE_WORDS = /\bmouse\b|\bmurine\b|Mus musculus|\bMm\b|mh\.all|ortholog/i;
+const HUMAN_RESOURCE = /\.Hs\.|h\.all\.v|Homo sapiens/;
+
+/**
+ * A step that uses gene sets names the organism of the dataset, or the ortholog mapping that bridges the two, and no
+ * step names a human resource. A step that asks names the gap instead.
+ */
+const MATCHES_ORGANISM = plans("a plan whose gene-set step names the mouse resource or an ortholog mapping, and no human resource", (steps) => {
+    const text = (step: PlanStepView): string => `${step.name} ${step.question} ${step.description}`;
+    const enrichment = steps.filter((step) => step.agent === "enrichment-agent");
+    const geneSets = enrichment.length > 0 ? enrichment : steps.filter((step) => /hallmark|GSEA/i.test(text(step)));
+    return geneSets.length > 0 && geneSets.every((step) => MOUSE_WORDS.test(text(step))) && !steps.some((step) => HUMAN_RESOURCE.test(text(step)));
+});
+
+/** With the human sets only, the planner asks for the mouse sets, or it plans with an ortholog mapping that it states. */
+const NO_SILENT_HUMAN_SETS = anyOf(decides("request_clarification", ["submit_plan", "report_blocker"]), MATCHES_ORGANISM);
+
+/** `to` reaches `from` through the `depends_on` edges of the plan. */
+function dependsOn(steps: readonly PlanStepView[], from: PlanStepView, to: PlanStepView): boolean {
+    const byId = new Map(steps.map((step) => [step.id, step]));
+    const seen = new Set<string>();
+    const queue = [...from.depends_on];
+    while (queue.length > 0) {
+        const id = queue.shift() ?? "";
+        if (id === to.id) return true;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        queue.push(...(byId.get(id)?.depends_on ?? []));
+    }
+    return false;
+}
+
+/**
+ * The edges follow the data: the enrichment step reaches the DE step whose genes it reads, and the immune step does
+ * not wait for the enrichment. The immune step can wait for the DE step only to read a matrix that the DE step writes,
+ * and its text names that matrix. An edge that no data needs holds a step back, and the run loses its parallel wave.
+ */
+const DEPENDENCIES_FOLLOW_DATA = plans("enrichment after DE, and an immune step that waits only for data it reads", (steps) => {
+    const de = steps.find((step) => step.agent === "bulk-transcriptomics-agent" && /differential|DE\b|DESeq|responder/i.test(`${step.name} ${step.question}`));
+    const enrichment = steps.find((step) => step.agent === "enrichment-agent");
+    const immune = steps.find((step) => step.agent === "immune-profiling-agent");
+    if (de === undefined || enrichment === undefined || immune === undefined) return false;
+    const readsMatrix = /TPM|VST|normali[sz]ed|expression matrix|log-?CPM/i.test(`${immune.question} ${immune.description}`);
+    return dependsOn(steps, enrichment, de) && (!dependsOn(steps, immune, de) || readsMatrix) && !dependsOn(steps, immune, enrichment);
+});
+
 const GroundedStepSchema = z.object({
     id: z.string(),
     grounding: z
@@ -718,6 +793,72 @@ export const plannerCases: readonly EvalCase[] = [
         pool: ROUTING_POOL,
         tools: ROUTING_TOOLS,
         grade: plans("a drug-repurposing step", (steps) => steps.some((step) => step.agent === "drug-repurposing-agent")),
+    },
+    {
+        id: "plan-organism-matches",
+        set: "dev",
+        source: "planner prompt: match the organism to the dataset; a human resource on mouse data gives confident, meaningless numbers",
+        user: organismSeed(BOTH_ORGANISM_REFS, "Which genes change between treated and control, and which hallmark pathways do they point to?"),
+        ...PLANNER,
+        tools: refsTools(BOTH_ORGANISM_REFS),
+        grade: MATCHES_ORGANISM,
+    },
+    {
+        id: "plan-organism-matches-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-organism-matches",
+        user: organismSeed(
+            BOTH_ORGANISM_REFS,
+            "Rank the genes by their response to the treatment, and run a GSEA of the ranking against the hallmark collection.",
+        ),
+        ...PLANNER,
+        tools: refsTools(BOTH_ORGANISM_REFS),
+        grade: MATCHES_ORGANISM,
+    },
+    {
+        id: "plan-organism-absent-no-silent-human",
+        set: "dev",
+        source: "planner prompt: match the organism; with only human gene sets for mouse data, ask or state the ortholog mapping (counter-case of plan-organism-matches)",
+        user: organismSeed(REFS_WITH_GENE_SETS, "Which genes change between treated and control, and which hallmark pathways do they point to?"),
+        ...PLANNER,
+        grade: NO_SILENT_HUMAN_SETS,
+    },
+    {
+        id: "plan-organism-absent-no-silent-human-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-organism-absent-no-silent-human",
+        user: organismSeed(
+            REFS_WITH_GENE_SETS,
+            "Rank the genes by their response to the treatment, and run a GSEA of the ranking against the hallmark collection.",
+        ),
+        ...PLANNER,
+        grade: NO_SILENT_HUMAN_SETS,
+    },
+    {
+        id: "plan-dependencies-follow-data",
+        set: "dev",
+        source: "planner prompt: start a new step for work that needs the result of a step; validate-plan checks only that each dependency exists and that no cycle forms",
+        user: routingSeed(
+            COHORT_PROFILE,
+            "Find the genes that differ between responders and non-responders and the hallmark pathways they enrich. Also estimate the immune cell composition of each biopsy.",
+        ),
+        ...PLANNER,
+        pool: ROUTING_POOL,
+        tools: ROUTING_TOOLS,
+        grade: DEPENDENCIES_FOLLOW_DATA,
+    },
+    {
+        id: "plan-dependencies-follow-data-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-dependencies-follow-data",
+        user: routingSeed(
+            COHORT_PROFILE,
+            "Two questions: how does the immune infiltrate of the tumors compare between the response groups, and which pathways do the differentially expressed genes of response enrich?",
+        ),
+        ...PLANNER,
+        pool: ROUTING_POOL,
+        tools: ROUTING_TOOLS,
+        grade: DEPENDENCIES_FOLLOW_DATA,
     },
     {
         id: "plan-hypothesis-plain",

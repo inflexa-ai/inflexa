@@ -142,6 +142,8 @@ type StepSpec = {
     readonly template?: TemplateBrief;
     /** Why the briefing holds no template contract for a grounding that names a template. */
     readonly templateNotRetrieved?: string;
+    /** The request that the plan answers. */
+    readonly request?: string;
 };
 
 /** The briefing of a step, as the scheduler composes it at dispatch. */
@@ -163,6 +165,7 @@ function briefing(spec: StepSpec): string {
         },
         ...(spec.template === undefined ? {} : { template: spec.template }),
         ...(spec.templateNotRetrieved === undefined ? {} : { templateNotRetrieved: spec.templateNotRetrieved }),
+        ...(spec.request === undefined ? {} : { request: spec.request }),
         workspace: { analysisId: ANALYSIS_ID, workingDir: workingDirOf({ agentId: spec.agent, stepId: spec.stepId }) },
         profile: spec.profile,
         upstream: spec.upstream ?? [],
@@ -733,6 +736,23 @@ const SCRIPT_FAILS: ExecRule = ({ line }) =>
 const NO_RESULT =
     /no (output|result|table|file)s?\b|not (produce|write|create|complete)|did not (produce|write|create|complete)|(was|were) not (produced|written|created)|failed/i;
 
+/**
+ * A script of the step writes the deliverable of the request under `output/`, with the file name and the fields that
+ * the request gives. The plan step names the result only, thus the request is the one source of the names.
+ */
+function keepsDeliverable(file: string, fields: readonly string[]): EvalCase["grade"] {
+    return (trial) => {
+        const scripts = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
+        const hit = scripts.find(([, text]) => text.includes(`output/${file}`) || (text.includes(file) && /\boutput\b/.test(text)));
+        if (hit === undefined)
+            return { pass: false, detail: `no script writes output/${file} (scripts: ${scripts.map(([path]) => path).join(", ") || "none"})` };
+        const missing = fields.filter((field) => !new RegExp(`["']${field}["']`).test(hit[1]));
+        return missing.length === 0
+            ? { pass: true, detail: `${hit[0]} writes output/${file} with ${fields.join(", ")}` }
+            : { pass: false, detail: `${hit[0]} writes ${file} without the fields ${missing.join(", ")}` };
+    };
+}
+
 const stepCases: readonly EvalCase[] = [
     sandboxCase({
         id: "step-renders-template",
@@ -823,6 +843,34 @@ const stepCases: readonly EvalCase[] = [
         maxSteps: 10,
         timeoutMs: 600_000,
         grade: CONSULTS_SKILLS,
+    }),
+    sandboxCase({
+        id: "step-keeps-request-deliverable",
+        set: "dev",
+        source: "briefing: a deliverable that the request describes keeps the file name, the fields, and the values of the request",
+        step: {
+            ...DE_STEP,
+            request:
+                "Which genes respond to the treatment? Save the significant genes as de_hits.tsv, with the columns gene, log2fc, and fdr, one row for each gene with fdr below 0.05.",
+        },
+        setup: { files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [namedOutputsRun("412 genes at padj < 0.05")] },
+        maxSteps: 12,
+        timeoutMs: 600_000,
+        grade: keepsDeliverable("de_hits.tsv", ["gene", "log2fc", "fdr"]),
+    }),
+    sandboxCase({
+        id: "step-keeps-request-deliverable-held-out",
+        set: "held-out",
+        source: "paraphrase of step-keeps-request-deliverable: the request names a directory, and the deliverable still goes to output/",
+        step: {
+            ...ENRICH_STEP,
+            request:
+                "Run DE of treated against control, then hallmark enrichment. Put the enriched pathways in deliverables/pathways_up.csv with three columns: pathway, nes, padj.",
+        },
+        setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: ENRICH_LOCK, exec: [namedOutputsRun("12 hallmark sets at FDR < 0.05")] },
+        maxSteps: 12,
+        timeoutMs: 600_000,
+        grade: keepsDeliverable("pathways_up.csv", ["pathway", "nes", "padj"]),
     }),
     sandboxCase({
         id: "step-briefing-no-hunt",
