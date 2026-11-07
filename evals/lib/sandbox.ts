@@ -243,13 +243,18 @@ const SCRIPT_NOTE =
 /** The time of one submit and its first poll of sandbox-server. */
 const EXEC_LATENCY_MS = 300;
 
-/** The default rules: the lint, a run of a Python or R script with the imports checked against the lock, and a read of a file. */
-function defaultRules(packages: readonly LockedPackage[]): ExecRule[] {
+/**
+ * The default rules: the lint, a run of a Python or R script with the imports checked against the farm, and a read of
+ * a file. `linked` holds the names that a link of the trial added to the farm.
+ */
+function defaultRules(packages: readonly LockedPackage[], linked: ReadonlySet<string>): ExecRule[] {
     const python = new Set(packages.filter((p) => p.track === "python").map((p) => fold(p.name)));
     const r = new Set(packages.filter((p) => p.track !== "python").map((p) => p.name));
+    const inPython = (name: string): boolean => python.has(fold(name)) || linked.has(fold(name));
+    const inR = (name: string): boolean => r.has(name) || linked.has(fold(name));
     const missingPython = (code: string): string | undefined =>
-        pythonImports(code).find((name) => !PYTHON_STDLIB.has(name) && !python.has(fold(PYTHON_DISTRIBUTION[name] ?? name)));
-    const missingR = (code: string): string | undefined => rLibraries(code).find((name) => !R_BASE.has(name) && !r.has(name));
+        pythonImports(code).find((name) => !PYTHON_STDLIB.has(name) && !inPython(PYTHON_DISTRIBUTION[name] ?? name));
+    const missingR = (code: string): string | undefined => rLibraries(code).find((name) => !R_BASE.has(name) && !inR(name));
 
     const runPython: ExecRule = ({ argv, read }) => {
         const program = argv[0] ?? "";
@@ -377,7 +382,8 @@ export async function openSandboxTrial(
         return join(root, absolute.slice(`/${ANALYSIS_ID}/`.length));
     };
     const caseRules = setup.exec ?? [];
-    const baseRules = defaultRules(setup.packages);
+    const linked = new Set<string>();
+    const baseRules = defaultRules(setup.packages, linked);
     const unscripted: string[] = [];
     const answer = (argv: readonly string[], line: string, cwd: string, rules: readonly ExecRule[]): ExecReply | undefined => {
         const view: ExecView = {
@@ -484,7 +490,11 @@ export async function openSandboxTrial(
         refStorePath: refsRoot,
         extendAnalysisFarm: (_analysisId, queries) =>
             okAsync(
-                queries.map((query): PackageRequestOutcome => setup.link?.(query) ?? { kind: "absent", spelling: query.spelling, acquisitionPossible: false }),
+                queries.map((query): PackageRequestOutcome => {
+                    const outcome = setup.link?.(query) ?? { kind: "absent", spelling: query.spelling, acquisitionPossible: false };
+                    if (outcome.kind === "linked") linked.add(fold(query.spelling));
+                    return outcome;
+                }),
             ),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         // The CLI binds an embedding provider, thus the agent declares `workspace_search`. A case scripts its answer.
