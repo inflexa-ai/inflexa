@@ -21,6 +21,7 @@ import { leaseOverClient } from "@inflexa-ai/harness/sandbox/__fixtures__/leases
 import { FARM_LOCK_FILE } from "@inflexa-ai/harness/sandbox/farm.js";
 import { createFileMetadataCell, type FileMetadataCell } from "@inflexa-ai/harness/tools/sandbox/submit-file-metadata.js";
 import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.js";
+import type { KnowledgeClient } from "@inflexa-ai/harness/tools/knowledge/client.js";
 import type { ExecRequest, ExecResult, PackageRequestOutcome } from "@inflexa-ai/harness/sandbox/types.js";
 import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/data-profile.js";
 import { buildSetMenu } from "@inflexa-ai/harness/input-scan/menu.js";
@@ -80,6 +81,8 @@ export type SandboxSetup = {
     readonly exec?: readonly ExecRule[];
     /** The files of the reference store, by path under `/mnt/refs`. A command reads them there. */
     readonly refs?: Readonly<Record<string, string>>;
+    /** The knowledge service of the step. Present: the agent holds `knowledge_template`. An operation it omits refuses. */
+    readonly knowledge?: Partial<KnowledgeClient>;
 };
 
 /** The agent id of the data profiler, which profiles the inputs before any run. */
@@ -339,6 +342,14 @@ function unconnectedPool(): ReturnType<typeof createPool> {
     return createPool({ host: "eval.invalid", port: "5432", database: "eval", user: "eval", password: "eval", sslMode: "disable" });
 }
 
+/** A knowledge service whose every operation refuses, as a step agent never calls the operations of the planner. */
+const REFUSING_KNOWLEDGE: KnowledgeClient = {
+    recommend: () => Promise.reject(new Error("a step agent does not call recommend")),
+    check: () => Promise.reject(new Error("a step agent does not call check")),
+    render: () => Promise.reject(new Error("the case scripts no render")),
+    contract: () => Promise.reject(new Error("the case scripts no contract")),
+};
+
 /** The agent of a setup over a fresh tree, for one trial. */
 export async function openSandboxTrial(
     setup: SandboxSetup,
@@ -477,6 +488,7 @@ export async function openSandboxTrial(
                 throw new Error("an eval embeds nothing");
             },
         },
+        ...(setup.knowledge === undefined ? {} : { knowledge: { ...REFUSING_KNOWLEDGE, ...setup.knowledge } }),
         // A step reports a blocker and declares its metadata tool. The profiler does neither (`profilerSandboxAgentDeps`).
         reportsBlocker: !profiler,
         fileMetadata: profiler ? undefined : createFileMetadataCell(),

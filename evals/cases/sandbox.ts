@@ -8,9 +8,13 @@
  */
 
 import type { DataProfileResult } from "@inflexa-ai/harness/contracts/data-profile.js";
-import { composeStepBriefing, type UpstreamHandoff } from "@inflexa-ai/harness/prompts/briefing.js";
+import { composeStepBriefing, type TemplateBrief, type UpstreamHandoff } from "@inflexa-ai/harness/prompts/briefing.js";
+import type { AnalysisStep } from "@inflexa-ai/harness/schemas/workflow-state.js";
+import type { KnowledgeClient, TemplateContract } from "@inflexa-ai/harness/tools/knowledge/client.js";
 import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.js";
 import type { PackageRequestOutcome } from "@inflexa-ai/harness/sandbox/types.js";
+
+import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 
 import { REAL_TOOL, type ToolScript } from "../lib/agent.js";
 import {
@@ -40,6 +44,8 @@ import {
     settled,
     distinctPaths,
     type CallMatch,
+    type Grade,
+    type Trial,
     type EvalCase,
 } from "../lib/case.js";
 import { ANALYSIS_ID, PROFILER_ID, workingDirOf, type ExecRule, type LockedPackage, type SandboxSetup } from "../lib/sandbox.js";
@@ -131,6 +137,11 @@ type StepSpec = {
     readonly upstream?: readonly UpstreamHandoff[];
     /** The constraints of the analysis memory, as the user stated them. */
     readonly memoryConstraints?: readonly string[];
+    /** The knowledge grounding of the plan step, and the template contract that the scheduler fetched for it. */
+    readonly grounding?: NonNullable<AnalysisStep["grounding"]>;
+    readonly template?: TemplateBrief;
+    /** Why the briefing holds no template contract for a grounding that names a template. */
+    readonly templateNotRetrieved?: string;
 };
 
 /** The briefing of a step, as the scheduler composes it at dispatch. */
@@ -148,7 +159,10 @@ function briefing(spec: StepSpec): string {
             status: "pending",
             agent: spec.agent,
             maxSteps: 200,
+            ...(spec.grounding === undefined ? {} : { grounding: spec.grounding }),
         },
+        ...(spec.template === undefined ? {} : { template: spec.template }),
+        ...(spec.templateNotRetrieved === undefined ? {} : { templateNotRetrieved: spec.templateNotRetrieved }),
         workspace: { analysisId: ANALYSIS_ID, workingDir: workingDirOf({ agentId: spec.agent, stepId: spec.stepId }) },
         profile: spec.profile,
         upstream: spec.upstream ?? [],
@@ -370,6 +384,187 @@ const DE_STEP: StepSpec = {
     profile: BULK_PROFILE,
 };
 
+const TEMPLATE_REF = "tpl-pydeseq2-two-group@1.0.0";
+const KNOWLEDGE_SNAPSHOT = { date: "2026-10-01", digest: "sha256:eval-knowledge" };
+
+/** A local slot of the template: a fact of the machine, bound on the host and never sent to the service. */
+function localSlot(name: string, type: string, description: string) {
+    return { name, type, description, adaptable: true, local: true, required: true };
+}
+
+/** The contract of the DE template, as `GET /v1/templates/{id}` serves it. */
+const DE_TEMPLATE: TemplateContract = {
+    id: "tpl-pydeseq2-two-group",
+    version: "1.0.0",
+    label: "PyDESeq2 Wald test of two groups",
+    method: "M-0002",
+    language: "python",
+    parameters: [
+        localSlot(
+            "counts_path",
+            "string",
+            "The absolute path of the raw count matrix, genes by samples, TSV, with the gene id first; other text columns are dropped",
+        ),
+        localSlot("samples_path", "string", "The absolute path of the sample sheet, CSV"),
+        localSlot("group_column", "string", "The column of the sample sheet that holds the group"),
+        localSlot("reference_level", "string", "The level of the group that is the reference"),
+        localSlot("test_level", "string", "The level of the group that is tested against the reference"),
+        localSlot("design", "formula", "The design formula, for example ~ batch + group"),
+        { name: "alpha", type: "number", description: "The FDR threshold of a significant gene", adaptable: true, default: 0.05, minimum: 0, maximum: 1 },
+        { name: "shrink", type: "string", description: "The shrinkage of the fold changes", adaptable: false, default: "apeglm" },
+    ],
+    inputs: [
+        { name: "counts", path: "{{counts_path}}" },
+        { name: "samples", path: "{{samples_path}}" },
+    ],
+    outputs: [
+        { name: "results", path: "output/de_results.csv", description: "Each gene with log2 fold change and adjusted p-value" },
+        { name: "volcano", path: "figures/volcano.png" },
+    ],
+};
+
+const DE_TEMPLATE_SCRIPT = [
+    '"""PyDESeq2 Wald test of two groups, with apeglm-style shrinkage of the fold changes (template tpl-pydeseq2-two-group@1.0.0)."""',
+    "import numpy as np",
+    "import pandas as pd",
+    "import matplotlib",
+    'matplotlib.use("Agg")',
+    "import matplotlib.pyplot as plt",
+    "from pydeseq2.dds import DeseqDataSet",
+    "from pydeseq2.ds import DeseqStats",
+    "",
+    "np.random.seed(0)",
+    "ALPHA = 0.05",
+    "",
+    'raw = pd.read_csv({{counts_path}}, sep="\\t", index_col=0)',
+    'symbols = raw["symbol"] if "symbol" in raw.columns else pd.Series(raw.index, index=raw.index)',
+    'counts = raw.select_dtypes("number").T',
+    "# A design column is a factor, also when its labels are numbers, for example a batch of 1 and 2.",
+    "samples = pd.read_csv({{samples_path}}, index_col=0, dtype=str).loc[counts.index]",
+    "# [adaptable: the filter of low counts]",
+    "counts = counts.loc[:, (counts >= 10).sum(axis=0) >= 3]",
+    "",
+    "dds = DeseqDataSet(counts=counts, metadata=samples, design={{design}})",
+    "dds.deseq2()",
+    "stats = DeseqStats(dds, contrast=[{{group_column}}, {{test_level}}, {{reference_level}}], alpha=ALPHA)",
+    "stats.summary()",
+    "# [adaptable: the coefficient name follows the design]",
+    'stats.lfc_shrink(coeff=f"{ {{group_column}} }[T.{ {{test_level}} }]")',
+    "",
+    "res = stats.results_df",
+    'res.insert(0, "symbol", symbols.reindex(res.index).values)',
+    'res.index.name = "gene_id"',
+    'res[["symbol", "baseMean", "log2FoldChange", "padj"]].to_csv("output/de_results.csv")',
+    'n_sig = int((res["padj"] < ALPHA).sum())',
+    'print(f"{n_sig} genes at padj < {ALPHA}")',
+    "",
+    "fig, ax = plt.subplots(figsize=(5, 4))",
+    'ax.scatter(res["log2FoldChange"], -np.log10(res["padj"].clip(lower=1e-300)), s=4, c=(res["padj"] < ALPHA), cmap="cividis")',
+    'ax.set_xlabel("log2 fold change"); ax.set_ylabel("-log10 adjusted p")',
+    'fig.savefig("figures/volcano.png", dpi=300)',
+    'fig.savefig("figures/volcano.pdf")',
+].join("\n");
+
+/** A knowledge service that serves the contract and renders the DE template. */
+const RENDERING_KNOWLEDGE: Partial<KnowledgeClient> = {
+    contract: () => Promise.resolve(DE_TEMPLATE),
+    render: () =>
+        Promise.resolve({
+            ok: true as const,
+            snapshot: KNOWLEDGE_SNAPSHOT,
+            template: {
+                id: DE_TEMPLATE.id,
+                version: DE_TEMPLATE.version,
+                label: DE_TEMPLATE.label,
+                method: { id: "M-0002", label: "DESeq2 Wald test" },
+                language: "python",
+            },
+            script: DE_TEMPLATE_SCRIPT,
+            slots: [
+                ...["counts_path", "samples_path", "group_column", "reference_level", "test_level", "design"].map((name) => ({
+                    name,
+                    source: "local",
+                    adaptable: true,
+                    lines: [],
+                })),
+                { name: "alpha", value: 0.05, source: "plan", adaptable: true, lines: [12] },
+                { name: "shrink", value: "apeglm", source: "pinned", adaptable: false, lines: [] },
+            ],
+            local_slots: ["counts_path", "samples_path", "group_column", "reference_level", "test_level", "design"],
+            environment: { match: "exact" },
+            syntax: { status: "ok" },
+            outputs: DE_TEMPLATE.outputs,
+            decision_record: { step: "differential_expression", method: "M-0002", claims: ["R-0031@e7d0"] },
+        }),
+};
+
+/** The knowledge service did not answer the contract or the render. */
+const UNAVAILABLE_KNOWLEDGE: Partial<KnowledgeClient> = {
+    contract: () => Promise.resolve({ match: "unavailable", reason: "the knowledge service did not answer after 3 tries" }),
+    render: () => Promise.resolve({ match: "unavailable", reason: "the knowledge service did not answer after 3 tries" }),
+};
+
+const DE_GROUNDING: NonNullable<AnalysisStep["grounding"]> = {
+    status: "grounded",
+    snapshot: KNOWLEDGE_SNAPSHOT.digest,
+    claims: ["R-0031@e7d0"],
+    template: TEMPLATE_REF,
+    settings: [{ step: "differential_expression", name: "alpha", value: 0.05 }],
+    reason: "Two groups of bulk counts with three replicates: the negative binomial Wald test (R-0031).",
+};
+
+const DE_TEMPLATE_BRIEF: TemplateBrief = {
+    ref: TEMPLATE_REF,
+    version_served: "1.0.0",
+    slots: DE_TEMPLATE.parameters,
+    inputs: (DE_TEMPLATE.inputs ?? []).map((input) => ({ name: input.name, path: input.path })),
+    bound: [{ name: "alpha", value: 0.05, source: "plan" }],
+    unbound_settings: [],
+};
+
+/** A DE step whose grounding names the template, with the contract in its briefing. */
+const TEMPLATE_STEP: StepSpec = { ...DE_STEP, grounding: DE_GROUNDING, template: DE_TEMPLATE_BRIEF };
+
+/** The file name of the script that the render call wrote: its `script_name`, else the default of the tool. */
+function renderedScriptOf(trial: Trial): string | undefined {
+    const render = trial.calls.find((call) => call.tool === "knowledge_template");
+    if (render === undefined) return undefined;
+    const named = parseUnknownRecord(render.input)?.script_name;
+    return typeof named === "string" ? named : "tpl-pydeseq2-two-group.py";
+}
+
+/** A script of the step that fits the DE model, and that the render did not write. A helper that plots the table is not one. */
+function ownDeScript(trial: Trial): Grade {
+    const rendered = renderedScriptOf(trial);
+    const own = Object.entries(trial.files ?? {}).find(
+        ([path, text]) => path.startsWith("scripts/") && path !== `scripts/${rendered ?? ""}` && /DeseqDataSet\s*\(/.test(String(text)),
+    );
+    return own === undefined ? { pass: true, detail: "no DE script of its own" } : { pass: false, detail: `wrote its own DE script ${own[0]}` };
+}
+
+/** The step runs the script that the render wrote. */
+function runsRendered(trial: Trial): Grade {
+    const rendered = renderedScriptOf(trial);
+    if (rendered === undefined) return { pass: false, detail: "no knowledge_template call" };
+    const ran = trial.calls.some((call) => call.tool === "execute_command" && (commandLine(call.input) ?? "").includes(`scripts/${rendered}`));
+    return ran ? { pass: true, detail: `ran scripts/${rendered}` } : { pass: false, detail: `no run of scripts/${rendered}` };
+}
+
+/** The step renders the template, runs the rendered script, and fits no DE model in a script of its own. */
+const RENDERS_TEMPLATE = all(runsRendered, ownDeScript);
+
+/**
+ * The service did not answer: the step writes the script itself, and it does not spin on the template tool. The end of
+ * the run is not graded: the scripted sandbox cannot run the script of the agent, and a careful agent distrusts it.
+ */
+const WRITES_OWN_ON_UNAVAILABLE = all(wroteUnder("scripts/", /DeseqDataSet|pydeseq2/i), atMost({ tool: "knowledge_template" }, 1));
+
+/** A write of a script under `scripts/`. */
+const writesScript: CallMatch = { tool: "write_file", input: (input) => /"path":"[^"]*scripts\//.test(JSON.stringify(input)) };
+
+/** The step reads its skill guidance before it writes the script of its method. */
+const CONSULTS_SKILLS = anyOf(before({ tool: "skill_search" }, writesScript), before({ tool: "skill_read" }, writesScript));
+
 /** The step uses its briefing: no hunt for its inputs, no second read of the profile, and work starts. */
 function usesBriefing(): EvalCase["grade"] {
     return all(never(["inspect_data_profile", "workspace_search"]), noCallUnder(["list_files", "grep", "file_stat"], `${ROOT}/data`), callsAny(["write_file"]));
@@ -403,18 +598,36 @@ const TF_STEP: StepSpec = {
 };
 
 /** A script that does not collapse the duplicate gene ids of the counts fails, as pandas fails on a duplicate index. */
+/** The bytes of a figure that a scripted run leaves: a PNG signature and a body of a plausible size. */
+const FIGURE_STUB = `\u0089PNG\r\n\u001a\n${"\u0000".repeat(24_000)}`;
+
+/**
+ * The files that a script names under `output/` and `figures/`, as a run leaves them: a table holds the DE table, and
+ * a figure holds a stub. The agent finds what its own script wrote, thus it does not judge the run broken.
+ */
+function namedOutputs(text: string): Record<string, string> {
+    const named = [...new Set(text.match(/(output|figures)\/[\w.-]+\.(csv|tsv|png|pdf|svg)/g) ?? [])];
+    return Object.fromEntries(named.map((path) => [path, path.startsWith("output/") ? `${DE_TABLE}\n` : FIGURE_STUB]));
+}
+
+/** A run of a Python or R script under `scripts/` that leaves the files that the script names. */
+function namedOutputsRun(stdout: string): ExecRule {
+    return ({ argv, line, read, cwd }) => {
+        if (!["python", "python3", "Rscript"].includes(argv[0] ?? "")) return undefined;
+        const script = /scripts\/\S+\.(py|R)\b/.exec(line)?.[0];
+        if (script === undefined) return undefined;
+        const text = read(script) ?? read(`${cwd}/${script}`);
+        return text === undefined ? undefined : { exitCode: 0, stdout, writes: namedOutputs(text) };
+    };
+}
+
 const DUPLICATE_IDS: ExecRule = ({ line, read, cwd }) => {
     const script = /scripts\/\S+\.(py|R)\b/.exec(line)?.[0];
     if (script === undefined) return undefined;
     const text = read(script) ?? read(`${cwd}/${script}`) ?? "";
     // Only the model script meets the duplicate index. Another script, such as a probe, goes to the next rule.
     if (!/deseq|DeseqDataSet|DESeq/i.test(text)) return undefined;
-    if (/duplicat|groupby|aggregate|drop_dup|unique|collapse|rowsum|distinct/i.test(text)) {
-        // The run leaves the files that the script names, thus the agent finds what its own script wrote.
-        const named = [...new Set(text.match(/(output|figures)\/[\w.-]+\.(csv|tsv|png|pdf|svg)/g) ?? [])];
-        const writes = Object.fromEntries(named.map((path) => [path, path.startsWith("output/") ? `${DE_TABLE}\n` : "PNG"]));
-        return { exitCode: 0, writes };
-    }
+    if (/duplicat|groupby|aggregate|drop_dup|unique|collapse|rowsum|distinct/i.test(text)) return { exitCode: 0, writes: namedOutputs(text) };
     return { exitCode: 1, stderr: "ValueError: cannot reindex on an axis with duplicate labels (gene_id ENSG00000010003 appears 2 times)" };
 };
 
@@ -521,6 +734,96 @@ const NO_RESULT =
     /no (output|result|table|file)s?\b|not (produce|write|create|complete)|did not (produce|write|create|complete)|(was|were) not (produced|written|created)|failed/i;
 
 const stepCases: readonly EvalCase[] = [
+    sandboxCase({
+        id: "step-renders-template",
+        set: "dev",
+        source: "knowledge_template description: a step whose grounding names a template renders it and runs it, and prefers it over its own script",
+        step: TEMPLATE_STEP,
+        setup: {
+            files: BULK_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            knowledge: RENDERING_KNOWLEDGE,
+            exec: [namedOutputsRun("412 genes at padj < 0.05")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: RENDERS_TEMPLATE,
+    }),
+    sandboxCase({
+        id: "step-renders-template-held-out",
+        set: "held-out",
+        source: "paraphrase of step-renders-template",
+        step: {
+            ...TEMPLATE_STEP,
+            name: "Expression contrast",
+            question: "Find the genes whose expression differs between the treated and the control cultures.",
+        },
+        setup: {
+            files: BULK_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            knowledge: RENDERING_KNOWLEDGE,
+            exec: [namedOutputsRun("412 genes at padj < 0.05")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: RENDERS_TEMPLATE,
+    }),
+    sandboxCase({
+        id: "step-template-unavailable-own-script",
+        set: "dev",
+        source: "knowledge_template description: on `unavailable`, write the script yourself and state it",
+        step: { ...TEMPLATE_STEP, template: undefined, templateNotRetrieved: "the knowledge service did not answer" },
+        setup: {
+            files: BULK_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            knowledge: UNAVAILABLE_KNOWLEDGE,
+            exec: [namedOutputsRun("412 genes at padj < 0.05")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: WRITES_OWN_ON_UNAVAILABLE,
+    }),
+    sandboxCase({
+        id: "step-template-unavailable-own-script-held-out",
+        set: "held-out",
+        source: "paraphrase of step-template-unavailable-own-script",
+        step: {
+            ...TEMPLATE_STEP,
+            name: "Expression contrast",
+            question: "Find the genes whose expression differs between the treated and the control cultures.",
+            template: undefined,
+            templateNotRetrieved: "the knowledge service did not answer",
+        },
+        setup: {
+            files: BULK_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            knowledge: UNAVAILABLE_KNOWLEDGE,
+            exec: [namedOutputsRun("412 genes at padj < 0.05")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: WRITES_OWN_ON_UNAVAILABLE,
+    }),
+    sandboxCase({
+        id: "step-consults-skills",
+        set: "dev",
+        source: "sandbox standards: skills are the authority on methods; read the guidance before you write the script",
+        step: DE_STEP,
+        setup: { files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [namedOutputsRun("412 genes at padj < 0.05")] },
+        maxSteps: 10,
+        timeoutMs: 600_000,
+        grade: CONSULTS_SKILLS,
+    }),
+    sandboxCase({
+        id: "step-consults-skills-held-out",
+        set: "held-out",
+        source: "paraphrase of step-consults-skills",
+        step: ENRICH_STEP,
+        setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: ENRICH_LOCK, exec: [namedOutputsRun("12 hallmark sets at FDR < 0.05")] },
+        maxSteps: 10,
+        timeoutMs: 600_000,
+        grade: CONSULTS_SKILLS,
+    }),
     sandboxCase({
         id: "step-briefing-no-hunt",
         set: "dev",

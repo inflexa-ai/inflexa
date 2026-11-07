@@ -35,6 +35,8 @@ import {
     threadRecord,
     userMessage,
     type EvalCase,
+    type Grade,
+    type Trial,
     type TurnState,
 } from "../lib/case.js";
 import type { ScriptedResult } from "../lib/agent.js";
@@ -478,8 +480,21 @@ const ANALOGY_HISTORY = [
     ),
 ];
 
-/** The content of the analogy report that must not reach a workflow input. A note that the plan leaves the analogy out names the word "analogy", thus the grade reads the content. */
-const ANALOGY_WORDS = ["thermostat", "circuit breaker", "load shedding", "control engineering", "power systems"];
+/** A reference that only the analogy report resolves. The planner does not see the report, thus such an input does not stand on its own. */
+const REPORT_REFERENCES = ["analogy report", "the report", "first analogy", "second analogy", "the first one", "the second one", "option 1", "option 2"];
+
+/** A workflow input that an analogy shaped stands on its own: it states the hypothesis in terms of the data, and it refers to no report. */
+const SELF_CONTAINED_INPUT = all(
+    callsAny(["generate_plan"]),
+    inputLacks("generate_plan", REPORT_REFERENCES),
+    inputLacks("execute_analysis", REPORT_REFERENCES),
+    (trial: Trial): Grade => {
+        const input = JSON.stringify(trial.calls.find((call) => call.tool === "generate_plan")?.input ?? "");
+        return /negative (regulator|feedback)|SOCS|USP18|damp/i.test(input)
+            ? { pass: true, detail: "the input states the hypothesis in terms of the data" }
+            : { pass: false, detail: "the input does not state the hypothesis" };
+    },
+);
 
 /** A report session that started on an earlier turn. */
 const REPORT_STARTED_HISTORY = [
@@ -1114,24 +1129,24 @@ export const conversationCases: readonly EvalCase[] = [
         grade: all(callsAny(["generate_analogy_report"]), neverSays(/\bcard\b/i), never(RUN_TOOLS)),
     },
     {
-        id: "analogy-stays-out-of-plan",
+        id: "analogy-plan-input-self-contained",
         set: "dev",
-        source: "conversation prompt: keep analogies out of generate_plan and each workflow input",
+        source: "conversation prompt: an analogy that shapes a workflow input is stated in terms of the data, never as a reference to the report",
         history: ANALOGY_HISTORY,
         user: "Let's go with the first one. Plan an analysis that tests whether the negative regulators go up with the treatment.",
         maxSteps: 4,
         tools: { ...PLAN_TOOLS, ...REPORT_TOOLS },
-        grade: all(callsAny(["generate_plan"]), inputLacks("generate_plan", ANALOGY_WORDS), inputLacks("execute_analysis", ANALOGY_WORDS)),
+        grade: SELF_CONTAINED_INPUT,
     },
     {
-        id: "analogy-stays-out-of-plan-held-out",
+        id: "analogy-plan-input-self-contained-held-out",
         set: "held-out",
-        source: "paraphrase of analogy-stays-out-of-plan",
+        source: "paraphrase of analogy-plan-input-self-contained",
         history: ANALOGY_HISTORY,
         user: "The feedback idea is interesting. Set up the analysis to check it on my data.",
         maxSteps: 4,
         tools: { ...PLAN_TOOLS, ...REPORT_TOOLS },
-        grade: all(callsAny(["generate_plan"]), inputLacks("generate_plan", ANALOGY_WORDS), inputLacks("execute_analysis", ANALOGY_WORDS)),
+        grade: SELF_CONTAINED_INPUT,
     },
     {
         id: "report-session-exists",

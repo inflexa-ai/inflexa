@@ -7,6 +7,7 @@
  */
 
 import type { PoolInventorySection } from "@inflexa-ai/harness/config/environment-stores.js";
+import type { KnowledgeClient } from "@inflexa-ai/harness/tools/knowledge/client.js";
 import type { StepSummary } from "@inflexa-ai/harness/schemas/step-summary.js";
 import { isDeepStrictEqual } from "node:util";
 
@@ -94,6 +95,11 @@ export type EvalCase = {
     readonly maxSteps: number;
     /** A planner case: the package pool that `submit_plan` resolves the packages against. It matches the census of the seed. */
     readonly pool?: readonly PoolInventorySection[];
+    /**
+     * A `planner-knowledge` case: the operations of the knowledge service that replace the ones of the eval client. A
+     * factory, thus each trial gets its own state, for example a check that refuses the first draft only.
+     */
+    readonly knowledge?: () => Partial<KnowledgeClient>;
     /** The tree, the farm, and the exec rules of a sandbox case. */
     readonly sandbox?: SandboxSetup;
     /** The narrative of the plan and the step summaries of a synthesis case. They make the seed of the synthesizer. */
@@ -320,6 +326,7 @@ export type PlanStepView = {
     readonly packages: readonly string[];
     readonly capability: string;
     readonly status: string;
+    readonly description: string;
 };
 
 const PlanViewSchema = z.object({
@@ -334,6 +341,7 @@ const PlanViewSchema = z.object({
                 packages: z.array(z.string()).catch([]),
                 capability: z.string().catch(""),
                 status: z.string().catch(""),
+                description: z.string().catch(""),
             }),
         ),
     }),

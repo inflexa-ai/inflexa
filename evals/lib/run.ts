@@ -31,6 +31,7 @@ import { defaultErrorFields, type Logger } from "@inflexa-ai/harness/lib/logger.
 import {
     exposed,
     plannerTrialAgent,
+    evalKnowledgeClient,
     synthesisAgent,
     withSandboxScripts,
     withScriptedTools,
@@ -208,7 +209,10 @@ async function trialAgentOf(
     const kind = evalCase.agent ?? "conversation";
     const scripted = (agent: AgentDefinition): AgentDefinition => withScriptedTools(exposed(agent, exposure), evalCase.tools ?? {}, record);
     if (kind === "synthesis") return { agent: scripted(synthesisAgent(synthesisOf(evalCase).summaries)) };
-    if (kind === "planner" || kind === "planner-knowledge") return { agent: scripted(plannerTrialAgent(evalCase.pool ?? [], kind === "planner-knowledge")) };
+    if (kind === "planner" || kind === "planner-knowledge") {
+        const knowledge = kind === "planner-knowledge" ? { ...evalKnowledgeClient, ...evalCase.knowledge?.() } : undefined;
+        return { agent: scripted(plannerTrialAgent(evalCase.pool ?? [], knowledge)) };
+    }
     if (kind !== "sandbox") return { agent: scripted(agents[kind]) };
     if (evalCase.sandbox === undefined) throw new Error(`the sandbox case ${evalCase.id} has no sandbox setup`);
     const sandbox = await openSandboxTrial(evalCase.sandbox, { toolOutputStore: store, label: evalCase.id });
