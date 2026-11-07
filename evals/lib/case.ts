@@ -445,11 +445,15 @@ export function numbersGrounded(allowed: readonly string[], floor = 10, opts: { 
 
 const CommandInputSchema = z.object({ command: z.array(z.string()) });
 
+/** The command line of an `execute_command` input, or `undefined` for an input of another shape. */
+export function commandLine(input: unknown): string | undefined {
+    const parsed = CommandInputSchema.safeParse(input);
+    return parsed.success ? parsed.data.command.join(" ") : undefined;
+}
+
 /** The command line of an `execute_command` call, or `undefined` for another call. */
 function commandOf(call: TrialCall): string | undefined {
-    if (call.tool !== "execute_command") return undefined;
-    const parsed = CommandInputSchema.safeParse(call.input);
-    return parsed.success ? parsed.data.command.join(" ") : undefined;
+    return call.tool === "execute_command" ? commandLine(call.input) : undefined;
 }
 
 /** Some `execute_command` call runs a command line that matches `pattern`. */

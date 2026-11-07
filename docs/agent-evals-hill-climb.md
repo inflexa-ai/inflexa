@@ -37,7 +37,7 @@ stricter before you tune against it.
 | --- | --- | --- |
 | Sonnet 5.5 | The model of the loop | Through the model proxy of the CLI. |
 | GLM-5.3 | The open-weights tier | Through the z.ai coding endpoint. Its own pass bar. |
-| Opus 5.5 | Gates only | Not run yet. |
+| Opus 5.5 | Gates only | Through the model proxy of the CLI, with `--model claude-opus-5-5`. It finds case defects that Sonnet does not show. |
 
 Haiku is not a target, because no user runs it for this work.
 
@@ -73,6 +73,9 @@ and a `held-out` twin.
 | The planner of each trial (`plannerOfInvocation`), with the package pool of the case (`pool`) | Production builds the planner for each call. `submit_plan` reads the same census as the seed. |
 | The result of each script call | A grader reads a block that landed, not a block that the draft refused. |
 | `EVALS_LOG=1` | The log of the harness shows the tries of a provider, for example after a 429. |
+| A trial that reaches its time bound is an error | A stalled provider gives no reply. As a failed grade, the stall lowered the pass rate. As an error, it fails the gate of `compare`. |
+| `--model <id>` | A run on a different model, with the connection and the credential of the CLI. |
+| The call names of a passing trial (`tools`) | The cost of a trial shows its path. A name ends with `!` when its call gave an error result. |
 
 ### New graders
 
@@ -177,6 +180,69 @@ calls of a script each obey it.
 The defect occurred one time in the first GLM baseline. It did not occur
 again. The check is insurance, and its test covers the refusal.
 
+### Round 5: `write_file` is also a script tool of the conversation agent
+
+The change: `createConversationAgent` makes one `write_file` tool. The agent
+declares it directly, and `run_script` also lists it. The write record of a
+nested call folds through `run_script`, thus the provenance of the write does
+not change. The approval of the user was necessary, because the exposure work
+had stopped.
+
+The baseline and the candidate both use `base` exposure. Thus the only
+difference is `write_file` in the scripts. The cost here is all input tokens
+plus 5 times the output tokens. The weight of the cache moves with the state of
+the cache, and that noise was larger than the effect.
+
+| Case (Sonnet 5.5, 5 trials) | Pass before | Pass after | Cost before | Cost after |
+| --- | --- | --- | --- | --- |
+| `write-derived-file` (dev) | 5/5 | 5/5 | 300k | 167k |
+| `write-derived-file-held-out` | 1/5 | 5/5 | 214k | 156k |
+
+On the 86 conversation cases at 3 trials, the pass count went from 249 to 248
+of 252. The three cases that lost one trial write no file. The total cost
+changed by -0.7 %.
+
+### Round 6, reverted: `read_file` named the analysis-root form of a relative path
+
+The defect: a GLM profiler read `data/inputs/...` first, because the menu of
+its seed lists the paths in that form. A relative path resolves against the
+working directory of the agent, thus each read gave `not_found`. A sentence in
+the seed did not change this.
+
+The change gave `analysisRootPath` with `not_found` when the analysis root holds
+the path. The agent then used the absolute form at once. But the first reads
+are parallel calls of the first step, thus no result can prevent them, and the
+agent already recovered in one round.
+
+| Case (GLM-5.3, 2 trials) | Without | With |
+| --- | --- | --- |
+| `profile-one-example-per-set` (dev) | 1/2 | 1/2 |
+| `profile-conflict-low-confidence` (dev) | 1/2 | 1/2 |
+
+The pass rate and the cost did not change, thus the change was reverted. Each
+failed trial wrote a script, got no output from the scripted sandbox, and used
+its steps on probes of the sandbox. This is a limit of the evals: the scripted
+sandbox cannot run the code of the model.
+
+### Round 7, reverted: a code limit on unanswered link passes
+
+The defect: after `link_packages` answered `unavailable`, the agents linked again
+and again. Each model made a third call, and GLM did not report the blocker.
+
+The change: after two `unavailable` answers in one step, the tool did not call
+the farm again. It answered with the last reason and said to report it. The
+count came from `foldCallRecord`, thus a replay kept it.
+
+| Case | Model | Without | With |
+| --- | --- | --- | --- |
+| `step-link-unavailable` (dev) | Sonnet 5.5, 5 trials | 2/5 | 3/5 |
+| `step-link-unavailable-held-out` | Sonnet 5.5, 5 trials | 4/5 | 5/5 |
+| Both | GLM-5.3, 2 trials each | 1/4 | 0/4 |
+
+The failed Sonnet trials made the same three calls in both arms, and then they
+reported the blocker. Only the third call changed: it did not reach the farm.
+No decision changed, thus the change was reverted.
+
 ## Stricter cases
 
 In the Sonnet baseline, Sonnet passed each trial of 157 of the 180 cases. A case
@@ -246,7 +312,13 @@ With `read-script`, a step agent read its documents with `cat` through
 `execute_command`, not in a script. The direct read tool is the one that an
 agent uses first.
 
-Decision: production stays as it is. The exposure work stops here.
+Decision: production stays as it is for the read tools.
+
+A later case showed one gap of `base`. The user asked for all 610 genes of a run
+in a file at a path of the user. The agent computed the list in a script, but a
+script could write only into the derived directory. The agent then refused to
+type 610 lines into a direct `write_file` call. Round 5 adds `write_file` to
+the script tools of the conversation agent only.
 
 ## Findings about the evals
 
@@ -285,6 +357,38 @@ These failures came from the evals, not from the agents. Each one is fixed.
   said 3.1 to 4.0. GLM found the difference and used its steps on it. The table
   now gives 4.0 to 3.1.
 
+### Found by the second climb
+
+- **A stalled proxy.** The CLI proxy stopped two times. The trials of the stall
+  had no reply, and the runner graded them as failures. Now they are errors.
+- **A grader that read JSON.** The match for "ran the script" read the JSON of
+  the input. Thus the argv form `["python", "scripts/de.py"]` did not match, and
+  an agent that fixed and ran its script failed. The match now reads the
+  command line.
+- **A fixture that did not agree with its history.** The scripted analogy report
+  named other analogies than the earlier reply of the agent. A careful agent saw
+  the difference and said that it invented the earlier analogies. The grader
+  also refused the word "analogy" in a note that kept the analogy out of a plan.
+- **A twin that was harder than its case.** `write-derived-file` asks for the
+  top genes, and its twin asks for all 610 genes. The twin found a real gap
+  (round 5), but the two cases do not test the same behavior.
+- **A corpus that was too small for Opus.** The four papers of the analogy cases
+  fit none of the analogies that Opus selected. Opus also sent the query
+  "Attention is all you need", got nothing, and judged the search fake. The
+  corpus now has real papers for those analogies and for that query.
+- **An ambiguous user message.** A held-out twin named only one donor pair, and
+  Opus correctly asked about the others. The message now names each pair.
+- **A scripted sandbox that looked broken.** A script and an inline `python -c`
+  gave a short note. GLM read the note as a broken interpreter, and it used its
+  steps on probes. The note now says that the eval cannot run model code, that
+  no named file appears, and that the sandbox works. On GLM, the two profiler
+  cases then used 40 % fewer tokens, and one case went from 1/2 to 2/2.
+- **A standard library that was not complete.** The scripted sandbox refused
+  `import importlib`, because its list of standard modules was typed by hand.
+  The list is now `sys.stdlib_module_names`.
+- **Step limits that were too low.** A path that records the constraints of the
+  user in the memory before the plan needs more than 3 steps.
+
 ## Open agent defects
 
 | Defect | Models | Fix in progress |
@@ -292,8 +396,8 @@ These failures came from the evals, not from the agents. Each one is fixed.
 | A plan that needs a reference that the store does not hold | Sonnet (held-out 4/5), GLM (held-out 2/3) | No. A gate in this change covers only the declared capabilities. Issue #838 takes the general design of the requirements of a plan. |
 | A zero p-value in the prose of a report | GLM (1/3 in the first baseline, 0/3 later) | No |
 | A step reads the data profile that its briefing holds | Sonnet, GLM | No. The cost is one small call. A fix changes the tool set for each step, and that breaks the prompt cache. |
-| `link_packages` called again after `unavailable` | Sonnet, GLM | No. A second try after a timeout is reasonable. |
-| The profiler reads too many files, and it ends with no accepted profile | GLM | No |
+| `link_packages` called again after `unavailable` | Sonnet, Opus, GLM | No. A code limit did not change a decision (round 7). GLM also does not report the blocker: it tries the R track, the store paths, and a wait. |
+| The profiler reads more than one file of a set | GLM | No |
 | A lookup over a table reads the table in many scripts | GLM (1/3) | No |
 
 ## GLM status
@@ -312,6 +416,18 @@ missing-reference pair ran at 3 trials, with no 429. In the failed
 held-out trial of the missing-reference pair, the planner saw that the store
 held no regulon. It then used a different gene-set collection in its place, and
 it submitted the plan. Issue #838 takes this defect.
+
+The second dev baseline of GLM-5.3, at 1 trial, passed 85 of 92 cases. A stream
+of the endpoint sometimes broke ("Failed to process successful response"), and
+the cases of those trials ran again. The cases that failed are the profiler
+cases, the link pair, and `step-briefing-no-hunt`. A profiler case costs about
+500k tokens for each GLM trial, thus a profiler run uses the 5-hour limit fast.
+
+## Opus status
+
+The full suite of Opus 5.5 at 2 trials passed 366 of 382 graded trials, after
+the case fixes above and a second run of the trials that the proxy stopped. The
+failures are the open agent defects of the table above.
 
 ## The next steps
 
