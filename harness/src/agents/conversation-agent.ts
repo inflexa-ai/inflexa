@@ -285,11 +285,15 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         logger: deps.logger,
     });
 
-    // The lookups and the light work on tables run in a script (`run_script`). Each tool asks no approval, and a
-    // script writes only into the scratch directory of its conversation.
+    // The direct tool and the script tool are one instance. A file that a script computes then reaches the path
+    // that the user names, and its content never passes through the reply of the model.
+    const writeFileTool = createWriteFileTool({ mutator });
+
+    // The lookups and the light work on tables run in a script (`run_script`). Each tool asks no approval.
     const scriptTools: Tool[] = [
         // Tables of the workspace in, derived files and chart files out.
         ...createScriptFileTools({ workspaceFs, resolveWorkspaceRoot: deps.resolveWorkspaceRoot, scratch: scriptScratch }),
+        writeFileTool,
         // Identifier resolution — the ENSG most other bio tools key off, and the
         // UniProt accession that the structure tools take.
         searchGeneTool,
@@ -448,7 +452,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // anywhere inside its own analysis tree; `..`, a foreign analysis, and
         // a symlink escape stay refused. No sandbox is involved — the mutator
         // writes host-side, exactly as it does for a sandbox agent.
-        createWriteFileTool({ mutator }),
+        writeFileTool,
         createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, intents: createEditIntentStore(pool) }),
         // Working memory.
         createUpdateWorkingMemoryTool(workingMemory, pool),

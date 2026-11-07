@@ -206,7 +206,7 @@ describe("createConversationAgent", () => {
         expect(descriptionOf("show_file")).toContain("a `.pdb` or `.cif` structure that a step wrote");
     });
 
-    test("the lookups are script tools, and the agent declares none of them directly", () => {
+    test("the lookups are script tools, and only write_file is also declared directly", () => {
         const agent = buildAgent();
         const scriptIds = (agent.scriptTools ?? []).map((tool) => tool.id);
         for (const id of [
@@ -221,7 +221,7 @@ describe("createConversationAgent", () => {
             "web_fetch",
         ])
             expect(scriptIds).toContain(id);
-        expect(agent.tools.map((tool) => tool.id).filter((id) => scriptIds.includes(id))).toEqual([]);
+        expect(agent.tools.map((tool) => tool.id).filter((id) => scriptIds.includes(id))).toEqual(["write_file"]);
         for (const tool of agent.scriptTools ?? []) {
             expect(tool.approval === undefined).toBe(true);
             expect(tool.startsWorkflow === true).toBe(false);
