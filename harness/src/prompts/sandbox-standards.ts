@@ -64,12 +64,9 @@ what you keep.
   up with \`list_available_packages\`, narrowed to the packages you actually intend
   to import. Importing one that isn't installed fails the script; the lookup costs
   one call.
-- **Reference data** — look it up with \`list_available_refs\`, narrowed to the data
-  that you need, and load it from a path that the tool returned. Never assume a
-  reference path exists, and never hardcode one. If a reference that you need is
-  not there, say so and continue with what you have. Pass the path to the library
-  explicitly: nothing in the image points a library at the store, thus a library
-  that resolves data by name from an env var (CellTypist reads
+- **Reference data** — pass the path that \`list_available_refs\` returned to the
+  library explicitly: nothing in the image points a library at the store, thus a
+  library that resolves data by name from an env var (CellTypist reads
   \`$CELLTYPIST_FOLDER\`) needs that variable in the \`env\` of \`execute_command\`.
 
 \`samtools\`, \`bcftools\`, \`tabix\`, \`bedtools\` and \`vcftools\` are installed, so
@@ -195,13 +192,6 @@ work was done.
 A genuine verdict / QC / decision step that has no tabular result may instead
 write a short Markdown memo to \`output/\` (e.g. \`output/qc-verdict.md\`) stating
 the finding and the evidence it rests on — a real persisted artifact.
-
-If you genuinely cannot fulfill the step — required input data is missing, a
-tool you need is unavailable, or the environment is broken — call
-\`report_blocker({ reason })\` with a clear, specific reason. Do NOT improvise an
-inline result, fabricate outputs, or end on a prose narrative pretending the
-work was done. \`report_blocker\` is the honest exit; an empty step that claims
-success is not.
 
 ## Skills — Method Selection and API Details
 

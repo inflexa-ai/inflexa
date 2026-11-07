@@ -243,6 +243,118 @@ The failed Sonnet trials made the same three calls in both arms, and then they
 reported the blocker. Only the third call changed: it did not reach the farm.
 No decision changed, thus the change was reverted.
 
+## The knowledge service in the evals
+
+The knowledge service is not in this repository. The client in
+`harness/src/tools/knowledge/client.ts` gives its contract:
+
+- `POST /v1/recommend` gives a procedure: each step has a method, rules, an
+  optional template id, parameters, and flags. It also gives claims with
+  evidence.
+- `POST /v1/check` gives the violations and the warnings of a drafted plan.
+- `GET /v1/templates/{id}` gives the contract of a template: its slots, its
+  inputs, and its outputs. A local slot (a path, a column, a level, a formula)
+  is bound on the host, and the service never sees it.
+- `POST /v1/template/render` gives the script with a `{{slot}}` marker for each
+  local slot, and a decision record.
+
+The planner folds the procedure into skeleton steps. The step agent renders the
+template that its briefing names with `knowledge_template`, and it runs the
+script.
+
+The evals now give each case its own copy of the service. The default copy
+gives a procedure for a comparison of two groups. Its step names are the names
+of the skeleton fold. Before this change, the step names did not match the
+fold, and the skeleton of each case held only the enrichment step.
+
+| Case | Behavior |
+| --- | --- |
+| `plan-knowledge-keeps-skeleton` | The plan keeps the template and the settings of the skeleton. |
+| `plan-knowledge-flag-descriptive` | A flag with the outcome `descriptive_only` reaches the drafted step, and the plan marks the step as flagged. |
+| `plan-knowledge-check-revises` | After a violation, the plan uses the method that the check permits. |
+| `plan-knowledge-unavailable-plans` | When the service does not answer, the planner plans, and it claims no grounding. |
+| `step-renders-template` | The step renders the template, runs it, and fits no model in a script of its own. |
+| `step-template-unavailable-own-script` | When the service does not answer, the step writes the script itself. |
+
+The first runs found defects in these cases, and not in the agents:
+
+- The check offered `ashr`, but the package census did not hold it. The agent
+  correctly refused to plan a package that the census did not hold.
+- The grader read a claim id before `submit_plan` repaired it.
+- The first template script treated the batch column as a number, and it did
+  not filter the genes. Sonnet found both problems, and it wrote its own script.
+  With a correct template, Sonnet renders the template and changes it with
+  small edits, as the tool description asks.
+- The evals replaced `knowledge_template` with a script that did not exist,
+  thus each render gave an error.
+
+## Other new cases
+
+| Case | Behavior |
+| --- | --- |
+| `plan-biomarker-selection-in-cv` | A model of response selects its genes inside the cross-validation, or it calls its estimate optimistic. |
+| `plan-optional-reference-plans` | An optional reference that is absent gives a plan, not a clarification. It is the counter-case of `plan-missing-reference`. |
+| `step-consults-skills` | The step reads its skills before it writes the script of its method. |
+| `plan-routes-immune-profiling` | An immune composition question goes to the immune-profiling agent. |
+| `plan-routes-drug-repurposing` | A question about existing drugs that reverse a signature goes to the drug-repurposing agent. |
+
+In the first run of the routing cases, the planner asked for a signature matrix
+and for a drug-signature compendium, because the census held neither. This was
+correct. The census of these cases now holds both.
+
+## An analogy in a plan input
+
+The conversation prompt said: keep analogies out of each workflow input. Its
+reason was that the planner and the sandbox agents do not see analogy reports.
+On the corrected fixture, Sonnet passed the chosen analogy to `generate_plan`
+with an explanation in biology, and the case failed it 3 of 3 times.
+
+An experiment tested the effect of the analogy on the planner. Two planner cases
+gave the same hypothesis, one with the explained analogy and one without it.
+
+| Variant | Pass | Tokens for each trial |
+| --- | --- | --- |
+| The hypothesis alone | 5/5 | 125k |
+| The hypothesis and the analogy | 5/5 | 139k |
+
+Both variants planned a test of the negative regulators. No plan modeled the
+analogy itself. Thus an explained analogy did not cause damage, and it did not
+improve the plan.
+
+The rule now says what its reason requires: an analogy that shapes a workflow
+input is stated in terms of the data, never as a reference to the report. The
+case `analogy-plan-input-self-contained` grades this rule, and it passed 10 of
+10 trials. The cases of the analogy exploration passed 10 of 10 trials.
+
+The planner cannot read an analogy report, because the harness keeps the report
+only in the stream of the chat and in the history of the conversation.
+
+## Prompt cuts
+
+Each cut removes text that a tool description, the seed, or the code already
+gives. Each cut ran on Sonnet 5.5 at 3 trials against a baseline on the clean
+commit. The gate of `compare` checks the pass rate and the token volume of each
+set.
+
+| Cut | Result |
+| --- | --- |
+| Planner: the section on how the work reaches the user, and the bullets on a pending profile | 30 planner cases: 100 % before and after. Token volume -4.7 % (per case -3.8 %, 95 % CI -8.4 to +0.8). |
+| Step standards: the `report_blocker` paragraph, and the reference bullet | Step cases: 124/132 before, 128/131 after. Token volume -0.9 %. |
+| Profiler: the paragraph on how to submit | Inside the step-case result above. |
+| Step standards: the paragraph on skills | Reverted. `step-consults-skills` went from 2/2 to 0/3. |
+
+The cases with no prompt change moved by +1.1 % in the same run. Thus a change
+of about 1 % is noise.
+
+These passages were not cut:
+
+- `packagesSection` of the planner. The ad-hoc router also uses it, and no code
+  checks the packages of the router.
+- The `## Skills` list of each specialist. It is the only place that names the
+  skills of the agent.
+- The routing rules of the planner. Cases now cover them, but the planner prompt
+  goes into one request for each plan, thus the saving is small.
+
 ## Stricter cases
 
 In the Sonnet baseline, Sonnet passed each trial of 157 of the 180 cases. A case
@@ -398,6 +510,7 @@ These failures came from the evals, not from the agents. Each one is fixed.
 | A step reads the data profile that its briefing holds | Sonnet, GLM | No. The cost is one small call. A fix changes the tool set for each step, and that breaks the prompt cache. |
 | `link_packages` called again after `unavailable` | Sonnet, Opus, GLM | No. A code limit did not change a decision (round 7). GLM also does not report the blocker: it tries the R track, the store paths, and a wait. |
 | The profiler reads more than one file of a set | GLM | No |
+| The enrichment agent does not read its skills before it writes its script | Sonnet (0/3) | No. The bulk agent reads its skills, because its prompt names one skill file to read. |
 | A lookup over a table reads the table in many scripts | GLM (1/3) | No |
 
 ## GLM status
