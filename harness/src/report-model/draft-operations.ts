@@ -324,10 +324,37 @@ function commit(candidate: DraftDocument, added: DraftBlock | undefined, snapsho
             },
         );
     }
+    unresolved.push(...unpinnedPmids(added, snapshot));
     if (unresolved.length > 0) {
         return err({ reason: "unresolved-reference", detail: `${unresolved.length} references do not resolve against the snapshot`, unresolved });
     }
     return ok(candidate);
+}
+
+/** A PubMed id written into a block: `PMID 123`, `PMID: 123`, or a PubMed URL. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- a PubMed id in free prose has no grammar that a parser knows.
+const WRITTEN_PMID = /\bPMID:?\s*(\d{1,9})\b|pubmed\.ncbi\.nlm\.nih\.gov\/(\d{1,9})/gi;
+
+/**
+ * Each PubMed id that a block writes and the pinned evidence does not hold. The report session searches no
+ * literature, thus a paper enters a report only through a pinned citation, and an id in the prose names a
+ * paper that no step of the analysis read.
+ */
+export function unpinnedPmids(added: unknown, snapshot: Pick<ReportSnapshot, "citations">): UnresolvedReference[] {
+    const unresolved: UnresolvedReference[] = [];
+    const seen = new Set<string>();
+    for (const match of JSON.stringify(added).matchAll(WRITTEN_PMID)) {
+        const id = match[1] ?? match[2];
+        if (id === undefined || seen.has(id)) continue;
+        seen.add(id);
+        if (snapshot.citations?.includes(`pmid:${id}`) === true) continue;
+        unresolved.push({
+            reference: { kind: "citation", idKind: "pmid", id, raw: match[0] },
+            reason: "artifact-missing",
+            detail: `the block names pmid:${id}, which is not in the pinned evidence. Name a paper only through a citation block of the pinned evidence.`,
+        });
+    }
+    return unresolved;
 }
 
 /**

@@ -164,6 +164,18 @@ describe("list_available_refs", () => {
         expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/managed", kind: "directory", fileCount: 1 })]);
     });
 
+    it("says that the store is the only reference data when a query matches nothing", async () => {
+        const root = await makeStore("miss");
+        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "source,target");
+
+        const result = (await createTool(root).execute({ query: "hallmark" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.total).toBe(0);
+        expect(result.content).toBe(
+            'No reference beneath /mnt/refs matches "hallmark". The store at /mnt/refs is the only reference data that the sandbox can read, and the sandbox has no network.',
+        );
+    });
+
     it("ignores invalid and stale metadata without hiding observed files", async () => {
         const root = await makeStore("stale");
         await mkdir(join(root, "user"), { recursive: true });

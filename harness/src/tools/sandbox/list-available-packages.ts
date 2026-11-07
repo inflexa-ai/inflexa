@@ -35,7 +35,9 @@ import {
     parseQuery,
     resolveQuery,
     type PackageIdentity,
+    type PackageQuery,
     type PoolIndex,
+    type QueryResolution,
     type Track,
 } from "../../sandbox/package-identity.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
@@ -353,6 +355,42 @@ function poolIndexOf(held: readonly Held[]): PoolIndex {
     };
 }
 
+/** The rows of the folded sections: each tracked row with its identity, and each untracked row by its lower-case name. */
+function rowsOf(sections: readonly Section[]): {
+    readonly held: Held[];
+    readonly untracked: Map<string, { entry: SectionPackage; section: string }[]>;
+} {
+    const held: Held[] = [];
+    const untracked = new Map<string, { entry: SectionPackage; section: string }[]>();
+    for (const section of sections) {
+        for (const pkg of section.packages) {
+            if (section.track === undefined) {
+                const lowered = pkg.name.toLowerCase();
+                const rows = untracked.get(lowered) ?? [];
+                rows.push({ entry: pkg, section: section.title });
+                untracked.set(lowered, rows);
+                continue;
+            }
+            held.push({ entry: pkg, section: section.title, identity: identityOf(section.track, pkg.name) });
+        }
+    }
+    return { held, untracked };
+}
+
+/**
+ * What the census resolves a query to, with the ladder of `resolveQuery`, the same as the `names` path of the
+ * listing. An untracked row (an executable, a node module) answers a query with no track by its name.
+ */
+export function censusResolver(rawSections: readonly Section[]): (query: PackageQuery) => QueryResolution | { readonly kind: "untracked" } {
+    const { held, untracked } = rowsOf(foldSections(rawSections));
+    const pool = poolIndexOf(held);
+    return (query) => {
+        const resolution = resolveQuery(query, pool);
+        if (resolution.kind === "unknown" && query.track === undefined && untracked.has(query.spelling.toLowerCase())) return { kind: "untracked" };
+        return resolution;
+    };
+}
+
 /**
  * One present answer of the `names` path. `name` echoes the spelling that the
  * source records, because an R name is case-sensitive at `library()` and the
@@ -394,20 +432,7 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
         // (system tools, node packages) holds no package of an ecosystem, thus
         // its rows match their rendered name without case: an identity rule
         // covers a distribution, and `BCFtools` must still reach `bcftools`.
-        const held: Held[] = [];
-        const untracked = new Map<string, { entry: SectionPackage; section: string }[]>();
-        for (const section of sections) {
-            for (const pkg of section.packages) {
-                if (section.track === undefined) {
-                    const lowered = pkg.name.toLowerCase();
-                    const rows = untracked.get(lowered) ?? [];
-                    rows.push({ entry: pkg, section: section.title });
-                    untracked.set(lowered, rows);
-                    continue;
-                }
-                held.push({ entry: pkg, section: section.title, identity: identityOf(section.track, pkg.name) });
-            }
-        }
+        const { held, untracked } = rowsOf(sections);
         const pool = poolIndexOf(held);
         const bySection = new Map<string, Held>();
         for (const row of held) if (!bySection.has(identityKey(row.identity))) bySection.set(identityKey(row.identity), row);

@@ -121,6 +121,10 @@ The id scan MUST read the payload and not the whole draft. Thus a duplicate that
 - **WHEN** the agent adds a metric whose value reference names a path that the snapshot does not hold
 - **THEN** the operation refuses with the reason `unresolved-reference`, and the refusal carries each unresolved reference
 
+#### Scenario: A PubMed id outside the pinned evidence refuses
+- **WHEN** the agent adds or changes a block whose text writes a PubMed id, as `PMID 123`, `PMID: 123`, or a PubMed URL, and the pinned citations do not hold that id
+- **THEN** the operation refuses with the reason `unresolved-reference`, and the refusal names the id
+
 ### Requirement: The snapshot owns every reference hash
 The authoring input of an artifact reference MUST carry the path and no hash field. The land path of an add and of a change stamps the hash from the snapshot entry at that path, before the grammar parse. A hash that a payload carries anyway MUST drop before the stamp, thus an echoed stored binding cannot mismatch. A path that is not in the snapshot MUST refuse as an unresolved reference, and the refusal names the path. The stored reference keeps its stamped hash, thus the grounding contract does not change, and the resolution still compares the pin against the fresh read.
 

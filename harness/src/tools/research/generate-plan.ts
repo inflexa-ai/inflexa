@@ -50,7 +50,8 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { createReadToolOutputTool } from "../read-tool-output.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
+import { censusResolver, createListAvailablePackagesTool, readInventorySections } from "../sandbox/list-available-packages.js";
+import { formatQuery, parseQuery, type PackageQuery, type QueryResolution } from "../../sandbox/package-identity.js";
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { blockerOf, createReportBlockerToolFor } from "../sandbox/report-blocker.js";
 import { terminalTextSchema } from "../terminal-text.js";
@@ -262,6 +263,14 @@ type ValidationIssue = {
     code: "schema" | "semantic";
     message: string;
     hint?: string;
+};
+
+/** The refusal of a plan that follows a `knowledge_recommend` answer with no `knowledge_check` of the draft. */
+const UNCHECKED_ISSUE: ValidationIssue = {
+    path: "plan",
+    code: "semantic",
+    message:
+        "No knowledge_check reviewed this draft. Call knowledge_check with the situation of the recommend answer and the drafted method steps, then submit again.",
 };
 
 const ValidationIssueSchema = z.object({ path: z.string(), code: z.enum(["schema", "semantic"]), message: z.string(), hint: z.string().optional() });
@@ -535,12 +544,15 @@ type RecommendMemory = {
     readonly claims: Set<string>;
     /** The digest of the last answer; `undefined` before the first. */
     digest?: string;
+    /** A `knowledge_check` answered after the last recommend answer. */
+    checked?: boolean;
 };
 
 function rememberAnswer(memory: RecommendMemory, answer: KnowledgeRecommendAnswer): void {
     memory.steps.clear();
     memory.claims.clear();
     memory.digest = answer.snapshot.digest;
+    memory.checked = false;
     for (const step of answer.plan_skeleton) {
         memory.steps.set(step.id, step);
         for (const claim of step.grounding.claims) memory.claims.add(claim);
@@ -749,6 +761,31 @@ export function plannerAgentOf(deps: GeneratePlanDeps, searchTools: readonly Too
     };
 }
 
+/**
+ * The planner of one invocation. Its terminal tools and its knowledge tools share the memory of the run, thus
+ * `submit_plan` reads the last `knowledge_recommend` answer.
+ */
+export function plannerOfInvocation(
+    deps: GeneratePlanDeps,
+    logger: Logger,
+): { readonly agent: AgentDefinition; readonly searchTools: readonly Tool[]; readonly terminal: readonly Tool[] } {
+    const memory: RecommendMemory = { steps: new Map(), claims: new Set() };
+    // The census is read once for each call, at the first submit, from the same source as the census of the seed.
+    let census: Promise<PackageResolver | undefined> | undefined;
+    const readPackages = (analysisId: string): Promise<PackageResolver | undefined> => {
+        census ??= readInventorySections(deps, analysisId).then((read) => (read.kind === "sections" ? censusResolver(read.sections) : undefined));
+        return census;
+    };
+    const { terminal } = buildInnerTools(logger, memory, readPackages);
+    const searchTools = buildPlannerSearchTools(deps, {
+        onRecommend: (answer) => rememberAnswer(memory, answer),
+        onCheck: () => {
+            memory.checked = true;
+        },
+    });
+    return { agent: plannerAgentOf(deps, searchTools, terminal), searchTools, terminal };
+}
+
 /** The terminal tools of a planner with no knowledge answer, for a consumer that runs the planner outside this tool. */
 export function plannerTerminalTools(logger: Logger): Tool[] {
     return buildInnerTools(logger, { steps: new Map(), claims: new Set() }).terminal;
@@ -758,7 +795,42 @@ export function plannerTerminalTools(logger: Logger): Tool[] {
  * Build the planner's inner tools for one invocation. `memory` holds the last
  * `knowledge_recommend` answer of the run, which the loop folds after each round.
  */
-function buildInnerTools(logger: Logger, memory: RecommendMemory): InnerTools {
+/** What the package census of the session resolves a query to. */
+type PackageResolver = (query: PackageQuery) => QueryResolution | { readonly kind: "untracked" };
+
+/**
+ * The issues of the `packages` entries that the census does not resolve to one package: a name that both tracks
+ * hold, and a name that the pool does not hold. The launch links the same entries and refuses the same ones, thus
+ * the planner repairs them here, with the census in its seed.
+ */
+function packageIssues(plan: PlannerPlan, resolve: PackageResolver): ValidationIssue[] {
+    const issues: ValidationIssue[] = [];
+    for (const [index, step] of plan.steps.entries()) {
+        for (const [position, entry] of step.packages.entries()) {
+            const parsed = parseQuery(entry);
+            if (parsed.isErr()) continue;
+            const resolution = resolve(parsed.value);
+            const path = `plan.steps.${index}.packages.${position}`;
+            if (resolution.kind === "ambiguous") {
+                issues.push({
+                    path,
+                    code: "semantic",
+                    message: `The pool holds "${entry}" in both tracks. Write "python:${parsed.value.spelling}" or "r:${parsed.value.spelling}".`,
+                });
+            } else if (resolution.kind === "unknown") {
+                const suggestion = resolution.suggestion === undefined ? "" : ` The pool holds "${resolution.suggestion.track}:${resolution.suggestion.name}".`;
+                issues.push({
+                    path,
+                    code: "semantic",
+                    message: `The pool holds no package "${formatQuery(parsed.value)}".${suggestion} Name a package of the census, or remove the entry.`,
+                });
+            }
+        }
+    }
+    return issues;
+}
+
+function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?: (analysisId: string) => Promise<PackageResolver | undefined>): InnerTools {
     const submitPlanTool = defineTool({
         id: SUBMIT_PLAN_TOOL_ID,
         description:
@@ -780,12 +852,17 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory): InnerTools {
         }),
         view: "none",
         describeCall: "none",
-        execute: (input): Promise<Result<SubmitPlanOutput, ToolError>> => {
+        execute: async (input, ctx): Promise<Result<SubmitPlanOutput, ToolError>> => {
             // The host owns the grounding fields: it fills them from the last answer of the run.
             const { candidate, stamped, restored, repaired, unknown } = restoreSkeletonGrounding(input.plan, memory);
             if (stamped.length > 0) logger.info("submit_plan stamped the snapshot digest of the answer on steps", { steps: stamped });
             if (restored.length > 0) logger.info("submit_plan restored the template of skeleton steps", { steps: restored });
             if (repaired.length > 0) logger.info("submit_plan repaired the claim ids of plan steps", { claims: repaired });
+            // The check is the review of the draft against the rules of the answer, thus a plan after an answer waits for it.
+            if (memory.digest !== undefined && memory.checked !== true) {
+                logger.warn("submit_plan refused a plan that no knowledge_check reviewed");
+                return Promise.resolve(ok({ accepted: false as const, issues: [UNCHECKED_ISSUE] }));
+            }
             const result = fullyValidate(candidate);
             // An unknown claim rejects a plan that the schema accepts, beside the
             // schema issues when the schema rejects it, thus one attempt shows both.
@@ -797,11 +874,20 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory): InnerTools {
                 logger.warn("submit_plan rejected a plan", { issueCount: issues.length, paths: issues.slice(0, MAX_LOGGED_ISSUES).map((i) => i.path) });
                 return Promise.resolve(ok({ accepted: false as const, issues }));
             }
+            // An unreadable census refuses nothing: the launch links the packages again, and it refuses there.
+            const resolve = await readPackages?.(scopeResource(ctx.session.scope).resourceId);
+            const unresolved = resolve === undefined ? [] : packageIssues(result.plan, resolve);
+            if (unresolved.length > 0) {
+                logger.warn("submit_plan rejected packages that the pool does not resolve", {
+                    paths: unresolved.slice(0, MAX_LOGGED_ISSUES).map((i) => i.path),
+                });
+                return ok({ accepted: false as const, issues: unresolved });
+            }
             logger.info("submit_plan accepted a plan", {
                 stepCount: result.plan.steps.length,
                 agents: [...new Set(result.plan.steps.map((s) => s.agent))],
             });
-            return Promise.resolve(ok({ accepted: true as const, plan: result.plan }));
+            return ok({ accepted: true as const, plan: result.plan });
         },
     });
 
@@ -1096,7 +1182,10 @@ export type GeneratePlanDeps = EnvironmentStorePaths & {
  * A tool here never writes and never computes. Thus the worst outcome of a
  * needless call is latency, and the prompt is what bounds that.
  */
-export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonly onRecommend?: (answer: KnowledgeRecommendAnswer) => void } = {}): Tool[] {
+export function buildPlannerSearchTools(
+    deps: GeneratePlanDeps,
+    hooks: { readonly onRecommend?: (answer: KnowledgeRecommendAnswer) => void; readonly onCheck?: () => void } = {},
+): Tool[] {
     const bioKeys = deps.bioKeys;
     const ncbi = createNcbiTools(bioKeys);
     return [
@@ -1134,6 +1223,7 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
             imagePackagesFile: deps.imagePackagesFile,
             refStorePath: deps.refStorePath,
             onRecommend: hooks.onRecommend,
+            onCheck: hooks.onCheck,
         }),
     ];
 }
@@ -1368,16 +1458,11 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         // stamps the snapshot digest, restores a template the model dropped,
         // and repairs or refuses a claim id the answer did not return. The loop
         // folds each answer after its round, on the first run and on a replay.
-        const memory: RecommendMemory = { steps: new Map(), claims: new Set() };
-        const innerTools = buildInnerTools(logger, memory);
         // Built here rather than at construction: a `describeCall` hook reads no
         // dep, thus the tool must stay constructible from an empty bag. The tool
         // definitions are identical across invocations, thus the request prefix
         // that the cache keys on does not move.
-        const searchTools = buildPlannerSearchTools(deps, {
-            onRecommend: (answer) => rememberAnswer(memory, answer),
-        });
-        const planner = plannerAgentOf(deps, searchTools, innerTools.terminal);
+        const { agent: planner, searchTools, terminal } = plannerOfInvocation(deps, logger);
 
         // Merge the outer abort signal with a wall-clock timeout — either
         // cancels the planner promptly.
@@ -1420,7 +1505,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                     toolOutputStore: deps.toolOutputStore,
                 },
                 {
-                    tools: innerTools.terminal.map((tool) => tool.id),
+                    tools: terminal.map((tool) => tool.id),
                     nudge:
                         "You ended without a terminal outcome. Call submit_plan with " +
                         "your final plan now, or request_clarification / report_blocker " +
