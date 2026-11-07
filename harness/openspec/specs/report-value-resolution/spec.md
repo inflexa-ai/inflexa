@@ -30,7 +30,7 @@ The realization MUST compare membership and the content hash before any read of 
 - **THEN** resolution fails with `hash-mismatch`, and no parser runs
 
 ### Requirement: The host fast path under the cap
-The realization MUST parse CSV, TSV, JSON, and parquet in process for a file at or under the cap. The parquet read MUST use a pure-JavaScript reader, thus no native library enters the package. The cap MUST be a composition-root value with a 16 MiB default. The host arm MUST parse a strict dialect only.
+The realization MUST parse CSV, TSV, JSON, and parquet on the host for a file at or under the cap, in a bounded decode worker. The parquet read MUST use a pure-JavaScript reader, thus no native library enters the package. The cap MUST be a composition-root value with a 16 MiB default. The host arm MUST parse a strict dialect only. A table whose cells pass 1,000,000 MUST NOT decode on the host.
 
 #### Scenario: A small CSV resolves in process
 - **WHEN** a reference addresses a cell in a 2 MiB CSV
@@ -41,11 +41,15 @@ The realization MUST parse CSV, TSV, JSON, and parquet in process for a file at 
 - **THEN** a 10 MiB file takes the fall-through
 
 ### Requirement: The fall-through takes every doubt
-An over-cap file, an unknown format, and a host parse fault MUST take the fall-through. The host arm MUST NOT give a partial or guessed answer. Thus correctness never depends on the host parser. The realization has no sandbox arm, thus the fall-through gives a typed failure and no value.
+An over-cap file, a table over the cell budget, a decode that ran out of memory, an unknown format, and a host parse fault MUST take the fall-through. The host arm MUST NOT give a partial or guessed answer. Thus correctness never depends on the host parser. The realization has no sandbox arm, thus the fall-through gives a typed failure and no value.
 
 #### Scenario: A parse fault falls through
 - **WHEN** the host parser fails on an odd CSV dialect
 - **THEN** the reference fails with `extraction-unavailable`, and the failure gives no guessed value from the host fault
+
+#### Scenario: A table over the cell budget falls through
+- **WHEN** a reference addresses a cell of a parquet file of 2,000,000 cells
+- **THEN** the reference fails with `extraction-unavailable`, and the file is not decoded
 
 ### Requirement: One assert semantics for each realization
 The assert rules MUST live in shared functions, and both realizations MUST call them. The rules are the tolerance compare, the percent-fraction rule, and the citation assert. Thus the fixture stays the executable specification of the value tier.
@@ -117,3 +121,11 @@ A reference on the fall-through path MUST fail with the reason `extraction-unava
 - **WHEN** a document holds one over-cap reference and nine under-cap references
 - **THEN** the nine resolve, and the one fails with `extraction-unavailable`
 - **AND** no sandbox starts
+
+### Requirement: The read cache of the process is bounded by cells
+The read store of the report path MUST hold one bounded cache for the process. It MUST drop the least recently used entry while the cells of the held rows pass 2,000,000, or while the entries pass 128. A dropped entry costs one read again, and it is never wrong.
+
+#### Scenario: Large tables of two analyses
+- **GIVEN** a cache that holds the rows of two tables of 900,000 cells each, of two analyses
+- **WHEN** a pass of a third analysis reads a table of 500,000 cells
+- **THEN** the cache drops the rows of the older table, and it holds the rows of the other two

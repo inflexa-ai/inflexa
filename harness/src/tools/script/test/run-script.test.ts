@@ -151,6 +151,25 @@ describe("run_script", () => {
         expect(result).toMatchObject({ ok: true, output: "caught: pubmed: PubMed is unavailable", calls: [{ tool: "pubmed", ok: false }] });
     });
 
+    test("a nested result over the size limit is an Error that the script catches, and the VM gets none of it", async () => {
+        const dump = defineTool({
+            id: "dump",
+            description: "Give a large result.",
+            inputSchema: z.object({}),
+            view: "none",
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({ blob: "x".repeat(33 * 1024 * 1024) })),
+        });
+
+        const result = await run(`try { await tools.dump({}); } catch (e) { text(e.message); }`, [dump]);
+
+        expect(result).toMatchObject({
+            ok: true,
+            output: "dump: the result is more than 32 MiB of JSON, the most that a script receives from one call; ask the tool for less",
+        });
+        expect(result.calls).toEqual([{ tool: "dump", ok: false }]);
+    });
+
     test("an input that the schema of the tool refuses is an Error that names the field", async () => {
         const result = await run(`await tools.search_gene({ identifiers: [] });`);
 

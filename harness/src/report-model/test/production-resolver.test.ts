@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { ArtifactTableReference, ArtifactValueReference, Reference } from "../../contracts/report-reference.js";
 import { computeSha256File } from "../../lib/fs-helpers.js";
 import { createFixtureResolver } from "../fixture-resolver.js";
-import { coerceCell, createArtifactReadStore, createProductionResolver } from "../production-resolver.js";
+import { coerceCell, createArtifactReadStore, createProductionResolver, decodeTable } from "../production-resolver.js";
 import type { ArtifactSnapshot, ReportSnapshot, ResolvedValue } from "../reference-resolver.js";
 
 type Row = Record<string, string | number>;
@@ -217,6 +217,62 @@ describe("production resolver, the fall-through", () => {
         const failure = result._unsafeUnwrapErr();
         expect(failure.reason).toBe("extraction-unavailable");
         expect(failure.detail).toContain("no supported tabular format");
+    });
+});
+
+describe("production resolver, the cell budget", () => {
+    test("a table over the cell budget fails extraction-unavailable, and names the cells", async () => {
+        const hash = await writeArtifact("wide.csv", `gene,a,b,c,d\n${"G,1,2,3,4\n".repeat(200_001)}`);
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS });
+
+        const failure = (await resolver.resolve(valueRef("wide.csv", hash, "a", "gene", "G"), snapshotOf([{ path: "wide.csv", hash }])))._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("extraction-unavailable");
+        expect(failure.detail).toContain("1000005 cells, over the 1000000-cell budget");
+    });
+
+    test("a parquet decode over the budget reads the metadata only, and the same file under it gives the kept rows", async () => {
+        const bytes = new Uint8Array(await readFile(PARQUET_FIXTURE));
+
+        const over = await decodeTable("parquet", bytes, { cellBudget: 8, numericText: false });
+        const page = await decodeTable("parquet", bytes, { columns: ["gene", "rank"], offset: 2, cellBudget: 8, numericText: false });
+
+        expect(over).toEqual({ kind: "over_budget", cells: 9, budget: 8, columns: ["gene", "score", "rank"], totalRows: 3 });
+        expect(page).toEqual({ kind: "rows", columns: ["gene", "rank"], rows: [{ gene: "EGFR", rank: 3 }], totalRows: 3 });
+    });
+
+    test("a delimited decode over the budget counts each row, and holds no row", async () => {
+        const decoded = await decodeTable("csv", new TextEncoder().encode("a,b\n1,2\n3,4\n5,6\n"), { cellBudget: 3, numericText: true });
+
+        expect(decoded).toEqual({ kind: "over_budget", cells: 6, budget: 3, columns: ["a", "b"], totalRows: 3 });
+    });
+});
+
+describe("production resolver, the read store", () => {
+    /** Rows that hold `cells` cells, as one shared row of 1,000 cells, thus the test holds no large table. */
+    function rowsOf(cells: number): Array<Record<string, string | number>> {
+        const row = Object.fromEntries(Array.from({ length: 1_000 }, (_, i) => [`c${String(i)}`, i]));
+        return Array.from({ length: cells / 1_000 }, () => row);
+    }
+
+    test("drops the least recently used rows while the held cells pass the limit of the process", () => {
+        const store = createArtifactReadStore();
+        store.forAnalysis("a1").set("/t1", { signature: "s", hash: "h1", rows: rowsOf(900_000) });
+        store.forAnalysis("a2").set("/t2", { signature: "s", hash: "h2", rows: rowsOf(900_000) });
+
+        store.forAnalysis("a3").set("/t3", { signature: "s", hash: "h3", rows: rowsOf(500_000) });
+
+        expect(store.forAnalysis("a1").get("/t1")).toBeUndefined();
+        expect(store.forAnalysis("a2").get("/t2")?.hash).toBe("h2");
+        expect(store.forAnalysis("a3").get("/t3")?.hash).toBe("h3");
+    });
+
+    test("keeps the entries of two analyses apart", () => {
+        const store = createArtifactReadStore();
+        store.forAnalysis("a1").set("/same", { signature: "s", hash: "h1" });
+
+        expect(store.forAnalysis("a2").get("/same")).toBeUndefined();
+        expect(store.forAnalysis("a1").get("/same")?.hash).toBe("h1");
     });
 });
 

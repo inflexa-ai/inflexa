@@ -47,6 +47,7 @@ import type { AuthContext, Identity } from "../auth/types.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
+import { setHostWorkerEntry } from "../lib/host-workers.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
 import { createToolOutputStore } from "../state/tool-outputs.js";
@@ -375,6 +376,9 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         semanticScholarApiKey: deps.citationResolverConfig?.semanticScholarApiKey ?? conversation.bioKeys.semanticScholar,
     });
 
+    // A bundled host embeds the worker entry of `run_script`, and each decode worker starts from the same entry.
+    if (conversation.scriptRuntime?.workerUrl !== undefined) setHostWorkerEntry(conversation.scriptRuntime.workerUrl);
+
     const toolOutputStore = createToolOutputStore(conversation.pool);
     const pauseRetryDelaysMs = deps.pauseRetryDelaysMs;
     // Each child of a sub-agent pauses with the work of its caller, thus a resume of the turn or of the run ends its wait.
@@ -463,7 +467,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const reportVersionStore = createReportVersionStore({ pool: conversation.pool, logger: conversation.logger });
     const reportThreads = createThreadStore(conversation.pool);
 
-    // The read cache of the production report path, one for each recent analysis. A preview
+    // The read cache of the production report path, with one view for each analysis. A preview
     // and the record that follows it are two tool calls over one draft, thus they meet the
     // same artifacts. The store carries the streamed hash and the parsed rows between them,
     // thus one unchanged file costs one hash and one parse.

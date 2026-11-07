@@ -6,8 +6,10 @@
  * of the call and refuses a symbolic link. `write_derived` and `render_chart` write only into the `derived/`
  * directory of the scratch of the session.
  *
- * A table read holds at most 16 MiB, and the parse runs on the host. A larger table, or a format with no parser
- * here, is work for an analysis run, and the refusal says so. `list_archive` lists the files of a compressed file, and
+ * A table read holds at most 16 MiB, and it gives at most {@link TABLE_CELL_BUDGET} cells. The decode runs on the host
+ * in a decode worker (`lib/host-workers.ts`), thus a table that decodes past the memory of the worker fails the call
+ * and not the host. A larger table, or a format with no parser here, is work for an analysis run, and the refusal
+ * says so. `list_archive` lists the files of a compressed file, and
  * a read names one of them as its `entry`. A gzip-compressed table reads with no entry.
  *
  * Each tool gives the files that it read or wrote as its call record. `run_script` collects the records of the
@@ -20,8 +22,8 @@ import { z } from "zod";
 import type { AgentSession } from "../../auth/types.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import { markdownImageSources, markdownToPdf, type PdfImage } from "../../lib/markdown-pdf.js";
-import { readPdfText, type PdfText } from "../../lib/pdf-text.js";
-import { detectFormat, parseTable, type Row } from "../../report-model/production-resolver.js";
+import { runHostTask, transferable, type HostTaskFailure } from "../../lib/host-workers.js";
+import { detectFormat, type Row } from "../../report-model/production-resolver.js";
 import { CHART_EXPORT_SIZES, SCATTER_CROWD_ROWS } from "../../report-render/design.js";
 import { loadChartRuntime, plottedPoints, renderChartSvg } from "../../report-render/chart-export.js";
 import { parseUnknownRecord, UnknownArraySchema } from "../../lib/unknown-containers.js";
@@ -30,7 +32,8 @@ import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { normalizeEchartSpec } from "../display/normalize-echart-spec.js";
-import { ARCHIVE_SCAN_CAP_BYTES, archiveKindOf, gzipEntryName, listArchive, readArchiveEntry, type ArchiveEntry } from "./archive.js";
+import type { ArchiveEntryRef } from "../../workspace/decode-tasks.js";
+import { ARCHIVE_SCAN_CAP_BYTES, archiveKindOf, gzipEntryName, type ArchiveEntry, type EntryRefusal } from "./archive.js";
 import { recordReadBytes, recordReadRefusal } from "./metrics.js";
 import type { ScratchFile, ScriptRead, ScriptScratch } from "./scratch.js";
 
@@ -58,25 +61,14 @@ function refused(error: string): Result<never, ToolError> {
     return err({ error, retryable: false });
 }
 
-/**
- * A cell of a text table as a number, when the text is a plain decimal number. A text with a leading zero, such
- * as an identifier `007`, stays text, because a number loses its zeros.
- */
-function numericCell(text: string): string | number {
-    if (text.length === 0 || text !== text.trim()) return text;
-    const value = Number(text);
-    if (!Number.isFinite(value)) return text;
-    const digits = text.startsWith("-") ? text.slice(1) : text;
-    if (digits.length > 1 && digits.startsWith("0") && digits[1] !== ".") return text;
-    if (digits.includes("x") || digits.includes("X") || digits.includes("o") || digits.includes("b")) return text;
-    return value;
-}
-
 /** The cap of the compressed file that a read of an entry reads. */
 const ARCHIVE_READ_CAP_BYTES = 64 * 1024 * 1024;
 
-/** The bytes of one read: the file or the entry that the read names, and the file on disk that holds them. */
-type ReadBytes = { readonly content: Buffer; readonly source: Buffer };
+/**
+ * The bytes of one read: the file on disk, its hash, and the entry inside it that the read names. The decode worker
+ * opens the entry, thus the main thread holds only the file.
+ */
+type ReadBytes = { readonly bytes: Buffer; readonly hash: string; readonly archive: ArchiveEntryRef | undefined };
 
 const entryInput = z
     .string()
@@ -85,8 +77,8 @@ const entryInput = z
     .describe("The file inside a compressed file at `path` (zip, tar, tar.gz), as `list_archive` names it. Absent: `path` itself.");
 
 /**
- * Read one file of the workspace through the read seam, or one entry of a compressed file. A gzip-compressed file
- * with no entry reads as its one entry. A refusal is the line that the script reads.
+ * Read one file of the workspace through the read seam, and name the entry of a compressed file that the read opens.
+ * A gzip-compressed file with no entry reads as its one entry. A refusal is the line that the script reads.
  */
 async function readScriptFile(args: {
     readonly workspaceFs: WorkspaceFilesystem;
@@ -110,36 +102,67 @@ async function readScriptFile(args: {
         recordReadRefusal("too_large");
         return err(`${path} is ${String(file.totalSize)} bytes, over the ${String(cap / (1024 * 1024))} MiB cap of a script read; ${args.tooLarge}`);
     }
-    if (kind === undefined || entry === undefined) return ok({ content: file.content, source: file.content });
-    const opened = readArchiveEntry(kind, path, file.content, entry, maxBytes);
-    if (opened.isOk()) return ok({ content: opened.value, source: file.content });
-    switch (opened.error.kind) {
+    const archive = kind === undefined || entry === undefined ? undefined : { kind, entry, entryCap: maxBytes };
+    return ok({ bytes: file.content, hash: computeSha256(file.content), archive });
+}
+
+/** The line that a script reads for an entry of a compressed file that did not open. */
+function entryRefusal(path: string, entry: string, maxBytes: number, refusal: EntryRefusal, tooLarge: string): string {
+    switch (refusal.kind) {
         case "not_found":
-            return err(`${path} holds no file ${entry}; list_archive gives its files`);
+            return `${path} holds no file ${entry}; list_archive gives its files`;
         case "too_large":
             recordReadRefusal("too_large");
-            return err(
-                `${entry} in ${path} is over the ${String(maxBytes / (1024 * 1024))} MiB cap of a script read, or its archive decompresses past ${String(ARCHIVE_SCAN_CAP_BYTES / (1024 * 1024))} MiB; ${args.tooLarge}`,
-            );
+            return `${entry} in ${path} is over the ${String(maxBytes / (1024 * 1024))} MiB cap of a script read, or its archive decompresses past ${String(ARCHIVE_SCAN_CAP_BYTES / (1024 * 1024))} MiB; ${tooLarge}`;
         case "unparsable":
             recordReadRefusal("unparsable");
-            return err(`${path} did not open: ${opened.error.detail}`);
+            return `${path} did not open: ${refusal.detail}`;
         default: {
-            const unhandled: never = opened.error;
+            const unhandled: never = refusal;
             throw new Error(`unhandled entry refusal: ${JSON.stringify(unhandled)}`);
         }
     }
 }
 
-/**
- * The rows of one table, the columns that they keep, and the bytes of the file on disk that held them. A read of an
- * entry names the compressed file, thus its hash is the hash of that file.
- */
-export type TableRows = { readonly source: Buffer; readonly columns: string[]; readonly rows: Row[] };
+/** The line that a script reads for a decode worker that gave no answer. */
+function workerFailure(path: string, failure: HostTaskFailure): string {
+    switch (failure.kind) {
+        case "out_of_memory":
+            recordReadRefusal("out_of_memory");
+            return `${path} needs more memory to decode than a script read holds; read fewer columns with \`columns\`, or fewer rows with \`offset\` and \`limit\``;
+        case "aborted":
+            return `the read of ${path} was cancelled`;
+        case "crashed":
+            return `the decode of ${path} failed: ${failure.detail}`;
+        default: {
+            const unhandled: never = failure;
+            throw new Error(`unhandled worker failure: ${JSON.stringify(unhandled)}`);
+        }
+    }
+}
+
+/** The most cells that one table read gives: the kept rows times the kept columns. */
+export const TABLE_CELL_BUDGET = 500_000;
 
 /**
- * Read one table through the read seam, parse it on the host, and keep the named columns. A refusal is the line
- * that the script reads. `tooLarge` names where a table over the cap goes instead.
+ * The rows of one table, the columns that they keep, the rows of the whole table, and the hash of the file on disk
+ * that held them. A read of an entry names the compressed file, thus its hash is the hash of that file.
+ */
+export type TableRows = { readonly hash: string; readonly columns: string[]; readonly rows: Row[]; readonly totalRows: number };
+
+/** The line that a script reads for a table over the cell budget, with the ways to read less. */
+function overBudget(path: string, cells: number, budget: number, columns: readonly string[], totalRows: number): string {
+    return (
+        `${path} holds ${String(totalRows)} rows and the read asks for ${String(cells)} cells, over the budget of ${String(budget)} cells of one read. ` +
+        `Read less: name the columns that you need with \`columns\`, read a page of rows with \`offset\` and \`limit\`, or find a few rows with \`grep\`. ` +
+        `The columns are ${columns.join(", ")}`
+    );
+}
+
+/**
+ * Read one table through the read seam, and decode it in a decode worker with the named columns, the range of rows,
+ * and the cell budget. The bytes move to the worker, and only the kept rows come back. A refusal is the line that the
+ * script reads. `tooLarge` names where a table over the file cap goes instead.
  */
 export async function readTableRows(args: {
     readonly workspaceFs: WorkspaceFilesystem;
@@ -147,7 +170,10 @@ export async function readTableRows(args: {
     readonly path: string;
     readonly entry?: string;
     readonly columns: readonly string[] | undefined;
+    readonly offset?: number;
+    readonly limit?: number;
     readonly tooLarge: string;
+    readonly signal?: AbortSignal;
 }): Promise<Result<TableRows, string>> {
     const { path, columns } = args;
     const kind = archiveKindOf(path);
@@ -161,46 +187,68 @@ export async function readTableRows(args: {
     }
     const read = await readScriptFile({ ...args, entry: args.entry, maxBytes: TABLE_READ_CAP_BYTES });
     if (read.isErr()) return err(read.error);
-    const { content, source } = read.value;
-    const parsed = await parseTable(format, content);
-    if (parsed === undefined) {
-        recordReadRefusal("unparsable");
-        return err(`${name} did not parse as ${format}: a ragged row, a repeated header, or a nested JSON value`);
-    }
-    recordReadBytes(content.length);
-
-    const header = [...new Set(parsed.flatMap((row) => Object.keys(row)))];
-    const missing = (columns ?? []).filter((column) => !header.includes(column));
-    if (missing.length > 0) return err(`${path} has no column ${missing.join(", ")}; its columns are ${header.join(", ")}`);
-    const kept = columns === undefined ? header : [...columns];
-    const rows = parsed.map((row) => {
-        const out: Row = {};
-        for (const column of kept) {
-            const cell = row[column];
-            if (cell !== undefined) out[column] = typeof cell === "string" ? numericCell(cell) : cell;
+    const { bytes, hash, archive } = read.value;
+    const buffer = transferable(bytes);
+    const decoded = await runHostTask(
+        {
+            kind: "table",
+            bytes: buffer,
+            path,
+            archive,
+            format,
+            options: { columns, offset: args.offset, limit: args.limit, cellBudget: TABLE_CELL_BUDGET, numericText: true },
+        },
+        { transfer: [buffer], signal: args.signal },
+    );
+    if (decoded.isErr()) return err(workerFailure(path, decoded.error));
+    const table = decoded.value;
+    switch (table.kind) {
+        case "entry":
+            return err(entryRefusal(path, archive?.entry ?? name, TABLE_READ_CAP_BYTES, table.refusal, args.tooLarge));
+        case "unparsable":
+            recordReadRefusal("unparsable");
+            return err(`${name} did not parse as ${format}: a ragged row, a repeated header, or a nested JSON value`);
+        case "missing_columns":
+            return err(`${path} has no column ${table.missing.join(", ")}; its columns are ${table.columns.join(", ")}`);
+        case "over_budget":
+            recordReadRefusal("over_budget");
+            return err(overBudget(path, table.cells, table.budget, table.columns, table.totalRows));
+        case "rows":
+            recordReadBytes(bytes.byteLength);
+            return ok({ hash, columns: table.columns, rows: table.rows, totalRows: table.totalRows });
+        default: {
+            const unhandled: never = table;
+            throw new Error(`unhandled table decode: ${JSON.stringify(unhandled)}`);
         }
-        return out;
-    });
-    return ok({ source, columns: kept, rows });
+    }
 }
 
 const readTableInput = z.object({
     path: z.string().min(1).describe("Analysis-rooted path of the table, for example 'runs/<runId>/<stepId>/output/de_results.csv'."),
     entry: entryInput,
     columns: z.array(z.string()).min(1).optional().describe("Keep only these columns. Absent: each column."),
+    offset: z.number().int().min(0).optional().describe("The first row to read, 0-based. Absent: 0."),
+    limit: z.number().int().min(1).optional().describe("The most rows to read. Absent: each row from `offset`."),
 });
 
 export const ReadTableOutputSchema = z.object({
     path: z.string(),
     columns: z.array(z.string()).readonly(),
-    rowCount: z.number(),
+    rowCount: z.number().describe("The rows that this read gives."),
+    totalRows: z.number().describe("The rows of the whole table."),
     rows: z.array(z.record(z.string(), z.union([z.string(), z.number()]))).readonly(),
 });
 
 const WrittenOutputSchema = z.object({ path: z.string().describe("The analysis-rooted path of the written file."), bytes: z.number() });
 
 type ReadTableOutput = WithToolCallRecord<
-    { readonly path: string; readonly columns: readonly string[]; readonly rowCount: number; readonly rows: readonly Record<string, string | number>[] },
+    {
+        readonly path: string;
+        readonly columns: readonly string[];
+        readonly rowCount: number;
+        readonly totalRows: number;
+        readonly rows: readonly Record<string, string | number>[];
+    },
     ScriptFileEffect
 >;
 
@@ -210,6 +258,7 @@ function createReadTableTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "re
         description:
             "Read one table of the workspace as rows: CSV, TSV, JSON (an array of flat objects), or parquet, up to 16 MiB. " +
             "Each row is an object keyed by column, and a cell that holds a plain number reads as a number. " +
+            `One read gives at most ${TABLE_CELL_BUDGET.toLocaleString("en-US")} cells (rows times columns): name the columns that you need, and read a large table in pages with \`offset\` and \`limit\`. ` +
             "A gzip-compressed table reads as it is, and `entry` reads one table inside a zip or a tar. " +
             "A larger table, or another format such as h5ad, is work for an analysis run.",
         inputSchema: readTableInput,
@@ -217,22 +266,25 @@ function createReadTableTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "re
         view: "none",
         describeCall: ({ path, entry }) => (entry === undefined ? path : `${path} : ${entry}`),
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
-        execute: async ({ path, entry, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
+        execute: async ({ path, entry, columns, offset, limit }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
             const table = await readTableRows({
                 workspaceFs: deps.workspaceFs,
                 session: ctx.session,
                 path,
                 entry,
                 columns,
+                offset,
+                limit,
                 tooLarge: "an analysis run reads it",
+                signal: ctx.signal,
             });
             if (table.isErr()) return refused(table.error);
-            const { source, rows } = table.value;
+            const { hash, rows, totalRows } = table.value;
             const { analysisId } = ctx.session.scope;
             const resolved = resolveWorkspacePath({ workspaceRoot: await deps.resolveWorkspaceRoot(analysisId), analysisId, path });
             const relative = resolved.kind === "ok" ? resolved.relative.split("\\").join("/") : path;
-            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(source) }] };
-            return ok(withToolCallRecord({ path: relative, columns: table.value.columns, rowCount: rows.length, rows }, effect));
+            const effect: ScriptFileEffect = { reads: [{ path: relative, hash }] };
+            return ok(withToolCallRecord({ path: relative, columns: table.value.columns, rowCount: rows.length, totalRows, rows }, effect));
         },
     });
 }
@@ -276,21 +328,24 @@ function createListArchiveTool(
                 tooLarge: "an analysis run opens it",
             });
             if (read.isErr()) return refused(read.error);
-            const { source } = read.value;
-            const listed = listArchive(kind, path, source);
-            if (listed.isErr()) {
-                if (listed.error.kind === "too_large") {
+            const { hash } = read.value;
+            const buffer = transferable(read.value.bytes);
+            const listed = await runHostTask({ kind: "archive-list", bytes: buffer, path, archive: kind }, { transfer: [buffer], signal: ctx.signal });
+            if (listed.isErr()) return refused(workerFailure(path, listed.error));
+            if (listed.value.kind === "entry") {
+                const { refusal } = listed.value;
+                if (refusal.kind === "too_large") {
                     recordReadRefusal("too_large");
                     return refused(`${path} decompresses past ${String(ARCHIVE_SCAN_CAP_BYTES / (1024 * 1024))} MiB; an analysis run opens it`);
                 }
                 recordReadRefusal("unparsable");
-                return refused(`${path} did not open${listed.error.kind === "unparsable" ? `: ${listed.error.detail}` : ""}`);
+                return refused(`${path} did not open${refusal.kind === "unparsable" ? `: ${refusal.detail}` : ""}`);
             }
             const { analysisId } = ctx.session.scope;
             const resolved = resolveWorkspacePath({ workspaceRoot: await deps.resolveWorkspaceRoot(analysisId), analysisId, path });
             const relative = resolved.kind === "ok" ? resolved.relative.split("\\").join("/") : path;
-            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(source) }] };
-            return ok(withToolCallRecord({ path: relative, entries: listed.value }, effect));
+            const effect: ScriptFileEffect = { reads: [{ path: relative, hash }] };
+            return ok(withToolCallRecord({ path: relative, entries: listed.value.entries }, effect));
         },
     });
 }
@@ -358,21 +413,25 @@ export function createReadPdfTool(
                 tooLarge: "an analysis run reads it",
             });
             if (read.isErr()) return refused(read.error);
-            const { content, source } = read.value;
+            const { bytes, hash, archive } = read.value;
             const first = firstPage ?? 1;
             const last = Math.min(lastPage ?? first + PDF_PAGES_PER_READ - 1, first + PDF_PAGES_PER_READ - 1);
-            let text: PdfText;
-            try {
-                text = await readPdfText(content, { first, last });
-            } catch {
+            const buffer = transferable(bytes);
+            const decoded = await runHostTask({ kind: "pdf-text", bytes: buffer, path, archive, first, last }, { transfer: [buffer], signal: ctx.signal });
+            if (decoded.isErr()) return refused(workerFailure(path, decoded.error));
+            const answer = decoded.value;
+            if (answer.kind === "entry")
+                return refused(entryRefusal(path, archive?.entry ?? path, PDF_READ_CAP_BYTES, answer.refusal, "an analysis run reads it"));
+            if (answer.kind === "unreadable") {
                 recordReadRefusal("unparsable");
                 return refused(`${path} did not open as a PDF: a damaged file, or a file with a password`);
             }
-            recordReadBytes(content.length);
+            const { text } = answer;
+            recordReadBytes(bytes.byteLength);
             const { analysisId } = ctx.session.scope;
             const resolved = resolveWorkspacePath({ workspaceRoot: await deps.resolveWorkspaceRoot(analysisId), analysisId, path });
             const relative = resolved.kind === "ok" ? resolved.relative.split("\\").join("/") : path;
-            const effect: ScriptFileEffect = { reads: [{ path: relative, hash: computeSha256(source) }] };
+            const effect: ScriptFileEffect = { reads: [{ path: relative, hash }] };
             return ok(withToolCallRecord({ path: relative, totalPages: text.totalPages, pages: text.pages }, effect));
         },
     });

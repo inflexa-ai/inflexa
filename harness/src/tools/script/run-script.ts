@@ -15,16 +15,17 @@
  */
 
 import {
-    CodemodeSandbox,
+    CodemodeSandboxBase,
     loadQuickJSWasm,
     renderToolSample,
     renderToolSignature,
     schemaToType,
     type CodemodeError,
-    type CodemodeSandboxOptions,
     type CodemodeTool,
+    type CodemodeWasmModule,
 } from "@earendil-works/pi-codemode";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { Worker } from "node:worker_threads";
 
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -32,6 +33,9 @@ import { z } from "zod";
 import type { ChatFrame, ChatPartFrame, EventSource } from "../../contracts/chat-events.js";
 import { createSubAgentActivityTracker } from "../../contracts/subagent-activity.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
+import { acquireScriptSlot, hostWorkerEntry, SCRIPT_VM_MEMORY_MIB, SCRIPT_WORKER_HEAP_MIB, workerLimits } from "../../lib/host-workers.js";
+import { measureJson } from "../../lib/json-size.js";
+import { errorMessageOf, errorNameOf } from "../../lib/thrown.js";
 import type { Logger } from "../../lib/logger.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { computeDetail, computeResultDetail } from "../../loop/tool-detail.js";
@@ -56,8 +60,14 @@ export const RUN_SCRIPT_TOOL_ID = "run_script";
 /** The deadline of one script, for each lookup in it together. */
 const SCRIPT_TIMEOUT_MS = 180_000;
 
-/** The heap of the VM. A script holds lookup results and tables of up to the read cap, not datasets. */
-const SCRIPT_MEMORY_BYTES = 256 * 1024 * 1024;
+/** The heap of the VM. A script holds lookup results and tables of up to the cell budget of a read, not datasets. */
+const SCRIPT_MEMORY_BYTES = SCRIPT_VM_MEMORY_MIB * 1024 * 1024;
+
+/**
+ * The most JSON of one nested result that goes into the VM. The VM holds the text and the value that it parses from
+ * it, thus the limit leaves room in its heap for both and for the work of the script.
+ */
+export const NESTED_RESULT_LIMIT_CHARS = 32 * 1024 * 1024;
 
 /** The text of a result that reaches the model. A longer output keeps its head and its tail. */
 const MAX_RESULT_CHARS = 24_000;
@@ -133,7 +143,7 @@ function bounded(text: string): string {
     return `${text.slice(0, half)}\n[... ${text.length - MAX_RESULT_CHARS} characters cut ...]\n${text.slice(-half)}`;
 }
 
-/** The JSON form of a tool result: the plain data, without the symbol keys of the loop. */
+/** The JSON form of the value that a script returned: the plain data, without the symbol keys of the loop. */
 function plainJson(value: unknown): unknown {
     return value === undefined ? null : parseJsonAs(JSON.stringify(value), z.json());
 }
@@ -285,8 +295,19 @@ async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, l
         const record = readToolCallRecord(result.value);
         if (record !== undefined) state.nested.push({ tool: tool.id, record });
     }
+    // The sandbox serializes the result for the VM. The measure bounds that text before it exists, and the value goes
+    // as it is: `JSON.stringify` drops the symbol keys of the loop.
+    const size = measureJson(result.value, NESTED_RESULT_LIMIT_CHARS);
+    if (size.kind !== "within") {
+        await finish("error", detail);
+        throw new Error(
+            size.kind === "over"
+                ? `${tool.id}: the result is more than ${String(NESTED_RESULT_LIMIT_CHARS / (1024 * 1024))} MiB of JSON, the most that a script receives from one call; ask the tool for less`
+                : `${tool.id}: the result has no JSON form: ${size.detail}`,
+        );
+    }
     await finish("ok", computeResultDetail(tool, parsed.data, result.value, log) ?? detail);
-    return plainJson(result.value);
+    return result.value;
 }
 
 /** The JSON schemas of a script tool as a script reads them. */
@@ -364,16 +385,75 @@ function descriptionOf(tools: readonly Tool[]): string {
     );
 }
 
-function sandboxRuntimeOf(runtime: ScriptRuntime): Pick<CodemodeSandboxOptions, "wasm" | "workerUrl"> {
-    const options: Pick<CodemodeSandboxOptions, "wasm" | "workerUrl"> = {};
-    if (runtime.wasmPath !== undefined) options.wasm = loadQuickJSWasm(runtime.wasmPath);
-    if (runtime.workerUrl !== undefined) options.workerUrl = runtime.workerUrl;
-    return options;
+type VmLauncher = ConstructorParameters<typeof CodemodeSandboxBase>[1];
+
+/** A dependency report that Node 24/26 --watch leaks onto the worker channel (nodejs/node#65044). */
+const reported = z.custom<unknown>((value) => value !== undefined);
+const WatchReportSchema = z.union([z.looseObject({ "watch:import": reported }), z.looseObject({ "watch:require": reported })]);
+
+/** The message of a worker that passed its V8 heap limit. */
+const WORKER_HEAP_MESSAGE = "reaching memory limit";
+
+/**
+ * The launcher of the VM of a script. It waits for a script slot of the process (`lib/host-workers.ts`), and it starts
+ * the worker from the harness entry with a V8 heap limit. The slot is free when the worker exits. pi-codemode 1.4.0
+ * starts its own worker with no `resourceLimits` and with a synchronous capacity hook only, thus the harness owns the
+ * worker, with the same interrupt flag, stop, and failures as the pi launcher.
+ */
+function scriptVmLauncher(runtime: ScriptRuntime): VmLauncher {
+    const wasm: Promise<CodemodeWasmModule> | undefined = runtime.wasmPath === undefined ? undefined : loadQuickJSWasm(runtime.wasmPath);
+    return async (data, events) => {
+        let module: CodemodeWasmModule;
+        try {
+            module = await (wasm ?? loadQuickJSWasm());
+        } catch (error) {
+            throw new Error(`Failed to load QuickJS: ${errorMessageOf(error) ?? "an unknown fault"}`, { cause: error });
+        }
+        const free = await acquireScriptSlot();
+        const interrupt = new SharedArrayBuffer(4);
+        let worker: Worker;
+        try {
+            worker = new Worker(runtime.workerUrl ?? hostWorkerEntry(), {
+                workerData: { ...data, wasm: module, interrupt },
+                resourceLimits: workerLimits(SCRIPT_WORKER_HEAP_MIB),
+            });
+        } catch (error) {
+            free();
+            throw new Error(`Failed to start worker: ${errorMessageOf(error) ?? "an unknown fault"}`, { cause: error });
+        }
+        worker.once("exit", free);
+        worker.on("message", (message: unknown) => {
+            if (WatchReportSchema.safeParse(message).success) return;
+            events.message(message);
+        });
+        worker.on("error", (error) => {
+            events.failure({
+                kind: "sandbox",
+                name: errorNameOf(error),
+                message: errorMessageOf(error) ?? "an unknown fault",
+            });
+        });
+        worker.on("exit", (code) => events.failure({ kind: "sandbox", message: `Worker exited with code ${String(code)} before the script settled` }));
+        return {
+            post: (message) => worker.postMessage(message),
+            stop: () => {
+                // Bun's terminate() cannot stop a thread that spins in wasm, thus the VM polls the flag first.
+                Atomics.store(new Int32Array(interrupt), 0, 1);
+                void worker.terminate().catch(() => undefined);
+                worker.unref();
+                return Promise.resolve();
+            },
+        };
+    };
 }
 
-/** The failure of a script, for the metrics. The VM reports an exhausted heap as an error of the script. */
+/**
+ * The failure of a script, for the metrics. The VM reports an exhausted heap as an error of the script, and a worker
+ * past its V8 heap limit as a fault of the sandbox.
+ */
 function failureOf(error: CodemodeError): ScriptFailure {
     if (error.kind === "script") return error.message.includes("out of memory") ? "memory" : "script";
+    if (error.kind === "sandbox" && error.message.includes(WORKER_HEAP_MESSAGE)) return "memory";
     return error.kind;
 }
 
@@ -411,7 +491,7 @@ export function createRunScriptTool(
     runtime: ScriptRuntime = {},
     options: RunScriptOptions = {},
 ): Tool<z.infer<typeof inputSchema>, RunScriptResult> {
-    const vm = sandboxRuntimeOf(runtime);
+    const launch = scriptVmLauncher(runtime);
     const byId = new Map(scriptTools.map((tool) => [tool.id, { tool, schemas: scriptSchemasOf(tool, true) }]));
     const log = (options.logger ?? createNoopLogger()).named("run-script");
     const { scratch } = options;
@@ -477,22 +557,25 @@ export function createRunScriptTool(
             // of this call. A nested call runs in the snapshot of this context, thus it sees what the call sees, for
             // example the durable step of the call, which DBOS keeps in an AsyncLocalStorage.
             const inCallContext = AsyncLocalStorage.snapshot();
-            const sandbox = new CodemodeSandbox({
-                tools: [...byId.values()].map(({ tool, schemas }) => scriptToolOf(tool, schemas, ctx, state, log, inCallContext)),
-                globals: [
-                    {
-                        name: "describe",
-                        execute: (name) => {
-                            const entry = typeof name === "string" ? byId.get(name) : undefined;
-                            if (entry === undefined) throw new Error(`no script tool ${JSON.stringify(name)}; the tools are ${[...byId.keys()].join(", ")}`);
-                            return describeTool(entry.tool, entry.schemas);
+            const sandbox = new CodemodeSandboxBase(
+                {
+                    tools: [...byId.values()].map(({ tool, schemas }) => scriptToolOf(tool, schemas, ctx, state, log, inCallContext)),
+                    globals: [
+                        {
+                            name: "describe",
+                            execute: (name) => {
+                                const entry = typeof name === "string" ? byId.get(name) : undefined;
+                                if (entry === undefined)
+                                    throw new Error(`no script tool ${JSON.stringify(name)}; the tools are ${[...byId.keys()].join(", ")}`);
+                                return describeTool(entry.tool, entry.schemas);
+                            },
                         },
-                    },
-                ],
-                timeoutMs: SCRIPT_TIMEOUT_MS,
-                memoryLimitBytes: SCRIPT_MEMORY_BYTES,
-                ...vm,
-            });
+                    ],
+                    timeoutMs: SCRIPT_TIMEOUT_MS,
+                    memoryLimitBytes: SCRIPT_MEMORY_BYTES,
+                },
+                launch,
+            );
             try {
                 const result = await sandbox.execute(code, { signal: ctx.signal });
                 // A cancel of the call is no result of the script: the loop must see the abort and end the run.
