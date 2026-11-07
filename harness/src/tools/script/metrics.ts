@@ -7,8 +7,9 @@
  *     `failure` (`none`, `script`, `memory`, `timeout`, `aborted`, or `sandbox`). A rise of `memory` and `timeout`
  *     says that scripts outgrow the VM.
  *   - cortex.harness.script.read_refusals — counter, one for each table read that a script tool refused, with
- *     `reason` (`too_large`, `unsupported_format`, or `unparsable`). A rise of `too_large` and `unsupported_format`
- *     says that the work wants the tables that only a sandbox reads.
+ *     `reason` (`too_large`, `unsupported_format`, `unparsable`, `over_budget`, or `out_of_memory`). A rise of
+ *     `too_large` and `unsupported_format` says that the work wants the tables that only a sandbox reads. A rise of
+ *     `over_budget` says that scripts read whole wide tables instead of the columns and rows that they need.
  *   - cortex.harness.script.read_bytes — histogram of the bytes of each table or PDF that a script read, in buckets
  *     from 1 KiB up to the PDF read cap.
  *
@@ -20,7 +21,7 @@ import { type Counter, type Histogram, metrics } from "@opentelemetry/api";
 
 export type ScriptFailure = "none" | "script" | "memory" | "timeout" | "aborted" | "sandbox";
 
-export type ReadRefusal = "too_large" | "unsupported_format" | "unparsable";
+export type ReadRefusal = "too_large" | "unsupported_format" | "unparsable" | "over_budget" | "out_of_memory";
 
 type Instruments = {
     readonly runs: Counter;

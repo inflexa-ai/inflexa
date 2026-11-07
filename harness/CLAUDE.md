@@ -378,6 +378,15 @@ is an embedder concern.
   a file emits one `run-script` provenance session event.
   `createConversationAgent(deps)` is the composition root that wires the deps
   of each tool.
+- **Heavy workers** (`lib/host-workers.ts`): a decode of untrusted file content
+  (a table, a compressed file, the text of a PDF) and the VM of a script each run
+  in a worker thread with a V8 heap limit, in a queue of fixed width for the
+  process. A decode past its limit fails its call, and the host continues. A new
+  tool that decodes file content adds a task to `workspace/decode-tasks.ts`, and
+  never decodes on the main thread. `HOST_WORKER_MEMORY_MIB` is the most memory
+  that the workers hold, thus a host sizes its own heap cap beside it. Each
+  nested result of a script has a JSON size limit before it goes into the VM
+  ([host-memory-bounds](openspec/specs/host-memory-bounds/spec.md)).
 - **Sub-agent tools** (`generatePlan`, `generateAnalogyReport`): a sub-agent that
   is a tool. It runs its loop under a child session (`forSubAgent`). Inside the
   body of a workflow, the call starts a child workflow (`loop/sub-agent.ts`). Thus

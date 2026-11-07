@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
 import { zipSync } from "fflate";
@@ -24,6 +25,7 @@ import { createScriptScratch, type ScriptScratch } from "../scratch.js";
 import type { SessionFileWrite } from "../../../workspace/session-files.js";
 
 const ANALYSIS = "analysis-001";
+const PARQUET_FIXTURE = fileURLToPath(new URL("../../../report-model/__fixtures__/sample.parquet", import.meta.url));
 const THREAD = "thread-1";
 const DERIVED = `${conversationSessionDir(THREAD)}/derived`;
 
@@ -147,6 +149,47 @@ describe("read_table", () => {
         expect(format._unsafeUnwrapErr().error).toContain("has no table format that a script reads");
         expect(missing._unsafeUnwrapErr().error).toContain("does not exist");
         expect(foreign._unsafeUnwrapErr().error).toContain("is outside this analysis");
+    });
+
+    test("reads a page of rows with offset and limit, and gives the rows of the whole table", async () => {
+        const lines = Array.from({ length: 1000 }, (_, i) => `G${String(i + 1)},${String(i + 1)}`);
+        writeFileSync(join(root, "runs/r1/s1/output/page.csv"), `gene,rank\n${lines.join("\n")}\n`);
+
+        const result = (await tool("read_table").execute({ path: "runs/r1/s1/output/page.csv", offset: 100, limit: 2 }, ctx()))._unsafeUnwrap();
+
+        expect(result).toMatchObject({
+            rowCount: 2,
+            totalRows: 1000,
+            rows: [
+                { gene: "G101", rank: 101 },
+                { gene: "G102", rank: 102 },
+            ],
+        });
+    });
+
+    test("refuses a read over the cell budget, and names the cells, the budget, the columns, and the ways to read less", async () => {
+        const row = "a,b,c,d,e";
+        writeFileSync(join(root, "runs/r1/s1/output/wide.csv"), `c1,c2,c3,c4,c5\n${`${row}\n`.repeat(100_001)}`);
+
+        const refused = await tool("read_table").execute({ path: "runs/r1/s1/output/wide.csv" }, ctx());
+        const narrowed = await tool("read_table").execute({ path: "runs/r1/s1/output/wide.csv", columns: ["c1", "c2"] }, ctx());
+
+        expect(refused._unsafeUnwrapErr().error).toBe(
+            "runs/r1/s1/output/wide.csv holds 100001 rows and the read asks for 500005 cells, over the budget of 500000 cells of one read. " +
+                "Read less: name the columns that you need with `columns`, read a page of rows with `offset` and `limit`, or find a few rows with `grep`. " +
+                "The columns are c1, c2, c3, c4, c5",
+        );
+        expect(narrowed._unsafeUnwrap()).toMatchObject({ columns: ["c1", "c2"], rowCount: 100_001, totalRows: 100_001 });
+    });
+
+    test("reads the named columns and rows of a parquet table", async () => {
+        writeFileSync(join(root, "runs/r1/s1/output/de.parquet"), readFileSync(PARQUET_FIXTURE));
+
+        const result = (
+            await tool("read_table").execute({ path: "runs/r1/s1/output/de.parquet", columns: ["gene", "score"], offset: 1, limit: 1 }, ctx())
+        )._unsafeUnwrap();
+
+        expect(result).toMatchObject({ columns: ["gene", "score"], rowCount: 1, totalRows: 3, rows: [{ gene: "TP53", score: 0.8 }] });
     });
 
     test("refuses a table over the cap of a script read", async () => {

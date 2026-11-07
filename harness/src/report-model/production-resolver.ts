@@ -21,11 +21,12 @@
 import { err, ok, type Result } from "neverthrow";
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
-import { parquetReadObjects, type AsyncBuffer } from "hyparquet";
+import { parquetMetadataAsync, parquetReadObjects, parquetSchema, type AsyncBuffer } from "hyparquet";
 import { z } from "zod";
 
 import type { ArtifactFileReference, ArtifactTableReference, ArtifactValueReference, Reference, UnresolvedReference } from "../contracts/report-reference.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
+import { runHostTask, transferable } from "../lib/host-workers.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { parseJsonAs } from "../lib/parse-json.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
@@ -41,6 +42,12 @@ export type Row = Record<string, string | number>;
  * The cap gates the cell extraction only. The identity compare streams the hash at every size.
  */
 const DEFAULT_CAP_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The most cells that the host fast path decodes for one table. A larger table takes the fall-through. The resolver
+ * keeps the rows on the host, thus the budget bounds the memory of each read and of each cache entry.
+ */
+const HOST_CELL_BUDGET = 1_000_000;
 
 /**
  * The cap on how many artifacts the prepare batch reads at the same time. A large report holds hundreds
@@ -74,64 +81,65 @@ export type ArtifactReadCache = {
     set(absolutePath: string, read: ArtifactRead): void;
 };
 
-/** The read caches that the host process holds, one for each recent analysis. */
+/** The read cache that the host process holds, with one view for each analysis. */
 export type ArtifactReadStore = {
     forAnalysis(analysisId: string): ArtifactReadCache;
 };
 
-/** The analyses that the read store holds at the same time. An older analysis drops out first. */
-const ANALYSIS_CACHE_LIMIT = 4;
+/** The entries that the read store holds across each analysis, and the cells of the rows that they hold together. */
+const READ_STORE_ENTRY_LIMIT = 128;
+const READ_STORE_CELL_LIMIT = 2_000_000;
 
-/** The artifacts that one analysis holds at the same time. The rows of a large file live here, thus the bound is small. */
-const ARTIFACT_CACHE_LIMIT = 32;
-
-/**
- * A bounded map that drops the least recently used entry.
- *
- * A `Map` keeps its insertion order. Thus a read that deletes the key and sets it again moves the key to the
- * end, and the first key of the map is always the oldest use.
- */
-function createBoundedMap<V>(limit: number): { get(key: string): V | undefined; set(key: string, value: V): void } {
-    const entries = new Map<string, V>();
-    return {
-        get(key) {
-            const value = entries.get(key);
-            if (value === undefined) {
-                return undefined;
-            }
-            entries.delete(key);
-            entries.set(key, value);
-            return value;
-        },
-        set(key, value) {
-            entries.delete(key);
-            entries.set(key, value);
-            if (entries.size > limit) {
-                const oldest = entries.keys().next();
-                if (!oldest.done) {
-                    entries.delete(oldest.value);
-                }
-            }
-        },
-    };
+/** The cells of the rows of one read: the cells that each row holds. */
+function cellsOf(read: ArtifactRead): number {
+    let cells = 0;
+    for (const row of read.rows ?? []) cells += Object.keys(row).length;
+    return cells;
 }
 
 /**
- * Make the read store of the report path. One host process serves many analyses, thus the store bounds both
- * dimensions: how many analyses it holds, and how many artifacts one analysis holds. A dropped entry costs
- * one read again, and it is never wrong.
+ * Make the read store of the report path. One host process serves many analyses, thus the store holds one cache
+ * across them, and it drops the least recently used entry while the entries pass {@link READ_STORE_ENTRY_LIMIT} or
+ * the cells of the held rows pass {@link READ_STORE_CELL_LIMIT}. A dropped entry costs one read again, and it is
+ * never wrong.
+ *
+ * A `Map` keeps its insertion order. Thus a read that deletes the key and sets it again moves the key to the end,
+ * and the first key of the map is always the oldest use.
  */
 export function createArtifactReadStore(): ArtifactReadStore {
-    const byAnalysis = createBoundedMap<ArtifactReadCache>(ANALYSIS_CACHE_LIMIT);
+    const entries = new Map<string, { read: ArtifactRead; cells: number }>();
+    let heldCells = 0;
+    const drop = (key: string): void => {
+        const held = entries.get(key);
+        if (held === undefined) return;
+        heldCells -= held.cells;
+        entries.delete(key);
+    };
     return {
         forAnalysis(analysisId) {
-            const held = byAnalysis.get(analysisId);
-            if (held !== undefined) {
-                return held;
-            }
-            const made = createBoundedMap<ArtifactRead>(ARTIFACT_CACHE_LIMIT);
-            byAnalysis.set(analysisId, made);
-            return made;
+            const keyOf = (absolutePath: string): string => `${analysisId}\u0000${absolutePath}`;
+            return {
+                get(absolutePath) {
+                    const key = keyOf(absolutePath);
+                    const held = entries.get(key);
+                    if (held === undefined) return undefined;
+                    entries.delete(key);
+                    entries.set(key, held);
+                    return held.read;
+                },
+                set(absolutePath, read) {
+                    const key = keyOf(absolutePath);
+                    drop(key);
+                    const cells = cellsOf(read);
+                    entries.set(key, { read, cells });
+                    heldCells += cells;
+                    for (const oldest of entries.keys()) {
+                        if (entries.size <= READ_STORE_ENTRY_LIMIT && heldCells <= READ_STORE_CELL_LIMIT) break;
+                        if (oldest === key) continue;
+                        drop(oldest);
+                    }
+                },
+            };
         },
     };
 }
@@ -234,12 +242,14 @@ export function coerceCell(value: unknown): string | number | undefined {
  * quote. Any structural doubt gives back `undefined`, thus a parse fault falls through and is never a
  * guess. The doubt cases are a quote inside an unquoted field, text after a closing quote, and an
  * unterminated quoted field.
+ *
+ * The walk gives one record at a time, and a doubt gives one `undefined` and ends the walk. Thus a caller
+ * that keeps only some records holds only those.
  */
-function parseRecords(text: string, delimiter: string): string[][] | undefined {
-    const records: string[][] = [];
+function* delimitedRecords(text: string, delimiter: string): Generator<string[] | undefined> {
     const n = text.length;
     if (n === 0) {
-        return records;
+        return;
     }
     let i = 0;
     while (i <= n) {
@@ -266,10 +276,12 @@ function parseRecords(text: string, delimiter: string): string[][] | undefined {
                     }
                 }
                 if (!closed) {
-                    return undefined;
+                    yield undefined;
+                    return;
                 }
                 if (i < n && text[i] !== delimiter && text[i] !== "\r" && text[i] !== "\n") {
-                    return undefined;
+                    yield undefined;
+                    return;
                 }
             } else {
                 while (i < n) {
@@ -278,7 +290,8 @@ function parseRecords(text: string, delimiter: string): string[][] | undefined {
                         break;
                     }
                     if (ch === '"') {
-                        return undefined;
+                        yield undefined;
+                        return;
                     }
                     field += ch;
                     i += 1;
@@ -291,7 +304,7 @@ function parseRecords(text: string, delimiter: string): string[][] | undefined {
             }
             break;
         }
-        records.push(record);
+        yield record;
         if (i < n && text[i] === "\r") {
             i += 1;
         }
@@ -302,7 +315,117 @@ function parseRecords(text: string, delimiter: string): string[][] | undefined {
             break;
         }
     }
-    return records;
+}
+
+/**
+ * A cell of a text table as a number, when the text is a plain decimal number. A text with a leading zero, such
+ * as an identifier `007`, stays text, because a number loses its zeros.
+ */
+export function numericCell(text: string): string | number {
+    if (text.length === 0 || text !== text.trim()) return text;
+    const value = Number(text);
+    if (!Number.isFinite(value)) return text;
+    const digits = text.startsWith("-") ? text.slice(1) : text;
+    if (digits.length > 1 && digits.startsWith("0") && digits[1] !== ".") return text;
+    if (digits.includes("x") || digits.includes("X") || digits.includes("o") || digits.includes("b")) return text;
+    return value;
+}
+
+/**
+ * What a decode keeps: the named columns, or each column; the rows from `offset`, up to `limit` rows; and at most
+ * `cellBudget` cells, a cell being one value of one kept row and one kept column. `numericText` reads a plain decimal
+ * text cell as a number ({@link numericCell}).
+ */
+export type TableDecodeOptions = {
+    readonly columns?: readonly string[];
+    readonly offset?: number;
+    readonly limit?: number;
+    readonly cellBudget: number;
+    readonly numericText: boolean;
+};
+
+/**
+ * The outcome of one decode. `totalRows` counts the rows of the whole table. A read over the budget keeps no row,
+ * and it gives the cells that it would have given.
+ */
+export type TableDecode =
+    | { readonly kind: "rows"; readonly columns: string[]; readonly rows: Row[]; readonly totalRows: number }
+    | { readonly kind: "unparsable" }
+    | { readonly kind: "missing_columns"; readonly missing: string[]; readonly columns: string[] }
+    | { readonly kind: "over_budget"; readonly cells: number; readonly budget: number; readonly columns: string[]; readonly totalRows: number };
+
+/** The kept columns of a table, or the named columns that it does not hold. */
+function keptColumns(header: readonly string[], options: TableDecodeOptions): { kept: string[] } | { missing: string[] } {
+    if (options.columns === undefined) return { kept: [...header] };
+    const missing = options.columns.filter((column) => !header.includes(column));
+    return missing.length > 0 ? { missing } : { kept: [...options.columns] };
+}
+
+/** The first row and the end of the range of rows that a decode keeps, in a table of `total` rows. */
+function rowRange(total: number, options: TableDecodeOptions): { start: number; end: number } {
+    const start = Math.min(options.offset ?? 0, total);
+    return { start, end: options.limit === undefined ? total : Math.min(total, start + options.limit) };
+}
+
+/**
+ * Keep the cells of one row: the kept columns, each cell coerced. The row is the object that the reader made, thus
+ * the decode makes no second set of rows. A cell with no value leaves the row.
+ */
+function keepCells(row: Record<string, unknown>, kept: readonly string[], numericText: boolean): Row {
+    const out: Row = {};
+    for (const column of kept) {
+        const coerced = coerceCell(row[column]);
+        if (coerced !== undefined) out[column] = numericText && typeof coerced === "string" ? numericCell(coerced) : coerced;
+    }
+    return out;
+}
+
+/**
+ * Decode a delimited file. The format has no index, thus the walk counts each record. It keeps the records of the
+ * range until the cells pass the budget, and then it keeps nothing and counts on, thus a refusal gives the exact
+ * cells and the walk holds no more than the budget.
+ */
+function decodeDelimited(text: string, delimiter: string, options: TableDecodeOptions): TableDecode {
+    const records = delimitedRecords(text, delimiter);
+    const first = records.next();
+    if (first.done === true) return { kind: "rows", columns: [], rows: [], totalRows: 0 };
+    const header = first.value;
+    if (header === undefined || new Set(header).size !== header.length) return { kind: "unparsable" };
+    const columns = keptColumns(header, options);
+    if ("missing" in columns) return { kind: "missing_columns", missing: columns.missing, columns: header };
+    const { kept } = columns;
+    const indexes = kept.map((column) => header.indexOf(column));
+    const start = options.offset ?? 0;
+    const end = options.limit === undefined ? Number.POSITIVE_INFINITY : start + options.limit;
+    const rows: Row[] = [];
+    let total = 0;
+    let overBudget = false;
+    for (const fields of records) {
+        if (fields === undefined) return { kind: "unparsable" };
+        // A blank line parses as one empty field, thus the walk drops it and reads no dialect into it. A
+        // record with more than one field, or one non-empty field, still obeys the count check, thus a
+        // genuinely ragged record falls through.
+        if (fields.length === 1 && fields[0] === "") continue;
+        if (fields.length !== header.length) return { kind: "unparsable" };
+        const index = total++;
+        if (overBudget || index < start || index >= end) continue;
+        if ((rows.length + 1) * kept.length > options.cellBudget) {
+            overBudget = true;
+            rows.length = 0;
+            continue;
+        }
+        const row: Row = {};
+        for (const [k, column] of kept.entries()) {
+            const value = fields[indexes[k] ?? -1];
+            if (value !== undefined) row[column] = options.numericText ? numericCell(value) : value;
+        }
+        rows.push(row);
+    }
+    if (overBudget) {
+        const range = rowRange(total, options);
+        return { kind: "over_budget", cells: (range.end - range.start) * kept.length, budget: options.cellBudget, columns: header, totalRows: total };
+    }
+    return { kind: "rows", columns: kept, rows, totalRows: total };
 }
 
 /**
@@ -310,42 +433,8 @@ function parseRecords(text: string, delimiter: string): string[][] | undefined {
  * name are structural doubt, thus each gives back `undefined` and the file falls through.
  */
 export function parseDelimited(text: string, delimiter: string): Row[] | undefined {
-    const records = parseRecords(text, delimiter);
-    if (records === undefined) {
-        return undefined;
-    }
-    const header = records[0];
-    if (header === undefined) {
-        return [];
-    }
-    const seen = new Set<string>();
-    for (const name of header) {
-        if (seen.has(name)) {
-            return undefined;
-        }
-        seen.add(name);
-    }
-    const rows: Row[] = [];
-    for (const fields of records.slice(1)) {
-        // A blank line parses as one empty field, thus the walk drops it and reads no dialect into it. A
-        // record with more than one field, or one non-empty field, still obeys the count check, thus a
-        // genuinely ragged record falls through.
-        if (fields.length === 1 && fields[0] === "") {
-            continue;
-        }
-        if (fields.length !== header.length) {
-            return undefined;
-        }
-        const row: Row = {};
-        for (const [c, name] of header.entries()) {
-            const value = fields[c];
-            if (value !== undefined) {
-                row[name] = value;
-            }
-        }
-        rows.push(row);
-    }
-    return rows;
+    const decoded = decodeDelimited(text, delimiter, { cellBudget: Number.POSITIVE_INFINITY, numericText: false });
+    return decoded.kind === "rows" ? decoded.rows : undefined;
 }
 
 /** A cell of a JSON table: the scalars JSON carries. A non-finite number stays a cell — `JSON.parse`
@@ -355,61 +444,80 @@ const JsonTableCell = z.custom<string | number | boolean | null>(
 );
 
 /**
- * Parse a JSON file into rows. The strict shape is an array of flat objects with scalar cells. A parse
- * fault, a top-level value that is not an array, and a nested cell are structural doubt, thus each gives
- * back `undefined` and the file falls through.
+ * Decode a JSON file. The strict shape is an array of flat objects with scalar cells. A parse fault, a top-level
+ * value that is not an array, and a nested cell are structural doubt. The header is each key in the order of its
+ * first row.
  */
-function parseJsonTable(text: string): Row[] | undefined {
+function decodeJsonTable(text: string, options: TableDecodeOptions): TableDecode {
     let table: readonly Record<string, string | number | boolean | null>[];
     try {
         table = parseJsonAs(text, z.array(z.record(z.string(), JsonTableCell)));
     } catch {
-        return undefined;
+        return { kind: "unparsable" };
     }
-    const rows: Row[] = [];
-    for (const fields of table) {
-        const row: Row = {};
-        for (const [key, cell] of Object.entries(fields)) {
-            const coerced = coerceCell(cell);
-            if (coerced !== undefined) {
-                row[key] = coerced;
-            }
-        }
-        rows.push(row);
-    }
-    return rows;
-}
-
-/** Wrap in-memory bytes as an `AsyncBuffer`, thus the parquet reader reads from memory and opens no file. */
-function toAsyncBuffer(bytes: Buffer): AsyncBuffer {
-    const buffer = new ArrayBuffer(bytes.byteLength);
-    new Uint8Array(buffer).set(bytes);
-    return { byteLength: buffer.byteLength, slice: (start: number, end?: number) => buffer.slice(start, end) };
+    const header = [...new Set(table.flatMap((row) => Object.keys(row)))];
+    const columns = keptColumns(header, options);
+    if ("missing" in columns) return { kind: "missing_columns", missing: columns.missing, columns: header };
+    const range = rowRange(table.length, options);
+    const cells = (range.end - range.start) * columns.kept.length;
+    if (cells > options.cellBudget) return { kind: "over_budget", cells, budget: options.cellBudget, columns: header, totalRows: table.length };
+    const rows = table.slice(range.start, range.end).map((row) => keepCells(row, columns.kept, options.numericText));
+    return { kind: "rows", columns: columns.kept, rows, totalRows: table.length };
 }
 
 /**
- * Read a parquet file into rows with the pure-JavaScript reader, thus no native library enters the
- * package. A reader fault gives back `undefined`, thus the file falls through.
+ * Wrap in-memory bytes as an `AsyncBuffer`, thus the parquet reader reads from memory and opens no file. Each slice
+ * copies only the range that the reader asks for.
  */
-async function parseParquet(bytes: Buffer): Promise<Row[] | undefined> {
-    let records: Array<Record<string, unknown>>;
+function toAsyncBuffer(bytes: Uint8Array): AsyncBuffer {
+    // A plain view, because `Buffer#slice` gives a view of the whole buffer and `Uint8Array#slice` a copy of the range.
+    const view = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { byteLength: view.byteLength, slice: (start: number, end?: number) => view.slice(start, end ?? view.byteLength).buffer };
+}
+
+/**
+ * Decode a parquet file with the pure-JavaScript reader, thus no native library enters the package. The metadata
+ * gives the row count and the columns before any page is decoded, thus a read over the budget decodes nothing. The
+ * reader decodes only the kept columns and the rows of the range. A reader fault is structural doubt.
+ */
+async function decodeParquet(bytes: Uint8Array, options: TableDecodeOptions): Promise<TableDecode> {
+    const file = toAsyncBuffer(bytes);
     try {
-        records = await parquetReadObjects({ file: toAsyncBuffer(bytes), rowFormat: "object", utf8: true });
+        const metadata = await parquetMetadataAsync(file);
+        const header = parquetSchema(metadata).children.map((child) => child.element.name);
+        const totalRows = Number(metadata.num_rows);
+        const columns = keptColumns(header, options);
+        if ("missing" in columns) return { kind: "missing_columns", missing: columns.missing, columns: header };
+        const range = rowRange(totalRows, options);
+        const cells = (range.end - range.start) * columns.kept.length;
+        if (cells > options.cellBudget) return { kind: "over_budget", cells, budget: options.cellBudget, columns: header, totalRows };
+        if (range.end === range.start || columns.kept.length === 0) return { kind: "rows", columns: columns.kept, rows: [], totalRows };
+        const records: Array<Record<string, unknown>> = await parquetReadObjects({
+            file,
+            metadata,
+            columns: columns.kept,
+            rowStart: range.start,
+            rowEnd: range.end,
+            rowFormat: "object",
+            utf8: true,
+        });
+        const rows = records.map((record) => keepCells(record, columns.kept, options.numericText));
+        return { kind: "rows", columns: columns.kept, rows, totalRows };
     } catch {
-        return undefined;
+        return { kind: "unparsable" };
     }
-    const rows: Row[] = [];
-    for (const record of records) {
-        const row: Row = {};
-        for (const [key, cell] of Object.entries(record)) {
-            const coerced = coerceCell(cell);
-            if (coerced !== undefined) {
-                row[key] = coerced;
-            }
-        }
-        rows.push(row);
-    }
-    return rows;
+}
+
+/**
+ * Decode the bytes of one table in a decided format, with the columns, the range, and the budget of `options`. A
+ * caller runs it in a decode worker (`lib/host-workers.ts`), because a table under the file cap can hold millions
+ * of cells.
+ */
+export async function decodeTable(format: TabularFormat, bytes: Uint8Array, options: TableDecodeOptions): Promise<TableDecode> {
+    if (format === "parquet") return decodeParquet(bytes, options);
+    const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8");
+    if (format === "json") return decodeJsonTable(text, options);
+    return decodeDelimited(text, format === "tsv" ? "\t" : ",", options);
 }
 
 /**
@@ -430,8 +538,32 @@ async function hostReadCells(cap: number, path: string, identity: ReadyIdentity)
     } catch {
         return { kind: "fall-through", detail: "the file could not be read" };
     }
-    const rows = await parseTable(format, bytes);
-    return rows === undefined ? { kind: "fall-through", detail: PARSE_FAULT_DETAIL[format] } : { kind: "rows", rows };
+    const buffer = transferable(bytes);
+    const decoded = await runHostTask(
+        { kind: "table", bytes: buffer, path, format, options: { cellBudget: HOST_CELL_BUDGET, numericText: false } },
+        { transfer: [buffer] },
+    );
+    if (decoded.isErr()) {
+        return {
+            kind: "fall-through",
+            detail: decoded.error.kind === "out_of_memory" ? "the decode passed the memory of its worker" : PARSE_FAULT_DETAIL[format],
+        };
+    }
+    const table = decoded.value;
+    switch (table.kind) {
+        case "rows":
+            return { kind: "rows", rows: table.rows };
+        case "over_budget":
+            return { kind: "fall-through", detail: `the table holds ${table.cells} cells, over the ${table.budget}-cell budget of the host read` };
+        case "unparsable":
+        case "missing_columns":
+        case "entry":
+            return { kind: "fall-through", detail: PARSE_FAULT_DETAIL[format] };
+        default: {
+            const unhandled: never = table;
+            throw new Error(`unhandled table decode: ${JSON.stringify(unhandled)}`);
+        }
+    }
 }
 
 /** The detail of a parse fault, for each format. */
@@ -441,14 +573,6 @@ const PARSE_FAULT_DETAIL: Record<TabularFormat, string> = {
     json: "the JSON parse did not succeed",
     parquet: "the parquet read did not succeed",
 };
-
-/** Parse the bytes of one table in a decided format. A parse fault gives back `undefined`. */
-export async function parseTable(format: TabularFormat, bytes: Buffer): Promise<Row[] | undefined> {
-    if (format === "parquet") return parseParquet(bytes);
-    const text = bytes.toString("utf8");
-    if (format === "json") return parseJsonTable(text);
-    return parseDelimited(text, format === "tsv" ? "\t" : ",");
-}
 
 /**
  * Compute the identity of one artifact: membership, containment, and the on-disk hash.

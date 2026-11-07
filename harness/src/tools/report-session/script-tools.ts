@@ -27,7 +27,7 @@ import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { isSafeId, reportSessionDerivedDir, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway } from "../report-authoring/authoring-tools.js";
-import { ReadTableOutputSchema, readTableRows, rowsText, type ScriptFileEffect } from "../script/file-tools.js";
+import { ReadTableOutputSchema, readTableRows, rowsText, TABLE_CELL_BUDGET, type ScriptFileEffect } from "../script/file-tools.js";
 import { DERIVED_FILE_CAP_BYTES } from "../script/scratch.js";
 import { confinedWrite } from "../workspace/mutator.js";
 import { syncWrittenFile, type SyncSessionFile } from "../../workspace/session-files.js";
@@ -50,10 +50,18 @@ function refused(error: string): Result<never, ToolError> {
 const readTableInput = z.object({
     path: z.string().min(1).describe("The path of a pinned artifact or of a derived table of this session, as `list_pinned_artifacts` gives it."),
     columns: z.array(z.string()).min(1).optional().describe("Keep only these columns. Absent: each column."),
+    offset: z.number().int().min(0).optional().describe("The first row to read, 0-based. Absent: 0."),
+    limit: z.number().int().min(1).optional().describe("The most rows to read. Absent: each row from `offset`."),
 });
 
 type ReadTableOutput = WithToolCallRecord<
-    { readonly path: string; readonly columns: readonly string[]; readonly rowCount: number; readonly rows: readonly Record<string, string | number>[] },
+    {
+        readonly path: string;
+        readonly columns: readonly string[];
+        readonly rowCount: number;
+        readonly totalRows: number;
+        readonly rows: readonly Record<string, string | number>[];
+    },
     ScriptFileEffect
 >;
 
@@ -63,13 +71,14 @@ function createReadTableTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeof r
         description:
             "Read one table of the pinned evidence as rows: CSV, TSV, JSON (an array of flat objects), or parquet, up to 16 MiB. " +
             "Each row is an object keyed by column, and a cell that holds a plain number reads as a number. " +
+            `One read gives at most ${TABLE_CELL_BUDGET.toLocaleString("en-US")} cells (rows times columns): name the columns that you need, and read a large table in pages with \`offset\` and \`limit\`. ` +
             "A larger table does not derive; tell the user which table is absent.",
         inputSchema: readTableInput,
         outputSchema: ReadTableOutputSchema,
         view: "none",
         describeCall: ({ path }) => path,
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
-        execute: async ({ path, columns }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
+        execute: async ({ path, columns, offset, limit }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
             const opened = await openReportThread(deps.gateway, ctx.session.scope);
             if (opened.isErr()) return refused(opened.error.detail);
             const entry = snapshotEntry(opened.value.state.snapshot, path);
@@ -79,13 +88,15 @@ function createReadTableTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeof r
                 session: ctx.session,
                 path,
                 columns,
+                offset,
+                limit,
                 tooLarge: "a larger table does not derive",
+                signal: ctx.signal,
             });
             if (table.isErr()) return refused(table.error);
-            const hash = computeSha256(table.value.source);
+            const { hash, rows, totalRows } = table.value;
             if (hash !== entry.hash) return refused(`${path} changed after the session pinned it, thus its bytes are not the evidence of this session`);
-            const { rows } = table.value;
-            return ok(withToolCallRecord({ path, columns: table.value.columns, rowCount: rows.length, rows }, { reads: [{ path, hash }] }));
+            return ok(withToolCallRecord({ path, columns: table.value.columns, rowCount: rows.length, totalRows, rows }, { reads: [{ path, hash }] }));
         },
     });
 }
