@@ -240,6 +240,9 @@ const SCRIPT_NOTE =
     "[eval] The script ran with exit code 0. This eval scripts the sandbox and cannot run model code, thus nothing that the script computes is printed, " +
     "and no file that it names appears. The sandbox works: another probe gives the same note.";
 
+/** The time of one submit and its first poll of sandbox-server. */
+const EXEC_LATENCY_MS = 300;
+
 /** The default rules: the lint, a run of a Python or R script with the imports checked against the lock, and a read of a file. */
 function defaultRules(packages: readonly LockedPackage[]): ExecRule[] {
     const python = new Set(packages.filter((p) => p.track === "python").map((p) => fold(p.name)));
@@ -442,7 +445,10 @@ export async function openSandboxTrial(
         }
         return true;
     };
-    const exec = (_ref: unknown, request: ExecRequest): Promise<ExecResult> => {
+    const exec = async (_ref: unknown, request: ExecRequest): Promise<ExecResult> => {
+        // A real exec submits over HTTP and polls, thus a host-side write of the same message lands before the command
+        // reads it. An answer with no wait reads the tree before that write.
+        await new Promise((resolve) => setTimeout(resolve, EXEC_LATENCY_MS));
         const state = { cwd: request.cwd ?? workingDirOf(setup) };
         // sandbox-server runs a one-element command through `sh -c`. A shell line runs each command of a `;` or `&&`
         // list, and the first command of each pipe, thus a rule answers a simple command.
@@ -455,14 +461,14 @@ export async function openSandboxTrial(
                 .map((reply) => pick(reply) ?? "")
                 .filter((text) => text.length > 0)
                 .join("\n");
-        return Promise.resolve({
+        return {
             execId: "eval:1",
             exitCode: last.exitCode,
             stdout: joined((r) => r.stdout),
             stderr: joined((r) => r.stderr),
             durationMs: 1,
             timedOut: false,
-        });
+        };
     };
 
     const deps: SandboxAgentDeps = {
