@@ -108,10 +108,27 @@ export type SandboxTrial = {
     dispose(): void;
 };
 
+// The top-level modules of `sys.stdlib_module_names` (Python 3.14), plus the modules that PEP 594 removed in 3.13,
+// thus the list covers the Python 3.12 of the lock. An extra name only lets an import through.
 const PYTHON_STDLIB = new Set(
-    "os sys re json csv math statistics pathlib collections itertools functools typing subprocess shutil glob gzip io argparse datetime time random warnings logging dataclasses textwrap string hashlib copy tempfile zipfile pickle enum abc".split(
-        " ",
-    ),
+    (
+        "abc aifc annotationlib antigravity argparse array ast asyncio atexit audioop base64 bdb binascii bisect " +
+        "builtins bz2 cProfile calendar cgi cgitb chunk cmath cmd code codecs codeop collections colorsys compileall " +
+        "compression concurrent configparser contextlib contextvars copy copyreg crypt csv ctypes curses dataclasses " +
+        "datetime dbm decimal difflib dis doctest email encodings ensurepip enum errno faulthandler fcntl filecmp " +
+        "fileinput fnmatch fractions ftplib functools gc genericpath getopt getpass gettext glob graphlib grp gzip " +
+        "hashlib heapq hmac html http idlelib imaplib imghdr importlib inspect io ipaddress itertools json keyword " +
+        "lib2to3 linecache locale logging lzma mailbox mailcap marshal math mimetypes mmap modulefinder msilib msvcrt " +
+        "multiprocessing netrc nis nntplib nt ntpath nturl2path numbers opcode operator optparse os ossaudiodev pathlib " +
+        "pdb pickle pickletools pipes pkgutil platform plistlib poplib posix posixpath pprint profile pstats pty pwd " +
+        "py_compile pyclbr pydoc pydoc_data pyexpat queue quopri random re readline reprlib resource rlcompleter runpy " +
+        "sched secrets select selectors shelve shlex shutil signal site smtplib sndhdr socket socketserver spwd sqlite3 " +
+        "sre_compile sre_constants sre_parse ssl stat statistics string stringprep struct subprocess sunau symtable sys " +
+        "sysconfig syslog tabnanny tarfile telnetlib tempfile termios textwrap this threading time timeit tkinter token " +
+        "tokenize tomllib trace traceback tracemalloc tty turtle turtledemo types typing unicodedata unittest urllib uu " +
+        "uuid venv warnings wave weakref webbrowser winreg winsound wsgiref xdrlib xml xmlrpc zipapp zipfile zipimport " +
+        "zlib zoneinfo"
+    ).split(" "),
 );
 
 /** The distribution of a Python import name, where the two differ. */
@@ -211,10 +228,14 @@ function fold(name: string): string {
  * What an inline `python -c` or `Rscript -e` prints when its imports resolve. An eval cannot compute the output of
  * model code, and an empty output reads as a broken sandbox, thus the run says what it is.
  */
-const INLINE_NOTE = "[eval] The inline code ran with exit code 0. This eval does not compute what it prints.";
+const INLINE_NOTE =
+    "[eval] The inline code ran with exit code 0. This eval scripts the sandbox and cannot run model code, thus nothing that the code computes is printed. " +
+    "The sandbox works: another probe gives the same note.";
 
 /** What a script run prints when no rule of the case answers it. */
-const SCRIPT_NOTE = "[eval] The script ran with exit code 0. This eval does not compute what it prints or writes.";
+const SCRIPT_NOTE =
+    "[eval] The script ran with exit code 0. This eval scripts the sandbox and cannot run model code, thus nothing that the script computes is printed, " +
+    "and no file that it names appears. The sandbox works: another probe gives the same note.";
 
 /** The default rules: the lint, a run of a Python or R script with the imports checked against the lock, and a read of a file. */
 function defaultRules(packages: readonly LockedPackage[]): ExecRule[] {

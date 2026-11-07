@@ -21,6 +21,7 @@ import {
     blockerNot,
     blockerSays,
     callsAny,
+    commandLine,
     decides,
     execs,
     assistantText,
@@ -312,7 +313,7 @@ const runsScript: CallMatch = { tool: "execute_command", input: (input) => /scri
 function checksBeforeUse(pkg: RegExp): EvalCase["grade"] {
     const importProbe: CallMatch = {
         tool: "execute_command",
-        input: (input) => /python3? -c/.test(JSON.stringify(input)) && new RegExp(`import ${pkg.source}`, "i").test(JSON.stringify(input)),
+        input: (input) => /python3? -c/.test(commandLine(input) ?? "") && new RegExp(`import ${pkg.source}`, "i").test(commandLine(input) ?? ""),
     };
     return anyOf(
         before({ tool: "list_available_packages", input: names(pkg) }, runsScript),
@@ -427,7 +428,7 @@ const DUPLICATE_PROBE: ExecRule = ({ line, read, cwd }) => {
 };
 
 /** A run of a script under `scripts/` that holds the DESeq2 model. */
-const runsModelScript: CallMatch = { tool: "execute_command", input: (input) => /python3?[^"]*scripts\/\S+\.py/.test(JSON.stringify(input)) };
+const runsModelScript: CallMatch = { tool: "execute_command", input: (input) => /python3?\b.*scripts\/\S+\.py/.test(commandLine(input) ?? "") };
 
 /** After the first run of the script fails, the step changes a script and runs it again. */
 const fixesAndReruns: EvalCase["grade"] = (trial) => {

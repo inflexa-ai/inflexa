@@ -70,10 +70,11 @@ export function identityOf(file: ProviderFile): ProviderIdentity {
     return { kind: file.kind, baseURL: file.baseURL, model: file.model, reasoning: file.reasoning };
 }
 
-/** The provider of one agent role as the CLI configures it, and the facts of it that a report names. */
+/** The provider of one agent role as the CLI configures it, and the facts of it that a report names. `modelOverride` keeps the connection and the credential of the CLI. */
 export async function cliProvider(
     logger: Logger,
     role: "conversation" | "sandbox" = "conversation",
+    modelOverride?: string,
 ): Promise<{ readonly provider: ChatProvider; readonly identity: ProviderIdentity }> {
     const connection = resolveModelConnection();
     if (connection.configError !== undefined) throw new Error(`the models block of the CLI config is not valid: ${connection.configError.issues}`);
@@ -86,7 +87,7 @@ export async function cliProvider(
     const source = credential.value.source;
     const config = agentProviderConfig({
         connection,
-        selection: { model: model.value, effort },
+        selection: { model: modelOverride ?? model.value, effort },
         apiKey: credential.value.apiKey,
         fetch: source === undefined ? undefined : buildAuthInjectingFetch(source),
     });

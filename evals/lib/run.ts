@@ -287,6 +287,8 @@ export async function runTrial(
                         },
                         ...stepRules,
                     });
+        // A trial that its time bound stopped measured the provider, not a decision. A stalled proxy stops each trial with no reply.
+        if (result.finish.reason === "aborted") return { kind: "error", error: `the trial reached its time bound after ${result.steps.length} steps` };
         const text = replyText(result.messages.slice(history.length));
         const summaryRecords: string[] = [];
         const summaryLogger = recordingLogger(summaryRecords);
