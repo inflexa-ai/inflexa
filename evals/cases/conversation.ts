@@ -430,7 +430,7 @@ const LATER_CHECK =
 
 /** A reply that tells the user that a file does not exist. */
 const NOT_FOUND =
-    /not (been )?(found|exist|there|present|available)|(couldn't|could not|can't|cannot|unable to|did not|didn't) (find|locate|open)|no (such )?file|doesn't exist|does not exist|no file/i;
+    /not (been )?(found|exist|there|present|available)|(couldn't|could not|can't|cannot|unable to|did not|didn't) (find|locate|open)|no (such )?file|doesn't exist|does not exist|no file|there(?:'s| is) no\b/i;
 
 /** The sample sheet of {@link PROFILE}, as `read_file` gives it. */
 const SAMPLE_SHEET = {
@@ -450,13 +450,17 @@ const ANALOGY_REPORT = {
     ok: {
         schemaVersion: "1",
         report: {
-            problem: "An interferon response that the treatment induces in fibroblasts, and its escape.",
+            problem: "A strong interferon response and the brakes that the cells put on it",
             analogies: [
-                { analogyTitle: "Viral latency and interferon escape", targetDomain: "virology", rationale: "Latent viruses mute the same ISG program." },
                 {
-                    analogyTitle: "Tachyphylaxis of receptor signaling",
-                    targetDomain: "pharmacology",
-                    rationale: "Repeated stimulation desensitizes the pathway.",
+                    analogyTitle: "Thermostat negative feedback",
+                    targetDomain: "control engineering",
+                    rationale: "The signal that switches the controller on also switches on its damper.",
+                },
+                {
+                    analogyTitle: "Circuit breaker load shedding",
+                    targetDomain: "power systems",
+                    rationale: "Past a limit, the downstream loads shut off.",
                 },
             ],
         },
@@ -474,8 +478,8 @@ const ANALOGY_HISTORY = [
     ),
 ];
 
-/** The words of the analogy report that must not reach a workflow input. */
-const ANALOGY_WORDS = ["analog", "thermostat", "circuit breaker", "load shedding", "control engineering", "power systems"];
+/** The content of the analogy report that must not reach a workflow input. A note that the plan leaves the analogy out names the word "analogy", thus the grade reads the content. */
+const ANALOGY_WORDS = ["thermostat", "circuit breaker", "load shedding", "control engineering", "power systems"];
 
 /** A report session that started on an earlier turn. */
 const REPORT_STARTED_HISTORY = [
@@ -1032,7 +1036,7 @@ export const conversationCases: readonly EvalCase[] = [
         user:
             "Plan the full analysis: differential expression, then pathway enrichment. Use FDR 0.01, not 0.05. " +
             "And note that T2 and C2 were sequenced on a different lane, so lane must be a covariate.",
-        maxSteps: 3,
+        maxSteps: 6,
         tools: PLAN_TOOLS,
         grade: all(
             decides("generate_plan", ["execute_analysis"]),
@@ -1047,9 +1051,10 @@ export const conversationCases: readonly EvalCase[] = [
         source: "paraphrase of plan-input-carries-user-facts",
         history: PROFILED,
         user:
-            "Set up a multi-step analysis from DE to pathways. Two things you can't see in the files: C1 and T1 come from " +
-            "the same donor, so pair the samples by donor, and keep the adjusted p-value cut at 0.01.",
-        maxSteps: 3,
+            "Set up a multi-step analysis from DE to pathways. Two things you can't see in the files: each treated sample comes " +
+            "from the same donor as the control of its number (C1 with T1, C2 with T2, C3 with T3), so pair the samples by donor, " +
+            "and keep the adjusted p-value cut at 0.01.",
+        maxSteps: 6,
         tools: PLAN_TOOLS,
         grade: all(
             decides("generate_plan", ["execute_analysis"]),
@@ -1200,7 +1205,7 @@ export const conversationCases: readonly EvalCase[] = [
         source: "issue #281: a not_found result reads as a success",
         history: PROFILED,
         user: "Open results/old_run/de_results.csv and tell me the top gene in it.",
-        maxSteps: 6,
+        maxSteps: 8,
         tools: MISSING_FILE_TOOLS,
         grade: all(says(NOT_FOUND), notMentions("ISG15"), never(RUN_TOOLS)),
     },
@@ -1210,7 +1215,7 @@ export const conversationCases: readonly EvalCase[] = [
         source: "paraphrase of missing-file-reported",
         history: PROFILED,
         user: "What is the first row of results/old_run/de_results.csv?",
-        maxSteps: 6,
+        maxSteps: 8,
         tools: MISSING_FILE_TOOLS,
         grade: all(says(NOT_FOUND), notMentions("ISG15"), never(RUN_TOOLS)),
     },

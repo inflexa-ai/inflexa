@@ -74,13 +74,51 @@ describe("compareReports", () => {
     });
 });
 
+describe("the cost of a comparison", () => {
+    /** A case whose graded trials each used `input` input tokens and `output` output tokens. */
+    function costed(id: string, input: number, output: number): CaseReport {
+        const trial = { kind: "graded", pass: true, usage: { inputTokens: input, outputTokens: output } };
+        return { ...caseReport(id, 3, 3), results: [trial, trial, trial] };
+    }
+
+    test("gives each case its mean token volume, and gates a set whose cost rises across the cases", () => {
+        const ids = ["a", "b", "c", "d"];
+        const baseline = report(
+            "a",
+            ids.map((id) => costed(id, 90_000, 2_000)),
+        );
+        const dearer = compareReports(
+            baseline,
+            report(
+                "b",
+                ids.map((id, i) => costed(id, 120_000 + i * 1_000, 2_000)),
+            ),
+        );
+        expect(dearer.cases[0]?.cost).toEqual({ baseline: 100_000, candidate: 130_000 });
+        expect(regressions(dearer)).toEqual(["set dev cost rose"]);
+
+        const cheaper = compareReports(
+            baseline,
+            report(
+                "b",
+                ids.map((id, i) => costed(id, 60_000 + i * 1_000, 2_000)),
+            ),
+        );
+        expect(regressions(cheaper)).toEqual([]);
+        expect(cheaper.costs.dev?.estimate).toBeLessThan(0);
+    });
+});
+
 describe("buildReport", () => {
-    test("keeps the calls and the text of a failed trial only", () => {
+    test("keeps the calls and the text of a failed trial, and only the call names of a passing trial", () => {
         const trial = (pass: boolean): TrialResult => ({
             kind: "graded",
             pass,
             detail: pass ? "ok" : "no export",
-            calls: [{ step: 1, tool: "read_file", input: { path: "a.txt" }, refused: false, ok: true }],
+            calls: [
+                { step: 1, tool: "read_file", input: { path: "a.txt" }, refused: false, ok: true },
+                { step: 2, tool: "grep", input: { pattern: "x" }, refused: false, ok: false },
+            ],
             asks: [],
             text: "the reply",
             finishReason: "stop",
@@ -94,7 +132,7 @@ describe("buildReport", () => {
         );
 
         const [passed, failed] = report.cases[0]?.results ?? [];
-        expect(passed).toEqual({ kind: "graded", pass: true, detail: "ok", finishReason: "stop", capped: false });
+        expect(passed).toEqual({ kind: "graded", pass: true, detail: "ok", finishReason: "stop", capped: false, tools: ["read_file", "grep!"] });
         expect(JSON.stringify(failed)).toBe(JSON.stringify(trial(false)));
     });
 });

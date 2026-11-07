@@ -52,6 +52,12 @@ Run `bun run evals` with no command for the usage. `main.ts` owns the flags.
 Each trial makes paid model calls. Thus `bun test` runs only the unit tests of
 `lib/`, never a case.
 
+`--model <id>` runs a different model through the connection and the
+credential of the CLI.
+
+A trial that reaches its time bound is an error, not a failed grade. A stalled
+provider gives no reply, and an error fails the gate of `compare`.
+
 With no `--provider`, a run uses the conversation model of the CLI configuration.
 The conversation agent holds the host tools of the CLI. Thus the CLI must resolve
 the harness of this checkout. If the run refuses the CLI, run `bun run
@@ -59,8 +65,9 @@ harness:local` in `cli/`.
 
 A report is a JSON file. It holds the grade and the token usage of each trial.
 Only a failed trial also keeps its calls and its text, because they explain the
-failure. The prompt digest of a report identifies the prompt variant that
-ran.
+failure. A passing trial keeps the names of its calls in `tools`. A name ends
+with `!` when its call gave an error result. The prompt digest of a report
+identifies the prompt variant that ran.
 
 A run writes its report to `results/`, under the commit that ran, the start time,
 and the prompt digest. Commit the report with the change that it measures. A
@@ -82,7 +89,8 @@ Do these steps for each change of a prompt or of a tool description:
    set, a case that only one report holds, or a trial error fails the gate.
 5. Read each failed trial before you change a prompt. Find the cause in its
    detail, its calls, and its text.
-6. Compare the cost, not only the pass rate. Use the `usage` of each trial.
+6. Compare the cost, not only the pass rate. `compare` gives the token volume
+   of each case. A set whose cost rises fails the gate.
 
 A failed trial has one of two causes:
 
@@ -105,7 +113,9 @@ decision with a high cost.
 
 The cache changes the cost of input tokens. One weight that tracks the price of
 Anthropic is: fresh input, plus 1.25 times the cache writes, plus 0.1 times the
-cache reads.
+cache reads. But the state of the cache changes between two runs, and that
+noise can be larger than the effect of a change. Thus `compare` uses the token
+volume: each input token, plus five times each output token.
 
 ## Write a case
 

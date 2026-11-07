@@ -3,7 +3,8 @@
  *
  * The message of each case is the brief that the tool composes. Each search tool gives the papers of a small set whose
  * keywords the query holds, thus a grader can tell a title that a search returned from a title that the reasoner made
- * up. The record tools are real: their input schemas check each part of the report.
+ * up. The set covers the analogies that a strong model picks, and a famous paper, because a model that finds neither
+ * judges the search fake and cites nothing. The record tools are real: their input schemas check each part of the report.
  */
 
 import { buildResearchPrompt } from "@inflexa-ai/harness/tools/research/generate-analogy-report.js";
@@ -38,6 +39,36 @@ const PAPERS: readonly Paper[] = [
         url: "https://arxiv.org/abs/2305.12345",
         abstract: "When a link fails, the controller reroutes flows through alternate paths within milliseconds, which keeps the throughput.",
     },
+    {
+        title: "Deterministic network interdiction",
+        url: "https://www.semanticscholar.org/paper/wood-1993-interdiction",
+        abstract: "An interdictor with a limited budget removes arcs of a network to minimize the maximum flow that an adversary can still send.",
+    },
+    {
+        title: "Shortest-path network interdiction",
+        url: "https://www.semanticscholar.org/paper/israeli-wood-2002",
+        abstract: "A leader interdicts arcs to maximize the length of the shortest path that a follower then takes, as a bilevel program.",
+    },
+    {
+        title: "Fault tree handbook",
+        url: "https://www.semanticscholar.org/paper/fault-tree-handbook",
+        abstract: "Minimal cut sets name the smallest combinations of component failures that defeat a redundant system.",
+    },
+    {
+        title: "Efficient minimum-cost network hardening via exploit dependency graphs",
+        url: "https://www.semanticscholar.org/paper/noel-2003-hardening",
+        abstract: "The cheapest set of security measures that cuts every attack path to the goal, computed from the attack graph.",
+    },
+    {
+        title: "Viewing invasive species removal in a whole-ecosystem context",
+        url: "https://www.semanticscholar.org/paper/zavaleta-2001-removal",
+        abstract: "The removal of one invasive species can release competitors and mesopredators, thus the community needs a joint plan.",
+    },
+    {
+        title: "Attention is all you need",
+        url: "https://arxiv.org/abs/1706.03762",
+        abstract: "The Transformer, a sequence model based only on attention.",
+    },
 ];
 
 const TITLES = new Set(PAPERS.map((paper) => paper.title));
@@ -48,6 +79,20 @@ const KEYWORDS: Readonly<Record<string, readonly string[]>> = {
     "https://www.semanticscholar.org/paper/network-resilience": ["network", "resilien", "robust", "node", "attack", "interdiction", "flow", "cut"],
     "https://www.semanticscholar.org/paper/ipm-resistance": ["pest", "resistance", "insecticide", "rotation", "mixture", "combination", "ecolog", "evolution"],
     "https://arxiv.org/abs/2305.12345": ["rout", "link", "traffic", "network", "failover", "path", "flow"],
+    "https://www.semanticscholar.org/paper/wood-1993-interdiction": ["interdiction", "max flow", "maximum flow", "bilevel", "cut"],
+    "https://www.semanticscholar.org/paper/israeli-wood-2002": ["interdiction", "shortest path", "shortest-path", "stackelberg", "bilevel"],
+    "https://www.semanticscholar.org/paper/fault-tree-handbook": ["fault tree", "cut set", "cutset", "reliability", "common cause", "redundan"],
+    "https://www.semanticscholar.org/paper/noel-2003-hardening": ["attack graph", "attack tree", "hardening", "attack path"],
+    "https://www.semanticscholar.org/paper/zavaleta-2001-removal": [
+        "invasi",
+        "eradicat",
+        "mesopredator",
+        "competitor release",
+        "compensatory",
+        "trophic",
+        "secondary invasion",
+    ],
+    "https://arxiv.org/abs/1706.03762": ["attention", "transformer"],
 };
 
 /** The papers whose keywords the query holds. A query that names none of them finds nothing, as a real search can. */

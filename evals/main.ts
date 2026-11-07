@@ -2,7 +2,7 @@
 
  * The command line of the decision evals.
  *
- *   bun run evals run [--provider <file>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3]
+ *   bun run evals run [--provider <file> | --model <id>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3]
  *                     [--concurrency 4] [--timeout 180] [--exposure base] [--out <file>]
  *   bun run evals compare <baseline.json> <candidate.json> [--fail-on-regression]
  *
@@ -31,7 +31,7 @@ import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
 import { okAsync } from "neverthrow";
 
 const USAGE = `usage:
-  bun run evals run [--provider <file>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--exposure base|read-both|read-write-both|read-script] [--out <file>]
+  bun run evals run [--provider <file> | --model <id>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--exposure base|read-both|read-write-both|read-script] [--out <file>]
   bun run evals compare <baseline.json> <candidate.json> [--fail-on-regression]
 
 With no --provider, the run uses the conversation model that the CLI configures.
@@ -76,6 +76,7 @@ async function run(args: readonly string[]): Promise<void> {
         args: [...args],
         options: {
             provider: { type: "string" },
+            model: { type: "string" },
             set: { type: "string", default: "dev" },
             case: { type: "string", multiple: true, default: [] },
             trials: { type: "string" },
@@ -97,11 +98,11 @@ async function run(args: readonly string[]): Promise<void> {
     const logger = process.env["EVALS_LOG"] === "1" ? createConsoleLogger() : createNoopLogger();
     const { provider, identity } =
         values.provider === undefined
-            ? await cliProvider(logger)
+            ? await cliProvider(logger, "conversation", values.model)
             : await readProviderFile(values.provider).then((file) => ({ provider: providerOf(file, process.env, logger), identity: identityOf(file) }));
     // A sandbox case runs on the sandbox model of the CLI. A provider file serves each case.
     const sandboxCases = cases.filter((c) => c.agent === "sandbox");
-    const sandbox = sandboxCases.length === 0 || values.provider !== undefined ? undefined : await cliProvider(logger, "sandbox");
+    const sandbox = sandboxCases.length === 0 || values.provider !== undefined ? undefined : await cliProvider(logger, "sandbox", values.model);
     const agents = evalAgents();
     const startedAt = new Date().toISOString();
     const digest = promptDigest(
