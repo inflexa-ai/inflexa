@@ -96,7 +96,9 @@ without any other context.
 #### Scenario: Successful plan
 
 - **WHEN** the planner submits a valid plan
-- **THEN** the output is `{ event: "plan_complete", planId, plan }`
+- **THEN** the output is `{ event: "plan_complete", planId, plan, claims? }`
+- **AND** `claims` gives the id, the title, and the strength of each claim view that the stored plan keeps
+- **AND** `claims` is absent when the plan keeps no view
 
 #### Scenario: Clarification needed
 

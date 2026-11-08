@@ -21,6 +21,7 @@ import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../../providers/types.js";
 import { PlannerPlanSchema, PlanningAgentOutputSchema, type PlanningAgentOutput } from "../../../schemas/plan-schemas.js";
+import { ClaimViewSchema } from "../../../schemas/workflow-state.js";
 import { loadPlan, type DataProfileResult } from "../../../state/index.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptStep } from "../../../testing.js";
 import type { Tool, ToolContext } from "../../define-tool.js";
@@ -491,9 +492,9 @@ describe("generatePlan loop-driving tool", () => {
 
         const stored = z.object({ request: z.string() }).parse((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
         expect(stored.request).toBe(INPUT.researchQuestion);
-        expect(Object.keys(z.object({ properties: z.record(z.string(), z.json()) }).parse(z.toJSONSchema(PlannerPlanSchema)).properties)).not.toContain(
-            "request",
-        );
+        const plannerFields = Object.keys(z.object({ properties: z.record(z.string(), z.json()) }).parse(z.toJSONSchema(PlannerPlanSchema)).properties);
+        expect(plannerFields).not.toContain("request");
+        expect(plannerFields).not.toContain("claims");
     });
 
     it("persists one plan when the persist of the same call runs again, and a new call persists a new plan", async () => {
@@ -609,6 +610,66 @@ describe("generatePlan loop-driving tool", () => {
             const steps = await storedStepsOf("an-restored-template", await plannedWithAnswer("an-restored-template", [grounded]));
 
             expect(steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
+        });
+
+        it("keeps the view of each claim that a step cites with the stored plan, and gives its title in plan_complete", async () => {
+            // Two steps cite the claim of the test, and one step departs from the answer with no
+            // claim. The plan keeps one view of the cited claim, and no view of a claim that no step cites.
+            const base = validCandidate({
+                id: "T1S2",
+                grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" },
+            });
+            const first = presentAt(base.steps, 0);
+            const plan = {
+                ...base,
+                steps: [
+                    first,
+                    { ...first, id: "T2S1", track: "T2", name: "edgeR robustness check" },
+                    {
+                        ...first,
+                        id: "T2S2",
+                        track: "T2",
+                        name: "Sample sheet audit",
+                        grounding: { status: "ungrounded", snapshot: "none", claims: [], reason: "no rule covers the audit of the sample sheet" },
+                    },
+                ],
+            };
+            const analysisId = "an-claim-views";
+
+            const result = await plannedWithAnswer(analysisId, [plan]);
+
+            expect(result.claims).toEqual([{ id: "R-0001@e7d0", title: "The title of R-0001", strength: "consensus" }]);
+            const stored = z.object({ claims: z.array(ClaimViewSchema) }).parse((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
+            expect(stored.claims).toEqual([
+                {
+                    id: "R-0001@e7d0",
+                    snapshot: SNAPSHOT.digest,
+                    rule: "R-0001",
+                    title: "The title of R-0001",
+                    statement: "With 2 to 11 replicates use DESeq2 Wald or edgeR QL.",
+                    strength: "consensus",
+                    severity: "info",
+                    evidence: [{ doi: "10.1261/rna.053959.115", title: "How many biological replicates", year: 2016, direction: "supports" }],
+                    license: "CC-BY-4.0",
+                },
+            ]);
+        });
+
+        it("keeps no claim view and gives no claims when no step cites a claim", async () => {
+            const plan = validCandidate({
+                id: "T9S1",
+                grounding: { status: "ungrounded", snapshot: SNAPSHOT.digest, claims: [], reason: "the question needs a method that no rule covers" },
+            });
+            const analysisId = "an-claim-views-none";
+
+            const result = await plannedWithAnswer(analysisId, [plan]);
+
+            expect(result.event).toBe("plan_complete");
+            expect(result.claims).toBeUndefined();
+            const stored = z
+                .object({ claims: z.array(ClaimViewSchema).optional() })
+                .parse((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap());
+            expect(stored.claims).toBeUndefined();
         });
 
         it("stamps the snapshot digest of a skeleton step that the model miscopied", async () => {

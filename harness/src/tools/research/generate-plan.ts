@@ -67,7 +67,8 @@ import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from 
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../../config/resource-limits.js";
 import { plannerPrompt } from "../../prompts/planner.js";
 import { planCardOf } from "../../memory/card-builders.js";
-import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
+import { hydratePlanSteps, PlannerPlanSchema, type PlanClaimTitle, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
+import { ClaimViewSchema, type ClaimView } from "../../schemas/workflow-state.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
@@ -244,7 +245,7 @@ export function plannerInstructions(): string {
 
 /** The outcome of an invocation: the selection from the recorded calls, then the persist of a plan. */
 type PlannerOutcome =
-    | { kind: "plan_submitted"; planId: string; plan: PlannerPlan }
+    | { kind: "plan_submitted"; planId: string; plan: PlannerPlan; claims: readonly ClaimView[] }
     | { kind: "clarification"; question: string; questionContext?: string }
     | { kind: "blocker"; reason: string }
     | { kind: "persist_error"; message: string };
@@ -490,6 +491,7 @@ function planIdFor(ctx: PersistContext): string {
  */
 async function persistPlan(
     plan: PlannerPlan,
+    claims: readonly ClaimView[],
     ctx: PersistContext,
     pool: Pool,
     logger: Logger,
@@ -500,7 +502,7 @@ async function persistPlan(
             await upsertPlan(pool, {
                 planId,
                 analysisId: ctx.analysisId,
-                plan: { ...hydratePlanSteps(plan), request: ctx.request },
+                plan: { ...hydratePlanSteps(plan), request: ctx.request, claims: claims.length > 0 ? claims : undefined },
                 parentPlanId: ctx.parentPlanId,
             }),
         );
@@ -536,12 +538,14 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
 /**
  * The last `knowledge_recommend` answer of one invocation: the skeleton steps
  * by step id, every claim id the answer returned, from the steps, their
- * alternatives, their disputed rules, the claim views, and the flags, and
- * the snapshot digest the answer came from.
+ * alternatives, their disputed rules, the claim views, and the flags, the
+ * view of each claim by its id, and the snapshot digest the answer came from.
  */
 type RecommendMemory = {
     readonly steps: Map<string, SkeletonStep>;
     readonly claims: Set<string>;
+    /** The view of each claim of the answer that parses, by claim id, with the digest of the answer. */
+    readonly views: Map<string, ClaimView>;
     /** The digest of the last answer; `undefined` before the first. */
     digest?: string;
     /** A `knowledge_check` answered after the last recommend answer. */
@@ -551,6 +555,7 @@ type RecommendMemory = {
 function rememberAnswer(memory: RecommendMemory, answer: KnowledgeRecommendAnswer): void {
     memory.steps.clear();
     memory.claims.clear();
+    memory.views.clear();
     memory.digest = answer.snapshot.digest;
     memory.checked = false;
     for (const step of answer.plan_skeleton) {
@@ -559,8 +564,37 @@ function rememberAnswer(memory: RecommendMemory, answer: KnowledgeRecommendAnswe
         for (const alternative of step.alternatives) for (const rule of alternative.rules) memory.claims.add(rule);
         if (step.disputed !== undefined) memory.claims.add(step.disputed.rule);
     }
-    for (const claim of answer.claims) memory.claims.add(claim.id);
+    for (const claim of answer.claims) {
+        memory.claims.add(claim.id);
+        // The parse keeps the fields of a view and drops the rest of the loose service object.
+        const view = ClaimViewSchema.safeParse({ ...claim, snapshot: answer.snapshot.digest });
+        if (view.success) memory.views.set(claim.id, view.data);
+    }
     for (const flag of answer.flags) memory.claims.add(flag.rule);
+}
+
+/**
+ * The view of each claim that a step of the plan cites, in the order of the
+ * steps, one per claim id. A step cites the release of its own snapshot, thus
+ * only a step whose digest is the digest of the answer takes a view from it.
+ * A claim the answer holds no view of stays an id on its step.
+ */
+function claimViewsOf(plan: PlannerPlan, memory: RecommendMemory): ClaimView[] {
+    const views = new Map<string, ClaimView>();
+    for (const step of plan.steps) {
+        const grounding = step.grounding;
+        if (grounding === undefined || grounding.snapshot !== memory.digest) continue;
+        for (const claim of grounding.claims) {
+            const view = memory.views.get(claim);
+            if (view !== undefined && !views.has(claim)) views.set(claim, view);
+        }
+    }
+    return [...views.values()];
+}
+
+/** The title and the strength of each view, for the conversation agent. */
+function claimTitlesOf(views: readonly ClaimView[]): PlanClaimTitle[] {
+    return views.map((view) => ({ id: view.id, title: view.title, strength: view.strength }));
 }
 
 /** The rule of a claim id: `R-0001` of `R-0001@e7d0`. */
@@ -763,13 +797,19 @@ export function plannerAgentOf(deps: GeneratePlanDeps, searchTools: readonly Too
 
 /**
  * The planner of one invocation. Its terminal tools and its knowledge tools share the memory of the run, thus
- * `submit_plan` reads the last `knowledge_recommend` answer.
+ * `submit_plan` reads the last `knowledge_recommend` answer. `claimViews` gives the view of each claim that a plan
+ * cites, from the same memory.
  */
 export function plannerOfInvocation(
     deps: GeneratePlanDeps,
     logger: Logger,
-): { readonly agent: AgentDefinition; readonly searchTools: readonly Tool[]; readonly terminal: readonly Tool[] } {
-    const memory: RecommendMemory = { steps: new Map(), claims: new Set() };
+): {
+    readonly agent: AgentDefinition;
+    readonly searchTools: readonly Tool[];
+    readonly terminal: readonly Tool[];
+    readonly claimViews: (plan: PlannerPlan) => ClaimView[];
+} {
+    const memory: RecommendMemory = { steps: new Map(), claims: new Set(), views: new Map() };
     // The census is read once for each call, at the first submit, from the same source as the census of the seed.
     let census: Promise<PackageResolver | undefined> | undefined;
     const readPackages = (analysisId: string): Promise<PackageResolver | undefined> => {
@@ -783,12 +823,12 @@ export function plannerOfInvocation(
             memory.checked = true;
         },
     });
-    return { agent: plannerAgentOf(deps, searchTools, terminal), searchTools, terminal };
+    return { agent: plannerAgentOf(deps, searchTools, terminal), searchTools, terminal, claimViews: (plan) => claimViewsOf(plan, memory) };
 }
 
 /** The terminal tools of a planner with no knowledge answer, for a consumer that runs the planner outside this tool. */
 export function plannerTerminalTools(logger: Logger): Tool[] {
-    return buildInnerTools(logger, { steps: new Map(), claims: new Set() }).terminal;
+    return buildInnerTools(logger, { steps: new Map(), claims: new Set(), views: new Map() }).terminal;
 }
 
 /**
@@ -1070,7 +1110,8 @@ function shapeOutcome(args: ShapeOutcomeArgs): ShapedOutcome {
     const { outcome, runError, timedOut, outerAborted } = args;
 
     if (outcome?.kind === "plan_submitted") {
-        return { output: { event: "plan_complete", planId: outcome.planId, plan: outcome.plan }, kind: "plan_submitted" };
+        const claims = outcome.claims.length > 0 ? claimTitlesOf(outcome.claims) : undefined;
+        return { output: { event: "plan_complete", planId: outcome.planId, plan: outcome.plan, claims }, kind: "plan_submitted" };
     }
     if (outcome?.kind === "clarification") {
         return {
@@ -1462,7 +1503,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         // dep, thus the tool must stay constructible from an empty bag. The tool
         // definitions are identical across invocations, thus the request prefix
         // that the cache keys on does not move.
-        const { agent: planner, searchTools, terminal } = plannerOfInvocation(deps, logger);
+        const { agent: planner, searchTools, terminal, claimViews } = plannerOfInvocation(deps, logger);
 
         // Merge the outer abort signal with a wall-clock timeout — either
         // cancels the planner promptly.
@@ -1522,9 +1563,11 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             trace = traceOf(run.steps);
             const selected = selectedOutcomeOf(run.steps);
             if (selected?.kind === "plan") {
-                const persisted = await durably("planner.persist", () => persistPlan(selected.plan, persistCtx, deps.pool, logger));
+                // The memory folds each answer on a replay too, thus the views are the same on each run of the body.
+                const claims = claimViews(selected.plan);
+                const persisted = await durably("planner.persist", () => persistPlan(selected.plan, claims, persistCtx, deps.pool, logger));
                 outcome = persisted.ok
-                    ? { kind: "plan_submitted", planId: persisted.planId, plan: selected.plan }
+                    ? { kind: "plan_submitted", planId: persisted.planId, plan: selected.plan, claims }
                     : { kind: "persist_error", message: persisted.message };
             } else {
                 outcome = selected;
@@ -1564,8 +1607,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             "record more faithfully than the record itself. Pass only what the profile cannot hold: the research " +
             "question, facts the user told you (analystNotes), prior run results, and their constraints. " +
             "The planner is a multi-step sub-agent, thus a call can take many minutes. " +
-            "The result carries an `event`: `plan_complete` with {planId, plan} — the plan is saved, the call shows its plan card to the user, " +
-            "and it does not run it (execute_analysis plan mode does, after the approval); `clarification_needed` with {question, questionContext?} " +
+            "The result carries an `event`: `plan_complete` with {planId, plan, claims?} — the plan is saved, the call shows its plan card to the user, " +
+            "and it does not run it (execute_analysis plan mode does, after the approval). `claims` gives the title and the strength of each knowledge rule that a step cites by id in `grounding.claims`; " +
+            "when you describe the plan, name a rule by its title, not by its id. `clarification_needed` with {question, questionContext?} " +
             "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
             "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
         inputSchema: generatePlanInputSchema,

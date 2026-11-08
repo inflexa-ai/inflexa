@@ -31,11 +31,16 @@ const QC_STEP = {
 };
 
 function claim(id: string, statement: string): RecommendResponse["claims"][number] {
+    const rule = id.split("@")[0] ?? id;
     return {
         id,
+        rule,
+        title: `The title of ${rule}`,
         statement,
         strength: "consensus",
+        severity: "info",
         evidence: [{ doi: "10.1261/rna.053959.115", title: "How many biological replicates", year: 2016, direction: "supports" }],
+        license: "CC-BY-4.0",
     };
 }
 
