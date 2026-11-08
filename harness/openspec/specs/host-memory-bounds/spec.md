@@ -23,13 +23,25 @@ The harness MUST decode untrusted file content in a worker thread with a V8 heap
 
 ### Requirement: The heavy workers of a process wait in queues of fixed width
 
-The harness MUST hold one queue for the decode workers and one queue for the script workers, each of a fixed width for the whole process. A task that finds each slot held MUST wait for a slot, and it MUST NOT fail for the wait. A slot MUST be free again when its worker exits, for each outcome of the task.
+The harness MUST hold one queue for the decode workers and one queue for the script workers, each of a fixed width for the whole process. A task that finds each slot held MUST wait for a slot, and it MUST NOT fail for the wait. A slot MUST be free again when its worker exits, for each outcome of the task. A read MUST hold its decode slot before it loads the bytes of the file, thus a read that waits holds no bytes. A cancel of a read that waits MUST take it out of the queue, and the read MUST NOT load or decode the file.
 
 #### Scenario: A third decode waits
 
 - **GIVEN** two decodes that hold the two decode slots
 - **WHEN** a third read starts
 - **THEN** the third read waits, and it decodes when the first slot is free
+
+#### Scenario: A waiting read holds no bytes
+
+- **GIVEN** two reads that hold the two decode slots
+- **WHEN** a third read starts
+- **THEN** the third read loads no bytes until a slot is free
+
+#### Scenario: A cancel while a read waits
+
+- **GIVEN** a read that waits for a decode slot
+- **WHEN** its call is cancelled
+- **THEN** the read leaves the queue, and it does not load or decode the file
 
 #### Scenario: A failed decode frees its slot
 
