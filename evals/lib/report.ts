@@ -73,8 +73,15 @@ function trialRecord(result: TrialResult):
         finishReason: result.finishReason,
         capped: result.capped,
         usage: result.usage,
-        tools: result.calls.map((call) => (call.ok === false ? `${call.tool}!` : call.tool)),
+        tools: result.calls.map((call) => `${nameOf(call)}${call.ok === false ? "!" : ""}`),
     };
+}
+
+/** The name of a call in a passing trial. A read of a skill keeps the file that it read, which shows the knowledge that the agent used. */
+function nameOf(call: Extract<TrialResult, { kind: "graded" }>["calls"][number]): string {
+    const input = call.input;
+    if (call.tool !== "skill_read" || typeof input !== "object" || input === null || !("skill" in input) || !("path" in input)) return call.tool;
+    return typeof input.skill === "string" && typeof input.path === "string" ? `skill_read(${input.skill}/${input.path})` : call.tool;
 }
 
 function caseReport(evalCase: EvalCase, results: readonly TrialResult[], k: number): CaseReport {

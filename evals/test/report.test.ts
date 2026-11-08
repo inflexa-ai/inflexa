@@ -118,6 +118,7 @@ describe("buildReport", () => {
             calls: [
                 { step: 1, tool: "read_file", input: { path: "a.txt" }, refused: false, ok: true },
                 { step: 2, tool: "grep", input: { pattern: "x" }, refused: false, ok: false },
+                { step: 3, tool: "skill_read", input: { skill: "enrichment", path: "SKILL.md" }, refused: false, ok: true },
             ],
             asks: [],
             text: "the reply",
@@ -132,7 +133,14 @@ describe("buildReport", () => {
         );
 
         const [passed, failed] = report.cases[0]?.results ?? [];
-        expect(passed).toEqual({ kind: "graded", pass: true, detail: "ok", finishReason: "stop", capped: false, tools: ["read_file", "grep!"] });
+        expect(passed).toEqual({
+            kind: "graded",
+            pass: true,
+            detail: "ok",
+            finishReason: "stop",
+            capped: false,
+            tools: ["read_file", "grep!", "skill_read(enrichment/SKILL.md)"],
+        });
         expect(JSON.stringify(failed)).toBe(JSON.stringify(trial(false)));
     });
 });
