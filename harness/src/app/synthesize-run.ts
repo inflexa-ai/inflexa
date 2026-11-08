@@ -38,6 +38,8 @@ import {
     loadStepSummariesFromDisk,
     persistSynthesis,
 } from "../execution/run-synthesis.js";
+import { readRunMethods, type RunStepMethods } from "../execution/run-methods.js";
+import type { StepSummary } from "../schemas/step-summary.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 import { createVectorStore } from "../state/vector-store.js";
@@ -112,10 +114,25 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
     await onProgress("starting", "Beginning literature-grounded synthesis");
 
     try {
-        const { workspaceRoot, summaries } = await durably("synthesis.read-summaries", async () => {
+        // The methods ride in the step of the summaries, thus the body keeps its sequence of steps. A
+        // checkpoint that an older version wrote has no methods, and the synthesis then has no method source.
+        const read: { workspaceRoot: string; summaries: StepSummary[]; methods?: RunStepMethods[] } = await durably("synthesis.read-summaries", async () => {
             const root = await resolveWorkspaceRoot(analysisId);
-            return { workspaceRoot: root, summaries: await loadStepSummariesFromDisk({ workspaceRoot: root, runId, completedSteps }) };
+            const run = unwrapOrThrow(await queryRun(pool, runId));
+            const methods = unwrapOrThrow(
+                await readRunMethods({
+                    pool,
+                    analysisId,
+                    runId,
+                    planId: run?.planId ?? null,
+                    workspaceRoot: root,
+                    stepIds: completedSteps,
+                    logger: (deps.logger ?? createNoopLogger()).named("synthesize-run").named("methods"),
+                }),
+            );
+            return { workspaceRoot: root, summaries: await loadStepSummariesFromDisk({ workspaceRoot: root, runId, completedSteps }), methods };
         });
+        const { workspaceRoot, summaries } = read;
         if (summaries.length === 0) {
             const logger = (deps.logger ?? createNoopLogger()).named("synthesize-run");
             logger.warn("synthesis skipped — no step summaries on disk", { runId, reason: "no-summaries" });
@@ -139,6 +156,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             workspace: { workspaceFs: deps.workspaceFs, pool, embedding, resolveWorkspaceRoot },
             summaries,
             planNarrative,
+            methods: read.methods ?? [],
             runId,
             emit,
             pause,

@@ -194,7 +194,8 @@ describe("readStepDecisionRecords", () => {
         await writeFile(join(dir, "output", "summary.json"), JSON.stringify(record()));
 
         const records = await readStepDecisionRecords(dir, logger);
-        expect(records.map((entry) => entry.script_path)).toEqual(["/x/scripts/a.R", "/x/scripts/b.R"]);
+        expect(records.map((entry) => entry.file)).toEqual(["output/decision_record_a.json", "output/decision_record_b.json"]);
+        expect(records.map((entry) => entry.record.script_path)).toEqual(["/x/scripts/a.R", "/x/scripts/b.R"]);
         const messages = logger.records.map((entry) => entry.msg);
         expect(messages.some((msg) => msg.includes("does not parse"))).toBe(true);
         expect(messages.some((msg) => msg.includes("read failed"))).toBe(true);

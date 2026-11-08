@@ -434,6 +434,7 @@ export const RunSynthesisPartSchema = z.object({
             description: z.string(),
         }),
     ),
+    methodReferences: z.array(z.object({ stepId: z.string(), source: z.string(), citation: z.string(), method: z.string() })).optional(),
 });
 
 // ── Synthesis Progress ─────────────────────────────────────────────

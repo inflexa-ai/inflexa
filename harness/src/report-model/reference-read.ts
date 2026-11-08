@@ -18,6 +18,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
+import { citationKey, normalizeCitationKey } from "../contracts/report-reference.js";
 import { asFiniteNumber, cellMatchesFilterValue, checkCitationAssertion, checkValueAssertion } from "./assert-rules.js";
 import { applyRowBound, columnsHeldByNoRow, defineOwn, type ReportSnapshot, type ResolvedValue } from "./reference-resolver.js";
 
@@ -177,11 +178,12 @@ export async function resolveDerivation(
 
 /** Resolve a citation: confirm that the id is in the pinned evidence, and echo the key back. */
 export function resolveCitation(reference: CitationReference, snapshot: ReportSnapshot): Result<ResolvedValue, UnresolvedReference> {
-    const key = `${reference.idKind}:${reference.id}`;
+    const key = citationKey(reference.idKind, reference.id);
     if (snapshot.citations === undefined || !snapshot.citations.includes(key)) {
         return fail(reference, "artifact-missing", `the citation ${key} is not in the pinned evidence`);
     }
     const value: ResolvedValue = { type: "citation", id: key };
-    const citationFailure = checkCitationAssertion(reference, reference.assert?.value, key);
+    const expected = reference.assert?.value;
+    const citationFailure = checkCitationAssertion(reference, expected === undefined ? undefined : normalizeCitationKey(expected), key);
     return citationFailure !== undefined ? err(citationFailure) : ok(value);
 }

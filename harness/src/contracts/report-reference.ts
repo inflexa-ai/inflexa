@@ -334,6 +334,20 @@ function sortKeysDeep(value: unknown): unknown {
 }
 
 /**
+ * The citation key of an external id, in the prefixed `idKind:id` form. A DOI is case-insensitive, thus
+ * its key is lower case: an author can type a DOI in any case, and the pin, the resolver, and the
+ * renderer then read one key.
+ */
+export function citationKey(idKind: CitationReference["idKind"], id: string): string {
+    return idKind === "doi" ? `doi:${id.toLowerCase()}` : `${idKind}:${id}`;
+}
+
+/** A citation key in the prefixed form, with a DOI key in lower case. A text with no known prefix is kept as it is. */
+export function normalizeCitationKey(key: string): string {
+    return key.startsWith("doi:") ? key.toLowerCase() : key;
+}
+
+/**
  * Serialize a reference to a canonical URI.
  *
  * The payload is an opaque base64url of the canonical JSON, and not a structured URI with a field for

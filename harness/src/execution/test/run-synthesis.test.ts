@@ -39,6 +39,7 @@ import {
     persistSynthesis,
     readRunSynthesis,
     synthesizerAgentOf,
+    synthesizerSeedOf,
     type GenerateRunSynthesisInput,
 } from "../run-synthesis.js";
 import { flattenDataPart } from "../../contracts/chat-frame.js";
@@ -273,6 +274,71 @@ describe("submit_synthesis inner tool", () => {
             ["synthesis.findings[0].references[0].pmid", `pmid "${CITED_PMID}" is in no lookup result of this run`],
             ["synthesis.keyReferences[0].pmid", `pmid "${CITED_PMID}" is in no lookup result of this run`],
         ]);
+    });
+
+    /** The methods of step T1S1: one DOI from a claim view, and one PubMed id from a decision record. */
+    const SOURCES = [
+        { doi: "10.1093/Bioinformatics/btp616", title: "edgeR: a Bioconductor package", year: 2010 },
+        { pmid: "27008025", title: "From reads to genes", year: 2016 },
+        { url: "https://example.org", title: "A manual" },
+    ];
+    // The display list of the methods holds the first source only: the check and the seed read the full list.
+    const METHODS = [
+        {
+            stepId: "T1S1",
+            methods: {
+                grounding: "grounded" as const,
+                templates: [{ id: "tpl-edger-ql", version: "1.8.0", label: "edgeR QL", method: { id: "M-0003", label: "edgeR quasi-likelihood F-test" } }],
+                claims: [{ id: "R-0028@d560", title: "Use the QL F-test" }],
+                sources: SOURCES.slice(0, 1),
+                sourcesOmitted: 2,
+            },
+            sources: SOURCES,
+        },
+    ];
+
+    function withMethodReferences(...methodReferences: SynthesisDraft["methodReferences"] & object): SynthesisDraft {
+        return { ...validSynthesisPayload(), methodReferences };
+    }
+
+    it("accepts a method reference to a method source of its step with no lookup, in any case of the DOI, also past the display list", async () => {
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]), lookedUpPmids: new Set([CITED_PMID]), methods: METHODS });
+        const synthesis = withMethodReferences(
+            { stepId: "T1S1", source: "doi:10.1093/BIOINFORMATICS/BTP616", citation: "Robinson 2010", method: "edgeR quasi-likelihood F-test" },
+            { stepId: "T1S1", source: "pmid:27008025", citation: "Chen 2016", method: "the filter of low counts" },
+        );
+
+        expect((await tool.execute({ synthesis }, makeToolCtx()))._unsafeUnwrap()).toEqual({ accepted: true });
+    });
+
+    it("refuses a method reference to a source that the step does not list, and to a step with no method source", async () => {
+        const { submit: tool } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]), lookedUpPmids: new Set([CITED_PMID]), methods: METHODS });
+        const synthesis = withMethodReferences(
+            { stepId: "T1S1", source: `pmid:${CITED_PMID}`, citation: "Smith 2020", method: "edgeR" },
+            { stepId: "T1S1", source: "url:https://example.org", citation: "A manual", method: "edgeR" },
+            { stepId: "T1S9", source: "pmid:27008025", citation: "Chen 2016", method: "edgeR" },
+        );
+
+        const result = (await tool.execute({ synthesis }, makeToolCtx()))._unsafeUnwrap();
+
+        // A PMID that a lookup returned is not a method source: the check reads the methods, not the lookups.
+        if (!("issues" in result)) throw new Error("expected a rejected submission");
+        expect(result.issues.map((i) => i.path)).toEqual([
+            "synthesis.methodReferences[0].source",
+            "synthesis.methodReferences[1].source",
+            "synthesis.methodReferences[2].stepId",
+        ]);
+    });
+
+    it("lists the bounded method sources of each step in the seed, with each citation key and the count of the tail", () => {
+        const seed = synthesizerSeedOf("The narrative.", [{ stepId: "T1S1", agentId: "bulk", markdown: "# Results" }], METHODS);
+
+        expect(seed).toContain("## Method Sources");
+        expect(seed).toContain("### T1S1\n- Template `tpl-edger-ql@1.8.0`: method M-0003, edgeR quasi-likelihood F-test");
+        expect(seed).toContain("- `doi:10.1093/bioinformatics/btp616`: edgeR: a Bioconductor package (2010)");
+        expect(seed).toContain("- (+2 more sources in the decision records of the step)");
+        expect(seed).not.toContain("pmid:27008025");
+        expect(synthesizerSeedOf("The narrative.", [{ stepId: "T1S1", agentId: "bulk", markdown: "# Results" }])).not.toContain("## Method Sources");
     });
 
     it("refuses a malformed synthesis at its input schema", () => {
@@ -578,6 +644,15 @@ describe("buildRunSynthesisPart + formatSynthesisEmbeddingText", () => {
         const data = parseUnknownRecord(part.data);
         expect(data?.id).toBe(`synthesis-${RUN_ID}`);
         expect(data?.runId).toBe(RUN_ID);
+    });
+
+    it("carries the method references of a synthesis in the part, and the part schema admits them", () => {
+        const methodReferences = [{ stepId: "T1S2", source: "doi:10.1093/bioinformatics/btp616", citation: "Robinson 2010", method: "edgeR" }];
+        const synthesis = { runId: RUN_ID, overview: "ov", conclusions: "cl", findings: [], themes: [], limitations: [], keyReferences: [], methodReferences };
+
+        const part = RunSynthesisPartSchema.parse(flattenDataPart(buildRunSynthesisPart(RUN_ID, synthesis)));
+
+        expect(part.methodReferences).toEqual(methodReferences);
     });
 
     it("formats the embedding text with the expected sections", () => {

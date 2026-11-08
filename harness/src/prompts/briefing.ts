@@ -26,6 +26,7 @@ import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from 
 import { WORKING_MEMORY_LIMITS, type WorkingMemory } from "../memory/working-memory.js";
 import type { DataProfileResult } from "../state/data-profile.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
+import type { StepMethods, StepMethodsSource } from "../contracts/chat-parts.js";
 import type { AnalysisStep, ClaimView } from "../schemas/workflow-state.js";
 import type { TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBindingValue } from "../tools/knowledge/template.js";
@@ -59,6 +60,12 @@ export const TEMPLATE_NOTES_MAX_CHARS = 8000;
 
 /** Characters of one claim title carried in the Grounding section — the rule, not its evidence. */
 export const CLAIM_TITLE_MAX_CHARS = 160;
+
+/** Rules and sources of one dependency carried in its handoff. The tail is counted, and the full summary of the dependency lists it. */
+export const UPSTREAM_METHODS_MAX_ITEMS = 8;
+
+/** Decision record paths listed per dependency. The rest are in its output directory. */
+export const MAX_UPSTREAM_DECISION_RECORDS = 4;
 
 // ── Field partition (the coverage guard's two halves) ─────────────────
 
@@ -500,6 +507,10 @@ export type UpstreamHandoff = {
     readonly outputDir: string;
     /** In-sandbox absolute paths of the artifacts the dependency registered. */
     readonly artifacts: readonly string[];
+    /** The methods of the dependency, from its plan grounding and its decision records. Absent for a dependency with neither. */
+    readonly methods?: StepMethods;
+    /** In-sandbox absolute paths of the decision records of the dependency. */
+    readonly decisionRecords?: readonly string[];
 };
 
 export function renderUpstream(handoffs: readonly UpstreamHandoff[]): string {
@@ -543,7 +554,51 @@ function renderHandoff(handoff: UpstreamHandoff): string {
         lines.push(`- Artifacts: ${shown.map((a) => `\`${a}\``).join(", ")}${more > 0 ? ` (+${more} more in the output directory)` : ""}`);
     }
 
+    if (handoff.methods) lines.push(...renderHandoffMethods(handoff.methods));
+    const records = handoff.decisionRecords ?? [];
+    if (records.length > 0) {
+        const shown = records.slice(0, MAX_UPSTREAM_DECISION_RECORDS);
+        const more = records.length - shown.length;
+        lines.push(`- Decision records: ${shown.map((r) => `\`${r}\``).join(", ")}${more > 0 ? ` (+${more} more in the output directory)` : ""}`);
+    }
+
     return lines.join("\n");
+}
+
+/** The tail note of a bounded list of the methods: the count past the bound, and where the full list is. */
+function methodsTail(shown: number, total: number, omitted: number | undefined): string {
+    const more = total - shown + (omitted ?? 0);
+    return more > 0 ? ` (+${more} more in the full summary)` : "";
+}
+
+function renderHandoffSource(source: StepMethodsSource): string {
+    const id = source.doi ? `, doi:${source.doi}` : source.pmid ? `, PMID:${source.pmid}` : source.url ? `, ${source.url}` : "";
+    return `${source.title}${source.year === undefined ? "" : ` (${source.year})`}${id}`;
+}
+
+/**
+ * The methods of one dependency: its grounding, its templates with their methods, and a bounded list of
+ * its rules and its sources. A downstream step that reports the methods reads them here, and the decision
+ * records give the rest.
+ */
+function renderHandoffMethods(methods: StepMethods): string[] {
+    const lines: string[] = [];
+    const release = methods.snapshot ? `knowledge release \`${methods.snapshot}\`` : undefined;
+    if (methods.grounding) lines.push(`- Grounding: ${methods.grounding}${release ? `, ${release}` : ""}`);
+    else if (release) lines.push(`- Grounding: none, ${release}`);
+    for (const template of methods.templates) {
+        lines.push(`- Template \`${template.id}@${template.version}\`: method ${template.method.id}, ${template.method.label}`);
+    }
+    const claims = methods.claims.slice(0, UPSTREAM_METHODS_MAX_ITEMS);
+    if (claims.length > 0) {
+        const shown = claims.map((claim) => `\`${claim.id}\`${claim.title ? ` ${clamp(claim.title, CLAIM_TITLE_MAX_CHARS)}` : ""}`);
+        lines.push(`- Rules: ${shown.join("; ")}${methodsTail(claims.length, methods.claims.length, methods.claimsOmitted)}`);
+    }
+    const sources = methods.sources.slice(0, UPSTREAM_METHODS_MAX_ITEMS);
+    if (sources.length > 0) {
+        lines.push(`- Sources: ${sources.map(renderHandoffSource).join("; ")}${methodsTail(sources.length, methods.sources.length, methods.sourcesOmitted)}`);
+    }
+    return lines;
 }
 
 // ── Composition ───────────────────────────────────────────────────────

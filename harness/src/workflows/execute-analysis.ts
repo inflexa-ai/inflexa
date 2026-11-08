@@ -105,6 +105,7 @@ import { flattenDataPart } from "../contracts/chat-frame.js";
 import type { PauseWaiter, RunCompletedPart, SynthesisPhase } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
+import { claimViewsOfGrounding, readStepMethods } from "../execution/step-methods.js";
 import {
     MAX_UPSTREAM_ARTIFACTS,
     composeStepBriefing,
@@ -575,7 +576,10 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
         workspaceRoot,
         dependsOn: step.depends_on,
         agentByStepId: input.agentByStepId,
+        planStepById: input.planStepById,
+        claims: input.claims ?? [],
         pool: deps.pool,
+        logger: (deps.logger ?? createNoopLogger()).named("executeAnalysis.seed").named("methods"),
     });
 
     const contract = await resolveTemplateContract(step, deps.knowledge);
@@ -601,9 +605,7 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
  * of one release only. A claim with no view is absent here, and the briefing renders its id alone.
  */
 function claimViewsOfStep(step: AnalysisStep, views: readonly ClaimView[]): readonly ClaimView[] {
-    const grounding = step.grounding;
-    if (!grounding) return [];
-    return grounding.claims.flatMap((id) => views.find((view) => view.id === id && view.snapshot === grounding.snapshot) ?? []);
+    return claimViewsOfGrounding(step.grounding, views);
 }
 
 /**
@@ -799,7 +801,10 @@ async function collectUpstreamHandoffs(args: {
     workspaceRoot: string;
     dependsOn: readonly string[];
     agentByStepId: Readonly<Record<string, string>>;
+    planStepById: ExecuteAnalysisInput["planStepById"];
+    claims: readonly ClaimView[];
     pool: Querier & Connectable;
+    logger: Logger;
 }): Promise<UpstreamHandoff[]> {
     const { analysisId, runId, workspaceRoot, dependsOn, agentByStepId, pool } = args;
     if (dependsOn.length === 0) return [];
@@ -815,6 +820,15 @@ async function collectUpstreamHandoffs(args: {
     for (const summary of summaries) {
         const outputDir = stepSubdir(runStepDir(runId, summary.stepId), "output");
         const artifacts = unwrapOrThrow(await queryStepArtifactPaths(pool, analysisId, runId, summary.stepId, MAX_UPSTREAM_ARTIFACTS));
+        // The methods of the dependency come from its plan grounding and its decision records, and not
+        // from its summary: the excerpt of the summary is clamped, and the methods block sits at its end.
+        const { methods, recordFiles } = await readStepMethods({
+            grounding: args.planStepById[summary.stepId]?.grounding,
+            claimViews: args.claims,
+            writePrefix: stepWritePrefix({ workspaceRoot, runId, stepId: summary.stepId }),
+            logger: args.logger.with({ runId, stepId: summary.stepId }),
+        });
+        const stepDir = runStepDir(runId, summary.stepId);
         handoffs.push({
             stepId: summary.stepId,
             agentId: summary.agentId,
@@ -822,6 +836,8 @@ async function collectUpstreamHandoffs(args: {
             summaryPath: `/${analysisId}/${outputDir}/summary.md`,
             outputDir: `/${analysisId}/${outputDir}`,
             artifacts: artifacts.map((a) => `/${analysisId}/${a.path}`),
+            methods,
+            decisionRecords: recordFiles.map((file) => `/${analysisId}/${stepDir}/${file}`),
         });
     }
     return handoffs;

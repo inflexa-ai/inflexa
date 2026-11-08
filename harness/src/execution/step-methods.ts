@@ -14,6 +14,7 @@ import { join, posix as posixPath } from "node:path";
 import { z } from "zod";
 
 import type { StepMethods, StepMethodsClaim, StepMethodsSource, StepMethodsTemplate } from "../contracts/chat-parts.js";
+import { citationKey } from "../contracts/report-reference.js";
 import { classifyWithinRoot } from "../lib/fs-helpers.js";
 import type { Logger } from "../lib/logger.js";
 import { safeParseJsonAs } from "../lib/parse-json.js";
@@ -60,12 +61,18 @@ const DecisionRecordSchema = z.looseObject({
 });
 export type StepDecisionRecord = z.infer<typeof DecisionRecordSchema>;
 
+/** One decision record that parsed, and its file relative to the step directory (`output/<name>`). */
+export type ReadDecisionRecord = {
+    readonly file: string;
+    readonly record: StepDecisionRecord;
+};
+
 /**
  * Read the decision records of a step from `output/decision_record_*.json`, in the order of the file
  * names. A file that escapes the step directory, that is too large, or that does not parse is left out
  * with a warning. An absent `output/` directory gives no record.
  */
-export async function readStepDecisionRecords(writePrefix: string, logger: Logger): Promise<StepDecisionRecord[]> {
+export async function readStepDecisionRecords(writePrefix: string, logger: Logger): Promise<ReadDecisionRecord[]> {
     const outputDir = join(writePrefix, "output");
     let names: string[];
     try {
@@ -78,7 +85,7 @@ export async function readStepDecisionRecords(writePrefix: string, logger: Logge
         .sort()
         .slice(0, MAX_RECORD_FILES);
 
-    const records: StepDecisionRecord[] = [];
+    const records: ReadDecisionRecord[] = [];
     for (const name of recordNames) {
         const path = join(outputDir, name);
         try {
@@ -96,12 +103,32 @@ export async function readStepDecisionRecords(writePrefix: string, logger: Logge
                 logger.warn("a decision record does not parse, thus the methods leave it out", { file: name });
                 continue;
             }
-            records.push(parsed.data);
+            records.push({ file: `output/${name}`, record: parsed.data });
         } catch (err) {
             logger.warn("a decision record read failed, thus the methods leave it out", { file: name, ...logger.errorFields(err) });
         }
     }
     return records;
+}
+
+/**
+ * The views of the claims that a grounding cites, in the order of the grounding. A view matches on the
+ * claim id and on the snapshot digest of the grounding, because a claim id names a claim of one release
+ * only. A claim with no view is absent here.
+ */
+export function claimViewsOfGrounding(grounding: Grounding | undefined, views: readonly ClaimView[]): ClaimView[] {
+    if (!grounding) return [];
+    return grounding.claims.flatMap((id) => views.find((view) => view.id === id && view.snapshot === grounding.snapshot) ?? []);
+}
+
+/**
+ * The citation key of a source in the prefixed `idKind:id` form: `doi:` in lower case, else `pmid:`.
+ * A source with only a URL or a title has no key, because a citation reference names no such id kind.
+ */
+export function citationKeyOfSource(source: StepMethodsSource): string | undefined {
+    if (source.doi) return citationKey("doi", source.doi);
+    if (source.pmid) return citationKey("pmid", source.pmid);
+    return undefined;
 }
 
 /** The key of a source: its DOI, else its PubMed id, else its URL, else its title. */
@@ -125,11 +152,18 @@ function stepScriptPath(scriptPath: string | undefined): string | undefined {
  * one entry for each DOI, PubMed id, or URL. Gives `undefined` when the step has no grounding, no claim,
  * and no record.
  */
-export function buildStepMethods(args: {
+export function buildStepMethods(args: StepMethodsInput): StepMethods | undefined {
+    return assembleStepMethods(args)?.methods;
+}
+
+type StepMethodsInput = {
     readonly grounding?: Grounding;
     readonly claimViews: readonly ClaimView[];
     readonly records: readonly StepDecisionRecord[];
-}): StepMethods | undefined {
+};
+
+/** The methods of a step, and the full list of its sources: the methods clamp the list for display, and the citation evidence must not. */
+function assembleStepMethods(args: StepMethodsInput): { readonly methods: StepMethods; readonly sources: StepMethodsSource[] } | undefined {
     const { grounding, claimViews, records } = args;
     const viewById = new Map(claimViews.map((view) => [view.id, view]));
 
@@ -179,7 +213,7 @@ export function buildStepMethods(args: {
     const allSources = [...sources.values()];
     const licenses = new Set(claimViews.filter((view) => claims.has(view.id)).flatMap((view) => (view.license ? [view.license] : [])));
     const snapshot = grounding && grounding.snapshot !== "none" ? grounding.snapshot : records.find((record) => record.snapshot)?.snapshot?.digest;
-    return {
+    const methods: StepMethods = {
         grounding: grounding?.status,
         snapshot,
         templates,
@@ -189,6 +223,34 @@ export function buildStepMethods(args: {
         sourcesOmitted: allSources.length > MAX_METHODS_SOURCES ? allSources.length - MAX_METHODS_SOURCES : undefined,
         license: licenses.size > 0 ? [...licenses].sort().join(", ") : undefined,
     };
+    return { methods, sources: allSources };
+}
+
+/** The methods of one step, the full list of its sources, and the record files that they read. */
+export type StepMethodsRead = {
+    readonly methods?: StepMethods;
+    /** Each source of the step. `methods.sources` stops at {@link MAX_METHODS_SOURCES}, and this list does not. */
+    readonly sources: readonly StepMethodsSource[];
+    readonly recordFiles: readonly string[];
+};
+
+/**
+ * Read the decision records of one step and build its methods. `claimViews` can hold the views of the
+ * whole plan, because the claims of the grounding select them.
+ */
+export async function readStepMethods(args: {
+    readonly grounding?: Grounding;
+    readonly claimViews: readonly ClaimView[];
+    readonly writePrefix: string;
+    readonly logger: Logger;
+}): Promise<StepMethodsRead> {
+    const read = await readStepDecisionRecords(args.writePrefix, args.logger);
+    const assembled = assembleStepMethods({
+        grounding: args.grounding,
+        claimViews: claimViewsOfGrounding(args.grounding, args.claimViews),
+        records: read.map((entry) => entry.record),
+    });
+    return { methods: assembled?.methods, sources: assembled?.sources ?? [], recordFiles: read.map((entry) => entry.file) };
 }
 
 /** The heading of the block that the host appends to the summary of a step. */

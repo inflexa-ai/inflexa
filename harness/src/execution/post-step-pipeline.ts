@@ -33,7 +33,7 @@ import { registerStepArtifacts, type ArtifactRegistrationFailure } from "./artif
 import { reconcileManifestWithDisk } from "./reconcile-manifest.js";
 import { generateFileMetadata as coreGenerateFileMetadata, type ArtifactForMetadata, type FileMetadataEntry } from "./artifact-metadata.js";
 import { generateStepSummary as coreGenerateStepSummary } from "./step-summary.js";
-import { buildStepMethods, readStepDecisionRecords, withMethodsBlock } from "./step-methods.js";
+import { readStepMethods, withMethodsBlock } from "./step-methods.js";
 import { StepSummarySchema, type StepSummary } from "../schemas/step-summary.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
@@ -139,8 +139,7 @@ export async function generateStepSummaryAndWrite(
         runId: input.runId,
     });
     const logger = (deps.logger ?? createNoopLogger()).named("post-step").named("methods").with({ runId: input.runId, stepId: input.stepId });
-    const records = await readStepDecisionRecords(writePrefix, logger);
-    const methods = buildStepMethods({ grounding: input.grounding, claimViews: input.claimViews ?? [], records });
+    const { methods } = await readStepMethods({ grounding: input.grounding, claimViews: input.claimViews ?? [], writePrefix, logger });
     const markdown = methods ? withMethodsBlock(agentSummary?.markdown, methods) : agentSummary?.markdown;
     const summary =
         markdown !== undefined && markdown.trim().length > 0
