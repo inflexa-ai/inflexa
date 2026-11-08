@@ -18,7 +18,7 @@
 
 import { Worker } from "node:worker_threads";
 
-import { err, errAsync, ok, ResultAsync } from "neverthrow";
+import { err, ok, ResultAsync, type Result } from "neverthrow";
 import { z } from "zod";
 
 import type { HostTask, HostTaskAnswer } from "../workspace/decode-tasks.js";
@@ -78,10 +78,30 @@ type Slots = { readonly width: number; inUse: number; readonly waiting: Array<()
 const decodeSlots: Slots = { width: DECODE_WORKER_SLOTS, inUse: 0, waiting: [] };
 const scriptSlots: Slots = { width: SCRIPT_WORKER_SLOTS, inUse: 0, waiting: [] };
 
-/** Wait for a slot, and give the function that frees it. The function frees the slot one time only. */
-async function acquire(slots: Slots): Promise<() => void> {
-    if (slots.inUse >= slots.width) await new Promise<void>((resolve) => slots.waiting.push(resolve));
-    else slots.inUse += 1;
+/**
+ * Wait for a slot, and give the function that frees it, or `undefined` when `signal` aborts first. An aborted wait
+ * leaves the queue. The function frees the slot one time only.
+ */
+async function acquire(slots: Slots, signal?: AbortSignal): Promise<(() => void) | undefined> {
+    if (signal?.aborted === true) return undefined;
+    if (slots.inUse >= slots.width) {
+        const granted = await new Promise<boolean>((resolve) => {
+            const grant = (): void => {
+                signal?.removeEventListener("abort", leave);
+                resolve(true);
+            };
+            const leave = (): void => {
+                const at = slots.waiting.indexOf(grant);
+                if (at !== -1) slots.waiting.splice(at, 1);
+                resolve(false);
+            };
+            slots.waiting.push(grant);
+            signal?.addEventListener("abort", leave, { once: true });
+        });
+        if (!granted) return undefined;
+    } else {
+        slots.inUse += 1;
+    }
     let freed = false;
     return () => {
         if (freed) return;
@@ -94,8 +114,11 @@ async function acquire(slots: Slots): Promise<() => void> {
 }
 
 /** Wait for a script slot, and give the function that frees it. The VM launcher of `run_script` holds it until its worker exits. */
-export function acquireScriptSlot(): Promise<() => void> {
-    return acquire(scriptSlots);
+export async function acquireScriptSlot(): Promise<() => void> {
+    const free = await acquire(scriptSlots);
+    // A wait with no signal ends only with a grant.
+    if (free === undefined) throw new Error("a script slot wait with no signal ended with no slot");
+    return free;
 }
 
 /** The slots that are held and the tasks that wait, for a test. */
@@ -114,61 +137,86 @@ function isOutOfMemory(error: unknown): boolean {
     return WorkerOutOfMemorySchema.safeParse(error).success;
 }
 
+/** The options of one task: the buffers that move to the worker, the cancel, and the V8 old-generation limit. */
+export type HostTaskOptions = { readonly transfer?: readonly ArrayBuffer[]; readonly signal?: AbortSignal; readonly heapMib?: number };
+
+/** Run one task in a decode slot that the caller holds. */
+export type DecodeRun = <T extends HostTask>(task: T, options?: HostTaskOptions) => ResultAsync<HostTaskAnswer<T>, HostTaskFailure>;
+
+type Outcome<T extends HostTask> = { ok: true; answer: HostTaskAnswer<T> } | { ok: false; failure: HostTaskFailure };
+
 /**
- * Run one task in a fresh decode worker with the V8 limit `heapMib`, after a decode slot is free. `transfer` moves
- * buffers to the worker with no copy, thus the caller must not read them after the call. The answer is the value
- * that the task gave. A task that throws is `crashed`, a worker past its heap is `out_of_memory`, and `signal`
- * ends the worker as `aborted`.
+ * Run one task in a fresh decode worker with the V8 limit `heapMib`. `transfer` moves buffers to the worker with no
+ * copy, thus the caller must not read them after the call. The answer is the value that the task gave. A task that
+ * throws is `crashed`, a worker past its heap is `out_of_memory`, and `signal` ends the worker as `aborted`, also a
+ * signal that aborted before the start.
  */
-export function runHostTask<T extends HostTask>(
-    task: T,
-    options: { readonly transfer?: readonly ArrayBuffer[]; readonly signal?: AbortSignal; readonly heapMib?: number } = {},
-): ResultAsync<HostTaskAnswer<T>, HostTaskFailure> {
-    if (options.signal?.aborted === true) return errAsync({ kind: "aborted" });
-    const run = async (): Promise<{ ok: true; answer: HostTaskAnswer<T> } | { ok: false; failure: HostTaskFailure }> => {
-        const free = await acquire(decodeSlots);
-        try {
-            return await new Promise((resolve) => {
-                const data: HostTaskData = { harnessTask: task };
-                let worker: Worker;
-                try {
-                    worker = new Worker(hostWorkerEntry(), {
-                        workerData: data,
-                        transferList: [...(options.transfer ?? [])],
-                        resourceLimits: workerLimits(options.heapMib ?? DECODE_WORKER_HEAP_MIB),
-                    });
-                } catch (cause) {
-                    resolve({ ok: false, failure: { kind: "crashed", detail: `the worker did not start: ${errorMessageOf(cause) ?? "an unknown fault"}` } });
-                    return;
-                }
-                let settled = false;
-                const settle = (outcome: { ok: true; answer: HostTaskAnswer<T> } | { ok: false; failure: HostTaskFailure }): void => {
-                    if (settled) return;
-                    settled = true;
-                    options.signal?.removeEventListener("abort", onAbort);
-                    void worker.terminate();
-                    resolve(outcome);
-                };
-                const onAbort = (): void => settle({ ok: false, failure: { kind: "aborted" } });
-                options.signal?.addEventListener("abort", onAbort, { once: true });
-                // The harness entry posts one reply, and `runDecodeTask` made its answer from this task, thus the reply
-                // has the type of the answer of `T`.
-                worker.on("message", (message: HostTaskReply<T>) => {
-                    if (message.ok) settle({ ok: true, answer: message.answer });
-                    else settle({ ok: false, failure: { kind: "crashed", detail: message.detail } });
-                });
-                worker.on("error", (error) => {
-                    settle({ ok: false, failure: isOutOfMemory(error) ? { kind: "out_of_memory" } : { kind: "crashed", detail: String(error) } });
-                });
-                worker.on("exit", (code) =>
-                    settle({ ok: false, failure: { kind: "crashed", detail: `the worker exited with code ${String(code)} and no answer` } }),
-                );
-            });
-        } finally {
-            free();
+function runInWorker<T extends HostTask>(task: T, options: HostTaskOptions): Promise<Outcome<T>> {
+    return new Promise((resolve) => {
+        if (options.signal?.aborted === true) {
+            resolve({ ok: false, failure: { kind: "aborted" } });
+            return;
         }
-    };
-    return new ResultAsync(run().then((outcome) => (outcome.ok ? ok(outcome.answer) : err(outcome.failure))));
+        const data: HostTaskData = { harnessTask: task };
+        let worker: Worker;
+        try {
+            worker = new Worker(hostWorkerEntry(), {
+                workerData: data,
+                transferList: [...(options.transfer ?? [])],
+                resourceLimits: workerLimits(options.heapMib ?? DECODE_WORKER_HEAP_MIB),
+            });
+        } catch (cause) {
+            resolve({ ok: false, failure: { kind: "crashed", detail: `the worker did not start: ${errorMessageOf(cause) ?? "an unknown fault"}` } });
+            return;
+        }
+        let settled = false;
+        const settle = (outcome: Outcome<T>): void => {
+            if (settled) return;
+            settled = true;
+            options.signal?.removeEventListener("abort", onAbort);
+            void worker.terminate();
+            resolve(outcome);
+        };
+        const onAbort = (): void => settle({ ok: false, failure: { kind: "aborted" } });
+        options.signal?.addEventListener("abort", onAbort, { once: true });
+        // The harness entry posts one reply, and `runDecodeTask` made its answer from this task, thus the reply
+        // has the type of the answer of `T`.
+        worker.on("message", (message: HostTaskReply<T>) => {
+            if (message.ok) settle({ ok: true, answer: message.answer });
+            else settle({ ok: false, failure: { kind: "crashed", detail: message.detail } });
+        });
+        worker.on("error", (error) => {
+            settle({ ok: false, failure: isOutOfMemory(error) ? { kind: "out_of_memory" } : { kind: "crashed", detail: String(error) } });
+        });
+        worker.on("exit", (code) => settle({ ok: false, failure: { kind: "crashed", detail: `the worker exited with code ${String(code)} and no answer` } }));
+    });
+}
+
+/**
+ * Hold a decode slot for `body`, and free it when `body` ends. A caller reads the bytes of a file inside `body`, thus
+ * a read that waits for a slot holds no bytes, and the process holds the bytes of at most the decode slots. An abort
+ * of `signal` while the caller waits gives `aborted`, and `body` does not run.
+ */
+export async function withDecodeSlot<R>(
+    signal: AbortSignal | undefined,
+    body: (run: DecodeRun) => Promise<R>,
+): Promise<Result<R, { readonly kind: "aborted" }>> {
+    const free = await acquire(decodeSlots, signal);
+    if (free === undefined) return err({ kind: "aborted" });
+    const run: DecodeRun = (task, options = {}) =>
+        new ResultAsync(
+            runInWorker(task, { ...options, signal: options.signal ?? signal }).then((outcome) => (outcome.ok ? ok(outcome.answer) : err(outcome.failure))),
+        );
+    try {
+        return ok(await body(run));
+    } finally {
+        free();
+    }
+}
+
+/** Run one task in a decode slot, after the slot is free. See {@link withDecodeSlot}. */
+export function runHostTask<T extends HostTask>(task: T, options: HostTaskOptions = {}): ResultAsync<HostTaskAnswer<T>, HostTaskFailure> {
+    return new ResultAsync(withDecodeSlot(options.signal, (run) => Promise.resolve(run(task, options)))).andThen((ran) => ran);
 }
 
 /**

@@ -16,6 +16,7 @@ import {
     SCRIPT_WORKER_HEAP_MIB,
     SCRIPT_WORKER_SLOTS,
     setHostWorkerEntry,
+    withDecodeSlot,
 } from "../host-workers.js";
 import type { HostTask } from "../../workspace/decode-tasks.js";
 import { parseJsonAs } from "../parse-json.js";
@@ -76,6 +77,51 @@ describe("the heavy workers", () => {
         controller.abort();
 
         expect((await runHostTask(tableTask(csvBuffer("a\n1\n")), { signal: controller.signal }))._unsafeUnwrapErr()).toEqual({ kind: "aborted" });
+    });
+
+    test("a body holds its decode slot from before its read to the end of its decode", async () => {
+        const releases: Array<() => void> = [];
+        const holding = Array.from({ length: DECODE_WORKER_SLOTS }, () =>
+            withDecodeSlot(undefined, () => new Promise<void>((resolve) => releases.push(resolve))),
+        );
+        let read = false;
+        const waiting = withDecodeSlot(undefined, (run) => {
+            read = true;
+            return Promise.resolve(run(tableTask(csvBuffer("a\n1\n"))));
+        });
+        await Promise.resolve();
+
+        expect(read).toBe(false);
+        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: DECODE_WORKER_SLOTS, waiting: 1 });
+        releases[0]?.();
+        expect((await waiting)._unsafeUnwrap()._unsafeUnwrap()).toMatchObject({ kind: "rows" });
+        expect(read).toBe(true);
+        for (const release of releases) release();
+        await Promise.all(holding);
+        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: 0, waiting: 0 });
+    });
+
+    test("a cancel while a read waits for a slot leaves the queue, and the read does not run", async () => {
+        const releases: Array<() => void> = [];
+        const holding = Array.from({ length: DECODE_WORKER_SLOTS }, () =>
+            withDecodeSlot(undefined, () => new Promise<void>((resolve) => releases.push(resolve))),
+        );
+        const controller = new AbortController();
+        let read = false;
+        const waiting = withDecodeSlot(controller.signal, () => {
+            read = true;
+            return Promise.resolve();
+        });
+        await Promise.resolve();
+
+        controller.abort();
+
+        expect((await waiting)._unsafeUnwrapErr()).toEqual({ kind: "aborted" });
+        expect(read).toBe(false);
+        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: DECODE_WORKER_SLOTS, waiting: 0 });
+        for (const release of releases) release();
+        await Promise.all(holding);
+        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: 0, waiting: 0 });
     });
 
     test("a script past the free script slots waits for one", async () => {

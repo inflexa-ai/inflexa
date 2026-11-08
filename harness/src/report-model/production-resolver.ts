@@ -26,7 +26,7 @@ import { z } from "zod";
 
 import type { ArtifactFileReference, ArtifactTableReference, ArtifactValueReference, Reference, UnresolvedReference } from "../contracts/report-reference.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
-import { runHostTask, transferable } from "../lib/host-workers.js";
+import { transferable, withDecodeSlot } from "../lib/host-workers.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { parseJsonAs } from "../lib/parse-json.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
@@ -532,17 +532,22 @@ async function hostReadCells(cap: number, path: string, identity: ReadyIdentity)
     if (identity.size > cap) {
         return { kind: "fall-through", detail: `the file size of ${identity.size} bytes is over the ${cap}-byte cap` };
     }
-    let bytes: Buffer;
-    try {
-        bytes = await readFile(identity.absolute);
-    } catch {
+    // The decode slot is held from before the read, thus a read that waits for a slot holds no bytes.
+    const held = await withDecodeSlot(undefined, async (run) => {
+        let bytes: Buffer;
+        try {
+            bytes = await readFile(identity.absolute);
+        } catch {
+            return undefined;
+        }
+        const buffer = transferable(bytes);
+        return run({ kind: "table", bytes: buffer, path, format, options: { cellBudget: HOST_CELL_BUDGET, numericText: false } }, { transfer: [buffer] });
+    });
+    // With no signal, the wait for the slot ends only with the slot.
+    const decoded = held.isOk() ? held.value : undefined;
+    if (decoded === undefined) {
         return { kind: "fall-through", detail: "the file could not be read" };
     }
-    const buffer = transferable(bytes);
-    const decoded = await runHostTask(
-        { kind: "table", bytes: buffer, path, format, options: { cellBudget: HOST_CELL_BUDGET, numericText: false } },
-        { transfer: [buffer] },
-    );
     if (decoded.isErr()) {
         return {
             kind: "fall-through",
