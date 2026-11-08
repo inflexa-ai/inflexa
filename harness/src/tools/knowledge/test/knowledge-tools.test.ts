@@ -16,7 +16,15 @@ import { callTools, reply, scriptedModel, text, toolCall } from "../../../testin
 import { createWorkspaceMutator } from "../../workspace/mutator.js";
 import { GroundingSchema } from "../../../schemas/workflow-state.js";
 import { stepWritePrefix } from "../../../workspace/paths.js";
-import { fakeKnowledgeClient, limitAnswer, notAssessedCheckAnswer, recommendAnswer, SNAPSHOT, substitutionAnswer } from "../__fixtures__/fake-client.js";
+import {
+    contractAnswer,
+    fakeKnowledgeClient,
+    limitAnswer,
+    notAssessedCheckAnswer,
+    recommendAnswer,
+    SNAPSHOT,
+    substitutionAnswer,
+} from "../__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "../check.js";
 import { joinEnvironment } from "../environment.js";
 import { createKnowledgeTools, knowledgeToolDefinitionHash } from "../index.js";
@@ -659,9 +667,37 @@ describe("knowledge_template", () => {
         const { tool, workingDir, calls } = build();
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: 42 } }, ctx))._unsafeUnwrap();
-        expect(out).toMatchObject({ match: "rejected", issues: [{ slot: "counts_path", reason: "a non-empty string is required" }] });
+        expect(out).toMatchObject({
+            match: "rejected",
+            issues: [{ slot: "counts_path", reason: "a non-empty string is required. The slot: The count table file." }],
+        });
         expect(calls.render).toHaveLength(0);
         expect(await Bun.file(join(workingDir, "scripts", "tpl-deseq2-two-group.R")).exists()).toBe(false);
+    });
+
+    it("gives the description of a local slot with a pattern refusal, thus the agent reads the intent of the pattern", async () => {
+        const contract = contractAnswer();
+        const design = {
+            name: "design",
+            type: "formula",
+            local: true,
+            adaptable: true,
+            description: "The design formula. It must end with condition.",
+            pattern: "condition\\s*$",
+        };
+        const { tool, calls } = build({ contract: { ...contract, parameters: [...contract.parameters.filter((slot) => slot.name !== "design"), design] } });
+        const { ctx } = makeToolContext();
+        const out = (
+            await tool.execute(
+                { template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: "/analysis-001/data/inputs/f1/counts.csv", design: "~ squamous + response" } },
+                ctx,
+            )
+        )._unsafeUnwrap();
+        expect(out).toMatchObject({
+            match: "rejected",
+            issues: [{ slot: "design", reason: "the value must match condition\\s*$. The slot: The design formula. It must end with condition." }],
+        });
+        expect(calls.render).toHaveLength(0);
     });
 
     it("refuses a column name where the situation takes a role", () => {

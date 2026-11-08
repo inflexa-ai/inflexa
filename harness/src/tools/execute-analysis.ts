@@ -290,6 +290,7 @@ function workflowInput(
         steps: plan.steps.map((step) => ({ id: step.id, depends_on: step.depends_on })),
         planStepById: Object.fromEntries(plan.steps.map((step) => [step.id, step])),
         request: plan.request,
+        claims: plan.claims,
         agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, resolveStepAgentId(step.agent ?? "")])),
         runSession: args.runSession,
         synthesisEnabled: args.synthesisEnabled,
