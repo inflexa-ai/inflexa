@@ -233,6 +233,8 @@ and `agent`; the step-detail dialog SHALL render the step's `question`, `accepta
 plan-card part already carries — no harness round-trip. Both dialogs SHALL act only through the
 `CommandContext` surface (`openDialog`/`closeDialog`) and SHALL NOT write to stdout.
 
+For a grounded step, the step-detail dialog MUST also show the grounding of the step. The grounding gives the status, the knowledge release, the template, and the reason of the planner. It also gives the rules with their strength and their title, the settings with their sources, and the sources of the rules. The dialog MUST list at most `MAX_GROUNDING_ITEMS` rules and sources, with a count of the rest. A rule with no claim view MUST show its claim id. A step with no grounding MUST show no grounding section.
+
 #### Scenario: The command lists the latest plan's steps
 
 - **WHEN** the transcript contains a plan card and the user runs "Explore plan steps…"
@@ -247,6 +249,13 @@ plan-card part already carries — no harness round-trip. Both dialogs SHALL act
 
 - **WHEN** the transcript contains no plan card
 - **THEN** "Explore plan steps…" is disabled and does not appear in the palette
+
+#### Scenario: A grounded step shows its grounding
+
+- **GIVEN** a plan card whose step cites `R-0028@d560`, and whose claim views hold the title and a DOI of that claim
+- **WHEN** the user opens the step-detail dialog of that step
+- **THEN** the dialog shows the status, the knowledge release, the template, and the reason
+- **AND** the dialog shows `R-0028@d560` with its strength and its title, and the DOI in the sources
 
 ### Requirement: Show runs command
 
