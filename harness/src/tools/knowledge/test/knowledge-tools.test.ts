@@ -14,8 +14,9 @@ import { runLoop } from "../../../loop/run-loop.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../../testing.js";
 import { createWorkspaceMutator } from "../../workspace/mutator.js";
+import { createDecisionRecordStore } from "../../workspace/decision-record.js";
 import { GroundingSchema } from "../../../schemas/workflow-state.js";
-import { stepWritePrefix } from "../../../workspace/paths.js";
+import { stepDecisionRecordDir, stepWritePrefix } from "../../../workspace/paths.js";
 import {
     contractAnswer,
     fakeKnowledgeClient,
@@ -611,17 +612,21 @@ describe("knowledge_template", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S1" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient(answers);
-        return { tool: createKnowledgeTemplateTool({ client: fake.client, mutator }), workingDir, calls: fake.calls };
+        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot) });
+        return { tool: createKnowledgeTemplateTool({ client: fake.client, mutator, records }), workspaceRoot, workingDir, calls: fake.calls };
     }
 
     it("writes the rendered script and the decision record through the mutator and reports both paths", async () => {
-        const { tool, workingDir } = build();
+        const { tool, workspaceRoot, workingDir } = build();
         const { ctx } = makeToolContext();
         const out = (
             await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: "/analysis-001/data/inputs/f1/counts.csv" } }, ctx)
         )._unsafeUnwrap();
         expect("status" in out && out.status).toBe("ok");
         if (!("status" in out) || out.status !== "ok") return;
+        // The host keeps the same bytes outside the step, where no agent writes.
+        const hostCopy = join(stepDecisionRecordDir({ workspaceRoot, runId: "run-1", stepId: "T1S1" }), "decision_record_tpl-deseq2-two-group.json");
+        expect(await readFile(hostCopy, "utf8")).toBe(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"));
         expect(out.script_path).toBe(`/${ANALYSIS}/runs/run-1/T1S1/scripts/tpl-deseq2-two-group.R`);
         expect(out.decision_record_path).toBe(`/${ANALYSIS}/runs/run-1/T1S1/output/decision_record_tpl-deseq2-two-group.json`);
         expect(out.run_with).toBe("Rscript scripts/tpl-deseq2-two-group.R");
@@ -750,7 +755,8 @@ describe("knowledge_template", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S1" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient();
-        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, farmLockFile: lockPath, imagePackagesFile: recordPath });
+        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot) });
+        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, records, farmLockFile: lockPath, imagePackagesFile: recordPath });
         const { ctx } = makeToolContext();
         await awaitOk(tool.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx));
         const farm = fake.calls.render[0]?.farm;

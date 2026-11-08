@@ -49,7 +49,7 @@ import { unwrapOrThrow } from "../../lib/result.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { bindSessionEmit, type ProvenanceSeam, type SessionProvenanceEvent } from "../../provenance/seam.js";
 import { syncWrittenFile, type SyncSessionFile } from "../../workspace/session-files.js";
-import { resolveForWrite, STAGED_INPUT_ROOT, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
+import { DECISION_RECORD_ROOT, resolveForWrite, STAGED_INPUT_ROOT, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
 
 /** Outcome of a confined write. Expected outcomes are data variants — never throws on them. */
 export type WriteFileResult =
@@ -142,17 +142,38 @@ export type WorkspaceMutator = {
 };
 
 /** Outcome of the hardened landing — the disk-touching half of a confined write. */
-type LandingStatus = "ok" | "out_of_prefix" | "symlink_denied" | "read_only";
+type LandingStatus = "ok" | "out_of_prefix" | "symlink_denied";
+
+/** The refusal of a write that lands in a directory that takes no write. */
+type ReadOnlyRefusal = { readonly status: "read_only"; readonly reason: string };
 
 /** The refusal of a write that lands under the staged inputs. */
-const STAGED_INPUT_REFUSAL = {
+const STAGED_INPUT_REFUSAL: ReadOnlyRefusal = {
     status: "read_only",
     reason: `${STAGED_INPUT_ROOT}/ holds the staged inputs of the analysis, and they are immutable. Write the file to a different directory.`,
-} as const;
+};
+
+/** The refusal of a write that lands under the host copies of the decision records. */
+const DECISION_RECORD_REFUSAL: ReadOnlyRefusal = {
+    status: "read_only",
+    reason: `${DECISION_RECORD_ROOT}/ holds the host copies of the decision records, and only the tools of the host write them. Write the file to a different directory.`,
+};
+
+/** A directory that takes no write, and the refusal of a write under it. */
+type ReadOnlyDir = { readonly dir: string; readonly refusal: ReadOnlyRefusal };
 
 /** True when `path` is `dir` or a path under it. */
 function isWithin(dir: string, path: string): boolean {
     return path === dir || path.startsWith(dir + sep);
+}
+
+/**
+ * {@link isWithin} with no case. A case-insensitive volume, the default on macOS, gives one directory for two
+ * spellings, thus a read-only directory compares with no case. On a case-sensitive volume the fold refuses some
+ * more paths, and no tool needs to write them.
+ */
+function isWithinAnyCase(dir: string, path: string): boolean {
+    return isWithin(dir.toLowerCase(), path.toLowerCase());
 }
 
 /**
@@ -174,10 +195,10 @@ function isWithin(dir: string, path: string): boolean {
  *      temporary file beside it and rename that file over it. The rename
  *      replaces a symlink raced in after the check, and never follows it.
  *
- * `readOnlyDir` is a directory under `prefix` that takes no write. The landing
- * refuses a canonical target under it as `read_only`, before the mkdir of
- * step 3 and again before step 4. Thus a symlinked ancestor cannot aim a write
- * into it.
+ * Each `readOnlyDirs` entry is a directory that takes no write. The landing
+ * refuses a canonical target under one with the refusal of that entry, before
+ * the mkdir of step 3 and again before step 4. Thus a symlinked ancestor cannot
+ * aim a write into it.
  *
  * Refusals are data; a genuine I/O failure throws (the loop's dispatch catch
  * maps it to an error tool result). A throw removes the temporary file.
@@ -188,16 +209,16 @@ async function landBytes(
     bytes: Buffer,
     stagingKey: string,
     beforeRename: (() => Promise<void>) | undefined,
-    readOnlyDir: string | undefined,
-): Promise<LandingStatus> {
+    readOnlyDirs: readonly ReadOnlyDir[],
+): Promise<LandingStatus | ReadOnlyRefusal> {
     unwrapOrThrow(await tryFsWrite("mutator.mkdirPrefix", () => mkdir(prefix, { recursive: true }), { path: prefix }));
     const realPrefix = unwrapOrThrow(await tryFs("mutator.realpathPrefix", () => realpath(prefix), { path: prefix }));
-    const realReadOnly =
-        readOnlyDir === undefined
-            ? undefined
-            : (unwrapOrThrow(
-                  await tryFs<string | null>("mutator.realpathReadOnly", () => realpath(readOnlyDir), { path: readOnlyDir, onAbsent: () => null }),
-              ) ?? joinPath(realPrefix, relativePath(prefix, readOnlyDir)));
+    const realReadOnly: ReadOnlyDir[] = [];
+    for (const { dir, refusal } of readOnlyDirs) {
+        const real = unwrapOrThrow(await tryFs<string | null>("mutator.realpathReadOnly", () => realpath(dir), { path: dir, onAbsent: () => null }));
+        realReadOnly.push({ dir: real ?? joinPath(realPrefix, relativePath(prefix, dir)), refusal });
+    }
+    const readOnlyRefusal = (path: string): ReadOnlyRefusal | undefined => realReadOnly.find(({ dir }) => isWithinAnyCase(dir, path))?.refusal;
 
     // Deepest existing ancestor of the target. The walk stops at the prefix,
     // which exists — the resolver already confined the lexical path under it.
@@ -213,7 +234,8 @@ async function landBytes(
     if (realDeepest !== realPrefix && !realDeepest.startsWith(realPrefix + sep)) return "out_of_prefix";
 
     const targetDir = joinPath(realDeepest, relativePath(deepest, dirname(absolute)));
-    if (realReadOnly !== undefined && isWithin(realReadOnly, joinPath(targetDir, basename(absolute)))) return "read_only";
+    const targetRefusal = readOnlyRefusal(joinPath(targetDir, basename(absolute)));
+    if (targetRefusal !== undefined) return targetRefusal;
     let landingDir = realDeepest;
     if (targetDir !== realDeepest) {
         unwrapOrThrow(await tryFsWrite("mutator.mkdirParents", () => mkdir(targetDir, { recursive: true }), { path: targetDir }));
@@ -232,7 +254,8 @@ async function landBytes(
     }
 
     const finalPath = joinPath(landingDir, basename(absolute));
-    if (realReadOnly !== undefined && isWithin(realReadOnly, finalPath)) return "read_only";
+    const finalRefusal = readOnlyRefusal(finalPath);
+    if (finalRefusal !== undefined) return finalRefusal;
     const finalStat = unwrapOrThrow(await tryFs<Stats | null>("mutator.lstatFinal", () => lstat(finalPath), { path: finalPath, onAbsent: () => null }));
     if (finalStat !== null && finalStat.isSymbolicLink()) return "symlink_denied";
 
@@ -290,9 +313,14 @@ export type ConfinedWriteOk = {
 };
 
 /** A refused confined write: the status, and the reason when the status alone does not give it. */
-type ConfinedWriteRefusal =
-    | { readonly status: Exclude<LandingStatus, "ok" | "read_only"> | "out_of_scope" }
-    | { readonly status: "read_only"; readonly reason: string };
+type ConfinedWriteRefusal = { readonly status: Exclude<LandingStatus, "ok"> | "out_of_scope" } | ReadOnlyRefusal;
+
+/** True when the root-relative `relative` is `dir` or a path under it, with no case, as {@link isWithinAnyCase}. */
+function isUnderRelative(relative: string, dir: string): boolean {
+    const folded = relative.toLowerCase();
+    const foldedDir = dir.toLowerCase();
+    return folded === foldedDir || folded.startsWith(`${foldedDir}/`);
+}
 
 /**
  * The shared write gauntlet both realizations run: resolve + confine
@@ -301,7 +329,8 @@ type ConfinedWriteRefusal =
  * analysis-relative path and the exact bytes that landed. `beforeLand` gets
  * the same ok while the bytes wait in the temporary file. With
  * `refuseStagedInputs`, a write under the staged inputs is refused before any
- * I/O, and the landing refuses a symlink that aims into them.
+ * I/O, and the landing refuses a symlink that aims into them. A write under the
+ * host copies of the decision records is refused the same way, always.
  */
 export async function confinedWrite(args: {
     readonly workspaceRoot: string;
@@ -327,25 +356,46 @@ export async function confinedWrite(args: {
     // path prepends the `/{analysisId}` frame; a provenance record uses
     // the bare tail (the collector normalizes it step-relative itself).
     const relative = scoped.relative.split("\\").join("/");
-    if (args.refuseStagedInputs && (relative === STAGED_INPUT_ROOT || relative.startsWith(`${STAGED_INPUT_ROOT}/`))) return STAGED_INPUT_REFUSAL;
+    if (args.refuseStagedInputs && isUnderRelative(relative, STAGED_INPUT_ROOT)) return STAGED_INPUT_REFUSAL;
+    if (isUnderRelative(relative, DECISION_RECORD_ROOT)) return DECISION_RECORD_REFUSAL;
     const agentPath = `/${args.analysisId}/${relative}`;
     const bytes = typeof args.content === "string" ? Buffer.from(args.content, "utf8") : Buffer.from(args.content);
     const prefix = resolvePath(args.workingDir);
 
     const confined: ConfinedWriteOk = { status: "ok", relative, agentPath, bytes };
     const { beforeLand } = args;
-    const readOnlyDir = args.refuseStagedInputs ? resolvePath(args.workspaceRoot, STAGED_INPUT_ROOT) : undefined;
+    const readOnlyDirs: ReadOnlyDir[] = [{ dir: resolvePath(args.workspaceRoot, DECISION_RECORD_ROOT), refusal: DECISION_RECORD_REFUSAL }];
+    if (args.refuseStagedInputs) readOnlyDirs.push({ dir: resolvePath(args.workspaceRoot, STAGED_INPUT_ROOT), refusal: STAGED_INPUT_REFUSAL });
     const landed = await landBytes(
         prefix,
         scoped.absolute,
         bytes,
         args.invocationId,
         beforeLand === undefined ? undefined : () => beforeLand(confined),
-        readOnlyDir,
+        readOnlyDirs,
     );
-    if (landed === "read_only") return STAGED_INPUT_REFUSAL;
+    if (typeof landed !== "string") return landed;
     if (landed !== "ok") return { status: landed };
     return confined;
+}
+
+/**
+ * Land `content` at `absolute`, a path under the host-owned directory `root`, with the hardening of an agent write:
+ * the parents are made only inside `root`, a symlinked ancestor or final component is refused, and the bytes land
+ * whole through a rename. `stagingKey` names the temporary file. The write records nothing.
+ */
+export async function landWithinRoot(args: {
+    readonly root: string;
+    readonly absolute: string;
+    readonly content: string | Uint8Array;
+    readonly stagingKey: string;
+}): Promise<LandingStatus> {
+    const root = resolvePath(args.root);
+    const absolute = resolvePath(args.absolute);
+    if (!absolute.startsWith(root + sep)) return "out_of_prefix";
+    const bytes = typeof args.content === "string" ? Buffer.from(args.content, "utf8") : Buffer.from(args.content);
+    const landed = await landBytes(root, absolute, bytes, args.stagingKey, undefined, []);
+    return typeof landed === "string" ? landed : "out_of_prefix";
 }
 
 export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMutator {

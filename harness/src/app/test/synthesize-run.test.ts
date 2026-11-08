@@ -32,6 +32,7 @@ import type { EmitFn } from "../../loop/types.js";
 import type { BioToolKeys } from "../../tools/bio/keys.js";
 import { synthesizeRun, type SynthesizeRunDeps, type SynthesisProgressExtra } from "../synthesize-run.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
+import { stepDecisionRecordDir } from "../../workspace/paths.js";
 
 const ANALYSIS_ID = "analysis-001";
 const RUN_ID = "run-001";
@@ -242,7 +243,8 @@ describe("synthesizeRun", () => {
             reply([text("done")]),
         ]);
         const h = await makeHarness(model.provider, { withSummary: true });
-        const outDir = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, STEP_ID, "output");
+        const outDir = stepDecisionRecordDir({ workspaceRoot: await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), runId: RUN_ID, stepId: STEP_ID });
+        await mkdir(outDir, { recursive: true });
         await writeFile(
             join(outDir, "decision_record_tpl-deseq2-two-group_A.json"),
             JSON.stringify({

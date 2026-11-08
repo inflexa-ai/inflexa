@@ -82,6 +82,7 @@ import {
     createGrepTool,
     createListFilesTool,
     createReadFileTool,
+    createDecisionRecordStore,
     createSessionWorkspaceMutator,
     createShowPlanTool,
     createWorkspaceSearchTool,
@@ -435,7 +436,12 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // a symlink escape stay refused. No sandbox is involved — the mutator
         // writes host-side, exactly as it does for a sandbox agent.
         writeFileTool,
-        createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, intents: createEditIntentStore(pool) }),
+        createEditFileTool({
+            mutator,
+            workspaceFilesystem: workspaceFs,
+            intents: createEditIntentStore(pool),
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: deps.resolveWorkspaceRoot }),
+        }),
         // Working memory.
         createUpdateWorkingMemoryTool(workingMemory, pool),
         // Host-contributed tools ride the same context and dispatch path as the

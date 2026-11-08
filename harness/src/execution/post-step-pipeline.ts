@@ -19,7 +19,7 @@ import type { Querier } from "../state/db.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { LoopMessage } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { stepDecisionRecordDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -139,7 +139,8 @@ export async function generateStepSummaryAndWrite(
         runId: input.runId,
     });
     const logger = (deps.logger ?? createNoopLogger()).named("post-step").named("methods").with({ runId: input.runId, stepId: input.stepId });
-    const { methods } = await readStepMethods({ grounding: input.grounding, claimViews: input.claimViews ?? [], writePrefix, logger });
+    const recordDir = stepDecisionRecordDir({ workspaceRoot: await deps.resolveWorkspaceRoot(input.analysisId), runId: input.runId, stepId: input.stepId });
+    const { methods } = await readStepMethods({ grounding: input.grounding, claimViews: input.claimViews ?? [], recordDir, logger });
     const markdown = methods ? withMethodsBlock(agentSummary?.markdown, methods) : agentSummary?.markdown;
     const summary =
         markdown !== undefined && markdown.trim().length > 0

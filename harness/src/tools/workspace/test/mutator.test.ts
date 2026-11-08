@@ -20,6 +20,7 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readToolCallRecord } from "../../define-tool.js";
 import { createSessionWorkspaceMutator, createWorkspaceMutator, type LandedWrite, type WorkspaceMutator } from "../mutator.js";
 import { createEditFileTool } from "../edit-file.js";
+import { createDecisionRecordStore } from "../decision-record.js";
 import { createWriteFileTool } from "../write-file.js";
 import { ProvenanceCollector } from "../../../provenance/collector.js";
 import type { SessionProvenanceEvent } from "../../../provenance/seam.js";
@@ -460,13 +461,56 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         expect(events).toHaveLength(0);
     });
 
+    test("a write under the host copies of the decision records is read_only, also through a symlinked ancestor", async () => {
+        const { mutator, events } = buildSessionMutator();
+        const recordDir = join(basePath, ANALYSIS, ".sandbox", "decision-records", "runs", RUN, STEP, "output");
+        await mkdir(recordDir, { recursive: true });
+        writeFileSync(join(recordDir, "decision_record_de.json"), "{}\n");
+        const outputDir = join(basePath, ANALYSIS, "runs", RUN, STEP, "output");
+        await mkdir(outputDir, { recursive: true });
+        await symlink(`../../../../.sandbox/decision-records/runs/${RUN}/${STEP}/output`, join(outputDir, "held"));
+
+        for (const path of [
+            `.sandbox/decision-records/runs/${RUN}/${STEP}/output/decision_record_de.json`,
+            `/${ANALYSIS}/.sandbox/decision-records/runs/${RUN}/${STEP}/output/decision_record_new.json`,
+            ".sandbox/decision-records",
+            `runs/${RUN}/${STEP}/output/held/decision_record_de.json`,
+        ]) {
+            const result = await writeAndRecord(mutator, { path, content: "x", toolName: "write_file", invocationId: "inv-1", session: chatSession });
+            expect(result.status).toBe("read_only");
+            expect("reason" in result && result.reason.includes(".sandbox/decision-records/")).toBe(true);
+        }
+
+        expect(readFileSync(join(recordDir, "decision_record_de.json"), "utf8")).toBe("{}\n");
+        expect(readdirSync(recordDir)).toEqual(["decision_record_de.json"]);
+        expect(events).toHaveLength(0);
+    });
+
+    test("a write under a case variant of the host copies is read_only, also before the directory exists", async () => {
+        const { mutator, events } = buildSessionMutator();
+        await mkdir(join(basePath, ANALYSIS), { recursive: true });
+
+        for (const path of [`.sandbox/DECISION-RECORDS/runs/${RUN}/${STEP}/output/decision_record_x.json`, ".Sandbox/Decision-Records/x.json"]) {
+            const result = await writeAndRecord(mutator, { path, content: "x", toolName: "write_file", invocationId: "inv-1", session: chatSession });
+            expect(result.status).toBe("read_only");
+        }
+
+        expect(existsSync(join(basePath, ANALYSIS, ".sandbox"))).toBe(false);
+        expect(events).toHaveLength(0);
+    });
+
     test("edit_file on a staged input is read_only and leaves the input unchanged", async () => {
         const { mutator, events } = buildSessionMutator();
         const inputDir = join(basePath, ANALYSIS, "data", "inputs", "f1");
         await mkdir(inputDir, { recursive: true });
         writeFileSync(join(inputDir, "counts.csv"), "gene,count\n");
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
-        const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs, intents: { put: () => okAsync(undefined), get: () => okAsync(null) } });
+        const editTool = createEditFileTool({
+            mutator,
+            workspaceFilesystem: fs,
+            intents: { put: () => okAsync(undefined), get: () => okAsync(null) },
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) }),
+        });
         const { ctx } = makeToolContext();
 
         const edited = (
@@ -497,7 +541,12 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
         // No workingDir: the read seam defaults to the analysis root, matching
         // the session-scoped mutator's write prefix.
-        const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs, intents: { put: () => okAsync(undefined), get: () => okAsync(null) } });
+        const editTool = createEditFileTool({
+            mutator,
+            workspaceFilesystem: fs,
+            intents: { put: () => okAsync(undefined), get: () => okAsync(null) },
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) }),
+        });
         const { ctx } = makeToolContext();
 
         const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();

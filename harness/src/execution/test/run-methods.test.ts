@@ -11,6 +11,7 @@ import { upsertAnalysis } from "../../state/analyses.js";
 import { insertPlan } from "../../state/plans.js";
 import type { Querier } from "../../state/db.js";
 import { readRunMethods } from "../run-methods.js";
+import { stepDecisionRecordDir } from "../../workspace/paths.js";
 
 const RUN_ID = "run-1";
 
@@ -51,7 +52,7 @@ const PLAN = {
 
 async function workspaceWithRecord(stepId: string): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), "run-methods-"));
-    const dir = join(root, "runs", RUN_ID, stepId, "output");
+    const dir = stepDecisionRecordDir({ workspaceRoot: root, runId: RUN_ID, stepId });
     await mkdir(dir, { recursive: true });
     await writeFile(
         join(dir, "decision_record_tpl.json"),

@@ -41,6 +41,7 @@ import type { WorkingMemoryStore } from "../../memory/working-memory.js";
 import type { EmbeddingProvider } from "../../providers/types.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import type { WorkspaceMutator } from "../workspace/mutator.js";
+import { createDecisionRecordStore } from "../workspace/decision-record.js";
 import type { Tool } from "../define-tool.js";
 
 /** A dep member describeCall never reaches. */
@@ -328,6 +329,7 @@ describe("describeCall — sandbox mutate surface", () => {
             workspaceFilesystem: makeFakeWorkspaceFs(),
             workingDir: "/a/runs/r1/s1",
             intents: notDrivenIntents,
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.reject(new Error("records: not driven by this test")) }),
         });
 
         expect(describeCall(tool, { path: "scripts/run.py", old_string: "a", new_string: "b", replace_all: false })).toBe("scripts/run.py");

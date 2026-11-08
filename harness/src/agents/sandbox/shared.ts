@@ -69,7 +69,14 @@ import { createFileStatTool, createGrepTool, createListFilesTool, createReadFile
 import { createScanInputsTool } from "../../tools/workspace/scan-inputs.js";
 
 // Workspace mutate surface.
-import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, createWriteFileTool } from "../../tools/workspace/index.js";
+import {
+    createDecisionRecordStore,
+    createEditFileTool,
+    createExecuteCommandTool,
+    createWorkspaceMutator,
+    createWriteFileTool,
+    type DecisionRecordStore,
+} from "../../tools/workspace/index.js";
 
 // Skills (declared per agent via meta.skills).
 import { createSkillTools, skillIndex } from "../../tools/sandbox/skills.js";
@@ -215,7 +222,12 @@ export type SandboxAgentPromptOptions = {
  * read/mutate tools and `inspect_data_profile` are added by `createSandboxAgent`
  * regardless of meta — they are the always-on substrate, not in the allowlist.
  */
-function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[], mutator: WorkspaceMutator | undefined): Tool[] {
+function resolveSandboxTools(
+    deps: SandboxAgentDeps,
+    tools: readonly SandboxToolName[],
+    mutator: WorkspaceMutator | undefined,
+    records: DecisionRecordStore | undefined,
+): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
     const chemDb = createChemDbTools(deps.bioKeys, { logger: deps.logger });
     const amass = createAmassTools(deps.bioKeys);
@@ -264,10 +276,11 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         targetSafety: targetSafetyTool,
         comptox: chemDb.comptox,
         knowledgeTemplate:
-            deps.knowledge && mutator
+            deps.knowledge && mutator && records
                 ? createKnowledgeTemplateTool({
                       client: deps.knowledge,
                       mutator,
+                      records,
                       farmLockFile: deps.farmLockFile,
                       imagePackagesFile: deps.imagePackagesFile,
                       binding: deps.step.templateBinding,
@@ -301,7 +314,7 @@ function buildWorkspaceTools(
     deps: SandboxAgentDeps,
     readOnly: boolean,
     readLineage: WorkspaceReadLineage | undefined,
-): { tools: Tool[]; mutator: WorkspaceMutator | undefined } {
+): { tools: Tool[]; mutator: WorkspaceMutator | undefined; records: DecisionRecordStore | undefined } {
     const { step, workspaceFs, pool, embedding, lineageCollector } = deps;
 
     // The agent's writable working directory: relative paths resolve here, and
@@ -320,23 +333,27 @@ function buildWorkspaceTools(
               workingDir: hostWorkingDir,
               lineageCollector,
           });
-    const mutateTools = mutator
-        ? [
-              createWriteFileTool({ mutator }),
-              createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir, intents: createEditIntentStore(pool) }),
-          ]
-        : [];
+    const records = mutator ? createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(step.workspaceRoot) }) : undefined;
+    const mutateTools =
+        mutator && records
+            ? [
+                  createWriteFileTool({ mutator }),
+                  createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir, intents: createEditIntentStore(pool), records }),
+              ]
+            : [];
 
     const tools = [
         createAcquireSandboxTool(step.lease),
         createReleaseSandboxTool(step.lease),
         createExecuteCommandTool({
+            logger: deps.logger,
             lease: step.lease,
             defaultCwd: sandboxWorkingDir,
             lineageCollector,
             mountRoot: `/${step.analysisId}`,
             workspaceFilesystem: workspaceFs,
             mutator,
+            records,
         }),
         ...mutateTools,
         createReadFileTool(workspaceFs, hostWorkingDir, readLineage),
@@ -345,7 +362,7 @@ function buildWorkspaceTools(
         createGrepTool(workspaceFs, hostWorkingDir, readLineage),
         ...(embedding ? [createWorkspaceSearchTool(pool, embedding)] : []),
     ];
-    return { tools, mutator };
+    return { tools, mutator, records };
 }
 
 /**
@@ -392,7 +409,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
           })
         : undefined;
     const workspace = buildWorkspaceTools(deps, opts.readOnly ?? false, readLineage);
-    const allowlisted = resolveSandboxTools(deps, meta.tools, workspace.mutator);
+    const allowlisted = resolveSandboxTools(deps, meta.tools, workspace.mutator, workspace.records);
     const tools: Tool[] = [
         ...workspace.tools,
         ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),

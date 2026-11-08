@@ -21,9 +21,12 @@ import {
     buildStepMethods,
     readStepDecisionRecords,
     renderMethodsBlock,
+    restoreStepDecisionRecords,
     withMethodsBlock,
     type StepDecisionRecord,
 } from "../step-methods.js";
+import { stepDecisionRecordDir } from "../../workspace/paths.js";
+import { computeSha256 } from "../../lib/fs-helpers.js";
 
 const SNAPSHOT = "sha256:a559d904";
 
@@ -193,7 +196,7 @@ describe("readStepDecisionRecords", () => {
         await writeFile(join(dir, "output", "decision_record_shape.json"), JSON.stringify({ template: 3 }));
         await writeFile(join(dir, "output", "summary.json"), JSON.stringify(record()));
 
-        const records = await readStepDecisionRecords(dir, logger);
+        const records = await readStepDecisionRecords(join(dir, "output"), logger);
         expect(records.map((entry) => entry.file)).toEqual(["output/decision_record_a.json", "output/decision_record_b.json"]);
         expect(records.map((entry) => entry.record.script_path)).toEqual(["/x/scripts/a.R", "/x/scripts/b.R"]);
         const messages = logger.records.map((entry) => entry.msg);
@@ -207,12 +210,90 @@ describe("readStepDecisionRecords", () => {
         await writeFile(join(outside, "secret.json"), JSON.stringify(record()));
         await symlink(join(outside, "secret.json"), join(dir, "output", "decision_record_x.json"));
 
-        expect(await readStepDecisionRecords(dir, createCapturingLogger())).toEqual([]);
+        expect(await readStepDecisionRecords(join(dir, "output"), createCapturingLogger())).toEqual([]);
     });
 
     it("gives no record when the step has no output directory", async () => {
         const dir = await mkdtemp(join(tmpdir(), "step-methods-empty-"));
-        expect(await readStepDecisionRecords(dir, createCapturingLogger())).toEqual([]);
+        expect(await readStepDecisionRecords(join(dir, "output"), createCapturingLogger())).toEqual([]);
+    });
+});
+
+// ── restoreStepDecisionRecords ───────────────────────────────────────
+
+describe("restoreStepDecisionRecords", () => {
+    it("writes again each copy in the step that is absent or changed, leaves an equal copy, and warns for each", async () => {
+        const writePrefix = await stepDir();
+        const recordDir = join(writePrefix, ".host");
+        await mkdir(recordDir, { recursive: true });
+        const held = (name: string): string => `${JSON.stringify(record({ script_path: `/x/scripts/${name}.R` }), null, 2)}\n`;
+        for (const name of ["a", "b", "c"]) await writeFile(join(recordDir, `decision_record_${name}.json`), held(name));
+        await writeFile(join(writePrefix, "output", "decision_record_b.json"), JSON.stringify({ template: { id: "forged" } }));
+        await writeFile(join(writePrefix, "output", "decision_record_c.json"), held("c"));
+        const logger = createCapturingLogger();
+
+        await restoreStepDecisionRecords({ recordDir, writePrefix, stagingKey: "restore", logger });
+
+        for (const name of ["a", "b", "c"]) expect(await readFile(join(writePrefix, "output", `decision_record_${name}.json`), "utf8")).toBe(held(name));
+        expect(logger.records.filter((entry) => entry.msg.includes("wrote it again")).map((entry) => entry.fields.file)).toEqual([
+            "output/decision_record_a.json",
+            "output/decision_record_b.json",
+        ]);
+    });
+
+    it("keeps the record of a file tool that wrote the bytes, and drops a producer of other bytes", async () => {
+        const writePrefix = await stepDir();
+        const recordDir = join(writePrefix, ".host");
+        await mkdir(recordDir, { recursive: true });
+        const held = JSON.stringify(record());
+        for (const name of ["a", "b"]) await writeFile(join(recordDir, `decision_record_${name}.json`), held);
+        await writeFile(join(writePrefix, "output", "decision_record_a.json"), held);
+        await writeFile(join(writePrefix, "output", "decision_record_b.json"), "changed by a command");
+        const collector = new ProvenanceCollector({ stepId: STEP_ID, runId: RUN_ID });
+        const hash = computeSha256(Buffer.from(held));
+        collector.recordFileToolWrite({
+            path: "output/decision_record_a.json",
+            hash,
+            size: held.length,
+            toolName: "knowledge_template",
+            invocationId: "call-1",
+        });
+        collector.recordCommandExecution("Rscript", ["scripts/x.R"], 0, 10, [{ path: "output/decision_record_b.json", hash: "", size: 20 }]);
+
+        const restore = () => restoreStepDecisionRecords({ recordDir, writePrefix, stagingKey: "restore", collector, logger: createCapturingLogger() });
+        await restore();
+        await restore();
+
+        expect(collector.getRecords().map((entry) => [entry.outputPath, entry.producer.type])).toEqual([["output/decision_record_a.json", "file_tool"]]);
+        expect(await readFile(join(writePrefix, "output", "decision_record_b.json"), "utf8")).toBe(held);
+    });
+
+    it("writes again each host copy, also past the bound of the methods", async () => {
+        const writePrefix = await stepDir();
+        const recordDir = join(writePrefix, ".host");
+        await mkdir(recordDir, { recursive: true });
+        const names = Array.from({ length: 20 }, (_, index) => `decision_record_${String(index).padStart(2, "0")}.json`);
+        for (const name of names) await writeFile(join(recordDir, name), JSON.stringify(record()));
+
+        await restoreStepDecisionRecords({ recordDir, writePrefix, stagingKey: "restore", logger: createCapturingLogger() });
+
+        for (const name of names) expect(await readFile(join(writePrefix, "output", name), "utf8")).toBe(JSON.stringify(record()));
+    });
+
+    it("does not follow a symlink that a command put in place of a copy, and warns", async () => {
+        const writePrefix = await stepDir();
+        const recordDir = join(writePrefix, ".host");
+        await mkdir(recordDir, { recursive: true });
+        await writeFile(join(recordDir, "decision_record_a.json"), JSON.stringify(record()));
+        const outside = await mkdtemp(join(tmpdir(), "step-methods-outside-"));
+        await writeFile(join(outside, "target.json"), "kept");
+        await symlink(join(outside, "target.json"), join(writePrefix, "output", "decision_record_a.json"));
+        const logger = createCapturingLogger();
+
+        await restoreStepDecisionRecords({ recordDir, writePrefix, stagingKey: "restore", logger });
+
+        expect(await readFile(join(outside, "target.json"), "utf8")).toBe("kept");
+        expect(logger.records.some((entry) => entry.msg.includes("cannot write it again"))).toBe(true);
     });
 });
 
@@ -256,7 +337,7 @@ function postCtx(writePrefix: string, grounding?: Grounding): PostStepContext {
     };
 }
 
-function deps(provider: PostStepPipelineDeps["provider"]): PostStepPipelineDeps {
+function deps(provider: PostStepPipelineDeps["provider"], workspaceRoot: string): PostStepPipelineDeps {
     return {
         pool: unusedPool,
         logger: createCapturingLogger(),
@@ -270,17 +351,19 @@ function deps(provider: PostStepPipelineDeps["provider"]): PostStepPipelineDeps 
                 throw new Error("artifactRegistry.sync: not driven by this test");
             },
         },
-        resolveWorkspaceRoot: (id) => Promise.resolve(id),
+        resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
     };
 }
 
 describe("generateStepSummaryAndWrite methods", () => {
     it("appends the methods block to the summary of the agent, writes it to summary.md, and returns the methods", async () => {
         const dir = await stepDir();
-        await writeFile(join(dir, "output", "decision_record_tpl-edger-ql_A.json"), JSON.stringify(record()));
+        const recordDir = stepDecisionRecordDir({ workspaceRoot: dir, runId: RUN_ID, stepId: STEP_ID });
+        await mkdir(recordDir, { recursive: true });
+        await writeFile(join(recordDir, "decision_record_tpl-edger-ql_A.json"), JSON.stringify(record()));
         const { provider } = scriptedModel([reply([text("# Results\n\n- 1 gene at FDR 0.05")])]);
 
-        const summary = await generateStepSummaryAndWrite(deps(provider), postCtx(dir, GROUNDING), [], []);
+        const summary = await generateStepSummaryAndWrite(deps(provider, dir), postCtx(dir, GROUNDING), [], []);
 
         expect(summary?.markdown.startsWith("# Results\n\n- 1 gene at FDR 0.05\n\n---\n\n## Methods and sources")).toBe(true);
         expect(summary?.methods?.templates.map((template) => template.id)).toEqual(["tpl-edger-ql"]);
@@ -291,7 +374,7 @@ describe("generateStepSummaryAndWrite methods", () => {
         const dir = await stepDir();
         const { provider } = scriptedModel([]);
 
-        const summary = await generateStepSummaryAndWrite(deps(provider), postCtx(dir, GROUNDING), [], []);
+        const summary = await generateStepSummaryAndWrite(deps(provider, dir), postCtx(dir, GROUNDING), [], []);
 
         expect(summary?.markdown.startsWith(METHODS_HEADING)).toBe(true);
         expect(summary?.markdown).toContain("- R-0028@d560 (consensus): The title of R-0028@d560");
@@ -302,7 +385,7 @@ describe("generateStepSummaryAndWrite methods", () => {
         const dir = await stepDir();
         const { provider } = scriptedModel([reply([text("# Results")])]);
 
-        const summary = await generateStepSummaryAndWrite(deps(provider), postCtx(dir), [], []);
+        const summary = await generateStepSummaryAndWrite(deps(provider, dir), postCtx(dir), [], []);
 
         expect(summary).toEqual({ stepId: STEP_ID, agentId: AGENT_ID, markdown: "# Results" });
     });
