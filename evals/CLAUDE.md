@@ -117,6 +117,54 @@ cache reads. But the state of the cache changes between two runs, and that
 noise can be larger than the effect of a change. Thus `compare` uses the token
 volume: each input token, plus five times each output token.
 
+## Keep or revert a change
+
+These rules come from [Automating eval design and
+hillclimbing](https://claude.dev/blog/automating-eval-design-and-hillclimbing/).
+
+- Before the first change, run the baseline two times. If the noise between the
+  two runs is larger than the smallest gain that you act on, add trials first.
+- Make one change in each round. Make it large enough to show above the noise.
+  Fix the cause of a failure: write the section that causes it again, or add
+  the missing rule. Do not only change the words of one line.
+- Keep a change only if the `dev` set and the `held-out` set both improve, and
+  neither regresses. If `dev` improves and `held-out` stays flat, the change
+  fits the cases, not the behavior. Revert it.
+- If a gain is inside the noise, do not keep the change.
+- Never copy a failed case into a prompt. A prompt that names the data of a
+  case passes that case and nothing else.
+- When the score stops for two or three rounds, sort the failures that remain
+  by cause. The cause is often a case defect, a defect of the runner, or
+  noise.
+- When a set passes at about 95 % or more, the gain that remains is the cost.
+  Then the objective is a lower token volume at the same pass rate.
+
+A prompt, a skill, a tool description, and the model are cheap to change and
+to revert. Code of the harness is not, thus prefer a change of text for a
+climb. A rule that the evals show the model does not obey is the exception: it
+goes into code, as `Agent-facing content` in the root `CLAUDE.md` says.
+
+## Design a case
+
+- A case gives a task that production gives. Do not select a task only because
+  it is easy to make or to grade.
+- Take the tasks first from real failures: a complaint, an issue, or a bug.
+  Then add the tasks that a person can justify as hard. Do not select only the
+  tasks that the current model fails. Such a set measures the weak points of
+  one model, not the behavior.
+- The grader checks only what the task states, or what a prompt rule or a tool
+  description requires. Two experts must give the same grade to one trial.
+- Grade the result of a decision, not a ritual. A grader that requires a call
+  that changes no result passes a slow agent and fails a fast one. For example,
+  a lookup of a package that the farm always holds is a ritual.
+- A case that fails each trial on each model is probably a case defect: an
+  ambiguous task, or a grader that refuses a correct answer. Read the trials
+  before you change a prompt.
+- A more capable model, or a higher effort, must pass at least as often. If
+  Opus fails a case that Sonnet passes, look for a case defect first.
+- Keep the state of one trial away from the next. A file or a history that
+  remains can give the answer to the agent.
+
 ## Write a case
 
 The cases are in `cases/`, one file for each agent or topic. The graders and the

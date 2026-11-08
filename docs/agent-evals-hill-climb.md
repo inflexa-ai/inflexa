@@ -243,27 +243,44 @@ The failed Sonnet trials made the same three calls in both arms, and then they
 reported the blocker. Only the third call changed: it did not reach the farm.
 No decision changed, thus the change was reverted.
 
-### Round 8: the standards say when to read the skills
+### Round 8, reverted: the standards say when to read the skills
 
-The defect: the step agents wrote the script of a method before they read its
-skill. Only the bulk agent read its skill, because its prompt names one skill
-file to read.
+The change: the skills paragraph of the step standards gave a time. Before the
+agent writes the first script of a method, it reads the reference of that
+method.
 
-The change: the skills paragraph of the step standards now gives a time.
-Before the agent writes the first script of a method, it finds the guidance
-with `skill_search` and reads the reference of that method with `skill_read`.
+`step-consults-skills` (dev) went from 1/3 to 3/3, with no regression in the
+other step cases. Its held-out twin stayed at 0/3, and the token volume of the
+dev set rose 10 %. A change that improves `dev` and leaves `held-out` flat fits
+the cases, thus the change is reverted (`evals/CLAUDE.md`, `Keep or revert a
+change`).
 
-| Arm | `step-consults-skills` (dev) | The other step cases | Token volume |
+The case also graded a ritual: it required a read of a skill, and the task did
+not ask for one. The pair `step-enrichment-offline-ora` replaces it. It grades
+the script: the GMT of the organism from the store, no Enrichr library name, a
+background, and no `organism=` in `gp.enrich()`.
+
+### Round 9, reverted: the method content only in the skill
+
+The enrichment prompt gives again most of the text of `enrichment/SKILL.md`:
+the method choice, the standards, and the anti-patterns. Anthropic advises to
+keep the procedure of a specialist in skills, and to load it only when
+necessary. This round measured that advice on one agent.
+
+| Arm | Enrichment cases, 4 trials | Trials that read the skill | Token volume |
 | --- | --- | --- | --- |
-| Baseline | 1/3 | | |
-| The time, plus "a call from memory fails on the version of the pool" | 3/3 | Two regressions: the agents read the skill, and then they ran with no other check | +12 % (gate fails) |
-| Only a line in the enrichment prompt, as the bulk prompt has | Not changed: the enrichment twin stays 0/3 | No change | No change |
-| The time, with no clause (kept) | 3/3 | No regression | dev +10 % (95 % CI 0 to +20), held-out +4 % |
+| The full prompt | 51/52 | 0 of 52 | |
+| A short prompt that points to the skill | 51/52 | 26 of 52 | dev +16 % (95 % CI +4 to +28), held-out +3 % |
 
-The kept arm costs more tokens, because each step reads one skill file. A step
-that renders a template also reads a skill, and the template already gives the
-script. The enrichment twin stays at 0/3, thus the enrichment agent is still an
-open defect.
+With the full prompt, the agent wrote a correct offline ORA in 8 of 8 trials,
+and it read no skill. Thus the agent that "does not read its skills" had no
+defect in its results. With the short prompt, the results did not change, and
+the dev set cost more, because half of the steps read the skill. The system
+prompt is cached across the steps of a run, and a skill read is not, thus the
+eval cost understates the advantage of the full prompt.
+
+The full prompt stays. For this agent, the content that each step uses belongs
+in the prompt. The skill keeps the API detail that only one method uses.
 
 ## The knowledge service in the evals
 
@@ -316,7 +333,7 @@ The first runs found defects in these cases, and not in the agents:
 | --- | --- |
 | `plan-biomarker-selection-in-cv` | A model of response selects its genes inside the cross-validation, or it calls its estimate optimistic. |
 | `plan-optional-reference-plans` | An optional reference that is absent gives a plan, not a clarification. It is the counter-case of `plan-missing-reference`. |
-| `step-consults-skills` | The step reads its skills before it writes the script of its method. |
+| `step-enrichment-offline-ora` | The ORA script reads the GMT of the organism from the store, names no Enrichr library, passes a background, and passes no `organism=` to `gp.enrich()`. |
 | `plan-routes-immune-profiling` | An immune composition question goes to the immune-profiling agent. |
 | `plan-routes-drug-repurposing` | A question about existing drugs that reverse a signature goes to the drug-repurposing agent. |
 | `plan-organism-matches` | The gene-set step of a mouse study names the mouse sets. No step names a human resource. |
@@ -376,7 +393,7 @@ set.
 | Planner: the section on how the work reaches the user, and the bullets on a pending profile | 30 planner cases: 100 % before and after. Token volume -4.7 % (per case -3.8 %, 95 % CI -8.4 to +0.8). |
 | Step standards: the `report_blocker` paragraph, and the reference bullet | Step cases: 124/132 before, 128/131 after. Token volume -0.9 %. |
 | Profiler: the paragraph on how to submit | Inside the step-case result above. |
-| Step standards: the paragraph on skills | Reverted. `step-consults-skills` went from 2/2 to 0/3. |
+| Step standards: the paragraph on skills | Reverted. `step-consults-skills` went from 2/2 to 0/3. That case graded a ritual (round 8), thus this cut must run again on the outcome cases. |
 
 The cases with no prompt change moved by +1.1 % in the same run. Thus a change
 of about 1 % is noise.
@@ -552,7 +569,6 @@ These failures came from the evals, not from the agents. Each one is fixed.
 | A step reads the data profile that its briefing holds | Sonnet, GLM | No. The cost is one small call. A fix changes the tool set for each step, and that breaks the prompt cache. |
 | `link_packages` called again after `unavailable` | Sonnet, Opus, GLM | No. A code limit did not change a decision (round 7). GLM also does not report the blocker: it tries the R track, the store paths, and a wait. |
 | The profiler reads more than one file of a set | GLM | No |
-| The enrichment agent does not read its skills before it writes its script | Sonnet (0/3) | No. Round 8 fixed the other agents. A line in the enrichment prompt changed nothing. |
 | A lookup over a table reads the table in many scripts | GLM (1/3) | No |
 
 ## GLM status
