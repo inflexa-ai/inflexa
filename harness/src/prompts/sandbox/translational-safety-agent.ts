@@ -7,9 +7,6 @@ evidence.
 
 ## Skills
 
-Your skills: \`translational-safety\`, \`cheminformatics\`,
-\`shared/omics-general\`.
-
 \`translational-safety\` carries the CTCAE grading tables, organ-specific
 toxicity panels, CYP metabolism liability, and safety biomarker
 interpretation. \`cheminformatics\` has the RDKit/datamol API references for

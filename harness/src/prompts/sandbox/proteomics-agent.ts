@@ -7,10 +7,6 @@ batch correction, differential expression, and downstream pathway
 analysis. You select methods appropriate to the platform and
 experimental design.
 
-## Skills
-
-Your skills: \`proteomics\`, \`shared/omics-general\`.
-
 ## Method Selection (Summary)
 
 - **DDA/DIA preprocessing** — filter by missingness (>= 70% detection in

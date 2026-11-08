@@ -14,6 +14,7 @@
  * skill, an undeclared skill, or no matches.
  */
 
+import { readFileSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 
@@ -187,4 +188,40 @@ export function createSkillTools(deps: SkillToolsDeps): {
     });
 
     return { skillSearch, skillRead };
+}
+
+/** The `description` of the frontmatter of a `SKILL.md`, or `undefined` when the file or the field is absent. */
+function skillDescription(skillsDir: string, skill: string): string | undefined {
+    let text: string;
+    try {
+        text = readFileSync(join(skillsDir, skill, "SKILL.md"), "utf8");
+    } catch {
+        return undefined;
+    }
+    const lines = splitLines(text);
+    if (lines[0]?.trim() !== "---") return undefined;
+    const end = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
+    const field = lines.slice(1, end === -1 ? undefined : end).find((line) => line.startsWith("description:"));
+    const value = field?.slice("description:".length).trim();
+    return value === undefined || value.length === 0 ? undefined : value;
+}
+
+/**
+ * The first level of the skills of an agent: one entry for each declared skill, from the `description` of its
+ * `SKILL.md`. The agent reads a `SKILL.md` and its references only when the work of the step needs them. The text
+ * depends only on the declared skills and the skill files, thus it stays the same for each step of an agent type.
+ */
+export function skillIndex(skillsDir: string, skills: readonly string[]): string | undefined {
+    const entries = skills.map((skill) => {
+        const description = skillDescription(skillsDir, skill);
+        return description === undefined ? `- \`${skill}\`` : `- \`${skill}\`: ${description}`;
+    });
+    if (entries.length === 0) return undefined;
+    return [
+        "## Your Skills",
+        "",
+        "`skill_read` reads a skill: its `SKILL.md` holds the method guidance, and its references hold the API of each library.",
+        "",
+        ...entries,
+    ].join("\n");
 }

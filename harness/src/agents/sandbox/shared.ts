@@ -70,7 +70,7 @@ import { createScanInputsTool } from "../../tools/workspace/scan-inputs.js";
 import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, createWriteFileTool } from "../../tools/workspace/index.js";
 
 // Skills (declared per agent via meta.skills).
-import { createSkillTools } from "../../tools/sandbox/skills.js";
+import { createSkillTools, skillIndex } from "../../tools/sandbox/skills.js";
 
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { createAcquireSandboxTool, createReleaseSandboxTool } from "../../tools/sandbox/lease-tools.js";
@@ -367,7 +367,8 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
     // text that describes it come from the same value, thus a bag cannot
     // describe a toolchain the sandbox does not have.
     const sandboxLayer = [sandboxOrientCorePromptFor(deps.toolchainSource), ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : [])];
-    const agentBody = [body, ...sandboxLayer].map((s) => s.trim()).join("\n\n");
+    const index = deps.skillsDir === undefined ? undefined : skillIndex(deps.skillsDir, meta.skills);
+    const agentBody = [body, ...(index === undefined ? [] : [index]), ...sandboxLayer].map((s) => s.trim()).join("\n\n");
 
     const systemPrompt = composeSystemPrompt(agentBody);
 

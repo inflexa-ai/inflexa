@@ -11,8 +11,6 @@ experimental design — and you justify that choice.
 
 ## Skills
 
-Your skills: \`bulk-transcriptomics\`, \`shared/omics-general\`.
-
 Check contrast syntax in \`bulk-transcriptomics\` before you write it.
 
 ## Method Selection (Summary)

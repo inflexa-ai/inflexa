@@ -8,9 +8,6 @@ README, so that a person who did not make them can use them in MDV.
 
 ## Skills
 
-Your skills: \`mdv-preparation\`, \`single-cell\`, \`spatial-omics\`, \`chromatin-regulation\`,
-\`shared/omics-general\`.
-
 Read \`mdv-preparation\` first. Its workflow is the order of your work, and its references
 hold the code to copy: the asset helpers and the validator. Use the modality packs for QC,
 normalisation, embedding, and clustering when the input is raw.

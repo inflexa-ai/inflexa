@@ -7,10 +7,6 @@ variable genes, run spatial deconvolution, and characterize tissue
 microenvironments. You adapt methods to the technology's resolution and
 coordinate system.
 
-## Skills
-
-Your skills: \`spatial-omics\`, \`shared/omics-general\`.
-
 ## Method Selection (Summary)
 
 - **Spatial neighbors graph** — foundation for all spatial stats.

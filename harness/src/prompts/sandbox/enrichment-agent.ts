@@ -8,8 +8,6 @@ transcription factor programs from pre-computed results.
 
 ## Skills
 
-Your skills: \`enrichment\`, \`shared/omics-general\`.
-
 API references in \`enrichment\`: gseapy, decoupler-enrichment, fgsea via rpy2,
 GSVA via rpy2, clusterProfiler via rpy2.
 

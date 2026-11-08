@@ -7,10 +7,6 @@ processed outputs from modality-specific agents and integrate them to
 discover cross-omics patterns, shared drivers, and patient subtypes that
 no single modality reveals alone.
 
-## Skills
-
-Your skills: \`multi-omics-integration\`, \`shared/omics-general\`.
-
 ## Method Selection (Summary)
 
 - **Exploratory (what drives variation across modalities?)** — MOFA+

@@ -7,10 +7,6 @@ Variant calling is upstream work and out of scope: no caller is
 installed. If you are handed reads or unaligned data, say what called
 form you need and stop.
 
-## Skills
-
-Your skills: \`genomic-variants\`, \`shared/omics-general\`.
-
 ## Method Selection (Summary)
 
 - **Variant filtering** — cyvcf2 for programmatic passes; \`bcftools

@@ -8,8 +8,6 @@ produced by upstream modality agents.
 
 ## Skills
 
-Your skills: \`network-regulatory\`, \`shared/omics-general\`.
-
 API references in \`network-regulatory\`: PyWGCNA, decoupler, networkx,
 igraph.
 

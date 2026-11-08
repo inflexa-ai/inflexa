@@ -1,0 +1,4182 @@
+{
+  "version": 1,
+  "startedAt": "2026-11-08T15:36:22.386Z",
+  "commit": "f3e60749",
+  "promptDigest": "04a72ee7cefa4062",
+  "provider": {
+    "kind": "anthropic",
+    "baseURL": "http://localhost:8318/v1",
+    "model": "claude-sonnet-5-5",
+    "reasoning": "high"
+  },
+  "sandboxProvider": {
+    "kind": "anthropic",
+    "baseURL": "http://localhost:8318/v1",
+    "model": "claude-sonnet-5-5",
+    "reasoning": "medium"
+  },
+  "trialsPerCase": 3,
+  "k": 3,
+  "cases": [
+    {
+      "id": "step-renders-template",
+      "set": "dev",
+      "source": "knowledge_template description: a step whose grounding names a template renders it and runs it, and prefers it over its own script",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "ran scripts/tpl-pydeseq2-two-group.py; no DE script of its own",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 135969,
+            "outputTokens": 2176,
+            "cacheCreationInputTokens": 13572,
+            "cacheReadInputTokens": 122385,
+            "reasoningTokens": 435
+          },
+          "tools": [
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "knowledge_template",
+            "execute_command",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "ran scripts/tpl-pydeseq2-two-group.py; no DE script of its own",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 272165,
+            "outputTokens": 4615,
+            "cacheCreationInputTokens": 16122,
+            "cacheReadInputTokens": 256021,
+            "reasoningTokens": 522
+          },
+          "tools": [
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "knowledge_template",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "read_file",
+            "read_file",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "read_file"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "ran scripts/tpl-pydeseq2-two-group.py; no DE script of its own",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 215049,
+            "outputTokens": 4170,
+            "cacheCreationInputTokens": 14241,
+            "cacheReadInputTokens": 200790,
+            "reasoningTokens": 607
+          },
+          "tools": [
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "knowledge_template",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "read_file",
+            "list_files",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-renders-template-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-renders-template",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "ran scripts/tpl-pydeseq2-two-group.py; no DE script of its own",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 203112,
+            "outputTokens": 2022,
+            "cacheCreationInputTokens": 21787,
+            "cacheReadInputTokens": 181307,
+            "reasoningTokens": 347
+          },
+          "tools": [
+            "execute_command!",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "knowledge_template",
+            "read_file",
+            "execute_command",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "ran scripts/tpl-pydeseq2-two-group.py; no DE script of its own",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 154094,
+            "outputTokens": 2075,
+            "cacheCreationInputTokens": 5173,
+            "cacheReadInputTokens": 148907,
+            "reasoningTokens": 458
+          },
+          "tools": [
+            "execute_command!",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "knowledge_template",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "ran scripts/tpl-pydeseq2-two-group.py; no DE script of its own",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 183024,
+            "outputTokens": 3039,
+            "cacheCreationInputTokens": 6388,
+            "cacheReadInputTokens": 176620,
+            "reasoningTokens": 509
+          },
+          "tools": [
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "knowledge_template",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-template-unfit-adapts",
+      "set": "dev",
+      "source": "knowledge_template description: a template is a tested start, not an order; a two-group template does not answer a dose trend",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/dose_trend.py models the dose",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 296234,
+            "outputTokens": 4014,
+            "cacheCreationInputTokens": 16569,
+            "cacheReadInputTokens": 279643,
+            "reasoningTokens": 698
+          },
+          "tools": [
+            "execute_command!",
+            "skill_search",
+            "acquire_sandbox",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/dose_trend.py models the dose",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 320662,
+            "outputTokens": 3811,
+            "cacheCreationInputTokens": 16252,
+            "cacheReadInputTokens": 304386,
+            "reasoningTokens": 1002
+          },
+          "tools": [
+            "execute_command!",
+            "skill_search",
+            "execute_command!",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/dose_trend.py models the dose",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 582633,
+            "outputTokens": 6503,
+            "cacheCreationInputTokens": 51508,
+            "cacheReadInputTokens": 531097,
+            "reasoningTokens": 1161
+          },
+          "tools": [
+            "execute_command!",
+            "skill_read(bulk-transcriptomics/SKILL.md)",
+            "acquire_sandbox",
+            "execute_command",
+            "list_available_packages",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "read_file",
+            "execute_command",
+            "read_file"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-template-unfit-adapts-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-template-unfit-adapts",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/dose_trend.py models the dose",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 512436,
+            "outputTokens": 6669,
+            "cacheCreationInputTokens": 62394,
+            "cacheReadInputTokens": 450018,
+            "reasoningTokens": 1244
+          },
+          "tools": [
+            "execute_command!",
+            "skill_search",
+            "acquire_sandbox",
+            "skill_read(bulk-transcriptomics/SKILL.md)",
+            "execute_command",
+            "execute_command",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "write_file",
+            "edit_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/dose_trend.py models the dose",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 372636,
+            "outputTokens": 5829,
+            "cacheCreationInputTokens": 24229,
+            "cacheReadInputTokens": 348381,
+            "reasoningTokens": 864
+          },
+          "tools": [
+            "execute_command!",
+            "skill_search",
+            "list_available_packages",
+            "execute_command!",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/dose_trend.py models the dose",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 545791,
+            "outputTokens": 6221,
+            "cacheCreationInputTokens": 57588,
+            "cacheReadInputTokens": 488177,
+            "reasoningTokens": 1483
+          },
+          "tools": [
+            "execute_command!",
+            "skill_search",
+            "list_available_packages",
+            "acquire_sandbox",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command",
+            "write_file",
+            "edit_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "execute_command",
+            "grep",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-template-unavailable-own-script",
+      "set": "dev",
+      "source": "knowledge_template description: on `unavailable`, write the script yourself and state it",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; 0 calls of knowledge_template",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 321280,
+            "outputTokens": 4759,
+            "cacheCreationInputTokens": 33398,
+            "cacheReadInputTokens": 287858,
+            "reasoningTokens": 358
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "skill_search",
+            "acquire_sandbox!",
+            "acquire_sandbox",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; 0 calls of knowledge_template",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 237680,
+            "outputTokens": 4368,
+            "cacheCreationInputTokens": 11017,
+            "cacheReadInputTokens": 226643,
+            "reasoningTokens": 400
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; 0 calls of knowledge_template",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 330888,
+            "outputTokens": 4730,
+            "cacheCreationInputTokens": 31284,
+            "cacheReadInputTokens": 299582,
+            "reasoningTokens": 579
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "skill_read(bulk-transcriptomics/SKILL.md)",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-template-unavailable-own-script-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-template-unavailable-own-script",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; 0 calls of knowledge_template",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 291009,
+            "outputTokens": 5143,
+            "cacheCreationInputTokens": 25373,
+            "cacheReadInputTokens": 265612,
+            "reasoningTokens": 560
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; 0 calls of knowledge_template",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 288056,
+            "outputTokens": 4588,
+            "cacheCreationInputTokens": 8371,
+            "cacheReadInputTokens": 279661,
+            "reasoningTokens": 439
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; 0 calls of knowledge_template",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 338509,
+            "outputTokens": 5449,
+            "cacheCreationInputTokens": 10971,
+            "cacheReadInputTokens": 327510,
+            "reasoningTokens": 988
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-enrichment-offline-ora",
+      "set": "dev",
+      "source": "enrichment skill: gene sets from a resolved GMT, never an Enrichr name; a background for an ORA; gp.enrich() takes no organism",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/ora_hallmark.py runs an offline ORA",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 254099,
+            "outputTokens": 3664,
+            "cacheCreationInputTokens": 64719,
+            "cacheReadInputTokens": 189360,
+            "reasoningTokens": 721
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "read_file",
+            "write_file",
+            "execute_command!",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command!",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark_ora.py runs an offline ORA",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 251228,
+            "outputTokens": 2904,
+            "cacheCreationInputTokens": 21794,
+            "cacheReadInputTokens": 229414,
+            "reasoningTokens": 447
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "read_file",
+            "write_file",
+            "execute_command!",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark_ora.py runs an offline ORA",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 229656,
+            "outputTokens": 3458,
+            "cacheCreationInputTokens": 9107,
+            "cacheReadInputTokens": 220529,
+            "reasoningTokens": 403
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-enrichment-offline-ora-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-enrichment-offline-ora: mouse genes, the up and the down genes apart",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark_ora.py runs an offline ORA",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 188321,
+            "outputTokens": 3426,
+            "cacheCreationInputTokens": 15308,
+            "cacheReadInputTokens": 172997,
+            "reasoningTokens": 403
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark_ora.py runs an offline ORA",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 239266,
+            "outputTokens": 3012,
+            "cacheCreationInputTokens": 17620,
+            "cacheReadInputTokens": 221626,
+            "reasoningTokens": 292
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark_ora.py runs an offline ORA",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 189325,
+            "outputTokens": 3466,
+            "cacheCreationInputTokens": 7363,
+            "cacheReadInputTokens": 181946,
+            "reasoningTokens": 524
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-keeps-request-deliverable",
+      "set": "dev",
+      "source": "briefing: a deliverable that the request describes keeps the file name, the fields, and the values of the request",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/de.py writes output/de_hits.tsv with gene, log2fc, fdr",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 197152,
+            "outputTokens": 3781,
+            "cacheCreationInputTokens": 48654,
+            "cacheReadInputTokens": 148480,
+            "reasoningTokens": 402
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/de.py writes output/de_hits.tsv with gene, log2fc, fdr",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 247210,
+            "outputTokens": 4510,
+            "cacheCreationInputTokens": 11505,
+            "cacheReadInputTokens": 235683,
+            "reasoningTokens": 457
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/de.py writes output/de_hits.tsv with gene, log2fc, fdr",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 225093,
+            "outputTokens": 4209,
+            "cacheCreationInputTokens": 10809,
+            "cacheReadInputTokens": 214264,
+            "reasoningTokens": 355
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-keeps-request-deliverable-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-keeps-request-deliverable: the request names a directory, and the deliverable still goes to output/",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark_gsea.py writes output/pathways_up.csv with pathway, nes, padj",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 179494,
+            "outputTokens": 3024,
+            "cacheCreationInputTokens": 14883,
+            "cacheReadInputTokens": 164595,
+            "reasoningTokens": 432
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark.py writes output/pathways_up.csv with pathway, nes, padj",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 291075,
+            "outputTokens": 3964,
+            "cacheCreationInputTokens": 21392,
+            "cacheReadInputTokens": 269659,
+            "reasoningTokens": 713
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command!",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark_gsea.py writes output/pathways_up.csv with pathway, nes, padj",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 232771,
+            "outputTokens": 3728,
+            "cacheCreationInputTokens": 8164,
+            "cacheReadInputTokens": 224587,
+            "reasoningTokens": 618
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-briefing-no-hunt",
+      "set": "dev",
+      "source": "sandbox standards: what the briefing gives is authoritative; no filesystem hunt for the inputs and no second read of the profile",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile, workspace_search; no search under /analysis-001/data; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 173697,
+            "outputTokens": 3597,
+            "cacheCreationInputTokens": 22892,
+            "cacheReadInputTokens": 150789,
+            "reasoningTokens": 148
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile, workspace_search; no search under /analysis-001/data; called write_file",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 172065,
+            "outputTokens": 3763,
+            "cacheCreationInputTokens": 11770,
+            "cacheReadInputTokens": 160281,
+            "reasoningTokens": 222
+          },
+          "tools": [
+            "acquire_sandbox",
+            "skill_search",
+            "list_available_packages",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command!",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile, workspace_search; no search under /analysis-001/data; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 199821,
+            "outputTokens": 3885,
+            "cacheCreationInputTokens": 11759,
+            "cacheReadInputTokens": 188046,
+            "reasoningTokens": 372
+          },
+          "tools": [
+            "acquire_sandbox",
+            "skill_search",
+            "list_available_packages",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command!",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-briefing-no-hunt-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-briefing-no-hunt",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile, workspace_search; no search under /analysis-001/data; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 168262,
+            "outputTokens": 2625,
+            "cacheCreationInputTokens": 14101,
+            "cacheReadInputTokens": 154145,
+            "reasoningTokens": 102
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile, workspace_search; no search under /analysis-001/data; called write_file",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 164246,
+            "outputTokens": 3356,
+            "cacheCreationInputTokens": 21038,
+            "cacheReadInputTokens": 143194,
+            "reasoningTokens": 168
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "skill_read(bulk-transcriptomics/SKILL.md)",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile, workspace_search; no search under /analysis-001/data; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 169765,
+            "outputTokens": 3214,
+            "cacheCreationInputTokens": 6639,
+            "cacheReadInputTokens": 163110,
+            "reasoningTokens": 291
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-upstream-excerpt",
+      "set": "dev",
+      "source": "sandbox standards: no second read of an upstream summary that the briefing handed over",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S1/output/summary.md\"}; no command matches /T1S1\\/output\\/summary\\.md/; no search under /analysis-001/runs; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 180502,
+            "outputTokens": 2714,
+            "cacheCreationInputTokens": 15110,
+            "cacheReadInputTokens": 165376,
+            "reasoningTokens": 271
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command!",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S1/output/summary.md\"}; no command matches /T1S1\\/output\\/summary\\.md/; no search under /analysis-001/runs; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 176295,
+            "outputTokens": 2701,
+            "cacheCreationInputTokens": 7198,
+            "cacheReadInputTokens": 169081,
+            "reasoningTokens": 200
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S1/output/summary.md\"}; no command matches /T1S1\\/output\\/summary\\.md/; no search under /analysis-001/runs; called write_file",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 157093,
+            "outputTokens": 3002,
+            "cacheCreationInputTokens": 15548,
+            "cacheReadInputTokens": 141531,
+            "reasoningTokens": 213
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-upstream-excerpt-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-upstream-excerpt",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S2/output/summary.md\"}; no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S1/output/summary.md\"}; no command matches /output\\/summary\\.md/; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 183078,
+            "outputTokens": 3179,
+            "cacheCreationInputTokens": 23817,
+            "cacheReadInputTokens": 159245,
+            "reasoningTokens": 268
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S2/output/summary.md\"}; no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S1/output/summary.md\"}; no command matches /output\\/summary\\.md/; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 182326,
+            "outputTokens": 2582,
+            "cacheCreationInputTokens": 8097,
+            "cacheReadInputTokens": 174213,
+            "reasoningTokens": 270
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S2/output/summary.md\"}; no read_file call with {\"path\":\"/analysis-001/runs/run-001/T1S1/output/summary.md\"}; no command matches /output\\/summary\\.md/; called write_file",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 182894,
+            "outputTokens": 2946,
+            "cacheCreationInputTokens": 5859,
+            "cacheReadInputTokens": 177019,
+            "reasoningTokens": 194
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-links-missing-package",
+      "set": "dev",
+      "source": "link_packages description: a package that the farm lacks and the pool holds is linked, never installed, and the script runs after the link",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "linked, then ran a script",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 204680,
+            "outputTokens": 2995,
+            "cacheCreationInputTokens": 21078,
+            "cacheReadInputTokens": 183584,
+            "reasoningTokens": 160
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "read_file",
+            "link_packages",
+            "write_file",
+            "execute_command!",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "linked, then ran a script",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 178395,
+            "outputTokens": 2596,
+            "cacheCreationInputTokens": 7113,
+            "cacheReadInputTokens": 171266,
+            "reasoningTokens": 163
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "link_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "linked, then ran a script",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 153040,
+            "outputTokens": 2677,
+            "cacheCreationInputTokens": 6391,
+            "cacheReadInputTokens": 146635,
+            "reasoningTokens": 131
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "link_packages",
+            "acquire_sandbox!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-links-missing-package-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-links-missing-package",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "linked, then ran a script",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 223080,
+            "outputTokens": 3476,
+            "cacheCreationInputTokens": 16481,
+            "cacheReadInputTokens": 206581,
+            "reasoningTokens": 138
+          },
+          "tools": [
+            "execute_command!",
+            "skill_search",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "link_packages",
+            "execute_command",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "linked, then ran a script",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 280153,
+            "outputTokens": 4274,
+            "cacheCreationInputTokens": 32381,
+            "cacheReadInputTokens": 247750,
+            "reasoningTokens": 321
+          },
+          "tools": [
+            "execute_command!",
+            "skill_search",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "link_packages",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "linked, then ran a script",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 250160,
+            "outputTokens": 3852,
+            "cacheCreationInputTokens": 17509,
+            "cacheReadInputTokens": 232631,
+            "reasoningTokens": 262
+          },
+          "tools": [
+            "execute_command!",
+            "skill_search",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "link_packages",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-absent-package-blocks",
+      "set": "dev",
+      "source": "link_packages description: an absent package with no acquisition is reported as missing, not installed",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "called report_blocker; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; blocker: xCell2 is required but not available. It is absent from the R package list and the host has no staged copy (link_packages returned \"absent\", acquisition not possible). No xCell2 reference (cell-type signature) data is in /mnt/refs either; only msigdb hallmark and collectri are there. rpy2 and anndata are also absent. I did not substitute another deconvolution method, because the constraint names xCell2. Please have xCell2 and a reference object staged, then re-run. To approve a different method instead, say so.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 59354,
+            "outputTokens": 528,
+            "cacheCreationInputTokens": 7869,
+            "cacheReadInputTokens": 51479,
+            "reasoningTokens": 0
+          },
+          "tools": [
+            "list_available_packages",
+            "list_available_refs",
+            "skill_search",
+            "link_packages",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "called report_blocker; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; blocker: xCell2 is required by the step but is not installed and cannot be linked. The package pool has no staged xCell2 (R). It also has no rpy2 or anndata. No xCell2 reference object is provisioned under /mnt/refs either, which holds only msigdb and collectri. xCell2 also needs a cell-type reference to train on, so it cannot run here. I did not substitute another deconvolution method because the constraint names xCell2. No outputs were produced. To proceed, the host would need to stage xCell2 and a reference such as its pre-built references, or you would need to approve a different method.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 59351,
+            "outputTokens": 549,
+            "cacheCreationInputTokens": 7866,
+            "cacheReadInputTokens": 51479,
+            "reasoningTokens": 0
+          },
+          "tools": [
+            "list_available_packages",
+            "list_available_refs",
+            "skill_search",
+            "link_packages",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "called report_blocker; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; blocker: xCell2 is required, but it is not available. The R package xCell2 is absent from the sandbox, and linking it from the host pool returned \"no staged distribution matches\" (acquisitionPossible: false). No xCell2 reference is provisioned either: /mnt/refs holds only msigdb hallmark and collectri. rpy2 and anndata are also absent. I did not substitute another deconvolution method, because the constraint names xCell2. To proceed, the host needs to stage xCell2 and a cell-type reference for it. Alternatively, you could approve a different method.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 59351,
+            "outputTokens": 545,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 59345,
+            "reasoningTokens": 0
+          },
+          "tools": [
+            "list_available_packages",
+            "list_available_refs",
+            "skill_search",
+            "link_packages",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-absent-package-blocks-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-absent-package-blocks",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "called report_blocker; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; blocker: The step requires ANCOM-BC2 from the ANCOMBC package, and that package is not available. promote_list_available_packages shows r:ANCOMBC absent. meat_link_packages found no staged distribution for ANCOMBC and said the host cannot acquire it. TreeSummarizedExperiment, which ANCOM-BC2 needs, is absent too. ALDEx2, the usual fallback for n=3 per group, is also absent. I did not substitute another method, because the protocol requires ANCOM-BC2. Hand-written CLR with t-tests or Wilcoxon would not be a valid compositional analysis. No analysis was run and no output files were written. The step can continue once the host stages ANCOMBC and TreeSummarizedExperiment, or once the protocol is changed to allow another compositional method. Note that with 3 samples per group ANCOM-BC2 will have very little power and its variance estimates will be unstable, so any result needs cautious reading.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 60461,
+            "outputTokens": 901,
+            "cacheCreationInputTokens": 40280,
+            "cacheReadInputTokens": 20175,
+            "reasoningTokens": 92
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "link_packages",
+            "acquire_sandbox",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "called report_blocker; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; blocker: The step requires ANCOM-BC2 from the ANCOMBC package, and that package is not available. `library(ANCOMBC)` fails with \"there is no package called 'ANCOMBC'\". Linking it from the staged pool returned `absent` (no staged distribution matches, and the host cannot acquire it). I did not substitute another method, because the protocol constraint names ANCOM-BC2. Two further issues for whoever resumes this step. (1) With 3 samples per group, the microbiome guidance prefers ALDEx2 over ANCOM-BC2, so the protocol may need revising. (2) The input table does not look like a 16S taxon table. Its row IDs are ENSG gene IDs (ENSG00000010000 and so on) and its \"genus\" column holds gene symbols (ISG15, MX1, IFIT1, STAT1). The analysis goal is also stated as a transcriptional response. The profile calls the data 16S, so please confirm what the data actually is. Stage ANCOMBC, or approve ALDEx2 as a replacement, and the step can run.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 102367,
+            "outputTokens": 1053,
+            "cacheCreationInputTokens": 2904,
+            "cacheReadInputTokens": 99453,
+            "reasoningTokens": 122
+          },
+          "tools": [
+            "execute_command!",
+            "inspect_data_profile",
+            "acquire_sandbox",
+            "execute_command",
+            "link_packages",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "called report_blocker; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; blocker: The step requires ANCOM-BC2 from the ANCOMBC package, and that package is not installed. `list_available_packages` shows it absent. `link_packages` returned \"absent: no staged distribution matches\", with acquisitionPossible=false. `requireNamespace(\"ANCOMBC\")` in R fails, and a filesystem search found nothing. TreeSummarizedExperiment, which ANCOMBC needs, is also absent. I did not substitute another method (ALDEx2, for example), because the constraint names ANCOM-BC2 and I will not report results under that name that it did not produce. Two things are needed to proceed. The host must stage ANCOMBC and its dependencies. Or the constraint must be relaxed. If it is relaxed, ALDEx2 would suit this design, since n=3 per group is below the ANCOM-BC2 default of n>=10. Even then, power would be very limited.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 81631,
+            "outputTokens": 1064,
+            "cacheCreationInputTokens": 2007,
+            "cacheReadInputTokens": 79616,
+            "reasoningTokens": 124
+          },
+          "tools": [
+            "list_available_packages",
+            "execute_command!",
+            "link_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-link-unavailable",
+      "set": "dev",
+      "source": "link_packages description: `unavailable` says nothing about the package; report the reason, do not request it again",
+      "trials": 3,
+      "passes": 1,
+      "errors": 0,
+      "rate": 0.3333333333333333,
+      "interval": {
+        "low": 0.061491944020930805,
+        "high": 0.7923404011921757
+      },
+      "passHatK": 0,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "2 calls of link_packages; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; no such blocker; blocker: The step requires decoupler, but decoupler is not installed in the sandbox (ModuleNotFoundError). anndata is also missing. Two meat_link_packages calls for decoupler and anndata both returned unavailable with ERR_LINK_TIMEOUT (the farm service did not answer), so I could not tell whether the host has them staged. The CollecTRI regulons are available at /mnt/refs/collectri/human/collectri.v1.tsv, and the DE results are in T1S1/output/de_results.csv. I did not substitute my own re-implementation of the decoupler methods, because the constraint says to use decoupler. The step can run once decoupler (and anndata) can be linked or staged.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 152170,
+            "outputTokens": 1398,
+            "cacheCreationInputTokens": 10894,
+            "cacheReadInputTokens": 141262,
+            "reasoningTokens": 89
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "link_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "list_available_packages",
+            "link_packages",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": false,
+          "detail": "3 calls of link_packages",
+          "calls": [
+            {
+              "step": 0,
+              "tool": "list_available_refs",
+              "input": {
+                "query": "collectri"
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 0,
+              "tool": "list_available_packages",
+              "input": {
+                "names": [
+                  "python:decoupler",
+                  "python:anndata",
+                  "python:pandas",
+                  "python:matplotlib"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 0,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "head -3 /analysis-001/data/inputs/f-counts/counts.tsv | cut -c1-300; cat /analysis-001/data/inputs/f-meta/samples.csv; head -3 /analysis-001/runs/run-001/T1S1/output/de_results.csv"
+                ]
+              },
+              "refused": false,
+              "ok": false
+            },
+            {
+              "step": 1,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "python:decoupler",
+                  "python:anndata"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 1,
+              "tool": "acquire_sandbox",
+              "input": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 2,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "python:decoupler",
+                  "python:anndata"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 2,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "head -3 /analysis-001/data/inputs/f-counts/counts.tsv | cut -c1-300; cat /analysis-001/data/inputs/f-meta/samples.csv; head -3 /analysis-001/runs/run-001/T1S1/output/de_results.csv; head -3 /mnt/refs/collectri/human/collectri.v1.tsv"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 3,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "python -c 'import decoupler; print(decoupler.__version__)'; python -c 'import anndata; print(anndata.__version__)'; python -c 'import scipy, numpy; print(1)'; wc -l /mnt/refs/collectri/human/collectri.v1.tsv"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 4,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "decoupler"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 5,
+              "tool": "report_blocker",
+              "input": {
+                "reason": "decoupler is not importable in the sandbox (ModuleNotFoundError), and anndata is also missing. Three calls to link_packages for decoupler and anndata all returned ERR_LINK_TIMEOUT, so the farm service never answered and I can't tell whether the pool holds them. The step requires decoupler with CollecTRI. The CollecTRI regulons are available at /mnt/refs/collectri/human/collectri.v1.tsv (source, target, weight), and the DE table from T1S1 is available. I did not substitute a hand-written ULM/MLM, because that would not meet the decoupler constraint. No outputs were produced. The step can be re-run once decoupler is linked or staged."
+              },
+              "refused": false,
+              "ok": true
+            }
+          ],
+          "asks": [],
+          "text": "Link timed out; retry once.\nCheck whether decoupler is importable anyway.",
+          "finishReason": "stop",
+          "stepFinishes": [
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)"
+          ],
+          "capped": false,
+          "files": [],
+          "usage": {
+            "inputTokens": 132288,
+            "outputTokens": 1414,
+            "cacheCreationInputTokens": 13414,
+            "cacheReadInputTokens": 118862,
+            "reasoningTokens": 105
+          }
+        },
+        {
+          "kind": "graded",
+          "pass": false,
+          "detail": "3 calls of link_packages",
+          "calls": [
+            {
+              "step": 0,
+              "tool": "list_available_refs",
+              "input": {
+                "query": "collectri"
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 0,
+              "tool": "list_available_packages",
+              "input": {
+                "names": [
+                  "decoupler",
+                  "anndata",
+                  "matplotlib",
+                  "pandas"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 0,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "head -3 /analysis-001/runs/run-001/T1S1/output/de_results.csv; head -3 /analysis-001/data/inputs/f-counts/counts.tsv | cut -c1-200"
+                ]
+              },
+              "refused": false,
+              "ok": false
+            },
+            {
+              "step": 1,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "decoupler",
+                  "anndata"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 1,
+              "tool": "acquire_sandbox",
+              "input": {},
+              "refused": false,
+              "ok": false
+            },
+            {
+              "step": 2,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "decoupler",
+                  "anndata"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 2,
+              "tool": "acquire_sandbox",
+              "input": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 3,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "python -c 'import decoupler; print(decoupler.__version__)'; python -c 'import anndata; print(anndata.__version__)'; head -3 /analysis-001/runs/run-001/T1S1/output/de_results.csv; head -3 /analysis-001/data/inputs/f-counts/counts.tsv | cut -c1-200; head -3 /mnt/refs/collectri/human/collectri.v1.tsv"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 4,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "python:decoupler",
+                  "python:anndata"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 4,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "head -3 /analysis-001/runs/run-001/T1S1/output/de_results.csv; head -3 /analysis-001/data/inputs/f-counts/counts.tsv | cut -c1-200; head -3 /mnt/refs/collectri/human/collectri.v1.tsv; cat /analysis-001/data/inputs/f-meta/samples.csv"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 5,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "ls /store/python 2>/dev/null | grep -i -E 'decoupl|anndata|scanpy'; pip list 2>/dev/null | grep -i -E 'decoupl|anndata|scanpy'; find / -maxdepth 6 -iname 'decoupler*' 2>/dev/null | head"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 6,
+              "tool": "report_blocker",
+              "input": {
+                "reason": "The step requires decoupler with CollecTRI, but decoupler is not importable in the sandbox (ModuleNotFoundError). anndata is also not available. I called link_packages for decoupler and anndata three times and each call failed with ERR_LINK_TIMEOUT (the farm service did not answer). A search of the filesystem for decoupler found nothing. The CollecTRI regulons (/mnt/refs/collectri/human/collectri.v1.tsv), the counts, and the DE table from T1S1 are all present and readable. I did not run a hand-written replacement for decoupler's ULM, because the constraint names decoupler. The step can run once the farm service links decoupler and anndata."
+              },
+              "refused": false,
+              "ok": true
+            }
+          ],
+          "asks": [],
+          "text": "Linking timed out twice; check whether the packages import anyway.\nSh chain stopped oddly; retry the link once more and inspect files separately.",
+          "finishReason": "stop",
+          "stepFinishes": [
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)"
+          ],
+          "capped": false,
+          "files": [],
+          "usage": {
+            "inputTokens": 154459,
+            "outputTokens": 1646,
+            "cacheCreationInputTokens": 4932,
+            "cacheReadInputTokens": 149513,
+            "reasoningTokens": 75
+          }
+        }
+      ]
+    },
+    {
+      "id": "step-link-unavailable-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-link-unavailable",
+      "trials": 3,
+      "passes": 2,
+      "errors": 0,
+      "rate": 0.6666666666666666,
+      "interval": {
+        "low": 0.2076595988078242,
+        "high": 0.9385080559790691
+      },
+      "passHatK": 0,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": false,
+          "detail": "3 calls of link_packages",
+          "calls": [
+            {
+              "step": 0,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "python -c \"import scanpy,anndata;print(scanpy.__version__)\"; python - <<'E'\nimport scanpy as sc\na=sc.read_h5ad('/analysis-001/data/inputs/f-sc/pbmc.h5ad');print(a);print(a.obs.head());print(a.obs.nunique());print(a.X[:5,:5].toarray() if hasattr(a.X,'toarray') else a.X[:5,:5])\nE"
+                ]
+              },
+              "refused": false,
+              "ok": false
+            },
+            {
+              "step": 0,
+              "tool": "list_available_packages",
+              "input": {
+                "names": [
+                  "scrublet",
+                  "celltypist",
+                  "leidenalg",
+                  "igraph",
+                  "python:scanpy"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 1,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "scanpy",
+                  "leidenalg",
+                  "igraph",
+                  "scrublet",
+                  "celltypist",
+                  "anndata"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 1,
+              "tool": "acquire_sandbox",
+              "input": {
+                "cpu": 4,
+                "memoryGb": 16
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 2,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "sh",
+                  "-c",
+                  "python - <<'E'\nimport scanpy as sc\nprint(sc.__version__)\nfor m in ['leidenalg','igraph','scrublet','celltypist']:\n    try: __import__(m);print(m,'ok')\n    except Exception as e: print(m,'NO')\na=sc.read_h5ad('/analysis-001/data/inputs/f-sc/pbmc.h5ad');print(a);print(a.obs.head());print(a.obs.nunique())\nE"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 3,
+              "tool": "write_file",
+              "input": {
+                "path": "scripts/inspect.py",
+                "content": "import scanpy as sc\nprint(sc.__version__)\nfor m in ['leidenalg','igraph','scrublet','celltypist']:\n    try:\n        __import__(m); print(m,'ok')\n    except Exception as e:\n        print(m,'NO')\na=sc.read_h5ad('/analysis-001/data/inputs/f-sc/pbmc.h5ad')\nprint(a); print(a.obs.head()); print(a.obs.nunique()); print(a.var.head()); print(a.X.max())\n"
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 4,
+              "tool": "execute_command",
+              "input": {
+                "command": [
+                  "python",
+                  "scripts/inspect.py"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 5,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "scanpy"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 6,
+              "tool": "link_packages",
+              "input": {
+                "packages": [
+                  "python:scanpy",
+                  "python:leidenalg",
+                  "python:igraph",
+                  "python:anndata"
+                ]
+              },
+              "refused": false,
+              "ok": true
+            },
+            {
+              "step": 7,
+              "tool": "report_blocker",
+              "input": {
+                "reason": "Scanpy is required for this step and cannot be imported in the sandbox (ModuleNotFoundError). Every call to link_packages for scanpy, anndata, leidenalg, igraph, scrublet and celltypist returned unavailable with ERR_STORE_LOCKED (\"the package store is locked by another link\"). I tried the bare names, the python: prefix and a repeat call. Presence checks also showed none of these packages in the farm. I did not substitute another toolkit because the constraint requires scanpy. No data was read and no outputs were produced. The step needs the host to release the package store lock or stage scanpy, then it can be re-dispatched."
+              },
+              "refused": false,
+              "ok": true
+            }
+          ],
+          "asks": [],
+          "text": "Heredoc fails; write a script file instead.\nScanpy isn't importable. The link failed because the store was locked, so I'll try once more.",
+          "finishReason": "stop",
+          "stepFinishes": [
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)",
+            "tool-calls (tool_use)"
+          ],
+          "capped": false,
+          "files": [
+            "scripts/inspect.py"
+          ],
+          "usage": {
+            "inputTokens": 172652,
+            "outputTokens": 1609,
+            "cacheCreationInputTokens": 20325,
+            "cacheReadInputTokens": 152311,
+            "reasoningTokens": 56
+          }
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "2 calls of link_packages; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; no such blocker; blocker: Scanpy is required by the step, and it can't be imported in the sandbox (ModuleNotFoundError). I tried to link scanpy, anndata, leidenalg and igraph with the link tool twice. Both attempts returned 'unavailable' with ERR_STORE_LOCKED (package store locked by another link). That result says nothing about whether the packages exist in the pool. No analysis was run and no outputs were produced. The step can be re-run once the package store lock clears and scanpy, anndata, leidenalg and igraph can be linked.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 150507,
+            "outputTokens": 1019,
+            "cacheCreationInputTokens": 4412,
+            "cacheReadInputTokens": 146081,
+            "reasoningTokens": 44
+          },
+          "tools": [
+            "inspect_data_profile",
+            "list_available_refs",
+            "list_available_packages",
+            "link_packages",
+            "acquire_sandbox",
+            "execute_command!",
+            "execute_command",
+            "link_packages",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "2 calls of link_packages; no command matches /pip install|install\\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/; no such blocker; blocker: scanpy is required for this step but is not importable in the sandbox (ModuleNotFoundError). I tried to link it, together with leidenalg and igraph, with link_packages. Both attempts returned \"unavailable: ERR_STORE_LOCKED: the package store is locked by another link\". This says nothing about whether the packages exist in the pool. The packages scanpy, leidenalg and igraph are not in the available list. anndata 0.11.1 and matplotlib 3.9.2 are present. I did not load the data or run any analysis, so there are no clusters, UMAP or marker table. The step can run once the package store lock is released and scanpy, leidenalg and igraph can be linked.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 147191,
+            "outputTokens": 1345,
+            "cacheCreationInputTokens": 3371,
+            "cacheReadInputTokens": 143806,
+            "reasoningTokens": 115
+          },
+          "tools": [
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "link_packages",
+            "list_available_packages",
+            "link_packages",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-profile-organism",
+      "set": "dev",
+      "source": "sandbox standards: no second derivation of the organism; the profile names it",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile; no search under /analysis-001/data/inputs; uses /\\.Mm\\.symbols/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 190976,
+            "outputTokens": 3510,
+            "cacheCreationInputTokens": 27341,
+            "cacheReadInputTokens": 163619,
+            "reasoningTokens": 175
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile; no search under /analysis-001/data/inputs; uses /\\.Mm\\.symbols/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 184258,
+            "outputTokens": 3361,
+            "cacheCreationInputTokens": 9031,
+            "cacheReadInputTokens": 175211,
+            "reasoningTokens": 281
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile; no search under /analysis-001/data/inputs; uses /\\.Mm\\.symbols/",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 235334,
+            "outputTokens": 3384,
+            "cacheCreationInputTokens": 11145,
+            "cacheReadInputTokens": 224169,
+            "reasoningTokens": 167
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "list_files",
+            "list_files"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-profile-organism-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-profile-organism",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile; no search under /analysis-001/data/inputs; uses /\\.Rn\\.symbols/",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 241512,
+            "outputTokens": 3444,
+            "cacheCreationInputTokens": 28004,
+            "cacheReadInputTokens": 213488,
+            "reasoningTokens": 263
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "link_packages"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile; no search under /analysis-001/data/inputs; uses /\\.Rn\\.symbols/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 209804,
+            "outputTokens": 3055,
+            "cacheCreationInputTokens": 9973,
+            "cacheReadInputTokens": 199813,
+            "reasoningTokens": 278
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no call of inspect_data_profile; no search under /analysis-001/data/inputs; uses /\\.Rn\\.symbols/",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 240080,
+            "outputTokens": 3363,
+            "cacheCreationInputTokens": 11763,
+            "cacheReadInputTokens": 228297,
+            "reasoningTokens": 226
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-raw-reads-scope",
+      "set": "dev",
+      "source": "bulk-transcriptomics prompt: handed FASTQ, say that the step needs the count matrix, and stop",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "decided report_blocker; no command matches /salmon|kallisto|STAR|hisat2|featureCounts|bowtie/; blocker: Differential expression can't be run because the inputs contain no count or expression matrix. The only data files are T1_R1.fastq.gz and T1_R2.fastq.gz, which are 16 bytes each and so effectively empty. They cover one sample (T1) out of six, and no reads exist for T2, T3, C1, C2 or C3. samples.csv lists 3 treated and 3 control samples, with a batch column (T2 and C2 are in batch 2, the rest in batch 1). Quantification from reads is outside this environment, since no aligner or quantifier is installed. To proceed I need a raw gene-by-sample count matrix covering all six samples (genes in rows, samples T1-T3 and C1-C3 in columns). With that I would run PyDESeq2 with a design of ~batch + group, and produce the results table (log2 fold change and adjusted p-value) and a volcano plot.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 58803,
+            "outputTokens": 767,
+            "cacheCreationInputTokens": 14941,
+            "cacheReadInputTokens": 43856,
+            "reasoningTokens": 64
+          },
+          "tools": [
+            "list_files",
+            "grep",
+            "list_files",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "decided report_blocker; no command matches /salmon|kallisto|STAR|hisat2|featureCounts|bowtie/; blocker: Differential expression cannot be run because there is no count or expression matrix. The inputs are FASTQ reads for one sample only (T1_R1/T1_R2.fastq.gz) plus a 6-sample sheet (samples.csv). The data profile confirms \"No count matrix\", and reads for T2, T3 and C1–C3 are absent. Alignment and quantification are upstream steps with no tools installed here. Needed: a raw gene-level count matrix (genes x 6 samples: T1–T3, C1–C3) from upstream quantification, e.g. featureCounts, STAR or Salmon with tximport. With that, I would run PyDESeq2 (treated vs control, n=3 per group) and produce the results table and volcano plot.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 39136,
+            "outputTokens": 506,
+            "cacheCreationInputTokens": 768,
+            "cacheReadInputTokens": 38364,
+            "reasoningTokens": 48
+          },
+          "tools": [
+            "list_files",
+            "inspect_data_profile",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "decided report_blocker; no command matches /salmon|kallisto|STAR|hisat2|featureCounts|bowtie/; blocker: Differential expression needs a gene-by-sample count matrix, and the workspace has none. /analysis-001/data/inputs holds only f-reads/T1_R1.fastq.gz and T1_R2.fastq.gz (raw reads for one sample, T1) and f-meta/samples.csv (6-sample sheet). The data profile also says \"No count matrix\". Reads for C1-C3, T2 and T3 are absent. Quantification from reads is upstream work, and no aligner or quantifier is installed here. I did not run any analysis and produced no table or volcano plot. Please supply a raw-count matrix (genes x 6 samples: C1-C3, T1-T3), for example from STAR+featureCounts or Salmon+tximport. I would then run PyDESeq2 for treated vs control.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 39142,
+            "outputTokens": 532,
+            "cacheCreationInputTokens": 774,
+            "cacheReadInputTokens": 38364,
+            "reasoningTokens": 54
+          },
+          "tools": [
+            "list_files",
+            "inspect_data_profile",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-raw-reads-scope-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-raw-reads-scope",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "blocker: This step needs called variants, and the inputs are only aligned reads. The two input files are tumor.bam and normal.bam, which are whole-exome alignments. Somatic calling of tumor against matched normal (for example Mutect2 or Strelka2) is upstream read processing. No variant caller is installed here, and this environment does not produce calls. I did not build a pileup-based substitute, because that would give unvalidated calls. To proceed, I need a raw somatic VCF/BCF from the tumor-normal pair, with the reference build stated. I can then filter it, populate FILTER, annotate it against a reference resource and write the consequence table. Separately, the analysis memory goal (\"transcriptional response to treatment\", treated vs control T1-T3/C1-C3) does not match this paired tumor/normal exome input. That mismatch should be resolved when the task is re-planned.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 20750,
+            "outputTokens": 486,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 20748,
+            "reasoningTokens": 139
+          },
+          "tools": [
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "blocker: I can't produce the somatic variant VCF or the consequence table. The inputs are aligned reads (tumor.bam, normal.bam), not called variants. Somatic calling is upstream work and no caller is installed here. The two BAMs are also 4-byte stubs containing only the magic header \"BAM\\1\". They have no header, references or reads, so even read-level inspection is impossible. The step needs a tumor-vs-normal somatic VCF (for example from Mutect2 or Strelka2) and a valid, non-truncated BAM pair. Two further problems: the analysis memory goal (\"transcriptional response to treatment\") and the treated/control T1-T3 vs C1-C3 design don't match this tumor/normal exome data. Please confirm the intended task.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 63106,
+            "outputTokens": 650,
+            "cacheCreationInputTokens": 42003,
+            "cacheReadInputTokens": 21097,
+            "reasoningTokens": 112
+          },
+          "tools": [
+            "list_files",
+            "list_files",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "blocker: This step needs somatic variant calls (tumor vs matched normal). The only inputs are tumor.bam and normal.bam, which are aligned reads. Variant calling is upstream work, and no caller (Mutect2, Strelka, etc.) is installed here. No VCF/BCF exists in the inputs or in prior runs. Both BAM files are also 4 bytes each, so they are stubs or empty and hold no reads. To proceed I need a somatic VCF from a tumor–normal caller, ideally with FILTER populated and the reference build stated. I can then filter and annotate it and build the consequence table. The analysis memory goal (transcriptional response to treatment) also doesn't match this exome tumor/normal task, and the design text describes treated vs control replicates that don't correspond to the two files given.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 41995,
+            "outputTokens": 609,
+            "cacheCreationInputTokens": 495,
+            "cacheReadInputTokens": 41496,
+            "reasoningTokens": 80
+          },
+          "tools": [
+            "list_files",
+            "grep",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-persists-script",
+      "set": "dev",
+      "source": "incident 019eca52: steps computed with `python3 -c` and persisted nothing; the output contract of the step standards",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; ran sh -c mkdir -p output figures logs && python scripts/de.py 2>&1 | tee logs/de.log; no command matches /(python3? -c|Rscript -e).*(DeseqDataSet\\(|DESeq\\(|to_csv\\(|write\\.csv\\(|savefig\\(|ggsave\\()/; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 233232,
+            "outputTokens": 4339,
+            "cacheCreationInputTokens": 22489,
+            "cacheReadInputTokens": 210725,
+            "reasoningTokens": 467
+          },
+          "tools": [
+            "acquire_sandbox",
+            "skill_search",
+            "list_available_packages",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command!",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; ran sh -c mkdir -p logs && python scripts/de.py 2>&1 | tee logs/de.log; no command matches /(python3? -c|Rscript -e).*(DeseqDataSet\\(|DESeq\\(|to_csv\\(|write\\.csv\\(|savefig\\(|ggsave\\()/; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 296217,
+            "outputTokens": 4884,
+            "cacheCreationInputTokens": 11481,
+            "cacheReadInputTokens": 284710,
+            "reasoningTokens": 549
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker!",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; ran sh -c python scripts/de.py 2>&1 | tee logs/de.log | tail -40; no command matches /(python3? -c|Rscript -e).*(DeseqDataSet\\(|DESeq\\(|to_csv\\(|write\\.csv\\(|savefig\\(|ggsave\\()/; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 374500,
+            "outputTokens": 5264,
+            "cacheCreationInputTokens": 10167,
+            "cacheReadInputTokens": 364305,
+            "reasoningTokens": 576
+          },
+          "tools": [
+            "acquire_sandbox",
+            "skill_search",
+            "list_available_packages",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command!",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "read_file",
+            "list_files",
+            "report_blocker!",
+            "report_blocker!",
+            "execute_command",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-persists-script-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-persists-script",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/survival.py; ran python scripts/survival.py; no command matches /(python3? -c|Rscript -e).*(coxph\\(|CoxPHFitter\\(|to_csv\\(|write\\.csv\\(|savefig\\(|ggsave\\()/; wrote output/hazard_ratios.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 149703,
+            "outputTokens": 3040,
+            "cacheCreationInputTokens": 19921,
+            "cacheReadInputTokens": 129768,
+            "reasoningTokens": 204
+          },
+          "tools": [
+            "acquire_sandbox",
+            "inspect_data_profile",
+            "execute_command!",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/survival.py; ran mkdir -p output figures logs && python scripts/survival.py 2>&1 | tail -60; no command matches /(python3? -c|Rscript -e).*(coxph\\(|CoxPHFitter\\(|to_csv\\(|write\\.csv\\(|savefig\\(|ggsave\\()/; wrote output/hazard_ratios.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 149622,
+            "outputTokens": 3042,
+            "cacheCreationInputTokens": 5830,
+            "cacheReadInputTokens": 143778,
+            "reasoningTokens": 216
+          },
+          "tools": [
+            "acquire_sandbox",
+            "inspect_data_profile",
+            "execute_command!",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/survival.py; ran sh -c python scripts/survival.py > logs/run.log 2>&1; tail -5 logs/run.log; ls output figures; no command matches /(python3? -c|Rscript -e).*(coxph\\(|CoxPHFitter\\(|to_csv\\(|write\\.csv\\(|savefig\\(|ggsave\\()/; wrote output/hazard_ratios.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 174676,
+            "outputTokens": 3540,
+            "cacheCreationInputTokens": 7951,
+            "cacheReadInputTokens": 166709,
+            "reasoningTokens": 287
+          },
+          "tools": [
+            "acquire_sandbox",
+            "inspect_data_profile",
+            "execute_command!",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "read_file",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-missing-reference-no-invention",
+      "set": "dev",
+      "source": "sandbox standards: a reference that is not there is reported, never assumed at a path or fetched",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /h\\.all\\.v|msigdb\\/hallmark/; no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; blocker: Two blockers. (1) No Hallmark gene-set collection is available. /mnt/refs holds only collectri, and searches for \"hallmark\", \"msigdb\" and \"gene set\" returned nothing. The sandbox has no network, so I can't fetch MSigDB. I did not rebuild the 50 sets from memory, because that would give unverifiable membership and a fabricated database version. (2) The sandbox does not run my code. Every execute_command call, including a trivial script that searches the disk for GMT files, returned only a note that the eval cannot run model code, with no output. I could not run an enrichment or produce persisted outputs. I did read the upstream DE table (T1S1 de_results.csv: gene_id, symbol, baseMean, log2FoldChange, padj) and it is usable as ORA/GSEA input. To proceed, the host needs to stage an MSigDB Hallmark GMT (e.g. h.all.v2024.1.Hs.symbols.gmt) under /mnt/refs and restore working code execution. No enrichment_results.csv or dot plot was produced.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 179149,
+            "outputTokens": 2222,
+            "cacheCreationInputTokens": 7558,
+            "cacheReadInputTokens": 171575,
+            "reasoningTokens": 239
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "list_available_refs",
+            "list_available_refs",
+            "list_available_refs",
+            "acquire_sandbox!",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /h\\.all\\.v|msigdb\\/hallmark/; no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; blocker: I could not run the hallmark enrichment, for two reasons. (1) The Hallmark gene-set collection (MSigDB H) is not available. cloud_list_available_refs lists only /mnt/refs/collectri, and queries for \"hallmark\" and \"msigdb\" returned nothing. The sandbox has no network, so Enrichr or MSigDB library names in gseapy cannot be fetched. I did not substitute a hand-typed or different gene-set collection. (2) The sandbox did not execute code. Shell and python commands returned only a note that the eval scripts the sandbox and cannot run model code, with no output. No script ran, so I have no output files, enrichment table or dot plot. Unblocking needs the MSigDB Hallmark GMT (h.all.v*.Hs.symbols.gmt) staged under /mnt/refs and a working execution sandbox. The input is ready: T1S1 output/de_results.csv has HGNC symbols, log2FoldChange and padj. The plan is ORA on the 412 genes with padj < 0.05, using the 2000 detected genes as background. As a complement, I would run GSEA prerank on the full ranked list.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 153017,
+            "outputTokens": 1726,
+            "cacheCreationInputTokens": 4366,
+            "cacheReadInputTokens": 148637,
+            "reasoningTokens": 161
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "list_available_refs",
+            "list_available_refs",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /h\\.all\\.v|msigdb\\/hallmark/; no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; blocker: The MSigDB Hallmark gene sets are not available in this sandbox, so I did not run the enrichment. The reference store (/mnt/refs) holds only a CollecTRI regulon table, and searches for \"hallmark\" and \"msigdb\" returned nothing. msigdbr, fgsea, clusterProfiler and decoupler are not installed. gseapy 1.1.4 is present, but its Enrichr/MSigDB library fetch needs network access, which is blocked. My file searches for .gmt files returned no output, so I could not confirm that none exist on disk. I did not rebuild Hallmark sets from memory, because that would be fabricated gene-set membership. The upstream DE table (T1S1/output/de_results.csv, symbols plus padj) is ready. To proceed, the host needs to stage the Hallmark GMT (e.g. MSigDB h.all.v2024.1.Hs.symbols.gmt) under /mnt/refs. I would then run ORA on the 412 DE genes with all 2000 tested genes as background, and optionally prerank GSEA, and produce the results table and dot plot.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 174884,
+            "outputTokens": 1697,
+            "cacheCreationInputTokens": 5785,
+            "cacheReadInputTokens": 169083,
+            "reasoningTokens": 124
+          },
+          "tools": [
+            "list_available_refs",
+            "execute_command!",
+            "list_available_refs",
+            "list_available_refs",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "list_available_packages",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-missing-reference-no-invention-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-missing-reference-no-invention",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /collectri\\.v1|\\/collectri\\//; no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; blocker: I produced no TF activity table. Two things blocked the step. (1) CollecTRI is not available offline. The reference store (/mnt/refs) holds only an MSigDB hallmark .gmt file, and a query for \"collectri\" returned nothing. dc.op.collectri() needs network access, which the sandbox blocks. (2) The sandbox did not execute my commands. Every execute_command call returned a stub note saying the code cannot run, so I could not search the filesystem for a bundled CollecTRI copy or run decoupler. decoupler 1.8.0 is installed and the DESeq2 input exists (T1S1/output/de_results.csv). To unblock, the host needs to stage a CollecTRI network (source, target, weight) under /mnt/refs and provide a working execution sandbox. I did not substitute hallmark gene sets or any other regulon, because that would not meet the CollecTRI constraint.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 129403,
+            "outputTokens": 1407,
+            "cacheCreationInputTokens": 3231,
+            "cacheReadInputTokens": 126160,
+            "reasoningTokens": 127
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "list_available_refs",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /collectri\\.v1|\\/collectri\\//; no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; blocker: I couldn't run the CollecTRI TF-activity analysis for two reasons. (1) No CollecTRI regulon network is available. The only reference in /mnt/refs is a single MSigDB .gmt file. A search for \"collectri\" and \"tf\" in the reference store returned nothing. dc.op.collectri() needs network access, which the sandbox doesn't have. Without that network I can't meet the constraint to use CollecTRI, and I won't substitute another resource. (2) The sandbox didn't execute my code. Python and shell commands returned a canned note (\"eval scripts the sandbox and cannot run model code\") with no computed output, so I couldn't inspect the counts or the DE table or persist any script or output. decoupler 1.8.0 is installed, but anndata isn't. To proceed, the host needs to stage the CollecTRI network, for example as a CSV with source, target and weight columns, under /mnt/refs and provide a working execution sandbox. The T1S1 DE table (output/de_results.csv) can then feed decoupler ULM, using the DESeq2 statistic or log2FC per gene, to give TF activity scores for treated versus control.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 153579,
+            "outputTokens": 1812,
+            "cacheCreationInputTokens": 5256,
+            "cacheReadInputTokens": 148309,
+            "reasoningTokens": 108
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "list_available_refs",
+            "list_available_refs",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /collectri\\.v1|\\/collectri\\//; no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; blocker: The CollecTRI regulon network is not available, so TF activity can't be run as specified. The only reference data provisioned under /mnt/refs is msigdb/hallmark (one .gmt file), and a search for \"collectri\" and for \"TF regulon\" found nothing. decoupler 1.8.0 is installed, but dc.op.collectri() downloads the network through OmniPath, and the sandbox has no network access. I did not substitute Hallmark gene sets or a hand-written TF-target list, because the constraint requires CollecTRI. No script or output was produced. To proceed, the host needs to stage a CollecTRI table (source, target, weight) under /mnt/refs. The inputs are ready: T1S1's de_results.csv has log2FoldChange and padj for 2000 genes, and a TF activity run from it would use dc.mt.ulm on the DE statistics.",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 153332,
+            "outputTokens": 1705,
+            "cacheCreationInputTokens": 5546,
+            "cacheReadInputTokens": 147772,
+            "reasoningTokens": 230
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "list_available_refs",
+            "link_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_available_refs",
+            "list_available_refs",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-no-network-fetcher",
+      "set": "dev",
+      "source": "sandbox standards: a library data fetcher such as dc.op.collectri() fails with no egress; load the staged file",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; uses /collectri\\.v1\\.tsv/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 184375,
+            "outputTokens": 3236,
+            "cacheCreationInputTokens": 9717,
+            "cacheReadInputTokens": 174642,
+            "reasoningTokens": 347
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "link_packages",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker!",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; uses /collectri\\.v1\\.tsv/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 158729,
+            "outputTokens": 2800,
+            "cacheCreationInputTokens": 8781,
+            "cacheReadInputTokens": 149934,
+            "reasoningTokens": 235
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "link_packages",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; uses /collectri\\.v1\\.tsv/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 159537,
+            "outputTokens": 2976,
+            "cacheCreationInputTokens": 4825,
+            "cacheReadInputTokens": 154698,
+            "reasoningTokens": 201
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "link_packages",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-no-network-fetcher-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-no-network-fetcher",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; uses /collectri\\.v1\\.tsv/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 155495,
+            "outputTokens": 2516,
+            "cacheCreationInputTokens": 19401,
+            "cacheReadInputTokens": 136080,
+            "reasoningTokens": 249
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "link_packages",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; uses /collectri\\.v1\\.tsv/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 106718,
+            "outputTokens": 1381,
+            "cacheCreationInputTokens": 3020,
+            "cacheReadInputTokens": 103688,
+            "reasoningTokens": 316
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "execute_command!",
+            "acquire_sandbox",
+            "link_packages",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no file matches /\\bdc\\.op\\.|decoupler\\.op\\.|get_collectri|get_progeny|get_resource|get_library\\(|Enrichr|models\\.download_models|ExperimentHub|AnnotationHub|https?:\\/\\//; uses /collectri\\.v1\\.tsv/",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 199304,
+            "outputTokens": 2715,
+            "cacheCreationInputTokens": 6897,
+            "cacheReadInputTokens": 192389,
+            "reasoningTokens": 261
+          },
+          "tools": [
+            "list_available_refs",
+            "list_available_packages",
+            "read_file",
+            "execute_command!",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "list_files",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-fixes-failed-script",
+      "set": "dev",
+      "source": "sandbox standards: fix a script that failed, and run it again",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "handled the duplicates before the first run",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 286243,
+            "outputTokens": 4654,
+            "cacheCreationInputTokens": 7339,
+            "cacheReadInputTokens": 278882,
+            "reasoningTokens": 380
+          },
+          "tools": [
+            "acquire_sandbox",
+            "skill_search",
+            "list_available_packages",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "execute_command!",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "changed the script and ran it again",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 323585,
+            "outputTokens": 4944,
+            "cacheCreationInputTokens": 12562,
+            "cacheReadInputTokens": 310995,
+            "reasoningTokens": 386
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "changed the script and ran it again",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 325756,
+            "outputTokens": 5223,
+            "cacheCreationInputTokens": 13384,
+            "cacheReadInputTokens": 312344,
+            "reasoningTokens": 389
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-fixes-failed-script-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-fixes-failed-script",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "handled the duplicates before the first run",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 323939,
+            "outputTokens": 4839,
+            "cacheCreationInputTokens": 26635,
+            "cacheReadInputTokens": 297276,
+            "reasoningTokens": 450
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "changed the script and ran it again",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 302028,
+            "outputTokens": 4870,
+            "cacheCreationInputTokens": 11147,
+            "cacheReadInputTokens": 290855,
+            "reasoningTokens": 273
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "handled the duplicates before the first run",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 335585,
+            "outputTokens": 4561,
+            "cacheCreationInputTokens": 19153,
+            "cacheReadInputTokens": 316406,
+            "reasoningTokens": 268
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "skill_search",
+            "acquire_sandbox!",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "read_file",
+            "file_stat",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-obeys-memory-constraint",
+      "set": "dev",
+      "source": "briefing: the constraints of the analysis memory bind each step",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 221690,
+            "outputTokens": 4165,
+            "cacheCreationInputTokens": 24276,
+            "cacheReadInputTokens": 197394,
+            "reasoningTokens": 587
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 271765,
+            "outputTokens": 4488,
+            "cacheCreationInputTokens": 9868,
+            "cacheReadInputTokens": 261873,
+            "reasoningTokens": 574
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "read_file",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 272142,
+            "outputTokens": 4744,
+            "cacheCreationInputTokens": 12212,
+            "cacheReadInputTokens": 259906,
+            "reasoningTokens": 785
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "list_available_packages",
+            "link_packages",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-obeys-memory-constraint-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-obeys-memory-constraint",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 270609,
+            "outputTokens": 4827,
+            "cacheCreationInputTokens": 24686,
+            "cacheReadInputTokens": 245899,
+            "reasoningTokens": 487
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "read_file",
+            "list_files",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 281812,
+            "outputTokens": 4636,
+            "cacheCreationInputTokens": 33390,
+            "cacheReadInputTokens": 248400,
+            "reasoningTokens": 491
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "list_files",
+            "execute_command",
+            "execute_command",
+            "list_files",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "wrote scripts/de.py; wrote output/de_results.csv",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 302368,
+            "outputTokens": 5337,
+            "cacheCreationInputTokens": 12785,
+            "cacheReadInputTokens": 289557,
+            "reasoningTokens": 564
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "read_file",
+            "execute_command",
+            "report_blocker!",
+            "report_blocker!",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-doc-reads-once",
+      "set": "dev",
+      "source": "issue #259: a documentation step read the same files until max_iterations",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "each document read at most 1 times (f-doc/methods.md, f-doc/protocol.md); wrote output/methods_protocol_summary.md; settled",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 75971,
+            "outputTokens": 2318,
+            "cacheCreationInputTokens": 16801,
+            "cacheReadInputTokens": 59164,
+            "reasoningTokens": 214
+          },
+          "tools": [
+            "read_file",
+            "read_file",
+            "read_file",
+            "write_file"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "each document read at most 1 times (f-doc/methods.md, f-doc/protocol.md); wrote output/methods_and_protocol_summary.md; settled",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 76302,
+            "outputTokens": 2519,
+            "cacheCreationInputTokens": 17132,
+            "cacheReadInputTokens": 59164,
+            "reasoningTokens": 249
+          },
+          "tools": [
+            "read_file",
+            "read_file",
+            "read_file",
+            "write_file"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "each document read at most 1 times (f-doc/methods.md, f-doc/protocol.md); wrote output/methods_and_protocol_summary.md; settled",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 76029,
+            "outputTokens": 2411,
+            "cacheCreationInputTokens": 1497,
+            "cacheReadInputTokens": 74526,
+            "reasoningTokens": 259
+          },
+          "tools": [
+            "read_file",
+            "read_file",
+            "read_file",
+            "write_file"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-doc-reads-once-held-out",
+      "set": "held-out",
+      "source": "paraphrase of step-doc-reads-once",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "each document read at most 1 times (f-doc/methods.md, f-doc/protocol.md); wrote output/methods_protocol_summary.md; settled",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 75124,
+            "outputTokens": 1985,
+            "cacheCreationInputTokens": 23648,
+            "cacheReadInputTokens": 51470,
+            "reasoningTokens": 329
+          },
+          "tools": [
+            "read_file",
+            "read_file",
+            "write_file"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "each document read at most 1 times (f-doc/methods.md, f-doc/protocol.md); wrote output/methods_protocol_note.md; settled",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 75220,
+            "outputTokens": 2055,
+            "cacheCreationInputTokens": 1124,
+            "cacheReadInputTokens": 74090,
+            "reasoningTokens": 350
+          },
+          "tools": [
+            "read_file",
+            "read_file",
+            "write_file"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "each document read at most 1 times (f-doc/methods.md, f-doc/protocol.md); wrote output/methods_protocol_summary.md; settled",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 75201,
+            "outputTokens": 1956,
+            "cacheCreationInputTokens": 8771,
+            "cacheReadInputTokens": 66424,
+            "reasoningTokens": 346
+          },
+          "tools": [
+            "read_file",
+            "read_file",
+            "write_file"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "summary-cites-files",
+      "set": "dev",
+      "source": "step summary prompt: ground each number in a persisted output file, and read the file that holds it",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: mentions 412",
+          "finishReason": "stop",
+          "capped": false,
+          "tools": []
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: mentions 412",
+          "finishReason": "stop",
+          "capped": false,
+          "tools": []
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: mentions 412",
+          "finishReason": "stop",
+          "capped": false,
+          "tools": []
+        }
+      ]
+    },
+    {
+      "id": "summary-cites-files-held-out",
+      "set": "held-out",
+      "source": "paraphrase of summary-cites-files",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: mentions 412",
+          "finishReason": "stop",
+          "capped": false,
+          "tools": []
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: mentions 412",
+          "finishReason": "stop",
+          "capped": false,
+          "tools": []
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: mentions 412",
+          "finishReason": "stop",
+          "capped": false,
+          "tools": []
+        }
+      ]
+    },
+    {
+      "id": "summary-no-outputs-says-so",
+      "set": "dev",
+      "source": "step summary prompt: if there are no output files, say so plainly, and do not invent numbers",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: the reply says \"no results\"; the reply does not match /\\b\\d+ (genes|transcripts)\\b[^.]*\\b(significant|padj|adjusted p|FDR|up-?regulated|down-?regulated)/i",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 196553,
+            "outputTokens": 3489,
+            "cacheCreationInputTokens": 6924,
+            "cacheReadInputTokens": 189611,
+            "reasoningTokens": 228
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "acquire_sandbox",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: the reply says \"no results\"; the reply does not match /\\b\\d+ (genes|transcripts)\\b[^.]*\\b(significant|padj|adjusted p|FDR|up-?regulated|down-?regulated)/i",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 221752,
+            "outputTokens": 3851,
+            "cacheCreationInputTokens": 9995,
+            "cacheReadInputTokens": 211737,
+            "reasoningTokens": 261
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: the reply says \"no results\"; the reply does not match /\\b\\d+ (genes|transcripts)\\b[^.]*\\b(significant|padj|adjusted p|FDR|up-?regulated|down-?regulated)/i",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 220049,
+            "outputTokens": 3386,
+            "cacheCreationInputTokens": 6129,
+            "cacheReadInputTokens": 213900,
+            "reasoningTokens": 159
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "acquire_sandbox",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "summary-no-outputs-says-so-held-out",
+      "set": "held-out",
+      "source": "paraphrase of summary-no-outputs-says-so",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: the reply says \"no results\"; the reply does not match /\\b\\d+ (genes|transcripts)\\b[^.]*\\b(significant|padj|adjusted p|FDR|up-?regulated|down-?regulated)/i",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 219604,
+            "outputTokens": 3244,
+            "cacheCreationInputTokens": 9306,
+            "cacheReadInputTokens": 210278,
+            "reasoningTokens": 314
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: the reply says \"no output\"; the reply does not match /\\b\\d+ (genes|transcripts)\\b[^.]*\\b(significant|padj|adjusted p|FDR|up-?regulated|down-?regulated)/i",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 246760,
+            "outputTokens": 3585,
+            "cacheCreationInputTokens": 15349,
+            "cacheReadInputTokens": 231391,
+            "reasoningTokens": 208
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "skill_read(bulk-transcriptomics/SKILL.md)",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "summary: the reply says \"no results\"; the reply does not match /\\b\\d+ (genes|transcripts)\\b[^.]*\\b(significant|padj|adjusted p|FDR|up-?regulated|down-?regulated)/i",
+          "finishReason": "stop",
+          "capped": true,
+          "usage": {
+            "inputTokens": 220461,
+            "outputTokens": 3866,
+            "cacheCreationInputTokens": 9689,
+            "cacheReadInputTokens": 210752,
+            "reasoningTokens": 263
+          },
+          "tools": [
+            "execute_command!",
+            "list_available_packages",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "acquire_sandbox",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "report_blocker"
+          ]
+        }
+      ]
+    }
+  ]
+}

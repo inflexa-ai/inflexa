@@ -12,10 +12,6 @@ Wilcoxon, plain correlation, DESeq2 and edgeR give spurious results there.
 Per-sample summaries such as alpha-diversity indices are not compositions
 and take ordinary tests.
 
-## Skills
-
-Your skills: \`microbiome\`, \`shared/omics-general\`.
-
 ## Method Selection (Summary)
 
 - **Amplicon processing** — DADA2 for ASV inference, with the 16S or ITS

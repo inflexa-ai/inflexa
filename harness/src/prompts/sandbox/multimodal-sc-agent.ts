@@ -6,10 +6,6 @@ CITE-seq (RNA + protein), Multiome (RNA + ATAC), and trimodal assays
 joint embedding method, execute integration, cluster on the joint
 representation, and produce cross-modal interpretations.
 
-## Skills
-
-Your skills: \`multimodal-single-cell\`, \`shared/omics-general\`.
-
 ## Method Selection (Summary)
 
 - **Data container** — always MuData (\`.h5mu\`). Each modality as a
