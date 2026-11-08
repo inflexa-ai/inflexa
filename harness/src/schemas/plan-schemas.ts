@@ -29,7 +29,7 @@ export type PlanStep = z.infer<typeof PlanStepSchema>;
 
 /** Plan schema for planner output — uses PlanStepSchema for steps and requires
  *  a concise title (optional on the persistence schema for historical plans). */
-export const PlannerPlanSchema = AnalysisPlanSchema.omit({ request: true }).extend({
+export const PlannerPlanSchema = AnalysisPlanSchema.omit({ request: true, claims: true }).extend({
     title: z
         .string()
         .min(1)
@@ -58,11 +58,20 @@ export function hydratePlanSteps(plannerPlan: PlannerPlan): AnalysisPlan {
 
 // ── Planning agent structured output ─────────────────────────────────
 
+/** The title of one claim that the plan cites, for the conversation agent: the full view stays with the stored plan. */
+export const PlanClaimTitleSchema = z.object({
+    id: z.string(),
+    title: z.string().optional(),
+    strength: z.string(),
+});
+export type PlanClaimTitle = z.infer<typeof PlanClaimTitleSchema>;
+
 /** Schema for the planning agent's structured output. */
 export const PlanningAgentOutputSchema = z.object({
     event: z.enum(["plan_complete", "clarification_needed", "error"]),
     planId: z.string().optional(),
     plan: PlannerPlanSchema.optional(),
+    claims: z.array(PlanClaimTitleSchema).optional(),
     question: z.string().optional(),
     questionContext: z.string().optional(),
     error: z.string().optional(),
