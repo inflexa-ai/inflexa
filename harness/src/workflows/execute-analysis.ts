@@ -114,7 +114,7 @@ import {
     type UpstreamHandoff,
 } from "../prompts/briefing.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
-import type { AnalysisStep, GroundingSetting } from "../schemas/workflow-state.js";
+import type { AnalysisStep, ClaimView, GroundingSetting } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
@@ -164,6 +164,12 @@ export type ExecuteAnalysisInput = {
     readonly planStepById: Readonly<Record<string, AnalysisStep>>;
     /** The request that the plan answers, which the seed of each step renders. Absent when the plan stores none. */
     readonly request?: string;
+    /**
+     * The view of each claim that a step of the plan cites, as the plan saved it. The seed of a step renders
+     * the title of each of its claims. Absent on a plan with no claim view, and on a run started before the
+     * field existed: the seed then renders the claim ids only.
+     */
+    readonly claims?: readonly ClaimView[];
     /** Per-step agent id (sandbox catalog entry). */
     readonly agentByStepId: Readonly<Record<string, string>>;
     /**
@@ -578,10 +584,22 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
             upstream,
             memory: { goal: memory.goal, constraints: memory.constraints },
             request: input.request,
+            claims: claimViewsOfStep(step, input.claims ?? []),
             ...contract.briefing,
         },
         templateBinding: contract.binding,
     };
+}
+
+/**
+ * The views of the claims that the grounding of a step cites, in the order of the grounding. A view
+ * matches on the claim id and on the snapshot digest of the grounding, because a claim id names a claim
+ * of one release only. A claim with no view is absent here, and the briefing renders its id alone.
+ */
+function claimViewsOfStep(step: AnalysisStep, views: readonly ClaimView[]): readonly ClaimView[] {
+    const grounding = step.grounding;
+    if (!grounding) return [];
+    return grounding.claims.flatMap((id) => views.find((view) => view.id === id && view.snapshot === grounding.snapshot) ?? []);
 }
 
 /**
@@ -695,7 +713,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
     const sources: Record<string, string> = {};
 
     for (const setting of settings) {
-        const shown = `\`${setting.name}\` = ${JSON.stringify(setting.value)} (${setting.step})`;
+        const shown = `\`${setting.name}\` = ${JSON.stringify(setting.value)} (${setting.step}${setting.source ? `; ${setting.source}` : ""})`;
         if (!versionMatches) {
             unbound.push(`${shown}: not bound, because the served version differs from the plan`);
             continue;
@@ -742,6 +760,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                 })),
                 bound,
                 unbound_settings: unbound,
+                notes: contract.notes?.trim() || undefined,
             },
         },
         binding: versionMatches

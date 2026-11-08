@@ -7,11 +7,12 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS } from "../../app/data-profile-orientation.js";
 import type { DataProfileResult } from "../../state/data-profile.js";
 import { AnalysisStepSchema } from "../../schemas/workflow-state.js";
-import type { AnalysisStep } from "../../schemas/workflow-state.js";
+import type { AnalysisStep, ClaimView } from "../../schemas/workflow-state.js";
 import { WORKING_MEMORY_LIMITS } from "../../memory/working-memory.js";
 import { contractAnswer } from "../../tools/knowledge/__fixtures__/fake-client.js";
 import {
     ANALYSIS_MEMORY_HEADING,
+    CLAIM_TITLE_MAX_CHARS,
     MAX_LISTED_UPSTREAM_DEPS,
     MAX_TEMPLATE_SLOTS,
     MAX_UPSTREAM_ARTIFACTS,
@@ -19,6 +20,7 @@ import {
     REQUEST_CHARS,
     STEP_NON_TASK_FIELDS,
     STEP_TASK_FIELDS,
+    TEMPLATE_NOTES_MAX_CHARS,
     TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS,
     UPSTREAM_SUMMARY_MAX_CHARS,
     composeStepBriefing,
@@ -103,6 +105,11 @@ function brief(overrides: Partial<TemplateBrief> = {}): TemplateBrief {
         unbound_settings: ["`alpha` = 0.05 (differential_expression): pinned by the template at the same value"],
         ...overrides,
     };
+}
+
+/** The view of one claim as the plan keeps it. */
+function claimView(id: string, overrides: Partial<ClaimView> = {}): ClaimView {
+    return { id, snapshot: "sha256:SENTINEL_SNAPSHOT", statement: "SENTINEL_STATEMENT", strength: "consensus", evidence: [], ...overrides };
 }
 
 /** The names of the adaptable slots of the fake contract. */
@@ -241,6 +248,21 @@ describe("renderTemplateContract", () => {
 
     it("renders nothing when no contract was retrieved", () => {
         expect(renderTemplateContract(undefined)).toBe("");
+    });
+
+    it("renders the notes of the template whole, with the column the script renames", () => {
+        const notes =
+            "The input follows the import state. A count matrix whose first column is the gene identifier. " +
+            "The condition column is renamed to `condition` inside the script, thus the design formula names `condition`.";
+        const rendered = renderTemplateContract(brief({ notes }));
+        expect(rendered).toContain(`Notes of the template (the input requirements of the script):\n${notes}`);
+    });
+
+    it("renders no notes block when the template gives none, and clamps a runaway note", () => {
+        expect(renderTemplateContract(brief())).not.toContain("Notes of the template");
+        const rendered = renderTemplateContract(brief({ notes: "n".repeat(TEMPLATE_NOTES_MAX_CHARS * 2) }));
+        expect(rendered).toContain("n…");
+        expect(rendered).not.toContain("n".repeat(TEMPLATE_NOTES_MAX_CHARS));
     });
 
     it("states a served version that differs from the plan as a caveat", () => {
@@ -585,6 +607,42 @@ describe("composeStepBriefing", () => {
         expect(seed).toContain("- Settings (the vetted values of the procedure; another value is permitted when your summary states the reason):");
         expect(seed).toContain("  - differential_expression: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)");
         expect(seed).not.toContain("Constraints");
+    });
+
+    it("renders each claim with its strength and its title when the plan kept its view", () => {
+        const seed = composeStepBriefing({
+            step: fullyPopulatedStep(),
+            workspace: WORKSPACE,
+            profile: null,
+            upstream: [],
+            memory: emptyStepMemory(),
+            claims: [claimView("SENTINEL_CLAIM", { title: "Use TMM for a library-composition bias" })],
+        });
+        expect(seed).toContain(
+            "- Claims (the rules of the knowledge service that this step obeys):\n  - SENTINEL_CLAIM (consensus): Use TMM for a library-composition bias",
+        );
+    });
+
+    it("renders the statement of a claim with no title, clamped, and the id alone of a claim with no view", () => {
+        const step = fullyPopulatedStep();
+        const grounding = step.grounding;
+        if (grounding === undefined) throw new Error("the populated step holds no grounding");
+        const seed = composeStepBriefing({
+            step: { ...step, grounding: { ...grounding, claims: ["SENTINEL_CLAIM", "R-0002@e7d0"] } },
+            workspace: WORKSPACE,
+            profile: null,
+            upstream: [],
+            memory: emptyStepMemory(),
+            claims: [claimView("SENTINEL_CLAIM", { statement: `S${"s".repeat(CLAIM_TITLE_MAX_CHARS * 2)}` })],
+        });
+        expect(seed).toContain("  - SENTINEL_CLAIM (consensus): Ss");
+        expect(seed).not.toContain("s".repeat(CLAIM_TITLE_MAX_CHARS));
+        expect(seed).toContain("\n  - R-0002@e7d0\n");
+    });
+
+    it("keeps the one line of claim ids when the plan kept no view", () => {
+        const seed = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
+        expect(seed).toContain("- Claims: SENTINEL_CLAIM\n");
     });
 
     it("leaves the settings to the template contract when the seed carries one", () => {

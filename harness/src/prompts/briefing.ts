@@ -26,7 +26,7 @@ import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from 
 import { WORKING_MEMORY_LIMITS, type WorkingMemory } from "../memory/working-memory.js";
 import type { DataProfileResult } from "../state/data-profile.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
-import type { AnalysisStep } from "../schemas/workflow-state.js";
+import type { AnalysisStep, ClaimView } from "../schemas/workflow-state.js";
 import type { TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBindingValue } from "../tools/knowledge/template.js";
 
@@ -49,6 +49,16 @@ export const MAX_TEMPLATE_SLOTS = 24;
 
 /** Characters of one slot description carried in the seed — the constraint, not the manual. */
 export const TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS = 160;
+
+/**
+ * Characters of the notes of a template carried in the seed. The notes are the input requirements of the
+ * script (the import state, the shape of the table, a column the script renames), and a render that
+ * ignores one fails. Thus the bound is wide, and it only keeps a runaway note from the seed.
+ */
+export const TEMPLATE_NOTES_MAX_CHARS = 8000;
+
+/** Characters of one claim title carried in the Grounding section — the rule, not its evidence. */
+export const CLAIM_TITLE_MAX_CHARS = 160;
 
 // ── Field partition (the coverage guard's two halves) ─────────────────
 
@@ -125,7 +135,7 @@ function clamp(text: string, max: number): string {
  * folded in here — otherwise the agent runs against the bare question and
  * improvises the rest.
  */
-export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "template" | "templateNotRetrieved"> = {}): string {
+export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "template" | "templateNotRetrieved" | "claims"> = {}): string {
     const parts: string[] = [`# ${step.name}`, section("Task", step.question)];
 
     if (step.description?.trim()) {
@@ -153,7 +163,11 @@ export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "tem
 /**
  * The grounding as data lines. The template id is the one value the agent
  * acts on (it names it to `knowledge_template`), thus it renders first after
- * the status. The claim identifiers and the digest are for the record.
+ * the status. The digest is for the record.
+ *
+ * Each claim renders with its strength and its title when the plan kept its
+ * view, thus the agent can name the rule that set a choice. A claim with no
+ * view renders as its id. A plan with no view at all keeps the one line of ids.
  *
  * A grounding that names a template promises a Template contract section.
  * When the seed carries none, one line says so with the reason, thus the
@@ -165,14 +179,17 @@ export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "tem
  * seed carries no template contract, because the bound and the unbound
  * lists of the contract hold every setting already.
  */
-function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>, contract: Pick<StepBriefing, "template" | "templateNotRetrieved">): string {
+function renderGrounding(
+    grounding: NonNullable<AnalysisStep["grounding"]>,
+    contract: Pick<StepBriefing, "template" | "templateNotRetrieved" | "claims">,
+): string {
     const lines = [`- Status: ${grounding.status}`];
     if (grounding.template) {
         lines.push(`- Template: \`${grounding.template}\``);
         if (!contract.template) lines.push(`- Template contract: not retrieved (${contract.templateNotRetrieved ?? "no contract was fetched for this step"})`);
     }
     lines.push(`- Snapshot: ${grounding.snapshot}`);
-    lines.push(`- Claims: ${grounding.claims.length > 0 ? grounding.claims.join(", ") : "none"}`);
+    lines.push(...renderClaims(grounding.claims, contract.claims ?? []));
     lines.push(`- Reason: ${grounding.reason}`);
     const settings = grounding.settings ?? [];
     if (settings.length > 0 && !contract.template) {
@@ -183,6 +200,22 @@ function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>, cont
         }
     }
     return lines.join("\n");
+}
+
+/** The Claims lines of the Grounding section: one line of ids, or one bullet for each claim when a view exists. */
+function renderClaims(ids: readonly string[], views: readonly ClaimView[]): string[] {
+    if (ids.length === 0) return ["- Claims: none"];
+    const viewById = new Map(views.map((view) => [view.id, view]));
+    if (!ids.some((id) => viewById.has(id))) return [`- Claims: ${ids.join(", ")}`];
+    return [
+        "- Claims (the rules of the knowledge service that this step obeys):",
+        ...ids.map((id) => {
+            const view = viewById.get(id);
+            if (!view) return `  - ${id}`;
+            const text = clamp((view.title ?? view.statement).trim(), CLAIM_TITLE_MAX_CHARS);
+            return `  - ${id} (${view.strength}): ${text}`;
+        }),
+    ];
 }
 
 // ── (1b) Analysis memory ──────────────────────────────────────────────
@@ -287,6 +320,8 @@ export type TemplateBrief = {
     readonly bound: readonly TemplateBoundSetting[];
     /** The plan settings no bound slot carries, one line each with the reason. */
     readonly unbound_settings: readonly string[];
+    /** The input requirements of the template in prose. Absent when the template gives none. */
+    readonly notes?: string;
 };
 
 /** A value as the render request carries it: JSON, thus `"apeglm"` and `10` cannot be confused. */
@@ -346,6 +381,8 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
         );
     }
     const blocks: string[] = [lead.join("\n")];
+
+    if (brief.notes) blocks.push(`Notes of the template (the input requirements of the script):\n${clamp(brief.notes, TEMPLATE_NOTES_MAX_CHARS)}`);
 
     const adaptable = brief.slots.filter((slot) => slot.adaptable);
     if (adaptable.length > 0) {
@@ -525,6 +562,11 @@ export type StepBriefing = {
     readonly request?: string;
     /** The contract of the template the step renders, with the plan settings bound to it. Absent when none was retrieved. */
     readonly template?: TemplateBrief;
+    /**
+     * The views of the claims that the grounding of the step cites, as the plan kept them. Absent or
+     * empty when the plan kept no view: the Grounding section then renders the claim ids only.
+     */
+    readonly claims?: readonly ClaimView[];
     /**
      * Why the seed carries no template contract for a step whose grounding
      * names one: no client is bound, the service did not answer, or the
