@@ -7,17 +7,18 @@ import { z } from "zod";
 
 import {
     acquireScriptSlot,
-    DECODE_WORKER_HEAP_MIB,
-    DECODE_WORKER_SLOTS,
-    HOST_WORKER_MEMORY_MIB,
+    configureHostWorkers,
+    DECODE_SLOT_MIB,
+    DEFAULT_HOST_WORKER_MEMORY_MIB,
+    hostWorkerBudget,
     hostWorkerSlotsForTest,
     runHostTask,
-    SCRIPT_VM_MEMORY_MIB,
-    SCRIPT_WORKER_HEAP_MIB,
-    SCRIPT_WORKER_SLOTS,
-    setHostWorkerEntry,
+    SCRIPT_SLOT_MIB,
     withDecodeSlot,
 } from "../host-workers.js";
+
+const DECODE_WORKER_SLOTS = hostWorkerBudget(DEFAULT_HOST_WORKER_MEMORY_MIB).decodeSlots;
+const SCRIPT_WORKER_SLOTS = hostWorkerBudget(DEFAULT_HOST_WORKER_MEMORY_MIB).scriptSlots;
 import type { HostTask } from "../../workspace/decode-tasks.js";
 import { parseJsonAs } from "../parse-json.js";
 
@@ -53,22 +54,22 @@ describe("the heavy workers", () => {
         const tasks = Array.from({ length: DECODE_WORKER_SLOTS + 1 }, () => runHostTask(tableTask(csvBuffer(text))));
         await Promise.resolve();
 
-        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: DECODE_WORKER_SLOTS, waiting: 1 });
+        expect(hostWorkerSlotsForTest().decode).toEqual({ width: DECODE_WORKER_SLOTS, inUse: DECODE_WORKER_SLOTS, waiting: 1 });
         const results = await Promise.all(tasks);
 
         expect(results.map((result) => result.isOk() && result.value.kind)).toEqual(Array.from({ length: DECODE_WORKER_SLOTS + 1 }, () => "rows"));
-        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: 0, waiting: 0 });
+        expect(hostWorkerSlotsForTest().decode).toEqual({ width: DECODE_WORKER_SLOTS, inUse: 0, waiting: 0 });
     });
 
     test("a worker that does not start is crashed, and its slot is free", async () => {
-        setHostWorkerEntry(new URL("./no-such-worker.js", import.meta.url));
+        configureHostWorkers({ entry: new URL("./no-such-worker.js", import.meta.url) });
         try {
             const result = await runHostTask(tableTask(csvBuffer("a\n1\n")));
 
             expect(result._unsafeUnwrapErr()).toMatchObject({ kind: "crashed" });
-            expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: 0, waiting: 0 });
+            expect(hostWorkerSlotsForTest().decode).toEqual({ width: DECODE_WORKER_SLOTS, inUse: 0, waiting: 0 });
         } finally {
-            setHostWorkerEntry(undefined);
+            configureHostWorkers({});
         }
     });
 
@@ -92,13 +93,13 @@ describe("the heavy workers", () => {
         await Promise.resolve();
 
         expect(read).toBe(false);
-        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: DECODE_WORKER_SLOTS, waiting: 1 });
+        expect(hostWorkerSlotsForTest().decode).toEqual({ width: DECODE_WORKER_SLOTS, inUse: DECODE_WORKER_SLOTS, waiting: 1 });
         releases[0]?.();
         expect((await waiting)._unsafeUnwrap()._unsafeUnwrap()).toMatchObject({ kind: "rows" });
         expect(read).toBe(true);
         for (const release of releases) release();
         await Promise.all(holding);
-        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: 0, waiting: 0 });
+        expect(hostWorkerSlotsForTest().decode).toEqual({ width: DECODE_WORKER_SLOTS, inUse: 0, waiting: 0 });
     });
 
     test("a cancel while a read waits for a slot leaves the queue, and the read does not run", async () => {
@@ -118,10 +119,10 @@ describe("the heavy workers", () => {
 
         expect((await waiting)._unsafeUnwrapErr()).toEqual({ kind: "aborted" });
         expect(read).toBe(false);
-        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: DECODE_WORKER_SLOTS, waiting: 0 });
+        expect(hostWorkerSlotsForTest().decode).toEqual({ width: DECODE_WORKER_SLOTS, inUse: DECODE_WORKER_SLOTS, waiting: 0 });
         for (const release of releases) release();
         await Promise.all(holding);
-        expect(hostWorkerSlotsForTest().decode).toEqual({ inUse: 0, waiting: 0 });
+        expect(hostWorkerSlotsForTest().decode).toEqual({ width: DECODE_WORKER_SLOTS, inUse: 0, waiting: 0 });
     });
 
     test("a script past the free script slots waits for one", async () => {
@@ -139,14 +140,25 @@ describe("the heavy workers", () => {
         expect(started).toBe(true);
         free();
         for (const release of held.slice(1)) release();
-        expect(hostWorkerSlotsForTest().script).toEqual({ inUse: 0, waiting: 0 });
+        expect(hostWorkerSlotsForTest().script).toEqual({ width: SCRIPT_WORKER_SLOTS, inUse: 0, waiting: 0 });
     });
 
-    test("the memory budget is the sum of the limits of each slot", () => {
-        const young = 16;
-        expect(HOST_WORKER_MEMORY_MIB).toBe(
-            DECODE_WORKER_SLOTS * (DECODE_WORKER_HEAP_MIB + young) + SCRIPT_WORKER_SLOTS * (SCRIPT_WORKER_HEAP_MIB + young + SCRIPT_VM_MEMORY_MIB),
-        );
+    test("the slots fit in the worker memory of the host, with at least one of each kind", () => {
+        expect(hostWorkerBudget(DEFAULT_HOST_WORKER_MEMORY_MIB)).toEqual({ decodeSlots: 2, scriptSlots: 3, memoryMib: DEFAULT_HOST_WORKER_MEMORY_MIB });
+        expect(hostWorkerBudget(800)).toEqual({ decodeSlots: 1, scriptSlots: 1, memoryMib: DECODE_SLOT_MIB + SCRIPT_SLOT_MIB });
+        expect(hostWorkerBudget(4000)).toEqual({ decodeSlots: 4, scriptSlots: 6, memoryMib: 4 * DECODE_SLOT_MIB + 6 * SCRIPT_SLOT_MIB });
+        expect(hostWorkerBudget(100)).toEqual({ decodeSlots: 1, scriptSlots: 1, memoryMib: DECODE_SLOT_MIB + SCRIPT_SLOT_MIB });
+    });
+
+    test("the host sizes the slots of the process, and the default comes back", () => {
+        try {
+            expect(configureHostWorkers({ memoryMib: 800 })).toEqual({ decodeSlots: 1, scriptSlots: 1, memoryMib: 800 });
+            expect(hostWorkerSlotsForTest()).toEqual({ decode: { width: 1, inUse: 0, waiting: 0 }, script: { width: 1, inUse: 0, waiting: 0 } });
+        } finally {
+            configureHostWorkers({});
+        }
+        expect(hostWorkerSlotsForTest().decode.width).toBe(DECODE_WORKER_SLOTS);
+        expect(hostWorkerSlotsForTest().script.width).toBe(SCRIPT_WORKER_SLOTS);
     });
 });
 
@@ -160,8 +172,8 @@ describe.skipIf(node === null)("the heavy workers under Node", () => {
         const driver = join(built, "driver.ts");
         await Bun.write(
             driver,
-            `import { runHostTask, setHostWorkerEntry } from ${JSON.stringify(join(import.meta.dir, "../host-workers.ts"))};
-setHostWorkerEntry(new URL("./codemode-worker.js", import.meta.url));
+            `import { configureHostWorkers, runHostTask } from ${JSON.stringify(join(import.meta.dir, "../host-workers.ts"))};
+configureHostWorkers({ entry: new URL("./codemode-worker.js", import.meta.url) });
 const wide = new TextEncoder().encode("a,b,c,d\\n" + "aaaaaaaa,bbbbbbbb,cccccccc,dddddddd\\n".repeat(400_000)).buffer;
 const first = await runHostTask({ kind: "table", bytes: wide, path: "w.csv", format: "csv", options: { cellBudget: Infinity, numericText: false } }, { transfer: [wide], heapMib: 32 });
 const small = new TextEncoder().encode("a\\n1\\n").buffer;
