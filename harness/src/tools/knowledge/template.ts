@@ -32,7 +32,7 @@ import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
-import { decisionRecordPath, scriptSha256 } from "../workspace/decision-record.js";
+import { decisionRecordPath, scriptSha256, type DecisionRecordStore } from "../workspace/decision-record.js";
 import type { WorkspaceMutator, WriteFileResult, WriteOutcome, WriteRecord } from "../workspace/mutator.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "./client.js";
 import { installedPackages } from "./environment.js";
@@ -69,6 +69,8 @@ export type TemplateBinding = {
 export type KnowledgeTemplateDeps = {
     readonly client: KnowledgeClient;
     readonly mutator: WorkspaceMutator;
+    /** The host copies of the decision records: each record lands in the step and on the host. */
+    readonly records: DecisionRecordStore;
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis. Absent with no image record, the environment match reads as unknown. */
     readonly farmLockFile?: EnvironmentStorePaths["farmLockFile"];
     /** Host path of the `image-packages.json` of the store: the packages the sandbox image ships, among them the R packages of the R runtime. */
@@ -374,10 +376,18 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z
                 bound_slots: boundSlots,
                 settings_overrides: settingsOverrides,
             };
-            const recordWrite = await write(decisionRecordPath(scriptFile), `${JSON.stringify(record, null, 2)}\n`);
+            const recordContent = `${JSON.stringify(record, null, 2)}\n`;
+            const recordWrite = await write(decisionRecordPath(scriptFile), recordContent);
             if (recordWrite.status !== "ok") {
                 return ok(withToolCallRecord({ status: "write_refused", path: recordWrite.path, reason: recordWrite.status }, records));
             }
+            const hostWrite = await deps.records.write({
+                session: ctx.session,
+                path: recordWrite.path,
+                content: recordContent,
+                invocationId: ctx.invocationId,
+            });
+            if (hostWrite !== "ok") return ok(withToolCallRecord({ status: "write_refused", path: recordWrite.path, reason: hostWrite }, records));
 
             return ok(
                 withToolCallRecord(

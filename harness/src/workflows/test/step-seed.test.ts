@@ -29,6 +29,7 @@ import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
 import { composeStepSeed } from "../execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput } from "../execute-analysis.js";
+import { stepDecisionRecordDir } from "../../workspace/paths.js";
 
 const ANALYSIS_ID = "an-1";
 const RUN_ID = "run-1";
@@ -300,8 +301,10 @@ describe("composeStepSeed", () => {
     it("carries the methods of a grounded dependency and the paths of its decision records into the downstream seed", async () => {
         const root = await makeWorkspace();
         await writeStepSummary(root, "T1S1", "# DE results");
+        const recordDir = stepDecisionRecordDir({ workspaceRoot: root, runId: RUN_ID, stepId: "T1S1" });
+        await mkdir(recordDir, { recursive: true });
         await writeFile(
-            join(root, "runs", RUN_ID, "T1S1", "output", "decision_record_tpl-deseq2-two-group_A.json"),
+            join(recordDir, "decision_record_tpl-deseq2-two-group_A.json"),
             JSON.stringify({
                 template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "DESeq2", method: { id: "M-0008", label: "DESeq2 Wald test" } },
                 citations: [{ doi: "10.1186/s13059-014-0550-8", title: "DESeq2", year: 2014 }],

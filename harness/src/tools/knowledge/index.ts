@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import type { Tool } from "../define-tool.js";
+import type { DecisionRecordStore } from "../workspace/decision-record.js";
 import type { WorkspaceMutator } from "../workspace/mutator.js";
 import type { KnowledgeClient } from "./client.js";
 import { createKnowledgeCheckTool } from "./check.js";
@@ -79,6 +80,11 @@ const NO_MUTATOR: WorkspaceMutator = {
     recordWrite: () => undefined,
 };
 
+const NO_RECORDS: DecisionRecordStore = {
+    read: () => Promise.resolve(undefined),
+    write: () => Promise.resolve("out_of_prefix"),
+};
+
 /**
  * The digest of the three tool definitions as this host registers them: the
  * id, the description, and the input schema of each, in id order. The
@@ -88,7 +94,10 @@ const NO_MUTATOR: WorkspaceMutator = {
  * not a silent one.
  */
 export function knowledgeToolDefinitionHash(): string {
-    const tools = [...createKnowledgeTools({ client: NO_CLIENT }), createKnowledgeTemplateTool({ client: NO_CLIENT, mutator: NO_MUTATOR })];
+    const tools = [
+        ...createKnowledgeTools({ client: NO_CLIENT }),
+        createKnowledgeTemplateTool({ client: NO_CLIENT, mutator: NO_MUTATOR, records: NO_RECORDS }),
+    ];
     const definitions = tools.map((tool) => ({ id: tool.id, description: tool.description, schema: tool.jsonSchema })).sort((a, b) => (a.id < b.id ? -1 : 1));
     return `sha256:${createHash("sha256").update(JSON.stringify(definitions), "utf8").digest("hex")}`;
 }

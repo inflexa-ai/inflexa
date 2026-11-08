@@ -67,9 +67,10 @@ import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import type { SandboxLeases, BoundLease } from "../sandbox/leases.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { stepDecisionRecordDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactRegistry } from "../execution/artifact-registry.js";
 import { walkStepArtifacts } from "../execution/post-step.js";
+import { restoreStepDecisionRecords } from "../execution/step-methods.js";
 import {
     collectStepOutputs,
     describeStepRegistrationFailure,
@@ -683,6 +684,27 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             usage: stepUsage,
         });
     }
+
+    // The copies of the decision records in `output/` come back from the host
+    // before the walk, thus the manifest and the briefings of the dependents
+    // hold each record that the step rendered. Inline and idempotent, like the walk.
+    await safeRunValue(
+        logger,
+        async () =>
+            restoreStepDecisionRecords({
+                recordDir: stepDecisionRecordDir({
+                    workspaceRoot: await deps.resolveWorkspaceRoot(input.analysisId),
+                    runId: input.runId,
+                    stepId: input.stepId,
+                }),
+                writePrefix,
+                stagingKey: `restore-records:${input.runId}:${input.stepId}`,
+                collector: lineageCollector,
+                logger: logger.named("decision-record"),
+            }),
+        "post-step.restore-records",
+        undefined,
+    );
 
     // Manifest walk, hoisted above the blocked branch so the capped-out
     // predicate can read it. The call is inline (not `DBOS.runStep`-wrapped),

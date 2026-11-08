@@ -571,6 +571,7 @@ bind mount decouples the two.
 +-- reports/{reportId}/          # Report output
 +-- report-sessions/{threadId}/  # The page of a report session
 +-- conversation-sessions/{threadId}/  # The scripts of a conversation, and their derived files
++-- .sandbox/decision-records/   # The host copy of each decision record, at the path of its copy in a step (no agent writes it)
 ```
 
 The file scratch of the data profiler is under `runs/data-profile/`, and it is

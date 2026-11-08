@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
 import { parseJsonAs } from "../../../lib/parse-json.js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { isUnknownArray } from "../../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -14,9 +14,9 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readToolCallRecord } from "../../define-tool.js";
 import { ProvenanceCollector } from "../../../provenance/collector.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
-import { stepWritePrefix } from "../../../workspace/paths.js";
+import { stepDecisionRecordDir, stepWritePrefix } from "../../../workspace/paths.js";
 import { createWorkspaceMutator } from "../mutator.js";
-import { scriptSha256 } from "../decision-record.js";
+import { createDecisionRecordStore, scriptSha256 } from "../decision-record.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecEmit, ExecRequest, ExecResult, SandboxRef } from "../../../sandbox/types.js";
 import { createExecuteCommandTool } from "../execute-command.js";
@@ -111,8 +111,20 @@ describe("execute_command and the decision record of a script", () => {
             defaultCwd: DEFAULT_CWD,
             workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) }),
             mutator: createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir }),
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) }),
         });
         return { tool, client };
+    }
+
+    function hostRecordPath(): string {
+        return join(stepDecisionRecordDir({ workspaceRoot: join(base, ANALYSIS), runId: "run-abc", stepId: "step1" }), "decision_record_de.json");
+    }
+
+    /** A record with a host copy, as `knowledge_template` writes it: the same bytes in the step and on the host. */
+    async function writeHeldRecord(content: string): Promise<void> {
+        await mkdir(stepDecisionRecordDir({ workspaceRoot: join(base, ANALYSIS), runId: "run-abc", stepId: "step1" }), { recursive: true });
+        await writeFile(hostRecordPath(), content);
+        await writeFile(join(stepDir(), "output", "decision_record_de.json"), content);
     }
 
     function asRecord(value: unknown): Record<string, unknown> {
@@ -152,6 +164,69 @@ describe("execute_command and the decision record of a script", () => {
         const unvetted = (await record()).unvetted_edits;
         if (!isUnknownArray(unvetted)) throw new Error("expected the unvetted edits array");
         expect(unvetted).toHaveLength(1);
+        // A record with no host copy stays in the step: a file in the step never becomes a host record.
+        expect(existsSync(hostRecordPath())).toBe(false);
+    });
+
+    it("writes the copy of a record in the step again from the host copy when a command removed it, and reports it", async () => {
+        const written = "ALPHA <- 0.05\n";
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        const held = `${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }, null, 2)}\n`;
+        await writeHeldRecord(held);
+        rmSync(join(stepDir(), "output", "decision_record_de.json"));
+        const { tool, client } = buildTool();
+        const { ctx } = makeToolContext();
+
+        const out = (await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx))._unsafeUnwrap();
+
+        expect(out).toMatchObject({ status: "ok", decision_records_restored: [`${DEFAULT_CWD}/output/decision_record_de.json`] });
+        expect(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8")).toBe(held);
+        expect(client.execs).toHaveLength(1);
+
+        // The copy is back, thus the next run reports nothing.
+        const again = (await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx))._unsafeUnwrap();
+        expect("decision_records_restored" in again).toBe(false);
+    });
+
+    it("reads the host copy of a record, and not a copy in the step that a command changed", async () => {
+        const written = "ALPHA <- 0.05\n";
+        const changed = "ALPHA <- 0.5\n";
+        await writeHeldRecord(`${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }, null, 2)}\n`);
+        // The copy in the step claims the changed bytes as the render, thus the change would hide behind it.
+        await writeFile(join(stepDir(), "output", "decision_record_de.json"), JSON.stringify({ written_sha256: scriptSha256(changed), unvetted_edits: [] }));
+        await writeFile(join(stepDir(), "scripts", "de.R"), changed);
+        const { tool } = buildTool();
+        const { ctx } = makeToolContext();
+
+        const out = (await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx))._unsafeUnwrap();
+
+        expect(out).toMatchObject({ decision_records_restored: [`${DEFAULT_CWD}/output/decision_record_de.json`] });
+        const host = await readFile(hostRecordPath(), "utf8");
+        expect(asRecord(parseJsonAs(host, z.json())).unvetted_edits).toEqual([
+            { path: `${DEFAULT_CWD}/scripts/de.R`, note: "the script changed by a path no file tool recorded, before it ran", sha256: scriptSha256(changed) },
+        ]);
+        expect(asRecord(parseJsonAs(host, z.json())).written_sha256).toBe(scriptSha256(written));
+        expect(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8")).toBe(host);
+    });
+
+    it("notes a change in the host copy when a symlink stands in place of the copy in the step", async () => {
+        const written = "ALPHA <- 0.05\n";
+        const changed = "ALPHA <- 0.5\n";
+        await writeHeldRecord(`${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }, null, 2)}\n`);
+        await writeFile(join(stepDir(), "output", "decoy.json"), "kept");
+        rmSync(join(stepDir(), "output", "decision_record_de.json"));
+        await symlink("decoy.json", join(stepDir(), "output", "decision_record_de.json"));
+        await writeFile(join(stepDir(), "scripts", "de.R"), changed);
+        const { tool, client } = buildTool();
+        const { ctx } = makeToolContext();
+
+        await awaitOk(tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
+
+        expect(asRecord(parseJsonAs(await readFile(hostRecordPath(), "utf8"), z.json())).unvetted_edits).toEqual([
+            { path: `${DEFAULT_CWD}/scripts/de.R`, note: "the script changed by a path no file tool recorded, before it ran", sha256: scriptSha256(changed) },
+        ]);
+        expect(await readFile(join(stepDir(), "output", "decoy.json"), "utf8")).toBe("kept");
+        expect(client.execs).toHaveLength(1);
     });
 
     it("runs a script of another step whose record it cannot write, and leaves that record as it is", async () => {

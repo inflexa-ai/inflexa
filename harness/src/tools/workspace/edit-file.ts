@@ -33,7 +33,7 @@ import { computeSha256 } from "../../lib/fs-helpers.js";
 import { unwrapOrThrow, type DomainError } from "../../lib/result.js";
 import { stepExecId } from "../../sandbox/exec.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
-import { noteScriptChange, scriptSha256 } from "./decision-record.js";
+import { noteScriptChange, scriptSha256, type DecisionRecordStore } from "./decision-record.js";
 import type { LandedWrite, WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
 
 /** The `ok` outcome of an `edit_file` call. */
@@ -141,6 +141,8 @@ export type EditFileDeps = {
      */
     readonly workingDir?: string;
     readonly intents: EditIntentStore;
+    /** The host copies of the decision records: an edit of a rendered script notes the change in both copies. */
+    readonly records: DecisionRecordStore;
     /** The key of the durable step that runs the call, `undefined` outside one. Defaults to {@link durableStepKey}. */
     readonly stepKey?: () => string | undefined;
 };
@@ -350,6 +352,7 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
             const noted = await noteScriptChange({
                 filesystem: deps.workspaceFilesystem,
                 mutator: deps.mutator,
+                records: deps.records,
                 session: ctx.session,
                 workingDir: deps.workingDir,
                 invocationId: ctx.invocationId,
@@ -361,7 +364,7 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
             const result = resultOf(write);
             if (noted.status !== "noted") return ok(withToolCallRecord(result, [write.record]));
             result.decision_record_noted = true;
-            const callRecord = [write.record, noted.write];
+            const callRecord = [write.record, ...noted.writes];
             // The first put holds the edit already, thus a failed update costs a rerun only the note of the decision record.
             if (key !== undefined) await deps.intents.put(intentOf(key, write, result, callRecord)).unwrapOr(undefined);
             return ok(withToolCallRecord(result, callRecord));

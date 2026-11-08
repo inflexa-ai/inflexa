@@ -158,6 +158,13 @@ export function stepWritePrefix(args: { readonly workspaceRoot: string; readonly
     return resolvePath(args.workspaceRoot, "runs", args.runId, args.stepId);
 }
 
+/** The host directory of the decision records of a step: the mirror of its `output/` under {@link DECISION_RECORD_ROOT}. */
+export function stepDecisionRecordDir(args: { readonly workspaceRoot: string; readonly runId: string; readonly stepId: string }): string {
+    assertSafeId(args.runId, "runId");
+    assertSafeId(args.stepId, "stepId");
+    return resolvePath(args.workspaceRoot, DECISION_RECORD_ROOT, "runs", args.runId, args.stepId, "output");
+}
+
 /**
  * Split a declared sandbox write tail into its segments, and refuse a tail that is
  * not one workspace-relative path.
@@ -367,10 +374,17 @@ export function assertSafeId(value: string, label: string): void {
 }
 
 /**
- * The directory of the harness under each workspace root: the exec records of the sandbox leases. No workspace tool
- * lists or reads it, and no artifact walk reaches it.
+ * The directory of the harness under each workspace root: the exec records of the sandbox leases and the decision
+ * records of the rendered scripts. No workspace tool lists or reads it, and no artifact walk reaches it.
  */
 export const HARNESS_PRIVATE_DIR = ".sandbox";
+
+/**
+ * The host copy of each decision record, workspace-root-relative. A record keeps the path of its copy under this
+ * directory, for example `runs/{runId}/{stepId}/output/decision_record_{stem}.json`. The sandbox mounts it read-only,
+ * and no file tool of an agent writes under it.
+ */
+export const DECISION_RECORD_ROOT = `${HARNESS_PRIVATE_DIR}/decision-records`;
 
 /** Root directory for a specific workflow run, workspace-root-relative. */
 export function runDir(runId: string): string {

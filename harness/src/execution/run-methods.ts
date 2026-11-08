@@ -18,7 +18,7 @@ import type { Logger } from "../lib/logger.js";
 import { ClaimViewSchema, GroundingSchema } from "../schemas/workflow-state.js";
 import type { Querier } from "../state/db.js";
 import { loadPlan } from "../state/plans.js";
-import { isSafeId, stepWritePrefix } from "../workspace/paths.js";
+import { isSafeId, stepDecisionRecordDir } from "../workspace/paths.js";
 import { readStepMethods } from "./step-methods.js";
 
 /** The two fields of a stored plan that the methods read. Each other field passes. */
@@ -66,7 +66,7 @@ export async function readRunMethods(args: {
         const { methods, sources } = await readStepMethods({
             grounding: groundingById.get(stepId),
             claimViews: plan.claims ?? [],
-            writePrefix: stepWritePrefix({ workspaceRoot: args.workspaceRoot, runId: args.runId, stepId }),
+            recordDir: stepDecisionRecordDir({ workspaceRoot: args.workspaceRoot, runId: args.runId, stepId }),
             logger: args.logger.with({ runId: args.runId, stepId }),
         });
         if (methods) out.push({ stepId, methods, sources });
