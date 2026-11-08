@@ -775,6 +775,74 @@ function keepsDeliverable(file: string, fields: readonly string[]): EvalCase["gr
     };
 }
 
+/** A dose series in place of two groups: vehicle and two doses, two replicates each. */
+const DOSE_SAMPLES = ["D0_1", "D0_2", "D10_1", "D10_2", "D100_1", "D100_2"];
+
+function doseCounts(): string {
+    return [
+        `gene_id\tsymbol\t${DOSE_SAMPLES.join("\t")}`,
+        ...Array.from({ length: GENE_COUNT }, (_, i) => {
+            const base = 50 + ((i * 37) % 900);
+            const slope = i < 280 ? 1.6 : i < RESPONDING ? 0.6 : 1;
+            const levels = [
+                base,
+                base + 4,
+                Math.round(base * slope),
+                Math.round(base * slope) + 3,
+                Math.round(base * slope * slope),
+                Math.round(base * slope * slope) - 2,
+            ];
+            return [geneIdOf(i), symbolOf(i), ...levels].join("\t");
+        }),
+    ].join("\n");
+}
+
+const DOSE_FILES = {
+    "data/inputs/f-counts/counts.tsv": `${doseCounts()}\n`,
+    "data/inputs/f-meta/samples.csv": `sample,dose_nM,batch\n${DOSE_SAMPLES.map((sample, i) => `${sample},${sample.split("_")[0]?.slice(1) ?? ""},${String((i % 2) + 1)}`).join("\n")}\n`,
+};
+
+const DOSE_PROFILE: DataProfileResult = {
+    ...BULK_PROFILE,
+    summary: "Bulk RNA-seq of Homo sapiens hepatocytes after 24 h of compound X at three doses, 6 samples.",
+    condition: "dose of compound X: 0, 10, 100 nM",
+    experimentalDesign: "Three dose levels (0, 10, 100 nM), two biological replicates each, one time point.",
+    files: [
+        {
+            path: "data/inputs/f-counts/counts.tsv",
+            description: "Raw gene-level count matrix with Ensembl ids and symbols",
+            dataType: "count-matrix",
+            format: "TSV",
+            rows: GENE_COUNT,
+            cols: 8,
+        },
+        {
+            path: "data/inputs/f-meta/samples.csv",
+            description: "Sample sheet: sample, dose_nM, batch",
+            dataType: "clinical-metadata",
+            format: "CSV",
+            rows: 6,
+            cols: 3,
+        },
+    ],
+};
+
+/**
+ * The grounding names the two-group template, but the step asks for a trend over the dose. The step does not run the
+ * two-group script as it renders: it models the dose, in a script of its own or in a rendered script that it edits.
+ */
+const MODELS_THE_DOSE: EvalCase["grade"] = (trial) => {
+    const scripts = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
+    const rendered = renderedScriptOf(trial);
+    const renderedText = rendered === undefined ? undefined : trial.files?.[`scripts/${rendered}`];
+    if (renderedText !== undefined && !/dose/i.test(renderedText) && runsRendered(trial).pass)
+        return { pass: false, detail: `ran the two-group template scripts/${rendered} unchanged` };
+    const model = scripts.find(([, text]) => /DeseqDataSet|glm|lm\(|ols\(|curve_fit|spearman|LRT|likelihood/i.test(text) && /dose/i.test(text));
+    return model === undefined
+        ? { pass: false, detail: `no script models the dose (scripts: ${scripts.map(([path]) => path).join(", ") || "none"})` }
+        : { pass: true, detail: `${model[0]} models the dose` };
+};
+
 const stepCases: readonly EvalCase[] = [
     sandboxCase({
         id: "step-renders-template",
@@ -809,6 +877,48 @@ const stepCases: readonly EvalCase[] = [
         maxSteps: 14,
         timeoutMs: 600_000,
         grade: RENDERS_TEMPLATE,
+    }),
+    sandboxCase({
+        id: "step-template-unfit-adapts",
+        set: "dev",
+        source: "knowledge_template description: a template is a tested start, not an order; a two-group template does not answer a dose trend",
+        step: {
+            ...TEMPLATE_STEP,
+            name: "Dose response",
+            question: "Which genes change monotonically with the dose of compound X (0, 10, 100 nM)?",
+            acceptance: ["A table of each gene with the effect of the dose and an adjusted p-value"],
+            profile: DOSE_PROFILE,
+        },
+        setup: {
+            files: DOSE_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            knowledge: RENDERING_KNOWLEDGE,
+            exec: [namedOutputsRun("390 genes at padj < 0.05")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: MODELS_THE_DOSE,
+    }),
+    sandboxCase({
+        id: "step-template-unfit-adapts-held-out",
+        set: "held-out",
+        source: "paraphrase of step-template-unfit-adapts",
+        step: {
+            ...TEMPLATE_STEP,
+            name: "Dose trend",
+            question: "Find the genes whose expression rises or falls with the concentration of compound X across the three doses.",
+            acceptance: ["A table of the dose trend of each gene with an adjusted p-value"],
+            profile: DOSE_PROFILE,
+        },
+        setup: {
+            files: DOSE_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            knowledge: RENDERING_KNOWLEDGE,
+            exec: [namedOutputsRun("390 genes at padj < 0.05")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: MODELS_THE_DOSE,
     }),
     sandboxCase({
         id: "step-template-unavailable-own-script",
