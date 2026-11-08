@@ -21,7 +21,6 @@ import {
     all,
     anyOf,
     atMost,
-    before,
     blockerNot,
     blockerSays,
     callsAny,
@@ -567,11 +566,29 @@ const RENDERS_TEMPLATE = all(runsRendered, ownDeScript);
  */
 const WRITES_OWN_ON_UNAVAILABLE = all(wroteUnder("scripts/", /DeseqDataSet|pydeseq2/i), atMost({ tool: "knowledge_template" }, 1));
 
-/** A write of a script under `scripts/`. */
-const writesScript: CallMatch = { tool: "write_file", input: (input) => /"path":"[^"]*scripts\//.test(JSON.stringify(input)) };
+/** An Enrichr library name as `gene_sets=`, which sends a request to the Enrichr service. */
+const ENRICHR_LIBRARY = /["'](MSigDB_|KEGG_|GO_(Biological|Molecular|Cellular)|Reactome_|WikiPathways?_)\w*["']/;
 
-/** The step reads its skill guidance before it writes the script of its method. */
-const CONSULTS_SKILLS = anyOf(before({ tool: "skill_search" }, writesScript), before({ tool: "skill_read" }, writesScript));
+/**
+ * The enrichment script of the step runs offline and gives a defensible ORA: it reads the GMT of the organism from the
+ * reference store, it names no Enrichr library, it passes a background, and it passes no `organism=` to
+ * `gp.enrich()`, which takes no such argument and raises a TypeError.
+ */
+function offlineOra(gmt: RegExp): EvalCase["grade"] {
+    return (trial) => {
+        const scripts = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
+        const hit = scripts.find(([, text]) => /\b(enrich|enrichr|enricher|enrichGO|prerank)\s*\(/.test(text));
+        if (hit === undefined) return { pass: false, detail: `no enrichment script (scripts: ${scripts.map(([path]) => path).join(", ") || "none"})` };
+        const [path, text] = hit;
+        const problems = [
+            gmt.test(text) ? undefined : `no ${String(gmt)}`,
+            ENRICHR_LIBRARY.test(text) ? "an Enrichr library name" : undefined,
+            /\b(background|universe)\s*=/.test(text) ? undefined : "no background",
+            /\benrich\s*\([^)]*\borganism\s*=/s.test(text) ? "organism= in gp.enrich()" : undefined,
+        ].filter((problem) => problem !== undefined);
+        return problems.length === 0 ? { pass: true, detail: `${path} runs an offline ORA` } : { pass: false, detail: `${path}: ${problems.join(", ")}` };
+    };
+}
 
 /** The step uses its briefing: no hunt for its inputs, no second read of the profile, and work starts. */
 function usesBriefing(): EvalCase["grade"] {
@@ -830,24 +847,38 @@ const stepCases: readonly EvalCase[] = [
         grade: WRITES_OWN_ON_UNAVAILABLE,
     }),
     sandboxCase({
-        id: "step-consults-skills",
+        id: "step-enrichment-offline-ora",
         set: "dev",
-        source: "sandbox standards: skills are the authority on methods; read the guidance before you write the script",
-        step: DE_STEP,
-        setup: { files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [namedOutputsRun("412 genes at padj < 0.05")] },
-        maxSteps: 10,
-        timeoutMs: 600_000,
-        grade: CONSULTS_SKILLS,
-    }),
-    sandboxCase({
-        id: "step-consults-skills-held-out",
-        set: "held-out",
-        source: "paraphrase of step-consults-skills",
-        step: ENRICH_STEP,
+        source: "enrichment skill: gene sets from a resolved GMT, never an Enrichr name; a background for an ORA; gp.enrich() takes no organism",
+        step: {
+            ...ENRICH_STEP,
+            question: "Which hallmark gene sets are over-represented among the significant genes of treated against control?",
+            constraints: ["Run an over-representation analysis with gseapy."],
+        },
         setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: ENRICH_LOCK, exec: [namedOutputsRun("12 hallmark sets at FDR < 0.05")] },
         maxSteps: 10,
         timeoutMs: 600_000,
-        grade: CONSULTS_SKILLS,
+        grade: offlineOra(/\.Hs\.symbols\.gmt/),
+    }),
+    sandboxCase({
+        id: "step-enrichment-offline-ora-held-out",
+        set: "held-out",
+        source: "paraphrase of step-enrichment-offline-ora: mouse genes, the up and the down genes apart",
+        step: {
+            ...ENRICH_STEP,
+            question: "Test the up-regulated and the down-regulated genes of the treatment apart for over-represented hallmark programs.",
+            constraints: ["Use gseapy for the over-representation test."],
+            profile: profileOf({ scientificName: "Mus musculus", taxonId: "10090" }, BULK_PROFILE.files),
+        },
+        setup: {
+            files: { ...rodentFiles("mouse"), ...deFiles("T1S1", "mouse") },
+            packages: ENRICH_LOCK,
+            exec: [namedOutputsRun("9 hallmark sets at FDR < 0.05")],
+        },
+        tools: { list_available_refs: refs([HUMAN_HALLMARK, MOUSE_HALLMARK]) },
+        maxSteps: 10,
+        timeoutMs: 600_000,
+        grade: offlineOra(/\.Mm\.symbols\.gmt/),
     }),
     sandboxCase({
         id: "step-keeps-request-deliverable",
