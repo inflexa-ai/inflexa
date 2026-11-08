@@ -3,7 +3,7 @@
  * The command line of the decision evals.
  *
  *   bun run evals run [--provider <file> | --model <id>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3]
- *                     [--concurrency 4] [--timeout 180] [--exposure base] [--out <file>]
+ *                     [--concurrency 4] [--timeout 180] [--exposure base] [--sandbox-agent <agent-id>] [--out <file>]
  *   bun run evals compare <baseline.json> <candidate.json> [--fail-on-regression]
  *
  * Each trial makes real model calls, thus the evals never run under `bun test`.
@@ -27,14 +27,16 @@ import { cliProvider, identityOf, providerOf, readProviderFile } from "./lib/pro
 import { buildReport, compareReports, comparisonTable, regressions, reportTable, ReportSchema, type Report } from "./lib/report.js";
 import { promptDigest, runCases } from "./lib/run.js";
 import { openSandboxTrial } from "./lib/sandbox.js";
+import { overrideAgentIds, overrideSandboxAgent } from "./lib/sandbox-agent.js";
 import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
 import { okAsync } from "neverthrow";
 
 const USAGE = `usage:
-  bun run evals run [--provider <file> | --model <id>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--exposure base|read-both|read-write-both|read-script] [--out <file>]
+  bun run evals run [--provider <file> | --model <id>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--exposure base|read-both|read-write-both|read-script] [--sandbox-agent <agent-id>] [--out <file>]
   bun run evals compare <baseline.json> <candidate.json> [--fail-on-regression]
 
 With no --provider, the run uses the conversation model that the CLI configures.
+--sandbox-agent runs each selected step case (not a case of the data profiler) with that step agent.
 A provider file holds an AiSdkProviderConfig: kind, model, baseURL, reasoning, and apiKey or apiKeyEnv.`;
 
 function fail(message: string): never {
@@ -85,6 +87,7 @@ async function run(args: readonly string[]): Promise<void> {
             timeout: { type: "string" },
             out: { type: "string" },
             exposure: { type: "string", default: "base" },
+            "sandbox-agent": { type: "string" },
         },
     });
     const exposure = TOOL_EXPOSURES.find((name) => name === values.exposure);
@@ -92,7 +95,10 @@ async function run(args: readonly string[]): Promise<void> {
     const trials = positiveInt(values.trials, 5, "trials");
     const k = positiveInt(values.k, Math.min(3, trials), "k");
     if (k > trials) fail("--k cannot be above --trials");
-    const cases = selectCases(values.set, values.case);
+    const selected = selectCases(values.set, values.case);
+    const override = values["sandbox-agent"];
+    if (override !== undefined && !overrideAgentIds().includes(override)) fail(`--sandbox-agent must be one of ${overrideAgentIds().join(", ")}`);
+    const cases = override === undefined ? selected : await overriddenCases(selected, override);
 
     // EVALS_LOG=1 shows the log of the harness, for example the retries of a provider that stalls.
     const logger = process.env["EVALS_LOG"] === "1" ? createConsoleLogger() : createNoopLogger();
@@ -135,6 +141,13 @@ async function run(args: readonly string[]): Promise<void> {
     await mkdir(dirname(out), { recursive: true });
     await writeFile(out, `${JSON.stringify(report, null, 2)}\n`);
     process.stdout.write(`${reportTable(report)}\n\nreport: ${out}\n`);
+}
+
+async function overriddenCases(cases: readonly EvalCase[], agentId: string): Promise<EvalCase[]> {
+    const overridden = await overrideSandboxAgent(cases, agentId);
+    for (const { evalCase, dropped } of overridden)
+        if (dropped.length > 0) process.stderr.write(`${evalCase.id}: ${agentId} holds no ${dropped.join(", ")}, thus the case drops their scripts\n`);
+    return overridden.map(({ evalCase }) => evalCase);
 }
 
 /** The static agents as a trial of `exposure` holds them, for the prompt digest. */
