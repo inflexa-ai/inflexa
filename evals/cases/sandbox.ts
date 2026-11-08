@@ -540,11 +540,20 @@ function renderedScriptOf(trial: Trial): string | undefined {
     return typeof named === "string" ? named : "tpl-pydeseq2-two-group.py";
 }
 
-/** A script of the step that fits the DE model, and that the render did not write. A helper that plots the table is not one. */
+/**
+ * A script of the step that fits the DE model, that the render did not write, and that does not name the template. A
+ * helper that plots the table is not one. A copy of the rendered script that names its template is an edit of the
+ * template: the scripted sandbox runs no code, thus an edit that a command makes in place never lands, and the agent
+ * then writes the edited copy with the file tool.
+ */
 function ownDeScript(trial: Trial): Grade {
     const rendered = renderedScriptOf(trial);
     const own = Object.entries(trial.files ?? {}).find(
-        ([path, text]) => path.startsWith("scripts/") && path !== `scripts/${rendered ?? ""}` && /DeseqDataSet\s*\(/.test(String(text)),
+        ([path, text]) =>
+            path.startsWith("scripts/") &&
+            path !== `scripts/${rendered ?? ""}` &&
+            /DeseqDataSet\s*\(/.test(String(text)) &&
+            !String(text).includes(DE_TEMPLATE.id),
     );
     return own === undefined ? { pass: true, detail: "no DE script of its own" } : { pass: false, detail: `wrote its own DE script ${own[0]}` };
 }
@@ -724,7 +733,9 @@ function readsOnce(pattern: RegExp, limit = 1): EvalCase["grade"] {
         const global = new RegExp(pattern.source, "g");
         const counts = new Map<string, number>();
         for (const call of trial.calls) {
-            const reads = call.tool === "read_file" || call.tool === "grep" || (call.tool === "execute_command" && readsByCommand(call.input));
+            // A command that failed, for example before the step held a sandbox, read nothing.
+            const reads =
+                call.tool === "read_file" || call.tool === "grep" || (call.tool === "execute_command" && call.ok !== false && readsByCommand(call.input));
             if (!reads) continue;
             for (const hit of new Set(JSON.stringify(call.input ?? "").match(global) ?? [])) counts.set(hit, (counts.get(hit) ?? 0) + 1);
         }
