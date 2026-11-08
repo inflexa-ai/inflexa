@@ -70,12 +70,13 @@ const MAX_HOST_RECORD_BYTES = 256 * 1024;
 /**
  * The host copies of the decision records: one file under `DECISION_RECORD_ROOT` of the workspace root for each
  * copy in a step, at the analysis-relative path of that copy. No file tool of an agent writes under the root, and
- * the sandbox mounts it read-only. A write records no provenance, because the copy in the step carries it.
+ * the sandbox mounts it read-only. A write records no provenance, because the copy in the step carries it. A write
+ * takes only a record whose copy is under the write prefix of the caller, the same lexical bound as the mutator.
  */
 export type DecisionRecordStore = {
     /** The host copy of the record at `path`, in the frame of the file tools, or `undefined` when the host holds none. */
     read(args: { readonly session: AgentSession; readonly path: string; readonly workingDir?: string }): Promise<Buffer | undefined>;
-    /** Land the host copy of the record at `path`, in the frame of the file tools. */
+    /** Land the host copy of the record at `path`, in the frame of the file tools. `out_of_prefix` for a copy outside the write prefix. */
     write(args: {
         readonly session: AgentSession;
         readonly path: string;
@@ -85,7 +86,16 @@ export type DecisionRecordStore = {
     }): Promise<"ok" | "out_of_prefix" | "symlink_denied">;
 };
 
-export function createDecisionRecordStore(deps: { readonly resolveWorkspaceRoot: ResolveWorkspaceRoot }): DecisionRecordStore {
+export type DecisionRecordStoreDeps = {
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    /**
+     * The host directory that bounds each write: the working directory of a step agent, thus a tool of one step
+     * never writes the record of another step. Absent, the analysis root bounds it, as for the session mutator.
+     */
+    readonly writePrefix?: string;
+};
+
+export function createDecisionRecordStore(deps: DecisionRecordStoreDeps): DecisionRecordStore {
     const rootOf = async (session: AgentSession): Promise<{ readonly analysisId: string; readonly workspaceRoot: string; readonly root: string }> => {
         const { resourceId: analysisId } = scopeResource(session.scope);
         const workspaceRoot = await deps.resolveWorkspaceRoot(analysisId);
@@ -102,6 +112,10 @@ export function createDecisionRecordStore(deps: { readonly resolveWorkspaceRoot:
             const { analysisId, workspaceRoot, root } = await rootOf(session);
             const resolved = resolveWorkspacePath({ workspaceRoot, analysisId, path, workingDir });
             if (resolved.kind !== "ok") return "out_of_prefix";
+            // The bound is lexical, as the resolver of the mutator: a symlink in place of `output/` of the own step
+            // stays inside it, and the copy of another step stays outside it.
+            const prefix = resolvePath(deps.writePrefix ?? workspaceRoot);
+            if (resolved.absolute !== prefix && !resolved.absolute.startsWith(prefix + sep)) return "out_of_prefix";
             return landWithinRoot({ root, absolute: resolvePath(root, resolved.relative), content, stagingKey: invocationId });
         },
     };
@@ -205,9 +219,9 @@ async function readHeldRecord(args: ReconcileScriptRecordArgs, recordPath: strin
 
 /**
  * Append one change to a held record. The copy in the step lands through the mutator. The host copy, when the record
- * has one, takes the change also when the mutator refuses the copy in the step, for example a symlink in its place or
- * a copy of another step. Thus a change never hides behind a copy that a command broke. A note on the host only
- * appends a true digest to a record that the host holds already.
+ * has one, takes the change also when the mutator refuses the copy in the step, for example a symlink in its place.
+ * Thus a change never hides behind a copy that a command broke. The store bounds the host write to the write prefix
+ * of the caller, thus the record of another step takes no note from this one.
  */
 async function appendChange(args: ReconcileScriptRecordArgs, recordPath: string, held: HeldRecord, entry: UnvettedEdit): Promise<ScriptChangeNote> {
     const edits = isUnknownArray(held.record.unvetted_edits) ? held.record.unvetted_edits : [];

@@ -111,7 +111,7 @@ describe("execute_command and the decision record of a script", () => {
             defaultCwd: DEFAULT_CWD,
             workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) }),
             mutator: createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir }),
-            records: createDecisionRecordStore({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)) }),
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)), writePrefix: workingDir }),
         });
         return { tool, client };
     }
@@ -242,6 +242,28 @@ describe("execute_command and the decision record of a script", () => {
         expect(client.execs).toHaveLength(1);
         // The record of another step is outside the writable prefix: the mutator refused the note, and the record is untouched.
         expect(asRecord(parseJsonAs(await readFile(join(other, "output", "decision_record_de.json"), "utf8"), z.json())).unvetted_edits).toEqual([]);
+    });
+
+    it("runs a changed script of another step and writes neither copy of the record of that step", async () => {
+        const other = join(base, ANALYSIS, "runs", "run-abc", "step0");
+        const otherHost = join(stepDecisionRecordDir({ workspaceRoot: join(base, ANALYSIS), runId: "run-abc", stepId: "step0" }), "decision_record_de.json");
+        const held = `${JSON.stringify({ written_sha256: scriptSha256("ALPHA <- 1\n"), unvetted_edits: [] }, null, 2)}\n`;
+        await mkdir(join(other, "scripts"), { recursive: true });
+        await mkdir(join(other, "output"), { recursive: true });
+        await mkdir(join(otherHost, ".."), { recursive: true });
+        await writeFile(join(other, "scripts", "de.R"), "ALPHA <- 2\n");
+        await writeFile(join(other, "output", "decision_record_de.json"), held);
+        await writeFile(otherHost, held);
+        const { tool, client } = buildTool();
+        const { ctx } = makeToolContext();
+
+        const out = (await tool.execute({ command: ["Rscript", `/${ANALYSIS}/runs/run-abc/step0/scripts/de.R`] }, ctx))._unsafeUnwrap();
+
+        expect(out.status).toBe("ok");
+        expect(client.execs).toHaveLength(1);
+        // The record of another step is outside the write prefix of this one: its host copy and its copy stay as they are.
+        expect(await readFile(otherHost, "utf8")).toBe(held);
+        expect(await readFile(join(other, "output", "decision_record_de.json"), "utf8")).toBe(held);
     });
 
     it("runs a script without a record, and a command without a script, with no record read", async () => {

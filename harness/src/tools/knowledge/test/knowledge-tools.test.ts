@@ -612,7 +612,7 @@ describe("knowledge_template", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S1" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient(answers);
-        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot) });
+        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot), writePrefix: workingDir });
         return { tool: createKnowledgeTemplateTool({ client: fake.client, mutator, records }), workspaceRoot, workingDir, calls: fake.calls };
     }
 
@@ -755,7 +755,7 @@ describe("knowledge_template", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S1" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient();
-        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot) });
+        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot), writePrefix: workingDir });
         const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, records, farmLockFile: lockPath, imagePackagesFile: recordPath });
         const { ctx } = makeToolContext();
         await awaitOk(tool.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx));

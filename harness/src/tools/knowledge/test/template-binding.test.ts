@@ -54,7 +54,7 @@ describe("knowledge_template with a binding", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S2" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient(answers);
-        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot) });
+        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot), writePrefix: workingDir });
         const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, records, binding: bound });
         return { tool, workingDir, calls: fake.calls };
     }

@@ -4,7 +4,7 @@
 
 Each write of a decision record MUST land two copies with the same bytes. The copy in the step stays at `output/decision_record_<script>.json`. The host copy MUST go under `.sandbox/decision-records/`, at the analysis-relative path of the copy in the step. The copy in the step MUST land first, through the mutator of the tool. The host copy MUST land after it, with the hardened landing of the mutator. A write of a host copy records no provenance, because the copy in the step carries it.
 
-`knowledge_template` MUST write the host copy of each record that it writes. `edit_file` and `execute_command` MUST read the host copy of a record first. A change note MUST land in both copies. When the mutator refuses the copy in the step, the note MUST still land in the host copy. A record with no host copy is a record that an earlier version wrote. The tools MUST note a change in such a record in the copy in the step only. Thus a file in the step never becomes a host record.
+`knowledge_template` MUST write the host copy of each record that it writes. `edit_file` and `execute_command` MUST read the host copy of a record first. A change note MUST land in both copies. When the mutator refuses the copy in the step, the note MUST still land in the host copy. A host write MUST take only a record whose copy is under the write prefix of the caller. Thus a tool of one step never writes a record of another step. A record with no host copy is a record that an earlier version wrote. The tools MUST note a change in such a record in the copy in the step only. Thus a file in the step never becomes a host record.
 
 Before `execute_command` runs a script, it MUST compare the copy in the step with the host copy. When the copy in the step is absent or differs, the tool MUST write it again from the host copy. The result MUST name each such record in `decision_records_restored`, and the host MUST log a warning. After the agent loop, the host MUST write again each absent or changed copy in the step, before the walk of the artifacts. The host MUST NOT follow a symbolic link in place of a copy. After that restore, the provenance record of a copy MUST stay only when a file tool wrote the same bytes. Otherwise the file falls to the step activity, because no other producer wrote those bytes.
 
@@ -29,6 +29,12 @@ Before `execute_command` runs a script, it MUST compare the copy in the step wit
 - **GIVEN** a host record, and a symlink in place of its copy in the step
 - **WHEN** `execute_command` runs a changed script of that record
 - **THEN** the host copy lists the change, and the target of the symlink stays unchanged
+
+#### Scenario: A changed script of another step
+
+- **GIVEN** a step `step0` with a host record, and a script that differs from the digest of the record
+- **WHEN** `execute_command` of another step runs that script
+- **THEN** the host copy and the copy in `step0` stay unchanged
 
 #### Scenario: A record that an earlier version wrote
 

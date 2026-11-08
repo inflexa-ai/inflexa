@@ -75,7 +75,7 @@ describe("edit_file tool", () => {
             workingDir,
             intents: opts.intents ?? createFakeIntentStore().store,
             stepKey: opts.stepKey,
-            records: createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot) }),
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot), writePrefix: workingDir }),
         });
         return { tool, fs };
     }
