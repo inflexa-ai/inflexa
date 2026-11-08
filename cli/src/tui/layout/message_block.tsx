@@ -346,6 +346,7 @@ export function MessageBlock(props: MessageBlockProps): JSX.Element {
                     case "data-step-file-tree":
                     case "data-step-output":
                     case "data-step-summary":
+                    case "data-step-methods":
                     case "data-step-usage":
                     case "data-step-blocked":
                     case "data-run-synthesis":

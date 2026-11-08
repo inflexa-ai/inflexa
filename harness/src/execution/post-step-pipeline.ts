@@ -21,7 +21,6 @@ import type { LoopMessage } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
-import type { StepSummary } from "../schemas/step-summary.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { describeDbError } from "../lib/db-result.js";
@@ -34,6 +33,8 @@ import { registerStepArtifacts, type ArtifactRegistrationFailure } from "./artif
 import { reconcileManifestWithDisk } from "./reconcile-manifest.js";
 import { generateFileMetadata as coreGenerateFileMetadata, type ArtifactForMetadata, type FileMetadataEntry } from "./artifact-metadata.js";
 import { generateStepSummary as coreGenerateStepSummary } from "./step-summary.js";
+import { buildStepMethods, readStepDecisionRecords, withMethodsBlock } from "./step-methods.js";
+import { StepSummarySchema, type StepSummary } from "../schemas/step-summary.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 import type { PostStepArtifacts, PostStepContext, StepFileEntry, StepOutputs } from "../workflows/sandbox-step.js";
@@ -109,6 +110,12 @@ export async function generateStepFileMetadata(
 /**
  * Generates the interpretive step summary, continuing after `metadataMessages`,
  * and writes it to `output/summary.md`. A write failure is non-fatal.
+ *
+ * The host then appends the methods and sources of the step, from the
+ * grounding, the claim views, and the decision records. The block is data of
+ * the host, thus it stands alone when the summary of the agent is absent. It
+ * runs inside the checkpointed step of the summary, thus a replay gives the
+ * same markdown and the body keeps its sequence of steps.
  */
 export async function generateStepSummaryAndWrite(
     deps: PostStepPipelineDeps,
@@ -118,7 +125,7 @@ export async function generateStepSummaryAndWrite(
 ): Promise<StepSummary | undefined> {
     const { input, session, transcript, agent, writePrefix } = postCtx;
 
-    const summary = await coreGenerateStepSummary({
+    const agentSummary = await coreGenerateStepSummary({
         logger: deps.logger,
         provider: deps.provider,
         usageRecorder: deps.usageRecorder,
@@ -131,7 +138,15 @@ export async function generateStepSummaryAndWrite(
         agentId: input.agentId,
         runId: input.runId,
     });
-    if (summary && summary.markdown.trim().length > 0) {
+    const logger = (deps.logger ?? createNoopLogger()).named("post-step").named("methods").with({ runId: input.runId, stepId: input.stepId });
+    const records = await readStepDecisionRecords(writePrefix, logger);
+    const methods = buildStepMethods({ grounding: input.grounding, claimViews: input.claimViews ?? [], records });
+    const markdown = methods ? withMethodsBlock(agentSummary?.markdown, methods) : agentSummary?.markdown;
+    const summary =
+        markdown !== undefined && markdown.trim().length > 0
+            ? StepSummarySchema.parse({ stepId: input.stepId, agentId: input.agentId, markdown, methods })
+            : undefined;
+    if (summary) {
         try {
             // Host-side write into the step's own RW subtree. Confine to the step
             // prefix (not the whole workspace) so a symlink a compromised agent

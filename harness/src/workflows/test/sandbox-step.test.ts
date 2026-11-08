@@ -438,7 +438,7 @@ describe("sandbox-step data-step-usage part", () => {
         // as the other terminal step parts do, and claiming otherwise would tell
         // consumers to fold something that never doubles.
         expect(isReconciling("data-step-usage")).toBe(false);
-        for (const sibling of ["data-step-summary", "data-step-output", "data-step-blocked"] as const) {
+        for (const sibling of ["data-step-summary", "data-step-methods", "data-step-output", "data-step-blocked"] as const) {
             expect(isReconciling(sibling)).toBe(isReconciling("data-step-usage"));
         }
     });
@@ -613,6 +613,34 @@ describe("sandbox-step post-step continuations", () => {
         });
         expect(summaryRequest.prompt[6]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "described" }] });
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "gene counts" })]);
+    });
+
+    it("emits the methods of a grounded step beside its summary, and the summary ends with the methods block", async () => {
+        const { provider } = scriptedModel([reply([text("done")]), reply([text("## Summary")])]);
+        const grounding = { status: "grounded" as const, snapshot: "sha256:71ac", claims: ["R-0001@e7d0"], reason: "per R-0001@e7d0" };
+        const claimViews = [{ id: "R-0001@e7d0", snapshot: "sha256:71ac", title: "Filter low counts", statement: "s", strength: "consensus", evidence: [] }];
+
+        const result = await runSandboxStepBody({ ...usageStepInput(), grounding, claimViews }, { ...usageStepDeps(undefined), provider });
+
+        expect(result.status).toBe("complete");
+        const methods = dbosState.emittedParts.filter((part) => part.type === "data-step-methods");
+        expect(methods).toHaveLength(1);
+        expect(methods[0]).toMatchObject({
+            id: `step-methods-${USAGE_RUN_ID}-${USAGE_STEP_ID}`,
+            stepId: USAGE_STEP_ID,
+            grounding: "grounded",
+            claims: [{ id: "R-0001@e7d0", title: "Filter low counts", strength: "consensus" }],
+        });
+        const summary = dbosState.emittedParts.find((part) => part.type === "data-step-summary");
+        expect(summary?.markdown).toContain("## Summary\n\n---\n\n## Methods and sources");
+    });
+
+    it("emits no methods for a step with no grounding and no decision record", async () => {
+        const { provider } = scriptedModel([reply([text("done")]), reply([text("## Summary")])]);
+
+        await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider });
+
+        expect(dbosState.emittedParts.filter((part) => part.type === "data-step-methods")).toEqual([]);
     });
 
     it("reads a cached metadata array of an earlier version as entries, and the summary continues the transcript directly", async () => {
