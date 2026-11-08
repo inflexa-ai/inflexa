@@ -68,11 +68,21 @@ Before the harness gives the result of a nested call to the VM, it MUST measure 
 - **WHEN** a script calls it
 - **THEN** the call throws an Error that names 32 MiB, and the VM receives nothing of the result
 
-### Requirement: The host declares the memory of its heavy workers
+### Requirement: The host gives the memory of its heavy workers
 
-The harness MUST export `HOST_WORKER_MEMORY_MIB`, the sum of the heap limits of the decode slots, and of the heap limits and the VM memory of the script slots. A host MUST be able to size its main heap beside it.
+A host MUST be able to give the memory in MiB that the heavy workers of its process hold together, as `hostWorkerMemoryMib` of `assembleCoreRuntime`. The harness MUST fit its slots in that memory: a decode slot holds 400 MiB and a script slot holds 400 MiB. Two fifths of the slots, rounded, MUST decode, and the others MUST run scripts. Each kind MUST get at least one slot, also when the memory holds fewer than two slots. With no memory, the harness MUST keep two decode slots and three script slots (2000 MiB). The harness MUST log the slots and their memory at boot, and it MUST warn when the slots hold more than the host gave.
 
-#### Scenario: The sum
+#### Scenario: A small host
 
-- **WHEN** a host reads `HOST_WORKER_MEMORY_MIB`
-- **THEN** the value is the decode slots times their heap limit, plus the script slots times their heap limit and their VM memory
+- **WHEN** a host gives 800 MiB
+- **THEN** the process runs one decode worker and one script worker at the same time
+
+#### Scenario: A large host
+
+- **WHEN** a host gives 4000 MiB
+- **THEN** the process runs four decode workers and six script workers at the same time
+
+#### Scenario: Less than the smallest budget
+
+- **WHEN** a host gives 100 MiB
+- **THEN** the process runs one decode worker and one script worker, and the boot log warns that the slots hold 800 MiB

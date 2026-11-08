@@ -7,8 +7,9 @@
  * A task past its limit ends only its worker, and its caller gets `out_of_memory`.
  *
  * The memory of a container belongs to the process, thus the slots are module state for the whole process, the
- * same as the per-host budgets of `host-concurrency.ts`. A task that finds each slot held waits for one. The sum of
- * the limits of all slots is {@link HOST_WORKER_MEMORY_MIB}: a host sizes its own heap cap beside it.
+ * same as the per-host budgets of `host-concurrency.ts`. A task that finds each slot held waits for one. The host gives
+ * the memory of its workers at boot ({@link configureHostWorkers}), and the slots fit in it. A host sizes its own heap
+ * cap beside that memory.
  *
  * Each worker starts from the one harness worker entry, `tools/script/codemode-worker.js`, which selects its task
  * from its worker data. A host that bundles the harness already embeds that entry for `run_script`, and
@@ -24,25 +25,40 @@ import { z } from "zod";
 import type { HostTask, HostTaskAnswer } from "../workspace/decode-tasks.js";
 import { errorMessageOf } from "./thrown.js";
 
-/** The decode workers that run at the same time, and the V8 old-generation limit of each one. */
-export const DECODE_WORKER_SLOTS = 2;
+/** The V8 old-generation limit of each decode worker. */
 export const DECODE_WORKER_HEAP_MIB = 384;
 
 /**
- * The script workers that run at the same time, the V8 old-generation limit of each one, and the memory of its VM.
- * The worker holds the JSON of each nested result and the printed output. The VM is wasm memory outside V8.
+ * The V8 old-generation limit of each script worker, and the memory of its VM. The worker holds the JSON of each
+ * nested result and the printed output. The VM is wasm memory outside V8.
  */
-export const SCRIPT_WORKER_SLOTS = 3;
 export const SCRIPT_WORKER_HEAP_MIB = 128;
 export const SCRIPT_VM_MEMORY_MIB = 256;
 
 /** The young generation of each heavy worker. Without a value V8 sizes it from the memory of the machine. */
 const WORKER_YOUNG_GENERATION_MIB = 16;
 
-/** The most memory that the heavy workers of the process hold at the same time. */
-export const HOST_WORKER_MEMORY_MIB =
-    DECODE_WORKER_SLOTS * (DECODE_WORKER_HEAP_MIB + WORKER_YOUNG_GENERATION_MIB) +
-    SCRIPT_WORKER_SLOTS * (SCRIPT_WORKER_HEAP_MIB + WORKER_YOUNG_GENERATION_MIB + SCRIPT_VM_MEMORY_MIB);
+/** The most memory that one slot holds: a decode worker, or a script worker with its VM. */
+export const DECODE_SLOT_MIB = DECODE_WORKER_HEAP_MIB + WORKER_YOUNG_GENERATION_MIB;
+export const SCRIPT_SLOT_MIB = SCRIPT_WORKER_HEAP_MIB + WORKER_YOUNG_GENERATION_MIB + SCRIPT_VM_MEMORY_MIB;
+
+/** The worker memory of a host that gives none: two decode slots and three script slots. */
+export const DEFAULT_HOST_WORKER_MEMORY_MIB = 2 * DECODE_SLOT_MIB + 3 * SCRIPT_SLOT_MIB;
+
+/** The slots that a worker memory gives, and the memory that the slots hold at most. */
+export type HostWorkerBudget = { readonly decodeSlots: number; readonly scriptSlots: number; readonly memoryMib: number };
+
+/**
+ * The slots that fit in `memoryMib`. Two fifths of the slots decode, because a decode is short and a script holds its
+ * slot while it waits on its lookups. Each kind gets at least one slot, thus a memory under the two smallest slots
+ * still runs one decode and one script, and `memoryMib` of the budget is then more than the host gave.
+ */
+export function hostWorkerBudget(memoryMib: number): HostWorkerBudget {
+    const total = Math.max(2, Math.floor(memoryMib / Math.max(DECODE_SLOT_MIB, SCRIPT_SLOT_MIB)));
+    const decodeSlots = Math.max(1, Math.min(total - 1, Math.round(total * 0.4)));
+    const scriptSlots = total - decodeSlots;
+    return { decodeSlots, scriptSlots, memoryMib: decodeSlots * DECODE_SLOT_MIB + scriptSlots * SCRIPT_SLOT_MIB };
+}
 
 /** Why a heavy task gave no answer. */
 export type HostTaskFailure = { readonly kind: "out_of_memory" } | { readonly kind: "crashed"; readonly detail: string } | { readonly kind: "aborted" };
@@ -57,9 +73,17 @@ export type HostTaskReply<T extends HostTask = HostTask> =
 
 let entryOverride: string | URL | undefined;
 
-/** Start each heavy worker from `url`, the embedded entry of a bundled host. `undefined` restores the entry beside this module. */
-export function setHostWorkerEntry(url: string | URL | undefined): void {
-    entryOverride = url;
+/**
+ * Size the heavy workers of the process from the worker memory of the host, and start each worker from `entry`, the
+ * embedded entry of a bundled host. An absent value keeps the default. The composition root calls it one time at
+ * boot, before any work, and it gives the budget that it set.
+ */
+export function configureHostWorkers(config: { readonly memoryMib?: number; readonly entry?: string | URL }): HostWorkerBudget {
+    entryOverride = config.entry;
+    const budget = hostWorkerBudget(config.memoryMib ?? DEFAULT_HOST_WORKER_MEMORY_MIB);
+    decodeSlots.width = budget.decodeSlots;
+    scriptSlots.width = budget.scriptSlots;
+    return budget;
 }
 
 /** The entry of each heavy worker. A source run (tests, tsx) names the `.ts` file, and the published package the `.js` file. */
@@ -73,10 +97,11 @@ export function workerLimits(heapMib: number): { maxOldGenerationSizeMb: number;
     return { maxOldGenerationSizeMb: heapMib, maxYoungGenerationSizeMb: WORKER_YOUNG_GENERATION_MIB };
 }
 
-type Slots = { readonly width: number; inUse: number; readonly waiting: Array<() => void> };
+type Slots = { width: number; inUse: number; readonly waiting: Array<() => void> };
 
-const decodeSlots: Slots = { width: DECODE_WORKER_SLOTS, inUse: 0, waiting: [] };
-const scriptSlots: Slots = { width: SCRIPT_WORKER_SLOTS, inUse: 0, waiting: [] };
+const defaultBudget = hostWorkerBudget(DEFAULT_HOST_WORKER_MEMORY_MIB);
+const decodeSlots: Slots = { width: defaultBudget.decodeSlots, inUse: 0, waiting: [] };
+const scriptSlots: Slots = { width: defaultBudget.scriptSlots, inUse: 0, waiting: [] };
 
 /**
  * Wait for a slot, and give the function that frees it, or `undefined` when `signal` aborts first. An aborted wait
@@ -122,10 +147,13 @@ export async function acquireScriptSlot(): Promise<() => void> {
 }
 
 /** The slots that are held and the tasks that wait, for a test. */
-export function hostWorkerSlotsForTest(): { decode: { inUse: number; waiting: number }; script: { inUse: number; waiting: number } } {
+export function hostWorkerSlotsForTest(): {
+    decode: { width: number; inUse: number; waiting: number };
+    script: { width: number; inUse: number; waiting: number };
+} {
     return {
-        decode: { inUse: decodeSlots.inUse, waiting: decodeSlots.waiting.length },
-        script: { inUse: scriptSlots.inUse, waiting: scriptSlots.waiting.length },
+        decode: { width: decodeSlots.width, inUse: decodeSlots.inUse, waiting: decodeSlots.waiting.length },
+        script: { width: scriptSlots.width, inUse: scriptSlots.inUse, waiting: scriptSlots.waiting.length },
     };
 }
 

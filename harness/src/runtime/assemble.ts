@@ -47,7 +47,7 @@ import type { AuthContext, Identity } from "../auth/types.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
-import { setHostWorkerEntry } from "../lib/host-workers.js";
+import { configureHostWorkers } from "../lib/host-workers.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
 import { createToolOutputStore } from "../state/tool-outputs.js";
@@ -166,6 +166,12 @@ export type CoreRuntimeDeps = {
      * `createNoopUsageRecorder()`.
      */
     readonly usageRecorder?: UsageRecorder;
+    /**
+     * The memory in MiB that the heavy workers of the process can hold together: the decode workers and the script
+     * VMs, each outside the main heap. The harness fits its slots in it, with at least one of each kind. A host sizes
+     * its main heap cap beside it. Absent, the harness keeps `DEFAULT_HOST_WORKER_MEMORY_MIB`.
+     */
+    readonly hostWorkerMemoryMib?: number;
     /** Harness-owned citation capability configuration; no ambient lookup occurs. */
     readonly citationResolverConfig?: CitationResolverConfig;
     /**
@@ -377,7 +383,15 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     });
 
     // A bundled host embeds the worker entry of `run_script`, and each decode worker starts from the same entry.
-    if (conversation.scriptRuntime?.workerUrl !== undefined) setHostWorkerEntry(conversation.scriptRuntime.workerUrl);
+    const workerBudget = configureHostWorkers({ memoryMib: deps.hostWorkerMemoryMib, entry: conversation.scriptRuntime?.workerUrl });
+    const workerLog = (conversation.logger ?? createNoopLogger()).named("host-workers");
+    workerLog.info("the heavy workers are sized", { ...workerBudget, givenMib: deps.hostWorkerMemoryMib });
+    if (deps.hostWorkerMemoryMib !== undefined && workerBudget.memoryMib > deps.hostWorkerMemoryMib) {
+        workerLog.warn("the worker memory holds less than one decode and one script slot; the slots can use more", {
+            givenMib: deps.hostWorkerMemoryMib,
+            memoryMib: workerBudget.memoryMib,
+        });
+    }
 
     const toolOutputStore = createToolOutputStore(conversation.pool);
     const pauseRetryDelaysMs = deps.pauseRetryDelaysMs;
