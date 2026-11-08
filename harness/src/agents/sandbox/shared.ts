@@ -325,7 +325,9 @@ function buildWorkspaceTools(
               workingDir: hostWorkingDir,
               lineageCollector,
           });
-    const records = mutator ? createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(step.workspaceRoot) }) : undefined;
+    const records = mutator
+        ? createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(step.workspaceRoot), writePrefix: hostWorkingDir })
+        : undefined;
     const mutateTools =
         mutator && records
             ? [
