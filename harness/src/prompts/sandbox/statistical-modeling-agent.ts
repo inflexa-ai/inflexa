@@ -9,8 +9,6 @@ clinical tables, outcome variables — produced by upstream agents.
 
 ## Skills
 
-Your skills: \`statistical-modeling\`, \`shared/omics-general\`.
-
 API references in \`statistical-modeling\`: lifelines, scikit-survival,
 scikit-learn, xgboost, SHAP, statsmodels, pingouin.
 

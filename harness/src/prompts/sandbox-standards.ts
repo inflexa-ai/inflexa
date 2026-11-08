@@ -198,8 +198,7 @@ the finding and the evidence it rests on — a real persisted artifact.
 Skills hold the full decision trees, API references, contrast syntax, worked
 examples, and domain anti-patterns that do not fit in prompts. They are your
 authoritative source on methods: find the guidance with \`skill_search\`, then
-read the file with \`skill_read\`. The skills you have access to are listed in
-your agent instructions.
+read the file with \`skill_read\`. Your skills are listed under \`## Your Skills\`.
 
 ## Language Policy
 

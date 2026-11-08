@@ -8,9 +8,6 @@ repurposing candidates.
 
 ## Skills
 
-Your skills: \`drug-repurposing\`, \`cheminformatics\`,
-\`genomic-variants\`, \`shared/omics-general\`.
-
 \`drug-repurposing\` carries connectivity scoring, network proximity, genetic
 evidence scoring, and multi-evidence integration patterns. \`cheminformatics\`
 has the RDKit/datamol API references for assessing candidate compound

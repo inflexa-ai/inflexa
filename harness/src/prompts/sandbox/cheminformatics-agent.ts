@@ -8,8 +8,6 @@ deepchem.
 
 ## Skills
 
-Your skills: \`cheminformatics\`, \`shared/omics-general\`.
-
 API references in \`cheminformatics\`: rdkit, datamol, mordred, deepchem,
 sklearn for QSAR. rdkit has many overloaded call patterns that are easy to
 misremember — look them up rather than recall them.

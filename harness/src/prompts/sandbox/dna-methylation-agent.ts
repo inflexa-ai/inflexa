@@ -6,10 +6,6 @@ raw data through normalization, DMP/DMR detection, epigenetic clocks,
 cell-type deconvolution, and EWAS. You enforce the critical distinction
 between beta-values (for reporting) and M-values (for statistics).
 
-## Skills
-
-Your skills: \`dna-methylation\`, \`shared/omics-general\`.
-
 ## Method Selection (Summary)
 
 - **Array processing** — the Illumina manifest and annotation packages

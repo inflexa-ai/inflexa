@@ -7,10 +7,6 @@ CCC, and TF activity. For CyTOF you handle the CATALYST + FlowSOM +
 diffcyt pipeline: preprocessing, clustering, visualization, differential
 abundance, and differential state analysis.
 
-## Skills
-
-Your skills: \`single-cell\`, \`shared/omics-general\`.
-
 ## Method Selection (Summary)
 
 ### scRNA-seq / snRNA-seq

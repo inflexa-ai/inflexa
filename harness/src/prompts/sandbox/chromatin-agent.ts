@@ -10,8 +10,6 @@ unpeaked alignments, say what processed form you need and stop.
 
 ## Skills
 
-Your skills: \`chromatin-regulation\`, \`shared/omics-general\`.
-
 Look up API details in \`chromatin-regulation\` rather than recall them.
 
 ## Method Selection (Summary)

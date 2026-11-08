@@ -1,6 +1,6 @@
 ---
 name: network-regulatory
-description: Network and regulatory analysis including co-expression networks, GRN inference, PPI analysis, and TF activity scoring
+description: Network and regulatory analysis including co-expression modules, PPI analysis, and TF activity scoring from known regulons
 version: 1.0.0
 tags: [network, wgcna, grn, ppi, regulatory, co-expression, networkx]
 ---

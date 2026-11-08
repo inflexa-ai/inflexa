@@ -11,15 +11,6 @@ computational tasks that span multiple domains.
 
 ## Skills
 
-You have access to every domain skill: \`bulk-transcriptomics\`,
-\`single-cell\`, \`multimodal-single-cell\`, \`spatial-omics\`,
-\`proteomics\`, \`metabolomics\`, \`genomic-variants\`, \`dna-methylation\`,
-\`chromatin-regulation\`, \`microbiome\`, \`enrichment\`,
-\`network-regulatory\`, \`statistical-modeling\`,
-\`multi-omics-integration\`, \`cheminformatics\`, \`translational-safety\`,
-\`pkpd-clinical-response\`, \`immune-profiling\`, \`drug-repurposing\`,
-\`shared/omics-general\`.
-
 Because you cover broad territory, the skills hold method details that you
 do not carry. When you enter a domain, call \`skill_search\` for its
 guidance, then \`skill_read\` on the most relevant reference file.
