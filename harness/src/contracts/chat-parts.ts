@@ -296,6 +296,68 @@ export type StepSummaryPart = {
     markdown: string;
 };
 
+// ── Step Methods (persistent, once per step) ────────────────────────
+
+/** A template that a step rendered, as its decision record names it. */
+export type StepMethodsTemplate = {
+    id: string;
+    version: string;
+    label: string;
+    /** The catalog method that the script runs. */
+    method: { id: string; label: string };
+    /** How the installed packages matched the pins of the template (`exact`, `compatible`, and the others). */
+    environmentMatch?: string;
+    /** The script path inside the step directory, for example `scripts/tpl-edger-ql.R`. */
+    script?: string;
+};
+
+/** A rule of the knowledge service that the step obeys. */
+export type StepMethodsClaim = {
+    /** The claim id with its release, for example `R-0028@d560`. */
+    id: string;
+    title?: string;
+    strength?: string;
+};
+
+/** A published source of a rule or a template. A source carries a DOI, a PubMed id, or a URL. */
+export type StepMethodsSource = {
+    doi?: string;
+    pmid?: string;
+    url?: string;
+    title: string;
+    year?: number;
+};
+
+/**
+ * The methods and the sources of one step, as the host builds them from the plan grounding and the
+ * decision records of the step. The agent of the step does not write them.
+ */
+export type StepMethods = {
+    /** The grounding status of the plan step. Absent when the step has no grounding. */
+    grounding?: "grounded" | "ungrounded" | "flagged";
+    /** The snapshot digest of the knowledge release. */
+    snapshot?: string;
+    /** One entry for each rendered script, in the order of the record files. */
+    templates: StepMethodsTemplate[];
+    claims: StepMethodsClaim[];
+    /** The count of the claims past the bound of the list. */
+    claimsOmitted?: number;
+    sources: StepMethodsSource[];
+    /** The count of the sources past the bound of the list. */
+    sourcesOmitted?: number;
+    /** The license of the rule text, for the attribution. */
+    license?: string;
+};
+
+/** The methods and sources of a step. One part for each step, emitted beside the summary. */
+export type StepMethodsPart = StepMethods & {
+    type: "data-step-methods";
+    id: string;
+    runId: string;
+    stepId: string;
+    agentId: string;
+};
+
 // ── Step Usage (persistent, once per step) ──────────────────────────
 
 /**
@@ -667,6 +729,7 @@ export type KnownChatPart =
     | StepFileTreePart
     | StepOutputPart
     | StepSummaryPart
+    | StepMethodsPart
     | StepUsagePart
     | StepBlockedPart
     | RunSynthesisPart

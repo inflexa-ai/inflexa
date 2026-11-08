@@ -479,6 +479,10 @@ export function buildChildInput(args: {
         // Composed beside the seed, thus the same checkpoint carries both and a
         // replay hands the child the binding its briefing describes.
         templateBinding,
+        // The methods block of the summary names the grounding and the rules of the step, thus the child
+        // gets them from the same durable input as the seed.
+        grounding: planStep.grounding,
+        claimViews: claimViewsOfStep(planStep, input.claims ?? []),
         level,
         prompt,
     };

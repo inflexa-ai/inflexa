@@ -2173,10 +2173,14 @@ describe("executeAnalysis child input projection", () => {
             },
         };
 
-        const result = await runExecuteAnalysisBody(grounded, deps);
+        const view = { id: "R-0001@e7d0", snapshot: "sha256:71ac", title: "Shrink the effect sizes", statement: "s", strength: "consensus", evidence: [] };
+        const result = await runExecuteAnalysisBody({ ...grounded, claims: [view, { ...view, snapshot: "sha256:9999" }] }, deps);
         expect(result.status).toBe("completed");
 
         const childB = presentFind(dbosState.childInputs, (i) => i.stepId === "B");
+        // The child gets the grounding of its plan step and the view of its claim at the digest of the step.
+        expect(childB.grounding).toEqual(grounded.planStepById.B?.grounding);
+        expect(childB.claimViews).toEqual([view]);
         expect(childB.templateBinding).toEqual({
             template: "tpl-deseq2-two-group@1.0.0",
             slots: { lfc_shrink: "apeglm" },
@@ -2190,7 +2194,10 @@ describe("executeAnalysis child input projection", () => {
                 .map((slot) => slot.name),
         });
         expect(childB.prompt).toContain("## Template contract");
-        expect(presentFind(dbosState.childInputs, (i) => i.stepId === "A").templateBinding).toBeUndefined();
+        const childA = presentFind(dbosState.childInputs, (i) => i.stepId === "A");
+        expect(childA.templateBinding).toBeUndefined();
+        expect(childA.grounding).toBeUndefined();
+        expect(childA.claimViews).toEqual([]);
     });
 
     it("hands the child the seed of a checkpoint written as a bare string, with no binding", async () => {

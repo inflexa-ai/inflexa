@@ -82,6 +82,7 @@ import {
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { blockerOf } from "../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
+import type { ClaimView, Grounding } from "../schemas/workflow-state.js";
 import type { TemplateBinding } from "../tools/knowledge/template.js";
 import { pauseAtGate, workPause } from "./pause.js";
 
@@ -119,6 +120,14 @@ export type SandboxStepInput = {
      * template has nothing to bind. Absence means the model values ride alone.
      */
     readonly templateBinding?: TemplateBinding;
+    /**
+     * The grounding of the plan step, and the claim views that the plan kept for its claims. The
+     * post-step pipeline builds the methods and sources of the summary from them and from the decision
+     * records of the step. Optional for the same reason as `dependsOn`: absence gives methods from the
+     * decision records alone.
+     */
+    readonly grounding?: Grounding;
+    readonly claimViews?: readonly ClaimView[];
     /** Topological level — persisted on `cortex_step_executions.wave`. */
     readonly level: number;
     /** User-content prompt the agent receives as its initial message. */
@@ -898,6 +907,16 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                 stepId: input.stepId,
                 agentId: input.agentId,
                 markdown: stepOutputs.summaryMarkdown,
+            });
+        }
+        if (summary?.methods) {
+            await safeEmit({
+                type: "data-step-methods",
+                id: stepPartId("step-methods", input.runId, input.stepId),
+                runId: input.runId,
+                stepId: input.stepId,
+                agentId: input.agentId,
+                ...summary.methods,
             });
         }
         if (stepOutputs.files.length > 0) {
