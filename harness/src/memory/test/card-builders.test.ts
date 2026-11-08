@@ -55,6 +55,40 @@ describe("planCardOf", () => {
     it("gives null for a document that does not parse", () => {
         expect(planCardOf(recordOf({ plan: { steps: "no" } }))).toBeNull();
     });
+
+    it("carries the claim views of the stored plan with the keys of the part, and no claims key for a plan with none", () => {
+        const plan = {
+            ...planDocument("Differential expression"),
+            claims: [
+                {
+                    id: "R-0028@d560",
+                    snapshot: "sha256:71ac",
+                    rule: "R-0028",
+                    title: "Use the QL F-test",
+                    statement: "s",
+                    strength: "consensus",
+                    severity: "info",
+                    evidence: [{ doi: "10.1093/bioinformatics/btw014", title: "edgeR QL", year: 2016, direction: "supports" }],
+                    license: "CC-BY-4.0",
+                },
+            ],
+        };
+
+        const card = planCardOf(recordOf({ plan }));
+
+        expect(card?.claims).toEqual([
+            {
+                id: "R-0028@d560",
+                snapshot: "sha256:71ac",
+                title: "Use the QL F-test",
+                statement: "s",
+                strength: "consensus",
+                evidence: [{ doi: "10.1093/bioinformatics/btw014", title: "edgeR QL", year: 2016 }],
+            },
+        ]);
+        expect(planPartOf(recordOf({ plan }))?.claims).toEqual(card?.claims);
+        expect(planCardOf(recordOf())).not.toHaveProperty("claims");
+    });
 });
 
 describe("planPartOf", () => {

@@ -141,6 +141,14 @@ const mockPlanSteps = [
         constraints: [],
         caveats: ["Small cohorts reduce power"],
         depends_on: ["s1"],
+        grounding: {
+            status: "grounded",
+            snapshot: "sha256:71ac",
+            claims: ["R-0001@e7d0"],
+            template: "tpl-deseq2-two-group@1.0.0",
+            settings: [{ step: "differential_expression", name: "alpha", value: 0.05 }],
+            reason: "DESeq2 Wald test per R-0001@e7d0",
+        },
         track: "differential-expression",
         step_type: "analysis",
         maxSteps: 30,
@@ -167,6 +175,16 @@ export const mockPlanCard: PlanPart = {
     planId: "plan-8f21",
     title: "Differential expression across conditions",
     steps: mockPlanSteps,
+    claims: [
+        {
+            id: "R-0001@e7d0",
+            snapshot: "sha256:71ac",
+            title: "Use DESeq2 Wald or edgeR QL with 2 to 11 replicates",
+            statement: "With 2 to 11 replicates use DESeq2 Wald or edgeR QL.",
+            strength: "consensus",
+            evidence: [{ doi: "10.1261/rna.053959.115", title: "How many biological replicates", year: 2016 }],
+        },
+    ],
 };
 
 function galleryPlanStep(id: string, name: string, depends_on: string[] = []): PlanCardStepView {
@@ -184,7 +202,19 @@ function galleryPlanStep(id: string, name: string, depends_on: string[] = []): P
     };
 }
 
-export const mockPlanStepDetail = galleryPlanStep("B", "Expression analysis", ["A"]);
+/** MOCK sample: a grounded step, as `readPlanCard` reads it, for the step dialog. */
+export const mockPlanStepDetail: PlanCardStepView = {
+    ...galleryPlanStep("B", "Expression analysis", ["A"]),
+    grounding: {
+        status: "grounded",
+        snapshot: "sha256:71ac",
+        template: "tpl-deseq2-two-group@1.0.0",
+        reason: "DESeq2 Wald test per R-0001@e7d0",
+        rules: [{ id: "R-0001@e7d0", title: "Use DESeq2 Wald or edgeR QL with 2 to 11 replicates", strength: "consensus" }],
+        settings: [{ step: "differential_expression", name: "alpha", value: "0.05", source: "" }],
+        sources: [{ title: "How many biological replicates", year: 2016, ref: "doi:10.1261/rna.053959.115" }],
+    },
+};
 
 /** MOCK plan shapes that pin every dependency-graph gallery state. */
 export const mockPlanGraphExhibits = {

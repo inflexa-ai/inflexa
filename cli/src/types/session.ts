@@ -65,6 +65,52 @@ export type PlanCardStepView = {
     depends_on: string[];
     track: string;
     step_type: string;
+    /** The grounding of the step in the knowledge release. Absent on a step that the planner made with no knowledge service. */
+    grounding?: PlanCardGroundingView;
+};
+
+/** The grounding of one plan step, as `readPlanCard` reads it: each claim id is joined to its view by the id and the snapshot. */
+export type PlanCardGroundingView = {
+    /** `grounded`, `ungrounded`, or `flagged`. */
+    status: string;
+    /** The snapshot digest of the knowledge release, or `none`. */
+    snapshot: string;
+    /** The template id with its version. Empty when the step renders no template. */
+    template: string;
+    /** The one-line reason of the planner. A departure from the template shows here. */
+    reason: string;
+    /** One entry per claim id of the step, in the order of the grounding. */
+    rules: PlanCardRuleView[];
+    settings: PlanCardSettingView[];
+    /** The sources of the rules, one per paper. */
+    sources: PlanCardSourceView[];
+};
+
+/** One rule of a grounded step. The title and the strength are empty when the plan keeps no view of the claim. */
+export type PlanCardRuleView = {
+    id: string;
+    title: string;
+    strength: string;
+};
+
+/** One scientific setting of a grounded step. */
+export type PlanCardSettingView = {
+    /** The procedure step of the setting, for example `differential_expression`. */
+    step: string;
+    name: string;
+    /** The value as text. A list value is joined with a comma. */
+    value: string;
+    /** The doi or the document that gives the value. Empty when the procedure names none. */
+    source: string;
+};
+
+/** One source of the rules of a grounded step. */
+export type PlanCardSourceView = {
+    title: string;
+    /** The publication year. */
+    year: number;
+    /** The id of the paper as `doi:<doi>`, `PMID:<id>`, or the url. Empty when the source names none. */
+    ref: string;
 };
 
 /**

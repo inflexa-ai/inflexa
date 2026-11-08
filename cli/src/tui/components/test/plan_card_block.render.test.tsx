@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { renderFrame } from "../../../test_support/tui.ts";
 import { WithTerminalSize } from "../../../test_support/terminal_size.tsx";
 
-import { PlanCardBlock } from "../plan_card_block.tsx";
-import type { PlanCardStepView } from "../../../types/session.ts";
+import { PlanCardBlock, planGroundingLine } from "../plan_card_block.tsx";
+import type { PlanCardGroundingView, PlanCardStepView } from "../../../types/session.ts";
 
 function step(id: string, depends_on: string[] = [], name = id): PlanCardStepView {
     return {
@@ -66,5 +66,38 @@ describe("PlanCardBlock", () => {
         );
         expect(frame).toContain("Fallback step");
         expect(frame).toContain("[scientific-executor]");
+    });
+
+    test("shows one grounding line under the plan: the grounded and flagged counts, and the knowledge release", async () => {
+        const grounding = (status: string): PlanCardGroundingView => ({
+            status,
+            snapshot: "sha256:71ac",
+            template: "",
+            reason: "r",
+            rules: [],
+            settings: [],
+            sources: [],
+        });
+        const steps = [{ ...step("A"), grounding: grounding("grounded") }, { ...step("B", ["A"]), grounding: grounding("flagged") }, step("C", ["B"])];
+
+        const frame = await renderFrame(
+            () => (
+                <WithTerminalSize>
+                    <PlanCardBlock planId="plan-1" title="Grounded plan" steps={steps} />
+                </WithTerminalSize>
+            ),
+            { width: 100, height: 30 },
+        );
+
+        expect(frame).toContain("grounding: 1 of 3 steps grounded · 1 flagged · knowledge release sha256:71ac");
+    });
+
+    test("gives no grounding line to a plan with no grounded step, and counts the releases when the steps name more than one", () => {
+        expect(planGroundingLine([step("A"), step("B")])).toBeNull();
+        const withRelease = (snapshot: string): PlanCardStepView => ({
+            ...step(snapshot),
+            grounding: { status: "grounded", snapshot, template: "", reason: "r", rules: [], settings: [], sources: [] },
+        });
+        expect(planGroundingLine([withRelease("sha256:71ac"), withRelease("sha256:ffff")])).toBe("grounding: 2 of 2 steps grounded · 2 knowledge releases");
     });
 });

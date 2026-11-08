@@ -24,12 +24,38 @@ import type { TokenUsageRollup } from "./usage.js";
 
 // ── Presentation (agent-synthesized content) ────────────────────────
 
+/** One scientific setting of a grounded plan step: the parameter of a procedure step, its value, and its source. */
+export type PlanStepSetting = {
+    step: string;
+    name: string;
+    value: string | number | boolean | string[];
+    /** The doi or the document that gives the value. Absent when the procedure names none. */
+    source?: string;
+};
+
+/** The grounding of one plan step: the claims and the knowledge release that the planner used, the template, and the settings. */
+export type PlanStepGrounding = {
+    /** `grounded`, `ungrounded`, or `flagged`. */
+    status: string;
+    /** The snapshot digest of the knowledge release, or `none`. */
+    snapshot: string;
+    /** The claim ids of the step, for example `R-0031@e7d0`. The `claims` of the plan part give their views. */
+    claims: string[];
+    /** The template id with its version, for example `tpl-deseq2-two-group@1.0.0`. */
+    template?: string;
+    settings?: PlanStepSetting[];
+    /** The one-line reason of the planner. */
+    reason: string;
+};
+
 export type PlanStep = {
     id: string;
     name: string;
     agent: string;
     question: string;
     depends_on: string[];
+    /** Absent on a step that the planner made with no knowledge service. */
+    grounding?: PlanStepGrounding;
     maxSteps: number;
     track?: string;
     step_type?: string;
@@ -79,9 +105,30 @@ export type PlanPart = {
     parentPlanId?: string;
     title?: string;
     steps?: PlanStep[];
+    /** The views of the claims that the steps cite, keyed by the claim id and the snapshot digest. Absent when no step cites a claim. */
+    claims?: PlanClaimView[];
     analytical_narrative?: string;
     omicsType?: string;
     omicsSubtype?: string;
+};
+
+/** A source of a claim: a paper by its doi, its PubMed id, or its url. */
+export type PlanClaimSource = {
+    doi?: string;
+    pmid?: string;
+    url?: string;
+    title: string;
+    year: number;
+};
+
+/** The view of one claim that a step of the plan cites, as its knowledge release holds it. */
+export type PlanClaimView = {
+    id: string;
+    snapshot: string;
+    title?: string;
+    statement: string;
+    strength: string;
+    evidence: PlanClaimSource[];
 };
 
 // ── Run card (chat-rendered, reconstructed on read) ─────────────────

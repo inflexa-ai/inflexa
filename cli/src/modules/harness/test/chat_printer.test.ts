@@ -52,6 +52,94 @@ describe("subAgentActivityLabel", () => {
 });
 
 describe("readPlanCard", () => {
+    test("joins each claim of a grounded step to its view by the id and the snapshot, and dedupes the sources", () => {
+        const source = { doi: "10.1093/bioinformatics/btw014", title: "edgeR QL", year: 2016 };
+        const card = readPlanCard({
+            type: "data-plan",
+            id: "pres-1",
+            planId: "pln-abc12345",
+            steps: [
+                {
+                    id: "T1S2",
+                    name: "Fit",
+                    agent: "bulk",
+                    question: "q",
+                    depends_on: [],
+                    maxSteps: 30,
+                    grounding: {
+                        status: "grounded",
+                        snapshot: "sha256:71ac",
+                        claims: ["R-0028@d560", "R-0031@e7d0", "R-0099@0000", "R-0040@e7d0"],
+                        template: "tpl-edger-ql@1.8.0",
+                        settings: [
+                            { step: "differential_expression", name: "fdr", value: 0.05, source: "doi:10.1093/bioinformatics/btw014" },
+                            { step: "differential_expression", name: "contrasts", value: ["a", "b"] },
+                        ],
+                        reason: "edgeR per R-0028",
+                    },
+                },
+            ],
+            claims: [
+                { id: "R-0028@d560", snapshot: "sha256:71ac", title: "Use the QL F-test", statement: "s", strength: "consensus", evidence: [source] },
+                // The same paper under a DOI in a different case is one source.
+                {
+                    id: "R-0031@e7d0",
+                    snapshot: "sha256:71ac",
+                    statement: "Filter the low counts",
+                    strength: "moderate",
+                    evidence: [{ ...source, doi: "10.1093/BIOINFORMATICS/btw014" }],
+                },
+                // A view of the same id in a different release does not match.
+                { id: "R-0099@0000", snapshot: "sha256:ffff", title: "Another release", statement: "s", strength: "weak", evidence: [] },
+                // A url keeps its case, thus two urls that differ in case are two sources.
+                {
+                    id: "R-0040@e7d0",
+                    snapshot: "sha256:71ac",
+                    title: "Read the manual",
+                    statement: "s",
+                    strength: "weak",
+                    evidence: [
+                        { url: "https://example.org/A.pdf", title: "Manual A", year: 2020 },
+                        { url: "https://example.org/a.pdf", title: "Manual a", year: 2020 },
+                    ],
+                },
+            ],
+        });
+
+        expect(present(card.steps[0]).grounding).toEqual({
+            status: "grounded",
+            snapshot: "sha256:71ac",
+            template: "tpl-edger-ql@1.8.0",
+            reason: "edgeR per R-0028",
+            rules: [
+                { id: "R-0028@d560", title: "Use the QL F-test", strength: "consensus" },
+                { id: "R-0031@e7d0", title: "Filter the low counts", strength: "moderate" },
+                { id: "R-0099@0000", title: "", strength: "" },
+                { id: "R-0040@e7d0", title: "Read the manual", strength: "weak" },
+            ],
+            settings: [
+                { step: "differential_expression", name: "fdr", value: "0.05", source: "doi:10.1093/bioinformatics/btw014" },
+                { step: "differential_expression", name: "contrasts", value: "a, b", source: "" },
+            ],
+            sources: [
+                { title: "edgeR QL", year: 2016, ref: "doi:10.1093/bioinformatics/btw014" },
+                { title: "Manual A", year: 2020, ref: "https://example.org/A.pdf" },
+                { title: "Manual a", year: 2020, ref: "https://example.org/a.pdf" },
+            ],
+        });
+    });
+
+    test("gives no grounding to a step that has none", () => {
+        const card = readPlanCard({
+            type: "data-plan",
+            id: "pres-1",
+            planId: "pln-abc12345",
+            steps: [{ id: "S1", name: "align", agent: "exec", question: "q", depends_on: [], maxSteps: 30 }],
+        });
+
+        expect(present(card.steps[0]).grounding).toBeUndefined();
+    });
+
     test("extracts planId, title, and per-step fields", () => {
         const card = readPlanCard({
             type: "data-plan",
