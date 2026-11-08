@@ -314,6 +314,16 @@ fold, and the skeleton of each case held only the enrichment step.
 | `plan-knowledge-unavailable-plans` | When the service does not answer, the planner plans, and it claims no grounding. |
 | `step-renders-template` | The step renders the template, runs it, and fits no model in a script of its own. |
 | `step-template-unavailable-own-script` | When the service does not answer, the step writes the script itself. |
+| `plan-knowledge-unfit-not-copied` | The service answers its two-group procedure for a dose series or a time course. The plan keeps no step on the two-group template, and it names a model of the real design. |
+| `step-template-unfit-adapts` | The briefing names the two-group template, but the step asks for a dose trend. The step models the dose. |
+
+A specialized analysis can be outside of what the service holds. The two
+`unfit` pairs make sure that an agent does not copy an answer that does not fit
+the design. The step pair passes 6 of 6 on Sonnet. The planner pair passes 5 of
+6. In the failed trial, the plan described a likelihood ratio test over the
+doses, and it kept the two-group template as the grounding of the step. The
+description of `knowledge_recommend` already asks for an ungrounded step with a
+reason in this situation.
 
 The first runs found defects in these cases, and not in the agents:
 
@@ -600,7 +610,26 @@ The full suite of Opus 5.5 at 2 trials passed 366 of 382 graded trials, after
 the case fixes above and a second run of the trials that the proxy stopped. The
 failures are the open agent defects of the table above.
 
+## The executor and the split of the specialists
+
+The flag `--sandbox-agent` runs a step case on a different step agent, with the
+same case id. On the 32 bulk and enrichment cases at 3 trials, the generic
+executor passed 96 of 96 trials, and the specialists 93 of 96. The executor
+used 6 % fewer tokens on the dev set and 12 % fewer on the held-out set.
+
+These cases test the shared standards: the briefing, the packages, the network,
+and the summary. Few cases test the choice of a method. Thus the result shows
+that the current specialist prompts add little to these cases, and it does not
+show that one agent is enough.
+
+An inventory of the step agents found that most specialist prompts copy their
+skill, and that few prompts hold a stance on their data. A proposal to draw each
+specialist around a stance on one kind of data, and to move the method
+knowledge into the skills, goes to the team for review. Until the team decides,
+the climb does not change the specialist prompts.
+
 ## The next steps
 
-1. Issue #838: the requirements of a plan, as a general part of the plan.
-2. Run the short bench tiers.
+1. Issue #838: the requirements of a plan, as a general part of the plan. The comments of the issue add the capability phrase of a step and the packages of a method.
+2. The review of the split of the specialists by the team. Then cases for the choice of a method, before a change of a specialist.
+3. Run the short bench tiers.
