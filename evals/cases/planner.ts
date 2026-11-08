@@ -695,6 +695,79 @@ const PLANS_UNGROUNDED = acceptedPlan("a plan with no grounded step", (steps) =>
     steps.every((step) => step.grounding === undefined || (step.grounding.status !== "grounded" && step.grounding.snapshot !== EVAL_SNAPSHOT.digest)),
 );
 
+/** A dose study: vehicle and three doses, three replicates each. The two-group procedure of the service does not fit it. */
+const DOSE_PROFILE: DataProfileResult = {
+    ...PROFILE,
+    summary: "Bulk RNA-seq of hepatocytes after 24 h of compound X at four doses, 12 samples.",
+    files: [
+        {
+            path: "data/inputs/f-counts/counts.tsv",
+            description: "Raw gene-level count matrix",
+            dataType: "count-matrix",
+            format: "TSV",
+            rows: 58_302,
+            cols: 12,
+        },
+        {
+            path: "data/inputs/f-meta/samples.csv",
+            description: "Sample sheet: sample, dose_nM, batch",
+            dataType: "clinical-metadata",
+            format: "CSV",
+            rows: 12,
+            cols: 3,
+        },
+    ],
+    condition: "dose of compound X: 0, 1, 10, 100 nM",
+    experimentalDesign: "Four dose levels (0, 1, 10, 100 nM), three biological replicates each, one time point.",
+    qualityAssessment: { concerns: [] },
+};
+
+const TIME_PROFILE: DataProfileResult = {
+    ...DOSE_PROFILE,
+    summary: "Bulk RNA-seq of macrophages at five times after LPS, 15 samples.",
+    files: [
+        {
+            path: "data/inputs/f-counts/counts.tsv",
+            description: "Raw gene-level count matrix",
+            dataType: "count-matrix",
+            format: "TSV",
+            rows: 58_302,
+            cols: 15,
+        },
+        {
+            path: "data/inputs/f-meta/samples.csv",
+            description: "Sample sheet: sample, hours, donor",
+            dataType: "clinical-metadata",
+            format: "CSV",
+            rows: 15,
+            cols: 3,
+        },
+    ],
+    condition: "time after LPS: 0, 1, 4, 8, 24 h",
+    experimentalDesign: "Five time points (0, 1, 4, 8, 24 h) after LPS, three donors, each donor at each time.",
+};
+
+function profileSeed(profile: DataProfileResult, researchQuestion: string): string {
+    return composePlannerSeed({
+        priorPlanBlock: null,
+        dataContextBlock: renderDataContext({ kind: "ready", result: profile }, ANALYSIS_ID),
+        groundingBlock: [REFS_WITH_GENE_SETS, PACKAGES].join("\n\n"),
+        input: { researchQuestion },
+    });
+}
+
+/**
+ * The service answers its two-group procedure for a design that it does not fit. The plan keeps no step on the
+ * two-group template, and it names a model of the real design: a trend over the dose or the time, a likelihood ratio
+ * test over the levels, or a curve.
+ */
+const NO_BLIND_SKELETON = acceptedPlan("a plan with no two-group template, and a model of the design", (steps, text) => {
+    const twoGroup = steps.some((step) => step.grounding?.template === "tpl-deseq2-two-group@1.2.0");
+    const modelsDesign =
+        /LRT|likelihood.?ratio|reduced model|spline|trend|dose.?response|curve|continuous|time.?course|monoton|DRomics|ImpulseDE|maSigPro/i.test(text);
+    return !twoGroup && modelsDesign;
+});
+
 export const plannerCases: readonly EvalCase[] = [
     {
         id: "plan-de-enrichment",
@@ -1166,6 +1239,25 @@ export const plannerCases: readonly EvalCase[] = [
         ...KNOWLEDGE,
         knowledge: UNAVAILABLE_KNOWLEDGE,
         grade: PLANS_UNGROUNDED,
+    },
+    {
+        id: "plan-knowledge-unfit-not-copied",
+        set: "dev",
+        source: "knowledge_recommend description: the service is a source, not an order; a procedure that does not fit the design is not copied",
+        user: profileSeed(DOSE_PROFILE, "Which genes respond to compound X in a dose-dependent way, and at what dose does each response start?"),
+        ...KNOWLEDGE,
+        grade: NO_BLIND_SKELETON,
+    },
+    {
+        id: "plan-knowledge-unfit-not-copied-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-knowledge-unfit-not-copied: a time course in place of a dose series",
+        user: profileSeed(
+            TIME_PROFILE,
+            "Find the genes whose expression changes over the time course after LPS, and group them by the shape of their response.",
+        ),
+        ...KNOWLEDGE,
+        grade: NO_BLIND_SKELETON,
     },
     {
         id: "plan-packages-habitual-absent",
