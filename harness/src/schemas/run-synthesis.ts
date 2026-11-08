@@ -118,6 +118,18 @@ export const KeyReferenceSchema = z.object({
     description: z.string().describe("What the paper establishes and why it is key to this run."),
 });
 
+export const MethodReferenceSchema = z.object({
+    stepId: z.string().describe("The step whose method the source supports. Must be a stepId of the method sources of the input."),
+    source: z
+        .string()
+        .describe(
+            "The citation key of the source, `doi:<doi>` or `pmid:<id>`, as the method sources of that step list it. " +
+                "A method source needs no lookup: the plan and the decision records of the step hold it.",
+        ),
+    citation: z.string().describe('Short citation for the source, e.g. "Robinson 2010".'),
+    method: z.string().describe("The method, the setting, or the rule of the step that the source supports."),
+});
+
 export const RunSynthesisSchema = z.object({
     runId: z.string().describe("The run being synthesized."),
     overview: z
@@ -153,6 +165,13 @@ export const RunSynthesisSchema = z.object({
         .describe(
             "The 5-10 most important papers across all findings. Prioritize those that directly validate, contradict, or extend the findings — do not pad with background citations.",
         ),
+    methodReferences: z
+        .array(MethodReferenceSchema)
+        .optional()
+        .describe(
+            "The sources of the methods that the run used: one entry for each method, setting, or rule that the synthesis names, with the source that supports it. " +
+                "Take each source from the method sources of the input. Omit the field when the input lists no method source.",
+        ),
 });
 
 export type RunSynthesis = z.infer<typeof RunSynthesisSchema>;
@@ -160,6 +179,7 @@ export type SynthesizedFinding = z.infer<typeof SynthesizedFindingSchema>;
 export type BiologicalTheme = z.infer<typeof BiologicalThemeSchema>;
 export type LiteratureReference = z.infer<typeof LiteratureReferenceSchema>;
 export type KeyReference = z.infer<typeof KeyReferenceSchema>;
+export type MethodReference = z.infer<typeof MethodReferenceSchema>;
 
 /** The synthesis that the synthesizer submits. The host stamps the run id, thus the model never types it. */
 export const SynthesisDraftSchema = RunSynthesisSchema.omit({ runId: true });

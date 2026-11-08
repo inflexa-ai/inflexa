@@ -41,10 +41,14 @@ import {
     SynthesisDraftSchema,
     type BiologicalTheme,
     type KeyReference,
+    type MethodReference,
     type RunSynthesis,
     type SynthesisDraft,
     type SynthesizedFinding,
 } from "../schemas/run-synthesis.js";
+import { normalizeCitationKey } from "../contracts/report-reference.js";
+import type { RunStepMethods } from "./run-methods.js";
+import { citationKeyOfSource } from "./step-methods.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { composeSystemPrompt } from "../agents/system-prompt.js";
 import type { RunSynthesisPart } from "../contracts/chat-parts.js";
@@ -102,7 +106,19 @@ type InnerToolContext = {
     readonly knownStepIds: ReadonlySet<string>;
     /** Each PMID that a lookup of this run returned. The fold of the lookups fills it on the first run and on each replay. */
     readonly lookedUpPmids: ReadonlySet<string>;
+    /** The citation keys of the method sources of each step, from the plan and the decision records of the run. */
+    readonly methodSources: ReadonlyMap<string, ReadonlySet<string>>;
 };
+
+/** The citation keys of the method sources of each step. A source with only a URL or a title has no key. */
+function methodSourcesOf(methods: readonly RunStepMethods[]): Map<string, Set<string>> {
+    const out = new Map<string, Set<string>>();
+    for (const { stepId, sources } of methods) {
+        const keys = new Set(sources.flatMap((source) => citationKeyOfSource(source) ?? []));
+        if (keys.size > 0) out.set(stepId, keys);
+    }
+    return out;
+}
 
 // ── The PMIDs of the lookups ────────────────────────────────────────
 
@@ -263,6 +279,39 @@ function checkPmidsLookedUp(synthesis: SynthesisDraft, lookedUp: ReadonlySet<str
         }));
 }
 
+/**
+ * Each method reference must name a step with method sources, and a source that the methods of that step
+ * list. The check reads the plan and the decision records of the run, and not a lookup, thus a method
+ * source needs no lookup and a lookup result is not a method source.
+ */
+function checkMethodReferences(methodReferences: readonly MethodReference[], methodSources: ReadonlyMap<string, ReadonlySet<string>>): ValidationIssue[] {
+    const issues: ValidationIssue[] = [];
+    for (const [i, reference] of methodReferences.entries()) {
+        const keys = methodSources.get(reference.stepId);
+        if (keys === undefined) {
+            issues.push({
+                path: `synthesis.methodReferences[${i}].stepId`,
+                code: "semantic",
+                message: `step "${reference.stepId}" has no method source`,
+                hint:
+                    methodSources.size > 0
+                        ? `Steps with method sources: ${[...methodSources.keys()].join(", ")}`
+                        : "The run has no method source. Omit methodReferences.",
+            });
+            continue;
+        }
+        if (!keys.has(normalizeCitationKey(reference.source))) {
+            issues.push({
+                path: `synthesis.methodReferences[${i}].source`,
+                code: "semantic",
+                message: `source "${reference.source}" is not a method source of step "${reference.stepId}"`,
+                hint: "Cite a source key as the method sources of the input list it for that step, for example doi:10.1093/bioinformatics/btp616.",
+            });
+        }
+    }
+    return issues;
+}
+
 function semanticCheck(synthesis: SynthesisDraft, ctx: InnerToolContext): ValidationIssue[] {
     return [
         ...checkFindingStepIds(synthesis.findings, ctx),
@@ -271,6 +320,7 @@ function semanticCheck(synthesis: SynthesisDraft, ctx: InnerToolContext): Valida
         ...checkFindingPmidFormat(synthesis.findings),
         ...checkKeyReferencePmidFormat(synthesis.keyReferences),
         ...checkPmidsLookedUp(synthesis, ctx.lookedUpPmids),
+        ...checkMethodReferences(synthesis.methodReferences ?? [], ctx.methodSources),
     ];
 }
 
@@ -282,7 +332,8 @@ function buildSubmitTool(ctx: InnerToolContext): Tool<{ synthesis: SynthesisDraf
         description:
             "Submit the synthesis. Checks the payload against the semantic checks " +
             "the arg schema cannot express (stepId refs, theme→finding refs, " +
-            "keyReferences PMIDs cited, numeric PMIDs, each PMID returned by a lookup of this run). On success returns " +
+            "keyReferences PMIDs cited, numeric PMIDs, each PMID returned by a lookup of this run, each method reference " +
+            "a method source of its step). On success returns " +
             "{accepted: true} — STOP after this. On rejection returns " +
             "{accepted: false, issues} — fix the specific fields at each issue " +
             "path and call again, or switch to report_blocker if the synthesis " +
@@ -327,11 +378,19 @@ function buildBlockerTool(): Tool<{ reason: string }> {
  * Test-only — expose the inner-tool factory so unit tests can assert on
  * the checks without driving the whole agent loop.
  */
-export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<string>; lookedUpPmids?: ReadonlySet<string> }): {
+export function __buildInnerToolsForTest(args: {
+    knownStepIds: ReadonlySet<string>;
+    lookedUpPmids?: ReadonlySet<string>;
+    methods?: readonly RunStepMethods[];
+}): {
     submit: Tool<{ synthesis: SynthesisDraft }, SubmitSynthesisOutput>;
     blocker: Tool<{ reason: string }>;
 } {
-    const ctx: InnerToolContext = { knownStepIds: args.knownStepIds, lookedUpPmids: args.lookedUpPmids ?? new Set() };
+    const ctx: InnerToolContext = {
+        knownStepIds: args.knownStepIds,
+        lookedUpPmids: args.lookedUpPmids ?? new Set(),
+        methodSources: methodSourcesOf(args.methods ?? []),
+    };
     return { submit: buildSubmitTool(ctx), blocker: buildBlockerTool() };
 }
 
@@ -355,6 +414,8 @@ export type GenerateRunSynthesisInput = {
     readonly summaries: readonly StepSummary[];
     /** Plan analytical narrative for context. */
     readonly planNarrative: string;
+    /** The methods of the steps of the run. A method reference of the synthesis must cite one of their sources. */
+    readonly methods?: readonly RunStepMethods[];
     /** Run id — the host stamps it on the accepted synthesis. */
     readonly runId: string;
     /** Optional cancellation. */
@@ -371,14 +432,17 @@ export type SynthesizerWorkspace = ReadSurfaceDeps & { readonly resolveWorkspace
 /** What the synthesizer agent is built from, for a consumer that runs the agent outside `generateRunSynthesis`. */
 export type SynthesizerAgentInput = Pick<
     GenerateRunSynthesisInput,
-    "model" | "synthesisLookups" | "scriptRuntime" | "toolOutputStore" | "summaries" | "workspace"
+    "model" | "synthesisLookups" | "scriptRuntime" | "toolOutputStore" | "summaries" | "workspace" | "methods"
 >;
 
-/** The synthesizer agent of one run. Its submit tool checks the step ids of the summaries and the PMIDs of its lookups. */
+/**
+ * The synthesizer agent of one run. Its submit tool checks the step ids of the summaries, the PMIDs of its
+ * lookups, and the method references against the method sources of the run.
+ */
 export function synthesizerAgentOf(input: SynthesizerAgentInput): AgentDefinition {
     const knownStepIds = new Set(input.summaries.map((s) => s.stepId));
     const lookedUpPmids = new Set<string>();
-    const innerCtx: InnerToolContext = { knownStepIds, lookedUpPmids };
+    const innerCtx: InnerToolContext = { knownStepIds, lookedUpPmids, methodSources: methodSourcesOf(input.methods ?? []) };
 
     const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
     // The lookups run in `run_script`, which gives the PMID record of each nested call to its lookup.
@@ -406,7 +470,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
     }
 
     const agent = synthesizerAgentOf(input);
-    const prompt = synthesizerSeedOf(input.planNarrative, input.summaries);
+    const prompt = synthesizerSeedOf(input.planNarrative, input.summaries, input.methods ?? []);
 
     const signal = input.signal ?? new AbortController().signal;
     const emit: EmitFn = input.emit ?? (() => {});
@@ -612,10 +676,40 @@ export function formatSynthesisEmbeddingText(synthesis: RunSynthesis): string {
 // ── Prompt builder ──────────────────────────────────────────────────
 
 /** The first message of the synthesizer: the narrative of the plan and the summary of each step. */
-export function synthesizerSeedOf(planNarrative: string, summaries: readonly StepSummary[]): string {
+export function synthesizerSeedOf(planNarrative: string, summaries: readonly StepSummary[], methods: readonly RunStepMethods[] = []): string {
     const summaryBlock = summaries.map((s) => `### ${s.stepId} (${s.agentId})\n\n${s.markdown}`).join("\n\n---\n\n");
 
-    return ["## Analytical Narrative", planNarrative, "", "## Step Summaries", summaryBlock].join("\n");
+    const sections = ["## Analytical Narrative", planNarrative, "", "## Step Summaries", summaryBlock];
+    const methodBlock = methodSourcesBlock(methods);
+    if (methodBlock.length > 0) sections.push("", methodBlock);
+    return sections.join("\n");
+}
+
+/**
+ * The method sources of each step, for the method references of the synthesis: the templates with their
+ * methods, and each source with its citation key. A step with no keyed source is absent.
+ */
+function methodSourcesBlock(methods: readonly RunStepMethods[]): string {
+    const blocks: string[] = [];
+    // The seed lists the bounded display list of each step. The check reads the full list, thus a key past the bound passes too.
+    for (const { stepId, methods: stepMethods } of methods) {
+        const sources = stepMethods.sources.flatMap((source) => {
+            const key = citationKeyOfSource(source);
+            return key === undefined ? [] : [`- \`${key}\`: ${source.title}${source.year === undefined ? "" : ` (${source.year})`}`];
+        });
+        if (sources.length === 0) continue;
+        const templates = stepMethods.templates.map((t) => `- Template \`${t.id}@${t.version}\`: method ${t.method.id}, ${t.method.label}`);
+        const tail = stepMethods.sourcesOmitted === undefined ? [] : [`- (+${stepMethods.sourcesOmitted} more sources in the decision records of the step)`];
+        blocks.push([`### ${stepId}`, ...templates, ...sources, ...tail].join("\n"));
+    }
+    if (blocks.length === 0) return "";
+    return [
+        "## Method Sources",
+        "",
+        "The plan and the decision records of each step give these sources. A method reference cites one by its key, and it needs no lookup.",
+        "",
+        blocks.join("\n\n"),
+    ].join("\n");
 }
 
 // ── Chat data part builders ─────────────────────────────────────────
@@ -640,5 +734,6 @@ function runSynthesisPartFields(runId: string, synthesis: RunSynthesis): Omit<Ru
         themes: synthesis.themes,
         limitations: synthesis.limitations,
         keyReferences: synthesis.keyReferences,
+        methodReferences: synthesis.methodReferences,
     };
 }

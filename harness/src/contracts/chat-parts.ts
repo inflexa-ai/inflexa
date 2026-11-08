@@ -470,6 +470,8 @@ export type RunSynthesisPart = {
     themes: BiologicalTheme[];
     limitations?: string[];
     keyReferences: { pmid: string; citation: string; description: string }[];
+    /** The sources of the methods of the run, each a `doi:` or a `pmid:` key of a method source of its step. Absent on a synthesis with none. */
+    methodReferences?: { stepId: string; source: string; citation: string; method: string }[];
 };
 
 // ── Synthesis Progress (reconciling per-run) ────────────────────────

@@ -22,6 +22,7 @@ import {
     STEP_TASK_FIELDS,
     TEMPLATE_NOTES_MAX_CHARS,
     TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS,
+    UPSTREAM_METHODS_MAX_ITEMS,
     UPSTREAM_SUMMARY_MAX_CHARS,
     composeStepBriefing,
     emptyStepMemory,
@@ -368,6 +369,41 @@ describe("renderUpstream", () => {
         const excerptLength = excerptStart < 0 ? 0 : excerptEnd - excerptStart;
         expect(excerptLength).toBeLessThanOrEqual(UPSTREAM_SUMMARY_MAX_CHARS);
         expect(rendered).toContain("/an-1/runs/run-1/T1S1/output/summary.md");
+    });
+
+    it("renders the methods of a dependency and the paths of its decision records, bounded", () => {
+        const claims = Array.from({ length: UPSTREAM_METHODS_MAX_ITEMS + 2 }, (_, i) => ({ id: `R-${i}@d560`, title: `Rule ${i}`, strength: "consensus" }));
+        const rendered = renderUpstream([
+            handoff({
+                methods: {
+                    grounding: "grounded",
+                    snapshot: "sha256:71ac",
+                    templates: [{ id: "tpl-edger-ql", version: "1.8.0", label: "edgeR QL", method: { id: "M-0003", label: "edgeR quasi-likelihood F-test" } }],
+                    claims,
+                    claimsOmitted: 3,
+                    sources: [
+                        { doi: "10.1093/bioinformatics/btp616", title: "edgeR", year: 2010 },
+                        { pmid: "27008025", title: "From reads to genes" },
+                    ],
+                },
+                decisionRecords: ["/an-1/runs/run-1/T1S1/output/decision_record_tpl-edger-ql_A.json"],
+            }),
+        ]);
+
+        expect(rendered).toContain("- Grounding: grounded, knowledge release `sha256:71ac`");
+        expect(rendered).toContain("- Template `tpl-edger-ql@1.8.0`: method M-0003, edgeR quasi-likelihood F-test");
+        expect(rendered).toContain("`R-0@d560` Rule 0; ");
+        expect(rendered).not.toContain(`R-${UPSTREAM_METHODS_MAX_ITEMS}@d560`);
+        // Two claims past the bound and three that the methods already left out.
+        expect(rendered).toContain("(+5 more in the full summary)");
+        expect(rendered).toContain("- Sources: edgeR (2010), doi:10.1093/bioinformatics/btp616; From reads to genes, PMID:27008025");
+        expect(rendered).toContain("- Decision records: `/an-1/runs/run-1/T1S1/output/decision_record_tpl-edger-ql_A.json`");
+    });
+
+    it("renders no methods line for a dependency with no methods", () => {
+        const rendered = renderUpstream([handoff()]);
+        expect(rendered).not.toContain("- Grounding:");
+        expect(rendered).not.toContain("- Decision records:");
     });
 
     function dependency(i: number): UpstreamHandoff {

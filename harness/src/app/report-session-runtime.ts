@@ -41,7 +41,7 @@ import { nullProtoRecord } from "../lib/null-proto.js";
 import type { Logger } from "../lib/logger.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import type { DraftDocument } from "../report-model/draft.js";
-import { pinReportSnapshot } from "../report-model/pin-snapshot.js";
+import { pinReportSnapshot, type PinSnapshotError } from "../report-model/pin-snapshot.js";
 import type { ArtifactSnapshot, ReportSnapshot } from "../report-model/reference-resolver.js";
 import {
     createReportSessionStateStore,
@@ -63,6 +63,13 @@ import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 
 /** The empty draft of a fresh session. The pin writes the snapshot first, thus the document is empty here. */
 const EMPTY_DRAFT: DraftDocument = { title: "", sections: [] };
+
+/** The detail of a failed pin, for each kind of the failure. */
+const PIN_FAILURE_DETAIL: Record<PinSnapshotError["kind"], string> = {
+    "ledger-read-failed": "the artifact ledger read failed",
+    "run-listing-failed": "the run listing read failed",
+    "plan-read-failed": "the plan read of a run failed",
+};
 
 /**
  * How a failed anchor ends. `absent-thread` and `wrong-thread-type` are permanent
@@ -172,10 +179,14 @@ export function createReportSessionRuntime(deps: ReportSessionRuntimeDeps): Repo
         if (deps.resolveWorkspaceRoot === undefined) {
             log.warn("the composition binds no workspace root, thus the pin carries no citation evidence", { threadId, analysisId });
         }
-        const pinned = await pinReportSnapshot(pool, analysisId, deps.resolveWorkspaceRoot ? { resolveWorkspaceRoot: deps.resolveWorkspaceRoot } : {});
+        const pinned = await pinReportSnapshot(
+            pool,
+            analysisId,
+            deps.resolveWorkspaceRoot ? { resolveWorkspaceRoot: deps.resolveWorkspaceRoot, logger: log } : { logger: log },
+        );
         if (pinned.isErr()) {
             log.error("the snapshot pin failed", { threadId, analysisId, kind: pinned.error.kind, ...log.errorFields(pinned.error.cause) });
-            const detail = pinned.error.kind === "run-listing-failed" ? "the run listing read failed" : "the artifact ledger read failed";
+            const detail = PIN_FAILURE_DETAIL[pinned.error.kind];
             return { outcome: "failed", kind: "unavailable", detail };
         }
         const written = await store.writeSnapshot({ threadId, analysisId, snapshot: pinned.value });
