@@ -167,7 +167,7 @@ export function createManageInputsTool(
             const paths = input.paths ?? [];
             if (paths.length === 0) return ok({ status: "error" as const, message: `${input.action} requires at least one path` });
 
-            // Defense-in-depth for the single-writer provenance invariant (design D4): a mutation must run
+            // Defense-in-depth for the single-writer provenance invariant: a mutation must run
             // in the process that holds the analysis lock. The conversation agent is hosted by the open
             // chat, which holds it — but assert rather than assume, so this tool can never append the
             // signed provenance chain from a process that does not own it.

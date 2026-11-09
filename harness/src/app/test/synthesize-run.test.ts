@@ -3,7 +3,7 @@
  *
  * The orchestration contract is the test surface: it drives the synthesizer,
  * indexes + persists, reports progress phases, and returns findings — or skips
- * honestly (no summaries / blocker) — or re-throws a genuine failure (D10).
+ * honestly (no summaries / blocker) — or re-throws a genuine failure.
  * The underlying pieces (`generateRunSynthesis`, `persistSynthesis`, …) are
  * tested in `execution/test/run-synthesis.test.ts`; here we assert the wiring.
  */
@@ -298,7 +298,7 @@ describe("synthesizeRun", () => {
         }
     });
 
-    it("reports failed and re-throws when synthesis cannot reach a terminal tool (D10)", async () => {
+    it("reports failed and re-throws when synthesis cannot reach a terminal tool", async () => {
         // Plain prose only — the synthesizer never calls a terminal tool, so
         // generateRunSynthesis throws after the salvage request.
         const model = scriptedModel([reply([text("just thinking")]), reply([text("just thinking")])]);

@@ -650,7 +650,7 @@ function sweepLlamaCache(): void {
 sweepLlamaCache();
 
 // Fetch + verify the platform-independent embedding model ONCE, outside the target loop: every target
-// embeds the same asset (D7), so a per-target fetch would be wasted work.
+// embeds the same asset, so a per-target fetch would be wasted work.
 await ensureModelCached();
 
 // The SBOM of each binary (CycloneDX 1.6). The binary embeds its own document, which `inflexa sbom` reads,

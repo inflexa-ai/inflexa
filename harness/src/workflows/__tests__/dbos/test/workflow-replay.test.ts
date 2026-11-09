@@ -1,12 +1,12 @@
 /**
- * Integration tests 10.6 + 10.13 — DBOS replay invariants.
+ * Integration tests — DBOS replay invariants.
  *
- * Test 10.6 — chaos recovery (tasks.md:102):
+ * Test — chaos recovery:
  *   "Kill mid-step after the LLM call of the loop has cached its result but
  *    before `generateFileMetadata` runs. Verify: cached LLM result returns
  *    on replay (no re-issued API call), the next step runs forward."
  *
- * Test 10.13 — per-step sync, sequenced after registration + idempotent:
+ * Test — per-step sync, sequenced after registration + idempotent:
  *   "Runs inline in the child; a registration rejection still attempts it and
  *    its own failure is logged as a warning rather than displacing the
  *    registration error; idempotent on DBOS recovery."
@@ -63,7 +63,7 @@ if (DBOS.isInitialized()) {
     await DBOS.shutdown();
 }
 
-// ── 10.6 — chaos mirror ─────────────────────────────────────────────────
+// ── chaos mirror ─────────────────────────────────────────────────
 
 let llmCallCounter = 0;
 let metaCallCounter = 0;
@@ -107,7 +107,7 @@ const chaosMirror = DBOS.registerWorkflow(
     { name: "chaos-mirror" },
 );
 
-// ── 10.6 — three-step mirror (defence-in-depth) ─────────────────────────
+// ── three-step mirror (defence-in-depth) ─────────────────────────
 
 let stepACalls = 0;
 let stepBCalls = 0;
@@ -177,7 +177,7 @@ const terminalMetricMirror = DBOS.registerWorkflow(
     { name: "terminal-metric-mirror" },
 );
 
-// ── 10.13 — sync attempted after a registration rejection ───────────────
+// ── sync attempted after a registration rejection ───────────────
 
 const REGISTRATION_REJECTION = "external registration failed: 1 row(s) rejected";
 const SYNC_UNREACHABLE = "artifact store reachability lost";
@@ -233,7 +233,7 @@ const registrationRejectionMirror = DBOS.registerWorkflow(
     { name: "registration-rejection-mirror" },
 );
 
-// ── 10.13 — a replayed sync moves no bytes ──────────────────────────────
+// ── a replayed sync moves no bytes ──────────────────────────────
 
 /** One `cortex_artifacts` row, cut down to the columns the sync selection reads. */
 type LedgerRow = {
@@ -303,7 +303,7 @@ afterAll(async () => {
 
 // ── Tests ───────────────────────────────────────────────────────────────
 
-describe("Integration test 10.6 — chaos recovery", () => {
+describe("Integration test — chaos recovery", () => {
     it("cached LLM step returns its cached result on replay; downstream step runs forward", async () => {
         llmCallCounter = 0;
         metaCallCounter = 0;
@@ -357,7 +357,7 @@ describe("Integration test 10.6 — chaos recovery", () => {
     });
 });
 
-describe("Integration test 10.13 — per-step sync (registration rejection + idempotent)", () => {
+describe("Integration test — per-step sync (registration rejection + idempotent)", () => {
     it("a registration rejection still attempts the sync, and is the error the workflow fails with", async () => {
         rejectionRegisterCalls = 0;
         rejectionSyncCalls = 0;

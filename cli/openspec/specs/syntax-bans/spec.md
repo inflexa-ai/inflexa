@@ -25,7 +25,7 @@ The oxlint configuration of cli MUST keep the two entries of `eslint-js/no-restr
 
 ### Requirement: The regex, JSON.parse, and timer bans report nothing
 
-The oxlint configuration of cli MUST NOT turn off the `regex`, `jsonParse`, or `timers` ban of `eslint-js/no-restricted-syntax`. This applies to the preset call and to each override. The bans report an inline regular expression, an unchecked `JSON.parse`, and a raw `setTimeout` or `setInterval` in the TypeScript source of cli, the tests included. A site that keeps a reported form MUST carry an `oxlint-disable-next-line eslint-js/no-restricted-syntax` directive on the line before it. The directive MUST give a reason after ` -- ` that states why no replacement applies. The fix shapes for a reported site are design rules of the change `adopt-syntax-bans` (design D1 to D8), not spec obligations.
+The oxlint configuration of cli MUST NOT turn off the `regex`, `jsonParse`, or `timers` ban of `eslint-js/no-restricted-syntax`. This applies to the preset call and to each override. The bans report an inline regular expression, an unchecked `JSON.parse`, and a raw `setTimeout` or `setInterval` in the TypeScript source of cli, the tests included. A site that keeps a reported form MUST carry an `oxlint-disable-next-line eslint-js/no-restricted-syntax` directive on the line before it. The directive MUST give a reason after ` -- ` that states why no replacement applies.
 
 #### Scenario: The lint run reports nothing for the three bans
 

@@ -1393,7 +1393,7 @@ describe("executeAnalysis body", () => {
 
         // The row was marked running and then left exactly there: no terminal
         // stamp, no cortex_runs synthesis outcome, no run-status write at all —
-        // both ledgers stay `running` under the CANCELLED workflow (D7).
+        // both ledgers stay `running` under the CANCELLED workflow.
         expect(synthesisMarkRunning(pool).length).toBe(1);
         expect(synthesisStepUpdates(pool)).toEqual([]);
         expect(synthesisWrites(pool)).toEqual([]);

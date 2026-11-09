@@ -316,10 +316,9 @@ where it flows → what the harness actually does with it → the UI surfaces a 
 
 ### 5.4 The actual agent seats (stated guess: two; code says more, in two tiers)
 
-One config id (resolved once at boot) threads into everything — "D6" is a **CLI** archived
-decision (`design.md:183-186` of the change `2026-07-03-embed-execute-analysis`, in the git history:
-"`synthesisModel = model` (one model id in the cli config; splitting is a later config concern)"),
-not a harness spec.
+One config id (resolved once at boot) threads into everything. This is a **CLI** decision, not a
+harness spec: the cli config holds one model id, and `synthesisModel = model` (a split is a later
+config concern).
 
 | Tier | Seat | Where |
 |-|-|-|

@@ -126,7 +126,7 @@ type SetupOptions = {
      * WHY every answer arrives here rather than pre-parsed beside it: `--connection`, `--provider`,
      * `--embeddings`, `--refs`, and `--model` are answers, and an answer parsed twice is an answer that
      * can mean two things. The registry therefore hands the raw values over untouched and the fields
-     * that survive on this type are exclusively EXECUTION MODIFIERS (design D3) — how THIS invocation
+     * that survive on this type are exclusively EXECUTION MODIFIERS — how THIS invocation
      * behaves, never what the client should look like, which is exactly the line the `--config` file
      * cannot cross either.
      */
@@ -227,10 +227,10 @@ export async function setup(options: SetupOptions): Promise<void> {
     // The resolver's advisories are DATA (it never prints), so rendering them is this layer's job — and it
     // has to happen for the merge's supersede drop to be an ANNOUNCED override rather than a silent one,
     // which is the only reading under which "a flag overrides the file" and "no answer is silently
-    // ignored" are both true (design D5). Named `advisory` because `note` is clack's own import here.
+    // ignored" are both true. Named `advisory` because `note` is clack's own import here.
     for (const advisory of resolved.notes) log.info(advisory);
 
-    // The answers layer cannot see the run modifiers (they are deliberately not answers — design D3), so
+    // The answers layer cannot see the run modifiers (they are deliberately not answers), so
     // the one contradiction that spans both is settled here: a step switched OFF consumes no answers, and
     // silently dropping them is the defect the whole answer surface exists to prevent.
     // Entries — not keys: an answer block carries every field, unanswered ones as `undefined`, so keying
@@ -245,7 +245,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         return;
     }
 
-    // FAIL BEFORE MUTATE, second half (design D2). The answers resolver deliberately never loads the
+    // FAIL BEFORE MUTATE, second half. The answers resolver deliberately never loads the
     // reference catalog — it stays a pure function of its inputs — so the one answer whose validity is a
     // question about the CATALOG is adjudicated here instead, still ahead of every mutator: the embedding
     // pre-gate below, the runtime pin, `writeProxyConfig`, and the download itself. Without this a
@@ -378,7 +378,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         // first prompt. So an unresolved mode here means exactly "an interactive run still has to ask".
         const mode = await chooseConnectionMode(connectionMode, asks("connection"));
 
-        // `--provider` wears the vocabulary of the connection mode (design D4), so its check can only run
+        // `--provider` wears the vocabulary of the connection mode, so its check can only run
         // once the mode is known — under batch that is upfront in the resolver, on an interactive run it
         // is here, immediately after the prompt. The runtime pin and the transfers run ABOVE this check,
         // because the download-first decision outranks the fail-before-mutate purity here — the accepted
@@ -441,7 +441,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             // sign-in notice). The stack is still fully provisioned — only the narration is dropped.
             if (options.auth) {
                 if (batch) {
-                    // Batch cliproxy is PRE-STAGING (design D10): provider OAuth needs a human in a
+                    // Batch cliproxy is PRE-STAGING: provider OAuth needs a human in a
                     // browser, and a credential cannot be pre-seeded across a fleet (two proxies
                     // refreshing one rotating refresh token corrupt it). So the login is the one step
                     // batch mode leaves undone — everything else is provisioned — and a missing
@@ -562,7 +562,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             // minted token or the static env key) is already in hand, so there is no reason for a rejected
             // id to cost the operator a written connection. Validating after the write would strand a
             // connection-without-model on a failed run, booting into exactly the `model_required` state the
-            // batch model requirement exists to prevent (design D1). The persist follows the write below.
+            // batch model requirement exists to prevent. The persist follows the write below.
             const modelAnswer = answerOf(answered.model);
             if (modelAnswer.answered) {
                 const validated = await validateAnsweredDirectModel(direct, modelAnswer.value, credentialProbe, validate);
@@ -897,8 +897,8 @@ async function runTransfersSetup(answered: SetupAnswers["sandbox"], canPrompt: b
 }
 
 /**
- * The answered reference ids the catalog cannot resolve — the upfront half of the unknown-id check
- * (design D2), run before any mutation. Empty means "nothing to refuse", which covers the three cases
+ * The answered reference ids the catalog cannot resolve — the upfront half of the unknown-id check,
+ * run before any mutation. Empty means "nothing to refuse", which covers the three cases
  * that are not a question about ids at all: an unanswered `refs`, a PRESET answer (a preset resolves
  * against the catalog by construction and can only ever name real ids), and a store this process could
  * not inspect.
@@ -912,7 +912,7 @@ async function runTransfersSetup(answered: SetupAnswers["sandbox"], canPrompt: b
  *
  * An inspection FAILURE degrades to "no unknown ids" rather than failing the run: this check exists to
  * move a diagnosis earlier, not to add a new way for a broken store to abort a provision, and the
- * download-time `unknown_dataset` rejection is still there as defense in depth (design D2).
+ * download-time `unknown_dataset` rejection is still there as defense in depth.
  */
 async function unknownReferenceIds(refs: SetupAnswers["refs"]): Promise<readonly string[]> {
     if (!Array.isArray(refs) || refs.length === 0) return [];
@@ -1150,11 +1150,11 @@ function writeBothAgents(modelId: string): Result<void, ConfigError> {
  * Persist an ANSWERED cliproxy model to all model roles, accessibility-checked the way the interactive
  * election checks its list — via the unbilled `count_tokens` route, bounded like every probe round-trip.
  *
- * The check is OPPORTUNISTIC, and deliberately asymmetric to the direct-endpoint validation (design D8):
+ * The check is OPPORTUNISTIC, and deliberately asymmetric to the direct-endpoint validation:
  * only a definite `not_found` fails the run. `served` obviously proceeds, and so does `inconclusive` —
  * a pre-staged proxy has NO provider credential loaded and no client key to ask with, so its check is
  * inconclusive by construction, and failing on that would make the whole legitimate pre-staging workflow
- * (design D10) impossible. `--no-validate` skips the check entirely: it is a network probe, and that flag
+ * impossible. `--no-validate` skips the check entirely: it is a network probe, and that flag
  * is the air-gapped escape for all of them.
  *
  * This is the ONE answer whose rejection lands after the machine has been mutated, and it is unavoidable:
@@ -1334,7 +1334,7 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
     const currentPct = Math.min(100, Math.max(1, Math.round((resolved.resourcePolicy.budget.cpu / machine.cpu) * 100)));
     // "Configure …" is an instruction to someone about to be asked something. A batch run reaches this
     // line only with the share already ANSWERED, so it states the detected machine instead — the same
-    // fact, phrased for a transcript nobody is going to type into (design D9).
+    // fact, phrased for a transcript nobody is going to type into.
     log.message(
         canPrompt
             ? `Configure the analysis resource allowance — detected ${machine.cpu} cores / ${machine.memoryGb} GB`
@@ -1385,7 +1385,7 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
 
 /**
  * Narrow a `provider` ANSWER to the OAuth account kind it names — the vocabulary the answer wears in
- * CLIPROXY mode (design D4). Called only from the cliproxy branch, because the same answer in direct
+ * CLIPROXY mode. Called only from the cliproxy branch, because the same answer in direct
  * mode is an open vendor slug that this check would wrongly reject; the answers resolver applies the
  * mode-keyed rule upfront whenever the mode is already known, and this is the interactive case where it
  * is not (the wizard's own prompt decides it).
@@ -1399,7 +1399,7 @@ function resolveProvider(answered: string | undefined): Result<Provider | undefi
 }
 
 /**
- * Check the `provider` answer against the mode it will actually be read as (design D4): an OAuth account
+ * Check the `provider` answer against the mode it will actually be read as: an OAuth account
  * kind under cliproxy, an open vendor slug under direct. The answers layer applies exactly this rule when
  * the mode is known upfront; it cannot when an interactive prompt decides the mode, so the same check runs
  * here on that path — the reason it exists at all. The ok channel carries the ACCOUNT KIND only, because a
@@ -1510,7 +1510,7 @@ const OPENAI_PUBLIC_ROOT = "https://api.openai.com/v1";
 
 /**
  * Which ecosystems are adoptable (their API key is present), in the deterministic anthropic-before-openai
- * precedence (design D6): a non-TTY setup adopts `[0]`, and an interactive both-present offer lists them
+ * precedence: a non-TTY setup adopts `[0]`, and an interactive both-present offer lists them
  * in this order. An empty array means no conventional provider env was detected.
  */
 export function detectedAdoptable(snap: ProviderEnvSnapshot): AdoptableProvider[] {
@@ -1644,9 +1644,9 @@ async function offerGatewayAdoption(gatewayURL: string): Promise<DirectConnectio
 }
 
 /**
- * Offer to adopt a detected ecosystem env: ask which when both are present (design D6), then show the
+ * Offer to adopt a detected ecosystem env: ask which when both are present, then show the
  * normalized `baseURL` as an EDITABLE pre-fill so an ambiguous gateway root is a one-keystroke edit, not
- * a silent 404 (design D4). Returns the confirmed connection, or `null` when the user chooses manual entry.
+ * a silent 404. Returns the confirmed connection, or `null` when the user chooses manual entry.
  */
 async function offerAdoption(snap: ProviderEnvSnapshot, adoptable: AdoptableProvider[]): Promise<DirectConnectionInput | null> {
     const [firstAdoptable] = adoptable;
@@ -2406,7 +2406,7 @@ function directModelValidationDetail(outcome: Exclude<MessagePingOutcome, { kind
  * Write-free is the point, not an implementation detail: everything the ping needs is known before the
  * connection is persisted, so the caller runs this FIRST and a rejected id leaves `config.json`
  * untouched. The alternative — write, then probe, then roll back — is remediation where prevention is
- * available, and a crash between the write and the rollback still strands the config (design D1).
+ * available, and a crash between the write and the rollback still strands the config.
  *
  * The contrast with the interactive prompt loop is deliberate: a prompt can re-ask, so a rejection there
  * is a re-prompt and an ambiguity is a save-anyway confirm. An ANSWER has nobody to re-ask, so every
