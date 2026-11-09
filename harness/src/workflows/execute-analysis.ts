@@ -834,7 +834,7 @@ export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: s
  * Run-level literature-grounded synthesis (no sandbox). Returns the
  * quick-display findings for the run-completed card; empty when synthesis is
  * skipped or produced no synthesizable content. A genuine failure re-throws,
- * failing the run (D10). It runs in the body of the run workflow: each read and
+ * failing the run. It runs in the body of the run workflow: each read and
  * write is a step, each model call is a step, and each lookup call is a step.
  * Exported so integration tests can drive the wired synthesis
  * without a full parent body.
@@ -1063,7 +1063,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         deps,
     });
 
-    // (5) Run-level synthesis — a genuine failure must fail the run (D10). The
+    // (5) Run-level synthesis — a genuine failure must fail the run. The
     // honest non-fatal outcomes (report_blocker / no-summaries) resolve normally
     // inside the dep; only real exceptions reach here. We capture the error,
     // still run the terminal block (close charge + revoke run authorization), and re-throw

@@ -10,7 +10,7 @@
  * provider carries the host's own billing choice (a no-op locally); `emit` is
  * the loop/chat-part sink the caller binds to its stream; `onProgress`
  * is the domain progress callback the caller serializes to the wire. A genuine
- * synthesis failure re-throws (D10) so the caller fails the run loudly; the
+ * synthesis failure re-throws so the caller fails the run loudly; the
  * honest non-fatal outcomes (no summaries, blocker) return empty findings after
  * a `skipped` phase.
  */
@@ -197,7 +197,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
     } catch (err) {
         const msg = errorMessageOf(err) ?? textOf(err);
         await onProgress("failed", "Synthesis could not be completed — step summaries are still available", { error: msg });
-        // A genuine synthesis failure must fail the run loudly (D10): re-throw so
+        // A genuine synthesis failure must fail the run loudly: re-throw so
         // the parent workflow goes to ERROR. The honest non-fatal outcomes
         // (no-summaries / blocker) early-return above.
         throw err;

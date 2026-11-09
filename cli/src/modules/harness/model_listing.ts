@@ -286,7 +286,7 @@ async function readPage(
     return ok(models);
 }
 
-// Commit-time accessibility validation for the agent-model picker (design D6). Distinct from listing:
+// Commit-time accessibility validation for the agent-model picker. Distinct from listing:
 // listing shapes a GET the picker turns into rows; this shapes the connection's cheapest "can the
 // credential serve THIS id?" check and returns the three-valued verdict the commit decision consumes.
 // The cliproxy verdict is delegated verbatim to proxy/models.ts (`checkModelAccess`) — never
@@ -296,7 +296,7 @@ async function readPage(
 
 /**
  * Upper bound on a single commit-time accessibility check. The `count_tokens` route is sub-second and
- * unbilled (design D3), so this is the "endpoint accepted the connection then never answered" ceiling —
+ * unbilled, so this is the "endpoint accepted the connection then never answered" ceiling —
  * not the expected latency. Matched to the launch probe's timeout discipline (setup.ts `PROBE_TIMEOUT_MS`)
  * so a hung endpoint can never wedge the picker's busy state open indefinitely; a trip past it aborts the
  * request, which the mapping below reads as `inconclusive` (the switch commits, never blocks).
@@ -344,8 +344,8 @@ const realValidateSeams: ValidateSelectionSeams = {
 };
 
 /**
- * Accessibility-validate a committed model id before the picker persists it, per connection protocol
- * (design D6). Returns the three-valued {@link ModelAccess} the commit decision consumes: `served` and
+ * Accessibility-validate a committed model id before the picker persists it, per connection protocol.
+ * Returns the three-valued {@link ModelAccess} the commit decision consumes: `served` and
  * `inconclusive` commit, only a definite `not_found` is rejected in-dialog. Every branch that cannot
  * decide resolves to `inconclusive` — the picker must NEVER lose its switch capability to validation:
  *
@@ -370,7 +370,7 @@ export async function validateModelSelection(modelId: string, seams: ValidateSel
         if (keyResult.isErr()) return "inconclusive";
         return seams.checkModelAccess(keyResult.value, modelId, AbortSignal.timeout(VALIDATE_TIMEOUT_MS));
     }
-    // Direct mode: only the Anthropic protocol has the unbilled count_tokens route (design D4); an
+    // Direct mode: only the Anthropic protocol has the unbilled count_tokens route; an
     // openai-compatible endpoint has no cheap check, so its selection commits as before.
     if (connection.protocol !== "anthropic") return "inconclusive";
     // The configured `auth` block supersedes the static env key (the chat path's precedence), its scheme

@@ -480,7 +480,7 @@ export function effortFor(model: ListedModel, wanted: AgentEffort): AgentEffort 
  * even when a listing IS present — so an id the connection does not enumerate stays reachable, mirroring
  * direct-setup, which always prompts free text — and esc there returns to the list rather than closing the
  * picker, since the row was reached FROM it. A committed pick (listed OR free-text) goes to `save`, and the
- * server validates its accessibility (design D6) before it persists — while it saves, the picker shows a busy
+ * server validates its accessibility before it persists — while it saves, the picker shows a busy
  * {@link PromptDialog}; a refused model keeps it open with the inline error of the server; a saved pick closes.
  *
  * The busy and inline-error affordances are PromptDialog's ONLY — {@link SelectDialog} has neither — so

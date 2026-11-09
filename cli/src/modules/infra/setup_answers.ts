@@ -30,7 +30,7 @@ import { messageOf } from "../../lib/cause.ts";
 //   - EVERY ERROR NAMES BOTH SPELLINGS (see {@link answerSpelling}), because the same question is
 //     answerable from a flag or a file key and the author must be able to fix it in either.
 //
-// Secrets never ride an answer (design D7): the direct-connection key and the api-key embedding secret
+// Secrets never ride an answer: the direct-connection key and the api-key embedding secret
 // stay environment reads through lib/env.ts. The credential-source answers (`connection.auth.*`) are
 // token-free by construction — a variable name, a command string, a scheme — exactly what config.json
 // already stores.
@@ -106,7 +106,7 @@ function trimmedAnswer(error: string): z.ZodString {
  * file most often carries, fails here rather than at the first model request.
  *
  * The interactive prompts have always enforced this; the refinement is what makes the flag and file legs
- * agree with them, so one question has one validity rule whichever front-end answers it (design D7).
+ * agree with them, so one question has one validity rule whichever front-end answers it.
  */
 function urlAnswer(): z.ZodString {
     return trimmedAnswer("must not be empty").refine(
@@ -122,7 +122,7 @@ function urlAnswer(): z.ZodString {
  * orchestrator persists verbatim as `models.connection.auth`. Declared separately rather than imported
  * because the persisted schema is deliberately LENIENT (config.json is runtime state that must survive
  * corruption) while an answers file is authored intent, where an unknown key must be an error rather than
- * a silently dropped instruction (design D6). The two shapes are kept assignable by a compile-time check
+ * a silently dropped instruction. The two shapes are kept assignable by a compile-time check
  * in setup_answers.test.ts.
  */
 export const setupAuthAnswerSchema = z.discriminatedUnion("kind", [
@@ -144,7 +144,7 @@ export const setupAuthAnswerSchema = z.discriminatedUnion("kind", [
 export type SetupAuthAnswer = z.infer<typeof setupAuthAnswerSchema>;
 
 /**
- * Every setup question, in the config-file spelling (design D3). ALL fields are optional at parse time:
+ * Every setup question, in the config-file spelling. ALL fields are optional at parse time:
  * requiredness is CONTEXTUAL — a direct connection needs a `baseURL` only under batch resolution — and is
  * enforced by {@link resolveSetupAnswers}, never by the schema.
  *
@@ -345,7 +345,7 @@ type AnswerQuestion<K extends string> = { readonly flag: string | null } & (K ex
  * renders both spellings from it, {@link mergeAnswers} walks it to merge flag-over-file per leaf, the
  * orchestrator's answer-coverage guard re-derives the key set from this declaration, and the `satisfies`
  * below ties it to the schema's leaf set — so an answer can no longer ship parsed-but-dropped or unspelled
- * because someone updated three places out of four (design D3).
+ * because someone updated three places out of four.
  *
  * `flag` is `null` for a question with no flag at all (a value too niche for argv, answerable only in a
  * file). A BLOCK is not answerable by one flag — its flags are a family — so its entry names that family
@@ -693,7 +693,7 @@ function answerAt(document: unknown, key: string): unknown {
  * Reject a numeric answer whose raw literal is not a plain decimal integer, naming both spellings and the
  * text the author actually wrote — the same rule, and the same message, {@link wholeNumber} enforces on the
  * flag side. `Bun.YAML.parse` resolves `0x1F5B` to 8027 and `1e2` to 100 before zod can see either, so this
- * parity cannot live in the schema (design D4).
+ * parity cannot live in the schema.
  *
  * Gated on the PARSED value already being a number, which keeps the check to exactly the hole it exists
  * for: a literal YAML turned into a number the author did not write. Anything else — a quoted `'5555'`, a
@@ -911,7 +911,7 @@ function authFromFlags(flags: SetupAnswerFlags, problems: string[]): unknown {
  * CONTEXTUAL requirements are not checked here — they belong to {@link resolveSetupAnswers}, which sees
  * the merged set.
  *
- * ONE PASS (design D6): flag-level problems no longer short-circuit the schema. An author who mistyped a
+ * ONE PASS: flag-level problems do not short-circuit the schema. An author who mistyped a
  * port AND a sandbox variant is told about both in the same run, which is the same contract
  * {@link resolveSetupAnswers} holds within a single set.
  */
@@ -1004,7 +1004,7 @@ export type ResolvedSetupAnswers = {
     readonly connectionMode: ConnectionMode | undefined;
     /**
      * Advisories the run must SHOW but that are not failures — today, the file leaves a mode-carrying flag
-     * superseded (design D5).
+     * superseded.
      *
      * DATA, not output: this module never prints, which is what keeps it a pure function of its inputs, so
      * the ORCHESTRATOR owns rendering these exactly as it owns rendering {@link describeSetupAnswersError}.

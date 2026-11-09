@@ -824,8 +824,8 @@ export function buildProgram(): Command {
             .option("--yes", "Batch mode: never prompt — every unanswered question takes its default or fails. Implied when there is no terminal")
             // The split is by KIND, not by novelty: everything above toggles how this run behaves, while
             // everything below supplies a VALUE for a question the wizard would otherwise ask (plus the
-            // file that carries those values). Grouping the answers keeps the flat `--help` list readable
-            // (design D12), and each of them also works interactively, where it simply skips its prompt.
+            // file that carries those values). Grouping the answers keeps the flat `--help` list readable,
+            // and each of them also works interactively, where it simply skips its prompt.
             // Set as the command's default option group so a new answer flag joins by position alone;
             // commander's lazily-created `-h, --help` stays under the plain "Options:" heading.
             .optionsGroup("Batch mode:")

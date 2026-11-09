@@ -25,7 +25,7 @@ Tests, not the flag, control a consumer that tells an absent key from an `undefi
 
 ### Requirement: The unchecked-value rules report nothing
 
-The oxlint configuration of cli MUST NOT turn off `typescript/no-unsafe-call`, `typescript/no-unsafe-member-access`, `typescript/no-unsafe-assignment`, `typescript/no-unsafe-return`, `typescript/no-unsafe-argument`, or `@inflexa-ai/no-conditional-spread`. The fix shapes for a reported site are design rules of the archived change `adopt-unchecked-value-rules` (design D2 and D3), not spec obligations.
+The oxlint configuration of cli MUST NOT turn off `typescript/no-unsafe-call`, `typescript/no-unsafe-member-access`, `typescript/no-unsafe-assignment`, `typescript/no-unsafe-return`, `typescript/no-unsafe-argument`, or `@inflexa-ai/no-conditional-spread`.
 
 #### Scenario: The lint run reports nothing for the rules
 
@@ -39,7 +39,7 @@ The oxlint configuration of cli MUST NOT turn off `typescript/no-unsafe-call`, `
 
 ### Requirement: The assertion-safety rules report nothing
 
-The oxlint configuration of cli MUST NOT turn off `@inflexa-ai/require-assertion-safety`, `typescript/no-unsafe-type-assertion`, or `@inflexa-ai/no-double-cast`. A type assertion that stays in the source MUST carry the invariant that makes it sound. A `SAFETY:` comment states the invariant, and a site that `typescript/no-unsafe-type-assertion` reports also needs an inline disable with a reason. The fix shapes for a reported site are design rules of the change `adopt-assertion-safety` (design D1 to D6), not spec obligations.
+The oxlint configuration of cli MUST NOT turn off `@inflexa-ai/require-assertion-safety`, `typescript/no-unsafe-type-assertion`, or `@inflexa-ai/no-double-cast`. A type assertion that stays in the source MUST carry the invariant that makes it sound. A `SAFETY:` comment states the invariant, and a site that `typescript/no-unsafe-type-assertion` reports also needs an inline disable with a reason.
 
 #### Scenario: The lint run reports nothing for the rules
 
@@ -58,7 +58,7 @@ The oxlint configuration of cli MUST NOT turn off `@inflexa-ai/require-assertion
 
 ### Requirement: The non-null and unnecessary-condition rules report nothing
 
-The oxlint configuration of cli MUST NOT turn off `typescript/no-non-null-assertion`, `typescript/no-unnecessary-type-assertion`, or `typescript/no-unnecessary-condition`. A non-null assertion (`x!`) MUST NOT remain in the TypeScript source of cli. A directive that turns off `typescript/no-unnecessary-condition` MUST apply to one line only, and it MUST state why the guard is live. The fix shapes for a reported site are design rules of the change `adopt-non-null-narrowing` (design D1 to D6), not spec obligations.
+The oxlint configuration of cli MUST NOT turn off `typescript/no-non-null-assertion`, `typescript/no-unnecessary-type-assertion`, or `typescript/no-unnecessary-condition`. A non-null assertion (`x!`) MUST NOT remain in the TypeScript source of cli. A directive that turns off `typescript/no-unnecessary-condition` MUST apply to one line only, and it MUST state why the guard is live.
 
 #### Scenario: The lint run reports nothing for the rules
 
@@ -104,7 +104,7 @@ The oxlint configuration of cli MUST NOT turn off a rule of the preset outside t
 - The two bun-types rules `typescript/await-thenable` and `typescript/no-confusing-void-expression` stay off for the test globs only, because bun-types types `expect().rejects.toThrow()` as `void`.
 - A deliberate site keeps a named exception when each fix of the rule would remove its form or change its behavior. For a `typescript/*` rule, the exception is an inline `oxlint-disable-next-line <rule> -- <reason>`. For an `@inflexa-ai/*` rule, which the architecture-directives layer of the plugin keeps out of inline directives, the exception is a zone block in the configuration that names exactly one rule and carries a reason for each file that it covers.
 
-The rule `@inflexa-ai/no-instanceof-error` MUST carry an `allowIn` list that names only the modules that normalize an arbitrary thrown value, with the reason of each entry beside it. The fix shapes for a reported site are design rules of the change `adopt-remaining-preset-rules` (design D1 to D15), not spec obligations.
+The rule `@inflexa-ai/no-instanceof-error` MUST carry an `allowIn` list that names only the modules that normalize an arbitrary thrown value, with the reason of each entry beside it.
 
 #### Scenario: The lint run reports nothing outside the recorded exceptions
 

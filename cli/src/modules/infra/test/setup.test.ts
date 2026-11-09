@@ -78,7 +78,7 @@ function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnap
 /**
  * Two ids the reference catalog really declares, and one it cannot. Read off the LIVE catalog rather
  * than hardcoded, because setup now resolves an answered `--refs` id list against that catalog BEFORE
- * anything mutates (design D2): a hardcoded id that a catalog revision renames would fail these runs
+ * anything mutates: a hardcoded id that a catalog revision renames would fail these runs
  * upfront and report the wrong defect. The non-`null` assertions are safe because the catalog schema
  * requires a non-empty dataset list, and a catalog with fewer than two datasets would fail its own
  * validation long before this file loads.
@@ -334,7 +334,7 @@ describe("detectedGatewayURL", () => {
     });
 });
 
-// The setup validation probe (design D6): run the source once, then a cheap authenticated GET {baseURL}/models.
+// The setup validation probe: run the source once, then a cheap authenticated GET {baseURL}/models.
 // A stubbed fetch drives the HTTP outcomes; the credential command is a real deterministic shell command.
 describe("probeCredentialSource", () => {
     /** A recording fetch serving per-route responses; keys are URL path suffixes. Unmapped routes 404. */
@@ -1144,7 +1144,7 @@ describe("askProxy — 503 cooldown discrimination", () => {
 
 // Drives the `setup()` command through the repo's spyOn seam pattern (mirroring compose.test.ts's
 // "entry-point wiring" block): the runtime gate and the embedding step are stubbed, so no real
-// container runtime is spawned and no real model is acquired. These assert design D9 — an ANSWERED
+// container runtime is spawned and no real model is acquired. These assert that an ANSWERED
 // embedding mode is configured AHEAD of the runtime gate (so an air-gapped host with no ready runtime
 // still configures embeddings), and the in-flow embedding step does not run a second time.
 describe("setup() — an answered embedding mode runs ahead of the runtime gate", () => {
@@ -1725,7 +1725,7 @@ describe("setup() — batch orchestration", () => {
         expect(present(refsStep.mock.calls[0])[0].interactive).toBe(false);
         // The sandbox image is never pulled implicitly; the hint names the explicit command instead.
         expect(output).toContain("inflexa sandbox pull");
-        // Pre-staging (design D10): no credential in the auth dir is a NOTICE plus a successful run —
+        // Pre-staging: no credential in the auth dir is a NOTICE plus a successful run —
         // the remaining steps still ran (refs above) and the exit code stays 0.
         expect(output).toContain("first `inflexa` launch");
     });
@@ -1822,7 +1822,7 @@ describe("setup() — batch orchestration", () => {
         expect(output).toContain("--no-validate");
     });
 
-    // Design D1: the answered model's 1-token validation runs BEFORE `writeDirectConnection`, so a
+    // The answered model's 1-token validation runs BEFORE `writeDirectConnection`, so a
     // rejected id costs the operator an error message and nothing else. The assertion is on the config
     // FILE's bytes rather than on the absence of `models.agents`, because the defect this replaces was
     // precisely a run that pinned no model and still left a `models.connection` behind — a client that
@@ -1856,7 +1856,7 @@ describe("setup() — batch orchestration", () => {
 
         test("an unclassifiable model validation is equally fatal, and equally write-free", async () => {
             // Batch has no save-anyway confirm, so an outcome nobody can classify fails exactly like a
-            // rejection — and, per D1, at the same point: before anything is persisted.
+            // rejection — and at the same point: before anything is persisted.
             routeFetch({
                 "/models": () => Response.json({ data: [{ id: "m-1" }] }),
                 "/messages": () => new Response("gateway says no", { status: 500 }),
@@ -1939,7 +1939,7 @@ describe("setup() — batch orchestration", () => {
         expect(persistedBudget(readConfig().harness)).toBeDefined();
     });
 
-    // Design D2: an answered `--refs` id list is resolved against the OFFERED catalog immediately after
+    // An answered `--refs` id list is resolved against the OFFERED catalog immediately after
     // answer resolution — before the embedding pre-gate, the runtime pin, the proxy config, and the
     // download. Before this, a typo'd id surfaced at download time, second-to-last step, on a machine
     // that had already been provisioned.
@@ -2002,7 +2002,7 @@ describe("setup() — batch orchestration", () => {
     });
 
     test("a mode-carrying flag superseding the file's leaves prints the note naming each dropped key", async () => {
-        // Design D5, at the orchestration level: the resolver produces the advisory as DATA, and this is
+        // At the orchestration level, the resolver produces the advisory as DATA, and this is
         // the layer that has to RENDER it — an unrendered note turns the documented per-machine override
         // (`--config fleet.yml --embeddings off`) back into a silent drop.
         const dir = mkdtempSync(join(tmpdir(), "inflexa-answers-"));
@@ -2328,7 +2328,7 @@ describe("setup() — batch orchestration", () => {
             readonly file?: string;
             /** Execution modifiers, never answers: `postgres: true` to reach the compose writer, `validate: false` to stay offline. */
             readonly options?: Partial<Parameters<typeof setup>[0]>;
-            /** Environment this case needs — the api-key embedding secret has no answer channel by design (D7). */
+            /** Environment this case needs — the api-key embedding secret has no answer channel by design. */
             readonly env?: Readonly<Record<string, string>>;
             readonly effect: (run: SetupRun) => void;
         };
@@ -2520,7 +2520,7 @@ describe("setup() — batch orchestration", () => {
             },
             refs: {
                 // Real catalog ids: the orchestrator now resolves an answered id list against the offered
-                // catalog BEFORE anything mutates (design D2), so an invented id would fail this run
+                // catalog BEFORE anything mutates, so an invented id would fail this run
                 // upfront rather than reaching the step whose consumption is under test.
                 file: `refs:\n  - ${CATALOG_ID}\n  - ${OTHER_CATALOG_ID}\n`,
                 effect: (run) => {

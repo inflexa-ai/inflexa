@@ -6,7 +6,7 @@ Holds the test-shape rules of the cli oxlint configuration: `typescript/require-
 ## Requirements
 ### Requirement: The test-shape rules report nothing
 
-The oxlint configuration of cli MUST NOT turn off `typescript/require-await` or `typescript/no-implied-eval`, neither in the preset call nor in an override. The rules apply to the TypeScript source of cli, the tests included. A site that keeps a reported form MUST carry an `oxlint-disable-next-line` directive on the line before it. The directive MUST give a reason after ` -- ` that states why no other form applies. The fix shapes for a reported site are design rules of the change `adopt-test-shape-rules` (design D1 to D7), not spec obligations.
+The oxlint configuration of cli MUST NOT turn off `typescript/require-await` or `typescript/no-implied-eval`, neither in the preset call nor in an override. The rules apply to the TypeScript source of cli, the tests included. A site that keeps a reported form MUST carry an `oxlint-disable-next-line` directive on the line before it. The directive MUST give a reason after ` -- ` that states why no other form applies.
 
 #### Scenario: The lint run reports nothing for the rules
 
