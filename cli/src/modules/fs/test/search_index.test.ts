@@ -650,16 +650,19 @@ describe("the cache", () => {
         touch("a/1.csv");
         const recorder = recordingRead(new Set([join(root, "a")]));
         const cache = cacheWith({ firstWaitMs: 60 }, inProcessSpawner(recorder.read).spawn);
-        let started = performance.now();
+        const started = performance.now();
         expect((await searchOk(cache, root, "")).truncated).toBe(true);
         const firstWait = performance.now() - started;
         expect(firstWait).toBeGreaterThanOrEqual(50);
         expect(firstWait).toBeLessThan(1000);
 
         clock = 61;
-        started = performance.now();
-        expect((await searchOk(cache, root, "")).truncated).toBe(true);
-        expect(performance.now() - started).toBeLessThan(30);
+        // A search with no wait settles in microtasks, before a zero-delay timer that starts after it. A search that
+        // waits arms its deadline timer first, thus the timer below wins. A wall-clock bound fails on a slow runner.
+        const later = searchOk(cache, root, "");
+        const first = await Promise.race([later.then(() => "answered"), Bun.sleep(0).then(() => "timer")]);
+        expect(first).toBe("answered");
+        expect((await later).truncated).toBe(true);
     });
 
     test("a small scope answers complete in the first search", async () => {
