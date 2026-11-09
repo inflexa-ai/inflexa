@@ -980,6 +980,23 @@ describe("flySourceBuild", () => {
         expect(rows[0]?.row.message).toContain(ROOT_DIR);
     });
 
+    test("a report that does not parse keeps the tail of the provisioner output in the reason", async () => {
+        const root = tempStore();
+        const unreadable: SourceBuildRunner = (run) =>
+            Promise.try(() => {
+                writeFileSync(join(run.storeRoot, run.reportName), `${JSON.stringify({ schema: 1, outcomes: [{ outcome: "refused" }], nodes: {} })}\n`);
+                return ok<CaptureResult>({ code: 0, stdout: "early line\n[provision] acquire-source: refused — the output holds a tarball\n", stderr: "" });
+            });
+
+        const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: unreadable });
+
+        expect(flown.kind).toBe("failed");
+        if (flown.kind !== "failed") throw new Error("expected a failed flight");
+        expect(flown.reason).toStartWith("resolve: the source build wrote no readable report");
+        expect(flown.reason).toContain("acquire-source: refused — the output holds a tarball");
+        expect(readStoreFlights()[0]?.row.message).toContain("the output holds a tarball");
+    });
+
     test("a refusal of the run itself settles the claimed row failed, because the claim preceded the launch", async () => {
         const root = tempStore();
         const refusing: SourceBuildRunner = (run) =>

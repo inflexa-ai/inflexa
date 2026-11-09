@@ -287,6 +287,8 @@ describe("install_from_source — the description", () => {
         expect(description).toContain("READ-ONLY /work/src");
         expect(description).toContain("copies it first");
         expect(description).toContain("/work/out");
+        expect(description).toContain("INSTALLED R package directory");
+        expect(description).toContain("never a source tarball");
     });
 
     it("tells the agent that a restart keeps /work alone", () => {

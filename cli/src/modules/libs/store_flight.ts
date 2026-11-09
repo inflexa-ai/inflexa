@@ -56,6 +56,7 @@ import { analysisFarmPath, describeFarmCompositionError, extendFarm, GRAPH_VERSI
 import {
     ACQUIRE_EGRESS_ALLOW,
     classifyProvisionerRun,
+    outputTail,
     runLoadCheck,
     runProvisioner,
     runSourceBuild,
@@ -943,7 +944,10 @@ export async function flySourceBuild(params: SourceFlightParams, deps: SourceFli
         const rawReport = await readFile(reportPath, "utf8").catch(() => null);
         const report: AcquireReport | null = rawReport === null ? null : JSON.parseWith(rawReport, acquireReportSchema);
         if (report === null) {
-            return settleResolve(`the source build wrote no readable report at ${reportPath}`);
+            // The report holds the reason of a refusal. When it does not parse, the end of the run output is
+            // the one record of what the run did.
+            const tail = outputTail(`${ran.value.stdout}\n${ran.value.stderr}`);
+            return settleResolve(`the source build wrote no readable report at ${reportPath}${tail === "" ? "" : `; the run output ended with:\n${tail}`}`);
         }
         const outcome = report.outcomes[0];
         if (outcome === undefined) {

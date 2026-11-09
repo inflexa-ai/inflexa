@@ -2605,6 +2605,9 @@ class AcquireSourceRunTests(StoreTestCase):
 
         outcome = report["outcomes"][0]
         self.assertEqual(outcome["outcome"], "refused")
+        # The host parses each outcome with a required `spec`, thus a refusal
+        # without one reads as a report that cannot be read, and its reason is lost.
+        self.assertIsInstance(outcome.get("spec"), str)
         self.assertIn("no artifact", outcome["reason"])
         self.assertEqual(report["nodes"], {})
         self.assertEqual(list(provision.STORE.iterdir()), [])

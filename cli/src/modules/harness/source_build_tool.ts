@@ -193,7 +193,7 @@ const InstallFromSourceInputSchema = z
             .min(1)
             .optional()
             .describe(
-                "For 'commit': the build script — the exact commands that worked in the session, building exactly one root artifact into /work/out (the clean run starts in the read-only /work/src, so a build that writes into the tree copies it first) and installing no dependencies.",
+                "For 'commit': the build script — the exact commands that worked in the session, building exactly one root artifact into /work/out — the INSTALLED R package directory (`R CMD INSTALL --library=/work/out <tree>`) or one built wheel, never a source tarball — (the clean run starts in the read-only /work/src, so a build that writes into the tree copies it first) and installing no dependencies.",
             ),
         packageDir: z
             .string()
@@ -488,7 +488,7 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
             "for Python, a wheel build of the tree, then a hash-pinned resolve of the wheel's requirements. Custom steps are for when the standard path fails, and the plan names the strategy you propose. " +
             "THE IDENTITY AND VERSION COME FROM THE PACKAGE METADATA — the `Package` and `Version` fields of the DESCRIPTION for R, the `.dist-info` of the built wheel for Python — " +
             "never from the repository name, and never ask the user for a version. " +
-            "WHEN THE BUILD WORKS, write the commands that worked into one build script and commit it: the script contract is fixed — the clean run starts in the READ-ONLY /work/src, so a build that writes into the tree copies it first, and exactly one root artifact lands in /work/out — the user approves the script and the build record, " +
+            "WHEN THE BUILD WORKS, write the commands that worked into one build script and commit it: the script contract is fixed — the clean run starts in the READ-ONLY /work/src, so a build that writes into the tree copies it first, and exactly one root artifact lands in /work/out: the INSTALLED R package directory (`R CMD INSTALL --library=/work/out <tree>`) or one built wheel, never a source tarball from `R CMD build` — the user approves the script and the build record, " +
             "and one clean run of the script in a new container over the pristine snapshot — that run alone writes the store. " +
             "The clean run installs the apt packages of the plan itself and runs the script as the non-root user with no capability, so the script holds no `apt-get` and no root step. " +
             "A failed clean run returns to the SAME session: the session held a state the script does not make, so correct the script there and commit again. " +

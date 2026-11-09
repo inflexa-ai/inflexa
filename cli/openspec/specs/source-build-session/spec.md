@@ -285,7 +285,7 @@ Before the commit, the tool MUST ask one time. The ask shows the build script, t
 
 The grant key of a commit ask MUST hold the session id and a digest of the script, the package directory, and the hosts and apt packages of the plan. Thus an `always` answer never approves a different script, or the same script under a different plan.
 
-The clean run installs the apt packages of the plan itself, and it runs the script as the non-root user with no capabilities. The tool description MUST tell the agent that the script installs no apt package and runs no command as root.
+The clean run installs the apt packages of the plan itself, and it runs the script as the non-root user with no capabilities. The tool description MUST tell the agent that the script installs no apt package and runs no command as root. It MUST also tell the agent that the one artifact in `/work/out` is an installed R package directory or a built wheel, never a source tarball.
 
 A failure of the clean run MUST return to the same session, because the session build used a state that the script does not make. The agent corrects the script there and starts the clean run again. A denied commit does not run, thus the session stays open with no store change.
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
     chmodSync,
     existsSync,
@@ -26,6 +26,12 @@ import { isLowerHex } from "../../../test_support/text_shapes.ts";
 import { SESSION_CLASS_HOSTS, sessionEgressAllow } from "../provisioner.ts";
 import { createBuildSession, sweepAtExit } from "../build-session.ts";
 import type { SourceFlightOutcome, SourceFlightParams } from "../store_flight.ts";
+
+// `bun test` runs no `exit` hook, thus the exit sweep never removes the scratch tree of a session that a test
+// leaves open. The sweep runs here, with no engine call, because the engines of these tests are recorders.
+afterAll(() => {
+    sweepAtExit({ spawnSync: () => undefined });
+});
 
 // The session module over pinned runners: every container command lands in a
 // recorded engine, and the assertions read the recorded arguments. Nothing here

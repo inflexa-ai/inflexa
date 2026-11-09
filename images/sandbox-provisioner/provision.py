@@ -2165,7 +2165,12 @@ def cmd_acquire_source(args) -> int:
             }
         except SourceBuildError as exc:
             nodes = {}
-            outcome = {"outcome": "refused", "reason": str(exc)}
+            # `spec` is a required field of each outcome on the host side. A
+            # refusal can come before the run knows its track and pin, thus the
+            # spec names the source.
+            outcome = {"outcome": "refused",
+                       "spec": f"source:{args.git_url}" if args.git_url else "source:folder",
+                       "reason": str(exc)}
             for store_dir, _pin, created in stored:
                 if created:
                     shutil.rmtree(store_dir, ignore_errors=True)

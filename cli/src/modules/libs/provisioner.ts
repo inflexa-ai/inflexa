@@ -271,7 +271,7 @@ export function classifyProvisionerRun(res: CaptureResult): Result<void, Provisi
 }
 
 /** The last few non-empty lines of the provisioner output, for a failure message that names the real cause. */
-function outputTail(text: string): string {
+export function outputTail(text: string): string {
     const lines = text
         .split("\n")
         .map((line) => line.trimEnd())
