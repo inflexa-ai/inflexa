@@ -400,6 +400,27 @@ describe("renderUpstream", () => {
         expect(rendered).toContain("- Decision records: `/an-1/runs/run-1/T1S1/output/decision_record_tpl-edger-ql_A.json`");
     });
 
+    it("renders the departures of a dependency with the rule, the setting, the value of the plan, and the reason", () => {
+        const rendered = renderUpstream([
+            handoff({
+                methods: {
+                    grounding: "grounded",
+                    templates: [],
+                    claims: [],
+                    sources: [],
+                    departures: [
+                        { rule: "R-0028@d560", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" },
+                        { rule: "R-0147@d560", reason: "the inputs hold no amplicon sequence" },
+                    ],
+                },
+            }),
+        ]);
+
+        expect(rendered).toContain(
+            "- Departures: R-0028@d560: `n_top_genes_pca` = 364. the panel holds 364 targets; R-0147@d560: the inputs hold no amplicon sequence",
+        );
+    });
+
     it("renders no methods line for a dependency with no methods", () => {
         const rendered = renderUpstream([handoff()]);
         expect(rendered).not.toContain("- Grounding:");

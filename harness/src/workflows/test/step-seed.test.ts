@@ -190,6 +190,12 @@ function grounded(settings: NonNullable<AnalysisStep["grounding"]>["settings"], 
     };
 }
 
+/** A grounding of {@link grounded} with the departures of the plan. */
+function departed(grounding: AnalysisStep["grounding"], departures: NonNullable<AnalysisStep["grounding"]>["departures"]): AnalysisStep["grounding"] {
+    if (grounding === undefined) throw new Error("the step has no grounding");
+    return { ...grounding, departures };
+}
+
 const SETTINGS: NonNullable<AnalysisStep["grounding"]>["settings"] = [
     { step: "differential_expression", name: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" },
     { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" },
@@ -616,6 +622,90 @@ describe("composeStepSeed template contract", () => {
             slots: { min_count: 10 },
             sources: { min_count: "doi:10.12688/f1000research.7035.1" },
         });
+    });
+
+    it("binds the value of a departure in place of the value of the rule, and names the departure as its source", async () => {
+        const root = await makeWorkspace();
+        const fake = fakeKnowledgeClient();
+        const departure = { rule: "R-0001@e7d0", setting: "min_count", value: 5, reason: "the panel holds 364 targets" };
+
+        const seed = await composeStepSeed({
+            input: input([
+                planStep(
+                    "T1S2",
+                    [],
+                    departed(grounded([{ step: "filter_low_counts", name: "min_count", value: 10, source: "doi:10.12688/f1000research.7035.1" }]), [departure]),
+                ),
+            ]),
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root, {}, fake.client),
+        });
+
+        expect(seed.templateBinding).toEqual({
+            ...BINDING_BASE,
+            slots: { min_count: 5 },
+            sources: { min_count: "departure from R-0001@e7d0" },
+            departures: [departure],
+        });
+        expect(seed.prompt).toContain("`min_count` = 5 (departure from R-0001@e7d0)");
+        expect(seed.prompt).toContain("  - R-0001@e7d0: `min_count` = 5. the panel holds 364 targets");
+        expect(seed.prompt).not.toContain("`min_count` = 10");
+    });
+
+    it("binds no value for a slot that a departure does not apply, names it as excluded, and asks for the value of the plan", async () => {
+        const root = await makeWorkspace();
+        const fake = fakeKnowledgeClient();
+        const departure = { rule: "R-0001@e7d0", setting: "lfc_shrink", reason: "the plan reports the unshrunk fold changes" };
+
+        const seed = await composeStepSeed({
+            input: input([planStep("T1S2", [], departed(grounded(SETTINGS), [departure]))]),
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root, {}, fake.client),
+        });
+
+        expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {}, departures: [departure], excluded: ["lfc_shrink"] });
+        expect(seed.prompt).toContain(
+            '`lfc_shrink` = "apeglm" (differential_expression; doi:10.1093/bioinformatics/bty895): the plan departs from R-0001@e7d0 and does not apply it (the plan reports the unshrunk fold changes), but the template gives each slot a value; send the value that matches the plan, with an `overrides` entry and the reason',
+        );
+        expect(seed.prompt).toContain("  - R-0001@e7d0: `lfc_shrink` not applied. the plan reports the unshrunk fold changes");
+    });
+
+    it("excludes no slot for a departure from a setting that no slot carries", async () => {
+        const root = await makeWorkspace();
+        const fake = fakeKnowledgeClient();
+        const departure = { rule: "R-0001@e7d0", setting: "gc_bias", reason: "the inputs hold no amplicon sequence" };
+
+        const seed = await composeStepSeed({
+            input: input([planStep("T1S2", [], departed(grounded([{ step: "qc_bias", name: "gc_bias", value: true }]), [departure]))]),
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root, {}, fake.client),
+        });
+
+        expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {}, departures: [departure] });
+        expect(seed.prompt).toContain(
+            "`gc_bias` = true (qc_bias): the plan departs from R-0001@e7d0 and does not apply it (the inputs hold no amplicon sequence)\n",
+        );
+    });
+
+    it("leaves a departure value that does not fit its slot unbound, with the departure in the line", async () => {
+        const root = await makeWorkspace();
+        const fake = fakeKnowledgeClient();
+        const departure = { rule: "R-0001@e7d0", setting: "min_count", value: "all_retained", reason: "the PCA uses each retained target" };
+
+        const seed = await composeStepSeed({
+            input: input([planStep("T1S2", [], departed(grounded([{ step: "filter_low_counts", name: "min_count", value: 10 }]), [departure]))]),
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root, {}, fake.client),
+        });
+
+        expect(seed.templateBinding?.slots).toEqual({});
+        expect(seed.prompt).toContain(
+            '`min_count` = "all_retained" (filter_low_counts; departure from R-0001@e7d0: the PCA uses each retained target): a policy of the plan, not a value of the `min_count` slot (integer)',
+        );
     });
 
     it("says the contract was not retrieved when no client is bound, and renders no section", async () => {

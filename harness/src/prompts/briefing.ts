@@ -27,6 +27,7 @@ import { WORKING_MEMORY_LIMITS, type WorkingMemory } from "../memory/working-mem
 import type { DataProfileResult } from "../state/data-profile.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
 import type { StepMethods, StepMethodsSource } from "../contracts/chat-parts.js";
+import { renderDeparture } from "../execution/step-methods.js";
 import type { AnalysisStep, ClaimView } from "../schemas/workflow-state.js";
 import type { TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBindingValue } from "../tools/knowledge/template.js";
@@ -193,6 +194,13 @@ function renderGrounding(
     lines.push(`- Snapshot: ${grounding.snapshot}`);
     lines.push(...renderClaims(grounding.claims, contract.claims ?? []));
     lines.push(`- Reason: ${grounding.reason}`);
+    const departures = grounding.departures ?? [];
+    if (departures.length > 0) {
+        // A departure binds before the contract, thus the bound and the unbound lists show its value too. A step with
+        // no template has only these lines, and a departure with no setting is in no other list.
+        lines.push("- Departures (the plan departs from these rules; apply the value of the plan, not the value of the rule):");
+        for (const departure of departures) lines.push(`  - ${renderDeparture(departure)}`);
+    }
     const settings = grounding.settings ?? [];
     if (settings.length > 0 && !contract.template) {
         lines.push("- Settings (the vetted values of the procedure; another value is permitted when your summary states the reason):");
@@ -585,7 +593,7 @@ function renderHandoffSource(source: StepMethodsSource): string {
 
 /**
  * The methods of one dependency: its grounding, its templates with their methods, and a bounded list of
- * its rules and its sources. A downstream step that reports the methods reads them here, and the decision
+ * its rules, its departures, and its sources. A downstream step that reports the methods reads them here, and the decision
  * records give the rest.
  */
 function renderHandoffMethods(methods: StepMethods): string[] {
@@ -600,6 +608,11 @@ function renderHandoffMethods(methods: StepMethods): string[] {
     if (claims.length > 0) {
         const shown = claims.map((claim) => `\`${claim.id}\`${claim.title ? ` ${clamp(claim.title, CLAIM_TITLE_MAX_CHARS)}` : ""}`);
         lines.push(`- Rules: ${shown.join("; ")}${methodsTail(claims.length, methods.claims.length, methods.claimsOmitted)}`);
+    }
+    const departures = (methods.departures ?? []).slice(0, UPSTREAM_METHODS_MAX_ITEMS);
+    if (departures.length > 0) {
+        const total = methods.departures?.length ?? 0;
+        lines.push(`- Departures: ${departures.map(renderDeparture).join("; ")}${methodsTail(departures.length, total, methods.departuresOmitted)}`);
     }
     const sources = methods.sources.slice(0, UPSTREAM_METHODS_MAX_ITEMS);
     if (sources.length > 0) {

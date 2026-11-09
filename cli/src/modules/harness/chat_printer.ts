@@ -3,7 +3,16 @@ import { basename, dirname } from "node:path";
 import type { EventSource, FileReferencePart, PlanPart, PresentationPart } from "@inflexa-ai/harness";
 import { PART_REGISTRY, type ChatFrame, type KnownChatPart } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { OpenableEntry, PlanCardGroundingView, PlanCardRuleView, PlanCardSourceView, PlanCardStepView, PresentationBody } from "../../types/session.ts";
+import type {
+    OpenableEntry,
+    PlanCardDepartureView,
+    PlanCardGroundingView,
+    PlanCardRuleView,
+    PlanCardSettingView,
+    PlanCardSourceView,
+    PlanCardStepView,
+    PresentationBody,
+} from "../../types/session.ts";
 
 // The readers that turn one chat frame, or one harness part, into the primitives a surface renders.
 //
@@ -111,14 +120,39 @@ function groundingViewOf(grounding: PlanPartGrounding, claims: readonly PlanPart
         template: grounding.template ?? "",
         reason: grounding.reason,
         rules,
-        settings: (grounding.settings ?? []).map((setting) => ({
-            step: setting.step,
-            name: setting.name,
-            value: Array.isArray(setting.value) ? setting.value.join(", ") : String(setting.value),
-            source: setting.source ?? "",
+        settings: settingViewsOf(grounding),
+        departures: (grounding.departures ?? []).map((departure): PlanCardDepartureView => ({
+            rule: departure.rule,
+            change: departure.setting === undefined ? "left_out" : departure.value === undefined ? "not_applied" : "value",
+            setting: departure.setting ?? "",
+            value: departure.value === undefined ? "" : valueText(departure.value),
+            reason: departure.reason,
         })),
         sources,
     };
+}
+
+/** A value of a setting as text. A list value is joined with a comma. An empty value shows as `[]` or `""`, thus it does not read as an absent value. */
+function valueText(value: string | number | boolean | string[]): string {
+    if (Array.isArray(value)) return value.length === 0 ? "[]" : value.join(", ");
+    return value === "" ? '""' : String(value);
+}
+
+/**
+ * The settings of a step as the run binds them. A departure with a value replaces the value of its setting, and a
+ * departure with no value marks its setting as not applied. The source of each such setting names the departure.
+ */
+function settingViewsOf(grounding: PlanPartGrounding): PlanCardSettingView[] {
+    const departures = new Map(
+        (grounding.departures ?? []).flatMap((departure) => (departure.setting === undefined ? [] : [[departure.setting, departure] as const])),
+    );
+    return (grounding.settings ?? []).map((setting) => {
+        const departure = departures.get(setting.name);
+        const view = { step: setting.step, name: setting.name, value: valueText(setting.value), source: setting.source ?? "" };
+        if (departure === undefined) return view;
+        if (departure.value === undefined) return { ...view, source: `not applied: departure from ${departure.rule}` };
+        return { ...view, value: valueText(departure.value), source: `departure from ${departure.rule}` };
+    });
 }
 
 /**

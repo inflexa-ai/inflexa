@@ -36,6 +36,7 @@ describe("PlanStepDetailDialog", () => {
                 { id: "R-0099@0000", title: "", strength: "" },
             ],
             settings: [{ step: "differential_expression", name: "fdr", value: "0.05", source: "doi:10.1093/bioinformatics/btw014" }],
+            departures: [],
             sources: [
                 { title: "edgeR QL", year: 2016, ref: "doi:10.1093/bioinformatics/btw014" },
                 { title: "A manual", year: 2020, ref: "" },
@@ -58,9 +59,59 @@ describe("PlanStepDetailDialog", () => {
         }
     });
 
+    test("shows each departure of a grounded step with its rule, its setting, the value of the plan, and the reason", () => {
+        const grounding: PlanCardGroundingView = {
+            status: "grounded",
+            snapshot: "sha256:71ac",
+            template: "",
+            reason: "r",
+            rules: [],
+            settings: [],
+            departures: [
+                { rule: "R-0001@e7d0", change: "value", setting: "n_top_genes_pca", value: "364", reason: "the panel holds 364 targets" },
+                { rule: "R-0001@e7d0", change: "value", setting: "covariates", value: "[]", reason: "the design has no covariate" },
+                { rule: "R-0001@e7d0", change: "not_applied", setting: "lfc_shrink", value: "", reason: "the plan reports the unshrunk fold changes" },
+                { rule: "R-0147@3c1d", change: "left_out", setting: "", value: "", reason: "the inputs hold no amplicon sequence" },
+            ],
+            sources: [],
+        };
+
+        const lines = planStepDetailLines({ ...detailStep, grounding });
+
+        expect(lines).toContain("departures from the rules:");
+        expect(lines).toContain("  - R-0001@e7d0: n_top_genes_pca = 364. the panel holds 364 targets");
+        expect(lines).toContain("  - R-0001@e7d0: covariates = []. the design has no covariate");
+        expect(lines).toContain("  - R-0001@e7d0: lfc_shrink not applied. the plan reports the unshrunk fold changes");
+        expect(lines).toContain("  - R-0147@3c1d: the inputs hold no amplicon sequence");
+    });
+
+    test("shows no departure section for a step with no departures", () => {
+        const grounding: PlanCardGroundingView = {
+            status: "grounded",
+            snapshot: "sha256:71ac",
+            template: "",
+            reason: "r",
+            rules: [],
+            settings: [],
+            departures: [],
+            sources: [],
+        };
+
+        expect(planStepDetailLines({ ...detailStep, grounding })).not.toContain("departures from the rules:");
+    });
+
     test("bounds the sources of a step, and names the count of the rest", () => {
         const sources = Array.from({ length: MAX_GROUNDING_ITEMS + 3 }, (_, i) => ({ title: `Paper ${i}`, year: 2020, ref: "" }));
-        const grounding: PlanCardGroundingView = { status: "grounded", snapshot: "sha256:71ac", template: "", reason: "r", rules: [], settings: [], sources };
+        const grounding: PlanCardGroundingView = {
+            status: "grounded",
+            snapshot: "sha256:71ac",
+            template: "",
+            reason: "r",
+            rules: [],
+            settings: [],
+            departures: [],
+            sources,
+        };
 
         const lines = planStepDetailLines({ ...detailStep, grounding });
 

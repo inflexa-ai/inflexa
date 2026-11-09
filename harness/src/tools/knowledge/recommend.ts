@@ -156,6 +156,8 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
             "then add the question, the acceptance criteria, the resources, and the step budget from the data profile. " +
             "A skeleton step is the vetted default, not the only permitted method. When the design or the question does not fit its method, plan the step with your method: " +
             "set `grounding.status: ungrounded`, keep the snapshot digest, cite no claim, and give the reason for the departure in `grounding.reason`. A departure the plan states is not a fault; a silent one is. " +
+            "When the step keeps its method and a setting or a part of a cited rule does not fit the data, keep the step grounded and add one entry to `grounding.departures` " +
+            "with the claim id, the setting, your value (or no value when the plan does not apply the setting), and the reason; the host binds your value in place of the value of the rule. " +
             "`match: flag`: a rule changes the outcome (for example no replication, or a batch confounded with the condition); " +
             "the skeleton step carries `status: flagged`, the rule id in its reason, and the flag message as its first caveat; obey the flag `outcome`. " +
             "`dropped` lists the steps the procedure removed, because a flag removed inference or because the script of the test runs no such step (the shrinkage of limma and edgeR); do not plan them. " +
