@@ -78,6 +78,7 @@ import { ensureRuntime } from "../../lib/config.ts";
 import { capture, type CaptureOpts, type CaptureResult, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { readEnvCredentialVar } from "../../lib/env.ts";
 import { messageOf } from "../../lib/cause.ts";
+import { isPidAlive } from "../../lib/lock.ts";
 import { ASCII_DIGITS, consistsOf } from "../../lib/text.ts";
 import { provisionerImageFor } from "./images.ts";
 import { ensureImagePresent, configuredSandboxImage, type ImageAbsentError } from "./pull.ts";
@@ -147,14 +148,28 @@ const READY_TIMEOUT_MS = 15_000;
 /** The egress preamble every walled container command sources before its own work. */
 const WALL_PREAMBLE = ". /usr/local/bin/egress-allowlist.sh && apply_egress_allowlist && ";
 
+/**
+ * The hold of each session container. The kernel drops each signal that PID 1 has no handler for, thus a bare
+ * `sleep` as PID 1 ignores the TERM of a removal, and the engine waits its stop timeout (10 s on podman) before
+ * the KILL. A shell that traps TERM ends at once, thus a removal and a plan restart cost no wait.
+ */
+const HOLD = "{ trap 'exit 0' TERM; sleep infinity & wait; }";
+
 /** The held entrypoint of the wall container: apply the allowlist the provisioner entrypoint applies, then hold. */
-const WALL_HOLD_COMMAND = `${WALL_PREAMBLE}exec sleep infinity`;
+const WALL_HOLD_COMMAND = `${WALL_PREAMBLE}${HOLD}`;
 
 /** The held entrypoint of a walled session container: resolve through the dnsmasq of the wall, then hold. The engines differ in the `resolv.conf` that a joined container gets, thus the container writes the line itself. */
-const WALLED_SESSION_HOLD_COMMAND = "printf 'nameserver 127.0.0.1\\n' > /etc/resolv.conf && exec sleep infinity";
+const WALLED_SESSION_HOLD_COMMAND = `printf 'nameserver 127.0.0.1\\n' > /etc/resolv.conf && ${HOLD}`;
 
 /** The held entrypoint of a session container with no network. */
-const OFFLINE_SESSION_HOLD_COMMAND = "exec sleep infinity";
+const OFFLINE_SESSION_HOLD_COMMAND = HOLD;
+
+/**
+ * The label that names the host process that owns a session container. A host that dies holds no exit sweep,
+ * thus the next boot removes each container whose owner is gone. The owner is a process and not a name prefix,
+ * because the dev and the release server share the engine and each holds its own live sessions.
+ */
+export const BUILD_SESSION_OWNER_LABEL = "ai.inflexa.build-session.owner";
 
 /** The one-shot container command that hashes a folder snapshot with the provisioner's own function. The image ships the module extensionless at /usr/local/bin/provision, and `spec_from_file_location` answers no loader for an unknown suffix, thus an explicit `SourceFileLoader` loads it (the `sys.path` entry keeps its sibling `emit_deps` importable). */
 const TREE_HASH_COMMAND =
@@ -272,6 +287,8 @@ function wallStartArgs(image: string, wallName: string, egressAllow: string): st
         "-d",
         "--name",
         wallName,
+        "--label",
+        `${BUILD_SESSION_OWNER_LABEL}=${process.pid}`,
         "--cap-add",
         "NET_ADMIN",
         "-e",
@@ -328,6 +345,8 @@ function sessionStartArgs(
         "-d",
         "--name",
         session.containerName,
+        "--label",
+        `${BUILD_SESSION_OWNER_LABEL}=${process.pid}`,
         ...(walled ? ["--network", `container:${session.wallName}`] : ["--network", "none"]),
         ...sessionHardeningArgs(limits),
         "-v",
@@ -1312,6 +1331,46 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
             if (rtResult.isOk()) await run(rtResult.value, ["rm", "-f", containerNameOf(handle), wallNameOf(handle)]).catch(() => undefined);
         },
     };
+}
+
+/** What the orphan sweep reads and runs. Each default is the real one; a test records the engine and pins the live processes. */
+export type OrphanSweepOpts = {
+    readonly resolveRuntime?: () => Promise<Result<ContainerRuntime, ContainerRuntimeError>>;
+    readonly run?: RuntimeCommand;
+    /** Whether a host process still runs. Default: `isPidAlive`. */
+    readonly isProcessAlive?: (pid: number) => boolean;
+};
+
+/**
+ * Remove each build-session container whose owner process is gone: the debris of a host that died before its
+ * exit sweep ran. A container of a live owner, this process included, stays. The sweep never fails the boot,
+ * thus each engine fault gives zero removed.
+ */
+export async function sweepOrphanedBuildSessions(opts: OrphanSweepOpts = {}): Promise<number> {
+    const run: RuntimeCommand = opts.run ?? capture;
+    const alive = opts.isProcessAlive ?? isPidAlive;
+    const rtResult = await (opts.resolveRuntime ?? ensureRuntime)();
+    if (rtResult.isErr()) return 0;
+    const rt = rtResult.value;
+    const listed = await run(rt, [
+        "ps",
+        "-a",
+        "--filter",
+        `label=${BUILD_SESSION_OWNER_LABEL}`,
+        "--format",
+        `{{.Names}}\t{{index .Labels "${BUILD_SESSION_OWNER_LABEL}"}}`,
+    ]).catch(() => null);
+    if (listed === null || listed.code !== 0) return 0;
+    const orphans = listed.stdout
+        .split("\n")
+        .map((line) => line.trim().split("\t"))
+        .flatMap(([name, owner]) => {
+            const pid = Number(owner);
+            return name !== undefined && name !== "" && Number.isInteger(pid) && pid > 0 && pid !== process.pid && !alive(pid) ? [name] : [];
+        });
+    if (orphans.length === 0) return 0;
+    const removed = await run(rt, ["rm", "-f", ...orphans]).catch(() => null);
+    return removed !== null && removed.code === 0 ? orphans.length : 0;
 }
 
 /** The container name of one session id — derived, so a stop after a host restart still reaches the container. */

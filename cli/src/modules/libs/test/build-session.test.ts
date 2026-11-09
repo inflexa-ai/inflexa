@@ -16,15 +16,15 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 
-import { runtimes, type CaptureOpts, type CaptureResult, type ContainerRuntime } from "../../../lib/container.ts";
+import { ContainerRuntimeError, runtimes, type CaptureOpts, type CaptureResult, type ContainerRuntime } from "../../../lib/container.ts";
 import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf, withoutSuffix } from "../../../lib/text.ts";
 import { runAfter } from "../../../lib/timer.ts";
 import { arrayContaining } from "../../../test_support/matchers.ts";
 import { isLowerHex } from "../../../test_support/text_shapes.ts";
 import { SESSION_CLASS_HOSTS, sessionEgressAllow } from "../provisioner.ts";
-import { createBuildSession, sweepAtExit } from "../build-session.ts";
+import { BUILD_SESSION_OWNER_LABEL, createBuildSession, sweepAtExit, sweepOrphanedBuildSessions } from "../build-session.ts";
 import type { SourceFlightOutcome, SourceFlightParams } from "../store_flight.ts";
 
 // `bun test` runs no `exit` hook, thus the exit sweep never removes the scratch tree of a session that a test
@@ -304,6 +304,61 @@ describe("sessionEgressAllow", () => {
     });
 });
 
+describe("the orphan sweep", () => {
+    /** An engine whose `ps` lists the given containers with their owner labels, and that records each command. */
+    function listing(rows: readonly (readonly [string, string])[]): {
+        calls: string[][];
+        run: (rt: ContainerRuntime, args: string[]) => Promise<CaptureResult>;
+    } {
+        const calls: string[][] = [];
+        return {
+            calls,
+            run: (_rt, args) =>
+                Promise.try(() => {
+                    calls.push(args);
+                    const stdout = args[0] === "ps" ? rows.map(([name, owner]) => `${name}\t${owner}`).join("\n") : "";
+                    return { code: 0, stdout, stderr: "" };
+                }),
+        };
+    }
+
+    test("removes each container whose owner process is gone, and keeps the containers of a live owner", async () => {
+        const engine = listing([
+            ["inflexa-build-bs-dead", "4242"],
+            ["inflexa-build-bs-dead-wall", "4242"],
+            ["inflexa-build-bs-live", "5151"],
+            ["inflexa-build-bs-mine", String(process.pid)],
+        ]);
+
+        const removed = await sweepOrphanedBuildSessions({
+            resolveRuntime: () => Promise.resolve(ok(DOCKER)),
+            run: engine.run,
+            isProcessAlive: (pid) => pid === 5151,
+        });
+
+        expect(removed).toBe(2);
+        expect(engine.calls[0]).toEqual([
+            "ps",
+            "-a",
+            "--filter",
+            `label=${BUILD_SESSION_OWNER_LABEL}`,
+            "--format",
+            `{{.Names}}\t{{index .Labels "${BUILD_SESSION_OWNER_LABEL}"}}`,
+        ]);
+        expect(engine.calls.slice(1)).toEqual([["rm", "-f", "inflexa-build-bs-dead", "inflexa-build-bs-dead-wall"]]);
+    });
+
+    test("removes nothing when no owner is gone, and a runtime that does not resolve fails no boot", async () => {
+        const engine = listing([["inflexa-build-bs-live", "5151"]]);
+
+        expect(await sweepOrphanedBuildSessions({ resolveRuntime: () => Promise.resolve(ok(DOCKER)), run: engine.run, isProcessAlive: () => true })).toBe(0);
+        expect(engine.calls.map((call) => call[0])).toEqual(["ps"]);
+        expect(await sweepOrphanedBuildSessions({ resolveRuntime: () => Promise.resolve(err(new ContainerRuntimeError("no engine"))), run: engine.run })).toBe(
+            0,
+        );
+    });
+});
+
 describe("the held container", () => {
     test("a walled start makes the wall container first: NET_ADMIN, the git host alone, and no mount", async () => {
         const engine = new Engine();
@@ -320,7 +375,8 @@ describe("the held container", () => {
         expect(wall[wall.length - 2]).toBe("-c");
         expect(wall[wall.length - 1]).toContain(". /usr/local/bin/egress-allowlist.sh");
         expect(wall[wall.length - 1]).toContain("apply_egress_allowlist");
-        expect(wall[wall.length - 1]).toContain("exec sleep infinity");
+        expect(wall[wall.length - 1]).toContain("apply_egress_allowlist && { trap 'exit 0' TERM; sleep infinity & wait; }");
+        expect(wall[wall.indexOf("--label") + 1]).toBe(`${BUILD_SESSION_OWNER_LABEL}=${process.pid}`);
         // The wall has no mount at all: it holds the rules, never the tree.
         expect(wall).not.toContain("-v");
         // The wall starts before the session container that joins it.
@@ -352,7 +408,8 @@ describe("the held container", () => {
         expect(start[start.indexOf("--entrypoint") + 1]).toBe("/bin/sh");
         expect(start[start.length - 2]).toBe("-c");
         // The joined container writes the resolver line itself, because the engines differ in what a joined container gets.
-        expect(start[start.length - 1]).toBe("printf 'nameserver 127.0.0.1\\n' > /etc/resolv.conf && exec sleep infinity");
+        expect(start[start.length - 1]).toBe("printf 'nameserver 127.0.0.1\\n' > /etc/resolv.conf && { trap 'exit 0' TERM; sleep infinity & wait; }");
+        expect(start[start.indexOf("--label") + 1]).toBe(`${BUILD_SESSION_OWNER_LABEL}=${process.pid}`);
         // The scratch volume is the writable mount, the pristine snapshot binds
         // read-only over it, and the store never mounts.
         const mounts = start.filter((_arg, at) => start[at - 1] === "-v");
@@ -971,7 +1028,7 @@ describe("a local folder source", () => {
         expect(start[start.indexOf("--pids-limit") + 1]).toBe("4096");
         expect(start[start.indexOf("--cpus") + 1]).toBe("2");
         expect(start[start.indexOf("--memory") + 1]).toBe(String(4 * 1024 ** 3));
-        expect(start[start.length - 1]).toBe("exec sleep infinity");
+        expect(start[start.length - 1]).toBe("{ trap 'exit 0' TERM; sleep infinity & wait; }");
     });
 });
 

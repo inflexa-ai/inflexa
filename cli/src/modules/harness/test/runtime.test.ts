@@ -254,6 +254,7 @@ function recordingSeams(calls: string[]): BootSeams {
         },
         probeEmbedding: recorded(calls, "probeEmbedding", () => ok(undefined)),
         createBuildSession,
+        sweepBuildSessions: recorded(calls, "sweepBuildSessions", () => 0),
     };
 }
 
@@ -297,6 +298,7 @@ describe("bootHarnessRuntime", () => {
             "boot",
             "sweepEphemeral",
             "sweepAsks",
+            "sweepBuildSessions",
             "registerNotificationSweep",
         ]);
         // No `models.agents` and a single `harness.model` (claude-test-model): all roles resolve to it.
