@@ -9,8 +9,6 @@
  *     whose host-side reads no exec frame names
  */
 
-import { presentFirst } from "../lib/present.js";
-import { collapseWhitespace, hasWhitespace } from "../lib/text.js";
 import type { ArtifactRecord } from "../execution/artifact-record.js";
 import type { ProvenanceRecord, InputRef, InputSource, Producer } from "./types.js";
 
@@ -32,31 +30,6 @@ export type ObservedWrite = {
     /** File size in bytes. */
     size: number;
 };
-
-// ── Script path inference ───────────────────────────────────────────
-
-/** Known interpreter prefixes for script path extraction. The two python spellings sit first, so the longer prefix wins. */
-const INTERPRETER_PREFIXES = ["python3", "python", "Rscript", "bash", "sh"];
-
-/**
- * Attempt to extract the script path from a command string.
- * Returns the first argument that looks like a file path for known interpreters.
- */
-function inferScriptPath(command: string, args?: string[]): string | null {
-    const fullCommand = args?.length ? `${command} ${args.join(" ")}` : command;
-
-    for (const prefix of INTERPRETER_PREFIXES) {
-        if (!fullCommand.startsWith(prefix)) continue;
-        const rest = fullCommand.slice(prefix.length);
-        if (!hasWhitespace(rest.charAt(0))) continue;
-        const argumentsText = collapseWhitespace(rest);
-        if (argumentsText === "") continue;
-        // Take the first token (the script path), ignoring further args
-        return presentFirst(argumentsText.split(" "), "the script path");
-    }
-
-    return null;
-}
 
 // ── Input classification ────────────────────────────────────────────
 
@@ -324,6 +297,10 @@ export class ProvenanceCollector {
      * When commandReads is provided, uses those as the inputs for this
      * command's provenance records (per-command scoping). Falls back to
      * snapshotting the global inputAccesses accumulator when not provided.
+     *
+     * `scriptPath` is the analysis-relative path of the script that the caller
+     * resolved against the cwd of the exec. The argv alone cannot name it,
+     * because a relative token means nothing without that cwd.
      */
     recordCommandExecution(
         command: string,
@@ -335,7 +312,6 @@ export class ProvenanceCollector {
         commandReads?: InputRef[],
     ): void {
         const inputs = commandReads ?? Array.from(this.inputAccesses.values());
-        const resolvedScript = scriptPath ?? inferScriptPath(command, args);
         const timestamp = new Date().toISOString();
 
         const producer: Producer = {
@@ -358,7 +334,7 @@ export class ProvenanceCollector {
                 outputSize: write.size,
                 producer,
                 inputs,
-                scriptPath: resolvedScript,
+                scriptPath: scriptPath ?? null,
                 stepId: this.stepId,
                 runId: this.runId,
             };

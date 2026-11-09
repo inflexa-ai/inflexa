@@ -53,6 +53,7 @@ import {
     activityEmission,
     activityForTool,
     applyTreeDelta,
+    buildFileTree,
     isChatDataPart,
     sandboxTreeDelta,
     stepPartId,
@@ -578,7 +579,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             id: treeFileId,
             runId: input.runId,
             stepId: input.stepId,
-            files: [...treeFiles].sort().map((path) => ({ path, type: "file" as const })),
+            files: buildFileTree([...treeFiles].map((path) => ({ path }))),
         });
 
     // One translator from sandbox/loop events to the typed per-step parts
@@ -886,11 +887,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                 id: stepPartId("step-file-tree", input.runId, input.stepId),
                 runId: input.runId,
                 stepId: input.stepId,
-                files: stepOutputs.files.map((f) => ({
-                    path: f.path,
-                    size: f.size,
-                    type: "file" as const,
-                })),
+                files: buildFileTree(stepOutputs.files),
             });
         }
         if (stepOutputs.summaryMarkdown.trim().length > 0) {

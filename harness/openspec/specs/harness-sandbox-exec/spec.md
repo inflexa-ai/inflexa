@@ -569,3 +569,25 @@ A poll can give a result that carries the lost reason of sandbox-server. Then th
 - **WHEN** the recovered exec submits the same exec id and polls
 - **THEN** the exec returns a synthetic failure with the reason `"sandbox-replaced"`
 - **AND** the command does not run again
+
+### Requirement: The step file tree is nested
+
+Each `data-step-file-tree` part MUST carry the tree of the step directory as nested nodes, for the live tree and the terminal tree. A node has a `name`, which is one path segment. A file node has `type: "file"` and an optional `size`. A directory node has `type: "directory"` and its `children`. Each level MUST be in code-point order of the name. The harness owns the sandbox, thus a consumer MUST NOT split a path.
+
+#### Scenario: A stale file gives way to a directory
+
+- **GIVEN** a live path set that holds `output` and `output/a.csv`
+- **WHEN** the body emits the live file tree
+- **THEN** `files` holds one directory `output` that holds the file `a.csv`
+
+#### Scenario: The live tree nests the paths
+
+- **GIVEN** a step whose execs wrote `scripts/run.R` and `output/figures/umap.png`
+- **WHEN** the body emits the live file tree
+- **THEN** `files` holds a directory `output` with a directory `figures` that holds the file `umap.png`, and a directory `scripts` that holds the file `run.R`
+
+#### Scenario: The terminal tree carries the sizes
+
+- **GIVEN** a step whose manifest holds `output/a.csv` with the size 30
+- **WHEN** the body emits the terminal file tree
+- **THEN** `files` holds a directory `output` that holds the file `a.csv` with `size: 30`

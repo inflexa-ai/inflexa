@@ -8,7 +8,7 @@
 
 import { z } from "zod";
 
-import type { ActivityEntryPart, StepActivityPart, StepPhase, SynthesisPhase, SynthesisProgressPart } from "../contracts/chat-parts.js";
+import type { ActivityEntryPart, FileTreeEntry, StepActivityPart, StepPhase, SynthesisPhase, SynthesisProgressPart } from "../contracts/chat-parts.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
 
@@ -129,6 +129,48 @@ export function applyTreeDelta(files: Set<string>, delta: SandboxTreeDelta): voi
     for (const p of delta.added ?? []) files.add(p);
     for (const p of delta.modified ?? []) files.add(p);
     for (const p of delta.removed ?? []) files.delete(p);
+}
+
+/** One file of a step, by its path under the step directory. */
+export type StepTreeFile = { readonly path: string; readonly size?: number };
+
+type TreeNode = { kind: "file"; size?: number } | { kind: "directory"; children: Map<string, TreeNode> };
+
+function treeEntries(level: Map<string, TreeNode>): FileTreeEntry[] {
+    return [...level.entries()]
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([name, node]): FileTreeEntry => {
+            if (node.kind === "directory") return { name, type: "directory", children: treeEntries(node.children) };
+            return node.size === undefined ? { name, type: "file" } : { name, type: "file", size: node.size };
+        });
+}
+
+/**
+ * Nest the files of a step into the tree that `data-step-file-tree` carries. The harness owns the sandbox, thus it
+ * gives the structure and a consumer never splits a path. A name that the live path set holds as a file and as a
+ * directory stays a directory, because a stale delta can leave such a pair and the deeper file is the newer fact.
+ */
+export function buildFileTree(files: Iterable<StepTreeFile>): FileTreeEntry[] {
+    const root = new Map<string, TreeNode>();
+    for (const file of files) {
+        const segments = file.path.split("/").filter((segment) => segment !== "" && segment !== ".");
+        const name = segments.pop();
+        if (name === undefined) continue;
+        let level = root;
+        for (const segment of segments) {
+            const existing = level.get(segment);
+            if (existing?.kind === "directory") {
+                level = existing.children;
+                continue;
+            }
+            const directory: TreeNode = { kind: "directory", children: new Map() };
+            level.set(segment, directory);
+            level = directory.children;
+        }
+        if (level.get(name)?.kind === "directory") continue;
+        level.set(name, file.size === undefined ? { kind: "file" } : { kind: "file", size: file.size });
+    }
+    return treeEntries(root);
 }
 
 /**

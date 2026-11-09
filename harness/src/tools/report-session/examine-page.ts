@@ -79,6 +79,8 @@ export type { CaptureCoverage, CapturePage, FailedRequest, PageCapture } from ".
 /**
  * The URL formation of one look. It maps the page of the thread onto the URL that the browser opens.
  * A composition whose browser cannot reach the workspace tree binds a resolver that names a served URL.
+ * `pagePath` is relative to the analysis root, `report-sessions/{threadId}/index.html`, thus a realization
+ * reads the page under the session directory of the thread and never parses a host path.
  * The args carry the auth of the tool call beside the page identity, thus a realization mints the URL
  * under the credential of the caller and holds no ambient state.
  */
@@ -446,7 +448,7 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 if (deps.resolvePageUrl === undefined) {
                     url = pathToFileURL(pagePath).href;
                 } else {
-                    const resolved = await deps.resolvePageUrl({ pagePath, analysisId, threadId, auth: ctx.session.auth });
+                    const resolved = await deps.resolvePageUrl({ pagePath: relativePagePath, analysisId, threadId, auth: ctx.session.auth });
                     if (resolved.isErr()) {
                         logger.warn("the page URL did not resolve", { threadId, analysisId, reason: resolved.error.reason });
                         return ok({ outcome: "capture-failed", detail: "the page URL did not resolve" });

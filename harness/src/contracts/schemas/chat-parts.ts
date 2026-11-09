@@ -5,6 +5,7 @@
 import { z } from "zod";
 
 import { AnalogicalReasonerOutputSchema } from "../analogy-report.js";
+import type { FileTreeEntry } from "../chat-parts.js";
 import { ToolCallOutcomeSchema } from "./chat-events.js";
 import { TokenUsageRollupSchema } from "./usage.js";
 
@@ -248,11 +249,24 @@ export const ActivityEntryPartSchema = z.object({
 
 // ── Step File Tree ──────────────────────────────────────────────────
 
-export const FileTreeEntrySchema = z.object({
-    path: z.string(),
+const FileTreeFileSchema = z.object({
+    name: z.string(),
+    type: z.literal("file"),
     size: z.number().optional(),
-    type: z.enum(["file", "directory"]),
 });
+
+/**
+ * The `children` field is a `z.lazy` and not a getter, so the discriminated union reads the `type` discriminator
+ * at construction time without a reference to `FileTreeEntrySchema` before it exists.
+ */
+const FileTreeDirectorySchema = z.object({
+    name: z.string(),
+    type: z.literal("directory"),
+    children: z.lazy(() => z.array(FileTreeEntrySchema)),
+});
+
+/** A `z.ZodType<FileTreeEntry>` annotation gives the recursive member a stable type. */
+export const FileTreeEntrySchema: z.ZodType<FileTreeEntry> = z.discriminatedUnion("type", [FileTreeFileSchema, FileTreeDirectorySchema]);
 
 export const StepFileTreePartSchema = z.object({
     type: z.literal("data-step-file-tree"),

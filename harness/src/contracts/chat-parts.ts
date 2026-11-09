@@ -241,11 +241,11 @@ export type ActivityEntryPart = {
 
 // ── Step File Tree (reconciliating per-step) ────────────────────────
 
-export type FileTreeEntry = {
-    path: string;
-    size?: number;
-    type: "file" | "directory";
-};
+/**
+ * One node of a step file tree. `name` is one path segment, thus the path of a node is the names from the root
+ * of the step directory down to it. A directory lists its children in code-point order of the name.
+ */
+export type FileTreeEntry = { name: string; type: "file"; size?: number } | { name: string; type: "directory"; children: FileTreeEntry[] };
 
 export type StepFileTreePart = {
     type: "data-step-file-tree";
@@ -253,7 +253,7 @@ export type StepFileTreePart = {
     id: string;
     runId: string;
     stepId: string;
-    /** Current file tree snapshot. May be empty if sandbox hasn't written to disk yet. */
+    /** The top-level nodes of the current tree of the step directory. Empty when the sandbox wrote no file yet. */
     files: FileTreeEntry[];
 };
 

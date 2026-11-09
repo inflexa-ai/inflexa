@@ -34,13 +34,14 @@ import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToo
 import type { BoundLease } from "../../sandbox/leases.js";
 import type { ProvenanceFrame } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
-import { feedExecFrame } from "../../provenance/exec-frame.js";
+import { feedExecFrame, stripMountPrefix } from "../../provenance/exec-frame.js";
 import { reconcileScriptRecord } from "./decision-record.js";
 import type { WorkspaceMutator, WriteRecord } from "./mutator.js";
 import { EXEC_STREAM_BYTE_CAP, boundExecResult, type BoundedExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
+import { collapseWhitespace } from "../../lib/text.js";
 import type { Logger } from "../../lib/logger.js";
 
 const ExecuteCommandInputSchema = z.object({
@@ -73,9 +74,24 @@ function scriptToken(command: readonly string[]): string | undefined {
     return command.find((arg) => SCRIPT_EXTENSIONS.some((extension) => arg.endsWith(extension)));
 }
 
+/**
+ * The analysis-relative path of the script that an argv runs, resolved against the cwd of the exec. A one-element
+ * argv is a shell line, thus its words are the tokens. A script outside the mount is no file of the analysis, and
+ * it gives `undefined`.
+ */
+function analysisScriptPath(command: readonly string[], cwd: string, mountRoot: string): string | undefined {
+    const tokens = command.length === 1 ? collapseWhitespace(command[0] ?? "").split(" ") : command;
+    const token = scriptToken(tokens);
+    if (token === undefined) return undefined;
+    const relative = stripMountPrefix(mountRoot, posixPath.resolve(cwd, token));
+    return relative.startsWith("/") ? undefined : relative;
+}
+
 /** What one exec leaves for the lineage collector of the step. */
 type ExecCallRecord = {
     readonly command: readonly string[];
+    /** The analysis-relative path of the script that the command ran. */
+    scriptPath?: string;
     readonly exitCode: number | null;
     readonly durationMs: number | null;
     provenance?: ProvenanceFrame;
@@ -201,6 +217,8 @@ export function createExecuteCommandTool(
                 durationMs: result.durationMs,
             };
             if (result.provenance) record.provenance = result.provenance;
+            const scriptPath = mountRoot === undefined ? undefined : analysisScriptPath(command, effectiveCwd, mountRoot);
+            if (scriptPath !== undefined) record.scriptPath = scriptPath;
             if (recordWrites.length > 0) record.recordWrites = recordWrites;
             return ok(withToolCallRecord(bounded, record));
         },
@@ -213,6 +231,7 @@ export function createExecuteCommandTool(
                     collector: lineageCollector,
                     mountRoot,
                     command: record.command,
+                    scriptPath: record.scriptPath,
                     exitCode: record.exitCode,
                     durationMs: record.durationMs,
                     logger: deps.logger,

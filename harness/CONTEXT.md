@@ -499,7 +499,8 @@ Other facts:
 
   The `file-tree` delta of the executor becomes `data-step-file-tree`. The body
   folds the per-exec `added`, `modified`, and `removed` deltas into a per-step path
-  set, and it emits the **full** tree, paths only. Both parts use a stable
+  set, and it emits the **full** tree as nested nodes. Each node has a name, a
+  type, and for a directory its children, thus a consumer never splits a path. Both parts use a stable
   per-step reconciling id, thus the run-stream fold and the observer collapse them
   latest-wins. A repeated delta changes no tree. After a recovery, the live tree
   holds only the deltas of the execs that ran in the new process. The terminal
