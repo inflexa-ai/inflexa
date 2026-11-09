@@ -315,7 +315,13 @@ describe("execute_command lineage", () => {
         )._unsafeUnwrap();
 
         expect(JSON.stringify(out)).not.toContain("layers");
-        expect(readToolCallRecord(out)).toEqual({ command: ["python", "scripts/de.py"], exitCode: 0, durationMs: 5, provenance: frame });
+        expect(readToolCallRecord(out)).toEqual({
+            command: ["python", "scripts/de.py"],
+            scriptPath: "runs/run-abc/step1/scripts/de.py",
+            exitCode: 0,
+            durationMs: 5,
+            provenance: frame,
+        });
         // The tool records nothing on its own: the loop folds the record after the call settles.
         expect(collector.getRecords()).toEqual([]);
     });
@@ -331,7 +337,24 @@ describe("execute_command lineage", () => {
         if (foldCallRecord === undefined) throw new Error("the tool folds no call record");
         foldCallRecord(readToolCallRecord(out));
 
-        expect(collector.getRecords().map((record) => record.outputPath)).toEqual(["output/de.csv"]);
+        expect(collector.getRecords().map((record) => [record.outputPath, record.scriptPath])).toEqual([["output/de.csv", "runs/run-abc/step1/scripts/de.py"]]);
+    });
+
+    it.each<[string, string[], string | undefined, string | undefined]>([
+        ["a token under a relative cwd", ["Rscript", "../scripts/qc.R"], "output", "runs/run-abc/step1/scripts/qc.R"],
+        ["a shell line", ["python3 scripts/de.py --fdr 0.05 > out.txt"], undefined, "runs/run-abc/step1/scripts/de.py"],
+        ["an absolute token under the mount", ["bash", "/analysis-001/runs/run-abc/shared/run.sh"], undefined, "runs/run-abc/shared/run.sh"],
+        ["a token outside the mount", ["bash", "/usr/local/bin/tool.sh"], undefined, undefined],
+        ["no script token", ["ls", "-la"], undefined, undefined],
+    ])("records the analysis-relative script path of %s", async (_label, command, cwd, expected) => {
+        const client = makeFakeClient({ result: { execId: "wf1:7", exitCode: 0, stdout: "", stderr: "", durationMs: 5, timedOut: false, provenance: frame } });
+        const collector = new ProvenanceCollector({ stepId: "step1", runId: "run-abc", dependsOn: [] });
+        const { ctx } = makeToolContext();
+
+        const input = cwd === undefined ? { command } : { command, cwd };
+        const out = (await makeTool(client, { lineageCollector: collector, mountRoot: "/analysis-001" }).execute(input, ctx))._unsafeUnwrap();
+
+        expect(parseUnknownRecord(readToolCallRecord(out))?.scriptPath).toBe(expected);
     });
 
     it("carries no call record when no collector is wired", async () => {

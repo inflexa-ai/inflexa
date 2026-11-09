@@ -224,3 +224,13 @@ The record tool MUST run the full validation before `store.record`, on every rec
 #### Scenario: A failed re-record keeps the stored version
 - **WHEN** a later record fails its gate
 - **THEN** the stored version stays as the earlier record left it
+
+### Requirement: The URL seam receives the page path relative to the analysis root
+
+The eyes tool MUST give the URL seam the page path relative to the analysis root, `report-sessions/{threadId}/index.html`. The path MUST NOT include the workspace root of the host. A realization in a different process does not know that root, thus it reads the page under the session directory of the thread and parses no host path.
+
+#### Scenario: The seam receives the relative page path
+
+- **GIVEN** a composition that binds the URL seam
+- **WHEN** a look runs on the page of thread `t1`
+- **THEN** the seam receives `pagePath: "report-sessions/t1/index.html"`, the analysis id, the thread id, and the auth of the call

@@ -30,6 +30,7 @@ describe("feedExecFrame", () => {
             collector,
             mountRoot: MOUNT,
             command: ["python3", "scripts/tmm.py"],
+            scriptPath: "runs/run-001/tmm/scripts/tmm.py",
             exitCode: 0,
             durationMs: 1200,
             provenance,
@@ -40,7 +41,7 @@ describe("feedExecFrame", () => {
         const rec = presentAt(records, 0);
         expect(rec.outputPath).toBe("output/tmm.csv");
         expect(rec.producer.type).toBe("command");
-        expect(rec.scriptPath).toBe("scripts/tmm.py");
+        expect(rec.scriptPath).toBe("runs/run-001/tmm/scripts/tmm.py");
         expect(rec.inputs).toHaveLength(1);
         expect(presentAt(rec.inputs, 0).source).toBe("data");
         expect(presentAt(rec.inputs, 0).path).toBe("/a1/data/inputs/Lab/counts.csv");
@@ -48,6 +49,21 @@ describe("feedExecFrame", () => {
         const dataInputs = collector.getDataInputs();
         expect(dataInputs).toHaveLength(1);
         expect(presentAt(dataInputs, 0).fileId).toBe("uuid-1");
+    });
+
+    test("records no script when the caller resolved none, and never guesses one from the argv", () => {
+        const collector = new ProvenanceCollector({ stepId: "tmm", runId: "run-001" });
+
+        feedExecFrame({
+            collector,
+            mountRoot: MOUNT,
+            command: ["python3", "scripts/tmm.py"],
+            exitCode: 0,
+            durationMs: 1,
+            provenance: { disabled: false, reads: [], writes: [{ path: "/a1/runs/run-001/tmm/output/tmm.csv", layers: ["inotify"] }], deletes: [] },
+        });
+
+        expect(presentAt(collector.getRecords(), 0).scriptPath).toBeNull();
     });
 
     test("upstream read is classified by step metadata", () => {

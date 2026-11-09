@@ -49,6 +49,8 @@ export type FeedExecFrameArgs = {
     readonly mountRoot: string;
     /** The argv the harness submitted for the exec. */
     readonly command: readonly string[];
+    /** The analysis-relative path of the script that the exec ran, as the caller resolved it against the exec cwd. */
+    readonly scriptPath?: string;
     readonly exitCode: number | null;
     readonly durationMs: number | null;
     /** The frame surfaced on `ExecResult.provenance` (may be absent). */
@@ -64,7 +66,7 @@ export type FeedExecFrameArgs = {
  * inputs don't collapse onto another's outputs.
  */
 export function feedExecFrame(args: FeedExecFrameArgs): void {
-    const { collector, mountRoot, command, exitCode, durationMs, provenance } = args;
+    const { collector, mountRoot, command, scriptPath, exitCode, durationMs, provenance } = args;
     const cmd = command[0] ?? "";
     const cmdArgs = command.slice(1);
     const code = exitCode ?? -1;
@@ -80,7 +82,7 @@ export function feedExecFrame(args: FeedExecFrameArgs): void {
         // complete, and downstream nothing distinguishes the two — say so here or
         // the gap ships looking like a command that touched no files.
         if (provenance?.disabled) logger.warn("sandbox reported provenance disabled — no file operations captured for this command", { command: cmd });
-        collector.recordCommandExecution(cmd, [...cmdArgs], code, duration, [], undefined, []);
+        collector.recordCommandExecution(cmd, [...cmdArgs], code, duration, [], scriptPath, []);
         return;
     }
 
@@ -107,5 +109,5 @@ export function feedExecFrame(args: FeedExecFrameArgs): void {
         size: 0,
     }));
 
-    collector.recordCommandExecution(cmd, [...cmdArgs], code, duration, writes, undefined, commandReads);
+    collector.recordCommandExecution(cmd, [...cmdArgs], code, duration, writes, scriptPath, commandReads);
 }

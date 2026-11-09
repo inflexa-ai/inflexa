@@ -73,7 +73,7 @@ export const ProvenanceRecordSchema = z.object({
     producer: ProducerSchema,
     /** Input files consumed to produce this artifact. */
     inputs: z.array(InputRefSchema),
-    /** Path to the script that produced this, if identifiable. */
+    /** Analysis-relative path of the script that produced this, or null when the command named no script in the analysis. */
     scriptPath: z.string().nullable(),
     /** Workflow step that produced this artifact. */
     stepId: z.string(),

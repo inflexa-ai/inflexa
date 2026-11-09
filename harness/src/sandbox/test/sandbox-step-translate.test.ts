@@ -10,7 +10,7 @@ import { createWriteFileTool } from "../../tools/workspace/write-file.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { ChatPartSchema } from "../../contracts/schemas/chat-parts.js";
-import { activityForTool, applyTreeDelta, sandboxTreeDelta, stepPartId, synthesisEmission } from "../sandbox-step-translate.js";
+import { activityForTool, applyTreeDelta, buildFileTree, sandboxTreeDelta, stepPartId, synthesisEmission } from "../sandbox-step-translate.js";
 
 describe("stepPartId", () => {
     it("pins the id shape the run-stream fold reconciles on", () => {
@@ -134,6 +134,49 @@ describe("applyTreeDelta", () => {
         applyTreeDelta(files, { removed: ["tmp/scratch"] });
 
         expect([...files].sort()).toEqual(["logs/run.log", "output/a.csv", "scripts/run.R"]);
+    });
+});
+
+describe("buildFileTree", () => {
+    it("nests the paths into named nodes, each level in code-point order", () => {
+        const tree = buildFileTree([
+            { path: "scripts/run.R", size: 120 },
+            { path: "output/figures/umap.png", size: 9000 },
+            { path: "README.md" },
+            { path: "output/a.csv", size: 30 },
+        ]);
+
+        expect(tree).toEqual([
+            { name: "README.md", type: "file" },
+            {
+                name: "output",
+                type: "directory",
+                children: [
+                    { name: "a.csv", type: "file", size: 30 },
+                    { name: "figures", type: "directory", children: [{ name: "umap.png", type: "file", size: 9000 }] },
+                ],
+            },
+            { name: "scripts", type: "directory", children: [{ name: "run.R", type: "file", size: 120 }] },
+        ]);
+    });
+
+    it("gives a tree that the part schema accepts", () => {
+        const part = { type: "data-step-file-tree" as const, id: "t", runId: "r", stepId: "s", files: buildFileTree([{ path: "output/a/b.csv", size: 1 }]) };
+        expect(ChatPartSchema.parse(part)).toEqual(part);
+    });
+
+    it("keeps a directory when a stale path names the same node as a file", () => {
+        expect(buildFileTree([{ path: "output" }, { path: "output/a.csv" }])).toEqual([
+            { name: "output", type: "directory", children: [{ name: "a.csv", type: "file" }] },
+        ]);
+        expect(buildFileTree([{ path: "output/a.csv" }, { path: "output" }])).toEqual([
+            { name: "output", type: "directory", children: [{ name: "a.csv", type: "file" }] },
+        ]);
+    });
+
+    it("ignores empty and dot segments, and gives an empty tree for no files", () => {
+        expect(buildFileTree([{ path: "./output//a.csv" }])).toEqual([{ name: "output", type: "directory", children: [{ name: "a.csv", type: "file" }] }]);
+        expect(buildFileTree([])).toEqual([]);
     });
 });
 

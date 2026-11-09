@@ -50,7 +50,12 @@ list is indistinguishable from a step that genuinely declared nothing, so a sile
 every same-run edge the step was entitled to while leaving no record that it did.
 
 Each `execute_command` call SHALL carry the argv, the exit code, the duration, and the `provenance` frame
-of its exec as its call record (see the harness-tools spec). The `foldCallRecord` of the tool SHALL feed
+of its exec as its call record (see the harness-tools spec). The call record SHALL also carry the
+`scriptPath` of the exec: the first script token of the argv, resolved against the cwd of the exec, and
+relative to the analysis root. A one-element argv is a shell line, thus its words are the tokens. A script
+outside the analysis mount, or an argv with no script token, gives no `scriptPath`. The collector SHALL
+record that path as it is, and SHALL NOT infer a script from the argv. A relative argv token names no file
+without the cwd of the exec, thus a consumer that reads a recorded token can only guess the location. The `foldCallRecord` of the tool SHALL feed
 the frame into the collector through `feedExecFrame` (`src/provenance/exec-frame.ts`). The loop runs the
 fold after the round, in call order, on the first run and on each replay. Thus a recovered step rebuilds
 its collector from the cached records. A failure of the fold SHALL NOT fail the exec.
@@ -58,7 +63,7 @@ its collector from the cached records. A failure of the fold SHALL NOT fail the 
 doubled at the boundary so an in-mount name lands on its canonical relative form — classify every read via
 `classifyReadPath(relativePath, stepId, runId, dependsOn)`, call `trackInputAccess` for each read that
 classification admits, and call `recordCommandExecution` once per exec with that exec's own admitted reads
-scoped to its outputs. A read that classification refuses SHALL be dropped and SHALL NOT be tracked. The
+scoped to its outputs and with the `scriptPath` of the call record. A read that classification refuses SHALL be dropped and SHALL NOT be tracked. The
 refusal SHALL be logged once per distinct path per step: a refusal reports one fact — a lineage edge that
 will not exist — and that fact does not change when the same file is read again, while reads dedup within a
 frame but not across the many execs a step issues, so an undeduped narration is a steady stream that trains
@@ -74,9 +79,21 @@ indistinguishable from a command that touched no files.
 
 #### Scenario: Command reading an input and writing an output produces a lineage edge
 
-- **GIVEN** an `execute_command` whose argv is `["python3", "scripts/tmm.py"]` and whose `ExecResult.provenance` reads `/{rid}/data/inputs/Lab/counts.csv` and writes `/{rid}/runs/{run}/{step}/output/tmm.csv`
+- **GIVEN** an `execute_command` whose argv is `["python3", "scripts/tmm.py"]`, whose cwd is `/{rid}/runs/{run}/{step}`, and whose `ExecResult.provenance` reads `/{rid}/data/inputs/Lab/counts.csv` and writes `/{rid}/runs/{run}/{step}/output/tmm.csv`
 - **WHEN** the tool feeds the frame via `feedExecFrame`
-- **THEN** `getRecords()` contains a record for `output/tmm.csv` with `producer.type: "command"`, an inferred `scriptPath: "scripts/tmm.py"`, and an input with `source: "data"` for `data/inputs/Lab/counts.csv`
+- **THEN** `getRecords()` contains a record for `output/tmm.csv` with `producer.type: "command"`, `scriptPath: "runs/{run}/{step}/scripts/tmm.py"`, and an input with `source: "data"` for `data/inputs/Lab/counts.csv`
+
+#### Scenario: The script path is relative to the analysis root
+
+- **GIVEN** an `execute_command` whose argv is `["Rscript", "../scripts/qc.R"]` and whose cwd is `/{rid}/runs/{run}/{step}/output`
+- **WHEN** the loop folds the call record
+- **THEN** the record of each output carries `scriptPath: "runs/{run}/{step}/scripts/qc.R"`
+
+#### Scenario: No script gives a null script path
+
+- **GIVEN** an `execute_command` whose argv names no script token, or names a script outside the analysis mount
+- **WHEN** the loop folds the call record
+- **THEN** the record of each output carries `scriptPath: null`, and the collector does not infer a script from the argv
 
 #### Scenario: Upstream read is classified by step metadata
 

@@ -823,10 +823,10 @@ describe("the URL seam", () => {
         expect(result.outcome).toBe("examined");
         // The seam replaces the file URL, thus the look opens the served page.
         expect(capturedUrl).toBe("https://content.test/report-sessions/analysis-001/t1/index.html?t=tok");
-        // The seam reads the page of the thread and the auth of the call, thus a realization maps the
-        // page with no second resolver and mints under the credential of the caller.
+        // The seam reads the analysis-relative page of the thread and the auth of the call, thus a realization
+        // maps the page with no host path and mints under the credential of the caller.
         expect(resolvedArgs).toEqual({
-            pagePath: join(root, "report-sessions", threadId, "index.html"),
+            pagePath: join("report-sessions", threadId, "index.html"),
             analysisId: DEFAULT_ANALYSIS_ID,
             threadId,
             auth: ctx.session.auth,
