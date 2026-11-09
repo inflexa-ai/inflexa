@@ -1,8 +1,8 @@
 /**
- * Knowledge barrel — the three tools of the knowledge plane and the client
+ * Knowledge barrel — the four tools of the knowledge plane and the client
  * interface they share.
  *
- * `createKnowledgeTools` gives the two planner tools when a client is bound,
+ * `createKnowledgeTools` gives the three planner tools when a client is bound,
  * and nothing when it is not. Absence is the default state of the open-source
  * host, and it is a normal condition: no tool attaches, no description enters
  * the context, and the planner works from the prose skills as it does today.
@@ -17,11 +17,13 @@ import type { DecisionRecordStore } from "../workspace/decision-record.js";
 import type { WorkspaceMutator } from "../workspace/mutator.js";
 import type { KnowledgeClient } from "./client.js";
 import { createKnowledgeCheckTool } from "./check.js";
+import { createClaimShelf, createKnowledgeClaimsTool } from "./claims.js";
 import { createSnapshotPin } from "./pin.js";
 import { createKnowledgeRecommendTool, type KnowledgeRecommendDeps } from "./recommend.js";
 import { createKnowledgeTemplateTool } from "./template.js";
 
 export * from "./client.js";
+export * from "./claims.js";
 export * from "./environment.js";
 export * from "./local-slots.js";
 export * from "./pin.js";
@@ -48,13 +50,17 @@ export type KnowledgeToolsDeps = {
 };
 
 /**
- * The planner tools: `knowledge_recommend` and `knowledge_check`, or an empty
- * list with no client. The two share one pin: the first recommend answer
- * fixes the release of the plan, and each later call carries it.
+ * The planner tools: `knowledge_recommend`, `knowledge_claims`, and
+ * `knowledge_check`, or an empty list with no client. The recommend tool and
+ * the check share one pin: the first recommend answer fixes the release of
+ * the plan, and each later call carries it. The recommend tool and the claims
+ * tool share one shelf: each answer keeps its claim views there, and the
+ * claims tool reads them.
  */
 export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
     if (!deps.client) return [];
     const pin = createSnapshotPin();
+    const shelf = createClaimShelf();
     return [
         createKnowledgeRecommendTool({
             client: deps.client,
@@ -64,7 +70,9 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
             refStorePath: deps.refStorePath,
             readPoolInventory: deps.readPoolInventory,
             onAnswer: deps.onRecommend,
+            shelf,
         }),
+        createKnowledgeClaimsTool({ shelf }),
         createKnowledgeCheckTool({ client: deps.client, pin, onCheck: deps.onCheck }),
     ];
 }
@@ -89,7 +97,7 @@ const NO_RECORDS: DecisionRecordStore = {
 };
 
 /**
- * The digest of the three tool definitions as this host registers them: the
+ * The digest of the four tool definitions as this host registers them: the
  * id, the description, and the input schema of each, in id order. The
  * snapshot of the service pins its wire contract under its own tool
  * definition hash; this one names what the model saw, and a run records it,

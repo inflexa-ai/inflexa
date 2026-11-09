@@ -193,7 +193,7 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
     /**
      * The knowledge service client, for the planner that `generate_plan` drives.
      * Absent, the planner attaches no knowledge tool. The conversation agent
-     * itself gets `knowledge_recommend` through `hostTools`, from the embedder.
+     * itself gets `knowledge_recommend` and `knowledge_claims` through `hostTools`, from the embedder.
      */
     readonly knowledge?: KnowledgeClient;
     /** Skills root. No tool of the roster reads it. */
