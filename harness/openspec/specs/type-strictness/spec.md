@@ -51,7 +51,7 @@ or `@inflexa-ai/no-double-cast`. The fix shape for a reported assertion — a
 parse or guard at the boundary that owns the data, a type that carries the
 narrowing, or a kept `SAFETY:` comment only where a real invariant that no
 type can carry holds — is a design rule of the adopting change
-(openspec/changes/archive/2026-10-25-adopt-assertion-safety, design D2),
+(`adopt-assertion-safety`, design D2, in the git history),
 not a spec obligation.
 
 #### Scenario: The lint run reports nothing for the rules
@@ -71,8 +71,7 @@ The oxlint configuration of the harness MUST NOT turn off
 `typescript/no-unsafe-assignment`, `typescript/no-unsafe-return`,
 `typescript/no-unsafe-argument`, or `@inflexa-ai/no-conditional-spread`.
 The fix shape for a conditional spread is a design rule of the adopting
-change (openspec/changes/archive/2026-10-24-adopt-index-access-strictness,
-design D3), not a spec obligation.
+change (`adopt-index-access-strictness`, design D3, in the git history), not a spec obligation.
 
 #### Scenario: The lint run reports nothing for the rules
 
