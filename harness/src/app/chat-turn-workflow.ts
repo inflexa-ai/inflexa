@@ -410,7 +410,8 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
         {
             kind: "ok",
             threadType: input.threadType,
-            model: opening.model,
+            // A turn that started before the prepare step recorded the model replays a stored result with no `model` key.
+            model: opening.model ?? null,
             history: view,
             userMessage: opening.userMessage,
             contextRecords: opening.contextRecords,
