@@ -1061,8 +1061,9 @@ the website consumes. The invariants are:
 - [`CONTEXT.md`](./CONTEXT.md) — the cli domain map.
 - [`openspec/specs/`](./openspec/specs/) — the feature specs, and the source of
   truth for the decisions of cli.
-- [`openspec/changes/`](./openspec/changes/) — the active and archived change
-  proposals, and the decision log of cli. There is no `docs/adr`.
+- [`openspec/changes/`](./openspec/changes/) — the active change proposals. The
+  git history keeps each archived change, and it is the decision log of cli. There
+  is no `docs/adr`.
 - [`docs/`](./docs/) — supplementary developer notes: audits and dev guides.
 - [`HORRIBLE_BUG_FIXES.md`](./HORRIBLE_BUG_FIXES.md) — the postmortems. Read the
   applicable entry before you work in the same area.

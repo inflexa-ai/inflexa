@@ -317,7 +317,7 @@ where it flows → what the harness actually does with it → the UI surfaces a 
 ### 5.4 The actual agent seats (stated guess: two; code says more, in two tiers)
 
 One config id (resolved once at boot) threads into everything — "D6" is a **CLI** archived
-decision (`cli/openspec/changes/archive/2026-07-03-embed-execute-analysis/design.md:183-186`:
+decision (`design.md:183-186` of the change `2026-07-03-embed-execute-analysis`, in the git history:
 "`synthesisModel = model` (one model id in the cli config; splitting is a later config concern)"),
 not a harness spec.
 
