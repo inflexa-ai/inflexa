@@ -17,12 +17,14 @@ import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import type { ChatFrame } from "../../contracts/chat-events.js";
 import type { ChatMessage } from "../../contracts/message.js";
 import type { Connectable } from "../../lib/db-result.js";
+import { parseJsonAs } from "../../lib/parse-json.js";
 import { finalText, runLoop } from "../../loop/run-loop.js";
 import { registerSubAgent } from "../../loop/sub-agent.js";
 import { turnCredentials } from "../../loop/turn-credentials.js";
 import type { Querier } from "../../state/db.js";
 import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
+import { createThreadStore } from "../../memory/thread-store.js";
 import type { ResolveRequestHeaders } from "../../providers/request-headers.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { ThreadAgentResolver } from "../../runtime/assemble.js";
@@ -286,6 +288,27 @@ async function roles(threadId: string): Promise<string[]> {
     return (await createThreadHistory(rig.pool).loadRecent(threadId))._unsafeUnwrap().map((message) => message.role);
 }
 
+/** The stored result of a `chat-turn.prepare` step: SuperJSON puts the value of the step under `json`. */
+const StoredPrepareSchema = z.looseObject({ json: z.looseObject({ model: z.string() }) });
+
+/** Removes `model` from the stored result of the `chat-turn.prepare` step of a turn, as a turn of an earlier harness stored it. */
+async function dropStoredModel(turnId: string, model: string): Promise<void> {
+    const { rows } = await rig.pool.query<{ output: string }>(
+        "SELECT output FROM dbos.operation_outputs WHERE workflow_uuid = $1 AND function_name = 'chat-turn.prepare'",
+        [turnId],
+    );
+    expect(rows).toHaveLength(1);
+    const {
+        json: { model: stored, ...result },
+        ...envelope
+    } = parseJsonAs(rows[0]?.output ?? "", StoredPrepareSchema);
+    expect(stored).toBe(model);
+    await rig.pool.query("UPDATE dbos.operation_outputs SET output = $2 WHERE workflow_uuid = $1 AND function_name = 'chat-turn.prepare'", [
+        turnId,
+        JSON.stringify({ ...envelope, json: result }),
+    ]);
+}
+
 /** A model request that hangs until the cancel or the stop of its turn. */
 function hanging(onHang: () => void): ScriptStep {
     return (call) => {
@@ -344,6 +367,39 @@ describe("a chat turn as a workflow", () => {
         const stored = (await createThreadHistory(rig.pool).loadAll(threadId))._unsafeUnwrap();
         expect(JSON.stringify(stored)).toContain('"toolName":"crash_after"');
         expect(textOf(await readAll(turnId))).toBe("Done after the crash.");
+    });
+
+    it("continues on the model of the host a turn whose stored prepare result holds no model", async () => {
+        toolRuns = 0;
+        parkedWrite = false;
+        credentialAfterRestart = makeLocalAuth();
+        const PINNED = "claude-opus-5";
+        const pinned = scriptedModel([callTools(toolCall("c1", "crash_after", {}))], { modelId: PINNED });
+        const host = scriptedModel([reply([text("on the model of the host")])]);
+        provider = {
+            ...host.provider,
+            withModel: (modelId) => {
+                if (modelId !== PINNED) throw new Error(`the test provider has no model ${modelId}`);
+                return pinned.provider;
+            },
+        };
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+        (await createThreadStore(rig.pool).createThread({ threadId, analysisId: ANALYSIS }))._unsafeUnwrap();
+        (await createThreadStore(rig.pool).setModel(threadId, PINNED))._unsafeUnwrap();
+
+        const turnId = await startTurn(threadId);
+        // A turn that started on a harness before the pin of the model recorded its prepare step with no `model` key.
+        const ended = DBOS.retrieveWorkflow(turnId)
+            .getResult()
+            .catch(() => undefined)
+            .then(() => dropStoredModel(turnId, PINNED));
+        const handle = await recoverAtCrashPoint(turnId, () => parkedWrite, { ended });
+        await handle.getResult();
+
+        expect(pinned.calls).toHaveLength(1);
+        expect(host.calls).toHaveLength(1);
+        expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
+        expect(textOf(await readAll(turnId))).toBe("on the model of the host");
     });
 
     it("pauses a recovered turn with no credential, and a resume with a credential continues it under that credential", async () => {
