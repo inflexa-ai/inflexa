@@ -160,7 +160,12 @@ export const SituationFieldsSchema = z.object({
         .describe(
             "The row unit of the count table: `gene` for one row per gene; `exon` for one row per exon or counting bin with the gene of each row, as featureCounts at the feature level writes it; `transcript` for one row per transcript, as tximport writes with txOut or a quantifier table delivers. Omit for a gene-level table or when `data_state` is not counts.",
         ),
-    library_type: z.enum(["polyA", "total", "three_prime", "unknown"]).optional().describe("The library preparation, when known."),
+    library_type: z
+        .enum(["polyA", "total", "three_prime", "targeted_amplicon", "unknown"])
+        .optional()
+        .describe(
+            "The library preparation, when known. `targeted_amplicon` for a targeted RNA panel of amplicons, for example an AmpliSeq panel on Ion Torrent: the panel is the gene universe, and an amplicon count has no gene length dependence.",
+        ),
     strandedness: z
         .enum(["verified", "declared_unverified", "unknown"])
         .optional()
@@ -209,10 +214,22 @@ export const SituationFieldsSchema = z.object({
             "What the enrichment step takes: `ranked_list` for every tested gene ranked by a statistic (the default), `gene_list` for a discrete list such as the significant genes, `sample_scores` for a pathway score per sample. Omit when the question has no enrichment.",
         ),
     quality_flags: z
-        .array(z.enum(["low_depth_sample", "outlier_sample", "sample_identity_doubt", "high_duplication", "degraded_rna"]))
+        .array(
+            z.enum([
+                "low_depth_sample",
+                "outlier_sample",
+                "sample_identity_doubt",
+                "high_duplication",
+                "degraded_rna",
+                "integrity_unmeasured",
+                "dominant_feature",
+            ]),
+        )
         .optional()
         .describe(
-            "The quality concerns of the profile as typed flags: a sample with a library size far below the median; a sample that does not cluster with its group; a doubt about the identity of a sample; high duplication; degraded RNA (a low RNA integrity number, a 3' coverage bias, or formalin-fixed material).",
+            "The quality concerns of the profile as typed flags: a sample with a library size far below the median; a sample that does not cluster with its group; a doubt about the identity of a sample; high duplication; degraded RNA (a low RNA integrity number, a 3' coverage bias, or formalin-fixed material); " +
+                "no measure of the RNA integrity per sample (`integrity_unmeasured`: the sample table holds no integrity number, and the input holds no reads for a coverage ratio); " +
+                "one feature that holds a large share of the reads of one or more samples (`dominant_feature`), when the profile or the user request states that share.",
         ),
     tissue: z
         .enum(["liver", "kidney", "heart", "muscle", "brain", "adipose", "blood", "other"])
