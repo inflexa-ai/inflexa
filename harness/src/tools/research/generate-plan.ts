@@ -1276,6 +1276,7 @@ export function buildPlannerSearchTools(
             farmLockFile: deps.farmLockFile,
             imagePackagesFile: deps.imagePackagesFile,
             refStorePath: deps.refStorePath,
+            readPoolInventory: deps.readPoolInventory,
             onRecommend: hooks.onRecommend,
             onCheck: hooks.onCheck,
         }),

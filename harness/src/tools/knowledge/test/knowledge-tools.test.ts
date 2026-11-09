@@ -16,6 +16,7 @@ import { callTools, reply, scriptedModel, text, toolCall } from "../../../testin
 import { createWorkspaceMutator } from "../../workspace/mutator.js";
 import { createDecisionRecordStore } from "../../workspace/decision-record.js";
 import { GroundingSchema } from "../../../schemas/workflow-state.js";
+import type { EnvironmentStorePaths, PoolInventoryRead } from "../../../config/environment-stores.js";
 import { stepDecisionRecordDir, stepWritePrefix } from "../../../workspace/paths.js";
 import {
     contractAnswer,
@@ -191,11 +192,26 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const store = join(base, "refs");
         await Bun.write(join(store, "managed", "msigdb-hallmark-human", "2026.1", "h.all.v2026.1.Hs.symbols.gmt"), "HALLMARK_X\tna\tA\tB\n");
         const { client } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client, farmLockFile: lockPath, refStorePath: store });
+        // The pool holds fgsea, and the farm of the analysis does not link it yet.
+        const readPoolInventory = (): Promise<PoolInventoryRead> =>
+            Promise.resolve({
+                kind: "sections",
+                sections: [
+                    {
+                        title: "R (Bioconductor)",
+                        track: "r",
+                        packages: [
+                            { name: "DESeq2", version: "1.52.0" },
+                            { name: "fgsea", version: "1.36.0" },
+                        ],
+                    },
+                ],
+            });
+        const tool = createKnowledgeRecommendTool({ client, farmLockFile: lockPath, refStorePath: store, readPoolInventory });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
-        expect(out.environment_source).toEqual({ farm: "lock", image: "unknown", references: "store" });
+        expect(out.environment_source).toEqual({ farm: "lock", image: "unknown", pool: "inventory", references: "store" });
 
         const skeleton = out.plan_skeleton;
         expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T2S1"]);
@@ -203,7 +219,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.agent).toBe("analyst");
         expect(analysis.packages).toEqual(["DESeq2"]);
         expect(analysis.depends_on).toEqual(["T1S1"]);
-        expect(analysis.environment).toEqual({ package: { name: "DESeq2", present: true, version: "1.52.0" } });
+        expect(analysis.environment).toEqual({ package: { name: "DESeq2", state: "installed", version: "1.52.0" } });
         // A parameter is a setting of the grounding, never a constraint of the step.
         expect("constraints" in analysis).toBe(false);
         expect(analysis.alternatives).toEqual([{ method: "M-0003", label: "Alternative count-model F-test", when: "robustness", rules: ["R-0001@e7d0"] }]);
@@ -221,7 +237,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(gsea.agent).toBe("analyst");
         expect(gsea.depends_on).toEqual(["T1S2"]);
         expect(gsea.caveats).toEqual(["Few DE genes: ORA has no power."]);
-        expect(gsea.environment?.package).toEqual({ name: "fgsea", present: false });
+        expect(gsea.environment?.package).toEqual({ name: "fgsea", state: "in_store", version: "1.36.0" });
         expect(gsea.environment?.collection?.present).toBe(true);
         expect(gsea.environment?.collection?.path).toContain("msigdb-hallmark-human");
         expect(gsea.grounding.settings).toEqual([{ step: "enrichment", name: "gene_set_collection", value: "msigdb_hallmark_human" }]);
@@ -338,7 +354,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
         expect(out.plan_skeleton.every((step) => step.environment === undefined)).toBe(true);
-        expect(out.environment_source).toEqual({ farm: "unknown", image: "unknown", references: "unknown" });
+        expect(out.environment_source).toEqual({ farm: "unknown", image: "unknown", pool: "unknown", references: "unknown" });
         expect(out.plan_skeleton.length).toBe(3);
     });
 
@@ -840,19 +856,27 @@ describe("joinEnvironment", () => {
                 claims: [],
             };
 
-            const joined = await joinEnvironment(answer, { farmLockFile: lockPath, imagePackagesFile: recordPath });
-            expect(joined.environment_source).toEqual({ farm: "lock", image: "record", references: "unknown" });
-            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "survival", present: true, version: "3.8-6" });
-            expect(joined.procedure[1]?.environment?.package).toEqual({ name: "ConsensusClusterPlus", present: false });
-            expect(joined.procedure[2]?.environment?.package).toEqual({ name: "survminer", present: true, version: "0.5.2" });
+            const pool = {
+                readPoolInventory: (): Promise<PoolInventoryRead> =>
+                    Promise.resolve({
+                        kind: "sections",
+                        sections: [{ title: "R (Bioconductor)", track: "r", packages: [{ name: "ConsensusClusterPlus", version: "1.74.0" }] }],
+                    }),
+            };
+            const joined = await joinEnvironment(answer, { farmLockFile: lockPath, imagePackagesFile: recordPath, ...pool });
+            expect(joined.environment_source).toEqual({ farm: "lock", image: "record", pool: "inventory", references: "unknown" });
+            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "survival", state: "installed", version: "3.8-6" });
+            // The farm does not link it, and the store holds it: the launch links it.
+            expect(joined.procedure[1]?.environment?.package).toEqual({ name: "ConsensusClusterPlus", state: "in_store", version: "1.74.0" });
+            expect(joined.procedure[2]?.environment?.package).toEqual({ name: "survminer", state: "installed", version: "0.5.2" });
             // Two records name Matrix, and the farm links the copy a step loads.
-            expect(joined.procedure[3]?.environment?.package).toEqual({ name: "Matrix", present: true, version: "1.8-0" });
-            expect(joined.procedure[4]?.environment?.package).toEqual({ name: "samtools", present: false });
+            expect(joined.procedure[3]?.environment?.package).toEqual({ name: "Matrix", state: "installed", version: "1.8-0" });
+            expect(joined.procedure[4]?.environment?.package).toEqual({ name: "samtools", state: "absent" });
 
             // The record is the ONE source of the R runtime packages: with no record, survival is absent.
-            const withoutRecord = await joinEnvironment(answer, { farmLockFile: lockPath });
-            expect(withoutRecord.environment_source).toEqual({ farm: "lock", image: "unknown", references: "unknown" });
-            expect(withoutRecord.procedure[0]?.environment?.package).toEqual({ name: "survival", present: false });
+            const withoutRecord = await joinEnvironment(answer, { farmLockFile: lockPath, ...pool });
+            expect(withoutRecord.environment_source).toEqual({ farm: "lock", image: "unknown", pool: "inventory", references: "unknown" });
+            expect(withoutRecord.procedure[0]?.environment?.package).toEqual({ name: "survival", state: "absent" });
         } finally {
             rmSync(base, { recursive: true, force: true });
         }
@@ -884,8 +908,91 @@ describe("joinEnvironment", () => {
 
             const joined = await joinEnvironment(answer, { imagePackagesFile: recordPath });
 
-            expect(joined.environment_source).toEqual({ farm: "unknown", image: "record", references: "unknown" });
-            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "stats", present: true, version: "4.6.0" });
+            expect(joined.environment_source).toEqual({ farm: "unknown", image: "record", pool: "unknown", references: "unknown" });
+            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "stats", state: "installed", version: "4.6.0" });
+        } finally {
+            rmSync(base, { recursive: true, force: true });
+        }
+    });
+
+    it("looks a package up in the track the service names, and names the track when the store holds the name in both", async () => {
+        const answer = {
+            match: "applicable" as const,
+            snapshot: { date: "2026-09-16", digest: "sha256:abc" },
+            procedure: [
+                { step: "network", rules: [], package: { name: "igraph", track: "python" } },
+                { step: "graph", rules: [], package: { name: "igraph", track: "cran" } },
+                // The pool holds the Python decoupler only, and a bare lookup of decoupleR resolves to it.
+                { step: "activity", rules: [], package: { name: "decoupleR", track: "bioconductor" } },
+                { step: "untracked", rules: [], package: { name: "igraph" } },
+            ],
+            uncovered: [],
+            flags: [],
+            claims: [],
+        };
+        const readPoolInventory = (): Promise<PoolInventoryRead> =>
+            Promise.resolve({
+                kind: "sections",
+                sections: [
+                    { title: "R (CRAN)", track: "r", packages: [{ name: "igraph", version: "2.1.4" }] },
+                    {
+                        title: "Python (pip)",
+                        track: "python",
+                        packages: [
+                            { name: "igraph", version: "0.11.9" },
+                            { name: "decoupler", version: "2.1.1" },
+                        ],
+                    },
+                ],
+            });
+
+        const joined = await joinEnvironment(answer, { readPoolInventory });
+
+        expect(joined.procedure[0]?.environment?.package).toEqual({ name: "igraph", state: "in_store", version: "0.11.9", entry: "python:igraph" });
+        expect(joined.procedure[1]?.environment?.package).toEqual({ name: "igraph", state: "in_store", version: "2.1.4", entry: "r:igraph" });
+        expect(joined.procedure[2]?.environment?.package).toEqual({ name: "decoupleR", state: "absent" });
+        // A bare name that both tracks hold names no one package.
+        expect(joined.procedure[3]?.environment).toBeUndefined();
+    });
+
+    it("gives no state to a package the sandbox lacks when the store cannot answer", async () => {
+        const base = mkdtempSync(join(tmpdir(), "inflexa-env-"));
+        try {
+            const lockPath = join(base, "inflexa.lock");
+            await Bun.write(
+                lockPath,
+                JSON.stringify({
+                    schema: 1,
+                    arch: "arm64",
+                    languages: {},
+                    merge_conflicts: [],
+                    packages: [{ name: "DESeq2", version: "1.52.0", track: "bioconductor", store_dir: "x", hash: "y", requested: true }],
+                }),
+            );
+            const answer = {
+                match: "applicable" as const,
+                snapshot: { date: "2026-09-16", digest: "sha256:abc" },
+                procedure: [
+                    { step: "differential_expression", rules: [], package: { name: "DESeq2" } },
+                    { step: "enrichment", rules: [], package: { name: "fgsea" } },
+                ],
+                uncovered: [],
+                flags: [],
+                claims: [],
+            };
+            const readers: readonly (EnvironmentStorePaths["readPoolInventory"] | undefined)[] = [
+                undefined,
+                () => Promise.resolve({ kind: "unavailable", reason: "the dependency graph has a dangling edge" }),
+                () => Promise.reject(new Error("EACCES")),
+            ];
+
+            for (const readPoolInventory of readers) {
+                const joined = await joinEnvironment(answer, { farmLockFile: lockPath, readPoolInventory });
+                expect(joined.environment_source).toEqual({ farm: "lock", image: "unknown", pool: "unknown", references: "unknown" });
+                expect(joined.procedure[0]?.environment?.package).toEqual({ name: "DESeq2", state: "installed", version: "1.52.0" });
+                // The farm alone cannot tell "absent" from "not linked yet", thus the step carries no state.
+                expect(joined.procedure[1]?.environment).toBeUndefined();
+            }
         } finally {
             rmSync(base, { recursive: true, force: true });
         }

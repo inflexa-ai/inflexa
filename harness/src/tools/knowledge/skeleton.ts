@@ -62,7 +62,7 @@ export type SkeletonStep = {
     readonly disputed?: { readonly rule: string; readonly sides: readonly string[] };
     /** The method ids the rules forbid in the steps of the group. */
     readonly forbids: readonly string[];
-    /** The environment of the central step, when the host bound the stores: the package in the farm and the collection in the reference store. */
+    /** The environment of the central step, when the host bound the stores: the state of the package and the collection in the reference store. */
     readonly environment?: StepEnvironment;
     readonly grounding: {
         readonly status: "grounded" | "ungrounded" | "flagged";

@@ -77,7 +77,17 @@ After a `knowledge_recommend` answer in one plan generation, `submit_plan` MUST 
 
 ### Requirement: The recommend answer carries the environment and a plan skeleton
 
-When the host binds a farm lock or a reference store, `knowledge_recommend` MUST join each step of the procedure with the environment. The environment says whether the farm holds the package of the step, and at which version. It says whether the reference store holds the collection the step names, and at which path. The tool MUST NOT fill a gap and MUST NOT name a path it did not read.
+When the host binds a farm lock, a package store, or a reference store, `knowledge_recommend` MUST join each step of the procedure with the environment. The environment gives the state of the package of the step, and its version. It says whether the reference store holds the collection the step names, and at which path. The tool MUST NOT fill a gap and MUST NOT name a path it did not read.
+
+The state of a package MUST be one of these values:
+
+- `installed`: the farm lock or the image record names the package, thus the sandbox loads it now.
+- `in_store`: the pool-scope inventory of the package store holds the package, and no record of the sandbox names it. The launch links it into the farm when the step names it in `packages`.
+- `absent`: the sandbox and the package store both do not hold the package.
+
+The pool lookup MUST resolve a name the same way as `list_available_packages`, in the track that the service names. When the store holds the name in both tracks, the package MUST carry `entry`, the `packages` entry with its track. A bare name that both tracks hold MUST get no state.
+
+When the host binds no pool inventory, or the inventory cannot answer, a package that no record of the sandbox names MUST get no state. The farm of an analysis links only the packages of its launched plans, thus the farm alone cannot show that a package is absent. With no path of the image record, the join MUST read the record at the container mountpoint of the store, as `list_available_packages` does. `environment_source` MUST name the source of each fact: the farm lock, the image record, the pool inventory, and the reference store.
 
 The tool MUST give the planner one representation: `plan_skeleton` and `claims`. The model-facing answer MUST NOT carry the `procedure` of the service. `plan_skeleton` MUST be the procedure folded into plan steps. When the procedure holds a `cohort_assembly` step, the fold MUST put it in one step before the QC step, and the QC step MUST depend on it. Each skeleton step MUST carry these fields, filled from the procedure:
 
@@ -95,13 +105,37 @@ Each entry of `settings` is one parameter of a procedure step of the group. The 
 
 - **GIVEN** a farm lock that lists DESeq2 and a reference store that holds the human Hallmark collection
 - **WHEN** the planner calls `knowledge_recommend` for a two-group design
-- **THEN** the differential expression skeleton step reads `environment.package.present: true` with the version, and the enrichment skeleton step reads `environment.collection.present: true` with its path
+- **THEN** the differential expression skeleton step reads `environment.package.state: installed` with the version, and the enrichment skeleton step reads `environment.collection.present: true` with its path
+
+#### Scenario: The store holds a package that the farm does not link
+
+- **GIVEN** a farm lock that does not list fgsea, and a pool inventory that holds fgsea
+- **WHEN** the planner calls `knowledge_recommend` for a two-group design with enrichment
+- **THEN** the enrichment skeleton step reads `environment.package.state: in_store` with the version of the pool
+
+#### Scenario: Neither the sandbox nor the store holds a package
+
+- **GIVEN** a farm lock, an image record, and a pool inventory that do not hold samtools
+- **WHEN** a procedure step names samtools
+- **THEN** the step reads `environment.package.state: absent`
+
+#### Scenario: The store holds the name in both tracks
+
+- **GIVEN** a pool inventory that holds the R igraph and the Python igraph
+- **WHEN** a procedure step names the Python igraph
+- **THEN** the step reads `environment.package.state: in_store` with the Python version and `entry: python:igraph`
+
+#### Scenario: The store cannot answer
+
+- **GIVEN** a farm lock that does not list fgsea, and a pool inventory that the host does not bind or that cannot answer
+- **WHEN** the planner calls `knowledge_recommend`
+- **THEN** the enrichment step carries no package state, and `environment_source.pool` reads unknown
 
 #### Scenario: No store is bound
 
-- **GIVEN** a host that binds no farm lock and no reference store
+- **GIVEN** a host that binds no farm lock, no package store, and no reference store
 - **WHEN** the planner calls `knowledge_recommend`
-- **THEN** no skeleton step carries an environment, and `environment_source` reads unknown for both
+- **THEN** no skeleton step carries an environment, and `environment_source` reads unknown for each source
 
 #### Scenario: The planner receives one representation
 

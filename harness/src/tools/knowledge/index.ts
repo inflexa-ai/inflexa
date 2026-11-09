@@ -39,6 +39,8 @@ export type KnowledgeToolsDeps = {
     readonly imagePackagesFile?: string;
     /** Host path of the reference store, for the same join. */
     readonly refStorePath?: string;
+    /** The pool-scope inventory of the package store, for the same join: what a launch can link into the farm. */
+    readonly readPoolInventory?: EnvironmentStorePaths["readPoolInventory"];
     /** Receives each recommend answer the planner sees; see `KnowledgeRecommendDeps.onAnswer`. */
     readonly onRecommend?: KnowledgeRecommendDeps["onAnswer"];
     /** Called for each answer of `knowledge_check`; see `KnowledgeCheckDeps.onCheck`. */
@@ -60,6 +62,7 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
             farmLockFile: deps.farmLockFile,
             imagePackagesFile: deps.imagePackagesFile,
             refStorePath: deps.refStorePath,
+            readPoolInventory: deps.readPoolInventory,
             onAnswer: deps.onRecommend,
         }),
         createKnowledgeCheckTool({ client: deps.client, pin, onCheck: deps.onCheck }),

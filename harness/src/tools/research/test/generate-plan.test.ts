@@ -27,7 +27,7 @@ import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, ty
 import type { Tool, ToolContext } from "../../define-tool.js";
 import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake-client.js";
 import { buildPlannerSearchTools, createGeneratePlanTool, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "../generate-plan.js";
-import { presentAt, presentFirst } from "../../../lib/present.js";
+import { presentAt, presentFind, presentFirst } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
 
 /** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
@@ -1393,6 +1393,36 @@ describe("generatePlan loop-driving tool", () => {
             // reason) in any sink that filters by name.
             expect(record.fields).not.toHaveProperty("reason");
         });
+    });
+});
+
+describe("buildPlannerSearchTools", () => {
+    it("joins the recommend answer against the package store that the planner holds", async () => {
+        const pool = new Pool();
+        const { client } = fakeKnowledgeClient();
+        const deps: GeneratePlanDeps = {
+            conversation: { provider: makeFakeChatProvider(), model: "claude-test" },
+            pool,
+            bioKeys: TEST_BIO_KEYS,
+            workspace: { workspaceFs: makeFakeWorkspaceFs(), pool, resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
+            knowledge: client,
+            // No farm lock is bound, and the store holds DESeq2: the launch links it.
+            readPoolInventory: () =>
+                Promise.resolve({ kind: "sections", sections: [{ title: "R (Bioconductor)", track: "r", packages: [{ name: "DESeq2", version: "1.52.0" }] }] }),
+        };
+        const recommend = presentFind(buildPlannerSearchTools(deps), (tool) => tool.id === "knowledge_recommend");
+
+        // The ok value carries its call record under a symbol key, thus a loose object reads it.
+        const packageOf = z.object({ name: z.string(), state: z.string(), version: z.string().optional() });
+        const answer = z
+            .looseObject({
+                environment_source: z.object({ farm: z.string(), image: z.string(), pool: z.string(), references: z.string() }),
+                plan_skeleton: z.array(z.looseObject({ environment: z.looseObject({ package: packageOf.optional() }).optional() })),
+            })
+            .parse(await awaitOk(recommend.execute(SITUATION, toolContext())));
+
+        expect(answer.environment_source).toEqual({ farm: "unknown", image: "unknown", pool: "inventory", references: "unknown" });
+        expect(answer.plan_skeleton.map((step) => step.environment)).toContainEqual({ package: { name: "DESeq2", state: "in_store", version: "1.52.0" } });
     });
 });
 

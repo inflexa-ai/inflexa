@@ -131,7 +131,10 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
             "A caveat is one of: a warn flag; a parameter conflict between two rules (the step omits that parameter, so state the value you choose and both rule ids); " +
             "a substitution (the template runs a substitute of the method of record, and the step method, package, and template are the substitute; the plan states it); " +
             "a language limit (the requested language has no template that realizes the method for this design, or its template refuses a value of the rules; the step keeps the named template, and the plan states the limit). " +
-            "A step carries `environment` when the host bound the stores: `package.present` and its version from the packages installed in the sandbox, and `collection.present` with its path in the reference store. " +
+            "A step carries `environment` when the host bound the stores. `package.state` is `installed` (the sandbox loads it now, at `version`), " +
+            "`in_store` (the package store holds it at `version`, and the launch links it when the step names it in `packages`), or `absent` (neither holds it); " +
+            "`package.entry`, when present, is the `packages` entry to write, because the store holds the name in two tracks. " +
+            "A package with no `state` has a store the host could not read. `collection.present` gives the collection with its path in the reference store. " +
             "That is the environment answer; do not call the listing tools for a package or a collection the answer already reports. " +
             "Call it once per situation; a second call with the same situation gives the same answer.",
         inputSchema: SituationFieldsSchema,
@@ -148,6 +151,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
                 farmLockFile,
                 imagePackagesFile: deps.imagePackagesFile,
                 refStorePath: deps.refStorePath,
+                readPoolInventory: deps.readPoolInventory,
             });
             const planner = toPlannerAnswer(joined);
             // The answer rides as the call record too. The pin and the memory of the planner
