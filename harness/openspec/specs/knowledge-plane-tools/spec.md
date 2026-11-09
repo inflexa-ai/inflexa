@@ -99,7 +99,9 @@ The tool MUST give the planner one representation: `plan_skeleton` and `claims`.
 
 Each entry of `settings` is one parameter of a procedure step of the group. The entry MUST name the procedure step, the name, the value, and the source.
 
-`claims` MUST hold only the claims the procedure references, in match order. A referenced claim is a rule of a step, a flag, an alternative, or a disputed rule. The full view of a claim is at `GET /v1/claims/{claim}` of the service, and the tool MUST NOT fetch it. The situation MUST accept an optional `enrichment_input` field, and the answer MUST list in `dropped` the steps a flag removed and the steps that the script of the test does not run, for example the shrinkage of limma and edgeR.
+`claims` MUST hold one heading for each claim that the procedure references, in match order. A referenced claim is a rule of a step, a flag, an alternative, or a disputed rule. A heading MUST carry the claim id, the title, the strength, and the severity. A heading MUST NOT carry the statement or the evidence, except that the heading of a claim with no title MUST carry the statement.
+
+The call record of the tool MUST keep the full view of each claim, and `knowledge_claims` gives it on demand. The full view of a claim is at `GET /v1/claims/{claim}` of the service, and the tool MUST NOT fetch it. The situation MUST accept an optional `enrichment_input` field, and the answer MUST list in `dropped` the steps a flag removed and the steps that the script of the test does not run, for example the shrinkage of limma and edgeR.
 
 #### Scenario: The farm holds the package and the store holds the collection
 
@@ -141,7 +143,14 @@ Each entry of `settings` is one parameter of a procedure step of the group. The 
 
 - **GIVEN** a two-group design whose differential expression rule names an alternative method, a forbidden method, and the alpha of the test with its source
 - **WHEN** the planner calls `knowledge_recommend`
-- **THEN** the answer carries `plan_skeleton` and `claims` and no `procedure`. The differential expression skeleton step carries the alternative in `alternatives`, the forbidden method in `forbids`, and the alpha with its step and source in `grounding.settings`. Each claim id a skeleton step cites has one view in `claims`.
+- **THEN** the answer carries `plan_skeleton` and `claims` and no `procedure`. The differential expression skeleton step carries the alternative in `alternatives`, the forbidden method in `forbids`, and the alpha with its step and source in `grounding.settings`. Each claim id a skeleton step cites has one heading in `claims`.
+
+#### Scenario: The model reads a heading of each claim
+
+- **GIVEN** an answer whose claims carry a title, a statement, and evidence
+- **WHEN** the planner calls `knowledge_recommend`
+- **THEN** each entry of `claims` in the model-facing answer carries the id, the title, the strength, and the severity, and no statement and no evidence
+- **AND** the call record carries the full view of each claim
 
 ### Requirement: A language preference selects among the templates that honor the design
 
@@ -307,7 +316,7 @@ The recommend tool MUST give each answer to the planner invocation that holds it
 
 ### Requirement: A plan pins one release of the service
 
-The two planner tools of one plan generation MUST share one pin. The first `knowledge_recommend` answer MUST set the pin to the served snapshot digest. Each later call of `knowledge_recommend` and `knowledge_check` in the same plan MUST send the pin as `expected_snapshot`. `knowledge_template` MUST send the snapshot digest of the grounding of its step as `expected_snapshot`, with the step id and the claims of the step. A 409 of the service MUST be the data variant `snapshot_mismatch`, with the expected and the served digests, and the tool MUST do no work on it. The render call of `knowledge_template` MUST run in a durable step, thus a replay of the step reads the cached answer and writes the same bytes.
+`knowledge_recommend` and `knowledge_check` of one plan generation MUST share one pin. The first `knowledge_recommend` answer MUST set the pin to the served snapshot digest. Each later call of `knowledge_recommend` and `knowledge_check` in the same plan MUST send the pin as `expected_snapshot`. `knowledge_template` MUST send the snapshot digest of the grounding of its step as `expected_snapshot`, with the step id and the claims of the step. A 409 of the service MUST be the data variant `snapshot_mismatch`, with the expected and the served digests, and the tool MUST do no work on it. The render call of `knowledge_template` MUST run in a durable step, thus a replay of the step reads the cached answer and writes the same bytes.
 
 #### Scenario: The service moves between two calls
 
@@ -361,7 +370,7 @@ The record on disk MUST carry the step, the claims, the digest of the script as 
 
 ### Requirement: The plan keeps the view of each cited claim
 
-When the planner saves a plan, the host MUST keep the view of each claim that a step of the plan cites in `grounding.claims`. The host MUST take a view only from the last `knowledge_recommend` answer of the invocation. A step MUST take a view only when its snapshot digest equals the digest of that answer. The stored plan MUST carry the views in the optional `claims` field, one view for each claim id, in the order of the steps. A view MUST carry the claim id, the snapshot digest, the statement, the strength, and the evidence. A view MUST also carry the rule, the title, the severity, and the license when the answer holds them. The planner MUST NOT write the `claims` field. A plan with no cited claim MUST NOT carry the field. A stored plan without the field MUST load as before.
+When the planner saves a plan, the host MUST keep the view of each claim that a step of the plan cites in `grounding.claims`. The host MUST take a view only from the call record of the last `knowledge_recommend` answer of the invocation. A step MUST take a view only when its snapshot digest equals the digest of that answer. The stored plan MUST carry the views in the optional `claims` field, one view for each claim id, in the order of the steps. A view MUST carry the claim id, the snapshot digest, the statement, the strength, and the evidence. A view MUST also carry the rule, the title, the severity, and the license when the answer holds them. The planner MUST NOT write the `claims` field. A plan with no cited claim MUST NOT carry the field. A stored plan without the field MUST load as before.
 
 #### Scenario: Two steps cite one claim
 
@@ -451,3 +460,22 @@ Before `execute_command` runs a script, it MUST compare the copy in the step wit
 - **GIVEN** a record in the step with no host copy
 - **WHEN** `execute_command` runs a changed script of that record
 - **THEN** the copy in the step lists the change, and the host holds no copy of the record
+
+### Requirement: The host gives the full view of a claim on demand
+
+`knowledge_claims` MUST give the full view of each requested claim from the claim shelf that the recommend tool of the same conversation fills. The fold of each recommend answer MUST keep its claim views on the shelf, on the first run and on a replay. A later view of one claim id MUST replace the earlier view. The tool MUST NOT call the service, because a claim id names the content hash of its rule.
+
+A call MUST name from 1 to `CLAIMS_PER_CALL_MAX` claim ids. The answer MUST list in `missing` each requested id that the shelf does not hold. An embedder that gives `knowledge_recommend` to an agent MUST give the agent `knowledge_claims` over the same shelf.
+
+#### Scenario: The planner reads a claim of the answer
+
+- **GIVEN** a recommend answer in an earlier round of the planner that holds the claim `R-0033@1a2b`
+- **WHEN** the planner calls `knowledge_claims` with `R-0033@1a2b` and `R-9999@0000`
+- **THEN** the answer carries the full view of `R-0033@1a2b` with its statement and its evidence, and `missing` lists `R-9999@0000`
+- **AND** the service gets no call
+
+#### Scenario: No answer holds the claim
+
+- **GIVEN** a conversation with no recommend answer
+- **WHEN** the agent calls `knowledge_claims` with `R-0001@e7d0`
+- **THEN** the answer carries no view, and `missing` lists `R-0001@e7d0`

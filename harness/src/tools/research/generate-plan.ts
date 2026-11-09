@@ -1216,8 +1216,8 @@ export type GeneratePlanDeps = EnvironmentStorePaths & {
     /** Where the VM of `run_script` comes from, for the script reads. See `ScriptRuntime`. */
     readonly scriptRuntime?: ScriptRuntime;
     /**
-     * The knowledge service client. Bound, the planner gains `knowledge_recommend`
-     * and `knowledge_check`. Absent, no knowledge tool attaches and no
+     * The knowledge service client. Bound, the planner gains `knowledge_recommend`,
+     * `knowledge_claims`, and `knowledge_check`. Absent, no knowledge tool attaches and no
      * description of one enters the context, which is the default state of
      * the open-source host.
      */
@@ -1269,8 +1269,9 @@ export function buildPlannerSearchTools(
             imagePackagesFile: deps.imagePackagesFile,
             readPoolInventory: deps.readPoolInventory,
         }),
-        // The knowledge plane: one cited procedure per situation, and one check
-        // of the draft. Both attach only when the embedder binds a client.
+        // The knowledge plane: one cited procedure per situation, the full view of
+        // a claim on demand, and one check of the draft. They attach only when the
+        // embedder binds a client.
         ...createKnowledgeTools({
             client: deps.knowledge,
             farmLockFile: deps.farmLockFile,

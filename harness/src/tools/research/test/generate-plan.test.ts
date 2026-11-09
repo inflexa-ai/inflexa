@@ -343,7 +343,8 @@ describe("generatePlan loop-driving tool", () => {
         const ids = toolNamesOf(presentAt(model.calls, 0));
         expect(ids.slice(-4)).toEqual([...TERMINAL_TOOLS, "run_script"]);
         expect(ids.indexOf("knowledge_recommend")).toBeGreaterThan(-1);
-        expect(ids.indexOf("knowledge_check")).toBe(ids.indexOf("knowledge_recommend") + 1);
+        expect(ids.indexOf("knowledge_claims")).toBe(ids.indexOf("knowledge_recommend") + 1);
+        expect(ids.indexOf("knowledge_check")).toBe(ids.indexOf("knowledge_claims") + 1);
         expect(ids.indexOf("knowledge_check")).toBeLessThan(ids.indexOf("submit_plan"));
     });
 

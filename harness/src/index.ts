@@ -166,16 +166,18 @@ export type { RunCanceler, RunCancelerDeps, CancelRunResult } from "./execution/
 // Tool primitive.
 export { defineTool, isToolError } from "./tools/define-tool.js";
 // The knowledge plane: an embedder binds a client at its composition root
-// (or none), and it can hand `knowledge_recommend` to the conversation agent
-// through `hostTools`.
+// (or none), and it can hand `knowledge_recommend` and `knowledge_claims`, over
+// one claim shelf, to the conversation agent through `hostTools`.
 export {
+    createClaimShelf,
     createHttpKnowledgeClient,
+    createKnowledgeClaimsTool,
     createKnowledgeRecommendTool,
     createKnowledgeCheckTool,
     createKnowledgeTools,
     knowledgeToolDefinitionHash,
 } from "./tools/knowledge/index.js";
-export type { KnowledgeClient, KnowledgeSituation, HttpKnowledgeClientConfig } from "./tools/knowledge/index.js";
+export type { ClaimShelf, KnowledgeClient, KnowledgeSituation, HttpKnowledgeClientConfig } from "./tools/knowledge/index.js";
 export type { Tool, ToolDefinition, ToolContext, ToolError } from "./tools/define-tool.js";
 export { viewText, viewJson, viewCode, viewFields } from "./tools/tool-view.js";
 export type { ToolCallView, ViewText, ViewJson, ViewCode, ViewFields, ViewLeaf, ViewValue } from "./tools/tool-view.js";

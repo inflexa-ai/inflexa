@@ -6,6 +6,8 @@ import {
     createAskGateway,
     createConfiguredAiSdkProvider,
     createHttpKnowledgeClient,
+    createClaimShelf,
+    createKnowledgeClaimsTool,
     createKnowledgeRecommendTool,
     createDbosRunLauncher,
     createLocalRunAuthorizer,
@@ -29,6 +31,7 @@ import {
     type EmbeddingProvider,
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
+    type KnowledgeClient,
     type MakeSessionPagePublisher,
     type PackageQuery,
     type PackageRequestOutcome,
@@ -41,6 +44,7 @@ import {
     type WorkSurface,
     type RunLauncher,
     type ThreadAgentResolver,
+    type Tool,
 } from "@inflexa-ai/harness";
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
@@ -128,6 +132,12 @@ declare const __INFLEXA_CODEMODE_WORKER__: string | undefined;
 function codemodeRuntime(): ScriptRuntime | undefined {
     if (typeof __INFLEXA_CODEMODE_WORKER__ === "undefined") return undefined;
     return { wasmPath: quickjsWasm, workerUrl: __INFLEXA_CODEMODE_WORKER__ };
+}
+
+/** The knowledge tools of the conversation agent: the recommend tool and the claims tool, over one claim shelf. */
+function knowledgeHostTools(client: KnowledgeClient): Tool[] {
+    const shelf = createClaimShelf();
+    return [createKnowledgeRecommendTool({ client, shelf }), createKnowledgeClaimsTool({ shelf })];
 }
 
 export type RunTriggerDeps = {
@@ -1288,12 +1298,13 @@ async function bootHarnessRuntimeOnce(
             // mutates under the chat's own lock and its provenance/parity events stay on this bus.
             // `knowledge_recommend` rides the same `hostTools` list when the knowledge plane is bound, thus the
             // conversation agent can orient a method question before it plans, with no harness change.
+            // `knowledge_claims` reads the full claim views of its answers from the shelf that the two share.
             scriptRuntime: codemodeRuntime(),
             hostTools: [
                 createRunInflexaTool(),
                 createLaunchDirTool(),
                 createManageInputsTool(),
-                ...(knowledge ? [createKnowledgeRecommendTool({ client: knowledge })] : []),
+                ...(knowledge ? knowledgeHostTools(knowledge) : []),
             ],
         };
         // Re-point the sandbox agent's provenance emitters when its model switches live.

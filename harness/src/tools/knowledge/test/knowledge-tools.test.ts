@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { isSha256Hash } from "../../../lib/test/text-shapes.js";
 import { parseJsonAs } from "../../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
@@ -28,6 +29,7 @@ import {
     substitutionAnswer,
 } from "../__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "../check.js";
+import { createClaimShelf, createKnowledgeClaimsTool } from "../claims.js";
 import { joinEnvironment } from "../environment.js";
 import { createKnowledgeTools, knowledgeToolDefinitionHash } from "../index.js";
 import { createKnowledgeRecommendTool, type KnowledgeRecommendAnswer } from "../recommend.js";
@@ -49,6 +51,17 @@ const SITUATION = {
     batch: "none" as const,
 };
 
+/** The output of the result of one tool call, as the request sent it to the model. */
+function toolResultIn(call: LanguageModelV4CallOptions, toolCallId: string): unknown {
+    for (const message of call.prompt) {
+        if (message.role !== "tool") continue;
+        for (const part of message.content) {
+            if (part.type === "tool-result" && part.toolCallId === toolCallId) return part.output;
+        }
+    }
+    return undefined;
+}
+
 /** The JSON of a written decision record, narrowed to the object the tool wrote. */
 function asRecord(json: unknown): Record<string, unknown> {
     const record = parseUnknownRecord(json);
@@ -57,10 +70,10 @@ function asRecord(json: unknown): Record<string, unknown> {
 }
 
 describe("createKnowledgeTools", () => {
-    it("attaches nothing without a client, and the two planner tools with one", () => {
+    it("attaches nothing without a client, and the three planner tools with one", () => {
         expect(createKnowledgeTools({})).toEqual([]);
         const { client } = fakeKnowledgeClient();
-        expect(createKnowledgeTools({ client }).map((tool) => tool.id)).toEqual(["knowledge_recommend", "knowledge_check"]);
+        expect(createKnowledgeTools({ client }).map((tool) => tool.id)).toEqual(["knowledge_recommend", "knowledge_claims", "knowledge_check"]);
     });
 
     it("emits flat object schemas that model tool calling accepts", () => {
@@ -74,7 +87,7 @@ describe("createKnowledgeTools", () => {
 describe("knowledge_recommend", () => {
     it("sends the situation with absent optional fields omitted and returns the skeleton", async () => {
         const { client, calls } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         expect(out.match).toBe("applicable");
@@ -85,9 +98,9 @@ describe("knowledge_recommend", () => {
         expect(Object.keys(presentAt(calls.recommend, 0).situation)).not.toContain("covariates");
     });
 
-    it("gives the planner one representation: the skeleton and the claims, never the procedure", async () => {
+    it("gives the planner one representation: the skeleton and a heading of each claim, never the procedure", async () => {
         const { client } = fakeKnowledgeClient({ recommend: { ...recommendAnswer(), dropped: ["shrink_lfc"], situation: SITUATION } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const input = tool.inputSchema.parse(SITUATION);
         const out = (await tool.execute(input, ctx))._unsafeUnwrap();
@@ -109,7 +122,29 @@ describe("knowledge_recommend", () => {
         expect(out.claims.map((claim) => claim.id)).toEqual(recommendAnswer().claims.map((claim) => claim.id));
         const cited = new Set(out.plan_skeleton.flatMap((step) => step.grounding.claims));
         for (const id of cited) expect(out.claims.some((claim) => claim.id === id)).toBe(true);
+        // The model reads the id, the title, the strength, and the severity of a claim, and the call record keeps the full view.
+        const model = parseJsonAs(JSON.stringify(out), z.object({ claims: z.array(z.record(z.string(), z.json())) }));
+        for (const heading of model.claims) expect(Object.keys(heading)).toEqual(["id", "title", "strength", "severity"]);
+        const kept = z.object({ claims: z.array(z.looseObject({ id: z.string() })) }).parse(readToolCallRecord(out));
+        expect(kept.claims).toEqual(recommendAnswer().claims);
         expect(tool.describeResult?.(input, out)).toBe("3 steps, 6 claims");
+    });
+
+    it("gives the statement in the heading of a claim with no title", async () => {
+        const [first, ...rest] = recommendAnswer().claims;
+        if (first === undefined) throw new Error("the fixture holds no claim");
+        const { title: _title, ...untitled } = first;
+        const { client } = fakeKnowledgeClient({ recommend: { ...recommendAnswer(), claims: [untitled, ...rest] } });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
+        if (out.match !== "applicable") throw new Error(out.match);
+        expect(parseJsonAs(JSON.stringify(presentAt(out.claims, 0)), z.record(z.string(), z.json()))).toEqual({
+            id: first.id,
+            statement: first.statement,
+            strength: first.strength,
+            severity: "info",
+        });
     });
 
     it("keeps the covered skeleton steps of a none answer beside the nearest rules", async () => {
@@ -124,7 +159,7 @@ describe("knowledge_recommend", () => {
                 reason: "no rule",
             },
         });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "none") throw new Error(out.match);
@@ -136,7 +171,7 @@ describe("knowledge_recommend", () => {
 
     it("sends the classifier flag and the import state as situation fields, and refuses an unknown import state", async () => {
         const { client, calls } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         await awaitOk(tool.execute(tool.inputSchema.parse({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" }), ctx));
         expect(calls.recommend[0]?.situation).toEqual({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" });
@@ -145,7 +180,7 @@ describe("knowledge_recommend", () => {
 
     it("sends the preferred language beside the situation, not inside it", async () => {
         const { client, calls } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         await awaitOk(tool.execute(tool.inputSchema.parse({ ...SITUATION, preferred_language: "python" }), ctx));
         expect(calls.recommend[0]?.preferences).toEqual({ language: "python" });
@@ -154,7 +189,7 @@ describe("knowledge_recommend", () => {
 
     it("passes an unavailable answer through as data, never as an error", async () => {
         const { client } = fakeKnowledgeClient({ recommend: { match: "unavailable", reason: "Request timed out after 30000ms" } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         expect(out).toEqual({ match: "unavailable", reason: "Request timed out after 30000ms" });
@@ -162,7 +197,7 @@ describe("knowledge_recommend", () => {
 
     it("describes the call and the result in one line each", () => {
         const { client } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         expect(tool.describeCall?.(tool.inputSchema.parse(SITUATION))).toBe("differential_expression: 6-6 per group, batch none");
         expect(tool.describeResult?.(tool.inputSchema.parse(SITUATION), { match: "unavailable", reason: "x" })).toBe("unavailable");
     });
@@ -207,7 +242,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
                     },
                 ],
             });
-        const tool = createKnowledgeRecommendTool({ client, farmLockFile: lockPath, refStorePath: store, readPoolInventory });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client, farmLockFile: lockPath, refStorePath: store, readPoolInventory });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -260,7 +295,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
                   : step,
         );
         const { client } = fakeKnowledgeClient({ recommend: { ...base, procedure } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -275,7 +310,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("renders a parameter conflict as a caveat that names both rules, never as a setting", async () => {
         const { client } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -287,7 +322,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("names the substitute as the step method and renders the substitution as a caveat", async () => {
         const { client } = fakeKnowledgeClient({ recommend: substitutionAnswer() });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (
             await tool.execute(
@@ -306,7 +341,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("renders a language limit as a caveat and keeps the named template", async () => {
         const { client } = fakeKnowledgeClient({ recommend: limitAnswer() });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse({ ...SITUATION, paired: true, preferred_language: "python" }), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -337,7 +372,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
                 : step,
         );
         const { client } = fakeKnowledgeClient({ recommend: { ...answer, procedure } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse({ ...SITUATION, paired: true, preferred_language: "python" }), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -349,7 +384,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("carries no environment when no store is bound, and still folds the skeleton", async () => {
         const { client } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -362,7 +397,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const base = recommendAnswer();
         const skeletonStepOf = async (recommend: ReturnType<typeof recommendAnswer>, id: string) => {
             const { client } = fakeKnowledgeClient({ recommend });
-            const tool = createKnowledgeRecommendTool({ client });
+            const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
             const { ctx } = makeToolContext();
             const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
             if (out.match !== "applicable") throw new Error(out.match);
@@ -392,7 +427,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         };
         const procedure = base.procedure.map((step) => (step.step === "differential_expression" ? { ...step, template: undefined, unrealized: gap } : step));
         const { client } = fakeKnowledgeClient({ recommend: { ...base, procedure, unrealized: ["differential_expression"] } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -404,7 +439,9 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.caveats.some((caveat) => caveat.includes("no vetted template realizes") && caveat.includes("n_timepoints is_null"))).toBe(true);
         // An answer with no gap carries no field.
         const { client: plain } = fakeKnowledgeClient({ recommend: base });
-        const plainOut = (await createKnowledgeRecommendTool({ client: plain }).execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
+        const plainOut = (
+            await createKnowledgeRecommendTool({ shelf: createClaimShelf(), client: plain }).execute(tool.inputSchema.parse(SITUATION), ctx)
+        )._unsafeUnwrap();
         expect("unrealized" in plainOut).toBe(false);
     });
 
@@ -439,7 +476,7 @@ describe("the release pin of one plan", () => {
         const fake = fakeKnowledgeClient();
         const tools = createKnowledgeTools({ client: fake.client });
         const recommend = presentAt(tools, 0, "the recommend tool");
-        const check = presentAt(tools, 1, "the check tool");
+        const check = presentFind(tools, (tool) => tool.id === "knowledge_check");
         const { ctx } = makeToolContext();
         await awaitOk(recommend.execute(SITUATION, ctx));
         expect(fake.calls.recommend[0]?.expected_snapshot).toBeUndefined();
@@ -452,7 +489,7 @@ describe("the release pin of one plan", () => {
     it("a check before any answer carries no pin, and a mismatch answer passes through as data", async () => {
         const mismatch = { match: "snapshot_mismatch" as const, message: "another release", expected: "sha256:aa", served: SNAPSHOT };
         const fake = fakeKnowledgeClient({ check: mismatch });
-        const check = presentAt(createKnowledgeTools({ client: fake.client }), 1, "the check tool");
+        const check = presentFind(createKnowledgeTools({ client: fake.client }), (tool) => tool.id === "knowledge_check");
         const { ctx } = makeToolContext();
         const out = (await check.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx))._unsafeUnwrap();
         expect(fake.calls.check[0]?.expected_snapshot).toBeUndefined();
@@ -487,7 +524,7 @@ describe("the release pin of one plan", () => {
         const tools = createKnowledgeTools({ client: replay.client });
         presentAt(tools, 0, "the recommend tool").foldCallRecord?.(recorded);
         await awaitOk(
-            presentAt(tools, 1, "the check tool").execute(
+            presentFind(tools, (tool) => tool.id === "knowledge_check").execute(
                 { ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] },
                 makeToolContext().ctx,
             ),
@@ -514,7 +551,41 @@ describe("the release pin of one plan", () => {
         expect(presentAt(answers, 0).snapshot).toEqual(SNAPSHOT);
     });
 
-    it("the tool definition hash is stable and names the three tools", () => {
+    it("gives the full view of a claim through knowledge_claims after the round of the answer, and names each id it does not hold", async () => {
+        const fake = fakeKnowledgeClient();
+        const tools = createKnowledgeTools({ client: fake.client });
+        const first = presentAt(recommendAnswer().claims, 0);
+        const model = scriptedModel([
+            callTools(toolCall("r1", "knowledge_recommend", SITUATION)),
+            callTools(toolCall("c1", "knowledge_claims", { claims: [first.id, "R-9999@0000", first.id] })),
+            reply([text("Planned.")]),
+        ]);
+        const agent = { id: "planner", systemPrompt: "Plan.", model: "scripted-model", tools, maxIterations: 4 };
+
+        await runLoop(agent, [{ role: "user", content: "Plan the analysis." }], makeSession(), {
+            provider: model.provider,
+            emit: () => undefined,
+            signal: new AbortController().signal,
+        });
+
+        const read = z
+            .object({ type: z.literal("json"), value: z.object({ claims: z.array(z.looseObject({ id: z.string() })), missing: z.array(z.string()) }) })
+            .parse(toolResultIn(presentAt(model.calls, 2), "c1"));
+        expect(read.value.claims).toEqual([first]);
+        expect(read.value.missing).toEqual(["R-9999@0000"]);
+        expect(fake.calls.recommend).toHaveLength(1);
+    });
+
+    it("answers each id as missing before a recommend answer", async () => {
+        const tool = createKnowledgeClaimsTool({ shelf: createClaimShelf() });
+        const { ctx } = makeToolContext();
+        const input = tool.inputSchema.parse({ claims: ["R-0001@e7d0"] });
+        const out = (await tool.execute(input, ctx))._unsafeUnwrap();
+        expect(out).toEqual({ claims: [], missing: ["R-0001@e7d0"] });
+        expect(tool.describeResult?.(input, out)).toBe("0 claims, 1 missing");
+    });
+
+    it("the tool definition hash is stable and names the four tools", () => {
         const first = knowledgeToolDefinitionHash();
         expect(isSha256Hash(first)).toBe(true);
         expect(knowledgeToolDefinitionHash()).toBe(first);
