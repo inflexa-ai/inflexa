@@ -247,7 +247,7 @@ export async function runSourceBuild(
     } catch (cause) {
         return err({
             type: "runtime_unavailable",
-            message: `Could not start the source build with ${rt.label}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Could not start the source build with ${rt.label}: ${messageOf(cause)}`,
         });
     } finally {
         if (signal?.aborted === true) {

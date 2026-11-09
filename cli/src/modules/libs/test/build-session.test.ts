@@ -18,10 +18,14 @@ import { dirname, join } from "node:path";
 
 import { ok } from "neverthrow";
 
-import { runtimes, type CaptureOpts, type CaptureResult, type ContainerRuntime } from "../../lib/container.ts";
-import { SESSION_CLASS_HOSTS, sessionEgressAllow } from "./provisioner.ts";
-import { createBuildSession, sweepAtExit } from "./build-session.ts";
-import type { SourceFlightOutcome, SourceFlightParams } from "./store_flight.ts";
+import { runtimes, type CaptureOpts, type CaptureResult, type ContainerRuntime } from "../../../lib/container.ts";
+import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE, consistsOf, withoutSuffix } from "../../../lib/text.ts";
+import { runAfter } from "../../../lib/timer.ts";
+import { arrayContaining } from "../../../test_support/matchers.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
+import { SESSION_CLASS_HOSTS, sessionEgressAllow } from "../provisioner.ts";
+import { createBuildSession, sweepAtExit } from "../build-session.ts";
+import type { SourceFlightOutcome, SourceFlightParams } from "../store_flight.ts";
 
 // The session module over pinned runners: every container command lands in a
 // recorded engine, and the assertions read the recorded arguments. Nothing here
@@ -29,6 +33,26 @@ import type { SourceFlightOutcome, SourceFlightParams } from "./store_flight.ts"
 
 const IMAGE = "ghcr.io/inflexa-ai/sandbox-provisioner:test";
 const DOCKER = runtimes.docker;
+
+/** The ASCII word characters, the class of `\w`. */
+const WORD_CHARACTERS = `${ASCII_LOWERCASE}${ASCII_UPPERCASE}${ASCII_DIGITS}_`;
+
+/** The text between `prefix` and the next `'` of `body`, or `null` when `body` holds no `prefix` with a non-empty quoted text after it. */
+function quotedAfter(body: string, prefix: string): string | null {
+    const at = body.indexOf(prefix);
+    if (at < 0) return null;
+    const from = at + prefix.length;
+    const end = body.indexOf("'", from);
+    return end > from ? body.slice(from, end) : null;
+}
+
+/** True when `path` is `tail` behind a directory that `mkdtemp` named: `prefix` and then ASCII word characters. It replaces `/<prefix>\w+<tail>$/`. */
+function isTempPath(path: string | undefined, prefix: string, tail: string): boolean {
+    if (path === undefined || !path.endsWith(tail)) return false;
+    const head = path.slice(0, path.length - tail.length);
+    const dir = head.slice(head.lastIndexOf("/") + 1);
+    return dir.startsWith(prefix) && consistsOf(dir.slice(prefix.length), WORD_CHARACTERS);
+}
 
 /** The commits of the fixture repository, in the `ls-remote` wire shape. */
 const MAIN_SHA = "2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a";
@@ -146,18 +170,17 @@ class Engine {
 
     /** The full sha a clone one-shot prints: the commit of what it detaches at, or the ref it verifies. */
     private commitCloneLandsAt(body: string): string {
-        const detached = /--detach '([^']+)'/.exec(body);
-        if (detached !== null) {
-            const target = detached[1] ?? "";
-            if (/^[0-9a-f]{40}$/.test(target)) return target;
+        const target = quotedAfter(body, "--detach '");
+        if (target !== null) {
+            if (isLowerHex(target, 40)) return target;
             if (target === "HEAD") return this.remoteShaOf("HEAD");
             if (target.startsWith("origin/")) return this.remoteShaOf(`refs/heads/${target.slice("origin/".length)}`);
             const peeled = this.remoteShaOf(`refs/tags/${target}^{}`);
             return peeled !== "" ? peeled : this.remoteShaOf(`refs/tags/${target}`);
         }
-        const verified = /--verify '([0-9a-f]{4,40})\^\{commit\}'/.exec(body);
-        if (verified !== null) {
-            const token = verified[1] ?? "";
+        const verified = quotedAfter(body, "--verify '") ?? "";
+        const token = withoutSuffix(verified, "^{commit}");
+        if (token !== verified && token.length >= 4 && token.length <= 40 && isLowerHex(token)) {
             return token.length === 40 ? token : (REF_ROWS.find(([sha]) => sha.startsWith(token))?.[0] ?? token);
         }
         return "";
@@ -215,12 +238,12 @@ async function runUnderTimeout(args: readonly string[]): Promise<CaptureResult> 
     const budgetMs = Number(args[at + 3]) * 1000;
     const killAfterMs = Number(args[at + 2]) * 1000;
     const proc = Bun.spawn(["/bin/sh", "-c", commandOf(args)], { stdout: "ignore", stderr: "ignore" });
-    const timer = setTimeout(() => {
+    const stopTerm = runAfter(budgetMs, () => {
         proc.kill("SIGTERM");
-        setTimeout(() => proc.kill("SIGKILL"), killAfterMs);
-    }, budgetMs);
+        runAfter(killAfterMs, () => proc.kill("SIGKILL"));
+    });
     await proc.exited;
-    clearTimeout(timer);
+    stopTerm();
     const signalExit = SIGNAL_EXITS[proc.signalCode ?? ""] ?? null;
     const code = proc.exitCode ?? (signalExit === null ? -1 : 128 + signalExit);
     return { code, stdout: "", stderr: "" };
@@ -229,10 +252,10 @@ async function runUnderTimeout(args: readonly string[]): Promise<CaptureResult> 
 /** A session host over the recorded engine, with the image and the token pinned. */
 function hostOf(engine: Engine, over: Record<string, unknown> = {}) {
     return {
-        resolveRuntime: async () => ok(DOCKER),
+        resolveRuntime: () => Promise.resolve(ok(DOCKER)),
         run: engine.run,
         provisionerImage: IMAGE,
-        ensureImage: async () => ok(undefined),
+        ensureImage: () => Promise.resolve(ok(undefined)),
         hostEnv: { GITHUB_PAT: TOKEN },
         ...over,
     };
@@ -265,9 +288,8 @@ describe("sessionEgressAllow", () => {
     test("adds the fixed class hosts — the apt snapshot host beside the index and pak hosts — to the plan's own hosts", () => {
         const allow = sessionEgressAllow(["snapshot.ubuntu.com", "github.com"]);
 
-        expect(allow.split(",")).toEqual(
-            expect.arrayContaining(["snapshot.ubuntu.com", "github.com", "pypi.org", "packagemanager.posit.co", "cran.r-project.org"]),
-        );
+        const hosts: unknown = allow.split(",");
+        expect(hosts).toEqual(arrayContaining(["snapshot.ubuntu.com", "github.com", "pypi.org", "packagemanager.posit.co", "cran.r-project.org"]));
         // The list stays one of each host, whatever the plan repeats.
         expect(new Set(allow.split(",")).size).toBe(allow.split(",").length);
         expect(sessionEgressAllow([])).toBe(SESSION_CLASS_HOSTS.join(","));
@@ -329,8 +351,8 @@ describe("the held container", () => {
         // read-only over it, and the store never mounts.
         const mounts = start.filter((_arg, at) => start[at - 1] === "-v");
         expect(mounts).toHaveLength(2);
-        expect(mounts[0]).toMatch(/inflexa-build-\w+\/work:\/work(:z)?$/);
-        expect(mounts[1]).toMatch(/inflexa-build-\w+\/work\/src:\/work\/src:ro(,z)?$/);
+        expect(isTempPath(mounts[0], "inflexa-build-", "/work:/work")).toBe(true);
+        expect(isTempPath(mounts[1], "inflexa-build-", "/work/src:/work/src:ro")).toBe(true);
         expect(start.join(" ")).not.toContain("/mnt/libs");
         expect(start).not.toContain("NET_ADMIN");
         // The mounted scratch directory is traversable by the non-root execs (0755), and its parent is private to the host user (0700).
@@ -411,7 +433,7 @@ describe("the held container", () => {
 
         expect(engine.sessionStarts()).toHaveLength(2);
         expect(engine.wallStarts()).toHaveLength(2);
-        const [exploration, build] = engine.sessionStarts() as [string[], string[]];
+        const [exploration = [], build = []] = engine.sessionStarts();
         // The same scratch volume, and the old containers went away first.
         expect(build[build.indexOf("-v") + 1]).toBe(exploration[exploration.indexOf("-v") + 1]);
         expect(
@@ -497,7 +519,7 @@ describe("the held container", () => {
         await expect(session.exec(handle.sessionId, { command: "R CMD build .", execId: `${handle.sessionId}-1`, plan: PLAN }, NO_ABORT)).rejects.toThrow();
         engine.failNextDetach = true;
         await expect(session.exec(handle.sessionId, { command: "ls", execId: `${handle.sessionId}-2` }, NO_ABORT)).rejects.toThrow(
-            /Stop the session and start a new one/,
+            "Stop the session and start a new one",
         );
     });
 
@@ -576,14 +598,15 @@ describe("the held container", () => {
             "/store/root",
             hostOf(engine, {
                 // The script directory exists only while a commit runs, thus the sweep runs inside the flight.
-                fly: async (params: SourceFlightParams): Promise<SourceFlightOutcome> => {
-                    const scriptDir = dirname(params.scriptHost);
-                    expect(existsSync(scriptDir)).toBe(true);
-                    sweepAtExit({ spawnSync: (command) => spawned.push(command) });
-                    swept.parentGone = !existsSync(parent);
-                    swept.scriptDirGone = !existsSync(scriptDir);
-                    return { kind: "failed", reason: "resolve: stopped by the test" };
-                },
+                fly: (params: SourceFlightParams): Promise<SourceFlightOutcome> =>
+                    Promise.try(() => {
+                        const scriptDir = dirname(params.scriptHost);
+                        expect(existsSync(scriptDir)).toBe(true);
+                        sweepAtExit({ spawnSync: (command) => spawned.push(command) });
+                        swept.parentGone = !existsSync(parent);
+                        swept.scriptDirGone = !existsSync(scriptDir);
+                        return { kind: "failed", reason: "resolve: stopped by the test" };
+                    }),
             }),
         );
         const handle = await session.start(SOURCE, ANALYSIS_ID, NO_ABORT);
@@ -714,7 +737,7 @@ describe("the ref resolution and the clone", () => {
             // The pin is the HEAD the checkout lands at, read after the detach.
             expect(clone[clone.length - 1]).toContain("sha=$(git -C '/work/src' rev-parse HEAD)");
             expect(clone[clone.length - 1]).toContain(`rm -rf '/work/src/.git'`);
-            expect(handle.commit).toMatch(/^[0-9a-f]{40}$/);
+            expect(isLowerHex(handle.commit ?? "", 40)).toBe(true);
         }
 
         const engine = new Engine();
@@ -783,7 +806,7 @@ describe("the ref resolution and the clone", () => {
         expect(clone).toContain("--rm");
         expect(clone).toContain("--cap-add");
         expect(clone).toContain("INFLEXA_EGRESS_ALLOW=github.com");
-        expect(clone[clone.indexOf("-v") + 1]).toMatch(/:\/work(:z)?$/);
+        expect(clone[clone.indexOf("-v") + 1]).toEndWith(":/work");
         // The held container answered no git command at all.
         expect(engine.of("exec").some((call) => (call[call.length - 1] ?? "").includes("git "))).toBe(false);
     });
@@ -919,7 +942,7 @@ describe("a local folder source", () => {
         expect(hashRun).toContain("--rm");
         expect(hashRun[hashRun.indexOf("--network") + 1]).toBe("none");
         expect(hashRun[hashRun.indexOf("--entrypoint") + 1]).toBe("/usr/bin/python3");
-        expect(hashRun[hashRun.indexOf("-v") + 1]).toMatch(/inflexa-build-\w+\/work\/src:\/work\/src:ro(,z)?$/);
+        expect(isTempPath(hashRun[hashRun.indexOf("-v") + 1], "inflexa-build-", "/work/src:/work/src:ro")).toBe(true);
         expect(hashRun[hashRun.length - 1]).toContain("SourceFileLoader('provision', '/usr/local/bin/provision')");
         expect(hashRun[hashRun.length - 1]).not.toContain("import provision");
         expect(handle.commit).toBeUndefined();
@@ -1083,10 +1106,11 @@ describe("the folder copy", () => {
         const session = createBuildSession(
             "/store/root",
             hostOf(engine, {
-                ensureImage: async () => {
-                    controller.abort();
-                    return ok(undefined);
-                },
+                ensureImage: () =>
+                    Promise.try(() => {
+                        controller.abort();
+                        return ok(undefined);
+                    }),
             }),
         );
         const before = scratchDirs();
@@ -1198,7 +1222,7 @@ describe("the abort of a turn", () => {
 
         expect(Date.now() - startedAt).toBeLessThan(3000);
         const wallName = engine.wallStarts()[0]?.[3] ?? "";
-        expect(wallName).toMatch(/-wall$/);
+        expect(wallName).toEndWith("-wall");
         expect(engine.of("rm").at(-1)).toEqual(["rm", "-f", wallName.slice(0, -"-wall".length), wallName]);
         expect(engine.sessionStarts()).toEqual([]);
         for (const [at, call] of engine.calls.entries()) {
@@ -1246,7 +1270,8 @@ describe("the abort of a turn", () => {
 
         const clone = engine.oneShots().find((call) => commandOf(call).includes("git clone")) ?? [];
         const name = clone[clone.indexOf("--name") + 1] ?? "";
-        expect(name).toMatch(/^inflexa-build-bs-[\w-]+-clone$/);
+        expect(name.startsWith("inflexa-build-bs-") && name.endsWith("-clone")).toBe(true);
+        expect(consistsOf(name.slice("inflexa-build-bs-".length, -"-clone".length), `${WORD_CHARACTERS}-`)).toBe(true);
         expect(engine.of("rm")).toContainEqual(["rm", "-f", name]);
         // The session container and the wall go away too, and no container ever started.
         const session_ = name.slice(0, -"-clone".length);
@@ -1267,12 +1292,13 @@ describe("the commit", () => {
         const seen: (SourceFlightParams & { readonly script: string; readonly scriptMode: number })[] = [];
         return {
             seen,
-            fly: async (params: SourceFlightParams): Promise<SourceFlightOutcome> => {
-                // The scratch tree goes away on a green commit, thus the stub
-                // reads the script while it still exists.
-                seen.push({ ...params, script: readFileSync(params.scriptHost, "utf8"), scriptMode: statSync(params.scriptHost).mode & 0o777 });
-                return outcome;
-            },
+            fly: (params: SourceFlightParams): Promise<SourceFlightOutcome> =>
+                Promise.try(() => {
+                    // The scratch tree goes away on a green commit, thus the stub
+                    // reads the script while it still exists.
+                    seen.push({ ...params, script: readFileSync(params.scriptHost, "utf8"), scriptMode: statSync(params.scriptHost).mode & 0o777 });
+                    return outcome;
+                }),
         };
     }
 
@@ -1303,8 +1329,8 @@ describe("the commit", () => {
         expect(params?.egressAllow).toContain("snapshot.ubuntu.com");
         expect(params?.egressAllow).toContain("pypi.org");
         // The clean run reads the pristine snapshot, and the script is the approved bytes.
-        expect(params?.snapshotHost).toMatch(/inflexa-build-\w+\/work\/src$/);
-        expect(params?.scriptHost).toMatch(/inflexa-build-script-\w+\/build\.sh$/);
+        expect(isTempPath(params?.snapshotHost, "inflexa-build-", "/work/src")).toBe(true);
+        expect(isTempPath(params?.scriptHost, "inflexa-build-script-", "/build.sh")).toBe(true);
         expect(params?.script).toBe("R CMD INSTALL .\n");
     });
 
@@ -1328,7 +1354,7 @@ describe("the commit", () => {
         expect(params?.script).toBe("R CMD INSTALL .\n");
         // The script directory is outside the scratch tree, never inside it, and no session container mounts it.
         expect(params?.scriptHost.startsWith(scratch)).toBe(false);
-        expect(params?.scriptHost).toMatch(/inflexa-build-script-\w+\/build\.sh$/);
+        expect(isTempPath(params?.scriptHost, "inflexa-build-script-", "/build.sh")).toBe(true);
         expect(params?.scriptMode).toBe(0o644);
         expect(engine.of("run").every((call) => !call.join(" ").includes("inflexa-build-script-"))).toBe(true);
     });
@@ -1375,10 +1401,11 @@ describe("the commit", () => {
         const session = createBuildSession(
             "/store/root",
             hostOf(engine, {
-                fly: async (): Promise<SourceFlightOutcome> => {
-                    controller.abort();
-                    return { kind: "failed", reason: "resolve: the build was aborted" };
-                },
+                fly: (): Promise<SourceFlightOutcome> =>
+                    Promise.try(() => {
+                        controller.abort();
+                        return { kind: "failed", reason: "resolve: the build was aborted" };
+                    }),
             }),
         );
         const handle = await session.start(SOURCE, ANALYSIS_ID, NO_ABORT);

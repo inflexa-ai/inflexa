@@ -43,6 +43,7 @@ import {
     type SourceBuildRunner,
 } from "../provisioner.ts";
 import { runtimes, type stream as runtimeStream } from "../../../lib/container.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 import { present } from "../../../lib/present.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { withoutPrefix } from "../../../lib/text.ts";
@@ -815,15 +816,15 @@ describe("runSourceBuild", () => {
 
     function opts(captured: string[][], streamed: Array<Parameters<typeof runtimeStream>>): SourceBuildOpts {
         return {
-            resolveRuntime: async () => ok(runtimes.docker),
-            ensureImage: async () => ok(undefined),
-            stream: async (rt, args, onLine, signal) => {
+            resolveRuntime: () => Promise.resolve(ok(runtimes.docker)),
+            ensureImage: () => Promise.resolve(ok(undefined)),
+            stream: (rt, args, onLine, signal) => {
                 streamed.push([rt, args, onLine, signal]);
-                return { code: 143, stdout: "", stderr: "" };
+                return Promise.resolve({ code: 143, stdout: "", stderr: "" });
             },
-            capture: async (_rt, args) => {
+            capture: (_rt, args) => {
                 captured.push(args);
-                return { code: 0, stdout: "", stderr: "" };
+                return Promise.resolve({ code: 0, stdout: "", stderr: "" });
             },
         };
     }
@@ -845,7 +846,7 @@ describe("runSourceBuild", () => {
     test("a run that no abort touches removes nothing", async () => {
         const captured: string[][] = [];
 
-        await runSourceBuild(run, () => undefined, new AbortController().signal, opts(captured, []));
+        await awaitOk(runSourceBuild(run, () => undefined, new AbortController().signal, opts(captured, [])));
 
         expect(captured).toEqual([]);
     });
@@ -855,9 +856,7 @@ describe("runSourceBuild", () => {
         controller.abort(new Error("turn cancelled"));
         const failing: SourceBuildOpts = {
             ...opts([], []),
-            capture: async () => {
-                throw new Error("engine gone");
-            },
+            capture: () => Promise.reject(new Error("engine gone")),
         };
 
         const ran = await runSourceBuild(run, () => undefined, controller.signal, failing);
@@ -870,25 +869,26 @@ describe("flySourceBuild", () => {
     const ROOT_DIR = "seedmatchr-2.0.0-0000000000src01";
 
     /** A runner that writes one source report with the staged pool directories and markers. */
-    function sourceRunner(outcome: Record<string, unknown>, nodes: Record<string, unknown>): SourceBuildRunner {
-        return async (run) => {
-            for (const dir of Object.keys(nodes)) {
-                const home = join(run.storeRoot, "store", dir);
-                mkdirSync(join(home, "SeedMatchR"), { recursive: true });
-                writeFileSync(join(home, "SeedMatchR", ".inflexa-pin"), `${outcome["pin"] ?? "SeedMatchR==2.0.0"}\n`);
-                writeFileSync(join(home, "SeedMatchR", ".inflexa-hash"), `${"a".repeat(64)}\n`);
-            }
-            writeFileSync(
-                join(run.storeRoot, run.reportName),
-                `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:SeedMatchR==2.0.0@git:2fc0c4f6", ...outcome }], nodes }, null, 2)}\n`,
-            );
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
-        };
+    function sourceRunner(outcome: Record<string, unknown> & { readonly pin?: string }, nodes: Record<string, unknown>): SourceBuildRunner {
+        return (run) =>
+            Promise.try(() => {
+                for (const dir of Object.keys(nodes)) {
+                    const home = join(run.storeRoot, "store", dir);
+                    mkdirSync(join(home, "SeedMatchR"), { recursive: true });
+                    writeFileSync(join(home, "SeedMatchR", ".inflexa-pin"), `${outcome["pin"] ?? "SeedMatchR==2.0.0"}\n`);
+                    writeFileSync(join(home, "SeedMatchR", ".inflexa-hash"), `${"a".repeat(64)}\n`);
+                }
+                writeFileSync(
+                    join(run.storeRoot, run.reportName),
+                    `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:SeedMatchR==2.0.0@git:2fc0c4f6", ...outcome }], nodes }, null, 2)}\n`,
+                );
+                return ok<CaptureResult>({ code: 0, stdout: "", stderr: "" });
+            });
     }
 
     const params = {
         storeRoot: "",
-        analysisId: null as string | null,
+        analysisId: null,
         snapshotHost: "/scratch/src",
         scriptHost: "/scratch/build.sh",
         egressAllow: "github.com,pypi.org",
@@ -927,7 +927,10 @@ describe("flySourceBuild", () => {
         const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: loadCheck([]) });
 
         expect(flown).toEqual({ kind: "committed", pin: GREEN_OUTCOME.pin, storeDir: ROOT_DIR, storeDirs: [ROOT_DIR] });
-        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as { nodes: Record<string, unknown>; by_name: { r: Record<string, string[]> } };
+        const graph = parsedJson(
+            readFileSync(join(root, "deps.json"), "utf8"),
+            z.object({ nodes: z.record(z.string(), z.json()), by_name: z.object({ r: z.record(z.string(), z.array(z.string())) }) }),
+        );
         expect(graph.nodes[ROOT_DIR]).toBeDefined();
         expect(graph.by_name.r["SeedMatchR"]).toEqual([ROOT_DIR]);
         expect(readStoreFlights()).toEqual([]);
@@ -941,35 +944,37 @@ describe("flySourceBuild", () => {
             { ...params, storeRoot: root },
             {
                 run: sourceRunner(GREEN_OUTCOME, nodes),
-                loadCheck: async () =>
-                    ok({
-                        code: 1,
-                        stdout: JSON.stringify({
-                            results: [
-                                {
-                                    package: ROOT_DIR,
-                                    track: "r",
-                                    ok: false,
-                                    error: "links a library the image does not carry: libfoo.so.1 (linked by /work/src/SeedMatchR/libs/SeedMatchR.so)",
-                                },
-                            ],
+                loadCheck: () =>
+                    Promise.resolve(
+                        ok({
+                            code: 1,
+                            stdout: JSON.stringify({
+                                results: [
+                                    {
+                                        package: ROOT_DIR,
+                                        track: "r",
+                                        ok: false,
+                                        error: "links a library the image does not carry: libfoo.so.1 (linked by /work/src/SeedMatchR/libs/SeedMatchR.so)",
+                                    },
+                                ],
+                            }),
+                            stderr: "",
                         }),
-                        stderr: "",
-                    }),
+                    ),
             },
         );
 
         expect(flown.kind).toBe("failed");
         if (flown.kind === "failed") expect(flown.reason).toContain("libfoo.so.1");
         // No advertised state: the graph holds no node, and the pool bytes stay for the debris pass.
-        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as { nodes: Record<string, unknown> };
+        const graph = parsedJson(readFileSync(join(root, "deps.json"), "utf8"), z.object({ nodes: z.record(z.string(), z.json()) }));
         expect(graph.nodes[ROOT_DIR]).toBeUndefined();
         expect(existsSync(join(root, "store", ROOT_DIR))).toBe(true);
         const rows = readStoreFlights();
         expect(rows).toHaveLength(1);
         // The row is keyed by the qualified source the session knew before the
         // launch — the run resolves the metadata version only after it built.
-        expect(rows[0]?.row.id).toBe(`any::SeedMatchR::@git:${"2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a"}`);
+        expect(rows[0]?.row.id).toBe("any::SeedMatchR::@git:2fc0c4f6f2bd0f2a1a5ce7e16c8b1f1d0000000a");
         expect(rows[0]?.row.state).toBe("failed");
         expect(rows[0]?.row.message).toStartWith("load_check: ");
         expect(rows[0]?.row.message).toContain(ROOT_DIR);
@@ -977,13 +982,14 @@ describe("flySourceBuild", () => {
 
     test("a refusal of the run itself settles the claimed row failed, because the claim preceded the launch", async () => {
         const root = tempStore();
-        const refusing: SourceBuildRunner = async (run) => {
-            writeFileSync(
-                join(run.storeRoot, run.reportName),
-                `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:?", outcome: "refused", reason: "the build script exited non-zero (exit 2)." }], nodes: {} })}\n`,
-            );
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
-        };
+        const refusing: SourceBuildRunner = (run) =>
+            Promise.try(() => {
+                writeFileSync(
+                    join(run.storeRoot, run.reportName),
+                    `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:?", outcome: "refused", reason: "the build script exited non-zero (exit 2)." }], nodes: {} })}\n`,
+                );
+                return ok<CaptureResult>({ code: 0, stdout: "", stderr: "" });
+            });
 
         const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: refusing });
 
@@ -1002,14 +1008,15 @@ describe("flySourceBuild", () => {
 
     test("a refused run leaves no report file", async () => {
         const root = tempStore();
-        const refusing: SourceBuildRunner = async (run) => {
-            mkdirSync(join(root, ".inflexa-download"), { recursive: true });
-            writeFileSync(
-                join(run.storeRoot, run.reportName),
-                `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:?", outcome: "refused", reason: "the build script exited non-zero (exit 2)." }], nodes: {} })}\n`,
-            );
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
-        };
+        const refusing: SourceBuildRunner = (run) =>
+            Promise.try(() => {
+                mkdirSync(join(root, ".inflexa-download"), { recursive: true });
+                writeFileSync(
+                    join(run.storeRoot, run.reportName),
+                    `${JSON.stringify({ schema: 1, arch: "arm64", outcomes: [{ spec: "r:?", outcome: "refused", reason: "the build script exited non-zero (exit 2)." }], nodes: {} })}\n`,
+                );
+                return ok<CaptureResult>({ code: 0, stdout: "", stderr: "" });
+            });
 
         const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: refusing });
 
@@ -1024,7 +1031,7 @@ describe("flySourceBuild", () => {
 
         const red = await flySourceBuild(
             { ...params, storeRoot: root },
-            { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: async () => ok({ code: 1, stdout: "not json", stderr: "" }) },
+            { run: sourceRunner(GREEN_OUTCOME, nodes), loadCheck: () => Promise.resolve(ok({ code: 1, stdout: "not json", stderr: "" })) },
         );
         expect(red.kind).toBe("failed");
         expect(reportFiles(root)).toEqual([]);
@@ -1054,15 +1061,16 @@ describe("flySourceBuild", () => {
         const controller = new AbortController();
         let seenSignal: AbortSignal | undefined;
         let seenRun: SourceBuildRun | undefined;
-        const aborting: SourceBuildRunner = async (run, _onLine, signal) => {
-            seenSignal = signal;
-            seenRun = run;
-            mkdirSync(join(root, ".inflexa-download"), { recursive: true });
-            writeFileSync(join(run.storeRoot, run.reportName), "{}");
-            controller.abort(new Error("turn cancelled"));
-            // The kill of the engine client ends the stream with a nonzero code.
-            return ok<CaptureResult, never>({ code: 143, stdout: "", stderr: "" });
-        };
+        const aborting: SourceBuildRunner = (run, _onLine, signal) =>
+            Promise.try(() => {
+                seenSignal = signal;
+                seenRun = run;
+                mkdirSync(join(root, ".inflexa-download"), { recursive: true });
+                writeFileSync(join(run.storeRoot, run.reportName), "{}");
+                controller.abort(new Error("turn cancelled"));
+                // The kill of the engine client ends the stream with a nonzero code.
+                return ok<CaptureResult>({ code: 143, stdout: "", stderr: "" });
+            });
 
         const flown = await flySourceBuild({ ...params, storeRoot: root, signal: controller.signal, packageDir: "pkg/R" }, { run: aborting });
 
@@ -1082,12 +1090,13 @@ describe("flySourceBuild", () => {
         const nodes = { [ROOT_DIR]: { track: "r", name: "SeedMatchR", version: "2.0.0", order: "0a", edges: [] } };
         const controller = new AbortController();
         let seenSignal: AbortSignal | undefined;
-        const cancelling: LoadCheckRunner = async (checkParams) => {
-            seenSignal = checkParams.signal;
-            controller.abort(new Error("turn cancelled"));
-            // The check itself reports green: only the signal can stop the commit.
-            return ok<CaptureResult, never>({ code: 0, stdout: JSON.stringify({ results: [{ package: ROOT_DIR, track: "r", ok: true }] }), stderr: "" });
-        };
+        const cancelling: LoadCheckRunner = (checkParams) =>
+            Promise.try(() => {
+                seenSignal = checkParams.signal;
+                controller.abort(new Error("turn cancelled"));
+                // The check itself reports green: only the signal can stop the commit.
+                return ok<CaptureResult>({ code: 0, stdout: JSON.stringify({ results: [{ package: ROOT_DIR, track: "r", ok: true }] }), stderr: "" });
+            });
 
         const flown = await flySourceBuild(
             { ...params, storeRoot: root, signal: controller.signal },
@@ -1098,7 +1107,7 @@ describe("flySourceBuild", () => {
         if (flown.kind === "failed") expect(flown.reason).toBe("load_check: the source build was cancelled");
         expect(seenSignal).toBe(controller.signal);
         const depsPath = join(root, "deps.json");
-        const graph = existsSync(depsPath) ? (JSON.parse(readFileSync(depsPath, "utf8")) as { nodes: Record<string, unknown> }) : { nodes: {} };
+        const graph = existsSync(depsPath) ? parsedJson(readFileSync(depsPath, "utf8"), z.object({ nodes: z.record(z.string(), z.json()) })) : { nodes: {} };
         expect(graph.nodes[ROOT_DIR]).toBeUndefined();
         const rows = readStoreFlights();
         expect(rows).toHaveLength(1);
@@ -1117,10 +1126,11 @@ describe("flySourceBuild", () => {
             holderPid: 999999,
         }).unwrapOr(false);
         let started = 0;
-        const runner: SourceBuildRunner = async () => {
-            started += 1;
-            return ok<CaptureResult, never>({ code: 0, stdout: "", stderr: "" });
-        };
+        const runner: SourceBuildRunner = () =>
+            Promise.try(() => {
+                started += 1;
+                return ok<CaptureResult>({ code: 0, stdout: "", stderr: "" });
+            });
 
         const flown = await flySourceBuild({ ...params, storeRoot: root }, { run: runner });
 

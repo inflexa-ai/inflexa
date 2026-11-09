@@ -20,6 +20,7 @@ import {
     type EngineSocketProbes,
 } from "../container.ts";
 import { runAfter } from "../timer.ts";
+import { countOccurrences } from "../../test_support/text_shapes.ts";
 
 describe("runtime mountArg", () => {
     test("docker uses the bare host:container form", () => {
@@ -420,7 +421,8 @@ describe("capture bounds", () => {
         // The budget splits in two halves: the first 500 bytes and the last 500 bytes.
         expect(result.stdout.startsWith("a".repeat(500) + "\n[... ")).toBe(true);
         expect(result.stdout.endsWith("\n" + "z".repeat(500))).toBe(true);
-        expect(result.stdout.match(/\[\.\.\. \d+ bytes not captured \.\.\.\]/g)).toEqual(["[... 9000 bytes not captured ...]"]);
+        expect(countOccurrences(result.stdout, " bytes not captured ...]")).toBe(1);
+        expect(result.stdout).toContain("[... 9000 bytes not captured ...]");
         expect(result.stdout).not.toContain("mm");
     });
 
@@ -455,7 +457,7 @@ describe("capture bounds", () => {
         const controller = new AbortController();
         const started = Date.now();
         const pending = capture(shell, ["-c", "exec sleep 30"], { signal: controller.signal });
-        setTimeout(() => controller.abort(), 50);
+        runAfter(50, () => controller.abort());
 
         const killed = await pending;
 

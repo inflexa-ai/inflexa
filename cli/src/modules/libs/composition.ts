@@ -637,7 +637,7 @@ function pickVersion(graph: DepsGraph, query: PackageQuery, identity: PackageIde
     const [first, second] = exact;
     if (first === undefined) return err({ type: "unknown_distribution" });
     if (second !== undefined) {
-        return err({ type: "ambiguous_version", ...(query.version === undefined ? {} : { version: query.version }), candidates: [first.storeDir, second.storeDir] });
+        return err({ type: "ambiguous_version", version: query.version, candidates: [first.storeDir, second.storeDir] });
     }
     return ok(first);
 }
@@ -991,7 +991,7 @@ function isSourceBuiltDir(storeRoot: string, storeDir: string, node: DepsNode): 
 }
 
 /** The `source` block of a build record, the one part the farm lock copies. */
-const buildRecordSchema = z.object({ source: z.union([z.object({ url: z.string(), commit: z.string() }), z.object({ tree_hash: z.string() })]) }).passthrough();
+const buildRecordSchema = z.object({ source: z.union([z.object({ url: z.string(), commit: z.string() }), z.object({ tree_hash: z.string() })]) }).loose();
 
 /** The provenance of one source-built distribution, in the shape the farm lock carries. */
 type PackageProvenance = NonNullable<FarmLock["packages"][number]["source"]>;
@@ -1042,7 +1042,7 @@ function lockPackageEntry(
             track: node.track === "python" ? "python" : source !== null ? "source" : (template.rSubtrees.get(storeDir) ?? "cran"),
             store_dir: storeDir,
             hash,
-            ...(source !== null ? { source } : {}),
+            source: source ?? undefined,
             // `requested` obeys the PEP 376 meaning: true for a direct ask, false for
             // a transitive dependency.
             requested,
@@ -1173,14 +1173,16 @@ function linkClosure(
             // with the other in silence. The Python pass refuses the same shape
             // through `isVersionCollision`; the R pass reads each subtree, because
             // the two builds of one name sit in two subtrees.
+            let refused = false;
             for (const other of R_SUBTREES) {
                 const at = entryAt(plan, other === subtree ? link : join(farmPath, "r", other, inner));
                 if (at.kind === "link" && at.target !== target && isVersionCollision(graph, at.target, target)) {
                     refuse(plan, inner, at.target, target);
+                    refused = true;
                     break;
                 }
             }
-            if (plan.collision) break;
+            if (refused) break;
             if (entryAt(plan, link).kind !== "absent") continue;
             plan.ops.push({ kind: "mkdir", path: join(farmPath, "r", subtree) }, { kind: "symlink", path: link, target });
             plan.planned.set(link, { kind: "link", target });

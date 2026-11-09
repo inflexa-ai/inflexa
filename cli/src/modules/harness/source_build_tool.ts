@@ -24,6 +24,7 @@ import { defineTool, type AskRequest, type Tool, type ToolError } from "@inflexa
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { describeCause, messageOf } from "../../lib/cause.ts";
 import { sha256Text } from "../../lib/hash.ts";
 import type { BuildCommitRequest, BuildExecResult, BuildPlan, BuildSession, BuildSource } from "../libs/build-session.ts";
 
@@ -103,6 +104,7 @@ const APPROVAL_STALE_NOTE =
     "so the approval no longer covers it. Send the call again; it asks under the current plan.";
 
 /** Two or more DNS labels of letters, digits, and hyphens, and a last label of letters alone: no IP literal, no top-level domain alone, no `/`, no `,`. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- The tool input goes to the model as JSON Schema, and only `.regex` puts a `pattern` into it: a `.refine` with a string-method predicate drops the host-name rule from what the model reads. `URL` takes an IP literal and a port, thus it is no replacement.
 const HOST_NAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]+$/;
 
 /** A plan host. The egress wall puts the value into a DNS allow-list, where a listed domain covers its subdomains, thus only a full host name may pass. The schema gives the realization the lower-case spelling. */
@@ -111,7 +113,8 @@ const hostSchema = z
     .min(1)
     .toLowerCase()
     .regex(HOST_NAME, {
-        error: (issue) => `${textOf(issue.input)} is not a host name: use two or more DNS labels such as pypi.org, with no scheme, path, port, or IP address`,
+        error: (issue) =>
+            `${describeCause(issue.input)} is not a host name: use two or more DNS labels such as pypi.org, with no scheme, path, port, or IP address`,
     });
 
 /** A git URL on `https` or `http`, whose host obeys the same rule as a plan host. `URL` folds the host to lower case. */
@@ -146,7 +149,9 @@ const InstallFromSourceInputSchema = z
         gitUrl: z
             .string()
             .min(1)
-            .refine(isGitUrl, { error: (issue) => `${textOf(issue.input)} is not a git URL: use an https or http URL on a host name such as github.com` })
+            .refine(isGitUrl, {
+                error: (issue) => `${describeCause(issue.input)} is not a git URL: use an https or http URL on a host name such as github.com`,
+            })
             .optional()
             .describe("For 'start': the git URL of the source, for example https://github.com/tacazares/SeedMatchR."),
         gitRef: z
@@ -194,7 +199,7 @@ const InstallFromSourceInputSchema = z
             .string()
             .min(1)
             .refine(isTreeRelative, {
-                error: (issue) => `${textOf(issue.input)} is not a directory inside the source tree: use a relative path with no .. segment`,
+                error: (issue) => `${describeCause(issue.input)} is not a directory inside the source tree: use a relative path with no .. segment`,
             })
             .optional()
             .describe(
@@ -346,27 +351,6 @@ function covers(approved: Ask, needed: Ask): boolean {
     }
 }
 
-/** The own string `message` of a thrown value of any object type, not only of an `Error`. */
-function messageOf(value: unknown): string | undefined {
-    if (typeof value !== "object" || value === null || !("message" in value)) return undefined;
-    const { message } = value;
-    return typeof message === "string" ? message : undefined;
-}
-
-/** The text form of a value typed `unknown`: a string as itself, a primitive through `String`, and an object as JSON so that no message reads `[object Object]`. */
-function textOf(value: unknown): string {
-    if (typeof value === "string") return value;
-    if (typeof value !== "object" || value === null) return String(value);
-    let json: string | undefined;
-    try {
-        json = JSON.stringify(value);
-    } catch {
-        // A cycle or a bigint inside the value makes `JSON.stringify` throw.
-    }
-    // `toJSON` that gives `undefined` makes `JSON.stringify` give `undefined` without a throw.
-    return json ?? Object.prototype.toString.call(value);
-}
-
 /** The two streams of one exec as the one log the model reads. */
 function combinedOutput(stdout: string, stderr: string): string {
     if (stdout.length === 0) return stderr;
@@ -378,8 +362,6 @@ function combinedOutput(stdout: string, stderr: string): string {
 export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z.infer<typeof InstallFromSourceInputSchema>, InstallFromSourceResult> {
     const sessions = new Map<string, SessionState>();
     const ended = new Set<string>();
-
-    const failureOf = (cause: unknown): string => messageOf(cause) ?? textOf(cause);
 
     // The loop runs the calls of one round in parallel and a host can run two turns at once, thus
     // the body of each exec, commit, and stop runs behind the earlier call of its session. Otherwise a
@@ -513,6 +495,11 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
             'STOP the session (`op: "stop"`) when the build is done or the user refuses to continue. ' +
             "Exec output obeys the tool-result cap; a longer log comes back cut with a reference you read through `read_tool_output`.",
         inputSchema: InstallFromSourceInputSchema,
+        view: {
+            input: (input) => input,
+            result: (_input, result: InstallFromSourceResult) => result,
+            error: true,
+        },
         // The loop asks the user before a call runs. The hook records the ask that the user answers on the session
         // entry, under the id of the call, and `execute` decides again inside the chain of the session.
         approval: (input, ctx): AskRequest | undefined => {
@@ -564,7 +551,7 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                             note: START_NOTE,
                         });
                     } catch (cause) {
-                        return ok({ status: "failed", reason: failureOf(cause) });
+                        return ok({ status: "failed", reason: messageOf(cause) });
                     }
                 }
                 case "exec": {
@@ -603,7 +590,7 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                             );
                             return ok(renderExec(sessionId, r));
                         } catch (cause) {
-                            return ok({ status: "failed", reason: failureOf(cause) });
+                            return ok({ status: "failed", reason: messageOf(cause) });
                         }
                     });
                 }
@@ -629,7 +616,7 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                             }
                             return ok({ status: "clean_run_failed", sessionId, reason: outcome.reason, note: CLEAN_RUN_FAILED_NOTE });
                         } catch (cause) {
-                            return ok({ status: "failed", reason: failureOf(cause) });
+                            return ok({ status: "failed", reason: messageOf(cause) });
                         }
                     });
                 }
@@ -642,7 +629,7 @@ export function createInstallFromSourceTool(deps: InstallFromSourceDeps): Tool<z
                         try {
                             await deps.buildSession.stop(sessionId);
                         } catch (cause) {
-                            return ok({ status: "failed", reason: failureOf(cause) });
+                            return ok({ status: "failed", reason: messageOf(cause) });
                         }
                         sessions.delete(sessionId);
                         ended.add(sessionId);

@@ -9,10 +9,12 @@
 
 import { describe, expect, it } from "bun:test";
 
-import type { AgentSession, AskRequest, ToolContext } from "@inflexa-ai/harness";
+import type { AskRequest, ToolContext } from "@inflexa-ai/harness";
 
-import { createInstallFromSourceTool } from "./source_build_tool.ts";
-import type { BuildCommitRequest, BuildCommitResult, BuildExecResult, BuildSession, BuildSessionCommand, BuildSource } from "../libs/build-session.ts";
+import { createInstallFromSourceTool } from "../source_build_tool.ts";
+import { buildAgentSession } from "../../../test_support/builders.ts";
+import { isLowerHex } from "../../../test_support/text_shapes.ts";
+import type { BuildCommitRequest, BuildCommitResult, BuildExecResult, BuildSession, BuildSessionCommand, BuildSource } from "../../libs/build-session.ts";
 
 const SHA = "2fc0c4f7d2be974cd8fa4f2a55a71c1a63d38b1e";
 const PIN = `SeedMatchR==2.0.0@git:${SHA}`;
@@ -20,9 +22,9 @@ const STORE_DIR = "/pool/seedmatchr-2.0.0-1e2b3d";
 
 const START_ASK_TITLE = "Approve the source-build session";
 
-/** The tool reads only `session.scope.analysisId`, so a cast avoids constructing the full value object. */
-function sessionFor(analysisId: string): AgentSession {
-    return { scope: { kind: "analysis", analysisId } } as unknown as AgentSession;
+/** True for `prefix` and then a sha-256 hex digest, the form of a grant key that binds a digest. */
+function isDigestKey(key: string | undefined, prefix: string): boolean {
+    return key !== undefined && key.startsWith(prefix) && isLowerHex(key.slice(prefix.length), 64);
 }
 
 /** The denial of a user, which the loop turns into a denied call that never runs. */
@@ -35,7 +37,7 @@ type CallCtx = ToolContext & { readonly approve: (request: AskRequest) => Promis
 function makeToolContext(signal?: AbortSignal): ToolContext {
     return {
         invocationId: "test-tool-call",
-        session: sessionFor("analysis-001"),
+        session: buildAgentSession({ scope: { kind: "analysis", analysisId: "analysis-001" } }),
         signal: signal ?? new AbortController().signal,
         emit: () => {},
     };
@@ -347,7 +349,7 @@ describe("install_from_source — start", () => {
     it("start carries the analysis id of the conversation session, so the commit extends the farm of that analysis", async () => {
         const stub = stubBuildSession();
         const tool = createInstallFromSourceTool({ buildSession: stub.buildSession });
-        const ctx: CallCtx = { ...askRecording([]).ctx, session: sessionFor("analysis-7f") };
+        const ctx: CallCtx = { ...askRecording([]).ctx, session: buildAgentSession({ scope: { kind: "analysis", analysisId: "analysis-7f" } }) };
 
         const result = (await run(tool, { op: "start", gitUrl: "https://github.com/tacazares/SeedMatchR" }, ctx))._unsafeUnwrap();
 
@@ -509,7 +511,7 @@ describe("install_from_source — the ask flow", () => {
         expect(planAsk?.detail).toContain("libcurl4-openssl-dev");
         expect(planAsk?.detail).toContain("pak lockfile resolve of the local tree");
         expect(planAsk?.detail).toContain("Command: R CMD build .");
-        expect(planAsk?.grantKey).toMatch(/^install_from_source:sess-1:plan:[0-9a-f]{64}$/);
+        expect(isDigestKey(planAsk?.grantKey, "install_from_source:sess-1:plan:")).toBe(true);
         expect(stub.calls.at(-1)).toMatchObject({ op: "exec", command: { command: "R CMD build .", plan: { hosts: ["github.com", "snapshot.ubuntu.com"] } } });
     });
 
@@ -757,7 +759,7 @@ describe("install_from_source — the grant keys", () => {
         const otherCommand = await approvalOf(tool, { ...FIRST_BUILD, command: "make" }, ctx, "d");
         const asRoot = await approvalOf(tool, { ...FIRST_BUILD, root: true }, ctx, "e");
 
-        expect(first?.grantKey).toMatch(/^install_from_source:sess-1:plan:[0-9a-f]{64}$/);
+        expect(isDigestKey(first?.grantKey, "install_from_source:sess-1:plan:")).toBe(true);
         expect(again?.grantKey).toBe(first?.grantKey);
         expect(new Set([first?.grantKey, otherApt?.grantKey, otherCommand?.grantKey, asRoot?.grantKey]).size).toBe(4);
     });
@@ -773,7 +775,7 @@ describe("install_from_source — the grant keys", () => {
         const withDir = await approvalOf(tool, { op: "commit", sessionId: "sess-1", script: "R CMD INSTALL .", packageDir: "pkg" }, ctx, "d");
         const command = await approvalOf(tool, { op: "exec", sessionId: "sess-1", command: "make" }, ctx, "e");
 
-        expect(commit?.grantKey).toMatch(/^install_from_source:sess-1:commit:[0-9a-f]{64}$/);
+        expect(isDigestKey(commit?.grantKey, "install_from_source:sess-1:commit:")).toBe(true);
         expect(same?.grantKey).toBe(commit?.grantKey);
         expect(new Set([commit?.grantKey, otherScript?.grantKey, withDir?.grantKey, command?.grantKey]).size).toBe(4);
         expect(command?.grantKey).toBe("install_from_source:sess-1");
@@ -794,7 +796,7 @@ describe("install_from_source — the grant keys", () => {
         )._unsafeUnwrap();
         const afterApt = await approvalOf(tool, commit, ctx, "c");
 
-        expect(after?.grantKey).toMatch(/^install_from_source:sess-1:commit:[0-9a-f]{64}$/);
+        expect(isDigestKey(after?.grantKey, "install_from_source:sess-1:commit:")).toBe(true);
         expect(after?.grantKey).not.toBe(before?.grantKey);
         expect(afterApt?.grantKey).not.toBe(after?.grantKey);
     });

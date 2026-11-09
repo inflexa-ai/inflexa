@@ -925,7 +925,7 @@ export async function flySourceBuild(params: SourceFlightParams, deps: SourceFli
                 scriptHost: params.scriptHost,
                 reportName,
                 git: params.git,
-                ...(params.packageDir === undefined ? {} : { packageDir: params.packageDir }),
+                packageDir: params.packageDir,
                 aptSnapshotDate: params.aptSnapshotDate,
                 aptPackages: params.aptPackages,
                 imageDigests: params.imageDigests,
@@ -975,7 +975,7 @@ export async function flySourceBuild(params: SourceFlightParams, deps: SourceFli
         const check = await (deps.loadCheck ?? runLoadCheck)({
             storeRoot: params.storeRoot,
             reportName,
-            ...(params.signal === undefined ? {} : { signal: params.signal }),
+            signal: params.signal,
         });
         if (cancelled()) return settle("load_check", "the source build was cancelled");
         if (check.isErr()) return settle("load_check", check.error.message);
@@ -995,11 +995,13 @@ export async function flySourceBuild(params: SourceFlightParams, deps: SourceFli
 
         // A farm extension never fails the flight: the pool and the graph hold the
         // build, and a later link extends the farm.
-        if (params.analysisId !== null && existsSync(analysisFarmPath(params.storeRoot, params.analysisId))) {
-            const extended = await extendFarm({ storeRoot: params.storeRoot, analysisId: params.analysisId, roots: [outcome.store_dir] });
+        const { analysisId } = params;
+        const { pin } = outcome;
+        if (analysisId !== null && existsSync(analysisFarmPath(params.storeRoot, analysisId))) {
+            const extended = await extendFarm({ storeRoot: params.storeRoot, analysisId, roots: [outcome.store_dir] });
             extended.match(
-                () => progress(`[flight] extended the farm of the analysis ${params.analysisId} with ${outcome.pin}`),
-                (error) => progress(`[flight] the farm of the analysis ${params.analysisId} was not extended: ${describeFarmCompositionError(error)}`),
+                () => progress(`[flight] extended the farm of the analysis ${analysisId} with ${pin}`),
+                (error) => progress(`[flight] the farm of the analysis ${analysisId} was not extended: ${describeFarmCompositionError(error)}`),
             );
         }
         deleteStoreFlight(flightId).unwrapOr(0);

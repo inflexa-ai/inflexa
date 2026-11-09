@@ -994,10 +994,12 @@ describe("bootHarnessRuntime — the build-session binding", () => {
         // `active`, and a second boot call would short-circuit on it.
         const deadEngine: BootSeams = {
             ...recordingSeams([]),
-            resolveSandboxEngine: async () =>
-                err(
-                    new ContainerRuntimeError(
-                        "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.",
+            resolveSandboxEngine: () =>
+                Promise.resolve(
+                    err(
+                        new ContainerRuntimeError(
+                            "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.",
+                        ),
                     ),
                 ),
         };
@@ -1008,15 +1010,16 @@ describe("bootHarnessRuntime — the build-session binding", () => {
         // ahead of the whole boot tail.
         expect(lastCore).toBeNull();
 
-        await bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() });
+        await awaitOk(bootHarnessRuntime({ seams: recordingSeams([]), config: testConfig() }));
 
         const conversation = lastCore?.conversation;
         expect(conversation).toBeDefined();
+        if (conversation === undefined) throw new Error("expected a conversation composition");
         // The roster over the SAME deps the assembly receives holds the tool
         // exactly once: the host tool list carries it, and nothing else registers it.
-        expect((conversation?.hostTools ?? []).filter((tool) => tool.id === "install_from_source")).toHaveLength(1);
+        expect((conversation.hostTools ?? []).filter((tool) => tool.id === "install_from_source")).toHaveLength(1);
         const agent = createConversationAgent({
-            ...conversation!,
+            ...conversation,
             executeAnalysisWorkflow: () => Promise.reject(new Error("not used at composition time")),
             anchorReportSession: () => {
                 throw new Error("not used at composition time");
@@ -1040,10 +1043,12 @@ describe("bootHarnessRuntime — the build-session limits", () => {
             },
         };
 
-        await bootHarnessRuntime({
-            seams,
-            config: testConfig({ resourcePolicy: { perStep: { maxCpu: 6, maxMemoryGb: 24, maxGpuCount: 0 }, budget: { cpu: 8, memoryGb: 32 } } }),
-        });
+        await awaitOk(
+            bootHarnessRuntime({
+                seams,
+                config: testConfig({ resourcePolicy: { perStep: { maxCpu: 6, maxMemoryGb: 24, maxGpuCount: 0 }, budget: { cpu: 8, memoryGb: 32 } } }),
+            }),
+        );
 
         expect(received?.limits).toEqual({ cpu: 6, memoryGb: 24 });
     });

@@ -1316,11 +1316,15 @@ describe("a source-built package", () => {
         writeFileSync(join(pyHome, ".inflexa-hash"), `${"e".repeat(64)}\n`);
         writeFileSync(join(pyHome, ".inflexa-build.json"), `${JSON.stringify({ schema: 1, source: { tree_hash: "e".repeat(64) } })}\n`);
 
-        const graph = JSON.parse(readFileSync(join(root, "deps.json"), "utf8")) as {
-            nodes: Record<string, { track: string; name: string; version: string; imports: string[]; entry_points: string[]; edges: string[] }>;
-            by_name: { python: Record<string, string[]>; r: Record<string, string[]> };
-        };
-        for (const dir of [SEEDMATCHR_CRAN, SEEDMATCHR_SRC]) graph.nodes[dir] = { track: "r", name: "SeedMatchR", version: "2.0.0", imports: [], entry_points: [], edges: [] };
+        const graph = parsedJson(
+            readFileSync(join(root, "deps.json"), "utf8"),
+            z.looseObject({
+                nodes: z.record(z.string(), z.json()),
+                by_name: z.looseObject({ python: z.record(z.string(), z.array(z.string())), r: z.record(z.string(), z.array(z.string())) }),
+            }),
+        );
+        for (const dir of [SEEDMATCHR_CRAN, SEEDMATCHR_SRC])
+            graph.nodes[dir] = { track: "r", name: "SeedMatchR", version: "2.0.0", imports: [], entry_points: [], edges: [] };
         graph.nodes[PYSRC] = { track: "python", name: "pysrc", version: "1.0", imports: ["pysrc"], entry_points: [], edges: [] };
         graph.by_name.r["SeedMatchR"] = [SEEDMATCHR_CRAN, SEEDMATCHR_SRC];
         graph.by_name.python["pysrc"] = [PYSRC];

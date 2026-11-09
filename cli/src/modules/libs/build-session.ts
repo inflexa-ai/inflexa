@@ -77,6 +77,8 @@ import PQueue from "p-queue";
 import { ensureRuntime } from "../../lib/config.ts";
 import { capture, type CaptureOpts, type CaptureResult, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { readEnvCredentialVar } from "../../lib/env.ts";
+import { messageOf } from "../../lib/cause.ts";
+import { ASCII_DIGITS, consistsOf } from "../../lib/text.ts";
 import { provisionerImageFor } from "./images.ts";
 import { ensureImagePresent, configuredSandboxImage, type ImageAbsentError } from "./pull.ts";
 import { SESSION_CLASS_HOSTS, sessionEgressAllow } from "./provisioner.ts";
@@ -228,12 +230,15 @@ type LiveSession = {
 const timedOut = (code: number, elapsedMs: number, budgetMs: number): boolean =>
     code === 124 || (code === 137 && elapsedMs >= budgetMs + TIMEOUT_KILL_AFTER_MS);
 
-/** A full commit sha. */
-const FULL_SHA = /^[0-9a-f]{40}$/i;
+/** The digits of a lowercase hex text: a sha-256 digest. */
+const LOWER_HEX = `${ASCII_DIGITS}abcdef`;
+
+/** The digits of a commit sha, in either letter case. */
+const ANY_CASE_HEX = `${LOWER_HEX}ABCDEF`;
 
 /** Quote one word for a `bash -c` command string. */
 function shellQuote(word: string): string {
-    return `'${word.replace(/'/g, `'\\''`)}'`;
+    return `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
 /** The image facts of one walled command's arguments: the container name, the egress preamble, the volume, and the entrypoint override. */
@@ -445,11 +450,10 @@ function parseLsRemote(out: string, ref: string | undefined): { readonly sha: st
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line !== "")
-        .map((line) => {
+        .flatMap((line) => {
             const tab = line.indexOf("\t");
-            return tab < 0 ? null : ([line.slice(0, tab).trim(), line.slice(tab + 1).trim()] as const);
-        })
-        .filter((row): row is readonly [string, string] => row !== null);
+            return tab < 0 ? [] : [[line.slice(0, tab).trim(), line.slice(tab + 1).trim()] as const];
+        });
     const wanted = ref === undefined ? ["HEAD"] : [ref, `refs/heads/${ref}`, `refs/tags/${ref}`];
     for (const name of wanted) {
         const hit = rows.find(([, rowName]) => rowName === name);
@@ -482,9 +486,11 @@ function snapshotTimestampOf(created: string): string {
 }
 
 /** Docker's RFC3339 spelling of a creation time. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads the day, the time, the fraction, and the zone of an RFC3339 time as parts. `Date.parse` gives one number and no parts, and a string form of the optional fraction and the two zone forms is longer than the pattern.
 const RFC3339 = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
 
 /** Podman's spelling: the Go time layout, `2026-10-19 21:31:56.69 +0000 UTC`, with the zone name behind the offset. */
+// oxlint-disable-next-line eslint-js/no-restricted-syntax -- Reads the parts of a time in the Go layout that podman prints. `Date.parse` does not read that layout, and a string form of the optional fraction, the signed offset, and the optional zone name is longer than the pattern.
 const GO_TIME = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.(\d+))? ([+-])(\d{2})(\d{2})(?: .+)?$/;
 
 /** One creation time as its parts: the day, the time, the fraction, and the zone offset (`Z` or `±hh:mm`). */
@@ -508,7 +514,7 @@ function baseDigestOf(label: string): string {
     const value = label.trim();
     const at = value.lastIndexOf("@sha256:");
     const digest = at < 0 ? "" : value.slice(at + "@sha256:".length);
-    if (!/^[0-9a-f]{64}$/.test(digest)) {
+    if (digest.length !== 64 || !consistsOf(digest, LOWER_HEX)) {
         throw new Error(`the org.opencontainers.image.base.name label "${value}" names no @sha256: digest, thus the build record names no base digest.`);
     }
     return `sha256:${digest}`;
@@ -547,7 +553,7 @@ function describeFolderCopyError(error: FolderCopyError): string {
         case "aborted":
             return "the copy of the folder was aborted.";
         case "io_failed":
-            return `could not copy ${error.path}: ${error.cause instanceof Error ? error.cause.message : String(error.cause)}`;
+            return `could not copy ${error.path}: ${messageOf(error.cause)}`;
         default: {
             const exhaustive: never = error;
             throw new Error(`unhandled folder copy error: ${JSON.stringify(exhaustive)}`);
@@ -1049,7 +1055,7 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
             signal,
         );
         const landed = captured.stdout.trim().split("\n").at(-1) ?? "";
-        if (!FULL_SHA.test(landed)) throw new Error(`the clone of ${url} named no full commit sha:\n${tailOf(captured)}`);
+        if (landed.length !== 40 || !consistsOf(landed, ANY_CASE_HEX)) throw new Error(`the clone of ${url} named no full commit sha:\n${tailOf(captured)}`);
         return landed;
     };
 
@@ -1089,10 +1095,11 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
             await run(session.rt, ["rm", "-f", `${session.containerName}-hash`]).catch(() => undefined);
             signal.throwIfAborted();
         }
-        if (captured.code !== 0 || !/^[0-9a-f]{64}$/.test(captured.stdout.trim())) {
+        const treeHash = captured.stdout.trim();
+        if (captured.code !== 0 || treeHash.length !== 64 || !consistsOf(treeHash, LOWER_HEX)) {
             throw new Error(`could not hash the folder snapshot with the provisioner:\n${tailOf(captured)}`);
         }
-        return captured.stdout.trim();
+        return treeHash;
     };
 
     /** The repository name of a git URL, which names the source flight row the commit claims. */
@@ -1183,7 +1190,7 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
             }
             return {
                 sessionId,
-                ...(session.commit === undefined ? {} : { commit: session.commit }),
+                commit: session.commit,
                 workingDir: WORKING,
                 classHosts: SESSION_CLASS_HOSTS,
             };
@@ -1213,7 +1220,7 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
                     // An abort removed both containers; the session stays open and the next exec retries the start.
                     signal.throwIfAborted();
                     throw new Error(
-                        `the session container is gone and the restart under the approved plan failed (${cause instanceof Error ? cause.message : String(cause)}). Stop the session and start a new one`,
+                        `the session container is gone and the restart under the approved plan failed (${messageOf(cause)}). Stop the session and start a new one`,
                         { cause },
                     );
                 }
@@ -1261,7 +1268,7 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
             try {
                 writeFileSync(scriptHost, request.script, { flag: "wx", mode: 0o644 });
                 const facts = await imageFacts(session, signal);
-                const outcome = await (host.fly ?? flySourceBuild)({
+                const params: SourceFlightParams = {
                     storeRoot,
                     analysisId: session.analysisId,
                     snapshotHost: join(session.scratch, "src"),
@@ -1277,9 +1284,9 @@ export function createBuildSession(storeRoot: string, host: BuildSessionHost = {
                     aptSnapshotDate: facts.aptSnapshotTimestamp,
                     aptPackages: session.plan.aptPackages,
                     imageDigests: { provisioner: facts.provisioner, base: facts.base },
-                    ...(request.packageDir === undefined ? {} : { packageDir: request.packageDir }),
                     signal,
-                });
+                };
+                const outcome = await (host.fly ?? flySourceBuild)(request.packageDir === undefined ? params : { ...params, packageDir: request.packageDir });
                 if (outcome.kind === "committed") {
                     await teardown(handle);
                     return { kind: "committed", pin: outcome.pin, storeDir: outcome.storeDir };
