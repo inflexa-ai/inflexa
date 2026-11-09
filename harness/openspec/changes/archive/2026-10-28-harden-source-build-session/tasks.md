@@ -1,0 +1,23 @@
+# Tasks
+
+## 1. The interface and the tool
+
+- [x] 1.1 In `harness/src/sandbox/types.ts`, add `BuildCommitRequest` (`script`, optional `packageDir`). Change the signatures to `start(source, analysisId, signal)`, `exec(handle, command, signal)`, `commit(handle, request, signal)`, and keep `stop(handle)`. Export `BuildCommitRequest` from `harness/src/index.ts`. Update the JSDoc of the interface for the signal (decision H5). Prove it with `cd harness && bun run typecheck`.
+- [x] 1.2 In `harness/src/tools/install-from-source.ts`, add the host-name rule to `hosts` and to the host of `gitUrl`, with the `https`/`http` scheme rule (decision H3). The check ignores case, and the schema gives the host in lower case. Add the `packageDir` input for `commit`: relative, no `..` segment, not absolute (decision H6). A refused value fails the call before any ask and names the value. Prove it with new cases in `harness/src/tools/test/install-from-source.test.ts`: `com`, `pypi.org/evil.example`, `10.0.0.1`, a `file:` URL, a `gitlab.com` URL that passes, and `../other`.
+- [x] 1.3 Add the lock for each session (decision H4): a promise chain for each session id that covers the whole body of `exec`, `commit`, and `stop`, the asks included. Add the start ask (decision H2): it shows the folder path, or the git URL and its ref. A rejection rethrows and calls no `start`. Prove it with test cases for the start asks of both sources and their rejection. Also prove that two calls on one session run in sequence and calls on two sessions do not wait.
+- [x] 1.4 Pass `ctx.signal` to `start`, `exec`, and `commit`, and pass the commit request with `packageDir`. Show the package directory in the commit ask. Prove it with test cases that read the signal and the request from a recorded fake `BuildSession`.
+- [x] 1.5 Update the tool description (decision H10). Add the restart rule (each change outside `/work` is gone, install it again) and the clean-run rule (the run installs the plan's apt packages, and the script runs as the non-root user with no `apt-get` and no root step). Add the `packageDir` rule for an R package in a subdirectory, in place of the "custom script" sentence. Prove it with the description pins of the test file.
+- [x] 1.6 Run `cd harness && bun run format:file <changed files>`, `bun run lint`, `bun run typecheck`, and `bun test src/tools/test/install-from-source.test.ts src/agents/sandbox/test/shared.test.ts`. Then run `bun run build`, because the CLI links the harness `dist/`.
+
+## 2. The provisioner run
+
+- [x] 2.1 In `images/sandbox-provisioner/provision.py`, add `--package-dir` and the required `--lib-view` to `acquire-source`. Refuse a package directory that is absolute, holds `..`, resolves outside the snapshot, or holds no `DESCRIPTION`. Resolve the R dependencies from that directory, and write `package_dir` into the source block of the build record. Prove it with new `AcquireSourceRunTests` cases for a subdirectory package, an escape refusal, and the record field.
+- [x] 2.2 Install the plan's apt packages as root after the apt pin and before the script. Refuse a name that is not a Debian package name before any install (decision H7). Prove it with test cases that read the `apt-get` calls from the monkeypatched runner and pin the refusal of `-oAPT::Get::AllowUnauthenticated=true`.
+- [x] 2.3 Run the script unprivileged (decision H7). Make the store parent mode 0700, and refuse when that parent is `/`. Give the output directory to uid 1000, and copy the script into a root-owned file of mode 0755. Make the R library links relative, and set `R_LIBS_USER` through `--lib-view`. Then run `setpriv --reuid=1000 --regid=1000 --init-groups --inh-caps=-all --bounding-set=-all --no-new-privs` with `HOME=/home/inflexa-build`. Write the script output to a file and read only its tail, never the whole output in memory. Prove it with test cases that pin the `setpriv` argv, the copied script, the relative links, the library path, and the tail.
+- [x] 2.4 In `source_python_dependencies`, append each installed directory to the list of the caller, and change a `ResolveError` or `SystemExit` of `ensure_stored` into `SourceBuildError` (decision H8). Prove it with a test case whose second pin fails: the report holds the reason, and the store directory of the first pin is gone.
+- [x] 2.5 Make `reclaim --debris` also remove `source-*.json` under `.inflexa-download/` (decision H9). Prove it with a `DebrisTests` case.
+- [x] 2.6 Run `cd images/sandbox-provisioner && python3 -m unittest -v test_provision`, and make sure that it passes.
+
+## 3. Validation
+
+- [x] 3.1 Run `cd harness && openspec validate harden-source-build-session --strict`, and make sure that it passes.

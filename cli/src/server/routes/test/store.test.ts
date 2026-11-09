@@ -13,7 +13,7 @@ import { asStr256 } from "../../../lib/types.ts";
 import { enqueueStoreAdd } from "../../../modules/libs/store_flight.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { FARM_PARITY_FIXTURE } from "../../../test_support/fixtures.ts";
-import { jsonBody } from "../../../test_support/response_body.ts";
+import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import type { ServerEnv } from "../../http.ts";
 import { DEFAULT_STORE_ROUTE_OPTS, farmLinkRoutes, storeRoutes, type StoreRouteOpts } from "../store.ts";
 import { stringContaining } from "../../../test_support/matchers.ts";
@@ -163,6 +163,23 @@ describe("the failed flights", () => {
         expect(await jsonBody(response)).toEqual({ flightKey: id, spec: "polars (python)", flushStarted: true });
         expect(stub.flushes()).toBe(1);
         expect(listPendingStoreAdds()._unsafeUnwrap()).toMatchObject([{ spelling: "polars", ecosystem: "python", specifier: "" }]);
+    });
+
+    test("a retry of a source row refuses and enqueues nothing, because an index store add cannot refly a source build", async () => {
+        const stub = stubbed(tempStore());
+        const id = "r::SeedMatchR::==2.0.0@git:2fc0c4f";
+        claimStoreFlight({ id, ecosystem: "r", spelling: "SeedMatchR", specifier: "==2.0.0@git:2fc0c4f", holderPid: process.pid })._unsafeUnwrap();
+        settleStoreFlightFailure({ id, message: "load_check: the load check failed inside the sandbox image" })._unsafeUnwrap();
+
+        const response = await storeRoutes(stub.opts).request(`/store/flights/${encodeURIComponent(id)}/retry`, post());
+
+        expect(response.status).toBe(409);
+        const body = await errorBody(response);
+        expect(body.error).toBe("conflict");
+        expect(body.message).toContain("SeedMatchR==2.0.0@git:2fc0c4f (r)");
+        expect(body.message).toContain("install-from-source");
+        expect(stub.flushes()).toBe(0);
+        expect(listPendingStoreAdds()._unsafeUnwrap()).toHaveLength(0);
     });
 
     test("a delete removes the record and runs the debris pass", async () => {

@@ -38,6 +38,14 @@ export const FarmLockPackageSchema = z.looseObject({
     /** The full sha256 of the sorted store tree. */
     hash: z.string(),
     requested: z.boolean(),
+    /**
+     * The provenance of a source-built distribution, read from its build record
+     * at composition time. An index entry carries none, because the pinned index
+     * is its provenance. Additive, thus the lock schema number stays 1.
+     */
+    source: z
+        .union([z.looseObject({ url: z.string(), commit: z.string(), pin: z.string() }), z.looseObject({ treeHash: z.string(), pin: z.string() })])
+        .optional(),
 });
 
 /**

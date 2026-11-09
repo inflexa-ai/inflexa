@@ -233,14 +233,14 @@ export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: 
 function libStoreEnv(toolchainSource: ToolchainSource | undefined, cache: boolean): Record<string, string> {
     if (toolchainSource !== "image") {
         return {
-            R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran",
+            R_LIBS_SITE: "/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran:/mnt/libs/current/r/source",
             NODE_PATH: "/mnt/libs/current/node/node_modules",
             PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin",
         };
     }
     const farm = farmContainerPath(toolchainSource);
     const env: Record<string, string> = {
-        R_LIBS_SITE: `${farm}/r/github:${farm}/r/bioconductor:${farm}/r/cran`,
+        R_LIBS_SITE: `${farm}/r/github:${farm}/r/bioconductor:${farm}/r/cran:${farm}/r/source`,
         NODE_PATH: "/opt/node/node_modules",
         PATH: `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/conda/bin:${farm}/python/bin`,
     };

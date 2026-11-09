@@ -1024,7 +1024,7 @@ describe("docker createSandbox — mounts and platform", () => {
         // The farm python/bin ends the PATH, after every image path, thus a
         // farm script never shadows an image tool.
         expect(env.PATH?.endsWith("/opt/conda/bin:/mnt/libs/farm/python/bin")).toBe(true);
-        expect(env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran");
+        expect(env.R_LIBS_SITE).toBe("/mnt/libs/farm/r/github:/mnt/libs/farm/r/bioconductor:/mnt/libs/farm/r/cran:/mnt/libs/farm/r/source");
         // Without a cache mount the cache env stays absent — the entrypoint fallback covers it.
         expect(env.NUMBA_CACHE_DIR).toBeUndefined();
     });
