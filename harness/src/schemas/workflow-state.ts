@@ -16,13 +16,37 @@ import { z } from "zod";
  * of the step at dispatch, thus a template default never replaces a plan
  * decision silently.
  */
+/** A value of a setting: a scalar, or a list of strings. */
+const GroundingValueSchema = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
+
 export const GroundingSettingSchema = z.object({
     step: z.string().describe("The procedure step the setting belongs to (for example `differential_expression` or `normalize`)."),
     name: z.string().describe("The parameter name as the procedure names it (for example `alpha` or `lfc_shrink`)."),
-    value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).describe("The value the procedure sets."),
+    value: GroundingValueSchema.describe("The value the procedure sets."),
     source: z.string().optional().describe("The source of the value (a doi or a document) when the procedure names one. Absent otherwise."),
 });
 export type GroundingSetting = z.infer<typeof GroundingSettingSchema>;
+
+/**
+ * One place where a grounded step departs from a rule it cites. A departure
+ * with a value replaces the value of its setting in the binding of the
+ * template, and a departure with a setting and no value removes the setting
+ * from the binding.
+ */
+export const GroundingDepartureSchema = z.object({
+    rule: z.string().describe("The claim id of the rule the step departs from, as `grounding.claims` holds it (for example `R-0147@3c1d`)."),
+    setting: z
+        .string()
+        .optional()
+        .describe(
+            "The `name` of the entry of `grounding.settings` that the departure changes. Absent when the step leaves out a part of the rule that no setting carries, for example a diagnostic the plan does not run.",
+        ),
+    value: GroundingValueSchema.optional().describe(
+        "The value of the plan for the setting. The host binds it in place of the value of the rule. Absent when the plan does not apply the setting.",
+    ),
+    reason: z.string().describe("Why the step departs from the rule, from the design or the data, in one line."),
+});
+export type GroundingDeparture = z.infer<typeof GroundingDepartureSchema>;
 
 /**
  * The grounding of one method step: the claim identifiers and the snapshot
@@ -53,7 +77,15 @@ export const GroundingSchema = z.object({
         .describe(
             "The scientific settings of the step: the parameters of the procedure steps the plan step holds, as `knowledge_recommend` returned them. " +
                 "Copy the `grounding.settings` of the skeleton step as it is, one entry per parameter, with its step, name, value, and source. " +
-                "Do not restate a setting as prose only, and do not change a value here: state a different value in the step and its reason. Absent when the step is ungrounded.",
+                "Do not restate a setting as prose only, and do not change a value here: give a different value as an entry of `departures`. Absent when the step is ungrounded.",
+        ),
+    departures: z
+        .array(GroundingDepartureSchema)
+        .optional()
+        .describe(
+            "Each place where the step keeps its method and departs from a rule it cites: a setting with a different value, a setting the plan does not apply, or a part of the rule the plan leaves out. " +
+                "One entry per setting, with the claim id of the rule, the setting name, the value of the plan, and the reason. " +
+                "The host binds the value of a departure in place of the value of the rule. Absent when the step obeys each rule it cites.",
         ),
     reason: z
         .string()

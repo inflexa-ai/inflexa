@@ -115,7 +115,7 @@ import {
     type UpstreamHandoff,
 } from "../prompts/briefing.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
-import type { AnalysisStep, ClaimView, GroundingSetting } from "../schemas/workflow-state.js";
+import type { AnalysisStep, ClaimView, GroundingDeparture, GroundingSetting } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
@@ -663,6 +663,7 @@ async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClie
         stepId: step.id,
         claims: step.grounding?.claims ?? [],
         snapshot: step.grounding?.snapshot && step.grounding.snapshot !== "none" ? step.grounding.snapshot : undefined,
+        departures: step.grounding?.departures ?? [],
     });
 }
 
@@ -704,15 +705,23 @@ function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
  *   a pinned conflict the agent must know about, an equal value is satisfied
  * - a setting that names no slot stays a plan setting the agent applies itself
  *
+ * A departure of the plan replaces the value of its setting before the
+ * intersection, thus the value of the plan takes each path above in place of
+ * the value of the rule. A departure that names a setting and gives no value
+ * removes the setting: the plan does not apply it, and nothing binds it. When
+ * that setting names an adaptable slot, the binding names the slot as excluded,
+ * and the render must send its value with an override.
+ *
  * A served version that differs from the version the plan names binds
  * nothing: the render refuses the plan version, and the settings then ride
  * as unbound lines under the caveat the section renders.
  */
-/** What binds the render to the plan step beside the settings: its id, its claims, and the release the plan pinned. */
+/** What binds the render to the plan step beside the settings: its id, its claims, the release the plan pinned, and its departures. */
 type StepGroundingRef = {
     readonly stepId: string;
     readonly claims: readonly string[];
     readonly snapshot?: string;
+    readonly departures: readonly GroundingDeparture[];
 };
 
 function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
@@ -726,9 +735,34 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
     const unbound: string[] = [];
     const slots: Record<string, TemplateBindingValue> = {};
     const sources: Record<string, string> = {};
+    const excluded: string[] = [];
 
-    for (const setting of settings) {
-        const shown = `\`${setting.name}\` = ${JSON.stringify(setting.value)} (${setting.step}${setting.source ? `; ${setting.source}` : ""})`;
+    const departureBySetting = new Map(
+        grounding.departures.flatMap((departure) => (departure.setting === undefined ? [] : [[departure.setting, departure] as const])),
+    );
+
+    for (const rule of settings) {
+        const departure = departureBySetting.get(rule.name);
+        if (departure !== undefined && departure.value === undefined) {
+            const departs = `\`${rule.name}\` = ${JSON.stringify(rule.value)} (${rule.step}${rule.source ? `; ${rule.source}` : ""}): the plan departs from ${departure.rule} and does not apply it (${departure.reason})`;
+            // A slot of the template always takes a value, and an omitted slot takes the default of the template. Thus the
+            // render must send the value that matches the plan, and the decision record keeps it as an override.
+            if (versionMatches && adaptableNames.has(rule.name)) {
+                excluded.push(rule.name);
+                unbound.push(
+                    `${departs}, but the template gives each slot a value; send the value that matches the plan, with an \`overrides\` entry and the reason`,
+                );
+            } else if (pinnedByName.has(rule.name)) {
+                unbound.push(`${departs}, but the template pins \`${rule.name}\``);
+            } else {
+                unbound.push(departs);
+            }
+            continue;
+        }
+        const setting: GroundingSetting =
+            departure?.value === undefined ? rule : { ...rule, value: departure.value, source: `departure from ${departure.rule}` };
+        const where = departure === undefined ? setting.source : `departure from ${departure.rule}: ${departure.reason}`;
+        const shown = `\`${setting.name}\` = ${JSON.stringify(setting.value)} (${setting.step}${where ? `; ${where}` : ""})`;
         if (!versionMatches) {
             unbound.push(`${shown}: not bound, because the served version differs from the plan`);
             continue;
@@ -790,6 +824,9 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                   // without a second read of the contract.
                   local: contract.parameters.filter((slot) => slot.local === true),
                   adaptable: adaptable.map((slot) => slot.name),
+                  // The decision record keeps the departures of the step beside the bound slots.
+                  departures: grounding.departures.length > 0 ? grounding.departures : undefined,
+                  excluded: excluded.length > 0 ? excluded : undefined,
               }
             : undefined,
     };

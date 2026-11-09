@@ -219,3 +219,38 @@ describe("the capability field of a step", () => {
         expect(STEP_TASK_FIELDS).not.toContain("capability");
     });
 });
+
+describe("the departures of a grounding", () => {
+    const grounding: NonNullable<AnalysisStep["grounding"]> = {
+        status: "grounded",
+        snapshot: "sha256:71ac",
+        claims: ["R-0001@e7d0", "R-0147@3c1d"],
+        settings: [{ step: "qc_sample_structure", name: "n_top_genes_pca", value: 500 }],
+        reason: "PCA per R-0001@e7d0",
+    };
+
+    it("accepts a departure from a cited rule, with or without a setting", () => {
+        const departures = [
+            { rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" },
+            { rule: "R-0147@3c1d", reason: "the inputs hold no amplicon sequence" },
+        ];
+        expect(validatePlan(plan([step({ id: "T1S1", grounding: { ...grounding, departures } })])).errors).toEqual([]);
+    });
+
+    it("refuses a rule the step does not cite, a setting the step does not hold, a second departure for one setting, and a value with no setting", () => {
+        const departures = [
+            { rule: "R-0200@aa00", reason: "the panel has no histone gene" },
+            { rule: "R-0001@e7d0", setting: "gc_bias", reason: "no sequence" },
+            { rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" },
+            { rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 300, reason: "a second value" },
+            { rule: "R-0147@3c1d", value: 1, reason: "a value with no setting" },
+        ];
+        const { errors } = validatePlan(plan([step({ id: "T1S1", grounding: { ...grounding, departures } })]));
+        expect(errors).toEqual([
+            'Step "T1S1" departs from R-0200@aa00, which is not a claim of its grounding — name a claim the step cites (R-0001@e7d0, R-0147@3c1d), or remove the departure',
+            'Step "T1S1" departs from the setting gc_bias, which grounding.settings does not hold — name one of its settings (n_top_genes_pca), or leave out the setting for a part of the rule that no setting carries',
+            'Step "T1S1" has two departures for the setting n_top_genes_pca — give one departure for each setting',
+            'Step "T1S1" gives a departure from R-0147@3c1d a value and no setting — name the setting of grounding.settings that the value replaces',
+        ]);
+    });
+});

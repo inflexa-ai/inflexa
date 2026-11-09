@@ -86,7 +86,50 @@ describe("knowledge_template with a binding", () => {
             { slot: "covariates", value: ["batch", "sex"], source: "plan" },
         ]);
         expect(record.settings_overrides).toEqual([]);
+        expect(record.departures).toEqual([]);
         expect(record.script_path).toBe(`/${ANALYSIS}/runs/run-1/T1S2/scripts/tpl-deseq2-two-group.R`);
+    });
+
+    it("refuses a render that sends no value for an excluded slot, or a value with no override", async () => {
+        const departures = [{ rule: "R-0001@e7d0", setting: "lfc_shrink", reason: "the plan reports the unshrunk fold changes" }];
+        const { tool, calls } = build(binding({ slots: {}, sources: {}, departures, excluded: ["lfc_shrink"] }));
+        const { ctx } = makeToolContext();
+
+        const attempts: Record<string, string>[] = [{ counts_path: COUNTS }, { counts_path: COUNTS, lfc_shrink: "apeglm" }];
+        for (const slots of attempts) {
+            const out = (await tool.execute({ template: TEMPLATE, slots }, ctx))._unsafeUnwrap();
+            expect(out).toMatchObject({ match: "rejected", issues: [{ slot: "lfc_shrink", reason: "not applied by the plan" }] });
+        }
+        expect(calls.render).toHaveLength(0);
+    });
+
+    it("renders an excluded slot with the value and the override of the model, and keeps the override with no plan value", async () => {
+        const departures = [{ rule: "R-0001@e7d0", setting: "lfc_shrink", reason: "the plan reports the unshrunk fold changes" }];
+        const reason = "the plan reports the unshrunk fold changes";
+        const { tool, workingDir, calls } = build(binding({ slots: {}, sources: {}, departures, excluded: ["lfc_shrink"] }));
+        const { ctx } = makeToolContext();
+
+        const out = (
+            await tool.execute({ template: TEMPLATE, slots: { counts_path: COUNTS, lfc_shrink: "none" }, overrides: [{ slot: "lfc_shrink", reason }] }, ctx)
+        )._unsafeUnwrap();
+
+        expect(out).toMatchObject({ status: "ok" });
+        expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "none" });
+        expect((await recordOf(workingDir)).settings_overrides).toEqual([{ slot: "lfc_shrink", plan_value: null, new_value: "none", reason }]);
+    });
+
+    it("keeps the departures of the plan step in the decision record, and the bound value of a departure in the bound slots", async () => {
+        const departures = [
+            { rule: "R-0001@e7d0", setting: "min_count", value: 5, reason: "the panel holds 364 targets" },
+            { rule: "R-0001@e7d0", reason: "the plan runs no GC diagnostic" },
+        ];
+        const { tool, workingDir } = build(binding({ slots: { min_count: 5 }, sources: { min_count: "departure from R-0001@e7d0" }, departures }));
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ template: TEMPLATE, slots: { counts_path: COUNTS } }, ctx))._unsafeUnwrap();
+        expect(out).toMatchObject({ status: "ok" });
+        const record = await recordOf(workingDir);
+        expect(record.departures).toEqual(departures);
+        expect(record.bound_slots).toEqual([{ slot: "min_count", value: 5, source: "departure from R-0001@e7d0" }]);
     });
 
     it("binds the render to the plan step: the step, its claims, and the pinned release ride in the request, and the local slots come from the binding", async () => {

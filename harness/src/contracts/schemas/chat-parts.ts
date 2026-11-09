@@ -11,6 +11,15 @@ import { TokenUsageRollupSchema } from "./usage.js";
 
 // ── Presentation ────────────────────────────────────────────────────
 
+const PlanStepValueSchema = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
+
+export const PlanStepDepartureSchema = z.object({
+    rule: z.string(),
+    setting: z.string().optional(),
+    value: PlanStepValueSchema.optional(),
+    reason: z.string(),
+});
+
 export const PlanStepSchema = z.object({
     id: z.string(),
     name: z.string(),
@@ -28,11 +37,12 @@ export const PlanStepSchema = z.object({
                     z.object({
                         step: z.string(),
                         name: z.string(),
-                        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
+                        value: PlanStepValueSchema,
                         source: z.string().optional(),
                     }),
                 )
                 .optional(),
+            departures: z.array(PlanStepDepartureSchema).optional(),
             reason: z.string(),
         })
         .optional(),
@@ -361,6 +371,8 @@ export const StepMethodsSchema = z.object({
     claimsOmitted: z.number().int().positive().optional(),
     sources: z.array(StepMethodsSourceSchema),
     sourcesOmitted: z.number().int().positive().optional(),
+    departures: z.array(PlanStepDepartureSchema).optional(),
+    departuresOmitted: z.number().int().positive().optional(),
     license: z.string().optional(),
 });
 

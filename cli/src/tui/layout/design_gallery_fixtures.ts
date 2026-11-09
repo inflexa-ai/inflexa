@@ -212,6 +212,7 @@ export const mockPlanStepDetail: PlanCardStepView = {
         reason: "DESeq2 Wald test per R-0001@e7d0",
         rules: [{ id: "R-0001@e7d0", title: "Use DESeq2 Wald or edgeR QL with 2 to 11 replicates", strength: "consensus" }],
         settings: [{ step: "differential_expression", name: "alpha", value: "0.05", source: "" }],
+        departures: [],
         sources: [{ title: "How many biological replicates", year: 2016, ref: "doi:10.1261/rna.053959.115" }],
     },
 };

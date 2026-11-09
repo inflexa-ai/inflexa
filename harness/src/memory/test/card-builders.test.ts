@@ -102,6 +102,21 @@ describe("planPartOf", () => {
         expect(part?.steps?.map((step) => step.id)).toEqual(["T1S1"]);
     });
 
+    it("keeps the settings and the departures of a grounded step", () => {
+        const grounding = {
+            status: "grounded",
+            snapshot: "sha256:71ac",
+            claims: ["R-0001@e7d0"],
+            settings: [{ step: "qc_sample_structure", name: "n_top_genes_pca", value: 500 }],
+            departures: [{ rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" }],
+            reason: "PCA per R-0001@e7d0",
+        };
+        const document = planDocument();
+        const plan = { ...document, steps: document.steps.map((step) => ({ ...step, grounding })) };
+
+        expect(planPartOf(recordOf({ plan }))?.steps?.[0]?.grounding).toEqual(grounding);
+    });
+
     it("gives null for a document that does not parse", () => {
         expect(planPartOf(recordOf({ plan: { steps: "no" } }))).toBeNull();
     });

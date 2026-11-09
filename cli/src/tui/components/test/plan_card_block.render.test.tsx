@@ -76,6 +76,7 @@ describe("PlanCardBlock", () => {
             reason: "r",
             rules: [],
             settings: [],
+            departures: [],
             sources: [],
         });
         const steps = [{ ...step("A"), grounding: grounding("grounded") }, { ...step("B", ["A"]), grounding: grounding("flagged") }, step("C", ["B"])];
@@ -96,7 +97,7 @@ describe("PlanCardBlock", () => {
         expect(planGroundingLine([step("A"), step("B")])).toBeNull();
         const withRelease = (snapshot: string): PlanCardStepView => ({
             ...step(snapshot),
-            grounding: { status: "grounded", snapshot, template: "", reason: "r", rules: [], settings: [], sources: [] },
+            grounding: { status: "grounded", snapshot, template: "", reason: "r", rules: [], settings: [], departures: [], sources: [] },
         });
         expect(planGroundingLine([withRelease("sha256:71ac"), withRelease("sha256:ffff")])).toBe("grounding: 2 of 2 steps grounded · 2 knowledge releases");
     });

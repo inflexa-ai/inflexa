@@ -33,7 +33,18 @@ export type PlanStepSetting = {
     source?: string;
 };
 
-/** The grounding of one plan step: the claims and the knowledge release that the planner used, the template, and the settings. */
+/** A place where the plan step departs from a rule it cites, as the grounding of the plan holds it. */
+export type PlanStepDeparture = {
+    /** The claim id of the rule, for example `R-0147@3c1d`. */
+    rule: string;
+    /** The setting that the departure changes. Absent for a part of the rule that no setting carries. */
+    setting?: string;
+    /** The value of the plan. Absent when the plan does not apply the setting. */
+    value?: string | number | boolean | string[];
+    reason: string;
+};
+
+/** The grounding of one plan step: the claims and the knowledge release that the planner used, the template, the settings, and the departures. */
 export type PlanStepGrounding = {
     /** `grounded`, `ungrounded`, or `flagged`. */
     status: string;
@@ -44,6 +55,8 @@ export type PlanStepGrounding = {
     /** The template id with its version, for example `tpl-deseq2-two-group@1.0.0`. */
     template?: string;
     settings?: PlanStepSetting[];
+    /** The departures of the step from its rules. The value of a departure replaces the value of its setting. */
+    departures?: PlanStepDeparture[];
     /** The one-line reason of the planner. */
     reason: string;
 };
@@ -392,6 +405,10 @@ export type StepMethods = {
     sources: StepMethodsSource[];
     /** The count of the sources past the bound of the list. */
     sourcesOmitted?: number;
+    /** The departures of the plan step from its rules. Absent when the step has none. */
+    departures?: PlanStepDeparture[];
+    /** The count of the departures past the bound of the list. */
+    departuresOmitted?: number;
     /** The license of the rule text, for the attribution. */
     license?: string;
 };

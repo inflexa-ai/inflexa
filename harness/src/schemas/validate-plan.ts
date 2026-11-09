@@ -19,7 +19,7 @@ import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js
 import { isLabelValue } from "../sandbox/labels.js";
 import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
 import { slugify } from "../lib/slug.js";
-import type { AnalysisPlan } from "./workflow-state.js";
+import type { AnalysisPlan, AnalysisStep } from "./workflow-state.js";
 
 const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
 
@@ -179,5 +179,45 @@ export function validatePlan(plan: AnalysisPlan): ValidationResult {
         }
     }
 
+    // 8. Each departure of a grounding names a rule the step cites, and the setting it changes is a setting
+    //    of the step. The binding replaces the value of that setting, thus a departure that names nothing
+    //    the step holds would change no value, and the plan would state a departure that did not take effect.
+    for (const step of plan.steps) errors.push(...departureErrors(step));
+
     return { valid: errors.length === 0, errors };
+}
+
+/** The errors of the departures of one step: an unknown rule, an unknown setting, a second departure for one setting, or a value with no setting. */
+function departureErrors(step: AnalysisStep): string[] {
+    const grounding = step.grounding;
+    if (!grounding?.departures) return [];
+    const errors: string[] = [];
+    const settings = new Set((grounding.settings ?? []).map((setting) => setting.name));
+    const departed = new Set<string>();
+    for (const departure of grounding.departures) {
+        if (!grounding.claims.includes(departure.rule)) {
+            const cited = grounding.claims.length > 0 ? grounding.claims.join(", ") : "none";
+            errors.push(
+                `Step "${step.id}" departs from ${departure.rule}, which is not a claim of its grounding — name a claim the step cites (${cited}), or remove the departure`,
+            );
+        }
+        if (departure.setting === undefined) {
+            if (departure.value !== undefined) {
+                errors.push(
+                    `Step "${step.id}" gives a departure from ${departure.rule} a value and no setting — name the setting of grounding.settings that the value replaces`,
+                );
+            }
+            continue;
+        }
+        if (!settings.has(departure.setting)) {
+            const names = settings.size > 0 ? [...settings].join(", ") : "none";
+            errors.push(
+                `Step "${step.id}" departs from the setting ${departure.setting}, which grounding.settings does not hold — name one of its settings (${names}), or leave out the setting for a part of the rule that no setting carries`,
+            );
+        }
+        if (departed.has(departure.setting))
+            errors.push(`Step "${step.id}" has two departures for the setting ${departure.setting} — give one departure for each setting`);
+        departed.add(departure.setting);
+    }
+    return errors;
 }

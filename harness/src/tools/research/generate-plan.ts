@@ -712,6 +712,7 @@ function restoreSkeletonGrounding(
             });
             if (changed) next = { ...next, claims };
         }
+        next = repairDepartureRules(next, label, repaired);
         // The repaired claims are the ones compared, thus a step whose only claim was miscopied still gets the digest.
         const vouched = Array.isArray(next.claims) && next.claims.some((claim) => typeof claim === "string" && memory.claims.has(claim));
         if (source === undefined && vouched && memory.digest !== undefined && current.snapshot !== "none" && next.snapshot !== memory.digest) {
@@ -721,6 +722,31 @@ function restoreSkeletonGrounding(
         return next === current ? step : { ...fields, grounding: next };
     });
     return { candidate: { ...decodedRecord, steps }, stamped, restored, repaired, unknown };
+}
+
+/**
+ * A departure names its rule by the claim id that the step cites. A rule id
+ * (`R-0147`), or a claim id with a miscopied hash, of exactly one claim of the
+ * step takes the claim id of the step. Any other rule stays as the model wrote
+ * it, and the validation of the plan refuses it with the claims of the step.
+ */
+function repairDepartureRules(grounding: Record<string, unknown>, step: string, repaired: RepairedClaim[]): Record<string, unknown> {
+    const { claims, departures } = grounding;
+    if (!isUnknownArray(departures) || !isUnknownArray(claims)) return grounding;
+    const cited = claims.flatMap((claim) => (typeof claim === "string" ? [claim] : []));
+    let changed: boolean | undefined;
+    const next = departures.map((departure) => {
+        const fields = parseUnknownRecord(departure);
+        const rule = fields?.rule;
+        if (fields === undefined || typeof rule !== "string" || cited.includes(rule)) return departure;
+        const matches = cited.filter((claim) => ruleOf(claim) === ruleOf(rule));
+        const match = matches[0];
+        if (matches.length !== 1 || match === undefined) return departure;
+        repaired.push({ step, from: rule, to: match });
+        changed = true;
+        return { ...fields, rule: match };
+    });
+    return changed ? { ...grounding, departures: next } : grounding;
 }
 
 /**
