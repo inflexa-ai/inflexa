@@ -1280,6 +1280,37 @@ def acquire_python_spec(query: PackageQuery, raw: str) -> dict:
     }
 
 
+def install_lock(pak_lock: dict, needed: set[str]) -> dict:
+    """The part of a pak lock that installs: each needed entry, plus each entry
+    that a needed source package builds against, transitively.
+
+    pak builds a source package only after each of its dependencies in the
+    plan, and a dependency that the plan does not hold makes pak index past
+    its plan (`done[[i]]: subscript out of bounds`). A pool hit leaves the
+    plan by the needed filter, thus each source build takes its dependencies
+    back. They install into the staging library again, and the store reuses
+    the pool directory of each one by its pin.
+    """
+    entries = {p["package"]: p for p in pak_lock.get("packages", [])
+               if isinstance(p, dict) and p.get("package")}
+
+    def builds(entry: dict) -> bool:
+        return entry.get("binary") is False and entry.get("type") != "installed"
+
+    keep = {name for name in needed if name in entries}
+    frontier = [name for name in keep if builds(entries[name])]
+    while frontier:
+        for dep in entries[frontier.pop()].get("dependencies") or []:
+            if isinstance(dep, str) and dep in entries and dep not in keep:
+                keep.add(dep)
+                if builds(entries[dep]):
+                    frontier.append(dep)
+    lock = dict(pak_lock)
+    lock["packages"] = [p for p in pak_lock.get("packages", [])
+                        if isinstance(p, dict) and p.get("package") in keep]
+    return lock
+
+
 def acquire_r_spec(query: PackageQuery, raw: str) -> dict:
     """Acquire one R query through pak, against CRAN and Bioconductor only.
 
@@ -1315,9 +1346,7 @@ def acquire_r_spec(query: PackageQuery, raw: str) -> dict:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
     if needed_names:
-        filtered = dict(pak_lock)
-        filtered["packages"] = [p for p in pak_lock.get("packages", [])
-                                if isinstance(p, dict) and p.get("package") in needed_names]
+        filtered = install_lock(pak_lock, needed_names)
         filtered_path = run_temp(f"pak-lock-needed-{spec_address}.json")
         filtered_path.write_text(json.dumps(filtered) + "\n")
         proc = subprocess.run(
@@ -1955,9 +1984,7 @@ def source_r_dependencies(tree: Path, root_name: str) -> tuple[list[tuple[Path, 
     needed = {e["name"] for e in entries
               if find_stored(f"{e['name']}=={e['version']}", "r") is None}
     if needed:
-        filtered = dict(pak_lock)
-        filtered["packages"] = [p for p in pak_lock.get("packages", [])
-                                if isinstance(p, dict) and p.get("package") in needed]
+        filtered = install_lock(pak_lock, needed)
         filtered_path = run_temp("pak-lock-source-needed.json")
         filtered_path.write_text(json.dumps(filtered) + "\n")
         proc = subprocess.run(

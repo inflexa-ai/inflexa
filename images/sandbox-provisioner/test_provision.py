@@ -315,6 +315,16 @@ class StoreTestCase(unittest.TestCase):
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
             if mode == "install":
                 lock = json.loads(Path(argv[3]).read_text())
+                # Real pak builds a source entry only after each of its
+                # dependencies in the plan, and it crashes when one is absent.
+                planned = {e["package"] for e in lock.get("packages", [])}
+                for entry in lock.get("packages", []):
+                    if entry.get("binary") is False and entry.get("type") != "installed":
+                        absent = [d for d in entry.get("dependencies", []) if d not in planned]
+                        if absent:
+                            return SimpleNamespace(
+                                returncode=1, stdout="",
+                                stderr="Caused by error in `done[[i]]`:\n! subscript out of bounds\n")
                 lib = Path(argv[4])
                 lib.mkdir(parents=True, exist_ok=True)
                 for entry in lock.get("packages", []):
@@ -1273,6 +1283,43 @@ class PrepareRunTests(StoreTestCase):
         self.assertIn("RuntimeError", message)
 
 
+class InstallLockTests(unittest.TestCase):
+    """The part of a pak lock that installs: the needed entries, plus what a
+    needed source package builds against."""
+
+    LOCK = {"lockfile_version": 1, "packages": [
+        {"package": "S4Arrays", "version": "1.12.1", "binary": False, "type": "standard",
+         "dependencies": ["abind", "BiocGenerics", "Matrix", "S4Vectors"]},
+        {"package": "S4Vectors", "version": "0.50.3", "binary": False, "type": "standard",
+         "dependencies": ["BiocGenerics"]},
+        {"package": "BiocGenerics", "version": "0.56.0", "binary": False, "type": "standard",
+         "dependencies": ["generics"]},
+        {"package": "generics", "version": "0.1.4", "binary": True, "type": "standard",
+         "dependencies": []},
+        {"package": "abind", "version": "1.4-8", "binary": True, "type": "standard",
+         "dependencies": []},
+        {"package": "Matrix", "version": "1.7-5", "binary": True, "type": "installed",
+         "dependencies": ["lattice"]},
+        {"package": "gt", "version": "1.3.0", "binary": True, "type": "standard",
+         "dependencies": ["dplyr"]},
+        {"package": "dplyr", "version": "1.1.4", "binary": True, "type": "standard",
+         "dependencies": []},
+    ]}
+
+    def names(self, needed: set[str]) -> set[str]:
+        return {p["package"] for p in provision.install_lock(self.LOCK, needed)["packages"]}
+
+    def test_a_source_package_keeps_what_it_builds_against_transitively(self):
+        self.assertEqual(self.names({"S4Arrays"}),
+                         {"S4Arrays", "abind", "BiocGenerics", "Matrix", "S4Vectors", "generics"})
+
+    def test_a_binary_keeps_no_dependency(self):
+        self.assertEqual(self.names({"gt"}), {"gt"})
+
+    def test_the_lock_keeps_its_other_fields(self):
+        self.assertEqual(provision.install_lock(self.LOCK, {"gt"})["lockfile_version"], 1)
+
+
 class AcquireRunTests(StoreTestCase):
     """The acquire run: the pool and the report land, and deps.json never
     changes. The probes are monkeypatched, because a unit test opens no
@@ -1284,6 +1331,21 @@ class AcquireRunTests(StoreTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             code = provision.cmd_acquire(args)
         return code, json.loads(report.read_text())
+
+    def test_an_r_source_package_installs_with_what_it_builds_against_that_the_pool_holds(self):
+        held = self._make_r_pkg(self.root / "held" / "BiocGenerics", "BiocGenerics", "0.56.0")
+        held_dir, _new = provision.store_r_package(held)
+        self.pak_locks["S4Vectors"] = {"packages": [
+            {"package": "S4Vectors", "version": "0.50.3", "binary": False,
+             "type": "standard", "dependencies": ["BiocGenerics"]},
+            {"package": "BiocGenerics", "version": "0.56.0", "binary": False,
+             "type": "standard", "dependencies": []}]}
+        self.dcf_fields["S4Vectors"] = "BiocGenerics"
+
+        outcome = provision.acquire_r_spec(package_identity.parse_query("r:S4Vectors"), "r:S4Vectors")
+
+        self.assertEqual(outcome["outcome"], "acquired", outcome.get("reason"))
+        self.assertEqual(sorted(provision.STORE.glob("biocgenerics-0.56.0-*")), [held_dir])
 
     def test_the_pool_and_the_staged_nodes_land_and_the_graph_stays(self):
         self.compile_by_input = {"foo": FOO_1}
@@ -2625,6 +2687,27 @@ class AcquireSourceRunTests(StoreTestCase):
         self.assertIn("more than the one root artifact", outcome["reason"])
         self.assertIn("SeedMatchR", outcome["reason"])
         self.assertIn("Rcpp", outcome["reason"])
+
+    def test_a_source_dependency_installs_with_what_it_builds_against_that_the_pool_holds(self):
+        held = self._make_r_pkg(self.root / "held" / "BiocGenerics", "BiocGenerics", "0.56.0")
+        held_dir, _new = provision.store_r_package(held)
+        snapshot = self._r_source(imports="S4Vectors")
+        self.pak_locks[str(snapshot)] = {"packages": [
+            {"package": "S4Vectors", "version": "0.50.3", "binary": False,
+             "type": "standard", "dependencies": ["BiocGenerics"]},
+            {"package": "BiocGenerics", "version": "0.56.0", "binary": False,
+             "type": "standard", "dependencies": []},
+            {"package": "SeedMatchR", "version": "2.0.0"}]}
+        self.dcf_fields["S4Vectors"] = "BiocGenerics"
+        out = self.root / "out"
+
+        report = self._git_source(snapshot, self._copy_script(snapshot, out, "SeedMatchR"), out)
+
+        outcome = report["outcomes"][0]
+        self.assertEqual(outcome["outcome"], "source", outcome.get("reason"))
+        # The rebuilt dependency reuses the directory that the pool holds.
+        self.assertEqual(sorted(provision.STORE.glob("biocgenerics-0.56.0-*")), [held_dir])
+        self.assertIn("BiocGenerics==0.56.0", outcome["reused"])
 
     def test_a_dangling_edge_refuses_and_names_the_edge(self):
         snapshot = self._r_source(imports="nowheremuch")
