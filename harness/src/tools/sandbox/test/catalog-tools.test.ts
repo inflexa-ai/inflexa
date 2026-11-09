@@ -258,7 +258,14 @@ describe("queryPackages — listing", () => {
             schema: 1,
             arch: "arm64",
             packages: [
-                { name: "SeedMatchR", version: "2.0.0", track: "source", store_dir: "seedmatchr-2.0.0-abcd1234abcd1234", hash: "a".repeat(64), requested: true },
+                {
+                    name: "SeedMatchR",
+                    version: "2.0.0",
+                    track: "source",
+                    store_dir: "seedmatchr-2.0.0-abcd1234abcd1234",
+                    hash: "a".repeat(64),
+                    requested: true,
+                },
             ],
             languages: {},
         };
@@ -273,7 +280,15 @@ describe("queryPackages — listing", () => {
         const checked = queryPackages(lockSections(lock), { names: ["r:SeedMatchR"] });
         if (!checked.available || !("checked" in checked)) throw new Error("expected a checked result");
         expect(checked.checked).toEqual([
-            { requested: "r:SeedMatchR", present: true, name: "SeedMatchR", section: "R (source-built)", version: "2.0.0", storeDir: "seedmatchr-2.0.0-abcd1234abcd1234", hash: "a".repeat(64) },
+            {
+                requested: "r:SeedMatchR",
+                present: true,
+                name: "SeedMatchR",
+                section: "R (source-built)",
+                version: "2.0.0",
+                storeDir: "seedmatchr-2.0.0-abcd1234abcd1234",
+                hash: "a".repeat(64),
+            },
         ]);
     });
 
