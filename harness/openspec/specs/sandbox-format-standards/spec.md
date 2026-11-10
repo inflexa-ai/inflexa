@@ -2,15 +2,16 @@
 
 ## Purpose
 
-Defines the shared standards every sandbox agent applies — language policy, data
-containers, file/figure formats, metadata placement, the filesystem path model,
-and command-execution discipline — so per-agent prompts only add domain-specific
-guidance on top. These standards live in two prompt layers
-(`harness/src/prompts/sandbox-standards.ts`): `sandboxOrientCorePrompt`, appended
-to every sandbox agent and the home of the path model and tool-use discipline;
-and `sandboxAnalysisStepStandardsPrompt`, appended only to plannable
-analysis-step agents (opt-out via `appendAnalysisStepStandards: false`) and the
-home of the language/data/figure conventions and the five-subdirectory layout.
+Defines the standards that the sandbox agents apply, and where each one lives.
+The environment layer (`sandboxOrientCorePrompt`, `harness/src/prompts/sandbox-standards.ts`)
+holds the facts of the sandbox and goes to each agent that runs commands in it.
+The step contract (`sandboxAnalysisStepStandardsPrompt`) holds what the harness
+and the later steps read back: the briefing, the scope, the output contract, the
+data containers, the five subdirectories, and the findings. It goes only to the
+plannable analysis-step agents (opt-out via `appendAnalysisStepStandards: false`).
+How an agent works (the language, the scripts, the figures) is in the body of
+each step agent. The path model is in the descriptions of the file tools, which
+agents without a sandbox hold too.
 
 Neither prompt layer names a concrete path, id, or any other per-step value, and
 neither carries a placeholder for one. The system prompt `createSandboxAgent`
@@ -30,29 +31,13 @@ supplies the *paths*.
 
 ### Requirement: Python-first language policy
 
-All sandbox agents SHALL use Python as the default programming language. R SHALL
-be used only when (a) no adequate Python equivalent exists, (b) the R
-implementation is significantly more mature or validated, or (c) the task
-explicitly requires an R-only package. Isolated R calls in a Python pipeline
-SHALL use the rpy2 bridge; an R-dominant pipeline MAY be written as native R
-scripts following the same standards.
+The body of each step agent MUST state Python as the default language, and R
+when the method has no mature Python implementation.
 
-#### Scenario: Agent defaults to Python for DE analysis on RNA-seq
+#### Scenario: The body states the default language
 
-- **WHEN** the `analyst` is asked to perform differential expression on a count matrix
-- **THEN** it uses a Python method (e.g. PyDESeq2) as the default
-- **AND** falls back to DESeq2 via rpy2 only if the Python method lacks a required feature
-
-#### Scenario: Agent uses R when no Python equivalent exists
-
-- **WHEN** the `analyst` preprocesses 450K/EPIC methylation array data
-- **THEN** it uses minfi (no adequate Python equivalent)
-- **AND** converts results back to AnnData/pandas for downstream steps
-
-#### Scenario: R-dominant pipeline uses native R, not whole-pipeline rpy2
-
-- **WHEN** an agent runs an R-dominant pipeline (e.g. DADA2 → phyloseq → vegan → ANCOM-BC2)
-- **THEN** it writes native R scripts rather than wrapping the entire pipeline in rpy2
+- **WHEN** the system prompt of `analyst` or `drug-analyst` is assembled
+- **THEN** it states Python as the default and R for a method with no mature Python implementation
 
 ### Requirement: AnnData/MuData as universal data containers
 
@@ -79,16 +64,8 @@ with derived summary statistics in AnnData or CSV.
 
 ### Requirement: Output format standards
 
-All sandbox agents SHALL follow standardized output conventions: figures saved
-as PNG at 300 DPI minimum AND a vector PDF (same base name); colorblind-safe
-palettes (viridis family default, never red-green as the sole distinguisher);
-clean minimal themes with complete labels; tabular results as CSV with
-human-readable column names.
-
-#### Scenario: Figures saved as PNG and PDF
-
-- **WHEN** any sandbox agent generates a figure
-- **THEN** it saves a PNG at ≥300 DPI and a vector PDF with the same base name
+The step contract MUST direct tabular results to CSV with human-readable column
+names. A later step reads them without the source modality.
 
 #### Scenario: Tabular results saved as descriptive CSV
 

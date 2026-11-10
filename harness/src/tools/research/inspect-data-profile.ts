@@ -263,32 +263,11 @@ export function createInspectDataProfileTool(pool: Querier): Tool<z.infer<typeof
     return defineTool({
         id: "inspect_data_profile",
         description:
-            "Read this analysis's data profile — the authoritative record of what the input dataset is: " +
-            "organism and taxon id, scientific domain and subtype, tissue, cell type, condition, experimental design, " +
-            "dataset-wide caveats, public accessions, the groups of files the dataset is made of, the dimensions that vary " +
-            "across it with the evidence behind each, and the file census (kept, unclassified, quarantined). " +
-            "There is no data-profile file in the workspace — this tool is the only way to read it. Do not search for one, " +
-            "and do not rediscover these facts by listing or reading the raw input files. " +
-            "Call it when a question about the data (for planning, analysis code, or interpretation) is not answered by what " +
-            "you already hold; a step briefing already carries a projection of this profile. " +
-            "scope:'overview' (the default) returns the dataset-level orientation plus the partition accounting — how many " +
-            "files were kept, how many landed in no group, how many were quarantined — and how many members are described " +
-            "individually. That last figure and the dataset's file count differ on purpose: a large dataset is described by " +
-            "its groups, not file by file. " +
-            "scope:'groups' returns the groups with their derived counts, display patterns, and slots, plus the dimensions " +
-            "with their observations, reconciliations, and probe outcomes — this is where a dataset of thousands of files is " +
-            "described. A profile written under the previous model returns its kinds and axes, labelled as such. " +
-            "scope:'files' returns the individually annotated members, paged: page (1-based, default 1) and pageSize (default 20, max 100), " +
-            "always with the true total and hasMore, so you can see exactly what you have not read yet. " +
-            "For the paths of files no record describes, use scope:'groups' for the structure and list the workspace tree for the paths. " +
-            "The file paths of scope:'files' and the display patterns of scope:'groups' are rooted at /{analysisId}/, thus they resolve from any working directory. " +
-            "The state field says what you got: 'ready'; 'stale' (a profile is returned but may not describe the current " +
-            "inputs — staleReason says why); 'pending' (profiling is still running); 'failed'; or 'absent' (never profiled, " +
-            "or the analysis has no input files). " +
-            "A 'failed' state reports a past attempt, with failedAt naming when it was recorded — it is not a verdict on the " +
-            "input files you are holding now, and this tool cannot tell you whether that attempt covered them. Compare failedAt " +
-            "against when the input set last changed before you conclude anything: if the data moved since, say the profile " +
-            "needs re-running rather than diagnosing the data itself.",
+            "Read the data profile of this analysis: the authoritative record of what the input dataset is — the organism, the domain, the tissue, the condition, " +
+            "the design, the caveats, the accessions, the groups of files, and the dimensions that vary across them. " +
+            "No data-profile file exists in the workspace, thus this tool is the only way to read it: do not derive these facts again from the raw files. " +
+            "Call it when what you hold does not answer a question about the data; a step briefing already carries a projection of it. " +
+            "The `state` of the result says whether a profile is ready, and its message says what to do when it is not",
         inputSchema: InspectDataProfileInputSchema,
         view: {
             input: (input) => input,

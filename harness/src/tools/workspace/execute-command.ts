@@ -49,7 +49,7 @@ const ExecuteCommandInputSchema = z.object({
         .array(z.string().min(1))
         .min(1)
         .describe(
-            "argv array — e.g. ['python', 'scripts/run.py'] or ['head', '-n', '50', 'data/inputs/x.csv']. " +
+            "argv array — e.g. ['python', 'scripts/run.py'] or ['Rscript', 'scripts/de.R']. " +
                 "A one-element array runs through `sh -c`, so pipes, `&&`, quoting, and globbing work, and a path that holds a space " +
                 "needs double quotes there; an array of two or more elements runs directly, with no shell, and nothing is expanded.",
         ),
@@ -62,7 +62,14 @@ const ExecuteCommandInputSchema = z.object({
                 "'/<analysisId>/...' value is used as-is. Each call starts here: a `cd` in an earlier call " +
                 "does not carry over, thus pass `cwd` or chain the commands with `&&` in one call.",
         ),
-    env: z.record(z.string(), z.string()).optional().describe("Extra environment variables for this command."),
+    env: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe(
+            "Extra environment variables for this command. The thread pools (OMP_NUM_THREADS, OPENBLAS_NUM_THREADS, MKL_NUM_THREADS) " +
+                "default to 1, and the core count that a script reads is the CPU quota of the grant. For one multi-threaded process, " +
+                "raise the thread variables here, and keep workers × threads within the quota.",
+        ),
     timeoutSeconds: z.number().int().positive().optional().describe("Per-command timeout in seconds. Default 3600."),
 });
 
@@ -99,7 +106,25 @@ type ExecCallRecord = {
     recordWrites?: readonly WriteRecord[];
 };
 
-type ExecuteCommandResult = { readonly status: "ok" } & BoundedExecResult;
+type ExecuteCommandResult = { readonly status: "ok"; readonly note?: string } & BoundedExecResult;
+
+/** What the agent must know about a result that is not a plain exit: a timeout, a dropped end of a stream, or an ended sandbox. */
+function execNote(result: BoundedExecResult): string | undefined {
+    const notes: string[] = [];
+    if (result.syntheticFailure !== undefined) {
+        notes.push(
+            "The sandbox ended under the command" +
+                (result.syntheticFailure.reason === "sandbox-oom-killed" ? ": the command passed the memory limit." : ".") +
+                " The command can have left partial files, and nothing runs it again. The next command runs on a new sandbox of the same size; " +
+                "call `acquire_sandbox` with a larger size for more memory.",
+        );
+    }
+    if (result.timedOut) notes.push("The timeout stopped the command.");
+    if (result.stdoutTruncated || result.stderrTruncated) {
+        notes.push(`A stream passed the cap of ${EXEC_STREAM_BYTE_CAP / (1024 * 1024)} MiB, and its end was dropped. Write long output to a file in logs/.`);
+    }
+    return notes.length === 0 ? undefined : notes.join(" ");
+}
 
 export type ExecuteCommandDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
@@ -140,18 +165,10 @@ export function createExecuteCommandTool(
         ownStep: true,
         description:
             "Run a command in the sandbox and return its stdout/stderr/exit code. " +
-            "Use for scripts, CLI tools, shell pipes, and anything the workspace " +
-            `tools don't express. stdout and stderr are each capped at ${EXEC_STREAM_BYTE_CAP / (1024 * 1024)} MiB; the end ` +
-            "of a longer stream is dropped, and the result carries its truncation flag. A long result comes back as an " +
-            "excerpt of its start and its end, with a reference to read the rest when the harness keeps it. " +
-            "Failures are returned as data, not thrown: `status` is `ok` whenever the call completed, so read " +
-            "`exitCode` for the outcome of the command. `timedOut: true` means the timeout stopped the command. A " +
-            "`syntheticFailure` with `exitCode: null` means the sandbox ended under the command: `sandbox-oom-killed` " +
-            "(the command passed `memoryLimitGb`), `sandbox-dead`, or `sandbox-replaced`. The command may have left " +
-            "partial files, and nothing runs it again. The next command runs on a new sandbox of the same size; call " +
-            "`acquire_sandbox` with a larger size for more memory. stdout and stderr are not a deliverable: they are ephemeral, " +
-            "so use them to confirm that a command ran. A result that you compute with 'python -c' or an inline " +
-            "one-liner and read from stdout is lost. Write a script and persist its outputs to output/.",
+            "A command runs only on the sandbox that `acquire_sandbox` granted, thus acquire it before the first command. " +
+            "Use it for scripts, CLI tools, and shell pipes; read and write files with the file tools, which need no sandbox. " +
+            "A failed command is data, not an error: read `exitCode`. stdout and stderr are not a deliverable, thus a result that " +
+            "you only print is lost. Write a script, and persist its outputs to output/.",
         inputSchema: ExecuteCommandInputSchema,
         view: "none",
         // The script is what a reader recognises, and it survives a long
@@ -209,7 +226,9 @@ export function createExecuteCommandTool(
             if (ran.isErr()) return err(ran.error);
             const result = ran.value;
 
-            const bounded = { status: "ok" as const, ...boundExecResult(result) };
+            const execResult = boundExecResult(result);
+            const note = execNote(execResult);
+            const bounded: ExecuteCommandResult = note === undefined ? { status: "ok", ...execResult } : { status: "ok", ...execResult, note };
             if ((!lineageCollector || !mountRoot) && recordWrites.length === 0) return ok(bounded);
             const record: ExecCallRecord = {
                 command,

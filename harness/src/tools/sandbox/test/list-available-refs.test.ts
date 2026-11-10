@@ -172,7 +172,7 @@ describe("list_available_refs", () => {
 
         expect(result.total).toBe(0);
         expect(result.content).toBe(
-            'No reference beneath /mnt/refs matches "hallmark". The store at /mnt/refs is the only reference data that the sandbox can read, and the sandbox has no network.',
+            'No reference beneath /mnt/refs matches "hallmark". The store at /mnt/refs is the only reference data that the sandbox can read, and the sandbox has no network. Say that the dataset is absent now. Do not guess a path, and do not use a different dataset in its place.',
         );
     });
 

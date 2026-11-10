@@ -28,10 +28,25 @@ export type LinkPackagesDeps = {
     readonly analysisId: string;
 };
 
-/** The tool result: one outcome per requested query, index-aligned. */
+/** The tool result: one outcome per requested query, index-aligned, and what to do about each kind of outcome that occurred. */
 export type LinkPackagesResult = {
     readonly outcomes: readonly PackageRequestOutcome[];
+    readonly notes?: readonly string[];
 };
+
+const OUTCOME_NOTES: Partial<Record<PackageRequestOutcome["kind"], string>> = {
+    absent: "`absent`: the store does not hold the package. `acquisitionPossible` says whether the host can acquire it. Report the package as missing, and do not request it again.",
+    collision:
+        "`collision`: the request resolves to two store directories. For a name that both tracks hold, call again with `python:<name>` or `r:<name>`. If that call also refuses, or the detail names two versions of one distribution, report it and continue without the package.",
+    unavailable:
+        "`unavailable`: the link pass could not answer, and this says nothing about the package. Report the reason, and do not request the packages again.",
+};
+
+/** The guidance for each kind of outcome in `outcomes`, once for each kind, in the order that the kinds first occur. */
+function withNotes(outcomes: readonly PackageRequestOutcome[]): LinkPackagesResult {
+    const notes = [...new Set(outcomes.map((outcome) => outcome.kind))].flatMap((kind) => OUTCOME_NOTES[kind] ?? []);
+    return notes.length === 0 ? { outcomes } : { outcomes, notes };
+}
 
 /**
  * The refusal of one entry that is not a query. The text names the entry and
@@ -83,15 +98,9 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps): Tool<z.infer<typ
         id: "link_packages",
         description:
             "Link host-staged packages into the farm of this analysis, so an import that failed works without a restart. " +
-            "This tool links what the host already staged — it NEVER installs, downloads, or acquires anything. " +
-            "Pass each module name verbatim, exactly as the import names it, optionally behind the track prefix `python:` or `r:` and optionally pinned as `name==version`. " +
-            "One outcome comes back per request: `linked` (the pool held it, and it is importable now), " +
-            "`present` (the farm held it already), " +
-            "`absent` (the pool does not hold it — a real answer, and `acquisitionPossible` states whether the host can acquire that ecosystem; report the package as missing, do not retry), " +
-            "`collision` (the request resolves to two store directories; the `detail` names the two pins and the packages that need each), " +
-            "or `unavailable` (the link pass itself could not answer — the `reason` says why; it says nothing about the package's presence, so report the reason and do not re-request packages). " +
-            "After a `collision` of one name that BOTH tracks hold, call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`. " +
-            "A collision is terminal only after that second call also refuses, or when it names two versions of one distribution — then report it and continue without the package.",
+            "It links what the host already staged, and it never installs, downloads, or acquires anything. " +
+            "Pass each module name exactly as the import names it, optionally behind the track prefix `python:` or `r:`, and optionally pinned as `name==version`. " +
+            "One outcome comes back for each request: `linked`, `present`, `absent`, `collision`, or `unavailable`; the result says what to do about each.",
         inputSchema: LinkPackagesInputSchema,
         view: "none",
         describeCall: ({ packages }) => packages.join(", "),
@@ -112,9 +121,9 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps): Tool<z.infer<typ
             const linked = await callExtendAnalysisFarm(deps.extendAnalysisFarm, deps.analysisId, queries);
             if (linked.isErr()) {
                 const reason = linked.error;
-                return ok({ outcomes: queries.map((query) => ({ kind: "unavailable" as const, spelling: query.spelling, reason })) });
+                return ok(withNotes(queries.map((query) => ({ kind: "unavailable" as const, spelling: query.spelling, reason }))));
             }
-            return ok({ outcomes: linked.value });
+            return ok(withNotes(linked.value));
         },
     });
 }

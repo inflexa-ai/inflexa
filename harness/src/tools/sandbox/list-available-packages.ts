@@ -608,14 +608,9 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
         id: "list_available_packages",
         description:
             scopeSentence +
-            "A full listing is small (a few hundred packages) and is returned whole by default, so a listing you get back is the complete set unless `hasMore` says otherwise. " +
-            '`names`: check specific packages — each entry is a query in the one grammar, `[python:|r:]<name>` (e.g. ["Seurat", "python:igraph"]) — returns present/absent plus the language track for each; this is the cheapest call and the right one for \'is X available?\'. ' +
-            "A Python name matches under PEP 503, thus `scikit_learn` reaches `scikit-learn`. An R name matches its DESCRIPTION spelling exactly, thus `seurat` answers absent and carries `Seurat` as the suggestion. " +
-            "A name that the Python track and the R track both hold answers once for each track. " +
-            "`query`: case-insensitive substring filter over package names. " +
-            "`language`: restrict to one track (r | python | cli | node). " +
-            "`limit`: cap the packages listed; the response always carries the true `total` and a `hasMore` flag, so truncation is never silent. " +
-            "Each entry renders as `name==version` where the source pins a version, and a `names` check also reports the store directory and the content hash where the source records them.",
+            "Check a package that you are not sure of before a script imports it: an import of an absent package fails the script. " +
+            "`names` is the cheapest check of a package. A full listing is small and comes back whole unless `hasMore` says otherwise. " +
+            "A Python name matches under PEP 503, and an R name matches its DESCRIPTION spelling exactly: an absent R name carries the spelling that the store holds.",
         inputSchema: ListAvailablePackagesInputSchema,
         view: {
             input: (input) => input,

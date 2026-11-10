@@ -69,12 +69,8 @@ export function createSubmitFileMetadataTool(cell: FileMetadataCell): Tool {
     return defineTool({
         id: SUBMIT_FILE_METADATA_TOOL_ID,
         description:
-            "Submit the metadata of the output files of this step. The harness asks " +
-            "for this tool after the task, with the list of the files. It does not " +
-            "run during the task. Each entry's `path` MUST exactly match one of the " +
-            "listed files. Returns {accepted, unknownPaths, remaining}: " +
-            "accepted=true means every file now has metadata — STOP. Otherwise drop " +
-            "the unknownPaths and describe the remaining files.",
+            "Submit the metadata of the output files of this step, when the harness asks for it after the task with the list of the files. " +
+            "Never call it during the task: the harness refuses it there. Each `path` must match one of the listed files exactly.",
         inputSchema: SubmitFileMetadataInputSchema,
         view: "none",
         describeCall: "none",

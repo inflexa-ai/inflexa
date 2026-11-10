@@ -81,7 +81,11 @@ const WorkspaceSearchInputSchema = z.object({
     type: z
         .enum(["input-group", "input-dimension", "input", "input-kind", "output", "summary", "synthesis"])
         .optional()
-        .describe('Restrict results to one entry type: "input-group", "input-dimension", "input", "input-kind", "output", "summary", or "synthesis"'),
+        .describe(
+            'Restrict results to one entry type: "input-group" (a group of input files that the profiler declared, with its count, display pattern, and slots), ' +
+                '"input-dimension" (something that varies across the dataset, with its observations), "input" (one input file that the profiler annotated), ' +
+                '"output" (a file that a step produced), "summary" (the summary of a step), "synthesis" (the synthesis of a run), and "input-kind" (a repeating set, on an older profile).',
+        ),
     limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
 });
 
@@ -97,22 +101,10 @@ export function createWorkspaceSearchTool(
     return defineTool({
         id: "workspace_search",
         description:
-            "Semantic search over the analysis workspace. Returns ranked entries with descriptions " +
-            "and metadata; read a file separately to see its contents. The nearest entries always come back, up to " +
-            "`limit`, with no relevance cut: `score` is the cosine similarity to the query, and a low score is a weak match, " +
-            "not a hit. An empty `results` list means that nothing of that type is indexed yet. `type` restricts results to one " +
-            'entry type: "input-group" (a GROUP of input data the data profiler declared, carrying its ' +
-            'derived count, its display pattern, and its slots), "input-dimension" (something that VARIES ' +
-            "across the dataset — subject, timepoint, batch — with the observations evidencing it), " +
-            '"input" (one input file the profiler annotated individually, or, on a profile of the ' +
-            'previous era, one entity the dataset is about), "output" (files a step produced), ' +
-            '"summary" (a step\'s summary), "synthesis" (a run\'s literature-grounded synthesis), ' +
-            '"input-kind" (a repeating set, on a profile of the previous era). ' +
-            "A hit carrying `path` is a FILE — read that path to see its contents. A hit without " +
-            "`path` is a PATTERN spanning many files (a group, a dimension, an entity): use its " +
-            "metadata, e.g. search input-group for a group's display pattern, then list the tree for " +
-            "its members. Most input files carry no entry of their own — find them through their " +
-            "group and the listing tools.",
+            "Semantic search over the analysis workspace. It returns the nearest entries with their descriptions and metadata, up to `limit`; read a file separately to see its contents. " +
+            "`score` is the cosine similarity, and a low score is a weak match, not a hit. An empty result means that nothing of that type is indexed yet. " +
+            "A hit with a `path` is a file. A hit without one is a pattern over many files (a group, a dimension): use its metadata, then list the tree for its members. " +
+            "Most input files have no entry of their own: find them through their group and the listing tools.",
         inputSchema: WorkspaceSearchInputSchema,
         view: {
             input: (input) => input,

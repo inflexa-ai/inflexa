@@ -85,12 +85,18 @@ describe("link_packages — the query grammar", () => {
                 { kind: "unavailable", spelling: "scanpy", reason: "the dependency graph is unreadable" },
                 { kind: "unavailable", spelling: "GO.db", reason: "the dependency graph is unreadable" },
             ],
+            notes: [expect.stringContaining("says nothing about the package")],
         });
     });
 
-    it("the description names the prefixed retry", () => {
-        const tool = createLinkPackagesTool({ extendAnalysisFarm: () => okAsync([]), analysisId: "an-42" });
+    it("a collision result names the prefixed retry", async () => {
+        const tool = createLinkPackagesTool({
+            extendAnalysisFarm: () => okAsync([{ kind: "collision" as const, spelling: "xgboost", storeDirs: ["python-dir", "r-dir"] as const }]),
+            analysisId: "an-42",
+        });
 
-        expect(tool.description).toContain("call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`");
+        const result = (await tool.execute({ packages: ["xgboost"] }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.notes).toEqual([expect.stringContaining("call again with `python:<name>` or `r:<name>`")]);
     });
 });
