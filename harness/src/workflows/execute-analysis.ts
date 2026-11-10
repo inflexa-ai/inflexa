@@ -968,11 +968,9 @@ function bindTemplateContract(
         const pinned = pinnedByName.get(setting.name);
         if (pinned) {
             const pinnedValue = pinned.default === undefined ? "a fixed value" : JSON.stringify(pinned.default);
-            unbound.push(
-                sameSettingValue(pinned.default, setting.value)
-                    ? `${shown}: pinned by the template at the same value`
-                    : `${shown}: the template pins \`${setting.name}\` at ${pinnedValue}, and the plan value cannot be sent`,
-            );
+            // The script reads the pinned value, thus a plan setting with that value needs no act of the agent.
+            if (sameSettingValue(pinned.default, setting.value)) doneByScript.push(`${shown}: pinned by the template at the same value`);
+            else unbound.push(`${shown}: the template pins \`${setting.name}\` at ${pinnedValue}, and the plan value cannot be sent`);
             continue;
         }
         // The script does some settings with no slot. The plan value that the script does needs no bind and no

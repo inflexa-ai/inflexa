@@ -521,9 +521,15 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).toContain("`{{counts_path}}`");
         // The setting that names an adaptable slot is bound, with its source.
         expect(seed.prompt).toContain('`lfc_shrink` = "apeglm" (doi:10.1093/bioinformatics/bty895)');
-        // The pinned slot at the plan value, and the name no slot carries, are unbound with the reason.
-        expect(seed.prompt).toContain("`alpha` = 0.05 (differential_expression; doi:10.1186/s13059-014-0550-8): pinned by the template at the same value");
-        expect(seed.prompt).toContain('`inference` = "none" (enrichment): no slot of the template carries it');
+        // The script reads the pinned slot at the plan value, thus the setting needs no act of the agent.
+        expect(seed.prompt).toContain(
+            "Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):\n" +
+                "- `alpha` = 0.05 (differential_expression; doi:10.1186/s13059-014-0550-8): pinned by the template at the same value",
+        );
+        // The name that no slot carries is unbound with the reason, and the pinned setting is not in that list.
+        expect(seed.prompt).toContain(
+            'Unbound settings (the plan states them, and no bound slot carries them):\n- `inference` = "none" (enrichment): no slot of the template carries it',
+        );
         expect(seed.templateBinding).toEqual({
             ...BINDING_BASE,
             slots: { lfc_shrink: "apeglm" },
@@ -901,7 +907,7 @@ describe("composeStepSeed template contract", () => {
             const fake = fakeKnowledgeClient({ contract });
             return composeStepSeed({ input: input([planStep("T1S2", [], grounding)]), stepId: "T1S2", runId: RUN_ID, deps: deps(root, {}, fake.client) });
         };
-        const DONE = "Done by the script (the plan states them, and the script does them with no slot; send no value for them):";
+        const DONE = "Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):";
         const LINE = '`adjustment` = "BH" (multiple_testing; rule:R-0003)';
 
         it("lists the setting as done by the script, binds no slot, and does not list it as unbound", async () => {

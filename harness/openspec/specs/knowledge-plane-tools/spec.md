@@ -256,6 +256,8 @@ A rule can give a setting as a policy word, which is not a value of a slot. The 
 
 A script does some settings with no slot, for example the adjustment of a fit script. The served contract can carry `settings_by_construction`. Each entry names one setting with the value that the script does. The service gives no more than one entry for one setting, and the parent MUST take the first such entry. An entry whose setting is the name of a slot of the served contract says nothing, because the slot carries that setting. The parent MUST read the setting after its departure. A setting of the step can have the name and the value of an entry. The seed MUST then list it under `Done by the script` with its procedure step and its source. The seed MUST NOT list that setting as unbound, and the binding MUST NOT hold a slot or a source for it. When the setting has a different value, the seed MUST list it as unbound, and the line MUST name the value that the script does. A departure with no value can name the setting. The seed MUST then list it as unbound, and the line MUST say that the script does it with no slot. The binding MUST NOT name an excluded slot for it. When the served version differs from the version of the plan, the seed MUST list no setting under `Done by the script`.
 
+A template can pin a slot at the value of a setting of the step. The script reads the pinned value, thus the setting needs no act of the agent. The seed MUST then list that setting under `Done by the script` with its procedure step and its source. The line MUST say that the template pins the slot at the same value. The seed MUST NOT list that setting as unbound.
+
 A script can fit the model of a fit in a step before it again. The served contract of such a template can carry `carried_slots`. The entry names the templates of that fit in `from_templates`. It names the slots that the parent binds in `bind`, and the slots that the seed shows in `show`. The parent MUST read the decision records of the steps that the step depends on. A record whose template is in `from_templates` is the record of the reported fit. With one such record, the parent MUST bind each `bind` slot to the value of the same slot in that record. The source of the bound slot MUST name the step and the template of the record. The parent MUST bind a local slot also, and `knowledge_template` binds that value on the machine. The parent MUST NOT bind a slot that has no value in the record, because the default of the template then applies. A setting of the step MUST NOT bind that slot, and the seed MUST list that setting as unbound. The parent MUST NOT bind a value that the slot of the served contract does not take. The seed MUST list that value as unbound with the reason. The seed MUST show the value of each `show` slot, and the binding MUST NOT hold it. A `show` slot is a path, or a slot whose value the script of the fit can change at run time. A carried slot binds before the settings of the step. A setting of the step that gives the slot a different value MUST be listed as unbound. A setting of the step MUST NOT bind a `show` slot, and the seed MUST list that setting as unbound. A departure with no value MUST NOT name a slot that holds a value of the reported fit as excluded. With no such record, or with more than one, the parent MUST bind no carried slot, and the seed MUST give the reason. The parent MUST also bind no carried slot when the record lists a change of the script after the render. The parent MUST compare the digest of the script on disk with the digest in the record. It MUST bind no carried slot when the two differ. The same applies when the parent did not read each record file of a dependency. In each of these cases, a setting of the step MUST NOT bind a carried slot. When the served version differs from the version of the plan, the parent MUST read no carried slot.
 
 A template gives each slot a value, and an omitted slot takes the default of the template. Thus the binding MUST name an adaptable slot as excluded when a departure with no value names it. `knowledge_template` MUST refuse a render that sends no value for an excluded slot. It MUST also refuse a value with no override. The decision record MUST keep the override of an excluded slot with a `plan_value` of `null`.
@@ -268,9 +270,16 @@ A template gives each slot a value, and an omitted slot takes the default of the
 
 #### Scenario: An unbound setting keeps its source
 
-- **GIVEN** a step whose settings hold `alpha = 0.05` with the source `doi:10.1186/s13059-014-0550-8`, and a contract that pins `alpha` at 0.05
+- **GIVEN** a step whose settings hold `alpha = 0.01` with the source `doi:10.1186/s13059-014-0550-8`, and a contract that pins `alpha` at 0.05
 - **WHEN** the seed composes
 - **THEN** the line of `alpha` under `Unbound settings` names the procedure step and the source
+
+#### Scenario: A setting that the template pins at the same value
+
+- **GIVEN** a step whose settings hold `alpha = 0.05`, and a contract that pins `alpha` at 0.05
+- **WHEN** the seed composes
+- **THEN** the seed lists `alpha` under `Done by the script`, and the line says that the template pins it at the same value
+- **AND** the seed does not list `alpha` as unbound
 
 #### Scenario: A bound slot rides without a model value
 
