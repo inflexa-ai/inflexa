@@ -340,8 +340,9 @@ export type TemplateBrief = {
      */
     readonly reported_fit?: { readonly source?: string; readonly shown: readonly string[]; readonly note?: string };
     /**
-     * The plan settings that the script of the template does with no slot, one line each. The agent does not do
-     * them again, and no slot takes them. Empty when the served contract lists none.
+     * The plan settings that the script of the template does, one line each: a setting with no slot, and a
+     * setting that the template pins at the plan value. The agent does not do them again, and sends no value
+     * for them. Empty when the served contract gives none.
      */
     readonly done_by_script: readonly string[];
     /** The plan settings no bound slot carries, one line each with the reason. */
@@ -439,7 +440,7 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
 
     if (brief.done_by_script.length > 0) {
         blocks.push(
-            `Done by the script (the plan states them, and the script does them with no slot; send no value for them):\n${bullets(brief.done_by_script)}`,
+            `Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):\n${bullets(brief.done_by_script)}`,
         );
     }
 

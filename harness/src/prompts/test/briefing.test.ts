@@ -104,7 +104,7 @@ function brief(overrides: Partial<TemplateBrief> = {}): TemplateBrief {
         inputs: contract.inputs ?? [],
         bound: [{ name: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" }],
         done_by_script: [],
-        unbound_settings: ["`alpha` = 0.05 (differential_expression): pinned by the template at the same value"],
+        unbound_settings: ['`inference` = "none" (enrichment): no slot of the template carries it'],
         ...overrides,
     };
 }
@@ -227,7 +227,9 @@ describe("renderTemplateContract", () => {
     it("renders the settings that the script does in a block of their own, and no block when there is none", () => {
         const line = '`adjustment` = "BH" (multiple_testing; rule:R-0003)';
         const rendered = renderTemplateContract(brief({ done_by_script: [line] }));
-        expect(rendered).toContain(`Done by the script (the plan states them, and the script does them with no slot; send no value for them):\n- ${line}`);
+        expect(rendered).toContain(
+            `Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):\n- ${line}`,
+        );
         // The block comes before the unbound settings: the agent reads what needs no act first.
         expect(rendered.indexOf("Done by the script")).toBeLessThan(rendered.indexOf("Unbound settings"));
         expect(renderTemplateContract(brief())).not.toContain("Done by the script");
@@ -261,7 +263,7 @@ describe("renderTemplateContract", () => {
     it("names the unbound settings", () => {
         const rendered = renderTemplateContract(brief());
         expect(rendered).toContain("Unbound settings");
-        expect(rendered).toContain("`alpha` = 0.05 (differential_expression): pinned by the template at the same value");
+        expect(rendered).toContain('`inference` = "none" (enrichment): no slot of the template carries it');
     });
 
     it("collapses the bound and unbound lists when they are empty", () => {
