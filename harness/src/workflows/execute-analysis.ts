@@ -678,6 +678,11 @@ function sameSettingValue(a: unknown, b: unknown): boolean {
     return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/** A list with each member as text. The skeleton keeps the members of a list setting as text, and the contract keeps their types. */
+function listAsText(value: unknown): unknown {
+    return Array.isArray(value) ? value.map(String) : value;
+}
+
 /**
  * Whether a plan value is a value of the slot, and not a policy word. A
  * procedure parameter and a template slot share a name, but not always a
@@ -767,20 +772,44 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
             unbound.push(`${shown}: not bound, because the served version differs from the plan`);
             continue;
         }
-        if (adaptableNames.has(setting.name)) {
-            const slot = adaptable.find((candidate) => candidate.name === setting.name);
-            if (slot && !fitsSlot(slot, setting.value)) {
-                unbound.push(`${shown}: a policy of the plan, not a value of the \`${setting.name}\` slot (${slot.type}); state the value it gives`);
+        // A policy word is no value of a slot. The template can map the word to a slot value, and the map reads
+        // the setting after its departure: a departure that changes the word or removes it also changes the bind.
+        // The service refuses a template with two entries for one setting with one value, thus the first entry is the entry.
+        const mapped = (contract.setting_bindings ?? []).find(
+            (entry) => entry.setting === setting.name && sameSettingValue(listAsText(entry.value), listAsText(setting.value)),
+        );
+        const mappedSlot = mapped === undefined ? undefined : adaptable.find((candidate) => candidate.name === mapped.slot && candidate.local !== true);
+        if (mapped !== undefined && (mappedSlot === undefined || !fitsSlot(mappedSlot, mapped.slot_value))) {
+            unbound.push(
+                `${shown}: the template maps it to \`${mapped.slot}\` = ${JSON.stringify(mapped.slot_value)}, which the served contract does not take`,
+            );
+            continue;
+        }
+        const target =
+            mapped !== undefined && mappedSlot !== undefined
+                ? {
+                      slot: mappedSlot,
+                      value: mapped.slot_value,
+                      source: `the plan setting \`${setting.name}\`${where ? `; ${where}` : ""}`,
+                  }
+                : adaptableNames.has(setting.name)
+                  ? { slot: adaptable.find((candidate) => candidate.name === setting.name), value: setting.value, source: setting.source ?? "plan" }
+                  : undefined;
+        if (target !== undefined) {
+            const name = target.slot?.name ?? setting.name;
+            if (target.slot && !fitsSlot(target.slot, target.value)) {
+                unbound.push(`${shown}: a policy of the plan, not a value of the \`${name}\` slot (${target.slot.type}); state the value it gives`);
                 continue;
             }
-            const prior = slots[setting.name];
+            const prior = slots[name];
             if (prior !== undefined) {
-                if (!sameSettingValue(prior, setting.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
+                if (!sameSettingValue(prior, target.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
                 continue;
             }
-            slots[setting.name] = setting.value;
-            if (setting.source) sources[setting.name] = setting.source;
-            bound.push({ name: setting.name, value: setting.value, source: setting.source ?? "plan" });
+            slots[name] = target.value;
+            if (mapped !== undefined) sources[name] = target.source;
+            else if (setting.source) sources[name] = setting.source;
+            bound.push({ name, value: target.value, source: target.source });
             continue;
         }
         const pinned = pinnedByName.get(setting.name);
