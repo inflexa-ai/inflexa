@@ -102,6 +102,11 @@ function scriptNames(trial: Trial): string {
     );
 }
 
+/** Each script that does the work of the step: it matches `work`. A step can also write a check script that matches. */
+function workScripts(trial: Trial, work: RegExp): (readonly [string, string])[] {
+    return scriptsOf(trial).filter(([, text]) => work.test(text));
+}
+
 /** The first script that does the work of the step: it matches `work`. */
 function workScript(trial: Trial, work: RegExp): readonly [string, string] | undefined {
     return scriptsOf(trial).find(([, text]) => work.test(text));
@@ -203,14 +208,17 @@ function pseudobulk(replicate: string, condition: string): EvalCase["grade"] {
 
 /** The clustering script selects the lineage markers of the panel. */
 function clustersOnLineage(lineage: string): EvalCase["grade"] {
-    // CATALYST names the lineage class `type` in `prepData`, thus `features = "type"` selects the lineage markers.
-    const select = new RegExp(`features\\s*=\\s*["'](${lineage}|type)["']|["']${lineage}["']`);
+    // CATALYST names the lineage class `type` in `prepData`, thus `features = "type"` selects the lineage markers. A
+    // panel whose class is re-coded from `lineage` to `type` clusters on the lineage markers with the default features.
+    const select = new RegExp(`features\\s*=\\s*["'](${lineage}|type)["']|["']${lineage}["']|\\b${lineage}\\s*=\\s*["']type["']`);
     return (trial) => {
-        const clustering = workScript(trial, /\bcluster\s*\(|FlowSOM|BuildSOM|leiden|louvain|phenograph|KMeans|kmeans/i);
-        if (clustering === undefined) return { pass: false, detail: `no clustering script (scripts: ${scriptNames(trial)})` };
-        return select.test(clustering[1])
-            ? { pass: true, detail: `${clustering[0]} clusters on the ${lineage} markers` }
-            : { pass: false, detail: `${clustering[0]} does not select the ${lineage} markers` };
+        const clustering = workScripts(trial, /\bcluster\s*\(|FlowSOM|BuildSOM|leiden|louvain|phenograph|KMeans|kmeans/i);
+        const first = clustering[0];
+        if (first === undefined) return { pass: false, detail: `no clustering script (scripts: ${scriptNames(trial)})` };
+        const selecting = clustering.find(([, text]) => select.test(text));
+        return selecting !== undefined
+            ? { pass: true, detail: `${selecting[0]} clusters on the ${lineage} markers` }
+            : { pass: false, detail: `${first[0]} does not select the ${lineage} markers` };
     };
 }
 
@@ -263,12 +271,15 @@ function selectionInsideResampling(): EvalCase["grade"] {
 /** The survival model reads the event from the coding of the data: `correct` holds, and `wrong` does not. */
 function eventCoding(correct: RegExp, wrong: RegExp): EvalCase["grade"] {
     return (trial) => {
-        const fit = workScript(trial, /CoxPHFitter|KaplanMeierFitter|coxph|survfit|Surv\s*\(|CoxnetSurvival|logrank/);
-        if (fit === undefined) return { pass: false, detail: `no survival script (scripts: ${scriptNames(trial)})` };
-        if (wrong.test(fit[1]) && !correct.test(fit[1])) return { pass: false, detail: `${fit[0]} takes the censoring flag as the event` };
-        return correct.test(fit[1])
-            ? { pass: true, detail: `${fit[0]} codes the event from the data` }
-            : { pass: false, detail: `${fit[0]} does not show the coding of the event` };
+        const fits = workScripts(trial, /CoxPHFitter|KaplanMeierFitter|coxph|survfit|Surv\s*\(|CoxnetSurvival|logrank/);
+        const first = fits[0];
+        if (first === undefined) return { pass: false, detail: `no survival script (scripts: ${scriptNames(trial)})` };
+        const wrongFit = fits.find(([, text]) => wrong.test(text) && !correct.test(text));
+        if (wrongFit !== undefined) return { pass: false, detail: `${wrongFit[0]} takes the censoring flag as the event` };
+        const coded = fits.find(([, text]) => correct.test(text));
+        return coded !== undefined
+            ? { pass: true, detail: `${coded[0]} codes the event from the data` }
+            : { pass: false, detail: `${first[0]} does not show the coding of the event` };
     };
 }
 
@@ -290,10 +301,13 @@ function adjustsForAncestry(): EvalCase["grade"] {
 function alignsBuilds(): EvalCase["grade"] {
     return (trial) => {
         const text = commandsAndScripts(trial);
-        if (!/merge\s*\(|\.join\s*\(|join_by|inner_join|left_join|overlap|intersect/i.test(text)) return { pass: false, detail: "no join of the two inputs" };
-        return /liftover|liftOver|\.over\.chain|\.chain\b|CrossMap|pyliftover|hg19ToHg38|hg38ToHg19/i.test(text)
-            ? { pass: true, detail: "converts the build before the join" }
-            : { pass: false, detail: "joins positions of two builds" };
+        // The decision is the conversion. A match can be a merge or a filter in a loop, thus a lift passes either way.
+        if (/liftover|liftOver|\.over\.chain|\.chain\b|CrossMap|pyliftover|hg19ToHg38|hg38ToHg19/i.test(text)) {
+            return { pass: true, detail: "converts the build before the match" };
+        }
+        return /merge\s*\(|\.join\s*\(|join_by|inner_join|left_join|overlap|intersect/i.test(text)
+            ? { pass: false, detail: "joins positions of two builds" }
+            : { pass: false, detail: "no join of the two inputs" };
     };
 }
 

@@ -184,6 +184,38 @@ const OBSERVED: readonly { readonly id: string; readonly trial: Trial; readonly 
         pass: true,
     },
     {
+        // A check script that sorts first does not hide the coding of the fit.
+        id: "domain-event-coding",
+        trial: trial({
+            "scripts/check.py": "CoxPHFitter().fit(m, 'os_months', 'event')\n",
+            "scripts/cox.py": "d['event'] = 1 - d['censored']\nCoxPHFitter().fit(m, 'os_months', 'event')\n",
+        }),
+        pass: true,
+    },
+    {
+        // CATALYST clusters on the `type` class by default, and the panel re-codes its lineage class to it.
+        id: "domain-cytof-lineage-markers-held-out",
+        trial: trial({
+            "scripts/analysis.R":
+                'panel$marker_type <- c(lineage="type", functional="state")[panel$marker_type]\nsce <- cluster(sce, features=NULL, maxK=10)\n',
+        }),
+        pass: true,
+    },
+    {
+        id: "domain-cytof-lineage-markers-held-out",
+        trial: trial({ "scripts/a.R": "sce <- cluster(sce, features=NULL)\n", "scripts/b.R": 'sce <- cluster(sce, features="type")\n' }),
+        pass: true,
+    },
+    {
+        // A lift of the positions, then a match by a filter in a loop: the conversion is the decision.
+        id: "domain-build-alignment-held-out",
+        trial: trial({
+            "scripts/lead.py":
+                'CHAIN = "/mnt/refs/liftover/hg38ToHg19.over.chain"\nfor _, r in lead.iterrows():\n    hit = e[(e.variant_chr == r.c) & (e.variant_pos == r.p)]\n',
+        }),
+        pass: true,
+    },
+    {
         id: "domain-gwas-ancestry-held-out",
         trial: trial({ "scripts/gwas.py": "pcs = PCA(10).fit(Z)\nbeta = np.linalg.lstsq(X, y, rcond=None)\nprint('lambda', lam)\n" }),
         pass: true,
