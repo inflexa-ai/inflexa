@@ -83,7 +83,24 @@ const DecisionRecordSchema = z.looseObject({
         .optional(),
     /** One entry for each change of the script after the render. With an entry, the slots can differ from the script that ran. */
     unvetted_edits: z.array(z.looseObject({ sha256: z.string().optional() })).optional(),
+    /**
+     * One entry for each run of the script through `execute_command`. A list of a different shape reads as no run,
+     * thus such a record stays in the methods and gives no slot value to a second fit.
+     */
+    runs: z
+        .array(z.looseObject({ exit_code: z.number().nullable().optional().catch(undefined), sha256: z.string().optional().catch(undefined) }))
+        .optional()
+        .catch(undefined),
 });
+
+/**
+ * True when the record holds a run of the bytes that the render wrote, and the command of that run ended with exit
+ * code 0. A render that never ran gave no result, and a run of changed bytes read values that the record does not hold.
+ */
+export function recordHasRenderedRun(record: StepDecisionRecord): boolean {
+    if (record.written_sha256 === undefined) return false;
+    return (record.runs ?? []).some((run) => run.exit_code === 0 && run.sha256 === record.written_sha256);
+}
 export type StepDecisionRecord = z.infer<typeof DecisionRecordSchema>;
 
 /** One decision record that parsed, and its file relative to the step directory (`output/<name>`). */

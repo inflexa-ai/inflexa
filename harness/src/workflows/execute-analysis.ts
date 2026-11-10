@@ -111,6 +111,7 @@ import {
     countStepDecisionRecordFiles,
     readStepDecisionRecords,
     readStepMethods,
+    recordHasRenderedRun,
     recordScriptIsAsRendered,
     type ReadDecisionRecord,
 } from "../execution/step-methods.js";
@@ -839,6 +840,12 @@ function bindTemplateContract(
             reportedFit = {
                 shown: [],
                 note: `the script of the reported fit is not the script that its render wrote (the record is ${fit.stepId}: ${fit.file}), thus its record does not prove the values that ran, and no slot takes a value: read the script of the fit`,
+            };
+        } else if (!recordHasRenderedRun(fit.record)) {
+            // A render with no run gave no result. The step can report a different script, thus the record proves no value.
+            reportedFit = {
+                shown: [],
+                note: `the record of the reported fit holds no run of its rendered script that ended with exit code 0 (the record is ${fit.stepId}: ${fit.file}), thus the host cannot tell that the results came from that script, and no slot takes a value: read the script that gave the results of the fit`,
             };
         } else {
             const source = `the reported fit of ${fit.stepId} (${fit.record.template.id}@${fit.record.template.version})`;

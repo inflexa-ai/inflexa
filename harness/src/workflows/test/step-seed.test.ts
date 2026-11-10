@@ -677,7 +677,9 @@ describe("composeStepSeed template contract", () => {
         });
         const SCRIPT = "min_count <- 5\n";
         // The record names its script and the digest of the bytes that the render wrote.
-        const RENDERED = { script_path: "/an-1/runs/run-1/T1S1/scripts/tpl-fit.R", written_sha256: scriptSha256(SCRIPT) };
+        const RENDERED_NO_RUN = { script_path: "/an-1/runs/run-1/T1S1/scripts/tpl-fit.R", written_sha256: scriptSha256(SCRIPT) };
+        // The record also holds the run of those bytes, as `execute_command` writes it.
+        const RENDERED = { ...RENDERED_NO_RUN, runs: [{ exit_code: 0, sha256: scriptSha256(SCRIPT) }] };
         const writeScript = async (root: string, content: string) => {
             const dir = join(root, "runs", RUN_ID, "T1S1", "scripts");
             await mkdir(dir, { recursive: true });
@@ -739,6 +741,36 @@ describe("composeStepSeed template contract", () => {
                 expect(seed.prompt).not.toContain("## Template contract");
                 expect(seed.prompt).not.toContain("reported fit");
             }
+        });
+
+        it("binds nothing from a record with no run of the rendered script that ended with exit code 0", async () => {
+            const NOTE = "holds no run of its rendered script that ended with exit code 0";
+            const cases: readonly Record<string, unknown>[] = [
+                // A render that never ran, and a record of an older version.
+                RENDERED_NO_RUN,
+                // A run that failed, and a run that the sandbox ended.
+                { ...RENDERED_NO_RUN, runs: [{ exit_code: 1, sha256: scriptSha256(SCRIPT) }] },
+                { ...RENDERED_NO_RUN, runs: [{ exit_code: null, sha256: scriptSha256(SCRIPT) }] },
+                // A run of different bytes.
+                { ...RENDERED_NO_RUN, runs: [{ exit_code: 0, sha256: scriptSha256("min_count <- 9\n") }] },
+                // A list of a different shape reads as no run, and the record stays a record.
+                { ...RENDERED_NO_RUN, runs: "yes" },
+            ];
+            for (const rendered of cases) {
+                const seed = await compose([{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS, ...rendered } }]);
+                expect(seed.templateBinding, JSON.stringify(rendered)).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+                expect(seed.prompt).toContain(NOTE);
+            }
+        });
+
+        it("binds from a record with one good run among failed runs", async () => {
+            const runs = [
+                { exit_code: 1, sha256: scriptSha256(SCRIPT) },
+                { exit_code: 0, sha256: scriptSha256(SCRIPT) },
+                { exit_code: 137, sha256: scriptSha256(SCRIPT) },
+            ];
+            const seed = await compose([{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS, ...RENDERED_NO_RUN, runs } }]);
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: CARRIED, sources: CARRIED_SOURCES });
         });
 
         it("keeps the value of the fit when a plan setting of the step gives a different value", async () => {
