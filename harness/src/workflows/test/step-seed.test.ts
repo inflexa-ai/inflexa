@@ -751,6 +751,13 @@ describe("composeStepSeed template contract", () => {
                 // A run that failed, and a run that the sandbox ended.
                 { ...RENDERED_NO_RUN, runs: [{ exit_code: 1, sha256: scriptSha256(SCRIPT) }] },
                 { ...RENDERED_NO_RUN, runs: [{ exit_code: null, sha256: scriptSha256(SCRIPT) }] },
+                // A recovered call of a script that changed: the entry names two digests and no `sha256`.
+                {
+                    ...RENDERED_NO_RUN,
+                    runs: [{ exit_code: 0, sha256_before_the_command: scriptSha256(SCRIPT), sha256_at_the_recovery: scriptSha256("min_count <- 9\n") }],
+                },
+                // A run that started and did not end: the entry from before the command has no exit code.
+                { ...RENDERED_NO_RUN, runs: [{ sha256: scriptSha256(SCRIPT), invocation: "call-1" }] },
                 // A run of different bytes.
                 { ...RENDERED_NO_RUN, runs: [{ exit_code: 0, sha256: scriptSha256("min_count <- 9\n") }] },
                 // A list of a different shape reads as no run, and the record stays a record.

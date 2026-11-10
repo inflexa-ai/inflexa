@@ -35,7 +35,7 @@ import type { BoundLease } from "../../sandbox/leases.js";
 import type { ProvenanceFrame } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame, stripMountPrefix } from "../../provenance/exec-frame.js";
-import { decisionRecordPathFor, noteScriptRun, reconcileScriptRecord, type DecisionRecordStore } from "./decision-record.js";
+import { decisionRecordPathFor, noteScriptRun, startScriptRun, reconcileScriptRecord, type DecisionRecordStore } from "./decision-record.js";
 import type { WorkspaceMutator, WriteRecord } from "./mutator.js";
 import { EXEC_STREAM_BYTE_CAP, boundExecResult, type BoundedExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
@@ -412,6 +412,35 @@ export function createExecuteCommandTool(
                         restored.push(recordPath);
                         recordLogger.warn("the copy of a decision record in the step was absent or changed, thus the host wrote it again", {
                             path: recordPath,
+                        });
+                    }
+                }
+            }
+
+            // The record of each script that the command runs takes the entry of the run before the command, with
+            // the digest of the check. The host can stop before the end of the call, and the call that it then does
+            // again compares its digest with this entry. A failed write is a warning: the entry after the command is then new.
+            if (deps.workspaceFilesystem && deps.mutator && deps.records) {
+                for (const scriptPath of runScriptPathsOf(command, effectiveCwd)) {
+                    const sha256 = recordedDigests.get(scriptPath);
+                    if (sha256 === undefined) continue;
+                    try {
+                        const started = await startScriptRun({
+                            filesystem: deps.workspaceFilesystem,
+                            mutator: deps.mutator,
+                            records: deps.records,
+                            session: ctx.session,
+                            invocationId: ctx.invocationId,
+                            toolName: "execute_command",
+                            scriptPath,
+                            sha256,
+                        });
+                        if (started.status === "started") recordWrites.push(...started.writes);
+                        else recordLogger.warn("the decision record took no entry before the run", { path: scriptPath, status: started.status });
+                    } catch (cause) {
+                        recordLogger.warn("the write of the entry before a run of a decision record failed", {
+                            path: scriptPath,
+                            cause: errorMessageOf(cause) ?? "unknown",
                         });
                     }
                 }
