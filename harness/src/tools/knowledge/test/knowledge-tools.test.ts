@@ -512,6 +512,30 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         // The test group keeps its own script: the calibration is not a step of it.
         expect(presentAt(skeleton, 1).grounding.settings.some((setting) => setting.step === "permutation_calibration")).toBe(false);
     });
+
+    it("the sensitivity fits are a group of their own after the test and before the calibration", () => {
+        const answer = recommendAnswer();
+        const fits = {
+            step: "sensitivity_fits",
+            method: { id: "M-0085", label: "Sensitivity fits" },
+            template: "tpl-edger-ql-sensitivity@1.0.0",
+            rules: ["R-0576@aa11"],
+            parameters: [{ name: "primary_fit_selected_from_the_comparison", value: "never", default_source: "rule:R-0195", required: true }],
+        };
+        const calibration = {
+            step: "permutation_calibration",
+            method: { id: "M-0084", label: "Permutation calibration" },
+            template: "tpl-permutation-calibration@1.0.0",
+            rules: ["R-0575@aa11"],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [...answer.procedure, fits, calibration] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T1S9", "T1S8", "T2S1"]);
+        const group = presentAt(skeleton, 2);
+        expect(group.step_type).toBe("analysis");
+        expect(group.depends_on).toEqual(["T1S2"]);
+        expect(group.grounding.template).toBe("tpl-edger-ql-sensitivity@1.0.0");
+        expect(group.grounding.settings.map((setting) => setting.name)).toEqual(["primary_fit_selected_from_the_comparison"]);
+    });
 });
 
 describe("the release pin of one plan", () => {

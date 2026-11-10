@@ -43,6 +43,7 @@ const DraftedStepSchema = z.object({
             "differential_expression",
             "shrink_lfc",
             "multiple_testing",
+            "sensitivity_fits",
             "permutation_calibration",
             "dose_response_fit",
             "benchmark_dose_sets",
