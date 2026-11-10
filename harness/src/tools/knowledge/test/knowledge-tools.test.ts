@@ -492,6 +492,26 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         // Without the step the test depends on the QC only, as before.
         expect(presentAt(buildPlanSkeleton(answer), 1).depends_on).toEqual(["T1S1"]);
     });
+
+    it("the permutation calibration is a group of its own after the test, and the report depends on it", () => {
+        const answer = recommendAnswer();
+        const calibration = {
+            step: "permutation_calibration",
+            method: { id: "M-0084", label: "Permutation calibration" },
+            template: "tpl-permutation-calibration@1.0.0",
+            rules: ["R-0575@aa11"],
+            parameters: [{ name: "n_permutations", value: 1000, default_source: "rule:R-0056" }],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [...answer.procedure, calibration] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T1S8", "T2S1"]);
+        const group = presentAt(skeleton, 2);
+        expect(group.step_type).toBe("analysis");
+        expect(group.depends_on).toEqual(["T1S2"]);
+        expect(group.grounding.template).toBe("tpl-permutation-calibration@1.0.0");
+        expect(group.grounding.settings).toEqual([{ step: "permutation_calibration", name: "n_permutations", value: 1000, source: "rule:R-0056" }]);
+        // The test group keeps its own script: the calibration is not a step of it.
+        expect(presentAt(skeleton, 1).grounding.settings.some((setting) => setting.step === "permutation_calibration")).toBe(false);
+    });
 });
 
 describe("the release pin of one plan", () => {
