@@ -154,6 +154,12 @@ export const SituationFieldsSchema = z.object({
         .describe(
             "Set true when the plan drops some delivered samples before the analysis, for example an on-treatment biopsy in a pre-treatment cohort or a failed library. The service then adds a cohort assembly step that counts the units per group after the drop, so the plan states no count before that step. Omit when every delivered sample enters the analysis.",
         ),
+    heterogeneous_samples: z
+        .boolean()
+        .optional()
+        .describe(
+            "Set true when the samples come from different persons of a population, for example the tumors of a patient cohort or the donors of a tissue bank. Omit for a designed experiment on one material under one protocol, for example a cell line, an organoid, or inbred animals. The service then adds a permutation calibration step after the test of a count model.",
+        ),
     feature_level: z
         .enum(["gene", "exon", "transcript"])
         .optional()

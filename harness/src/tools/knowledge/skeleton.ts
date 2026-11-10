@@ -106,6 +106,17 @@ const GROUPS: readonly {
         steps: ["filter_low_counts", "normalize", "model_design", "differential_expression", "shrink_lfc", "multiple_testing"],
         name: "Differential expression",
     },
+    // The calibration fits the model of the test again on permuted labels,
+    // which is a long run with a script of its own. Thus it is a group
+    // after the test and not a step of the test group.
+    {
+        id: "T1S8",
+        track: "T1",
+        step_type: "analysis",
+        agent: "bulk-transcriptomics-agent",
+        steps: ["permutation_calibration"],
+        name: "Permutation calibration",
+    },
     // The dose-response chain: each step reads the table that the step before
     // it writes, thus the four are one track in the order of the chain. The
     // track is its own, because the chain is a branch off the test and not a
@@ -188,6 +199,7 @@ const DEPENDS: Readonly<Record<string, readonly string[]>> = {
     T1S1: ["T0S1"],
     T1S7: ["T1S1"],
     T1S2: ["T1S7", "T1S1"],
+    T1S8: ["T1S2"],
     T4S1: ["T1S2"],
     T4S2: ["T4S1"],
     T4S3: ["T4S2", "T4S1"],
@@ -209,6 +221,7 @@ const DEPENDS: Readonly<Record<string, readonly string[]>> = {
     T1S3: [
         "T1S7",
         "T1S2",
+        "T1S8",
         "T4S1",
         "T4S2",
         "T4S3",
