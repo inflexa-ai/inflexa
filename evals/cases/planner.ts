@@ -541,13 +541,15 @@ function dependsOn(steps: readonly PlanStepView[], from: PlanStepView, to: PlanS
  * not wait for the enrichment. The immune step can wait for the DE step only to read a matrix that the DE step writes,
  * and its text names that matrix. An edge that no data needs holds a step back, and the run loses its parallel wave.
  */
-const DEPENDENCIES_FOLLOW_DATA = plans("enrichment after DE, and an immune step that waits only for data it reads", (steps) => {
+const DEPENDENCIES_FOLLOW_DATA = plans("enrichment with or after DE, and an immune step that waits only for data it reads", (steps) => {
     const de = analystStep(steps, /differential|DE\b|DESeq|responder/i);
-    const enrichment = de === undefined ? undefined : analystStep(steps, ENRICHMENT_WORDS, [de]);
+    // One analyst can run the DE and the enrichment in one step, on one data object in one pass.
+    const enrichment = de === undefined ? undefined : ENRICHMENT_WORDS.test(stepText(de)) ? de : analystStep(steps, ENRICHMENT_WORDS, [de]);
     const immune = de === undefined || enrichment === undefined ? undefined : analystStep(steps, IMMUNE_WORDS, [de, enrichment]);
     if (de === undefined || enrichment === undefined || immune === undefined) return false;
     const readsMatrix = /TPM|VST|normali[sz]ed|expression matrix|log-?CPM/i.test(`${immune.question} ${immune.description}`);
-    return dependsOn(steps, enrichment, de) && (!dependsOn(steps, immune, de) || readsMatrix) && !dependsOn(steps, immune, enrichment);
+    const enrichmentAfterDe = enrichment === de || dependsOn(steps, enrichment, de);
+    return enrichmentAfterDe && (!dependsOn(steps, immune, de) || readsMatrix) && !dependsOn(steps, immune, enrichment);
 });
 
 const GroundedStepSchema = z.object({
