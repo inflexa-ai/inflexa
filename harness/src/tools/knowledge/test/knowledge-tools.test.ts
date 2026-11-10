@@ -470,6 +470,28 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         // Without the step the QC depends on nothing, as before.
         expect(presentAt(buildPlanSkeleton(answer), 0).depends_on).toEqual([]);
     });
+
+    it("the normalization diagnostics are a group of their own after the QC, and the test and the report depend on it", () => {
+        const answer = recommendAnswer();
+        const diagnostics = {
+            step: "normalization_diagnostics",
+            method: { id: "M-0083", label: "Normalization diagnostics" },
+            template: "tpl-normalization-diagnostics@1.0.0",
+            rules: ["R-0574@aa11"],
+            parameters: [{ name: "scale_of_the_fit", value: "stated_with_the_other_scale_as_a_sensitivity", default_source: "rule:R-0574", required: true }],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [presentAt(answer.procedure, 0), diagnostics, ...answer.procedure.slice(1)] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S7", "T1S2", "T2S1"]);
+        const group = presentAt(skeleton, 1);
+        expect(group.step_type).toBe("qc");
+        expect(group.depends_on).toEqual(["T1S1"]);
+        expect(group.grounding.template).toBe("tpl-normalization-diagnostics@1.0.0");
+        expect(group.grounding.settings.map((setting) => setting.name)).toEqual(["scale_of_the_fit"]);
+        // The fit reads the scale that the diagnostics state, thus the test waits for the group.
+        expect(presentAt(skeleton, 2).depends_on).toEqual(["T1S7", "T1S1"]);
+        // Without the step the test depends on the QC only, as before.
+        expect(presentAt(buildPlanSkeleton(answer), 1).depends_on).toEqual(["T1S1"]);
+    });
 });
 
 describe("the release pin of one plan", () => {

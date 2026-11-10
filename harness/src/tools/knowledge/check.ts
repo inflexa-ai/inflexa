@@ -36,6 +36,7 @@ const DraftedStepSchema = z.object({
         .enum([
             "cohort_assembly",
             "qc_sample_structure",
+            "normalization_diagnostics",
             "filter_low_counts",
             "normalize",
             "model_design",

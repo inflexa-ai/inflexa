@@ -87,6 +87,17 @@ const GROUPS: readonly {
 }[] = [
     { id: "T0S1", track: "T1", step_type: "data_preparation", agent: "bulk-transcriptomics-agent", steps: ["cohort_assembly"], name: "Cohort assembly" },
     { id: "T1S1", track: "T1", step_type: "qc", agent: "bulk-transcriptomics-agent", steps: ["qc_sample_structure"], name: "Sample structure QC" },
+    // The service joins the diagnostics when the scale of a sample is in
+    // doubt. The step has its own script, and the fit reads the scale that
+    // the step states, thus it is a group of its own before the test.
+    {
+        id: "T1S7",
+        track: "T1",
+        step_type: "qc",
+        agent: "bulk-transcriptomics-agent",
+        steps: ["normalization_diagnostics"],
+        name: "Normalization diagnostics",
+    },
     {
         id: "T1S2",
         track: "T1",
@@ -175,7 +186,8 @@ const GROUPS: readonly {
 const DEPENDS: Readonly<Record<string, readonly string[]>> = {
     T0S1: [],
     T1S1: ["T0S1"],
-    T1S2: ["T1S1"],
+    T1S7: ["T1S1"],
+    T1S2: ["T1S7", "T1S1"],
     T4S1: ["T1S2"],
     T4S2: ["T4S1"],
     T4S3: ["T4S2", "T4S1"],
@@ -195,6 +207,7 @@ const DEPENDS: Readonly<Record<string, readonly string[]>> = {
     T1S5: ["T1S1"],
     T1S6: ["T1S1"],
     T1S3: [
+        "T1S7",
         "T1S2",
         "T4S1",
         "T4S2",
