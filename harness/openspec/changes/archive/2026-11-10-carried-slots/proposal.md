@@ -15,6 +15,7 @@ The plan gives those values to the step of the fit, not to the step of the secon
 - A carried slot binds before the settings of the step. A setting with a different value is an unbound line.
 - With no such record, or with more than one, the parent binds no carried slot. The seed gives the reason.
 - A record of a script that changed after its render does not prove the values that ran. The parent then binds no carried slot.
+- A shell command can change a script with no note in the record. Thus the parent compares the digest of the script on disk with the digest in the record.
 - The parent also binds no carried slot when it did not read each record file of a dependency.
 
 ## Capabilities

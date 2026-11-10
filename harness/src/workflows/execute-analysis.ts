@@ -111,6 +111,7 @@ import {
     countStepDecisionRecordFiles,
     readStepDecisionRecords,
     readStepMethods,
+    recordScriptIsAsRendered,
     type ReadDecisionRecord,
 } from "../execution/step-methods.js";
 import {
@@ -686,7 +687,8 @@ async function resolveTemplateContract(
             const read = await readStepDecisionRecords(recordDir, records.logger);
             // An absent directory holds no record. A directory that the host cannot read can hold a record of the fit.
             if ((await countStepDecisionRecordFiles(recordDir)) !== read.length) unreadSteps.push(stepId);
-            fitRecords.push(...read.map((entry) => ({ ...entry, stepId })));
+            const stepDir = stepWritePrefix({ workspaceRoot: records.workspaceRoot, runId: records.runId, stepId });
+            for (const entry of read) fitRecords.push({ ...entry, stepId, scriptAsRendered: await recordScriptIsAsRendered(stepDir, entry.record) });
         }
     }
     return bindTemplateContract(
@@ -704,7 +706,11 @@ async function resolveTemplateContract(
 }
 
 /** One decision record of a step that the step of the seed depends on. */
-type FitRecord = ReadDecisionRecord & { readonly stepId: string };
+type FitRecord = ReadDecisionRecord & {
+    readonly stepId: string;
+    /** True when the script of the record on disk holds the bytes that the render wrote. */
+    readonly scriptAsRendered: boolean;
+};
 
 /** The version of a template reference (`tpl-x@1.0.0` gives `1.0.0`), or `undefined` when the reference has none. */
 function versionOfRef(ref: string): string | undefined {
@@ -828,11 +834,11 @@ function bindTemplateContract(
                 shown: [],
                 note: `${matches.length} decision records of ${wanted} are in the steps that this step depends on (${files}), thus no slot takes a value: read the record of the reported fit`,
             };
-        } else if ((fit.record.unvetted_edits ?? []).length > 0) {
+        } else if ((fit.record.unvetted_edits ?? []).length > 0 || !fit.scriptAsRendered) {
             // The record holds the slots of the render. A script that changed after the render can read different values.
             reportedFit = {
                 shown: [],
-                note: `the script of the reported fit changed after its render (${fit.stepId}: ${fit.file} lists the changes), thus its record does not prove the values that ran, and no slot takes a value: read the script of the fit`,
+                note: `the script of the reported fit is not the script that its render wrote (the record is ${fit.stepId}: ${fit.file}), thus its record does not prove the values that ran, and no slot takes a value: read the script of the fit`,
             };
         } else {
             const source = `the reported fit of ${fit.stepId} (${fit.record.template.id}@${fit.record.template.version})`;

@@ -29,6 +29,7 @@ import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
 import { composeStepSeed } from "../execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput } from "../execute-analysis.js";
+import { scriptSha256 } from "../../tools/workspace/decision-record.js";
 import { stepDecisionRecordDir } from "../../workspace/paths.js";
 
 const ANALYSIS_ID = "an-1";
@@ -668,6 +669,14 @@ describe("composeStepSeed template contract", () => {
             ...contractAnswer(),
             carried_slots: { from_templates: ["tpl-fit"], bind, show: ["counts_path"] },
         });
+        const SCRIPT = "min_count <- 5\n";
+        // The record names its script and the digest of the bytes that the render wrote.
+        const RENDERED = { script_path: "/an-1/runs/run-1/T1S1/scripts/tpl-fit.R", written_sha256: scriptSha256(SCRIPT) };
+        const writeScript = async (root: string, content: string) => {
+            const dir = join(root, "runs", RUN_ID, "T1S1", "scripts");
+            await mkdir(dir, { recursive: true });
+            await writeFile(join(dir, "tpl-fit.R"), content, "utf8");
+        };
         const writeRecord = async (root: string, stepId: string, file: string, record: unknown) => {
             const recordDir = stepDecisionRecordDir({ workspaceRoot: root, runId: RUN_ID, stepId });
             await mkdir(recordDir, { recursive: true });
@@ -677,9 +686,11 @@ describe("composeStepSeed template contract", () => {
             records: readonly { readonly file: string; readonly record: unknown }[],
             grounding: AnalysisStep["grounding"] = grounded([]),
             contract: ReturnType<typeof contractAnswer> = carriedContract(),
+            script: string | null = SCRIPT,
         ) => {
             const root = await makeWorkspace();
             for (const entry of records) await writeRecord(root, "T1S1", entry.file, entry.record);
+            if (script !== null) await writeScript(root, script);
             const fake = fakeKnowledgeClient({ contract });
             return composeStepSeed({
                 input: input([planStep("T1S1"), planStep("T1S2", ["T1S1"], grounding)]),
@@ -688,7 +699,7 @@ describe("composeStepSeed template contract", () => {
                 deps: deps(root, {}, fake.client),
             });
         };
-        const ONE = [{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS } }];
+        const ONE = [{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS, ...RENDERED } }];
         const CARRIED = { min_count: 5, lfc_shrink: "ashr", condition_column: "arm" };
         const CARRIED_SOURCES = { min_count: SOURCE, lfc_shrink: SOURCE, condition_column: SOURCE };
 
@@ -787,14 +798,23 @@ describe("composeStepSeed template contract", () => {
             const edited = [
                 {
                     file: "decision_record_tpl-fit.R.json",
-                    record: { template: FIT, slots: FIT_SLOTS, unvetted_edits: [{ sha256: "ab12", tool: "edit_file" }] },
+                    record: { template: FIT, slots: FIT_SLOTS, ...RENDERED, unvetted_edits: [{ sha256: "ab12", tool: "edit_file" }] },
                 },
             ];
             const seed = await compose(edited);
             expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
-            expect(seed.prompt).toContain(
-                "Values of the reported fit: the script of the reported fit changed after its render (T1S1: output/decision_record_tpl-fit.R.json lists the changes)",
-            );
+            const NOTE =
+                "Values of the reported fit: the script of the reported fit is not the script that its render wrote (the record is T1S1: output/decision_record_tpl-fit.R.json)";
+            expect(seed.prompt).toContain(NOTE);
+            // A shell command can write the script, and the record then lists no change. The digest of the bytes
+            // on disk tells: a different script, an absent script, and a record with no digest bind nothing.
+            for (const script of ["min_count <- 10\n", null]) {
+                const changed = await compose(ONE, grounded([]), carriedContract(), script);
+                expect(changed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+                expect(changed.prompt).toContain(NOTE);
+            }
+            const noDigest = await compose([{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS } }]);
+            expect(noDigest.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
             expect(seed.prompt).not.toContain("that are not bound");
         });
 
@@ -819,6 +839,7 @@ describe("composeStepSeed template contract", () => {
                     file: "decision_record_tpl-fit.R.json",
                     record: {
                         template: FIT,
+                        ...RENDERED,
                         slots: [
                             { name: "min_count", value: -1 },
                             { name: "lfc_shrink", value: "other" },
