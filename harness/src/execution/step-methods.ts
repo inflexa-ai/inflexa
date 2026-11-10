@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { PlanStepDeparture, StepMethods, StepMethodsClaim, StepMethodsSource, StepMethodsTemplate } from "../contracts/chat-parts.js";
 import { citationKey } from "../contracts/report-reference.js";
 import { classifyWithinRoot, computeSha256 } from "../lib/fs-helpers.js";
+import { errnoOf } from "../lib/fs-result.js";
 import type { Logger } from "../lib/logger.js";
 import type { ProvenanceCollector } from "../provenance/collector.js";
 import { landWithinRoot } from "../tools/workspace/mutator.js";
@@ -63,6 +64,23 @@ const DecisionRecordSchema = z.looseObject({
         .optional(),
     environment: z.looseObject({ match: z.string() }).optional(),
     script_path: z.string().optional(),
+    /**
+     * The slots that the script read, with the value of each. A step that fits the same model again takes them.
+     * A value of a different shape reads as no value, thus one such slot does not remove the record from the methods.
+     */
+    slots: z
+        .array(
+            z.looseObject({
+                name: z.string(),
+                value: z
+                    .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
+                    .optional()
+                    .catch(undefined),
+            }),
+        )
+        .optional(),
+    /** One entry for each change of the script after the render. With an entry, the slots can differ from the script that ran. */
+    unvetted_edits: z.array(z.looseObject({ sha256: z.string().optional() })).optional(),
 });
 export type StepDecisionRecord = z.infer<typeof DecisionRecordSchema>;
 
@@ -81,6 +99,20 @@ async function recordFileNames(dir: string): Promise<string[]> {
         return [];
     }
     return names.filter((name) => name.startsWith(RECORD_PREFIX) && name.endsWith(RECORD_SUFFIX)).sort();
+}
+
+/**
+ * The count of the record files of a step in `recordDir`, or `undefined` when the directory is there and the read of
+ * it failed. An absent directory gives 0. `readStepDecisionRecords` reads a bounded count of the files, and it
+ * leaves out a file that does not parse. A caller that needs each record compares the two counts.
+ */
+export async function countStepDecisionRecordFiles(recordDir: string): Promise<number | undefined> {
+    try {
+        const names = await readdir(recordDir);
+        return names.filter((name) => name.startsWith(RECORD_PREFIX) && name.endsWith(RECORD_SUFFIX)).length;
+    } catch (err) {
+        return errnoOf(err) === "ENOENT" ? 0 : undefined;
+    }
 }
 
 /**

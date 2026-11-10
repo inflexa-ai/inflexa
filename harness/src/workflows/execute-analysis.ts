@@ -105,7 +105,13 @@ import { flattenDataPart } from "../contracts/chat-frame.js";
 import type { PauseWaiter, RunCompletedPart, SynthesisPhase } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
-import { claimViewsOfGrounding, readStepMethods } from "../execution/step-methods.js";
+import {
+    claimViewsOfGrounding,
+    countStepDecisionRecordFiles,
+    readStepDecisionRecords,
+    readStepMethods,
+    type ReadDecisionRecord,
+} from "../execution/step-methods.js";
 import {
     MAX_UPSTREAM_ARTIFACTS,
     composeStepBriefing,
@@ -118,6 +124,7 @@ import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import type { AnalysisStep, ClaimView, GroundingDeparture, GroundingSetting } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "../tools/knowledge/client.js";
+import { validateLocalSlot } from "../tools/knowledge/local-slots.js";
 import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
@@ -591,7 +598,11 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
         logger: (deps.logger ?? createNoopLogger()).named("executeAnalysis.seed").named("methods"),
     });
 
-    const contract = await resolveTemplateContract(step, deps.knowledge);
+    const contract = await resolveTemplateContract(step, deps.knowledge, {
+        workspaceRoot,
+        runId,
+        logger: (deps.logger ?? createNoopLogger()).named("executeAnalysis.seed").named("carried"),
+    });
 
     return {
         briefing: {
@@ -646,7 +657,11 @@ function isTemplateContract(answer: TemplateContract | KnowledgeUnavailable | Kn
  * template) gets the reason, thus the seed reports the absence rather than
  * hiding it, and no binding.
  */
-async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClient | undefined): Promise<TemplateSeedPart> {
+async function resolveTemplateContract(
+    step: AnalysisStep,
+    client: KnowledgeClient | undefined,
+    records: { readonly workspaceRoot: string; readonly runId: string; readonly logger: Logger },
+): Promise<TemplateSeedPart> {
     const ref = step.grounding?.template;
     if (!ref) return { briefing: {} };
     if (!client) return { briefing: { templateNotRetrieved: "no knowledge client is bound" } };
@@ -659,13 +674,36 @@ async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClie
                 : `the knowledge service refused the lookup: ${answer.message}`;
         return { briefing: { templateNotRetrieved: reason } };
     }
-    return bindTemplateContract(ref, answer, step.grounding?.settings ?? [], {
-        stepId: step.id,
-        claims: step.grounding?.claims ?? [],
-        snapshot: step.grounding?.snapshot && step.grounding.snapshot !== "none" ? step.grounding.snapshot : undefined,
-        departures: step.grounding?.departures ?? [],
-    });
+    // A template that carries slots reads the decision records of the steps that this step depends on. Only such a
+    // record holds what the fit ran with: the defaults, the mapped policy words, the departures, and the overrides.
+    const fitRecords: FitRecord[] = [];
+    // A record file that the read left out can be a second record of the fit, thus the host then binds nothing.
+    const unreadSteps: string[] = [];
+    if (answer.carried_slots !== undefined) {
+        for (const stepId of step.depends_on) {
+            const recordDir = stepDecisionRecordDir({ workspaceRoot: records.workspaceRoot, runId: records.runId, stepId });
+            const read = await readStepDecisionRecords(recordDir, records.logger);
+            // An absent directory holds no record. A directory that the host cannot read can hold a record of the fit.
+            if ((await countStepDecisionRecordFiles(recordDir)) !== read.length) unreadSteps.push(stepId);
+            fitRecords.push(...read.map((entry) => ({ ...entry, stepId })));
+        }
+    }
+    return bindTemplateContract(
+        ref,
+        answer,
+        step.grounding?.settings ?? [],
+        {
+            stepId: step.id,
+            claims: step.grounding?.claims ?? [],
+            snapshot: step.grounding?.snapshot && step.grounding.snapshot !== "none" ? step.grounding.snapshot : undefined,
+            departures: step.grounding?.departures ?? [],
+        },
+        { records: fitRecords, unreadSteps },
+    );
 }
+
+/** One decision record of a step that the step of the seed depends on. */
+type FitRecord = ReadDecisionRecord & { readonly stepId: string };
 
 /** The version of a template reference (`tpl-x@1.0.0` gives `1.0.0`), or `undefined` when the reference has none. */
 function versionOfRef(ref: string): string | undefined {
@@ -729,7 +767,13 @@ type StepGroundingRef = {
     readonly departures: readonly GroundingDeparture[];
 };
 
-function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
+function bindTemplateContract(
+    ref: string,
+    contract: TemplateContract,
+    settings: readonly GroundingSetting[],
+    grounding: StepGroundingRef,
+    fits: { readonly records: readonly FitRecord[]; readonly unreadSteps: readonly string[] } = { records: [], unreadSteps: [] },
+): TemplateSeedPart {
     const refVersion = versionOfRef(ref);
     const versionMatches = refVersion === undefined || refVersion === contract.version;
     const adaptable = contract.parameters.filter((slot) => slot.adaptable);
@@ -742,6 +786,13 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
     const slots: Record<string, TemplateBindingValue> = {};
     const sources: Record<string, string> = {};
     const excluded: string[] = [];
+    // The slots that hold a value of the reported fit, and the slots whose value of that fit the seed shows.
+    const carriedNames = new Set<string>();
+    const shownNames = new Set<string>();
+    // The carried slots that the reported fit read no value for. A plan value of this step does not bind such a slot.
+    const defaultNames = new Set<string>();
+    // The carried slots of a contract whose reported fit the host did not find. No plan value binds such a slot.
+    const unresolvedNames = new Set<string>();
 
     // The settings that the script does with no slot, by name. A name that is also a slot is not such a setting:
     // the slot carries it. The service gives one entry for one setting, and the first entry is the entry.
@@ -749,6 +800,70 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
     for (const entry of contract.settings_by_construction ?? []) {
         if (!byConstruction.has(entry.setting) && !adaptableNames.has(entry.setting) && !pinnedByName.has(entry.setting))
             byConstruction.set(entry.setting, entry.value);
+    }
+
+    // The carried slots bind first: the value that the reported fit read is the value of the slot, and a plan
+    // setting of this step with a different value is a line of the unbound settings.
+    let reportedFit: { readonly source?: string; readonly shown: readonly string[]; readonly note?: string } | undefined;
+    const carried = contract.carried_slots;
+    if (versionMatches && carried !== undefined) {
+        const wanted = carried.from_templates.map((id) => `\`${id}\``).join(" or ");
+        const matches = fits.records.filter((entry) => carried.from_templates.includes(entry.record.template.id));
+        const [fit] = matches;
+        if (fits.unreadSteps.length > 0) {
+            reportedFit = {
+                shown: [],
+                note: `the host did not read each decision record of ${fits.unreadSteps.join(", ")}, thus it cannot tell that one record is the reported fit, and no slot takes a value: read the record of the reported fit`,
+            };
+        } else if (fit === undefined) {
+            reportedFit = {
+                shown: [],
+                note: `no step that this step depends on holds a decision record of ${wanted}, thus no slot takes a value of the reported fit`,
+            };
+        } else if (matches.length > 1) {
+            // Two renders of a fit template are two fits, and the host cannot tell which one the step reports.
+            const files = matches.map((entry) => `${entry.stepId}: ${entry.file}`).join(", ");
+            reportedFit = {
+                shown: [],
+                note: `${matches.length} decision records of ${wanted} are in the steps that this step depends on (${files}), thus no slot takes a value: read the record of the reported fit`,
+            };
+        } else if ((fit.record.unvetted_edits ?? []).length > 0) {
+            // The record holds the slots of the render. A script that changed after the render can read different values.
+            reportedFit = {
+                shown: [],
+                note: `the script of the reported fit changed after its render (${fit.stepId}: ${fit.file} lists the changes), thus its record does not prove the values that ran, and no slot takes a value: read the script of the fit`,
+            };
+        } else {
+            const source = `the reported fit of ${fit.stepId} (${fit.record.template.id}@${fit.record.template.version})`;
+            const valueOf = new Map((fit.record.slots ?? []).flatMap((slot) => (slot.value === undefined ? [] : [[slot.name, slot.value] as const])));
+            for (const name of carried.bind ?? []) {
+                const slot = adaptable.find((candidate) => candidate.name === name);
+                // A slot with no value in the record is a slot that the fit did not read, thus the default of this template holds.
+                const value = valueOf.get(name);
+                if (slot === undefined) continue;
+                if (value === undefined) {
+                    defaultNames.add(name);
+                    continue;
+                }
+                const issue = validateLocalSlot(slot, value);
+                if (issue !== undefined) {
+                    unbound.push(`\`${name}\` = ${JSON.stringify(value)} (${source}): the slot of this template does not take it (${issue.reason})`);
+                    // A plan value is not the value of the fit, thus no setting of the step binds this slot.
+                    unresolvedNames.add(name);
+                    continue;
+                }
+                slots[name] = value;
+                sources[name] = source;
+                carriedNames.add(name);
+                bound.push({ name, value, source });
+            }
+            for (const name of carried.show ?? []) shownNames.add(name);
+            const shown = (carried.show ?? []).flatMap((name) =>
+                adaptableNames.has(name) && valueOf.has(name) ? [`\`${name}\` = ${JSON.stringify(valueOf.get(name))}`] : [],
+            );
+            reportedFit = { source, shown };
+        }
+        if (reportedFit.note !== undefined) for (const name of [...(carried.bind ?? []), ...(carried.show ?? [])]) unresolvedNames.add(name);
     }
 
     const departureBySetting = new Map(
@@ -761,7 +876,10 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
             const departs = `\`${rule.name}\` = ${JSON.stringify(rule.value)} (${rule.step}${rule.source ? `; ${rule.source}` : ""}): the plan departs from ${departure.rule} and does not apply it (${departure.reason})`;
             // A slot of the template always takes a value, and an omitted slot takes the default of the template. Thus the
             // render must send the value that matches the plan, and the decision record keeps it as an override.
-            if (versionMatches && adaptableNames.has(rule.name)) {
+            if (versionMatches && carriedNames.has(rule.name)) {
+                // The slot holds the value that the reported fit read. A second fit of that model keeps it.
+                unbound.push(`${departs}, but the slot takes the value ${JSON.stringify(slots[rule.name])} of the reported fit`);
+            } else if (versionMatches && adaptableNames.has(rule.name)) {
                 excluded.push(rule.name);
                 unbound.push(
                     `${departs}, but the template gives each slot a value; send the value that matches the plan, with an \`overrides\` entry and the reason`,
@@ -811,6 +929,20 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                   : undefined;
         if (target !== undefined) {
             const name = target.slot?.name ?? setting.name;
+            // The seed shows the value of the reported fit for this slot, and the agent sends it. A bound plan value
+            // would refuse that value at the render, thus the plan value stays a line of the seed.
+            if (unresolvedNames.has(name)) {
+                unbound.push(`${shown}: the slot \`${name}\` takes the value that the reported fit used, and the host holds no valid value of it`);
+                continue;
+            }
+            if (defaultNames.has(name)) {
+                unbound.push(`${shown}: the reported fit read no value for the slot \`${name}\`, thus the default of the template holds`);
+                continue;
+            }
+            if (shownNames.has(name)) {
+                unbound.push(`${shown}: the slot \`${name}\` takes the value that the reported fit used, which the seed shows`);
+                continue;
+            }
             if (target.slot && !fitsSlot(target.slot, target.value)) {
                 unbound.push(`${shown}: a policy of the plan, not a value of the \`${name}\` slot (${target.slot.type}); state the value it gives`);
                 continue;
@@ -862,6 +994,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                     description: input.description,
                 })),
                 bound,
+                reported_fit: reportedFit,
                 done_by_script: doneByScript,
                 unbound_settings: unbound,
                 notes: contract.notes?.trim() || undefined,
