@@ -102,10 +102,10 @@ describe("execute_command and the decision record of a script", () => {
         return join(base, ANALYSIS, "runs", "run-abc", "step1");
     }
 
-    function buildTool() {
+    function buildTool(opts: FakeOpts = {}) {
         const workspaceRoot = join(base, ANALYSIS);
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-abc", stepId: "step1" });
-        const client = makeFakeClient();
+        const client = makeFakeClient(opts);
         const tool = createExecuteCommandTool({
             lease: leaseOverClient(client, makeSandboxRef()),
             defaultCwd: DEFAULT_CWD,
@@ -351,6 +351,56 @@ describe("execute_command and the decision record of a script", () => {
             ["call-3", "call-4", "call-5"].map((invocationId) => tool.execute({ command: ["Rscript", "scripts/de.R"] }, { ...ctx, invocationId })),
         );
         expect((await record()).runs).toHaveLength(5);
+    });
+
+    it("writes the entry of a run before the command, with the digest and with no exit code", async () => {
+        const written = "ALPHA <- 0.05\n";
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeHeldRecord(`${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }, null, 2)}\n`);
+        // The exec fails: the host stops between the entry before the command and the entry of its end.
+        const { tool } = buildTool({ execError: new Error("the host stopped") });
+        const { ctx } = makeToolContext();
+
+        const failed = await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx).then(
+            (result) => result.isErr(),
+            () => true,
+        );
+        expect(failed).toBe(true);
+
+        const started = { sha256: scriptSha256(written), invocation: "test-tool-call" };
+        expect((await record()).runs).toEqual([started]);
+        expect(asRecord(parseJsonAs(await readFile(hostRecordPath(), "utf8"), z.json())).runs).toEqual([started]);
+    });
+
+    it("gives the entry of a recovered call its digest only when the script still holds the bytes from before the command", async () => {
+        const written = "ALPHA <- 0.05\n";
+        const other = "ALPHA <- 0.5\n";
+        const { ctx } = makeToolContext();
+        const heldWith = (sha256: string) =>
+            `${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [], runs: [{ sha256, invocation: "test-tool-call" }] }, null, 2)}\n`;
+
+        // The same bytes at the recovery: the command ran them before the stop, or it runs them now.
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeHeldRecord(heldWith(scriptSha256(written)));
+        await awaitOk(buildTool().tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
+        expect((await record()).runs).toEqual([{ exit_code: 0, sha256: scriptSha256(written), invocation: "test-tool-call" }]);
+
+        // The script changed after the entry. The host stopped before the command or after it, and the entry does
+        // not say which. Thus the entry names the two digests and no `sha256`: it is a run of no known script.
+        await writeFile(join(stepDir(), "scripts", "de.R"), other);
+        await writeHeldRecord(heldWith(scriptSha256(written)));
+        await awaitOk(buildTool().tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
+        expect((await record()).runs).toEqual([
+            { exit_code: 0, sha256_before_the_command: scriptSha256(written), sha256_at_the_recovery: scriptSha256(other), invocation: "test-tool-call" },
+        ]);
+
+        // The script held different bytes at the entry, and it holds the rendered bytes again at the recovery.
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeHeldRecord(heldWith(scriptSha256(other)));
+        await awaitOk(buildTool().tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
+        expect((await record()).runs).toEqual([
+            { exit_code: 0, sha256_before_the_command: scriptSha256(other), sha256_at_the_recovery: scriptSha256(written), invocation: "test-tool-call" },
+        ]);
     });
 
     it("writes the run of a changed script with the digest of the bytes that ran, after the change note", async () => {

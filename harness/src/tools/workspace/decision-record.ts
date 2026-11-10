@@ -297,24 +297,80 @@ export type ReconcileScriptRecordArgs = Omit<NoteScriptChangeArgs, "note" | "sha
 
 /** One run of a script, as the record keeps it. */
 export type ScriptRun = {
-    /** The exit code of the command that ran the script, or `null` when the sandbox ended under it. */
-    readonly exit_code: number | null;
-    /** The digest of the script as the check before the run read it. */
-    readonly sha256: string;
+    /**
+     * The exit code of the command that ran the script, or `null` when the sandbox ended under it. An entry with
+     * no exit code is a run that started: the host wrote it before the command, and the command did not end yet.
+     */
+    readonly exit_code?: number | null;
+    /**
+     * The digest of the script as the check before the run read it. Absent when the host did the call again after
+     * a recovery and the script then held different bytes: the host cannot tell which bytes ran.
+     */
+    readonly sha256?: string;
+    /** The digest from before the command, in an entry with no `sha256`. */
+    readonly sha256_before_the_command?: string;
+    /** The digest that the call after the recovery read, in an entry with no `sha256`. */
+    readonly sha256_at_the_recovery?: string;
     /** The tool call that ran the command. A call that the host does again after a recovery writes no second entry. */
     readonly invocation: string;
 };
 
-const RunInvocationSchema = z.looseObject({ invocation: z.string() });
+const RunEntrySchema = z.looseObject({
+    invocation: z.string(),
+    sha256: z.string().optional().catch(undefined),
+    exit_code: z.number().nullable().optional().catch(undefined),
+});
 
 /** The most run entries that a record keeps. A script runs one time, or a small number of times. */
 const MAX_RECORDED_RUNS = 50;
 
+/** The position of the entry of a tool call in `runs`, with the entry, or `undefined` when the call has none. */
+function runOfInvocation(
+    runs: readonly unknown[],
+    invocationId: string,
+): { readonly index: number; readonly sha256: string | undefined; readonly ended: boolean } | undefined {
+    for (const [index, run] of runs.entries()) {
+        const parsed = RunEntrySchema.safeParse(run);
+        if (!parsed.success || parsed.data.invocation !== invocationId) continue;
+        return { index, ended: parsed.data.exit_code !== undefined, sha256: parsed.data.sha256 };
+    }
+    return undefined;
+}
+
+/** The outcome of the entry that the host writes before a command runs a script. */
+export type ScriptRunStart = { readonly status: "started"; readonly writes: readonly WriteRecord[] } | { readonly status: "no_record" | "refused" };
+
 /**
- * Append one run to the record of a script, after the command that ran it. The record then says that the script
- * ran, with which bytes, and how the command ended. A step that fits the same model again takes the slot values
- * of a record only when a run of the rendered bytes ended with exit code 0. The function reads the record again,
- * thus a change note that landed while the command ran stays. `no_record` when the script has no record.
+ * Write the entry of a run to the record of a script before the command runs, with the digest that the check
+ * before the run read and with no exit code. The host can stop after this write. The call that the host then
+ * does again finds this entry and writes no second one. `no_record` when the script has no record.
+ */
+export async function startScriptRun(args: ReconcileScriptRecordArgs & { readonly sha256: string }): Promise<ScriptRunStart> {
+    const recordPath = decisionRecordPathFor(args.scriptPath);
+    if (!recordPath) return { status: "no_record" };
+    return inRecordOrder(args, recordPath, async () => {
+        const held = await readHeldRecord(args, recordPath);
+        if (!held) return { status: "no_record" };
+        const runs = isUnknownArray(held.record.runs) ? held.record.runs : [];
+        // The entry of this call is there: the host does the call again, and the entry of the first time stands.
+        if (runOfInvocation(runs, args.invocationId)) return { status: "started", writes: [] };
+        const entry: ScriptRun = { sha256: args.sha256, invocation: args.invocationId };
+        const written = await writeHeldRecord(args, recordPath, held, { ...held.record, runs: [...runs, entry].slice(-MAX_RECORDED_RUNS) });
+        return written.status === "noted" ? { status: "started", writes: written.writes } : { status: written.status };
+    });
+}
+
+/**
+ * Give the run entry of a tool call its exit code, after the command that ran the script. The record then says
+ * that the script ran, with which bytes, and how the command ended. A step that fits the same model again takes
+ * the slot values of a record only when a run of the rendered bytes ended with exit code 0. The function reads
+ * the record again, thus a change note that landed while the command ran stays. A call with no entry from before
+ * the command gets a new entry. `no_record` when the script has no record.
+ *
+ * The host can stop before the command or after it, and it then does the call again. The entry from before the
+ * command does not say which of the two occurred. When the digest of this call is the digest of that entry, the
+ * same bytes ran in the two cases. When the two differ, the host cannot tell which bytes ran: the entry then
+ * holds the two digests and no `sha256`, thus it is a run of no known script.
  */
 export async function noteScriptRun(args: ReconcileScriptRecordArgs & ScriptRunArgs): Promise<ScriptChangeNote> {
     const recordPath = decisionRecordPathFor(args.scriptPath);
@@ -323,14 +379,15 @@ export async function noteScriptRun(args: ReconcileScriptRecordArgs & ScriptRunA
         const held = await readHeldRecord(args, recordPath);
         if (!held) return { status: "no_record" };
         const runs = isUnknownArray(held.record.runs) ? held.record.runs : [];
-        const known = runs.some((run) => {
-            const parsed = RunInvocationSchema.safeParse(run);
-            return parsed.success && parsed.data.invocation === args.invocationId;
-        });
-        // The entry of this call is there: the host does the call again after a recovery, and the command ran one time.
-        if (known) return { status: "noted", writes: [], restored: false, copyWritten: true };
-        const entry: ScriptRun = { exit_code: args.exitCode, sha256: args.sha256, invocation: args.invocationId };
-        return writeHeldRecord(args, recordPath, held, { ...held.record, runs: [...runs, entry].slice(-MAX_RECORDED_RUNS) });
+        const known = runOfInvocation(runs, args.invocationId);
+        // The entry of this call has its exit code: the host does the call again after a recovery, and the command ran one time.
+        if (known?.ended) return { status: "noted", writes: [], restored: false, copyWritten: true };
+        const entry: ScriptRun =
+            known === undefined || known.sha256 === args.sha256
+                ? { exit_code: args.exitCode, sha256: args.sha256, invocation: args.invocationId }
+                : { exit_code: args.exitCode, sha256_before_the_command: known.sha256, sha256_at_the_recovery: args.sha256, invocation: args.invocationId };
+        const next = known ? runs.map((run, index) => (index === known.index ? entry : run)) : [...runs, entry].slice(-MAX_RECORDED_RUNS);
+        return writeHeldRecord(args, recordPath, held, { ...held.record, runs: next });
     });
 }
 
