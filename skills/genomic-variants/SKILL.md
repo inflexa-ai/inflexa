@@ -1,6 +1,6 @@
 ---
 name: genomic-variants
-description: Analysis of called genomic variants — filtering, annotation, GWAS, and population-genetics summaries from VCF and PLINK-format data
+description: Read before you filter, annotate, or test called variants or genotype cohorts (GWAS, Mendelian randomization). It tells which annotation resources are absent, the traps of contig names and genome builds, the covariates that a GWAS must have, and what to do with raw reads.
 version: 1.0.0
 tags: [wgs, wes, gwas, variant-annotation, population-genetics, plink2]
 ---

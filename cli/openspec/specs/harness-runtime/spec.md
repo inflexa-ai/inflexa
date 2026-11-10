@@ -184,7 +184,7 @@ metadata/summary. Specific to the run engine:
 
 #### Scenario: Step agents come from the harness catalog
 
-- **WHEN** a run step declares agent id `bulk-transcriptomics-agent` (a catalog id)
+- **WHEN** a run step declares agent id `analyst` (a catalog id)
 - **THEN** the built agent is the catalog's definition for that id, wired with the step's sandbox, write prefix, and lineage collector
 
 #### Scenario: Unknown agent id fails visibly

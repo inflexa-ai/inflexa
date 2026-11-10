@@ -9,7 +9,7 @@ function step(id: string, depends_on: string[] = [], name = id): PlanCardStepVie
     return {
         id,
         name,
-        agent: "scientific-executor",
+        agent: "analyst",
         question: "question",
         acceptance_criteria: [],
         constraints: [],
@@ -65,6 +65,6 @@ describe("PlanCardBlock", () => {
             { width: 80, height: 6 },
         );
         expect(frame).toContain("Fallback step");
-        expect(frame).toContain("[scientific-executor]");
+        expect(frame).toContain("[analyst]");
     });
 });

@@ -8,7 +8,6 @@ import {
     createPool,
     createSandboxClient,
     createWorkspaceFilesystem,
-    SANDBOX_AGENT_META,
     type ArtifactRegistrationInput,
     type ChatProvider,
     type ExecuteAnalysisDeps,
@@ -25,7 +24,6 @@ import type { StampedEvent } from "../../../types/events.ts";
 import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "../prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "../run_deps.ts";
 import { present } from "../../../lib/present.ts";
-import { errorOf } from "../../../lib/cause.ts";
 
 // All factories below construct lazily (pg pools connect on first query; the
 // SDK clients open no socket at construction), so the whole module builds
@@ -296,7 +294,7 @@ describe("per-agent composition — run-engine bundles draw the sandbox agent", 
 describe("buildSandboxStepDeps", () => {
     test("resolveWritePrefix is the absolute runs/{runId}/{stepId} path under the analysis's workspace root", async () => {
         const deps = buildSandboxStepDeps(testComposition());
-        const prefix = await deps.resolveWritePrefix(stepInput("bulk-transcriptomics-agent"));
+        const prefix = await deps.resolveWritePrefix(stepInput("analyst"));
 
         expect(prefix).toBe("/tmp/sessions/an-1/runs/run-1/step-1");
     });
@@ -306,10 +304,10 @@ describe("buildSandboxStepDeps", () => {
         const deps = buildSandboxStepDeps(comp);
         const writePrefix = "/tmp/sessions/an-1/runs/run-1/step-1";
 
-        const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", writePrefix));
+        const agent = await deps.buildAgent(fakeBuildContext("analyst", writePrefix));
 
         // The returned definition is the catalog's own entry for that id.
-        expect(agent.id).toBe("bulk-transcriptomics-agent");
+        expect(agent.id).toBe("analyst");
         expect(Array.isArray(agent.tools)).toBe(true);
         expect(agent.tools.at(-1)?.id).toBe("submit_file_metadata");
     });
@@ -317,7 +315,7 @@ describe("buildSandboxStepDeps", () => {
     test("buildAgent gives the tool output store of the step to the agent, thus it declares read_tool_output", async () => {
         const deps = buildSandboxStepDeps(testComposition());
 
-        const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
+        const agent = await deps.buildAgent(fakeBuildContext("analyst", "/tmp/sessions/an-1/runs/run-1/step-1"));
 
         expect(agent.tools.map((tool) => tool.id)).toContain("read_tool_output");
     });
@@ -325,30 +323,17 @@ describe("buildSandboxStepDeps", () => {
     test("buildAgent passes the blocker flag of the step to the agent, thus it declares report_blocker", async () => {
         const deps = buildSandboxStepDeps(testComposition());
 
-        const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
+        const agent = await deps.buildAgent(fakeBuildContext("analyst", "/tmp/sessions/an-1/runs/run-1/step-1"));
 
         expect(agent.tools.map((tool) => tool.id)).toContain("report_blocker");
     });
 
-    test("buildAgent rejects for an unknown agent id, naming the id and the known catalog ids", async () => {
+    test("buildAgent runs a step whose agent id the roster no longer holds on the analyst", async () => {
         const deps = buildSandboxStepDeps(testComposition());
 
-        // The write prefix must sit under the analysis's workspace root — agent
-        // construction maps it to a sandbox path — so the unknown-id lookup is
-        // what fails, not the path mapping.
-        const built = deps.buildAgent(fakeBuildContext("not-a-real-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
+        const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
 
-        const thrown = await built.then(
-            () => null,
-            (e: unknown) => e,
-        );
-        expect(thrown).toBeInstanceOf(Error);
-        const message = errorOf(thrown)?.message ?? "";
-        expect(message).toContain('unknown sandbox agent id "not-a-real-agent"');
-        // Every known catalog id is listed for the operator.
-        for (const id of Object.keys(SANDBOX_AGENT_META)) {
-            expect(message).toContain(id);
-        }
+        expect(agent.id).toBe("analyst");
     });
 });
 

@@ -44,7 +44,7 @@ Two tools defined in `harness/src/tools/sandbox/skills.ts`:
 
 Both are confined to the agent's allowlist. Per-file cap is **512 KiB** (`MAX_FILE_BYTES`): larger files are skipped by search and truncated by read.
 
-Each sandbox agent declares its packs in `meta.skills` (`AgentMeta`, see `harness/src/agents/sandbox/types.ts` and each `*-agent.ts`, e.g. `cheminformatics-agent.ts`). `validate-skills.ts` checks every declared name resolves to a real directory. **A pack not listed in an agent's `meta.skills` is invisible to that agent** — there is no global auto-load. `shared/omics-general` is declared by every analysis agent except the `data-profiler` (which declares none).
+Each sandbox agent declares its packs in `meta.skills` (`AgentMeta`, see `harness/src/agents/sandbox/types.ts`, `analyst.ts`, and `drug-analyst.ts`). `validate-skills.ts` checks every declared name resolves to a real directory. **A pack not listed in an agent's `meta.skills` is invisible to that agent** — there is no global auto-load. `shared/omics-general` is declared by every analysis agent except the `data-profiler` (which declares none).
 
 ## Contributing a skill
 

@@ -236,7 +236,7 @@ afterAll(async () => {
 const ANALYSIS_ID = "an-usage";
 const USAGE_RUN_ID = "run-usage";
 const USAGE_STEP_ID = "T1S1";
-const USAGE_AGENT_ID = "scientific-executor";
+const USAGE_AGENT_ID = "analyst";
 const STEP_MODEL_ID = "test-step-model";
 
 /** A pool that answers every query with an empty rowset — no ledger assertions here. */

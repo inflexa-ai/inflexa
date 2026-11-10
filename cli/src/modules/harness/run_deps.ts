@@ -3,6 +3,7 @@ import type { ScriptRuntime } from "@inflexa-ai/harness/tools/script/run-script.
 import {
     createNoopRunCharge,
     createSandboxAgents,
+    resolveStepAgentId,
     runStepDir,
     SANDBOX_AGENT_META,
     type AgentDefinition,
@@ -179,18 +180,19 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
         },
     };
 
-    // TODO(perf): `createSandboxAgents` builds the entire ~22-agent catalog
-    // (prompt composition + per-tool `z.toJSONSchema()` wiring) and we keep one,
-    // per step and again on every workflow replay. The cost is in-memory CPU with
-    // no I/O against a multi-minute sandboxed step, so it is acceptable today; the
-    // real fix is a harness-side per-id selector (e.g. `createSandboxAgent(deps,
-    // id)`) since the deps are per-`ctx` and cannot be hoisted to boot. Mirrors the
-    // harness's own data-profile construction, which selects the same way.
-    // Tracked in https://github.com/inflexa-ai/inf-cli/issues/30.
-    const agent = createSandboxAgents(deps)[ctx.input.agentId];
+    // TODO(perf): `createSandboxAgents` builds the whole catalog (prompt composition
+    // + per-tool `z.toJSONSchema()` wiring) and we keep one, per step and again on
+    // every workflow replay. The cost is in-memory CPU with no I/O against a
+    // multi-minute sandboxed step, so it is acceptable today; the real fix is a
+    // harness-side per-id selector since the deps are per-`ctx` and cannot be
+    // hoisted to boot. Tracked in https://github.com/inflexa-ai/inf-cli/issues/30.
+    // A recovered run can carry an agent id that the roster no longer holds; the
+    // harness resolves it to the default step agent.
+    const agentId = resolveStepAgentId(ctx.input.agentId);
+    const agent = createSandboxAgents(deps)[agentId];
     if (agent === undefined) {
         const known = Object.keys(SANDBOX_AGENT_META).join(", ");
-        throw new Error(`unknown sandbox agent id "${ctx.input.agentId}" — known catalog ids: ${known}`);
+        throw new Error(`unknown sandbox agent id "${agentId}" — known catalog ids: ${known}`);
     }
     return agent;
 }

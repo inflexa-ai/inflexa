@@ -115,12 +115,10 @@ export function conversationAgent(): AgentDefinition {
     return createConversationAgent({
         provider: unusedChatProvider(),
         registerSubAgent: inProcessSubAgent,
-        utilityProvider: unusedChatProvider(),
         pool: unconnectedPool(),
         embedding: unusedEmbedding,
         workspaceFs: makeFakeWorkspaceFs(),
         model: "eval",
-        utilityModel: "eval",
         executeAnalysisWorkflow: (): Promise<ExecuteAnalysisResult> => refuse(),
         anchorReportSession: (): Promise<EnsureSessionStateResult> => refuse(),
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/eval", id)),

@@ -42,7 +42,7 @@ import {
 import { synthesizerSeedOf } from "@inflexa-ai/harness/execution/run-synthesis.js";
 import { generateStepSummary } from "@inflexa-ai/harness/execution/step-summary.js";
 import { generateFileMetadata } from "@inflexa-ai/harness/execution/artifact-metadata.js";
-import { openSandboxTrial, type SandboxTrial } from "./sandbox.js";
+import { openSandboxTrial, type ExecMode, type SandboxTrial } from "./sandbox.js";
 import { trialOf, type EvalCase, type Grade, type RunningRun, type TrialAsk, type TrialCall } from "./case.js";
 
 const ANALYSIS_ID = "analysis-001";
@@ -79,6 +79,8 @@ export type RunOptions = {
     readonly trialTimeoutMs: number;
     /** Where each agent holds its plain file tools. Absent: `base`. */
     readonly exposure?: ToolExposure;
+    /** How a command of a sandbox trial runs. Absent: `scripted`. */
+    readonly exec?: ExecMode;
     /** Called when a trial ends, for progress output. */
     readonly onTrial?: (evalCase: EvalCase, result: TrialResult) => void;
 };
@@ -203,6 +205,7 @@ async function trialAgentOf(
     evalCase: EvalCase,
     agents: RunOptions["agents"],
     exposure: ToolExposure,
+    exec: ExecMode,
     store: ToolOutputStore,
     record: ScriptToolCall[],
 ): Promise<{ readonly agent: AgentDefinition; readonly sandbox?: SandboxTrial }> {
@@ -215,20 +218,20 @@ async function trialAgentOf(
     }
     if (kind !== "sandbox") return { agent: scripted(agents[kind]) };
     if (evalCase.sandbox === undefined) throw new Error(`the sandbox case ${evalCase.id} has no sandbox setup`);
-    const sandbox = await openSandboxTrial(evalCase.sandbox, { toolOutputStore: store, label: evalCase.id });
+    const sandbox = await openSandboxTrial(evalCase.sandbox, { toolOutputStore: store, label: evalCase.id, exec });
     return { agent: withSandboxScripts(exposed(sandbox.agent, exposure), evalCase.tools ?? {}), sandbox };
 }
 
 export async function runTrial(
     evalCase: EvalCase,
-    options: Pick<RunOptions, "agents" | "provider" | "sandboxProvider" | "trialTimeoutMs" | "exposure">,
+    options: Pick<RunOptions, "agents" | "provider" | "sandboxProvider" | "trialTimeoutMs" | "exposure" | "exec">,
 ): Promise<TrialResult> {
     const history = evalCase.history ?? [];
     const store = memoryToolOutputStore();
     let sandbox: SandboxTrial | undefined;
     try {
         const record: ScriptToolCall[] = [];
-        const built = await trialAgentOf(evalCase, options.agents, options.exposure ?? "base", store, record);
+        const built = await trialAgentOf(evalCase, options.agents, options.exposure ?? "base", options.exec ?? "scripted", store, record);
         const { agent } = built;
         sandbox = built.sandbox;
         const asks: TrialAsk[] = [];
@@ -374,7 +377,7 @@ export async function runTrial(
     } catch (cause) {
         return { kind: "error", error: errorMessageOf(cause) ?? "the trial failed with no message" };
     } finally {
-        sandbox?.dispose();
+        await sandbox?.dispose();
     }
 }
 

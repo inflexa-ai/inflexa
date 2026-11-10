@@ -1,6 +1,6 @@
 ---
 name: spatial-omics
-description: Spatial transcriptomics and spatial proteomics analysis covering technology-specific workflows, spatial statistics, deconvolution, and niche analysis
+description: Read before you analyze spatial transcriptomics or spatial proteomics data. It tells how the platform resolution changes the neighbor graph, domains, and deconvolution, which spatial methods cannot run here, and the traps of spots that hold more than one cell.
 version: 1.0.0
 tags: [visium, merfish, slide-seq, codex, spatial, squidpy, spatialdata]
 ---

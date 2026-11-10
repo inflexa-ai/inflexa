@@ -152,7 +152,7 @@ type SynthesisScript = { readonly kind: "produced" } | { readonly kind: "blocker
  * of the requests that the synthesizer got.
  */
 function scriptSynthesis(script: SynthesisScript, before: readonly ScriptStep[] = []): ReturnType<typeof scriptedModel>["calls"] {
-    const summaries = script.kind === "no-summaries" ? [] : [{ stepId: "A", agentId: "scientific-executor", markdown: "## results" }];
+    const summaries = script.kind === "no-summaries" ? [] : [{ stepId: "A", agentId: "analyst", markdown: "## results" }];
     dbosState.resultOnStep.set("synthesis.read-summaries", { workspaceRoot: "/unused", summaries });
     dbosState.resultOnStep.set("synthesis.read-plan", "");
     dbosState.resultOnStep.set("synthesis.index", undefined);
@@ -1486,8 +1486,8 @@ describe("executeAnalysis body", () => {
         const seeds = pool.queries.filter((q) => STEP_SEED_INSERT.test(q.text) && q.text.includes("'pending'"));
         expect(seeds.length).toBe(1);
         // One 5-value tuple per step (runId, stepId, analysisId, wave, agentId);
-        // B's wave is 1 (depends on A) and both carry the shared agent fallback map.
-        expect(presentAt(seeds, 0).values).toEqual(["run-test", "A", "a1", 0, "agent-x", "run-test", "B", "a1", 1, "agent-x"]);
+        // B's wave is 1 (depends on A) and both name an agent the roster does not hold, thus both run on the analyst.
+        expect(presentAt(seeds, 0).values).toEqual(["run-test", "A", "a1", 0, "analyst", "run-test", "B", "a1", 1, "analyst"]);
         expect(presentAt(seeds, 0).text).toContain("ON CONFLICT (run_id, step_id) DO NOTHING");
     });
 

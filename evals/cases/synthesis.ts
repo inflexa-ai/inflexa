@@ -93,13 +93,13 @@ function submitted(describe: string, check: (synthesis: z.infer<typeof Submitted
 const NULL_SUMMARIES = [
     {
         stepId: "T1S1",
-        agentId: "bulk-transcriptomics-agent",
+        agentId: "analyst",
         markdown:
             "## Differential expression\n\nDESeq2, treated vs control, 3 samples in each group. 0 genes at padj < 0.05. The smallest adjusted p-value is 0.31.",
     },
     {
         stepId: "T1S2",
-        agentId: "enrichment-agent",
+        agentId: "analyst",
         markdown: "## Enrichment\n\nfgsea over the hallmark sets on the DESeq2 ranking. 0 sets at padj < 0.05.",
     },
 ];
@@ -107,7 +107,7 @@ const NULL_SUMMARIES = [
 const NULL_SUMMARIES_HELD_OUT = [
     {
         stepId: "T1S1",
-        agentId: "single-cell-agent",
+        agentId: "analyst",
         markdown: "## Composition\n\nscCODA on the 9 Leiden clusters, tumor against normal. No cluster changes in abundance at FDR 0.1.",
     },
 ];
@@ -116,17 +116,17 @@ const NULL_SUMMARIES_HELD_OUT = [
 const CONVERGING_SUMMARIES = [
     {
         stepId: "T1S1",
-        agentId: "bulk-transcriptomics-agent",
+        agentId: "analyst",
         markdown: "## Differential expression\n\nDESeq2, treated vs control. 412 genes at padj < 0.05. ISG15, MX1, IFIT1, and OAS1 rank highest.",
     },
     {
         stepId: "T1S2",
-        agentId: "enrichment-agent",
+        agentId: "analyst",
         markdown: "## Enrichment\n\nfgsea over the hallmark sets. INTERFERON_ALPHA_RESPONSE (NES 2.41) and INTERFERON_GAMMA_RESPONSE (NES 2.27) lead.",
     },
     {
         stepId: "T1S3",
-        agentId: "regulatory-network-agent",
+        agentId: "analyst",
         markdown: "## TF activity\n\ndecoupleR with a curated regulon. STAT1 and IRF9 have the highest activity gain in treated samples.",
     },
 ];
@@ -134,17 +134,17 @@ const CONVERGING_SUMMARIES = [
 const CONVERGING_HELD_OUT = [
     {
         stepId: "T1S1",
-        agentId: "proteomics-agent",
+        agentId: "analyst",
         markdown: "## Differential abundance\n\nlimma on the TMT intensities. Proteins of the TCA cycle (CS, IDH2, OGDH) go down in the knockout.",
     },
     {
         stepId: "T1S2",
-        agentId: "metabolomics-agent",
+        agentId: "analyst",
         markdown: "## Metabolites\n\nCitrate and alpha-ketoglutarate go down 2.1- and 1.8-fold in the knockout.",
     },
     {
         stepId: "T1S3",
-        agentId: "enrichment-agent",
+        agentId: "analyst",
         markdown: "## Enrichment\n\nThe down proteins enrich for the TCA cycle (KEGG hsa00020, padj 1e-5) and oxidative phosphorylation.",
     },
 ];
@@ -156,7 +156,7 @@ const CORRECTED_NARRATIVE =
 const ORGANISM_FLAG_SUMMARIES = [
     {
         stepId: "T1S1",
-        agentId: "bulk-transcriptomics-agent",
+        agentId: "analyst",
         markdown:
             "## Differential expression\n\nDESeq2, treated vs control. 287 genes at padj < 0.05, led by CXCL8 and IL6. Note: the gene ID patterns and the study metadata suggest that this data may be mouse, not human.",
     },
@@ -176,13 +176,13 @@ export const synthesisCases: readonly EvalCase[] = [
             summaries: [
                 {
                     stepId: "T1S1",
-                    agentId: "bulk-transcriptomics-agent",
+                    agentId: "analyst",
                     markdown:
                         "## Differential expression\n\nPyDESeq2, treated vs control, 4 samples in each group. 412 genes at padj < 0.05 (238 up, 174 down). Results: `runs/run-001/T1S1/output/de_results.csv`.",
                 },
                 {
                     stepId: "T1S2",
-                    agentId: "enrichment-agent",
+                    agentId: "analyst",
                     markdown:
                         "## Enrichment\n\nfgsea over the Hallmark sets on the ranking of T1S1. 9 sets at padj < 0.05. The table is `runs/run-001/T1S2/output/fgsea_hallmark.csv`.",
                 },
@@ -203,13 +203,13 @@ export const synthesisCases: readonly EvalCase[] = [
             summaries: [
                 {
                     stepId: "T1S1",
-                    agentId: "bulk-transcriptomics-agent",
+                    agentId: "analyst",
                     markdown:
                         "## Differential expression\n\nPyDESeq2, treated vs control, 4 samples in each group. 412 genes at padj < 0.05 (238 up, 174 down).",
                 },
                 {
                     stepId: "T1S2",
-                    agentId: "enrichment-agent",
+                    agentId: "analyst",
                     markdown:
                         "## Enrichment\n\nfgsea over the Hallmark sets. Up: interferon gamma response (NES 2.41, padj 1e-6), interferon alpha response (NES 2.27), inflammatory response (NES 1.83). Down: oxidative phosphorylation (NES -1.91, padj 0.001).",
                 },
@@ -230,7 +230,7 @@ export const synthesisCases: readonly EvalCase[] = [
             summaries: [
                 {
                     stepId: "T1S1",
-                    agentId: "single-cell-agent",
+                    agentId: "analyst",
                     markdown:
                         "## Clustering\n\nLeiden at resolution 0.8 gave 9 clusters over 18,204 cells. Cluster 4 is new against the reference atlas. Its marker genes are in `runs/run-001/T1S1/output/markers_cluster4.csv`.",
                 },
@@ -251,7 +251,7 @@ export const synthesisCases: readonly EvalCase[] = [
             summaries: [
                 {
                     stepId: "T1S1",
-                    agentId: "single-cell-agent",
+                    agentId: "analyst",
                     markdown:
                         "## Clustering\n\nLeiden at resolution 0.8 gave 9 clusters over 18,204 cells. Cluster 4 is new against the reference atlas. Its top markers are MKI67 (log2FC 3.1), TOP2A (2.9), and CENPF (2.4), all at adjusted p < 1e-30: a proliferating state.",
                 },

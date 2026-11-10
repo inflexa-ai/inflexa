@@ -1,6 +1,6 @@
 ---
 name: immune-profiling
-description: Immune cell deconvolution, immune signature scoring, checkpoint expression panels, TCR/BCR repertoire analysis, tumor microenvironment characterization, and IO response prediction
+description: Read before you estimate immune cell composition, score immune signatures, compare checkpoint genes, classify the tumor microenvironment, or analyze TCR or BCR repertoires. It tells which deconvolution methods are available, what their output means, and the statistics for many immune scores.
 version: 1.0.0
 tags: [immunology, immuno-oncology, deconvolution, immune-signatures, TME, checkpoint, TCR, BCR, IO-response]
 ---

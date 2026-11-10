@@ -1,6 +1,6 @@
 ---
 name: mdv-preparation
-description: Prepare scRNA-seq, scATAC-seq, spatial transcriptomics, and spatial proteomics data as MDV-ready assets (AnnData plus context tables) for MDV, the Multi-Dimensional Viewer — input wrangling, metadata curation, human-readable labels, and validation against what MDV's upload does
+description: Read before you prepare single-cell, scATAC, spatial transcriptomics, or spatial proteomics data for MDV, the Multi-Dimensional Viewer. It gives the route for each input, the rules for labels and categories, the data types that make the upload fail, and the validation before delivery.
 version: 1.0.0
 tags: [mdv, multi-dimensional-viewer, visualization, anndata, h5ad, cosmx, xenium, visium, merfish, codex, imc, mibi]
 ---

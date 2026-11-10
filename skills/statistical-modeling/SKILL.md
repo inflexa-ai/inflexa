@@ -1,6 +1,6 @@
 ---
 name: statistical-modeling
-description: Statistical modeling and machine learning for biomarker discovery, survival analysis, classification, regression, and model interpretation
+description: Read before you fit survival, classification, regression, or mixed-effects models, select biomarkers, set a cutpoint, or compare ROC curves. It covers leakage across steps, prognostic versus predictive claims, corrected cutpoint p-values, and the metrics and validation for each outcome.
 version: 1.0.0
 tags: [survival, machine-learning, classification, regression, mixed-models, biomarker, shap]
 ---

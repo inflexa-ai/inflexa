@@ -85,13 +85,13 @@ const GROUPS: readonly {
     readonly steps: readonly string[];
     readonly name: string;
 }[] = [
-    { id: "T0S1", track: "T1", step_type: "data_preparation", agent: "bulk-transcriptomics-agent", steps: ["cohort_assembly"], name: "Cohort assembly" },
-    { id: "T1S1", track: "T1", step_type: "qc", agent: "bulk-transcriptomics-agent", steps: ["qc_sample_structure"], name: "Sample structure QC" },
+    { id: "T0S1", track: "T1", step_type: "data_preparation", agent: "analyst", steps: ["cohort_assembly"], name: "Cohort assembly" },
+    { id: "T1S1", track: "T1", step_type: "qc", agent: "analyst", steps: ["qc_sample_structure"], name: "Sample structure QC" },
     {
         id: "T1S2",
         track: "T1",
         step_type: "analysis",
-        agent: "bulk-transcriptomics-agent",
+        agent: "analyst",
         steps: ["filter_low_counts", "normalize", "model_design", "differential_expression", "shrink_lfc", "multiple_testing"],
         name: "Differential expression",
     },
@@ -99,23 +99,23 @@ const GROUPS: readonly {
     // it writes, thus the four are one track in the order of the chain. The
     // track is its own, because the chain is a branch off the test and not a
     // part of the core walk, and it ends in a regulatory quantity.
-    { id: "T4S1", track: "T4", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["dose_response_fit"], name: "Benchmark dose of each gene" },
+    { id: "T4S1", track: "T4", step_type: "analysis", agent: "analyst", steps: ["dose_response_fit"], name: "Benchmark dose of each gene" },
     {
         id: "T4S2",
         track: "T4",
         step_type: "analysis",
-        agent: "bulk-transcriptomics-agent",
+        agent: "analyst",
         steps: ["benchmark_dose_sets"],
         name: "Benchmark dose of each gene set",
     },
-    { id: "T4S3", track: "T4", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["point_of_departure"], name: "Point of departure" },
-    { id: "T4S4", track: "T4", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["exposure_margin"], name: "Exposure margin" },
-    { id: "T2S1", track: "T2", step_type: "enrichment", agent: "enrichment-agent", steps: ["enrichment"], name: "Gene set enrichment" },
+    { id: "T4S3", track: "T4", step_type: "analysis", agent: "analyst", steps: ["point_of_departure"], name: "Point of departure" },
+    { id: "T4S4", track: "T4", step_type: "analysis", agent: "analyst", steps: ["exposure_margin"], name: "Exposure margin" },
+    { id: "T2S1", track: "T2", step_type: "enrichment", agent: "analyst", steps: ["enrichment"], name: "Gene set enrichment" },
     {
         id: "T2S2",
         track: "T2",
         step_type: "activity",
-        agent: "enrichment-agent",
+        agent: "analyst",
         steps: ["tf_activity", "pathway_activity"],
         name: "Regulator and pathway activity",
     },
@@ -127,16 +127,16 @@ const GROUPS: readonly {
         id: "T2S3",
         track: "T2",
         step_type: "analysis",
-        agent: "enrichment-agent",
+        agent: "analyst",
         steps: ["compendium_connectivity"],
         name: "Compendium connectivity",
     },
-    { id: "T1S4", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["variance_partition"], name: "Variance partition" },
-    { id: "T3S1", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["signature_scoring"], name: "Signature scoring" },
-    { id: "T3S2", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["deconvolution"], name: "Cell type deconvolution" },
-    { id: "T3S3", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["coexpression"], name: "Co-expression modules" },
-    { id: "T3S4", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["clustering"], name: "Sample clustering" },
-    { id: "T3S5", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["survival"], name: "Outcome association" },
+    { id: "T1S4", track: "T1", step_type: "analysis", agent: "analyst", steps: ["variance_partition"], name: "Variance partition" },
+    { id: "T3S1", track: "T3", step_type: "analysis", agent: "analyst", steps: ["signature_scoring"], name: "Signature scoring" },
+    { id: "T3S2", track: "T3", step_type: "analysis", agent: "analyst", steps: ["deconvolution"], name: "Cell type deconvolution" },
+    { id: "T3S3", track: "T3", step_type: "analysis", agent: "analyst", steps: ["coexpression"], name: "Co-expression modules" },
+    { id: "T3S4", track: "T3", step_type: "analysis", agent: "analyst", steps: ["clustering"], name: "Sample clustering" },
+    { id: "T3S5", track: "T3", step_type: "analysis", agent: "analyst", steps: ["survival"], name: "Outcome association" },
     // Three computations over the value matrix and the sample table, each
     // independent of the others and of the chain, thus each is a group of
     // this track: a class per gene over the time points, a score per sample
@@ -145,7 +145,7 @@ const GROUPS: readonly {
         id: "T3S6",
         track: "T3",
         step_type: "analysis",
-        agent: "bulk-transcriptomics-agent",
+        agent: "analyst",
         steps: ["trajectory_classification"],
         name: "Trajectory classification",
     },
@@ -153,14 +153,14 @@ const GROUPS: readonly {
         id: "T3S7",
         track: "T3",
         step_type: "analysis",
-        agent: "bulk-transcriptomics-agent",
+        agent: "analyst",
         steps: ["reference_module_score"],
         name: "Reference module score",
     },
-    { id: "T3S8", track: "T3", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["classifier_call"], name: "Classifier call" },
-    { id: "T1S5", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["transcript_level"], name: "Transcript-level analysis" },
-    { id: "T1S6", track: "T1", step_type: "analysis", agent: "bulk-transcriptomics-agent", steps: ["annotation"], name: "Identifier annotation" },
-    { id: "T1S3", track: "T1", step_type: "report", agent: "bulk-transcriptomics-agent", steps: ["report"], name: "Report" },
+    { id: "T3S8", track: "T3", step_type: "analysis", agent: "analyst", steps: ["classifier_call"], name: "Classifier call" },
+    { id: "T1S5", track: "T1", step_type: "analysis", agent: "analyst", steps: ["transcript_level"], name: "Transcript-level analysis" },
+    { id: "T1S6", track: "T1", step_type: "analysis", agent: "analyst", steps: ["annotation"], name: "Identifier annotation" },
+    { id: "T1S3", track: "T1", step_type: "report", agent: "analyst", steps: ["report"], name: "Report" },
 ];
 
 /**

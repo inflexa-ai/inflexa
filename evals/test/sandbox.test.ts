@@ -10,7 +10,7 @@ import { workingDirOf, type SandboxSetup } from "../lib/sandbox.js";
 const agents = evalAgents();
 
 const SETUP: SandboxSetup = {
-    agentId: "bulk-transcriptomics-agent",
+    agentId: "analyst",
     stepId: "T1S1",
     files: { "data/inputs/f-counts/counts.tsv": "gene\tT1\tC1\nTP53\t10\t3\n" },
     packages: [{ name: "pandas", version: "2.2.3", track: "python" }],

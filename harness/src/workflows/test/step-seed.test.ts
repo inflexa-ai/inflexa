@@ -157,7 +157,7 @@ function planStep(id: string, dependsOn: readonly string[] = [], grounding?: Ana
         acceptance_criteria: [`CRITERION_${id}`],
         depends_on: [...dependsOn],
         status: "pending",
-        agent: "bulk-transcriptomics-agent",
+        agent: "analyst",
         maxSteps: 10,
         grounding,
     };
@@ -241,7 +241,7 @@ describe("composeStepSeed", () => {
 
         expect(seed.prompt).toContain("T1S1");
         expect(seed.prompt).toContain("UPSTREAM_FINDING");
-        expect(seed.prompt).toContain("bulk-transcriptomics-agent");
+        expect(seed.prompt).toContain("analyst");
         expect(seed.prompt).toContain(`/${ANALYSIS_ID}/runs/${RUN_ID}/T1S1/output`);
         expect(seed.prompt).toContain(`/${ANALYSIS_ID}/runs/${RUN_ID}/T1S1/output/summary.md`);
         expect(seed.prompt).toContain(`/${ANALYSIS_ID}/runs/${RUN_ID}/T1S1/output/de.csv`);

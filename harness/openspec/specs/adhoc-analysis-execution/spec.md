@@ -1,19 +1,17 @@
 # adhoc-analysis-execution Specification
 
 ## Purpose
-How the conversation agent launches an analysis through the one `execute_analysis` tool, from an approved plan or from an ad hoc request. An ad hoc request becomes an internal plan of one step, with a specialist and resources that a utility router selects. The stable tool invocation id names the run, thus a second delivery of one invocation starts no second run.
+How the conversation agent launches an analysis through the one `execute_analysis` tool, from an approved plan or from an ad hoc request. An ad hoc request becomes an internal plan of one step, on the agent and with the packages that the tool input names. The stable tool invocation id names the run, thus a second delivery of one invocation starts no second run.
 
 ## Requirements
 
 ### Requirement: Unified analysis tool selects plan or ad hoc execution
 
-The conversation-agent roster SHALL expose `execute_analysis` as the sole
-general analysis launch tool. Its flat object input SHALL contain `mode` plus
-exactly one mode-specific field: `{ mode: "plan", planId }` or
-`{ mode: "adhoc", request }`. Plan mode SHALL resolve and validate the approved
-stored plan identified by `planId`; ad hoc mode SHALL construct one internal
-step from `request`. Both modes SHALL return a `runId` after asynchronous launch
-and SHALL leave result retrieval to the ordinary run-inspection tools.
+The conversation-agent roster MUST expose `execute_analysis` as the sole general analysis launch tool. Its flat
+object input MUST contain `mode` plus the fields of that mode: `{ mode: "plan", planId }`, or
+`{ mode: "adhoc", request, agent?, packages? }`. Plan mode MUST resolve and validate the approved stored plan of
+`planId`. Ad hoc mode MUST construct one internal step from `request`. Both modes MUST return a `runId` after an
+asynchronous launch. They MUST leave the retrieval of the result to the run-inspection tools.
 
 #### Scenario: Approved plan launches by id
 
@@ -30,8 +28,8 @@ and SHALL leave result retrieval to the ordinary run-inspection tools.
 
 #### Scenario: Mode-specific input is exact
 
-- **WHEN** a call supplies neither mode-specific field, both fields, or the field belonging to the other mode
-- **THEN** input validation rejects the call before routing, persistence, authorization, or launch
+- **WHEN** a call supplies neither `planId` nor `request`, both of them, the field of the other mode, or `agent` or `packages` in plan mode
+- **THEN** input validation rejects the call before persistence, authorization, or launch
 
 ### Requirement: Explicit computational intent authorizes ad hoc launch
 
@@ -53,141 +51,41 @@ calling `execute_analysis`; the tool SHALL NOT be invoked speculatively.
 - **WHEN** the conversation agent believes a computation would improve the answer
 - **THEN** it asks for consent before calling ad hoc `execute_analysis`
 
-### Requirement: Utility router selects a specialist
-
-Before the harness constructs a new ad hoc plan, it MUST make one structured
-call through its required utility provider/model. The deadline of the call MUST
-be the maximum of the 10-second default and the advertised `requestTimeoutMs`
-of the utility provider. An explicit `timeoutMs` dep, when set, overrides the
-derived deadline. The call MUST receive the request, the data-profile
-orientation that the server loads, and the plannable specialist catalog. It
-MUST receive no resource bounds. It MUST have no workspace tools and no
-execution tools.
-
-Its result can recommend a specialist id. It MUST NOT recommend a resource
-specification, because the step agent selects the size of its sandbox. The
-result MUST NOT change the requested execution mode, make a DAG, or reject the
-request as plan-only.
-
-The harness MUST accept only an id in the plannable catalog as a routed
-specialist. `scientific-executor` MUST NOT be a candidate. It MUST serve only
-as the deterministic agent fallback when the selection is absent, invalid,
-timed out, or failed.
-
-The result can recommend the packages that the step imports, each entry in
-the one package grammar. The router prompt MUST teach that grammar through
-the same section that the planner prompt uses. The router MUST validate each
-entry independently from the agent. An entry that does not
-parse MUST be dropped, and a package failure MUST NOT change the agent. When a resolution of the names is bound, a name that the pool does
-not hold MUST be dropped. A name with a known spelling MUST take that
-spelling. A name that both tracks hold MUST stay as written. When no
-resolution is bound, or the inventory is unavailable, each entry that parses
-MUST stay. The router MUST record each dropped entry with its reason.
-
-#### Scenario: Targeted request selects a specialist
-
-- **GIVEN** the request and data profile clearly match a plannable specialist
-- **WHEN** the utility call returns that specialist
-- **THEN** the internal step stores and uses that recommendation
-
-#### Scenario: Router cannot select an agent
-
-- **WHEN** the utility call times out, errors, returns no match, or returns an id outside the plannable catalog
-- **THEN** the step uses `scientific-executor`
-- **AND** the failure class or fallback rationale is recorded
-
-#### Scenario: A slow provider raises the router deadline
-
-- **GIVEN** a utility provider that advertises a `requestTimeoutMs` above 10 seconds
-- **WHEN** the router makes its structured call
-- **THEN** the deadline is the advertised value, not the 10-second default
-
-#### Scenario: Invalid resources do not erase a valid route
-
-- **GIVEN** the router returns a valid specialist and an extra resource field
-- **WHEN** the result is validated
-- **THEN** the specialist is retained, the resource field is dropped, and the step carries no resources
-
-#### Scenario: The router gets no resource bounds
-
-- **GIVEN** an embedder with a `ResourcePolicy`
-- **WHEN** the router makes its structured call
-- **THEN** the call holds no resource bounds, and the internal step carries no resources
-
-#### Scenario: Router does not overrule ad hoc mode
-
-- **GIVEN** the conversation agent called ad hoc mode with an explicit user request
-- **WHEN** the utility model considers the request broad
-- **THEN** it still returns or falls back to a one-step route and cannot force plan generation
-
-#### Scenario: The router names the packages of the step
-
-- **GIVEN** a request that names a method whose library the pool holds
-- **WHEN** the utility call returns that library in `packages`
-- **THEN** the internal step carries it, and the link pass receives it
-
-#### Scenario: A package failure does not erase a valid route
-
-- **GIVEN** the router returns a valid specialist and a package entry that is a path
-- **WHEN** the result is validated
-- **THEN** the specialist is retained, the entry is dropped as unparsable, and the drop is recorded
-
-#### Scenario: An absent name leaves the step with a caveat
-
-- **GIVEN** a bound resolution that answers absent for one name and gives no suggestion
-- **WHEN** the router validates the packages
-- **THEN** the step does not carry that name, and its caveats name the drop
-
-#### Scenario: A known spelling replaces the entry
-
-- **GIVEN** a bound resolution that answers absent for `seurat` with the suggestion `Seurat`
-- **WHEN** the router validates the packages
-- **THEN** the step carries `Seurat`
-
-#### Scenario: A bare both-track name reaches the link pass
-
-- **GIVEN** the router returns the bare name `xgboost`, and both tracks hold it
-- **WHEN** the launch runs the link pass with a bound seam
-- **THEN** the launch refuses with the two prefixed forms, and no run reserves
-
 ### Requirement: Internal plan is mechanical and not an approval artifact
 
-Ad hoc mode MUST persist an `AnalysisPlan` with one step and no dependencies.
-The step MUST carry the request as the analytical question, the selected
-agent, and the packages that the router validated. It MUST carry no resources. It MUST
-carry the ordinary iteration limit of the selected agent, and the acceptance
-criteria for reproducible script and result artifacts and a direct answer. The caveats of the step MUST name each dropped package entry
-with its reason. When the step declares no packages, the caveats MUST say so,
-because the link pass then links nothing. The launch record MUST carry the
-count of the package queries that the link pass sent. It MUST be
-constructed deterministically by harness code and MUST NOT invoke the planner.
-The plan MUST NOT be emitted for user approval or represented as user-authored
-planning intent.
+Ad hoc mode MUST persist an `AnalysisPlan` with one step and no dependencies. The step MUST carry the request as
+the analytical question, the agent of the tool input, and the validated packages of the tool input. It MUST carry no
+resources. It MUST carry the iteration limit of its agent. It MUST carry the acceptance criteria for a
+reproducible script, result artifacts, and a direct answer. The caveats of the step MUST name each dropped package
+entry with its reason. When the step declares no packages, the caveats MUST say so, because the link pass then links
+nothing. The launch record MUST carry the count of the package queries that the link pass sent. Harness code MUST
+make the plan deterministically, with no model call. The plan MUST NOT go to the user for approval, and it MUST NOT
+show as planning intent of the user.
 
 The internal plan id MUST derive from analysis and tool invocation identity.
 Persistence MUST be insert-if-absent. After any insert race, each caller MUST
-reload the stored plan so the first persisted routing decision wins.
+reload the stored plan so the first persisted plan wins.
 
 #### Scenario: New invocation creates one-step bookkeeping
 
 - **WHEN** an ad hoc invocation has no stored internal plan
-- **THEN** the harness routes once, constructs and validates a single no-dependency step, and persists it before run reservation
-- **AND** no planner model call or plan approval occurs
+- **THEN** the harness constructs and validates a single no-dependency step on the agent of the input, and persists it before run reservation
+- **AND** no model call, planner call, or plan approval occurs
 
 #### Scenario: Concurrent duplicate routing converges
 
 - **GIVEN** two deliveries of the same invocation race before its internal plan exists
 - **WHEN** both attempt insert-if-absent
-- **THEN** exactly one plan row survives and both deliveries reload that same stored agent decision
+- **THEN** exactly one plan row survives and both deliveries reload that same stored step
 
 #### Scenario: The step carries the validated packages
 
-- **WHEN** the router returns `["scanpy", "python:igraph"]`
+- **WHEN** the tool input holds `["scanpy", "python:igraph"]`
 - **THEN** the stored step carries that array, and the link pass receives two queries
 
 #### Scenario: A step with no packages says so
 
-- **WHEN** the router returns no packages
+- **WHEN** the tool input holds no packages
 - **THEN** the stored step carries an empty array, the seam is not called, and a caveat says that the step declares no packages
 
 ### Requirement: Ad hoc runs use the ordinary one-step lifecycle without synthesis
@@ -244,3 +142,60 @@ request text equals an earlier request.
 - **GIVEN** an earlier ad hoc invocation used request text `R`
 - **WHEN** the agent issues a later tool call with a new invocation id and the same text `R`
 - **THEN** the later call creates a new run
+
+### Requirement: The ad hoc input selects the agent of the step
+
+The `agent` of an ad hoc tool input MUST be `analyst` or `drug-analyst`. When the input has no `agent`, the step MUST
+run on `analyst`. The harness MUST make no model call to select the agent. It MUST record no usage under a router
+agent id.
+
+#### Scenario: An input with no agent runs on the analyst
+
+- **WHEN** the conversation agent calls ad hoc `execute_analysis` with no `agent`
+- **THEN** the internal step names `analyst`
+
+#### Scenario: An input can name the drug analyst
+
+- **WHEN** the conversation agent calls ad hoc `execute_analysis` with `agent = "drug-analyst"` for a question about the exposure of a compound
+- **THEN** the internal step names `drug-analyst`
+
+#### Scenario: An unknown agent is refused
+
+- **WHEN** the input names an agent other than `analyst` or `drug-analyst`
+- **THEN** input validation refuses the call before persistence, authorization, or launch
+
+### Requirement: The ad hoc input carries the packages of the step
+
+The `packages` of an ad hoc tool input MUST obey the one package grammar of the planner. The harness MUST validate
+each entry apart from the others. It MUST drop an entry that does not parse, and it MUST record each dropped entry
+with its reason.
+
+#### Scenario: A package that is a path is dropped
+
+- **GIVEN** a tool input with a package entry that is a path
+- **WHEN** the harness validates the packages
+- **THEN** the entry is dropped as unparsable, the drop is recorded, and the step launches
+
+### Requirement: The pool resolves the ad hoc packages
+
+When a resolution of the names is bound, the harness MUST drop a name that the pool does not hold. It MUST use the
+known spelling of a name. It MUST keep a name that both tracks hold as written. When no resolution is bound, or the
+inventory is unavailable, each entry that parses MUST stay.
+
+#### Scenario: An absent name leaves the step with a caveat
+
+- **GIVEN** a bound resolution that answers absent for one name and gives no suggestion
+- **WHEN** the harness validates the packages
+- **THEN** the step does not carry that name, and its caveats name the drop
+
+#### Scenario: A known spelling replaces the entry
+
+- **GIVEN** a bound resolution that answers absent for `seurat` with the suggestion `Seurat`
+- **WHEN** the harness validates the packages
+- **THEN** the step carries `Seurat`
+
+#### Scenario: A bare both-track name reaches the link pass
+
+- **GIVEN** the tool input holds the bare name `xgboost`, and both tracks hold it
+- **WHEN** the launch runs the link pass with a bound seam
+- **THEN** the launch refuses with the two prefixed forms, and no run reserves

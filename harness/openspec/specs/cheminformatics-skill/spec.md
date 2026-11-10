@@ -3,7 +3,7 @@
 ## Purpose
 
 Define the `cheminformatics` skill pack — the runtime knowledge the
-`cheminformatics-agent` reads (via `skill_search` / `skill_read`) to pick and
+`drug-analyst` reads (via `skill_search` / `skill_read`) to pick and
 execute molecular-analysis methods. The pack is the source of truth for the
 agent's method-selection decision tree, figure/output conventions, and
 anti-patterns, plus focused per-package API references. It assumes Python with

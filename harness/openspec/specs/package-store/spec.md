@@ -428,7 +428,7 @@ acquisition MUST be a host action.
 
 ### Requirement: The farm lock path resolves for the analysis of each read
 
-The embedder MUST give the host path of the farm `inflexa.lock` as one path or as a function of the analysis id. A host that keeps one farm for each analysis, and serves many analyses from one runtime, gives the function. Each reader of the farm inventory MUST resolve the path with the analysis id of its own session. The readers are `list_available_packages` and the package resolution of the ad hoc router. A reader MUST NOT keep a path that it resolved for a different analysis. A string path MUST name the same farm lock for each analysis, as before.
+The embedder MUST give the host path of the farm `inflexa.lock` as one path or as a function of the analysis id. A host that keeps one farm for each analysis, and serves many analyses from one runtime, gives the function. Each reader of the farm inventory MUST resolve the path with the analysis id of its own session. The readers are `list_available_packages` and the package resolution of an ad hoc launch. A reader MUST NOT keep a path that it resolved for a different analysis. A string path MUST name the same farm lock for each analysis, as before.
 
 #### Scenario: A function path reads the farm of the session
 

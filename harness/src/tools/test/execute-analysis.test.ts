@@ -9,9 +9,6 @@
 import { errorOf } from "../../lib/thrown.js";
 import { textOf } from "../../lib/unknown-text.js";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { z } from "zod";
@@ -20,8 +17,6 @@ import type { Querier } from "../../state/db.js";
 import type { Connectable } from "../../lib/db-result.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
-import { callTools, scriptedModel, toolCall } from "../../testing.js";
 
 /** A `fetch` test double: the callable plus the `preconnect` member that `typeof fetch` carries. */
 function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): typeof fetch {
@@ -56,28 +51,22 @@ import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { GateFailure } from "../../lib/hooks.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
-import type { ChatProvider } from "../../providers/types.js";
-import type { AdHocRoute } from "../ad-hoc-router.js";
 import type { ToolContext } from "../define-tool.js";
-import { capabilityDataRequirement } from "../../agents/sandbox-catalog.js";
-import { SANDBOX_AGENT_META } from "../../agents/sandbox/index.js";
 import { awaitOk } from "../../lib/test/result-assert.js";
-import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
-import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../../reference-data/receipt.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { RunDedupCollisionError, insertRun, queryNewestPlanRun, updateRunStatus, upsertAnalysis, upsertPlan } from "../../state/index.js";
 import {
     PlanMalformedError,
     PlanNotFoundError,
     PlanPackagesMissingError,
-    PlanReferencesMissingError,
     PlanValidationError,
     buildAdHocPlan,
+    type AdHocStep,
     createExecuteAnalysisTool,
     launchPlanRun,
     type LaunchPlanRunDeps,
 } from "../execute-analysis.js";
-import { presentAt, presentFind, presentGet } from "../../lib/present.js";
+import { presentAt, presentGet } from "../../lib/present.js";
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
@@ -167,7 +156,6 @@ function toolWithWorkflow(
     executeAnalysisWorkflow: NonNullable<Parameters<typeof createExecuteAnalysisTool>[0]["executeAnalysisWorkflow"]>,
 ): ReturnType<typeof createExecuteAnalysisTool> {
     return createExecuteAnalysisTool({
-        ...utilityDeps,
         pool,
         runLauncher: fakeLauncher().launcher,
         runAuthorizer: throwingAuthorizer,
@@ -192,13 +180,6 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
             return Promise.resolve();
         },
     };
-}
-
-/** A router model that answers each request with one route. The script holds one reply for each request that a test makes. */
-function routeProvider(agentId = "single-cell-agent", packages?: string[]): { provider: ChatProvider; calls: readonly unknown[] } {
-    const route = (n: number) => callTools(toolCall(`route-${n}`, "submit_route", { agentId, rationale: `route-${n}`, packages }));
-    const { provider, calls } = scriptedModel([route(1), route(2), route(3)]);
-    return { provider, calls };
 }
 
 function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: Map<string, Row> } {
@@ -265,7 +246,7 @@ function makeStep(id: string, deps: string[] = []) {
         question: `do ${id}`,
         acceptance_criteria: ["completes"],
         depends_on: deps,
-        agent: "bulk-transcriptomics-agent",
+        agent: "analyst",
         maxSteps: 30,
     };
 }
@@ -276,15 +257,10 @@ const validPlan = {
     created_at: "2026-01-01T00:00:00Z",
 };
 
-const utilityDeps = {
-    utilityProvider: unusedChatProvider(),
-    utilityModel: "utility-model",
-};
 
 describe("createExecuteAnalysisTool plan mode", () => {
-    it("exposes one flat refined schema with only mode, planId, and request", () => {
+    it("exposes one flat refined schema with mode, planId, request, agent, and packages", () => {
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool: new Pool(),
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
@@ -293,7 +269,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             },
         });
 
-        expect(Object.keys(parseUnknownRecord(tool.jsonSchema.properties) ?? {}).sort()).toEqual(["mode", "planId", "request"]);
+        expect(Object.keys(parseUnknownRecord(tool.jsonSchema.properties) ?? {}).sort()).toEqual(["agent", "mode", "packages", "planId", "request"]);
         expect(tool.inputSchema.safeParse({ mode: "plan", planId: PLAN_ID }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Compute this" }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ mode: "plan", request: "wrong" }).success).toBe(false);
@@ -408,7 +384,6 @@ describe("createExecuteAnalysisTool plan mode", () => {
             renew: () => okAsync(undefined),
         };
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: failingAuthorizer,
@@ -440,7 +415,6 @@ describe("createExecuteAnalysisTool plan mode", () => {
             renew: () => okAsync(undefined),
         };
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: suspendingAuthorizer,
@@ -464,7 +438,6 @@ describe("createExecuteAnalysisTool plan mode", () => {
         const { authorizer, revokes } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -489,7 +462,6 @@ describe("createExecuteAnalysisTool plan mode", () => {
         const { authorizer } = recordingAuthorizer();
         const { launcher, inputs } = fakeLauncher();
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -515,7 +487,6 @@ describe("createExecuteAnalysisTool plan mode", () => {
         const { authorizer, revokes } = recordingAuthorizer();
         const { launcher } = fakeLauncher({ failLaunch: true });
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -532,16 +503,13 @@ describe("createExecuteAnalysisTool plan mode", () => {
 });
 
 describe("createExecuteAnalysisTool ad hoc mode", () => {
-    it("persists one routed step, disables synthesis, and launches the same reservation again on redelivery", async () => {
+    it("persists one step on the analyst, disables synthesis, and launches the same reservation again on redelivery", async () => {
         const { pool, plans, runs } = statefulAdHocPool();
-        const routing = routeProvider();
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches, inputs } = fakeLauncher();
         const emitted: unknown[] = [];
         const tool = createExecuteAnalysisTool({
             pool,
-            utilityProvider: routing.provider,
-            utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
             executeAnalysisWorkflow: () => {
@@ -561,24 +529,20 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         )._unsafeUnwrap();
 
         expect(replay.runId).toBe(first.runId);
-        expect(routing.calls).toHaveLength(1);
         expect(launches).toEqual([{ workflowId: first.runId }, { workflowId: first.runId }]);
         expect(launchedInput(inputs[0]).steps).toEqual([{ id: "T1S1", depends_on: [] }]);
-        expect(launchedInput(inputs[0]).agentByStepId).toEqual({ T1S1: "single-cell-agent" });
+        expect(launchedInput(inputs[0]).agentByStepId).toEqual({ T1S1: "analyst" });
         expect(launchedInput(inputs[0]).synthesisEnabled).toBe(false);
         expect(plans.size).toBe(1);
         expect(emitted).toHaveLength(2);
     });
 
-    it("treats a deliberate identical re-call with a new tool invocation id as a new run", async () => {
+    it("runs the named agent, and treats a deliberate identical re-call with a new tool invocation id as a new run", async () => {
         const { pool } = statefulAdHocPool();
-        const routing = routeProvider("cheminformatics-agent");
         const { authorizer } = recordingAuthorizer();
-        const { launcher, launches } = fakeLauncher();
+        const { launcher, launches, inputs } = fakeLauncher();
         const tool = createExecuteAnalysisTool({
             pool,
-            utilityProvider: routing.provider,
-            utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
             executeAnalysisWorkflow: () => {
@@ -587,24 +551,21 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         });
         const request = "Calculate descriptors for the supplied compounds";
 
-        const first = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-1")))._unsafeUnwrap();
-        const second = (await tool.execute({ mode: "adhoc", request }, fakeContext("call-2")))._unsafeUnwrap();
+        const first = (await tool.execute({ mode: "adhoc", request, agent: "drug-analyst" }, fakeContext("call-1")))._unsafeUnwrap();
+        const second = (await tool.execute({ mode: "adhoc", request, agent: "drug-analyst" }, fakeContext("call-2")))._unsafeUnwrap();
 
         expect(second.runId).not.toBe(first.runId);
         expect(launches).toHaveLength(2);
-        expect(routing.calls).toHaveLength(2);
+        expect(launchedInput(inputs[0]).agentByStepId).toEqual({ T1S1: "drug-analyst" });
     });
 
-    it("links the packages of the routed step before the launch", async () => {
+    it("links the packages of the tool input before the launch", async () => {
         const { pool } = statefulAdHocPool();
-        const routing = routeProvider("single-cell-agent", ["scanpy", "python:igraph"]);
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
         const seamCalls: Array<{ analysisId: string; queries: Array<{ spelling: string; track?: string }> }> = [];
         const tool = createExecuteAnalysisTool({
             pool,
-            utilityProvider: routing.provider,
-            utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
             extendAnalysisFarm: (analysisId, queries) => {
@@ -617,7 +578,10 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         });
 
         const result = (
-            await tool.execute({ mode: "adhoc", request: "Cluster these cells and score the markers" }, fakeContext("call-adhoc-packages"))
+            await tool.execute(
+                { mode: "adhoc", request: "Cluster these cells and score the markers", packages: ["scanpy", "python:igraph"] },
+                fakeContext("call-adhoc-packages"),
+            )
         )._unsafeUnwrap();
 
         expect(seamCalls).toHaveLength(1);
@@ -629,12 +593,9 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 
     it("a bare both-track name refuses the launch with the two prefixed forms, and no run reserves", async () => {
         const { pool, runs } = statefulAdHocPool();
-        const routing = routeProvider("statistical-modeling-agent", ["xgboost"]);
         const { launcher, launches } = fakeLauncher();
         const tool = createExecuteAnalysisTool({
             pool,
-            utilityProvider: routing.provider,
-            utilityModel: "utility-model",
             runAuthorizer: throwingAuthorizer,
             runLauncher: launcher,
             extendAnalysisFarm: (_analysisId, queries) =>
@@ -651,23 +612,22 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         });
         const request = "Fit a gradient boosting model on these features";
 
-        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-1"))).rejects.toThrow(PlanPackagesMissingError);
-        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-2"))).rejects.toThrow("python:xgboost");
-        await expect(tool.execute({ mode: "adhoc", request }, fakeContext("call-adhoc-collision-3"))).rejects.toThrow("r:xgboost");
+        await expect(tool.execute({ mode: "adhoc", request, packages: ["xgboost"] }, fakeContext("call-adhoc-collision-1"))).rejects.toThrow(
+            PlanPackagesMissingError,
+        );
+        await expect(tool.execute({ mode: "adhoc", request, packages: ["xgboost"] }, fakeContext("call-adhoc-collision-2"))).rejects.toThrow("python:xgboost");
+        await expect(tool.execute({ mode: "adhoc", request, packages: ["xgboost"] }, fakeContext("call-adhoc-collision-3"))).rejects.toThrow("r:xgboost");
         expect(launches).toHaveLength(0);
         expect(runs.size).toBe(0);
     });
 
-    it("stores an empty package list and its caveat when the route names no package", async () => {
+    it("stores an empty package list and its caveat when the input names no package", async () => {
         const { pool, plans } = statefulAdHocPool();
-        const routing = routeProvider();
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
         let seamCalled = false;
         const tool = createExecuteAnalysisTool({
             pool,
-            utilityProvider: routing.provider,
-            utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
             extendAnalysisFarm: () => {
@@ -691,10 +651,32 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
     });
 });
 
+describe("the input of execute_analysis", () => {
+    const tool = createExecuteAnalysisTool({
+        pool: statefulAdHocPool().pool,
+        runAuthorizer: throwingAuthorizer,
+        runLauncher: fakeLauncher().launcher,
+        executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
+    });
+
+    it("accepts an ad hoc input with no agent, or with the drug analyst", () => {
+        expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Compare the clusters" }).success).toBe(true);
+        expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Fit the exposure", agent: "drug-analyst", packages: ["pkpy"] }).success).toBe(true);
+    });
+
+    it("refuses an unknown agent, and an agent or packages in plan mode", () => {
+        const refused = [
+            { mode: "adhoc", request: "Compare the clusters", agent: "single-cell" },
+            { mode: "plan", planId: PLAN_ID, agent: "analyst" },
+            { mode: "plan", planId: PLAN_ID, packages: ["scanpy"] },
+        ];
+        expect(refused.map((input) => tool.inputSchema.safeParse(input).success)).toEqual([false, false, false]);
+    });
+});
+
 describe("buildAdHocPlan", () => {
-    const route: AdHocRoute = {
-        agentId: "single-cell-agent",
-        rationale: "A targeted comparison.",
+    const route: AdHocStep = {
+        agentId: "analyst",
         packages: [],
         droppedPackages: [],
     };
@@ -707,7 +689,7 @@ describe("buildAdHocPlan", () => {
         expect(presentAt(plan.steps, 0).caveats).toBeUndefined();
     });
 
-    it("names each dropped entry with its reason, after the routing fallback", () => {
+    it("names each dropped entry with its reason", () => {
         const plan = buildAdHocPlan(
             "Compare the clusters",
             {
@@ -717,19 +699,17 @@ describe("buildAdHocPlan", () => {
                     { entry: "./wheels/mofa.whl", reason: "unparsable" },
                     { entry: "MOFA2", reason: "absent" },
                 ],
-                fallbackClass: "timeout",
             },
             CREATED_AT,
         );
 
         const caveats = presentAt(plan.steps, 0).caveats ?? [];
-        expect(caveats[0]).toContain("Automatic routing fallback: timeout");
-        expect(caveats[1]).toContain("./wheels/mofa.whl");
-        expect(caveats[1]).toContain("does not parse");
-        expect(caveats[1]).toContain("MOFA2");
-        expect(caveats[1]).toContain("the pool does not hold it");
+        expect(caveats[0]).toContain("./wheels/mofa.whl");
+        expect(caveats[0]).toContain("does not parse");
+        expect(caveats[0]).toContain("MOFA2");
+        expect(caveats[0]).toContain("the pool does not hold it");
         // The step carries a package, thus the no-packages caveat does not apply.
-        expect(caveats).toHaveLength(2);
+        expect(caveats).toHaveLength(1);
     });
 
     it("says that a step with no packages was linked nothing", () => {
@@ -759,7 +739,6 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         const { launcher } = fakeLauncher();
         const farmCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -786,7 +765,6 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         const { launcher, launches } = fakeLauncher();
         const seamCalls: Array<{ analysisId: string; queries: unknown[] }> = [];
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -816,7 +794,6 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { launcher, launches } = fakeLauncher();
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -848,7 +825,6 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { launcher, launches } = fakeLauncher();
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -965,7 +941,6 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         const { launcher, launches } = fakeLauncher();
         const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -1005,7 +980,6 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { launcher, launches } = fakeLauncher();
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -1040,7 +1014,6 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { launcher, launches } = fakeLauncher();
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -1065,7 +1038,6 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         const { launcher, launches } = fakeLauncher();
         let seamCalled = false;
         const tool = createExecuteAnalysisTool({
-            ...utilityDeps,
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -1235,122 +1207,6 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(linked).toBe(false);
             expect(launches).toHaveLength(0);
             expect((await runRows()).map((row) => row.run_id)).toEqual(["r-active"]);
-        });
-
-        /**
-         * The reference pass is the only thing standing between "a capability needs six datasets"
-         * and a run that spends a sandbox to discover one is absent. It must refuse on an absent
-         * dataset, stay silent for a plan that declares none, and never read an unanswerable store
-         * as an empty one.
-         */
-        describe("the declared reference data of a capability", () => {
-            const SAFETY_AGENT = "translational-safety-agent";
-            const CAPABILITY = presentGet(SANDBOX_AGENT_META, SAFETY_AGENT).capabilities.find((phrase) => phrase.includes("matched negative gene set"));
-            if (CAPABILITY === undefined) throw new Error("CAPABILITY is absent");
-            const DECLARED = [...capabilityDataRequirement(SAFETY_AGENT, CAPABILITY)];
-
-            function planDeclaring(capability?: string) {
-                return {
-                    ...validPlan,
-                    steps: [{ ...makeStep("T1S1"), agent: SAFETY_AGENT, capability }],
-                };
-            }
-
-            /** A store whose receipts report exactly `ids` as installed. */
-            async function storeWith(ids: readonly string[]): Promise<string> {
-                const root = await mkdtemp(join(tmpdir(), "refs-"));
-                const receipts = join(root, ".inflexa", "receipts");
-                await mkdir(receipts, { recursive: true });
-                for (const id of ids) {
-                    const dataset = presentFind(REFERENCE_DATA_CATALOG.datasets, (candidate) => candidate.id === id);
-                    const artifacts = dataset.artifacts.map((artifact) => ({ path: artifact.path, bytes: 1, sha256: "a".repeat(64) }));
-                    const content = { datasetId: id, datasetVersion: dataset.version, artifacts };
-                    await writeFile(
-                        join(receipts, `${id}.json`),
-                        JSON.stringify({
-                            version: REFERENCE_INSTALL_RECEIPT_VERSION,
-                            ...content,
-                            activatedAt: "2026-01-01T00:00:00Z",
-                            contentDigest: referenceReceiptContentDigest(content),
-                        }),
-                    );
-                }
-                return root;
-            }
-
-            it("refuses the launch and names every absent dataset, reserving no run", async () => {
-                await seedPlan(planDeclaring(CAPABILITY));
-                const refStorePath = await storeWith([]);
-
-                const refusal = (await launchPlanRun(deps({ refStorePath }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
-
-                expect(refusal).toEqual({ type: "references_missing", missing: [...DECLARED].sort() });
-                expect(await runRows()).toEqual([]);
-            });
-
-            it("names only the absent one when the store holds the rest", async () => {
-                await seedPlan(planDeclaring(CAPABILITY));
-                const refStorePath = await storeWith(DECLARED.slice(1));
-
-                const refusal = (await launchPlanRun(deps({ refStorePath }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
-
-                expect(refusal).toEqual({ type: "references_missing", missing: [presentAt(DECLARED, 0)] });
-            });
-
-            it("launches when the store holds every declared dataset", async () => {
-                await seedPlan(planDeclaring(CAPABILITY));
-                const refStorePath = await storeWith(DECLARED);
-                const { launcher } = fakeLauncher();
-
-                const launch = (await launchPlanRun(deps({ refStorePath, runLauncher: launcher }), { session: session(), planId: PLAN_ID }))._unsafeUnwrap();
-
-                expect(launch.started).toBe(true);
-            });
-
-            // The defect this covers refused EVERY launch of a plan that declares a capability: with no
-            // bound store the pass read the container path, which no host holds, so the store read as
-            // unreadable forever. An unbound store means the embedder provisions another way.
-            it("checks nothing when the embedder binds no reference store", async () => {
-                await seedPlan(planDeclaring(CAPABILITY));
-                const { launcher } = fakeLauncher();
-
-                const launch = (await launchPlanRun(deps({ runLauncher: launcher }), { session: session(), planId: PLAN_ID }))._unsafeUnwrap();
-
-                expect(launch.started).toBe(true);
-            });
-
-            it("checks nothing for a step that names no capability", async () => {
-                await seedPlan(planDeclaring());
-                const { launcher } = fakeLauncher();
-
-                const launch = (
-                    await launchPlanRun(deps({ refStorePath: "/nonexistent-store", runLauncher: launcher }), { session: session(), planId: PLAN_ID })
-                )._unsafeUnwrap();
-
-                expect(launch.started).toBe(true);
-            });
-
-            it("gives one reason when the store cannot answer, and names no dataset as absent", async () => {
-                await seedPlan(planDeclaring(CAPABILITY));
-
-                const refusal = (
-                    await launchPlanRun(deps({ refStorePath: join(tmpdir(), "no-such-ref-store-dir") }), { session: session(), planId: PLAN_ID })
-                )._unsafeUnwrapErr();
-
-                expect(refusal).toEqual({
-                    type: "references_missing",
-                    missing: [],
-                    unavailable: `the reference store at ${join(tmpdir(), "no-such-ref-store-dir")} could not be read`,
-                });
-            });
-
-            it("carries the datasets into the error the tool body throws, with no remedy command", () => {
-                const error = new PlanReferencesMissingError(["impc-phenotyping", "hpo-annotations"]);
-
-                expect(error.missing).toEqual(["impc-phenotyping", "hpo-annotations"]);
-                expect(error.message).toContain("impc-phenotyping");
-                expect(error.message).not.toContain("refs download");
-            });
         });
 
         it("refuses an unknown plan and a plan of another analysis with plan_not_found, and reserves no run", async () => {
@@ -1688,7 +1544,7 @@ describe("the launch of a stored plan, over a real database", () => {
 
     describe("the plan mode of execute_analysis", () => {
         function toolFor(over: Partial<LaunchPlanRunDeps> = {}, emitted: unknown[] = []) {
-            const tool = createExecuteAnalysisTool({ ...utilityDeps, ...deps(over) });
+            const tool = createExecuteAnalysisTool({ ...deps(over) });
             return { run: () => tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-1", emitted)) };
         }
 
@@ -1702,7 +1558,7 @@ describe("the launch of a stored plan, over a real database", () => {
             await expect(toolFor().run()).rejects.toBeInstanceOf(PlanMalformedError);
 
             await seedPlan({ ...validPlan, steps: [makeStep("a", ["b"]), makeStep("b", ["a"])] }, "pln-0000000b");
-            const tool = createExecuteAnalysisTool({ ...utilityDeps, ...deps() });
+            const tool = createExecuteAnalysisTool({ ...deps() });
             const failure = await tool.execute({ mode: "plan", planId: "pln-0000000b" }, fakeContext()).catch((error: unknown) => error);
 
             if (!(failure instanceof PlanValidationError)) throw new Error("the call fails with PlanValidationError");

@@ -2,6 +2,9 @@ import type { EvalCase } from "../lib/case.js";
 import { analogyCases } from "./analogy.js";
 import { cliHostToolCases } from "./cli-host-tools.js";
 import { conversationCases } from "./conversation.js";
+import { domainCases } from "./domain.js";
+import { drugCases } from "./drug.js";
+import { mdvCases } from "./mdv.js";
 import { plannerCases } from "./planner.js";
 import { reportCases } from "./report.js";
 import { sandboxCases } from "./sandbox.js";
@@ -16,4 +19,7 @@ export const allCases: readonly EvalCase[] = [
     ...analogyCases,
     ...synthesisCases,
     ...sandboxCases,
+    ...domainCases,
+    ...drugCases,
+    ...mdvCases,
 ];

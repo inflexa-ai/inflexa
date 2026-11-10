@@ -28,29 +28,27 @@ gain a scoped `read_file` to ground every claim in the actual persisted outputs.
 
 ### Requirement: Code-defined sandbox agents in a directory structure
 
-The harness SHALL define every sandbox agent under `harness/src/agents/sandbox/`.
-The directory SHALL contain `shared.ts` (the composition root: tool registry,
+The harness MUST define every sandbox agent under `harness/src/agents/sandbox/`.
+The directory MUST contain `shared.ts` (the composition root: tool registry,
 `BASE_SANDBOX_TOOLS`, `createSandboxAgent`, `resolveSandboxTools`), `types.ts`
 (the `AgentMeta` type, the `SandboxToolName` union, and
 `SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS`), `index.ts` (the `SANDBOX_AGENT_META`
 record and the `createSandboxAgents(deps)` builder), and one file per agent. The
-agent set SHALL cover the data-profiler, the omics specialists,
-scientific-executor, cheminformatics, translational-safety,
-pkpd-clinical-response, immune-profiling, and drug-repurposing. It SHALL NOT
-contain a special ephemeral executor. Each `AgentDefinition` SHALL carry the
-five fields `runLoop` consumes: `id`, `systemPrompt`, `model`, `tools`, and
+agent set MUST be the data profiler, the analyst, and the drug analyst. It MUST NOT
+contain a special ephemeral executor. Each `AgentDefinition` MUST carry the
+five fields that `runLoop` reads: `id`, `systemPrompt`, `model`, `tools`, and
 `maxIterations`.
 
 #### Scenario: Catalog covers every agent
 
 - **WHEN** the keys of `SANDBOX_AGENT_META` are compared to `createSandboxAgents(deps)`
-- **THEN** every agent id SHALL map to an `AgentMeta` entry
-- **AND** every id SHALL resolve to an `AgentDefinition` built by `createSandboxAgent(deps, meta, body)`
+- **THEN** every agent id MUST map to an `AgentMeta` entry
+- **AND** every id MUST resolve to an `AgentDefinition` built by `createSandboxAgent(deps, meta, body)`
 
 #### Scenario: Each definition is fully populated
 
 - **WHEN** any sandbox `AgentDefinition` is inspected
-- **THEN** its `id`, `systemPrompt`, `model`, `tools`, and `maxIterations` SHALL all be populated
+- **THEN** its `id`, `systemPrompt`, `model`, `tools`, and `maxIterations` MUST all be populated
 
 #### Scenario: Ephemeral executor is absent
 
@@ -133,7 +131,7 @@ A sandbox agent MUST NOT get `inspect_run`. A step runs inside its own run, and 
 ### Requirement: AgentMeta declares per-agent planner metadata and tool allowlist
 
 The harness SHALL export an `AgentMeta` entry per sandbox agent with: `id`
-(string), `capabilities` (string array), `suitableFor` (string array), `skills`
+(string), `description` (string), `skills`
 (skill directory names), `tools` (`SandboxToolName[]`), an optional
 `defaultMaxSteps` (number), and an optional `plannable` (boolean, defaults true).
 The agent's runaway cap SHALL be `meta.defaultMaxSteps ??
@@ -283,18 +281,17 @@ client, and on no field of the agent deps. With `"store"`, it is
 
 ### Requirement: Planner catalog derives from the sandbox-agent meta
 
-`SANDBOX_AGENT_META` (`harness/src/agents/sandbox/index.ts`) SHALL be the source
-of truth from which the planner catalog (`harness/src/agents/sandbox-catalog.ts`)
-derives `PLANNABLE_AGENT_CATALOG` by projecting `{ id, capabilities, suitableFor }`
-and filtering on `plannable !== false`. `generatePlan` SHALL consume the rendered
-markdown via `formatAgentCatalog()`. Non-plannable agents (`data-profiler`,
-`scientific-executor`, `ephemeral-executor`) SHALL be excluded from the catalog.
+`SANDBOX_AGENT_META` (`harness/src/agents/sandbox/index.ts`) MUST be the source
+of truth of the planner catalog (`harness/src/agents/sandbox-catalog.ts`). The catalog derives
+`PLANNABLE_AGENT_CATALOG` from it: it projects `{ id, description, liveSources }`
+and keeps each meta with `plannable !== false`. `generatePlan` MUST read the rendered
+markdown of `formatAgentCatalog()`. The catalog MUST exclude the data profiler.
 
 #### Scenario: Planner catalog excludes non-plannable agents
 
 - **WHEN** `formatAgentCatalog()` renders `PLANNABLE_AGENT_CATALOG`
-- **THEN** it SHALL list each plannable agent with its `capabilities` and `suitableFor`
-- **AND** `data-profiler`, `scientific-executor`, and `ephemeral-executor` SHALL NOT appear
+- **THEN** it MUST list each plannable agent with its `description`
+- **AND** `data-profiler` MUST NOT appear
 
 ### Requirement: Step agents declare inability via report_blocker, not output inference
 

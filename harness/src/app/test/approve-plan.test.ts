@@ -37,7 +37,7 @@ function step(id: string) {
         question: `do ${id}`,
         acceptance_criteria: ["completes"],
         depends_on: [],
-        agent: "bulk-transcriptomics-agent",
+        agent: "analyst",
         maxSteps: 30,
     };
 }

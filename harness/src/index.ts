@@ -765,6 +765,7 @@ export { pipeFoldedRunEvents } from "./execution/run-event-parts.js";
 // `SandboxAgentDeps`, then selects the per-step agent by id from this record;
 // `SANDBOX_AGENT_META` is the planner-facing meta the same ids key.
 export { createSandboxAgents, SANDBOX_AGENT_META } from "./agents/sandbox/index.js";
+export { resolveStepAgentId } from "./agents/sandbox-catalog.js";
 export type { SandboxAgentDeps, SandboxStepCoords, AgentMeta } from "./agents/sandbox/index.js";
 
 // Plan schema and structural validation — the gates a plan passes before it can

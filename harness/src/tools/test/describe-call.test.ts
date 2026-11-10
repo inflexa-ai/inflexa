@@ -186,8 +186,6 @@ describe("describeCall — conversation roster", () => {
             executeAnalysisWorkflow: () => refuse("executeAnalysisWorkflow"),
             runAuthorizer: createLocalRunAuthorizer(),
             runLauncher: notDrivenLauncher,
-            utilityProvider: makeFakeChatProvider(),
-            utilityModel: "test-model",
         });
 
         expect(describeCall(tool, { mode: "plan", planId: "plan-42" })).toBe("plan plan-42");

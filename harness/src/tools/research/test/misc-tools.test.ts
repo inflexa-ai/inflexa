@@ -204,7 +204,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
             step_id: "T1S1",
             analysis_id: "analysis-001",
             wave: 0,
-            agent_id: "scientific-executor",
+            agent_id: "analyst",
             status: "completed",
             started_at: "2026-01-01T00:00:00.000Z",
             completed_at: "2026-01-01T00:01:00.000Z",

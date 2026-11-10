@@ -2,7 +2,7 @@
  * Planner-facing sandbox-agent catalog.
  *
  * Derives from `harness/agents/sandbox/index.ts` `SANDBOX_AGENT_META` —
- * the source of truth — by projecting `{ id, capabilities, suitableFor }`
+ * the source of truth — by projecting `{ id, description }`
  * and filtering on the `plannable` flag. `generatePlan` consumes the
  * rendered markdown via `formatAgentCatalog()` to fill its prompt's
  * `{{AGENT_CATALOG}}` placeholder.
@@ -14,8 +14,7 @@ import type { SandboxToolName } from "./sandbox/types.js";
 /** Planner-facing metadata for one sandbox agent. */
 export type PlannerAgentMeta = {
     readonly id: string;
-    readonly capabilities: readonly string[];
-    readonly suitableFor: readonly string[];
+    readonly description: string;
     /** The public databases that the agent queries at run time, thus a step of the agent needs no staged copy of them. */
     readonly liveSources: readonly string[];
 };
@@ -61,36 +60,12 @@ export const PLANNABLE_AGENT_CATALOG: readonly PlannerAgentMeta[] = Object.value
     .filter((meta) => meta.plannable !== false)
     .map((meta) => ({
         id: meta.id,
-        capabilities: [...meta.capabilities],
-        suitableFor: [...meta.suitableFor],
+        description: meta.description,
         liveSources: meta.tools.flatMap((tool) => {
             const source = LIVE_SOURCES[tool];
             return source === null ? [] : [source];
         }),
     }));
-
-/**
- * The reference datasets one capability of one agent cannot run without, by catalog id.
- *
- * Empty for an unknown agent, for an agent that declares nothing, and for a phrase no declaration
- * matches. An unmatched phrase must NOT refuse a launch: the pass can only demand what a
- * declaration states, so a paraphrased phrase degrades to the behaviour of a step with no phrase.
- */
-export function capabilityDataRequirement(agentId: string, capability: string): readonly string[] {
-    const entry = SANDBOX_AGENT_META[agentId]?.dataRequirements?.find((requirement) => requirement.capability === capability);
-    return entry?.datasets ?? [];
-}
-
-/** Every declared requirement, for a caller that asks what a capability wants before it plans. */
-export function declaredDataRequirements(): readonly { agentId: string; capability: string; datasets: readonly string[] }[] {
-    return Object.values(SANDBOX_AGENT_META).flatMap((meta) =>
-        (meta.dataRequirements ?? []).map((requirement) => ({
-            agentId: meta.id,
-            capability: requirement.capability,
-            datasets: requirement.datasets,
-        })),
-    );
-}
 
 /**
  * Ids of the agents the planner may assign — the `z.enum` domain for
@@ -106,10 +81,21 @@ export const PLANNABLE_AGENT_IDS: readonly [string, ...string[]] = (() => {
 
 /**
  * Every sandbox agent id — plannable agents plus the workflow-dedicated
- * ones (`data-profiler`, the executors). Plan validation checks step
+ * `data-profiler`. Plan validation checks step
  * assignments against this set.
  */
 export const KNOWN_AGENT_IDS: readonly string[] = Object.keys(SANDBOX_AGENT_META);
+
+/** The step agent of a step whose agent id the roster does not hold. */
+export const DEFAULT_STEP_AGENT_ID = "analyst";
+
+/**
+ * The agent that runs a step. A stored plan, or the input of a run that recovers, can name an agent id that the
+ * roster no longer holds. Such a step runs on the analyst, the agent of each analysis of data.
+ */
+export function resolveStepAgentId(agentId: string): string {
+    return Object.hasOwn(SANDBOX_AGENT_META, agentId) ? agentId : DEFAULT_STEP_AGENT_ID;
+}
 
 /**
  * Render the catalog as the markdown block the planner prompt expects in
@@ -119,7 +105,7 @@ export function formatAgentCatalog(catalog: readonly PlannerAgentMeta[] = PLANNA
     return catalog
         .map((meta) => {
             const live = meta.liveSources.length === 0 ? "" : `, live lookups: [${meta.liveSources.join(", ")}]`;
-            return `- **${meta.id}**: capabilities: [${meta.capabilities.join(", ")}], suitable for: [${meta.suitableFor.join(", ")}]${live}`;
+            return `- **${meta.id}**: ${meta.description}${live}`;
         })
         .join("\n");
 }

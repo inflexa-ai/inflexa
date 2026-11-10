@@ -130,7 +130,7 @@ A universe gene with no edge in the subgraph MUST keep degree 0 and betweenness 
 
 When a source of step 3 is absent from the reference store, the step MUST write the exclusion audit with the sources that it has. It MUST NOT write `negatives.csv`, and it MUST name the absent source in its summary. The `annotation_free` label MUST mean that these four exclusion sources were applied: the mouse phenotypes, the human phenotypes, the safety events, and the viability calls. The viability calls count only when `exclude_lethal` is on. The `tested_clean` definition also needs the IMPC completeness file. A definition whose source is absent gets no set, and the other definition still runs.
 
-Two sources outside step 3 have their own rule. Without the STRING alias table the step MUST compute no network metrics and write no negatives file. Without the homology reports each mouse-only symbol MUST get the status `unresolved`. The capability phrase of the agent MUST name the data classes of the method. Thus the planner can ask for an absent source before the run. The planner prompt MUST state that a bounded reference census is not evidence of absence. Thus the planner confirms with its tool before it reports a source as absent.
+Two sources outside step 3 have their own rule. Without the STRING alias table the step MUST compute no network metrics and write no negatives file. Without the homology reports each mouse-only symbol MUST get the status `unresolved`. The planner prompt MUST state that a bounded reference census is not evidence of absence. Thus the planner confirms with its tool before it reports a source as absent.
 
 #### Scenario: The HPO table is absent
 
@@ -178,22 +178,6 @@ A run that makes a matched negative gene set MUST make the set of the definition
 - **WHEN** the `tested_clean` pool holds fewer candidates than the quota of a cell
 - **THEN** the step reports the shortfall, and it does not fill the tier from `annotation_free`
 
-### Requirement: The translational-safety agent advertises the capability
-
-The `AgentMeta` of `translational-safety-agent` MUST carry two capability phrases. The first is "matched negative gene set for a tissue risk benchmark (annotation_free or tested_clean negatives) matched on tissue expression and PPI connectivity with mouse and human phenotype annotation exclusions". The second is "expression and PPI connectivity matching". Neither phrase holds a comma, because each renderer of the catalog joins the phrases with a comma. Each phrase spells a definition as the skill pack spells it, because `skill_search` matches a substring. Its `suitableFor` MUST include `gene-lists`.
-
-The planner prompt MUST carry a routing rule that the question of a gene-list step selects the agent. Without the rule the existing rule of the prompt sends each gene-list step to the enrichment agent, which does not hold the `translational-safety` pack.
-
-#### Scenario: The planner sees the two definitions and the data classes
-
-- **WHEN** the planner reads the agent catalog
-- **THEN** the entry of `translational-safety-agent` names the two definitions and the three data classes in one capability phrase
-
-#### Scenario: A gene list with a tissue risk question routes to the agent
-
-- **WHEN** a request gives a gene list and asks for negatives matched on tissue expression and network connectivity
-- **THEN** the planner assigns the steps to `translational-safety-agent`, because its routing rule reads the question of the step and not the data object alone
-
 ### Requirement: One run writes the deliverable
 
 A run on the positives MUST write five files: `output/positives_resolved.csv`, `output/universe_metrics.csv`, `output/exclusion_audit.csv`, `output/negatives.csv`, and `output/balance_report.json`. The step that resolves the positives MUST write the universe table with the covariates, the flags, and the viability. The same step MUST write the exclusion audit. Thus the matching step reads no reference file. The run MUST use the tools that the harness has. No new harness tool is necessary.
@@ -209,3 +193,12 @@ A run on the positives MUST write five files: `output/positives_resolved.csv`, `
 
 - **WHEN** the matching step runs
 - **THEN** it reads the universe table and the exclusion audit of the first step, and it opens no reference file
+
+### Requirement: The question of a gene-list step can select the drug analyst
+
+The planner prompt MUST carry a routing rule that the question of a gene-list step selects the agent. Without the rule, a gene-list step goes to the analyst, which does not hold the `translational-safety` skill.
+
+#### Scenario: A gene list with a tissue risk question routes to the drug analyst
+
+- **WHEN** a request gives a gene list and asks for negatives matched on tissue expression and network connectivity
+- **THEN** the planner assigns the steps to `drug-analyst`, because its routing rule reads the question of the step and not the data object alone

@@ -1,6 +1,6 @@
 ---
 name: cheminformatics
-description: Molecular structure analysis, SAR triage, compound library characterization, QSAR modeling, ADMET prediction, chemical space visualization, target engagement assessment, drug perturbation connectivity scoring, and selectivity profiling
+description: Read before you analyze compound structures (SAR, library profiles, QSAR, ADMET, chemical space, target occupancy, connectivity to drug perturbation signatures, selectivity panels). It gives the method for each goal, structure standardization, split and fingerprint rules, and absent data.
 version: 1.1.0
 tags: [cheminformatics, rdkit, datamol, mordred, deepchem, sar, qsar, drug-discovery, molecular-properties, scaffold, pains, target-engagement, cmap, selectivity, kinase-selectivity]
 ---

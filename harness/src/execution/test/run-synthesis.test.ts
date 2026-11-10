@@ -163,7 +163,7 @@ function synthesize(script: readonly ScriptStep[], extra: Partial<GenerateRunSyn
             pool: { query: () => Promise.resolve({ rows: [], rowCount: 0 }) },
             resolveWorkspaceRoot: () => Promise.resolve("/workspace"),
         },
-        summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
+        summaries: [{ stepId: "T1S1", agentId: "analyst", markdown: "## results" }],
         planNarrative: "Compare stimulated vs resting T-cells.",
         runId: RUN_ID,
         ...extra,
@@ -462,7 +462,7 @@ describe("synthesizerAgentOf", () => {
         const agent = synthesizerAgentOf({
             model: "claude-test",
             synthesisLookups: [pubmedLookup],
-            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
+            summaries: [{ stepId: "T1S1", agentId: "analyst", markdown: "## results" }],
             workspace: {
                 workspaceFs: makeFakeWorkspaceFs(),
                 pool: { query: () => Promise.resolve({ rows: [], rowCount: 0 }) },

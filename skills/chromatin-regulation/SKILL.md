@@ -1,6 +1,6 @@
 ---
 name: chromatin-regulation
-description: Chromatin regulation analysis from called peaks and count matrices — differential binding, signal summarisation, peak annotation, and scATAC-seq
+description: Read before you analyze ATAC-seq, ChIP-seq, CUT&Tag, or scATAC data from peaks, counts, or signal tracks. It gives differential binding, peak annotation, and signal profiles, the upstream facts that change the counts, and which motif analyses are not available.
 version: 1.0.0
 tags: [atac-seq, chip-seq, cut-and-tag, cut-and-run, peaks, diffbind, chromatin]
 ---

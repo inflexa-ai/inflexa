@@ -11,8 +11,7 @@ import type { AgentMeta } from "./types.js";
 
 export const meta: AgentMeta = {
     id: "data-profiler",
-    capabilities: ["data profiling", "literature review", "methodology research", "analysis planning", "experimental design analysis"],
-    suitableFor: ["bulk-rna-seq", "single-cell", "proteomics", "metabolomics", "genomics", "transcriptomics", "chemical-structures", "compound-screening"],
+    description: "Profiles the input files of an analysis for the planner.",
     skills: [],
     // `scanInputs` is the profiler's own instrument: the workflow injects one scan into
     // its briefing, and the tool is how it re-scans a subtree it wants to group

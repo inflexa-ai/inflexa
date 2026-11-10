@@ -29,8 +29,7 @@ import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 
 const meta: AgentMeta = {
     id: "test-agent",
-    capabilities: ["test-cap"],
-    suitableFor: ["test-suit"],
+    description: "Does testy things.",
     skills: [],
     tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene"],
 };

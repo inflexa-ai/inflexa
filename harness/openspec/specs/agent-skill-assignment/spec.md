@@ -34,7 +34,7 @@ resolve to `skills/shared/<name>/`.
 
 #### Scenario: Agent meta declares its packs
 
-- **WHEN** a sandbox agent meta is defined (e.g. `cheminformatics-agent`)
+- **WHEN** a sandbox agent meta is defined (e.g. `drug-analyst`)
 - **THEN** its `AgentMeta` carries a `skills` array of pack directory names
 - **AND** each entry resolves to a directory under `skills/`
 
@@ -53,7 +53,7 @@ resolve to `skills/shared/<name>/`.
 
 ### Requirement: shared/omics-general is declared by every analysis agent
 
-Every analysis sandbox agent (every plannable agent plus the executors) SHALL
+Every analysis sandbox agent (every plannable agent) SHALL
 include `"shared/omics-general"` in its `meta.skills`, so cross-cutting guidance
 (AnnData conventions, Python-first patterns, data-format detection) is available
 in every analysis run. The non-analysis `data-profiler` is the only agent that
@@ -61,7 +61,7 @@ declares no skills.
 
 #### Scenario: A modality agent declares the shared pack
 
-- **WHEN** the `bulk-transcriptomics-agent` meta is inspected
+- **WHEN** the `analyst` meta is inspected
 - **THEN** its `skills` array contains `"bulk-transcriptomics"` and `"shared/omics-general"`
 
 ### Requirement: Skills tree layout and pack anatomy

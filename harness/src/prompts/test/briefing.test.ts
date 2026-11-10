@@ -57,7 +57,7 @@ function fullyPopulatedStep(): AnalysisStep {
         },
         depends_on: [],
         status: "pending",
-        agent: "bulk-transcriptomics-agent",
+        agent: "analyst",
         maxSteps: 10,
     };
 }
@@ -65,7 +65,7 @@ function fullyPopulatedStep(): AnalysisStep {
 function handoff(overrides: Partial<UpstreamHandoff> = {}): UpstreamHandoff {
     return {
         stepId: "T1S1",
-        agentId: "bulk-transcriptomics-agent",
+        agentId: "analyst",
         summaryMarkdown: "UPSTREAM_GIST",
         summaryPath: "/an-1/runs/run-1/T1S1/output/summary.md",
         outputDir: "/an-1/runs/run-1/T1S1/output",
@@ -326,7 +326,7 @@ describe("renderUpstream", () => {
     it("renders one block per completed dependency with its id, agent, gist, and paths", () => {
         const rendered = renderUpstream([handoff()]);
         expect(rendered).toContain("T1S1");
-        expect(rendered).toContain("bulk-transcriptomics-agent");
+        expect(rendered).toContain("analyst");
         expect(rendered).toContain("UPSTREAM_GIST");
         expect(rendered).toContain("/an-1/runs/run-1/T1S1/output/summary.md");
         expect(rendered).toContain("/an-1/runs/run-1/T1S1/output");

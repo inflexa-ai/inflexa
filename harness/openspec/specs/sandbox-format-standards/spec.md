@@ -39,13 +39,13 @@ scripts following the same standards.
 
 #### Scenario: Agent defaults to Python for DE analysis on RNA-seq
 
-- **WHEN** the `bulk-transcriptomics-agent` is asked to perform differential expression on a count matrix
+- **WHEN** the `analyst` is asked to perform differential expression on a count matrix
 - **THEN** it uses a Python method (e.g. PyDESeq2) as the default
 - **AND** falls back to DESeq2 via rpy2 only if the Python method lacks a required feature
 
 #### Scenario: Agent uses R when no Python equivalent exists
 
-- **WHEN** the `dna-methylation-agent` preprocesses 450K/EPIC methylation array data
+- **WHEN** the `analyst` preprocesses 450K/EPIC methylation array data
 - **THEN** it uses minfi (no adequate Python equivalent)
 - **AND** converts results back to AnnData/pandas for downstream steps
 
@@ -64,12 +64,12 @@ with derived summary statistics in AnnData or CSV.
 
 #### Scenario: Bulk RNA-seq data stored in AnnData
 
-- **WHEN** the `bulk-transcriptomics-agent` processes bulk RNA-seq data
+- **WHEN** the `analyst` processes bulk RNA-seq data
 - **THEN** it stores it as AnnData with samples in `.obs`, genes in `.var`, and values in `.X`
 
 #### Scenario: MuData used for multi-modal single-cell data
 
-- **WHEN** the `multimodal-sc-agent` processes CITE-seq data (RNA + protein)
+- **WHEN** the `analyst` processes CITE-seq data (RNA + protein)
 - **THEN** it stores it as MuData with a separate AnnData modality per assay and shared sample metadata at the MuData level
 
 #### Scenario: Intermediate objects saved as h5ad/h5mu, not rds or pkl
@@ -103,7 +103,7 @@ so metadata travels with the data through the pipeline.
 
 #### Scenario: Analysis results stored in the AnnData object
 
-- **WHEN** the `single-cell-agent` performs clustering
+- **WHEN** the `analyst` performs clustering
 - **THEN** cluster assignments are stored in `.obs` and UMAP coordinates in `.obsm['X_umap']`
 - **AND** they are NOT written as separate CSV files for the result itself (a summary CSV for human readability is allowed)
 

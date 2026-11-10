@@ -1,6 +1,6 @@
 ---
 name: drug-repurposing
-description: Systematic drug repurposing via signature matching, target-based analysis, network proximity, genetic evidence scoring, and clinical evidence mining
+description: Read before you rank existing drugs for a new indication from a disease signature, a target list, a network, or genetic evidence. It gives the strategy for each input, the correct connectivity score, how to treat a source that did not answer, and the claims that are not permitted.
 version: 1.0.0
 tags: [drug-repurposing, repositioning, cmap, connectivity-score, network-proximity, genetic-evidence, indication-expansion]
 ---

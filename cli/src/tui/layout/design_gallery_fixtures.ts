@@ -173,7 +173,7 @@ function galleryPlanStep(id: string, name: string, depends_on: string[] = []): P
     return {
         id,
         name,
-        agent: "scientific-executor",
+        agent: "analyst",
         question: `What should ${name.toLowerCase()} establish?`,
         acceptance_criteria: ["Produces a reviewable result"],
         constraints: [],

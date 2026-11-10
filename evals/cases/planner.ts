@@ -11,7 +11,6 @@
 
 import type { PoolInventorySection } from "@inflexa-ai/harness/config/environment-stores.js";
 import type { DataProfileResult } from "@inflexa-ai/harness/contracts/data-profile.js";
-import { SANDBOX_AGENT_META } from "@inflexa-ai/harness/agents/sandbox/index.js";
 import { composePlannerSeed, formatPriorPlan, renderDataContext } from "@inflexa-ai/harness/tools/research/generate-plan.js";
 
 import type { KnowledgeClient, RecommendResponse } from "@inflexa-ai/harness/tools/knowledge/client.js";
@@ -141,7 +140,7 @@ const PRIOR_PLAN = formatPriorPlan("pln-1a2b3c4d", {
             acceptance_criteria: ["A results table with log2 fold change and adjusted p-value"],
             depends_on: [],
             status: "pending",
-            agent: "bulk-transcriptomics-agent",
+            agent: "analyst",
             maxSteps: 40,
         },
         {
@@ -153,7 +152,7 @@ const PRIOR_PLAN = formatPriorPlan("pln-1a2b3c4d", {
             acceptance_criteria: ["An enrichment table with adjusted p-values"],
             depends_on: ["T1S1"],
             status: "pending",
-            agent: "enrichment-agent",
+            agent: "analyst",
             maxSteps: 40,
         },
     ],
@@ -161,7 +160,19 @@ const PRIOR_PLAN = formatPriorPlan("pln-1a2b3c4d", {
 
 if (PRIOR_PLAN === null) throw new Error("the prior plan of the planner cases does not parse");
 
-const TRANSLATIONAL_AGENTS = ["drug-repurposing-agent", "cheminformatics-agent", "translational-safety-agent", "pkpd-clinical-response-agent"];
+/** The text of a step that a grader reads to tell its work apart, because both analysis kinds run on the analyst. */
+function stepText(step: PlanStepView): string {
+    return `${step.name} ${step.question} ${step.description}`;
+}
+
+const DE_WORDS = /differential|\bDE\b|DESeq|edgeR|limma|fold change/i;
+const ENRICHMENT_WORDS = /enrich|GSEA|hallmark|KEGG|over-?representation|pathway/i;
+const IMMUNE_WORDS = /immune|deconvol|CIBERSORT|xCell|microenvironment|T[- ]cell|infiltrat/i;
+
+/** A step on the analyst whose work matches `words`, other than the steps in `not`. */
+function analystStep(steps: readonly PlanStepView[], words: RegExp, not: readonly PlanStepView[] = []): PlanStepView | undefined {
+    return steps.find((step) => step.agent === "analyst" && !not.includes(step) && words.test(stepText(step)));
+}
 
 /** A step that only explores or profiles the data, which the profile already did. */
 function exploresData(step: PlanStepView): boolean {
@@ -170,8 +181,8 @@ function exploresData(step: PlanStepView): boolean {
 }
 
 function deThenEnrichment(steps: readonly PlanStepView[]): boolean {
-    const de = steps.find((step) => step.agent === "bulk-transcriptomics-agent");
-    const enrichment = steps.find((step) => step.agent === "enrichment-agent");
+    const de = analystStep(steps, DE_WORDS);
+    const enrichment = de === undefined ? undefined : analystStep(steps, ENRICHMENT_WORDS, [de]);
     if (de === undefined || enrichment === undefined) return false;
     const names = `${de.question} ${de.name}`.toLowerCase();
     return enrichment.depends_on.length > 0 && names.includes("treated") && names.includes("control") && !steps.some(exploresData);
@@ -180,7 +191,7 @@ function deThenEnrichment(steps: readonly PlanStepView[]): boolean {
 function keepsPriorIds(steps: readonly PlanStepView[]): boolean {
     const de = steps.find((step) => step.id === "T1S1");
     const enrichment = steps.find((step) => step.id === "T1S2");
-    return de?.agent === "bulk-transcriptomics-agent" && enrichment?.agent === "enrichment-agent";
+    return de?.agent === "analyst" && enrichment?.agent === "analyst";
 }
 
 /** The package census of the network cases: `igraph` is in both tracks, and the Python name of scikit-learn is not `sklearn`. */
@@ -234,11 +245,6 @@ function packagesResolve(census: { readonly r: readonly string[]; readonly pytho
     return (steps: readonly PlanStepView[]): boolean => steps.every((step) => step.packages.every((entry) => packageProblem(entry, census) === undefined));
 }
 
-/** The `capability` of each step is one phrase of the capabilities of its agent, as the catalog spells it. */
-function capabilitiesExact(steps: readonly PlanStepView[]): boolean {
-    return steps.every((step) => SANDBOX_AGENT_META[step.agent]?.capabilities.includes(step.capability) === true);
-}
-
 /** The prior plan of the completed differential expression step. */
 const PRIOR_PLAN_DONE = formatPriorPlan("pln-1a2b3c4d", {
     title: "Treated vs control DE",
@@ -254,7 +260,7 @@ const PRIOR_PLAN_DONE = formatPriorPlan("pln-1a2b3c4d", {
             acceptance_criteria: ["A results table with log2 fold change and adjusted p-value"],
             depends_on: [],
             status: "completed",
-            agent: "bulk-transcriptomics-agent",
+            agent: "analyst",
             maxSteps: 40,
         },
     ],
@@ -267,9 +273,7 @@ const PRIOR_RUN =
 
 /** No step other than the completed T1S1 does the differential expression again. */
 function noSecondDe(steps: readonly PlanStepView[]): boolean {
-    return !steps.some(
-        (step) => step.id !== "T1S1" && /differential expression|deseq2/i.test(`${step.name} ${step.question}`) && step.agent === "bulk-transcriptomics-agent",
-    );
+    return !steps.some((step) => step.id !== "T1S1" && /differential expression|deseq2/i.test(`${step.name} ${step.question}`) && step.agent === "analyst");
 }
 
 function revisionSeed(researchQuestion: string): string {
@@ -466,7 +470,7 @@ function routingSeed(profile: DataProfileResult, researchQuestion: string): stri
 const SELECTS_INSIDE_CV = plans("a modeling step that selects inside the cross-validation, or calls its estimate optimistic", (steps) =>
     steps.some(
         (step) =>
-            step.agent === "statistical-modeling-agent" &&
+            step.agent === "analyst" &&
             /cross-?validat|nested|\bCV\b/i.test(`${step.question} ${step.description}`) &&
             /(inside|within|in each|in every|nested)[^.]{0,60}(fold|cross-?validat|\bCV\b|loop)|optimistic/i.test(`${step.question} ${step.description}`),
     ),
@@ -510,8 +514,7 @@ const HUMAN_RESOURCE = /\.Hs\.|h\.all\.v|Homo sapiens/;
  */
 const MATCHES_ORGANISM = plans("a plan whose gene-set step names the mouse resource or an ortholog mapping, and no human resource", (steps) => {
     const text = (step: PlanStepView): string => `${step.name} ${step.question} ${step.description}`;
-    const enrichment = steps.filter((step) => step.agent === "enrichment-agent");
-    const geneSets = enrichment.length > 0 ? enrichment : steps.filter((step) => /hallmark|GSEA/i.test(text(step)));
+    const geneSets = steps.filter((step) => /hallmark|GSEA|enrich/i.test(text(step)));
     return geneSets.length > 0 && geneSets.every((step) => MOUSE_WORDS.test(text(step))) && !steps.some((step) => HUMAN_RESOURCE.test(text(step)));
 });
 
@@ -539,9 +542,9 @@ function dependsOn(steps: readonly PlanStepView[], from: PlanStepView, to: PlanS
  * and its text names that matrix. An edge that no data needs holds a step back, and the run loses its parallel wave.
  */
 const DEPENDENCIES_FOLLOW_DATA = plans("enrichment after DE, and an immune step that waits only for data it reads", (steps) => {
-    const de = steps.find((step) => step.agent === "bulk-transcriptomics-agent" && /differential|DE\b|DESeq|responder/i.test(`${step.name} ${step.question}`));
-    const enrichment = steps.find((step) => step.agent === "enrichment-agent");
-    const immune = steps.find((step) => step.agent === "immune-profiling-agent");
+    const de = analystStep(steps, /differential|DE\b|DESeq|responder/i);
+    const enrichment = de === undefined ? undefined : analystStep(steps, ENRICHMENT_WORDS, [de]);
+    const immune = de === undefined || enrichment === undefined ? undefined : analystStep(steps, IMMUNE_WORDS, [de, enrichment]);
     if (de === undefined || enrichment === undefined || immune === undefined) return false;
     const readsMatrix = /TPM|VST|normali[sz]ed|expression matrix|log-?CPM/i.test(`${immune.question} ${immune.description}`);
     return dependsOn(steps, enrichment, de) && (!dependsOn(steps, immune, de) || readsMatrix) && !dependsOn(steps, immune, enrichment);
@@ -824,12 +827,12 @@ export const plannerCases: readonly EvalCase[] = [
     {
         id: "plan-routes-immune-profiling",
         set: "dev",
-        source: "planner prompt: immune cell composition and the tumor microenvironment go to the immune-profiling agent",
+        source: "planner prompt: an analysis of data goes to the analyst; immune cell composition is not drug work",
         user: routingSeed(COHORT_PROFILE, "What is the immune cell composition of these tumors, and does it differ between responders and non-responders?"),
         ...PLANNER,
         pool: ROUTING_POOL,
         tools: ROUTING_TOOLS,
-        grade: plans("an immune-profiling step", (steps) => steps.some((step) => step.agent === "immune-profiling-agent")),
+        grade: plans("an immune-profiling step on the analyst", (steps) => analystStep(steps, IMMUNE_WORDS) !== undefined),
     },
     {
         id: "plan-routes-immune-profiling-held-out",
@@ -842,17 +845,17 @@ export const plannerCases: readonly EvalCase[] = [
         ...PLANNER,
         pool: ROUTING_POOL,
         tools: ROUTING_TOOLS,
-        grade: plans("an immune-profiling step", (steps) => steps.some((step) => step.agent === "immune-profiling-agent")),
+        grade: plans("an immune-profiling step on the analyst", (steps) => analystStep(steps, IMMUNE_WORDS) !== undefined),
     },
     {
         id: "plan-routes-drug-repurposing",
         set: "dev",
-        source: "planner prompt: a question of which existing drugs could reverse a signature goes to the drug-repurposing agent, not to cheminformatics",
+        source: "planner prompt: a question of which existing drugs could reverse a signature goes to the drug analyst",
         user: routingSeed(PROFILE, "Which approved drugs could reverse the transcriptional signature of the treatment?"),
         ...PLANNER,
         pool: ROUTING_POOL,
         tools: ROUTING_TOOLS,
-        grade: plans("a drug-repurposing step", (steps) => steps.some((step) => step.agent === "drug-repurposing-agent")),
+        grade: plans("a drug-repurposing step", (steps) => steps.some((step) => step.agent === "drug-analyst")),
     },
     {
         id: "plan-routes-drug-repurposing-held-out",
@@ -865,7 +868,7 @@ export const plannerCases: readonly EvalCase[] = [
         ...PLANNER,
         pool: ROUTING_POOL,
         tools: ROUTING_TOOLS,
-        grade: plans("a drug-repurposing step", (steps) => steps.some((step) => step.agent === "drug-repurposing-agent")),
+        grade: plans("a drug-repurposing step", (steps) => steps.some((step) => step.agent === "drug-analyst")),
     },
     {
         id: "plan-organism-matches",
@@ -967,7 +970,7 @@ export const plannerCases: readonly EvalCase[] = [
         user: seed("Which genes are differentially expressed between treated and control?"),
         ...PLANNER,
         grade: all(
-            plans("a DE plan with no translational step", (steps) => !steps.some((step) => TRANSLATIONAL_AGENTS.includes(step.agent))),
+            plans("a DE plan with no translational step", (steps) => !steps.some((step) => step.agent === "drug-analyst")),
             never(["request_clarification", "report_blocker"]),
         ),
     },
@@ -977,9 +980,7 @@ export const plannerCases: readonly EvalCase[] = [
         source: "planner prompt: a question about druggable targets gets a step that maps the genes to known drugs",
         user: seed("Which of the genes that the treatment changes are druggable targets with existing compounds?"),
         ...PLANNER,
-        grade: plans("a plan with a drug mapping step", (steps) =>
-            steps.some((step) => ["drug-repurposing-agent", "cheminformatics-agent"].includes(step.agent)),
-        ),
+        grade: plans("a plan with a drug mapping step", (steps) => steps.some((step) => step.agent === "drug-analyst")),
     },
     {
         id: "plan-de-enrichment-held-out",
@@ -1016,7 +1017,7 @@ export const plannerCases: readonly EvalCase[] = [
         user: seed("Give me the list of genes that the treatment changes, with their fold changes."),
         ...PLANNER,
         grade: all(
-            plans("a DE plan with no translational step", (steps) => !steps.some((step) => TRANSLATIONAL_AGENTS.includes(step.agent))),
+            plans("a DE plan with no translational step", (steps) => !steps.some((step) => step.agent === "drug-analyst")),
             never(["request_clarification", "report_blocker"]),
         ),
     },
@@ -1026,9 +1027,7 @@ export const plannerCases: readonly EvalCase[] = [
         source: "paraphrase of plan-druggable-targets",
         user: seed("For the genes that respond to the treatment, which existing drugs could act on them?"),
         ...PLANNER,
-        grade: plans("a plan with a drug mapping step", (steps) =>
-            steps.some((step) => ["drug-repurposing-agent", "cheminformatics-agent"].includes(step.agent)),
-        ),
+        grade: plans("a plan with a drug mapping step", (steps) => steps.some((step) => step.agent === "drug-analyst")),
     },
     {
         id: "plan-packages-resolve",
@@ -1049,22 +1048,6 @@ export const plannerCases: readonly EvalCase[] = [
         tools: NETWORK_TOOLS,
         pool: poolOf(NETWORK_CENSUS.r, NETWORK_CENSUS.python),
         grade: plans("a plan whose packages each resolve to one package of the pool", packagesResolve(NETWORK_CENSUS)),
-    },
-    {
-        id: "plan-capability-exact",
-        set: "dev",
-        source: "planner prompt: copy one capability phrase of the agent, spelled as the catalog spells it",
-        user: seed("Which genes change between treated and control, and which hallmark pathways do they point to?"),
-        ...PLANNER,
-        grade: plans("a plan whose capabilities each match the catalog", capabilitiesExact),
-    },
-    {
-        id: "plan-capability-exact-held-out",
-        set: "held-out",
-        source: "paraphrase of plan-capability-exact",
-        user: seed("Find the genes that respond to the treatment, and run a KEGG enrichment on them."),
-        ...PLANNER,
-        grade: plans("a plan whose capabilities each match the catalog", capabilitiesExact),
     },
     {
         id: "plan-skips-completed-step",
