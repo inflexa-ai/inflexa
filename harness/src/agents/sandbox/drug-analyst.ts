@@ -38,6 +38,12 @@ export const meta: AgentMeta = {
         "searchClinicalTrials",
         "searchRegulatoryApprovals",
         "geneDiseaseEvidence",
+        "resolve_citation",
+        "searchArxiv",
+        "searchSemanticScholar",
+        "getProteinDomains",
+        "searchProtein",
+        "alphafoldPrediction",
     ],
 };
 

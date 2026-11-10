@@ -57,6 +57,9 @@ export type ScriptFileToolsDeps = {
     readonly scratch: ScriptScratch;
 };
 
+/** `lineage` records each read in the lineage of a step. */
+type ReadScriptToolsDeps = Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot"> & { readonly lineage?: WorkspaceReadLineage };
+
 function refused(error: string): Result<never, ToolError> {
     return err({ error, retryable: false });
 }
@@ -273,7 +276,8 @@ type ReadTableOutput = WithToolCallRecord<
     ScriptFileEffect
 >;
 
-function createReadTableTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">): Tool<z.infer<typeof readTableInput>, ReadTableOutput> {
+function createReadTableTool(deps: ReadScriptToolsDeps): Tool<z.infer<typeof readTableInput>, ReadTableOutput> {
+    const { lineage } = deps;
     return defineTool({
         id: "read_table",
         description:
@@ -287,6 +291,7 @@ function createReadTableTool(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "re
         view: "none",
         describeCall: ({ path, entry }) => (entry === undefined ? path : `${path} : ${entry}`),
         describeResult: (_input, result) => `${String(result.rowCount)} rows`,
+        foldCallRecord: lineage === undefined ? undefined : (effect: ScriptFileEffect) => lineage.track(effect.reads ?? []),
         execute: async ({ path, entry, columns, offset, limit }, ctx): Promise<Result<ReadTableOutput, ToolError>> => {
             const table = await readTableRows({
                 workspaceFs: deps.workspaceFs,
@@ -321,9 +326,8 @@ const ListArchiveOutputSchema = z.object({
 
 type ListArchiveOutput = WithToolCallRecord<{ readonly path: string; readonly entries: readonly ArchiveEntry[] }, ScriptFileEffect>;
 
-function createListArchiveTool(
-    deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">,
-): Tool<z.infer<typeof listArchiveInput>, ListArchiveOutput> {
+function createListArchiveTool(deps: ReadScriptToolsDeps): Tool<z.infer<typeof listArchiveInput>, ListArchiveOutput> {
+    const { lineage } = deps;
     return defineTool({
         id: "list_archive",
         description:
@@ -334,6 +338,7 @@ function createListArchiveTool(
         view: "none",
         describeCall: ({ path }) => path,
         describeResult: (_input, result) => `${String(result.entries.length)} files`,
+        foldCallRecord: lineage === undefined ? undefined : (effect: ScriptFileEffect) => lineage.track(effect.reads ?? []),
         execute: async ({ path }, ctx): Promise<Result<ListArchiveOutput, ToolError>> => {
             const kind = archiveKindOf(path);
             if (kind === undefined) {
@@ -397,10 +402,7 @@ const ReadPdfOutputSchema = z.object({
 
 type ReadPdfOutput = WithToolCallRecord<z.infer<typeof ReadPdfOutputSchema>, ScriptFileEffect>;
 
-/** `lineage` records each read in the lineage of a step. */
-export function createReadPdfTool(
-    deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot"> & { readonly lineage?: WorkspaceReadLineage },
-): Tool<z.infer<typeof readPdfInput>, ReadPdfOutput> {
+export function createReadPdfTool(deps: ReadScriptToolsDeps): Tool<z.infer<typeof readPdfInput>, ReadPdfOutput> {
     const { lineage } = deps;
     return defineTool({
         id: "read_pdf",
@@ -647,7 +649,7 @@ export function createScriptFileTools(deps: ScriptFileToolsDeps): Tool[] {
 }
 
 /** The script tools that read a table, a PDF, and the files of a compressed file of the workspace, and write nothing. */
-export function createReadScriptTools(deps: Pick<ScriptFileToolsDeps, "workspaceFs" | "resolveWorkspaceRoot">): Tool[] {
+export function createReadScriptTools(deps: ReadScriptToolsDeps): Tool[] {
     return [createReadTableTool(deps), createReadPdfTool(deps), createListArchiveTool(deps)];
 }
 

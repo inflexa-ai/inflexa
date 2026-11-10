@@ -62,6 +62,29 @@ const PROFILE: DataProfileResult = {
 
 const DATA_CONTEXT = renderDataContext({ kind: "ready", result: PROFILE }, ANALYSIS_ID);
 
+/** The treated samples ran in one batch and the control samples in the other, thus no model separates the two. */
+const CONFOUNDED_PROFILE: DataProfileResult = {
+    ...PROFILE,
+    experimentalDesign:
+        "Two groups, treated (T1-T3) against control (C1-C3), three biological replicates for each group. T1-T3 ran in batch A and C1-C3 in batch B: the batch and the condition coincide.",
+    qualityAssessment: { concerns: ["the batch is fully confounded with the condition"] },
+};
+
+/** One sample for each group: no dispersion can be estimated for a test between them. */
+const UNREPLICATED_PROFILE: DataProfileResult = {
+    ...PROFILE,
+    summary: "Bulk RNA-seq of spleen tissue, 2 samples, treated against control.",
+    files: [
+        { path: "data/inputs/f-counts/counts.tsv", description: "Raw gene-level count matrix", dataType: "count-matrix", format: "TSV", rows: 58_302, cols: 2 },
+        { path: "data/inputs/f-meta/samples.csv", description: "Sample sheet: sample, group", dataType: "clinical-metadata", format: "CSV", rows: 2, cols: 2 },
+    ],
+    experimentalDesign: "One treated sample (T1) and one control sample (C1). No replicates.",
+    qualityAssessment: { concerns: [] },
+};
+
+/** No plan: the design defect goes back to the user as a blocker or a question, not into a run. */
+const NO_PLAN_FOR_DEFECT = all(never(["submit_plan"]), callsAny(["report_blocker", "request_clarification"]));
+
 const REFS_WITH_GENE_SETS = [
     "## Available Reference Data",
     "",
@@ -89,10 +112,10 @@ function poolOf(r: readonly string[], python: readonly string[]): readonly PoolI
 
 const BASE_POOL = poolOf(R_BASE, PYTHON_BASE);
 
-function seed(researchQuestion: string, extra: { priorPlanBlock?: string; userConstraints?: string } = {}): string {
+function seed(researchQuestion: string, extra: { priorPlanBlock?: string; userConstraints?: string; profile?: DataProfileResult } = {}): string {
     return composePlannerSeed({
         priorPlanBlock: extra.priorPlanBlock ?? null,
-        dataContextBlock: DATA_CONTEXT,
+        dataContextBlock: extra.profile === undefined ? DATA_CONTEXT : renderDataContext({ kind: "ready", result: extra.profile }, ANALYSIS_ID),
         groundingBlock: [REFS_WITH_GENE_SETS, PACKAGES].join("\n\n"),
         input: { researchQuestion, userConstraints: extra.userConstraints },
     });
@@ -774,6 +797,24 @@ const NO_BLIND_SKELETON = acceptedPlan("a plan with no two-group template, and a
 });
 
 export const plannerCases: readonly EvalCase[] = [
+    {
+        id: "plan-confounded-design-blocks",
+        set: "dev",
+        source: "bench batch-confounded-stop: the planner planned a step that only confirmed the confound (0.85 USD against 0.17 USD)",
+        user: seed("We want the genes that differ between the treated samples and the control samples. The metadata carries a batch column.", {
+            profile: CONFOUNDED_PROFILE,
+        }),
+        ...PLANNER,
+        grade: NO_PLAN_FOR_DEFECT,
+    },
+    {
+        id: "plan-confounded-design-blocks-held-out",
+        set: "held-out",
+        source: "bench no-replicates-stop: paraphrase of plan-confounded-design-blocks with a design that has no replicate",
+        user: seed("Which genes are differentially expressed between the treated sample and the control sample?", { profile: UNREPLICATED_PROFILE }),
+        ...PLANNER,
+        grade: NO_PLAN_FOR_DEFECT,
+    },
     {
         id: "plan-de-enrichment",
         set: "dev",

@@ -44,6 +44,11 @@ export const meta: AgentMeta = {
         "humanbase",
         "getVariantFrequencies",
         "getProteinDomains",
+        "resolve_citation",
+        "searchArxiv",
+        "searchSemanticScholar",
+        "searchProtein",
+        "alphafoldPrediction",
     ],
 };
 

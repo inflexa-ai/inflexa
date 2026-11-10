@@ -404,6 +404,18 @@ export function renderWorkspace(frame: WorkspaceFrame): string {
     );
 }
 
+/**
+ * The state of the lease at the start of a step. A step starts with no machine, and it sizes its own with
+ * `acquire_sandbox`, thus the first look at the data runs on the host.
+ */
+export function renderSandbox(): string {
+    return section(
+        "Sandbox",
+        "No sandbox is held for this step yet. `acquire_sandbox` grants one at the size that the data needs, and `execute_command` runs only on it. " +
+            "A first look at the data needs no sandbox: `read_file`, `inspect_data_profile`, and `read_table` in `run_script` read it on the host.",
+    );
+}
+
 // ── (2b) Resources ────────────────────────────────────────────────────
 
 /**
@@ -530,7 +542,7 @@ export type StepBriefing = {
 
 /**
  * Compose the seed. Absent sections collapse out entirely — an independent step
- * with no profile and an empty memory yields exactly the task and workspace sections, byte-identical
+ * with no profile and an empty memory yields exactly the task, workspace, and sandbox sections, byte-identical
  * to what a step got before any of this existed plus its paths.
  *
  * Pure: the same briefing composes to the same string, which is what makes the
@@ -543,6 +555,7 @@ export function composeStepBriefing(briefing: StepBriefing): string {
         renderTemplateContract(briefing.template),
         renderMemory(briefing.memory),
         renderWorkspace(briefing.workspace),
+        renderSandbox(),
         renderOrientation(briefing.profile, briefing.workspace.analysisId),
         renderUpstream(briefing.upstream),
     ]

@@ -34,8 +34,8 @@ describe("createSandboxAgents", () => {
         const ALWAYS_ON_PROFILE = ["inspect_data_profile"];
         // The two lease tools: the agent holds its sandbox through them, whatever its meta declares.
         const ALWAYS_ON_LEASE = ["acquire_sandbox", "release_sandbox"];
-        // A paper of the analysis is a PDF, thus each agent reads PDFs in a script.
-        const ALWAYS_ON_SCRIPT = ["read_pdf"];
+        // A table, a paper, or a compressed file of the analysis reads on the host, thus each agent reads them in a script.
+        const ALWAYS_ON_SCRIPT = ["read_table", "read_pdf", "list_archive"];
         for (const [id, def] of Object.entries(agents)) {
             const meta = presentGet(SANDBOX_AGENT_META, id);
             const all = [...def.tools, ...(def.scriptTools ?? [])];
@@ -81,7 +81,7 @@ describe("createSandboxAgents", () => {
             humanbase: ["analyst"],
             // The analyst maps genes to the Entrez IDs of HumanBase and to the UniProt accessions of InterPro.
             resolve_gene_ids: ["analyst"],
-            get_protein_domains: ["analyst"],
+            get_protein_domains: ["analyst", "drug-analyst"],
         };
         for (const [id, def] of Object.entries(agents)) {
             for (const [toolId, agentIds] of Object.entries(holders)) {

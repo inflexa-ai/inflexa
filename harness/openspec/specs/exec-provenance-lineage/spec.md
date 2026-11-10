@@ -250,7 +250,7 @@ applies to both feeds.
 
 ### Requirement: The workspace read tools of a step record their reads
 
-When a sandbox step has a collector, `read_file`, `grep`, and the `read_pdf` script tool MUST put each file that they read into their call record, as an analysis-relative path. The `foldCallRecord` of the tool MUST track each read with `trackInputAccess`, under the mount root `/{analysisId}` of `execute_command`. Thus an exec and a read tool give one input for one file, and a replay rebuilds the same inputs.
+When a sandbox step has a collector, `read_file`, `grep`, and the `read_table`, `read_pdf`, and `list_archive` script tools MUST put each file that they read into their call record, as an analysis-relative path. The `foldCallRecord` of the tool MUST track each read with `trackInputAccess`, under the mount root `/{analysisId}` of `execute_command`. Thus an exec and a read tool give one input for one file, and a replay rebuilds the same inputs.
 
 #### Scenario: A read_file of a data file gives a data input
 
@@ -285,7 +285,7 @@ A read of the whole file MUST carry the SHA-256 of the bytes that the tool read,
 
 ### Requirement: A read tool records only the files whose content it gives
 
-`read_file` MUST record a read that gave text to the agent, and no `binary`, `not_found`, or `out_of_scope` result. `grep` MUST record each file whose lines the result returns. `read_pdf` MUST record the `reads` of its call record, which `run_script` folds into the tool. `workspace_search`, `list_files`, and `file_stat` MUST record nothing, because they give no content of a file.
+`read_file` MUST record a read that gave text to the agent, and no `binary`, `not_found`, or `out_of_scope` result. `grep` MUST record each file whose lines the result returns. `read_table`, `read_pdf`, and `list_archive` MUST record the `reads` of their call record, which `run_script` folds into the tool. `workspace_search`, `list_files`, and `file_stat` MUST record nothing, because they give no content of a file.
 
 #### Scenario: grep records the files that its result returns
 
