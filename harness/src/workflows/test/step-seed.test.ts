@@ -715,6 +715,26 @@ describe("composeStepSeed template contract", () => {
             expect(seed.templateBinding?.slots).not.toHaveProperty("counts_path");
         });
 
+        it("binds nothing from the record of the fit when the service does not answer or no client is bound", async () => {
+            // A grounded plan of an earlier session, and the service is not there at the run. The record of the
+            // fit is on disk, and the step must start with no binding and no value of the fit.
+            for (const client of [fakeKnowledgeClient({ contract: { match: "unavailable", reason: "connect ECONNREFUSED" } }).client, undefined]) {
+                const root = await makeWorkspace();
+                await writeRecord(root, "T1S1", "decision_record_tpl-fit.R.json", { template: FIT, slots: FIT_SLOTS, ...RENDERED });
+                await writeScript(root, SCRIPT);
+                const seed = await composeStepSeed({
+                    input: input([planStep("T1S1"), planStep("T1S2", ["T1S1"], grounded(SETTINGS))]),
+                    stepId: "T1S2",
+                    runId: RUN_ID,
+                    deps: deps(root, {}, client),
+                });
+                expect(seed.templateBinding).toBeUndefined();
+                expect(seed.prompt).toContain("- Template contract: not retrieved (");
+                expect(seed.prompt).not.toContain("## Template contract");
+                expect(seed.prompt).not.toContain("reported fit");
+            }
+        });
+
         it("keeps the value of the fit when a plan setting of the step gives a different value", async () => {
             const own = { step: "sensitivity_fits", name: "min_count", value: 10, source: "doi:10.12688/f1000research.7035.1" };
             const same = { step: "sensitivity_fits", name: "lfc_shrink", value: "ashr" };
@@ -1063,6 +1083,23 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).toContain(
             '`min_count` = "all_retained" (filter_low_counts; departure from R-0001@e7d0: the PCA uses each retained target): a policy of the plan, not a value of the `min_count` slot (integer)',
         );
+    });
+
+    it("gives a seed with no text of the knowledge service for a plan with no grounding and no client", async () => {
+        const root = await makeWorkspace();
+
+        const seed = await composeStepSeed({
+            input: input([planStep("T1S1"), planStep("T1S2", ["T1S1"])]),
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root),
+        });
+
+        // The harness with no knowledge service: the seed names no tool that is not attached and no contract.
+        expect(seed.templateBinding).toBeUndefined();
+        expect(seed.prompt).not.toContain("knowledge_");
+        expect(seed.prompt).not.toContain("Template contract");
+        expect(seed.prompt).not.toContain("reported fit");
     });
 
     it("says the contract was not retrieved when no client is bound, and renders no section", async () => {
