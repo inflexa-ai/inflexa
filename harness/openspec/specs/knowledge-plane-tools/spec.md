@@ -202,6 +202,15 @@ The input of `knowledge_recommend` and `knowledge_check` MUST be the flat situat
 - **WHEN** the tool runs with valid slot values
 - **THEN** the script and the decision record exist in the working directory, the result names both paths and the environment match, and the provenance record of each write names `knowledge_template`
 
+The service marks a slot with `read: false` when the script does not read it on this render. The decision record MUST leave such a slot out of `slots`, and it MUST name the slot in `inactive_slots`. The result of the tool MUST keep the slot with its flag, because the value is in the script.
+
+#### Scenario: A slot that the script does not read stays out of the record
+
+- **GIVEN** a render answer with the slot `quantifier` marked `read: false`
+- **WHEN** the tool writes the decision record
+- **THEN** `slots` of the record does not hold `quantifier`, and `inactive_slots` names it
+- **AND** the result of the tool keeps `quantifier` with `read: false`
+
 #### Scenario: A read-only agent gets no template tool
 
 - **GIVEN** an agent built with `readOnly: true`
