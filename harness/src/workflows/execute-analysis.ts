@@ -68,6 +68,7 @@ import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { resolveStepAgentId } from "../agents/sandbox-catalog.js";
 import { isWorkflowCancellation } from "../runtime/dbos.js";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { mkdir } from "node:fs/promises";
@@ -460,7 +461,7 @@ export function buildChildInput(args: {
         analysisId: input.analysisId,
         runId,
         stepId,
-        agentId: input.agentByStepId[stepId] ?? "scientific-executor",
+        agentId: resolveStepAgentId(input.agentByStepId[stepId] ?? ""),
         // Carried into the child because lineage classification admits a same-run
         // sibling edge only when the sibling was declared here — the scheduler's
         // ordering guarantee attaches to this list and nothing else. Read from the
@@ -1012,7 +1013,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 stepId: step.id,
                 analysisId: input.analysisId,
                 wave: levels.get(step.id) ?? 0,
-                agentId: input.agentByStepId[step.id] ?? "scientific-executor",
+                agentId: resolveStepAgentId(input.agentByStepId[step.id] ?? ""),
             }));
             const synthesisRow = {
                 runId,

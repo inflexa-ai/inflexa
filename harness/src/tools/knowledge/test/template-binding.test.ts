@@ -249,11 +249,7 @@ describe("the binding rides the step coordinates into the template tool", () => 
         const fake = fakeKnowledgeClient();
         const base = makeFakeSandboxAgentDeps();
         const agents = createSandboxAgents({ ...base, knowledge: fake.client, step: { ...base.step, templateBinding: binding() } });
-        const tool = presentFind(
-            presentGet(agents, "bulk-transcriptomics-agent").tools,
-            (candidate) => candidate.id === "knowledge_template",
-            "the knowledge_template tool",
-        );
+        const tool = presentFind(presentGet(agents, "analyst").tools, (candidate) => candidate.id === "knowledge_template", "the knowledge_template tool");
         expect(tool).toBeDefined();
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ template: TEMPLATE, slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
@@ -265,11 +261,7 @@ describe("the binding rides the step coordinates into the template tool", () => 
         // The fake answers unavailable, thus the call reaches the service and the tool writes nothing.
         const fake = fakeKnowledgeClient({ render: { match: "unavailable", reason: "off" } });
         const agents = createSandboxAgents({ ...makeFakeSandboxAgentDeps(), knowledge: fake.client });
-        const tool = presentFind(
-            presentGet(agents, "bulk-transcriptomics-agent").tools,
-            (candidate) => candidate.id === "knowledge_template",
-            "the knowledge_template tool",
-        );
+        const tool = presentFind(presentGet(agents, "analyst").tools, (candidate) => candidate.id === "knowledge_template", "the knowledge_template tool");
         const { ctx } = makeToolContext();
         const out = (await tool.execute({ template: "tpl-deseq2-blocked@1.0.0", slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
         expect(out).toEqual({ match: "unavailable", reason: "off" });

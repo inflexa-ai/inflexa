@@ -1,0 +1,145 @@
+/**
+ * `--sandbox-arm`: each step case runs on a variant of the step agents, with the same case id, thus `compare` pairs the
+ * arm with the production run case by case.
+ *
+ * - `stance`: five specialists drawn by the kind of data that a step reads. A step whose agent no specialist replaces
+ *   runs on the generic executor of the arm.
+ * - `one`: one step agent, with each skill and each tool of the step agents.
+ * - `compute`: one compute agent for each analysis of data, and one evidence agent for the drug, safety, and
+ *   clinical lookups. The split follows the tool sets, which overlap least across that line.
+ * - `split`: the `compute` arm, with genetics as an agent of its own, because its lookups overlap no other agent.
+ *
+ * A variant holds the union of the skills and the tools of the agents that it replaces, thus a variant never loses a
+ * capability that a case needs. Only the prompt body and the split differ from production.
+ */
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { BASE_SANDBOX_TOOLS, SANDBOX_AGENT_META } from "@inflexa-ai/harness/agents/sandbox/index.js";
+import type { AgentMeta, SandboxToolName } from "@inflexa-ai/harness/agents/sandbox/index.js";
+
+import { PROFILER_ID } from "./sandbox.js";
+
+export const SANDBOX_ARMS = ["stance", "one", "compute", "split"] as const;
+export type SandboxArm = (typeof SANDBOX_ARMS)[number];
+
+/** A step agent of an arm: the meta of production shape, and the body of its system prompt. */
+export type AgentVariant = { readonly meta: AgentMeta; readonly body: string };
+
+const BODIES_DIR = join(import.meta.dir, "..", "arms");
+
+/** The step agents of production that a plan can name. The profiler runs a different task, thus it is not one. */
+function stepAgentIds(): string[] {
+    return Object.keys(SANDBOX_AGENT_META).filter((id) => id !== PROFILER_ID);
+}
+
+function metaOf(id: string): AgentMeta {
+    const meta = SANDBOX_AGENT_META[id];
+    if (meta === undefined) throw new Error(`no sandbox agent ${id}`);
+    return meta;
+}
+
+/** One variant that replaces `replaced`, with the union of their skills, tools, and capabilities. */
+function variant(id: string, bodyFile: string, replaced: readonly string[], tools?: readonly SandboxToolName[]): AgentVariant {
+    const metas = replaced.map(metaOf);
+    const union = <T>(pick: (meta: AgentMeta) => readonly T[]): T[] => [...new Set(metas.flatMap(pick))];
+    return {
+        meta: {
+            id,
+            capabilities: union((meta) => meta.capabilities),
+            suitableFor: union((meta) => meta.suitableFor),
+            skills: union((meta) => meta.skills),
+            tools: tools === undefined ? union<SandboxToolName>((meta) => meta.tools) : [...tools],
+        },
+        body: readFileSync(join(BODIES_DIR, bodyFile), "utf8"),
+    };
+}
+
+/** The production agents that each specialist of the `stance` arm replaces. */
+const STANCE_GROUPS: Readonly<Record<string, { readonly body: string; readonly replaces: readonly string[] }>> = {
+    "matrix-analyst": {
+        body: "stance/matrix-analyst.md",
+        replaces: [
+            "bulk-transcriptomics-agent",
+            "proteomics-agent",
+            "metabolomics-agent",
+            "dna-methylation-agent",
+            "chromatin-agent",
+            "immune-profiling-agent",
+        ],
+    },
+    "cell-resolved-analyst": { body: "stance/cell-resolved-analyst.md", replaces: ["single-cell-agent", "multimodal-sc-agent", "spatial-omics-agent"] },
+    interpretation: { body: "stance/interpretation.md", replaces: ["enrichment-agent", "network-agent"] },
+    "statistical-modeling": { body: "stance/statistical-modeling.md", replaces: ["statistical-modeling-agent"] },
+    genetics: { body: "stance/genetics.md", replaces: ["genomic-variant-agent"] },
+};
+
+function stanceArm(): ReadonlyMap<string, AgentVariant> {
+    const byAgent = new Map<string, AgentVariant>();
+    for (const [id, group] of Object.entries(STANCE_GROUPS)) {
+        const built = variant(id, group.body, group.replaces);
+        for (const replaced of group.replaces) byAgent.set(replaced, built);
+    }
+    const rest = stepAgentIds().filter((id) => !byAgent.has(id));
+    const executor = variant("analyst", "stance/executor.md", rest);
+    for (const id of rest) byAgent.set(id, executor);
+    return byAgent;
+}
+
+function oneArm(): ReadonlyMap<string, AgentVariant> {
+    const ids = stepAgentIds();
+    const one = variant("analyst", "one/analyst.md", ids);
+    return new Map(ids.map((id) => [id, one]));
+}
+
+/** The agents of outside evidence: their lookups (drugs, safety, trials) are the tool set that no compute agent holds. */
+const EVIDENCE_AGENTS = ["cheminformatics-agent", "translational-safety-agent", "pkpd-clinical-response-agent", "drug-repurposing-agent"];
+
+/** The lookups of a compute step: the gene spaces, annotation, and interactions. No drug, safety, or trial lookup. */
+const COMPUTE_TOOLS: readonly SandboxToolName[] = [
+    ...BASE_SANDBOX_TOOLS,
+    "pubmed",
+    "searchGeoDatasets",
+    "searchGene",
+    "resolveGeneIds",
+    "lookupAnnotation",
+    "searchInteractions",
+    "humanbase",
+];
+const VARIANT_TOOLS: readonly SandboxToolName[] = ["getVariantFrequencies", "getProteinDomains"];
+
+/** One compute agent and one evidence agent. `own` names further groups that keep an agent of their own. */
+function computeArm(own: Readonly<Record<string, { readonly body: string; readonly replaces: readonly string[] }>>): ReadonlyMap<string, AgentVariant> {
+    const byAgent = new Map<string, AgentVariant>();
+    for (const [id, group] of Object.entries(own)) {
+        const built = variant(id, group.body, group.replaces);
+        for (const replaced of group.replaces) byAgent.set(replaced, built);
+    }
+    const evidence = variant("drug-analyst", "compute/evidence.md", EVIDENCE_AGENTS);
+    for (const id of EVIDENCE_AGENTS) byAgent.set(id, evidence);
+    const rest = stepAgentIds().filter((id) => !byAgent.has(id));
+    // The compute agent serves the variant steps unless a group of its own takes them.
+    const tools = rest.includes("genomic-variant-agent") ? [...COMPUTE_TOOLS, ...VARIANT_TOOLS] : COMPUTE_TOOLS;
+    const compute = variant("analyst", "one/analyst.md", rest, tools);
+    for (const id of rest) byAgent.set(id, compute);
+    return byAgent;
+}
+
+/** The variant of each production step agent under `arm`. */
+export function armVariants(arm: SandboxArm): ReadonlyMap<string, AgentVariant> {
+    switch (arm) {
+        case "stance":
+            return stanceArm();
+        case "one":
+            return oneArm();
+        case "compute":
+            return computeArm({});
+        case "split":
+            return computeArm({ genetics: { body: "stance/genetics.md", replaces: ["genomic-variant-agent"] } });
+        default: {
+            const unhandled: never = arm;
+            throw new Error(`unhandled arm ${String(unhandled)}`);
+        }
+    }
+}

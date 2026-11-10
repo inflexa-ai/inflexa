@@ -35,7 +35,7 @@ tools via the shared base sandbox tool set
 
 #### Scenario: Any sandbox agent can look up package docs
 
-- **WHEN** the `single-cell-agent` needs to verify the scanpy API for `rank_genes_groups`
+- **WHEN** the `analyst` needs to verify the scanpy API for `rank_genes_groups`
 - **THEN** it can call `resolveLibraryId("scanpy", ...)` to get the library ID
 - **AND** then call `queryDocs` with that library ID and a query to retrieve current documentation
 

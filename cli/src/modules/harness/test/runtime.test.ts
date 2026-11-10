@@ -151,8 +151,6 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.dataProfile.skillsDir).toBe(skillsDir);
             expect(workflows.dataProfile.embedding.dimensions).toBe(1536);
             expect(typeof workflows.dataProfile.embedding.embed).toBe("function");
-            expect(conversation.utilityProvider).toBeDefined();
-            expect(conversation.utilityModel).toBeDefined();
             // The conversation bundle carries the local realizations: the configured
             // skills tree, and the shared launcher.
             expect(conversation.skillsDir).toBe(skillsDir);

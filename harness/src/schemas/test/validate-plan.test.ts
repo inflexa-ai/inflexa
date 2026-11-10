@@ -1,8 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { KNOWN_AGENT_IDS, PLANNABLE_AGENT_IDS } from "../../agents/sandbox-catalog.js";
-import { STEP_NON_TASK_FIELDS, STEP_TASK_FIELDS } from "../../prompts/briefing.js";
-import { PlanStepSchema } from "../plan-schemas.js";
+import { KNOWN_AGENT_IDS, resolveStepAgentId } from "../../agents/sandbox-catalog.js";
 import { STEP_SUBDIRS } from "../../workspace/paths.js";
 import { AnalysisStepSchema } from "../workflow-state.js";
 import type { AnalysisPlan, AnalysisStep } from "../workflow-state.js";
@@ -25,6 +23,20 @@ function step(over: Partial<AnalysisStep> & { id: string }): AnalysisStep {
         ...over,
     };
 }
+
+describe("the agent of a step", () => {
+    it("accepts an agent id that the roster no longer holds, and the step runs on the analyst", () => {
+        expect(validatePlan(plan([step({ id: "T1S1", agent: "bulk-transcriptomics-agent" })])).errors).toEqual([]);
+        expect(resolveStepAgentId("bulk-transcriptomics-agent")).toBe("analyst");
+        expect(resolveStepAgentId("drug-analyst")).toBe("drug-analyst");
+    });
+
+    it("refuses a step with no agent", () => {
+        const { errors } = validatePlan(plan([step({ id: "T1S1", agent: undefined })]));
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain("has no agent assigned");
+    });
+});
 
 function plan(steps: AnalysisStep[]): AnalysisPlan {
     return {
@@ -184,38 +196,3 @@ describe("validatePlan package entries", () => {
  * schemas must disagree about it on purpose: a plan stored before the field has to keep parsing,
  * and a plan the planner writes today has to carry it.
  */
-describe("the capability field of a step", () => {
-    const base = {
-        id: "T1S1",
-        name: "s",
-        track: "T1",
-        step_type: "analysis",
-        question: "q",
-        acceptance_criteria: ["a"],
-        depends_on: [],
-        resources: { cpu: 1, memoryGb: 2 },
-        packages: [],
-        agent: presentAt(PLANNABLE_AGENT_IDS, 0),
-    };
-
-    it("parses a stored step that carries no phrase", () => {
-        const parsed = AnalysisStepSchema.safeParse({ ...base, status: "pending", maxSteps: 10 });
-        expect(parsed.success).toBe(true);
-        expect(parsed.success && parsed.data.capability).toBeUndefined();
-    });
-
-    it("refuses planner output that carries no phrase", () => {
-        expect(PlanStepSchema.safeParse(base).success).toBe(false);
-    });
-
-    it("accepts planner output that carries one", () => {
-        const parsed = PlanStepSchema.safeParse({ ...base, capability: "differential expression" });
-        expect(parsed.success).toBe(true);
-        expect(parsed.success && parsed.data.capability).toBe("differential expression");
-    });
-
-    it("keeps the phrase out of the rendered task, because the launch already consumed it", () => {
-        expect(STEP_NON_TASK_FIELDS).toContain("capability");
-        expect(STEP_TASK_FIELDS).not.toContain("capability");
-    });
-});

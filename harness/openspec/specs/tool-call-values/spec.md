@@ -306,7 +306,7 @@ The stream of a run MUST NOT carry a value of a call. A step and the synthesis f
 These tools MUST declare these views. Each is a root tool of the conversation agent or of the report-session agent, except `scan_inputs`, a sandbox tool that the user put in the set:
 
 - `run_script`: the view of "run_script shows its code, its output, and its value" in `script-tools`
-- `write_file`, `edit_file`, `update_working_memory`, `workspace_search`, `list_files`, `file_stat`, `scan_inputs`, `inspect_run`, `inspect_data_profile`, `inspect_capability_data`, `list_available_refs`, `list_available_packages`, `examine_page`, and `list_pinned_artifacts`: the input, the result, and the error
+- `write_file`, `edit_file`, `update_working_memory`, `workspace_search`, `list_files`, `file_stat`, `scan_inputs`, `inspect_run`, `inspect_data_profile`, `list_available_refs`, `list_available_packages`, `examine_page`, and `list_pinned_artifacts`: the input, the result, and the error
 - `read_file`, `grep`, `read_tool_output`, `generate_plan`, and `execute_analysis`: the input and the error. The result of each holds workspace bytes or shows in its own card, thus it does not show
 - `show_user`, `show_plan`, `show_file`, `start_report_session`, `generate_analogy_report`, `preview_report`, and `record_report_version`: `"none"`
 

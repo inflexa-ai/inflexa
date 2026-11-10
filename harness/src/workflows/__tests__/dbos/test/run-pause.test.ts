@@ -66,7 +66,7 @@ if (DBOS.isInitialized()) {
     await DBOS.shutdown();
 }
 
-const AGENT_ID = "scientific-executor";
+const AGENT_ID = "analyst";
 
 /**
  * The replies of a step whose task and post-step continuations each end on their first reply. A step with no

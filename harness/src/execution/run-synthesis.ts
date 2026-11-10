@@ -472,7 +472,7 @@ export async function loadStepSummariesFromDisk(args: LoadStepSummariesInput): P
             if (markdown.trim().length === 0) continue;
             out.push({
                 stepId,
-                agentId: args.agentByStepId?.[stepId] ?? "scientific-executor",
+                agentId: args.agentByStepId?.[stepId] ?? "analyst",
                 markdown,
             });
         } catch {

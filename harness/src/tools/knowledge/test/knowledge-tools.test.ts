@@ -191,7 +191,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const skeleton = out.plan_skeleton;
         expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T2S1"]);
         const analysis = presentAt(skeleton, 1);
-        expect(analysis.agent).toBe("bulk-transcriptomics-agent");
+        expect(analysis.agent).toBe("analyst");
         expect(analysis.packages).toEqual(["DESeq2"]);
         expect(analysis.depends_on).toEqual(["T1S1"]);
         expect(analysis.environment).toEqual({ package: { name: "DESeq2", present: true, version: "1.52.0" } });
@@ -209,7 +209,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
             reason: "Count-model Wald test with effect shrinkage per R-0001@e7d0",
         });
         const gsea = presentAt(skeleton, 2);
-        expect(gsea.agent).toBe("enrichment-agent");
+        expect(gsea.agent).toBe("analyst");
         expect(gsea.depends_on).toEqual(["T1S2"]);
         expect(gsea.caveats).toEqual(["Few DE genes: ORA has no power."]);
         expect(gsea.environment?.package).toEqual({ name: "fgsea", present: false });
@@ -396,7 +396,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(skeleton.map((step) => step.id)).toEqual(["T0S1", "T1S1", "T1S2", "T2S1"]);
         const assembly = presentAt(skeleton, 0);
         expect(assembly.step_type).toBe("data_preparation");
-        expect(assembly.agent).toBe("bulk-transcriptomics-agent");
+        expect(assembly.agent).toBe("analyst");
         expect(assembly.depends_on).toEqual([]);
         expect(assembly.grounding.template).toBe("tpl-cohort-assembly@1.0.0");
         expect(assembly.grounding.settings).toEqual([

@@ -110,10 +110,10 @@ describe("the agent of a case", () => {
             stepFinishes: ["tool-calls"],
             capped: false,
         });
-        const grade = plans("a DE step", (steps) => steps.some((step) => step.agent === "bulk-transcriptomics-agent"));
+        const grade = plans("a DE step", (steps) => steps.some((step) => step.agent === "analyst"));
 
-        expect(grade(trial([{ id: "T1S1", agent: "bulk-transcriptomics-agent" }])).pass).toBe(true);
-        expect(grade(trial([{ id: "T1S1", agent: "enrichment-agent" }])).pass).toBe(false);
+        expect(grade(trial([{ id: "T1S1", agent: "analyst" }])).pass).toBe(true);
+        expect(grade(trial([{ id: "T1S1", agent: "drug-analyst" }])).pass).toBe(false);
     });
 });
 
@@ -164,8 +164,8 @@ async function toolsOf(c: EvalCase): Promise<readonly Tool[]> {
     if (kind !== "sandbox") return [...agents[kind].tools, ...(agents[kind].scriptTools ?? [])];
     if (c.sandbox === undefined) throw new Error(`the sandbox case ${c.id} has no setup`);
     const trial = await openSandboxTrial(c.sandbox, { toolOutputStore: { put: () => okAsync(undefined), get: () => okAsync(null) }, label: "tools" });
-    trial.dispose();
-    return trial.agent.tools;
+    await trial.dispose();
+    return [...trial.agent.tools, ...(trial.agent.scriptTools ?? [])];
 }
 
 describe("the cases", () => {

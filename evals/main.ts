@@ -3,7 +3,7 @@
  * The command line of the decision evals.
  *
  *   bun run evals run [--provider <file> | --model <id>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3]
- *                     [--concurrency 4] [--timeout 180] [--exposure base] [--sandbox-agent <agent-id>] [--out <file>]
+ *                     [--concurrency 4] [--timeout 180] [--exposure base] [--sandbox-agent <agent-id>] [--exec scripted|docker] [--out <file>]
  *   bun run evals compare <baseline.json> <candidate.json> [--fail-on-regression]
  *
  * Each trial makes real model calls, thus the evals never run under `bun test`.
@@ -27,16 +27,18 @@ import { cliProvider, identityOf, providerOf, readProviderFile } from "./lib/pro
 import { buildReport, compareReports, comparisonTable, regressions, reportTable, ReportSchema, type Report } from "./lib/report.js";
 import { promptDigest, runCases } from "./lib/run.js";
 import { openSandboxTrial } from "./lib/sandbox.js";
-import { overrideAgentIds, overrideSandboxAgent } from "./lib/sandbox-agent.js";
+import { overrideAgentIds, overrideSandboxAgent, type OverriddenCase } from "./lib/sandbox-agent.js";
+import { assertSandboxImage, SANDBOX_IMAGE } from "./lib/docker-exec.js";
 import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
 import { okAsync } from "neverthrow";
 
 const USAGE = `usage:
-  bun run evals run [--provider <file> | --model <id>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--exposure base|read-both|read-write-both|read-script] [--sandbox-agent <agent-id>] [--out <file>]
+  bun run evals run [--provider <file> | --model <id>] [--set dev|held-out|all] [--case <id>]... [--trials 5] [--k 3] [--concurrency 4] [--timeout 180] [--exposure base|read-both|read-write-both|read-script] [--sandbox-agent <agent-id>] [--exec scripted|docker] [--out <file>]
   bun run evals compare <baseline.json> <candidate.json> [--fail-on-regression]
 
 With no --provider, the run uses the conversation model that the CLI configures.
 --sandbox-agent runs each selected step case (not a case of the data profiler) with that step agent.
+--exec docker runs each command of a sandbox case in a container of the sandbox image, with no network, over a farm of the package store.
 A provider file holds an AiSdkProviderConfig: kind, model, baseURL, reasoning, and apiKey or apiKeyEnv.`;
 
 function fail(message: string): never {
@@ -88,6 +90,7 @@ async function run(args: readonly string[]): Promise<void> {
             out: { type: "string" },
             exposure: { type: "string", default: "base" },
             "sandbox-agent": { type: "string" },
+            exec: { type: "string", default: "scripted" },
         },
     });
     const exposure = TOOL_EXPOSURES.find((name) => name === values.exposure);
@@ -98,7 +101,9 @@ async function run(args: readonly string[]): Promise<void> {
     const selected = selectCases(values.set, values.case);
     const override = values["sandbox-agent"];
     if (override !== undefined && !overrideAgentIds().includes(override)) fail(`--sandbox-agent must be one of ${overrideAgentIds().join(", ")}`);
-    const cases = override === undefined ? selected : await overriddenCases(selected, override);
+    const exec = values.exec === "docker" ? "docker" : values.exec === "scripted" ? "scripted" : fail("--exec must be scripted or docker");
+    if (exec === "docker") await assertSandboxImage();
+    const cases = override !== undefined ? reported(await overrideSandboxAgent(selected, override), override) : selected;
 
     // EVALS_LOG=1 shows the log of the harness, for example the retries of a provider that stalls.
     const logger = process.env["EVALS_LOG"] === "1" ? createConsoleLogger() : createNoopLogger();
@@ -127,12 +132,22 @@ async function run(args: readonly string[]): Promise<void> {
         concurrency: positiveInt(values.concurrency, 4, "concurrency"),
         trialTimeoutMs: positiveInt(values.timeout, 180, "timeout") * 1000,
         exposure,
+        exec,
         onTrial: (_case, result) => process.stderr.write(result.kind === "error" ? "E" : result.pass ? "." : "F"),
     });
     process.stderr.write("\n");
 
     const report = buildReport(
-        { startedAt, commit: commitOf(), promptDigest: digest, provider: identity, sandboxProvider: sandbox?.identity, trialsPerCase: trials, k },
+        {
+            startedAt,
+            commit: commitOf(),
+            promptDigest: digest,
+            provider: identity,
+            sandboxProvider: sandbox?.identity,
+            exec: exec === "docker" ? { mode: exec, image: SANDBOX_IMAGE } : undefined,
+            trialsPerCase: trials,
+            k,
+        },
         cases,
         results,
     );
@@ -143,10 +158,9 @@ async function run(args: readonly string[]): Promise<void> {
     process.stdout.write(`${reportTable(report)}\n\nreport: ${out}\n`);
 }
 
-async function overriddenCases(cases: readonly EvalCase[], agentId: string): Promise<EvalCase[]> {
-    const overridden = await overrideSandboxAgent(cases, agentId);
+function reported(overridden: readonly OverriddenCase[], replacement: string): EvalCase[] {
     for (const { evalCase, dropped } of overridden)
-        if (dropped.length > 0) process.stderr.write(`${evalCase.id}: ${agentId} holds no ${dropped.join(", ")}, thus the case drops their scripts\n`);
+        if (dropped.length > 0) process.stderr.write(`${evalCase.id}: ${replacement} holds no ${dropped.join(", ")}, thus the case drops their scripts\n`);
     return overridden.map(({ evalCase }) => evalCase);
 }
 
@@ -167,7 +181,7 @@ async function sandboxAgentsOf(cases: readonly EvalCase[]): Promise<AgentDefinit
     const agents: AgentDefinition[] = [];
     for (const setup of setups.values()) {
         const trial = await openSandboxTrial(setup, { toolOutputStore: { put: () => okAsync(undefined), get: () => okAsync(null) }, label: "digest" });
-        trial.dispose();
+        await trial.dispose();
         agents.push(trial.agent);
     }
     return agents;

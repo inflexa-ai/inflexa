@@ -70,7 +70,7 @@ describe("plan.explore-steps", () => {
                 {
                     id: "T1S1",
                     name: "Load inputs",
-                    agent: "scientific-executor",
+                    agent: "analyst",
                     question: "Which inputs are valid?",
                     acceptance_criteria: ["Inputs validated"],
                     depends_on: [],

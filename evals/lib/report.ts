@@ -38,6 +38,8 @@ export const ReportSchema = z.object({
     provider: ProviderSchema,
     /** The provider of the sandbox cases, when it differs from `provider`. */
     sandboxProvider: ProviderSchema.optional(),
+    /** How the commands of the sandbox cases ran, and the image of a real run. Absent: scripted. */
+    exec: z.object({ mode: z.enum(["scripted", "docker"]), image: z.string().optional() }).optional(),
     trialsPerCase: z.number(),
     k: z.number(),
     cases: z.array(CaseReportSchema),
@@ -52,6 +54,7 @@ export type ReportMeta = {
     readonly promptDigest: string;
     readonly provider: ProviderIdentity;
     readonly sandboxProvider?: ProviderIdentity;
+    readonly exec?: { readonly mode: "scripted" | "docker"; readonly image?: string };
     readonly trialsPerCase: number;
     readonly k: number;
 };

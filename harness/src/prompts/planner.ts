@@ -116,29 +116,19 @@ ${packagesSection()}
 If the context mentions prior run results, do NOT re-plan steps that already
 completed successfully unless the user explicitly wants a different approach.
 
-## Agent Assignment — Data-Object-Based Routing
-
-Route each step based on the **primary data object** it operates on.
+## Agent Assignment
 
 ### Available Agents
 
 ${agentCatalog}
 
 ### Routing Rules
-- Route by primary data object: if the step works on a count matrix, assign
-  the transcriptomics agent; if on a gene list, assign the enrichment agent.
+- Assign the drug analyst to a step about compounds, their exposure and
+  response, their safety, or their use for a new indication. Assign the
+  analyst to each other step.
 - A gene list does not settle the assignment by itself. Read what the step
   asks of the list. A step that builds, labels, or benchmarks a gene set for a
-  safety or tissue-risk question goes to the specialist whose capabilities name
-  that work, not to the enrichment agent.
-- When a step could go to either a modality or cross-cutting agent, prefer
-  cross-cutting if the input is already in generic format (CSV/TSV). Prefer
-  modality if it needs modality-specific objects (AnnData, SummarizedExperiment).
-- If no agent is an exact fit, pick the closest specialist from the list.
-- Name the capability you routed on. Copy one phrase out of that agent's
-  capabilities into the step's \`capability\` field, spelled exactly as the
-  catalog spells it. The launch resolves what reference data that capability
-  needs before the run starts, so a paraphrase costs the step that check.
+  safety or tissue-risk question goes to the drug analyst.
 
 ## Grounding
 
@@ -170,16 +160,15 @@ safety, toxicity, or treatment outcomes:
 
 1. **Include mechanistic grounding steps.** If the analysis identifies
    differentially expressed genes or enriched pathways, include a
-   cheminformatics or drug-repurposing step to map findings to known drug
-   targets, existing therapeutics, and clinical-stage compounds. The
-   enrichment agent holds no drug or target lookup, thus it cannot do this
-   mapping. This
+   drug-analyst step to map findings to known drug targets, existing
+   therapeutics, and clinical-stage compounds. The analyst holds no drug or
+   target lookup, thus it cannot do this mapping. This
    prevents the synthesizer from speculating about druggability without
    evidence.
 
 2. **Include biomarker evaluation steps.** If the analysis involves
    outcome data (survival, response, toxicity), include a
-   statistical-modeling step for biomarker panel construction with
+   modeling step for biomarker panel construction with
    proper cross-validation. Distinguish predictive (treatment x marker
    interaction) from prognostic (outcome association) modeling — these
    require different designs. A feature list from a supervised contrast
@@ -194,41 +183,21 @@ safety, toxicity, or treatment outcomes:
    assess known safety liabilities (off-target effects, known adverse
    events, organ-specific toxicity signals).
 
-4. **Route PK/PD data correctly.** If the data includes concentration,
-   exposure, dosing, or pharmacokinetic measurements, route to the
-   pkpd-clinical-response-agent. If the data includes clinical response
-   classifications (RECIST, CTCAE, responder/non-responder labels),
-   route to either pkpd-clinical-response-agent (if PK data present)
-   or statistical-modeling-agent (if pure outcome classification).
+4. **Route exposure and response data correctly.** If the data includes
+   concentration, exposure, dosing, or pharmacokinetic measurements, route
+   to the drug analyst. A pure outcome classification (RECIST, CTCAE,
+   responder labels) with no exposure data goes to the analyst.
 
 5. **Route safety data correctly.** If the data includes safety
    biomarkers (ALT, AST, troponin, creatinine, hERG), adverse event
-   records, or toxicity classifications, route to the
-   translational-safety-agent. Route a request for matched negative
-   controls, or for a tissue-risk benchmark set, to the same agent even
-   when the only input is a gene list.
+   records, or toxicity classifications, route to the drug analyst. Route
+   a request for matched negative controls, or for a tissue-risk benchmark
+   set, to the drug analyst even when the only input is a gene list.
 
-6. **Route immune profiling correctly.** If the research question
-   involves immune cell composition, tumor microenvironment
-   characterization, IO biomarkers, checkpoint expression, or
-   TCR/BCR repertoire analysis, route to the immune-profiling-agent.
-   This agent handles immune deconvolution from bulk data and immune
-   signature scoring — do NOT route these tasks to bulk-transcriptomics
-   or enrichment agents.
-
-7. **Route drug repurposing correctly.** If the research question
-   asks about drug repositioning, indication expansion, therapeutic
-   candidates for a disease signature, or connecting omics findings
-   to existing therapeutics, route to the drug-repurposing-agent.
-   This agent handles multi-evidence repurposing workflows — do NOT
-   route these to the cheminformatics-agent (which focuses on
-   compound characterization, not repurposing).
-
-8. **Anchor off-target safety early.** When the research question
+6. **Anchor off-target safety early.** When the research question
    involves a drug candidate, target selectivity, or off-target
    liability assessment, include an early off-target safety step
-   (routed to the translational-safety-agent or
-   drug-repurposing-agent) against the candidate's known targets, so
+   (routed to the drug analyst) against the candidate's known targets, so
    that the deeper safety analyses downstream start from a curated
    liability screen rather than from scratch.
 

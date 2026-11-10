@@ -19,7 +19,6 @@ import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
 import { createDbosRunLauncher } from "../../../../execution/dbos-run-launcher.js";
 import { dbosClientFor } from "../../../../execution/dbos-workflow-purger.js";
 import { createNoopLogger } from "../../../../lib/console-logger.js";
-import { unusedChatProvider } from "../../../../providers/__fixtures__/chat-provider.js";
 import { upsertAnalysis, upsertPlan } from "../../../../state/index.js";
 import { makeToolContext } from "../../../../tools/__fixtures__/tool-context.js";
 import { callRunId } from "../../../../tools/analysis-invocation.js";
@@ -105,7 +104,7 @@ beforeAll(async () => {
                 question: "do a",
                 acceptance_criteria: ["completes"],
                 depends_on: [],
-                agent: "bulk-transcriptomics-agent",
+                agent: "analyst",
                 maxSteps: 30,
             },
         ],
@@ -117,8 +116,6 @@ beforeAll(async () => {
         executeAnalysisWorkflow: runWorkflow,
         runAuthorizer: createLocalRunAuthorizer(),
         runLauncher: createDbosRunLauncher({ pool: rig.pool }),
-        utilityProvider: unusedChatProvider(),
-        utilityModel: "utility-model",
     });
 });
 

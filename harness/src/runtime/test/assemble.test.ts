@@ -378,12 +378,10 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
     return createConversationAgent({
         provider: unusedChatProvider(),
         registerSubAgent: inProcessSubAgent,
-        utilityProvider: unusedChatProvider(),
         pool,
         embedding: refuseEmbedding(),
         workspaceFs: makeFakeWorkspaceFs(),
         model: "test/model",
-        utilityModel: "test/utility-model",
         executeAnalysisWorkflow: (_input: ExecuteAnalysisInput): Promise<ExecuteAnalysisResult> => {
             try {
                 return Promise.resolve(refuse("executeAnalysisWorkflow"));
@@ -611,7 +609,7 @@ describe("the approval of the composition", () => {
                 question: "do a",
                 acceptance_criteria: ["completes"],
                 depends_on: [],
-                agent: "bulk-transcriptomics-agent",
+                agent: "analyst",
                 maxSteps: 30,
             },
         ],
@@ -656,12 +654,10 @@ describe("the approval of the composition", () => {
         const deps: CoreRuntimeDeps = {
             conversation: {
                 provider: unusedChatProvider(),
-                utilityProvider: unusedChatProvider(),
                 pool,
                 embedding: refuseEmbedding(),
                 workspaceFs: makeFakeWorkspaceFs(),
                 model: "test/model",
-                utilityModel: "test/utility-model",
                 resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
                 runAuthorizer,
                 runLauncher,

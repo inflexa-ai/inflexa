@@ -13,15 +13,12 @@
 
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
-import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
 import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js";
 import { isLabelValue } from "../sandbox/labels.js";
 import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
 import { slugify } from "../lib/slug.js";
 import type { AnalysisPlan } from "./workflow-state.js";
-
-const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
 
 /**
  * Reserved step-id names. A step id equal to an artifact subdirectory name
@@ -119,10 +116,9 @@ export function validatePlan(plan: AnalysisPlan): ValidationResult {
 
     // 3. Agent assignment validation
     for (const step of plan.steps) {
+        // An agent id that the roster no longer holds is valid: the step runs on the default agent.
         if (!step.agent) {
             errors.push(`Step "${step.id}" has no agent assigned — every step must specify an agent`);
-        } else if (!KNOWN_AGENTS.has(step.agent)) {
-            errors.push(`Step "${step.id}" assigns unknown agent "${step.agent}" — not found in agent catalog`);
         }
     }
 

@@ -1,0 +1,638 @@
+{
+  "version": 1,
+  "startedAt": "2026-11-09T14:17:20.049Z",
+  "commit": "fd50d8de-dirty",
+  "promptDigest": "3acd7cd53b4473f4",
+  "provider": {
+    "kind": "anthropic",
+    "baseURL": "http://localhost:8318/v1",
+    "model": "claude-opus-5-5",
+    "reasoning": "high"
+  },
+  "sandboxProvider": {
+    "kind": "anthropic",
+    "baseURL": "http://localhost:8318/v1",
+    "model": "claude-opus-5-5",
+    "reasoning": "medium"
+  },
+  "exec": {
+    "mode": "docker",
+    "image": "ghcr.io/inflexa-ai/sandbox-base:20261029-c94d23e"
+  },
+  "trialsPerCase": 1,
+  "k": 1,
+  "cases": [
+    {
+      "id": "domain-intensities-linear-model",
+      "set": "dev",
+      "source": "matrix stance: the scale decides the family; proteomics prompt anti-pattern 'DESeq2 on protein intensities'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/differential_abundance.py fits a linear model",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 442336,
+            "outputTokens": 14439,
+            "cacheCreationInputTokens": 90666,
+            "cacheReadInputTokens": 351644,
+            "reasoningTokens": 3874
+          },
+          "tools": [
+            "acquire_sandbox",
+            "inspect_data_profile",
+            "execute_command",
+            "execute_command",
+            "list_available_packages",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "run_script",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-no-replicate-descriptive",
+      "set": "dev",
+      "source": "matrix stance: the replicates limit the claim; bulk prompt 'no inferential DE for 1 vs 1'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/descriptive_fc.py gives effect sizes only; the reply says \"replicat\"",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 111630,
+            "outputTokens": 4398,
+            "cacheCreationInputTokens": 48901,
+            "cacheReadInputTokens": 62719,
+            "reasoningTokens": 408
+          },
+          "tools": [
+            "acquire_sandbox",
+            "read_file",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "grep"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-beta-logit",
+      "set": "dev",
+      "source": "matrix stance: a proportion takes the logit scale for the test; methylation prompt 'statistics on beta-values'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/dmp_limma.R tests M-values",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 197722,
+            "outputTokens": 5514,
+            "cacheCreationInputTokens": 55076,
+            "cacheReadInputTokens": 142630,
+            "reasoningTokens": 564
+          },
+          "tools": [
+            "acquire_sandbox",
+            "list_available_packages",
+            "read_file",
+            "read_file",
+            "inspect_data_profile",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-batch-in-design",
+      "set": "dev",
+      "source": "matrix stance: keep a known batch as a term of the design; bulk prompt 'skipping batch assessment'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/de_pydeseq2.py models batch",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 1401490,
+            "outputTokens": 16631,
+            "cacheCreationInputTokens": 110757,
+            "cacheReadInputTokens": 1290679,
+            "reasoningTokens": 3423
+          },
+          "tools": [
+            "skill_read(bulk-transcriptomics/SKILL.md)",
+            "read_file",
+            "read_file",
+            "list_available_packages",
+            "inspect_data_profile",
+            "skill_read(bulk-transcriptomics/references/pydeseq2-api.md)",
+            "write_file",
+            "acquire_sandbox",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "read_file",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "grep",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "read_file",
+            "edit_file",
+            "execute_command",
+            "release_sandbox"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-npx-no-renormalization",
+      "set": "dev",
+      "source": "proteomics prompt and skill: Olink NPX is log2 and normalized already; do not normalize it again",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "no second normalization",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 232624,
+            "outputTokens": 8481,
+            "cacheCreationInputTokens": 40931,
+            "cacheReadInputTokens": 191675,
+            "reasoningTokens": 1028
+          },
+          "tools": [
+            "inspect_data_profile",
+            "read_file",
+            "read_file",
+            "list_available_packages",
+            "acquire_sandbox",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "list_files",
+            "release_sandbox"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-pseudobulk-condition",
+      "set": "dev",
+      "source": "cell stance: the sample is the replicate; single-cell prompt 'per-cell DE between conditions'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/cd14_pseudobulk_de.py aggregates by donor",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 114979,
+            "outputTokens": 3912,
+            "cacheCreationInputTokens": 24732,
+            "cacheReadInputTokens": 90237,
+            "reasoningTokens": 176
+          },
+          "tools": [
+            "acquire_sandbox",
+            "list_available_packages",
+            "execute_command",
+            "write_file",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-cytof-lineage-markers",
+      "set": "dev",
+      "source": "cell stance: cluster cytometry on its lineage markers; single-cell prompt 'CyTOF clustering on state markers'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/cytof_cluster_da.R clusters on the type markers",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 680380,
+            "outputTokens": 16923,
+            "cacheCreationInputTokens": 70594,
+            "cacheReadInputTokens": 609748,
+            "reasoningTokens": 3739
+          },
+          "tools": [
+            "list_available_packages",
+            "read_file",
+            "read_file",
+            "inspect_data_profile",
+            "acquire_sandbox",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "grep",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "read_file",
+            "edit_file",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-signed-rank",
+      "set": "dev",
+      "source": "interpretation stance: a ranked list takes a rank test on a signed statistic; enrichment prompt 'never rank by p-value alone'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/hallmark_gsea.py ranks on a signed statistic",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 279793,
+            "outputTokens": 6839,
+            "cacheCreationInputTokens": 41762,
+            "cacheReadInputTokens": 238011,
+            "reasoningTokens": 1121
+          },
+          "tools": [
+            "read_file",
+            "list_available_refs",
+            "list_available_packages",
+            "acquire_sandbox",
+            "skill_read(enrichment/SKILL.md)",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "write_file"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-methylation-probe-bias",
+      "set": "dev",
+      "source": "interpretation stance: the background carries the bias of the hits (a gene with more CpGs gets more hits); dna-methylation skill 'probe-number bias'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/go_enrichment.R corrects the CpG-count bias",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 282201,
+            "outputTokens": 6871,
+            "cacheCreationInputTokens": 38516,
+            "cacheReadInputTokens": 243663,
+            "reasoningTokens": 1057
+          },
+          "tools": [
+            "read_file",
+            "read_file",
+            "list_available_refs",
+            "list_files",
+            "read_file",
+            "list_available_packages",
+            "acquire_sandbox!",
+            "acquire_sandbox",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "release_sandbox"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-selection-inside-cv",
+      "set": "dev",
+      "source": "modeling stance: a feature list from an earlier step on the same samples already read the outcome; statistical-modeling skill",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "the reply says \"leak\"",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 304317,
+            "outputTokens": 10317,
+            "cacheCreationInputTokens": 43654,
+            "cacheReadInputTokens": 260641,
+            "reasoningTokens": 1396
+          },
+          "tools": [
+            "acquire_sandbox",
+            "list_available_packages",
+            "read_file",
+            "execute_command",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "release_sandbox"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-event-coding",
+      "set": "dev",
+      "source": "modeling stance: read the coding of the outcome from the data; statistical-modeling prompt 'swapping survival censoring encoding'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "scripts/cox_stage_age.py codes the event from the data",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 306022,
+            "outputTokens": 10064,
+            "cacheCreationInputTokens": 45485,
+            "cacheReadInputTokens": 260515,
+            "reasoningTokens": 1269
+          },
+          "tools": [
+            "read_file",
+            "read_file",
+            "inspect_data_profile",
+            "acquire_sandbox",
+            "list_available_packages",
+            "write_file",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "write_file",
+            "release_sandbox"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-gwas-ancestry",
+      "set": "dev",
+      "source": "genetics stance: ancestry and kinship confound a genotype; genomic-variant prompt 'GWAS without PCA covariates'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "adjusts for ancestry and reports the inflation",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 257398,
+            "outputTokens": 12643,
+            "cacheCreationInputTokens": 79228,
+            "cacheReadInputTokens": 178154,
+            "reasoningTokens": 1085
+          },
+          "tools": [
+            "list_available_packages",
+            "inspect_data_profile",
+            "acquire_sandbox",
+            "link_packages",
+            "execute_command",
+            "write_file",
+            "edit_file",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "domain-build-alignment",
+      "set": "dev",
+      "source": "genetics stance: align the builds before a join; genomic-variant prompt 'mixing GRCh37 and GRCh38 coordinates'",
+      "trials": 1,
+      "passes": 1,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.20654931179180275,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "converts the build before the join",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 421233,
+            "outputTokens": 8567,
+            "cacheCreationInputTokens": 39652,
+            "cacheReadInputTokens": 381553,
+            "reasoningTokens": 832
+          },
+          "tools": [
+            "list_available_refs",
+            "read_file",
+            "read_file",
+            "list_available_packages",
+            "acquire_sandbox",
+            "link_packages",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "edit_file",
+            "execute_command",
+            "grep",
+            "edit_file",
+            "execute_command",
+            "execute_command"
+          ]
+        }
+      ]
+    }
+  ]
+}

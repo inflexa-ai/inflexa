@@ -1,6 +1,6 @@
 ---
 name: multi-omics-integration
-description: Multi-omics integration methods including factor analysis, supervised classification, network fusion, and causal modeling across modalities
+description: Read before you combine two or more omics types for the same samples (factor analysis, supervised classification, patient similarity, cross-omics networks, causal signal models). It gives the method for each question, the data preparation, and the traps of prior-knowledge networks and solvers.
 version: 1.0.0
 tags: [multi-omics, integration, mofa, diablo, snf, factor-analysis, cross-modality]
 ---

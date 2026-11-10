@@ -89,12 +89,10 @@ export function constructionSandbox(): CoreSandboxDeps {
 export function conversationDeps(): ConversationAssemblyDeps {
     return {
         provider: unusedChatProvider(),
-        utilityProvider: unusedChatProvider(),
         pool: new Pool(),
         embedding: refuseEmbedding(),
         workspaceFs: makeFakeWorkspaceFs(),
         model: "test/model",
-        utilityModel: "test/utility-model",
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         runAuthorizer: createLocalRunAuthorizer(),
         runLauncher: refuseRunLauncher(),

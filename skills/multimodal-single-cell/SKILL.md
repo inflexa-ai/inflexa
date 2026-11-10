@@ -1,6 +1,6 @@
 ---
 name: multimodal-single-cell
-description: Multi-modal single-cell analysis for CITE-seq, Multiome, TEA-seq, and DOGMA-seq including joint embedding, per-modality QC, and cross-modal integration
+description: Read before you analyze single cells with two or more modalities (RNA and surface protein, RNA and chromatin accessibility, or three modalities). It gives the joint method for each assay, the QC for each modality, and the normalization traps of protein and accessibility data.
 version: 1.0.0
 tags: [cite-seq, multiome, tea-seq, dogma-seq, mudata, multimodal]
 ---

@@ -61,46 +61,20 @@ export type SandboxToolName =
     // Resolves to nothing when the embedder binds no knowledge client.
     | "knowledgeTemplate";
 
-/**
- * The reference datasets that one capability of one agent cannot run without.
- *
- * A requirement belongs to a capability, never to the agent: an agent holds capabilities that need
- * no reference data at all, so an agent-wide requirement would refuse a step that needs nothing.
- * The skill of the agent still states what the data IS and how to use it. This states which catalog
- * entry carries it, in a form a test can pin.
- */
-export type CapabilityDataRequirement = {
-    /** One phrase of the same agent's `capabilities`, verbatim — the step copies it from the catalog. */
-    readonly capability: string;
-    /** Reference-catalog dataset ids. Declare only an opt-in dataset: a recommended one is already in a default store. */
-    readonly datasets: readonly string[];
-};
-
 /** Planner-facing metadata + tool allowlist for one sandbox agent. */
 export type AgentMeta = {
     /** Stable agent id — also the key in the catalog and the `AgentDefinition.id`. */
     readonly id: string;
-    /** Capabilities surfaced to the planner. */
-    readonly capabilities: readonly string[];
-    /** Omics / data types this agent handles. */
-    readonly suitableFor: readonly string[];
+    /** What the agent does, in one or two sentences. The planner reads it to assign a step. */
+    readonly description: string;
     /** Skill directory names loaded into the agent's workspace. */
     readonly skills: readonly string[];
     /** Bio/literature tools the agent may use (workspace + sandbox tools are always wired). */
     readonly tools: readonly SandboxToolName[];
     /** Per-agent override for `maxIterations`; defaults to {@link SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS}. */
     readonly defaultMaxSteps?: number;
-    /** False for agents the planner must NOT assign to plan steps (executors, the profiler). */
+    /** False for agents the planner must NOT assign to plan steps (the profiler). */
     readonly plannable?: boolean;
-    /**
-     * Per-capability reference-data requirements. Omitted by an agent whose capabilities all run on
-     * what a default store holds.
-     *
-     * The pre-launch pass resolves these against the live store, so an absent dataset refuses the
-     * launch instead of costing a run. The planner-facing projection deliberately drops this field:
-     * a prompt names no dataset, so the ids reach a caller through a tool and the launch through here.
-     */
-    readonly dataRequirements?: readonly CapabilityDataRequirement[];
 };
 
 /** Default runaway-guard for sandbox agents. */

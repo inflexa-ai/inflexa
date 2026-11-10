@@ -21,7 +21,7 @@ async function seedRunning(pool: Pool, runId: string, stepId: string): Promise<v
             stepId,
             analysisId: "analysis-1",
             wave: 0,
-            agentId: "scientific-executor",
+            agentId: "analyst",
         })
     )._unsafeUnwrap();
 }
@@ -101,7 +101,7 @@ describe("step-executions: pending seeding", () => {
     });
 
     function seedRows(runId: string, stepIds: string[], wave = 0) {
-        return stepIds.map((stepId) => ({ runId, stepId, analysisId: "analysis-1", wave, agentId: "scientific-executor" }));
+        return stepIds.map((stepId) => ({ runId, stepId, analysisId: "analysis-1", wave, agentId: "analyst" }));
     }
 
     it("seeds pending rows with null started_at", async () => {
@@ -201,14 +201,14 @@ describe("step-executions: step counts of a list of runs", () => {
             stepId,
             analysisId: "a1",
             wave: 0,
-            agentId: "scientific-executor",
+            agentId: "analyst",
         }));
         (await seedStepExecutions(pool, rows))._unsafeUnwrap();
         for (const stepId of ["s1", "s2", "s3"]) {
-            (await insertStepExecution(pool, { runId: "r1", stepId, analysisId: "a1", wave: 0, agentId: "scientific-executor" }))._unsafeUnwrap();
+            (await insertStepExecution(pool, { runId: "r1", stepId, analysisId: "a1", wave: 0, agentId: "analyst" }))._unsafeUnwrap();
         }
         for (const stepId of ["s1", "s2"]) (await updateStepExecution(pool, "r1", stepId, { status: "completed" }))._unsafeUnwrap();
-        (await insertStepExecution(pool, { runId: "r9", stepId: "s1", analysisId: "a9", wave: 0, agentId: "scientific-executor" }))._unsafeUnwrap();
+        (await insertStepExecution(pool, { runId: "r9", stepId: "s1", analysisId: "a9", wave: 0, agentId: "analyst" }))._unsafeUnwrap();
 
         const counts = (await countStepsByRuns(pool, "a1", ["r1", "r2", "r9"]))._unsafeUnwrap();
         expect(counts).toEqual([{ runId: "r1", doneSteps: 2, runningSteps: 1, totalSteps: 5 }]);
@@ -234,9 +234,7 @@ describe("step-executions: running settle", () => {
     });
 
     it("touches only running rows", async () => {
-        (
-            await seedStepExecutions(pool, [{ runId: "run-cut", stepId: "pending-step", analysisId: "analysis-1", wave: 1, agentId: "scientific-executor" }])
-        )._unsafeUnwrap();
+        (await seedStepExecutions(pool, [{ runId: "run-cut", stepId: "pending-step", analysisId: "analysis-1", wave: 1, agentId: "analyst" }]))._unsafeUnwrap();
         await seedRunning(pool, "run-cut", "running-step");
         await seedRunning(pool, "run-cut", "completed-step");
         (await updateStepExecution(pool, "run-cut", "completed-step", { status: "completed", durationMs: 7 }))._unsafeUnwrap();

@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "startedAt": "2026-11-10T11:01:28.215Z",
+  "commit": "d311850a-dirty",
+  "promptDigest": "e8116350098bca3f",
+  "provider": {
+    "kind": "anthropic",
+    "baseURL": "http://localhost:8318/v1",
+    "model": "claude-sonnet-5-5",
+    "reasoning": "high"
+  },
+  "sandboxProvider": {
+    "kind": "anthropic",
+    "baseURL": "http://localhost:8318/v1",
+    "model": "claude-sonnet-5-5",
+    "reasoning": "medium"
+  },
+  "exec": {
+    "mode": "docker",
+    "image": "ghcr.io/inflexa-ai/sandbox-base:20261029-c94d23e"
+  },
+  "trialsPerCase": 3,
+  "k": 3,
+  "cases": [
+    {
+      "id": "mdv-asset-validated",
+      "set": "dev",
+      "source": "mdv-preparation skill: an asset is MDV-ready when the validator reports zero errors, with a README",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "output/pbmc.mdv.h5ad validates (output/pbmc.mdv.validation.json)",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 466619,
+            "outputTokens": 9092,
+            "cacheCreationInputTokens": 69978,
+            "cacheReadInputTokens": 396617,
+            "reasoningTokens": 567
+          },
+          "tools": [
+            "skill_read(mdv-preparation/SKILL.md)",
+            "inspect_data_profile",
+            "skill_read(mdv-preparation/references/asset-route.md)",
+            "skill_read(mdv-preparation/references/validation.md)",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "list_available_packages",
+            "write_file",
+            "write_file",
+            "execute_command",
+            "write_file",
+            "write_file",
+            "execute_command"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "output/pbmc.mdv.h5ad validates (output/pbmc.mdv.validation.json)",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 476795,
+            "outputTokens": 11275,
+            "cacheCreationInputTokens": 59429,
+            "cacheReadInputTokens": 417342,
+            "reasoningTokens": 682
+          },
+          "tools": [
+            "skill_read(mdv-preparation/SKILL.md)",
+            "inspect_data_profile",
+            "skill_read(mdv-preparation/references/asset-route.md)",
+            "skill_read(mdv-preparation/references/validation.md)",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "list_available_packages",
+            "write_file",
+            "write_file",
+            "write_file",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "submit_file_metadata!"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "output/pbmc.mdv.h5ad validates (output/pbmc.mdv.validation.json)",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 475226,
+            "outputTokens": 10492,
+            "cacheCreationInputTokens": 78428,
+            "cacheReadInputTokens": 396774,
+            "reasoningTokens": 621
+          },
+          "tools": [
+            "skill_read(mdv-preparation/SKILL.md)",
+            "inspect_data_profile",
+            "skill_read(mdv-preparation/references/asset-route.md)",
+            "skill_read(mdv-preparation/references/validation.md)",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "list_available_packages",
+            "write_file",
+            "write_file",
+            "write_file",
+            "execute_command",
+            "execute_command",
+            "write_file",
+            "execute_command"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mdv-asset-validated-held-out",
+      "set": "held-out",
+      "source": "paraphrase of mdv-asset-validated: mouse cortex nuclei, a viewer for the lab",
+      "trials": 3,
+      "passes": 3,
+      "errors": 0,
+      "rate": 1,
+      "interval": {
+        "low": 0.4385029643606803,
+        "high": 1
+      },
+      "passHatK": 1,
+      "results": [
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "output/cortex.mdv.h5ad validates (output/cortex.mdv.validation.json)",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 420844,
+            "outputTokens": 7174,
+            "cacheCreationInputTokens": 52471,
+            "cacheReadInputTokens": 368351,
+            "reasoningTokens": 338
+          },
+          "tools": [
+            "skill_read(mdv-preparation/SKILL.md)",
+            "skill_read(mdv-preparation/references/asset-route.md)",
+            "skill_read(mdv-preparation/references/validation.md)",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "write_file",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "submit_file_metadata!"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "output/cortex.mdv.h5ad validates (output/cortex.mdv.validation.json)",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 520539,
+            "outputTokens": 9822,
+            "cacheCreationInputTokens": 74401,
+            "cacheReadInputTokens": 446112,
+            "reasoningTokens": 492
+          },
+          "tools": [
+            "skill_read(mdv-preparation/SKILL.md)",
+            "inspect_data_profile",
+            "skill_read(mdv-preparation/references/asset-route.md)",
+            "skill_read(mdv-preparation/references/validation.md)",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "write_file",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "submit_file_metadata!"
+          ]
+        },
+        {
+          "kind": "graded",
+          "pass": true,
+          "detail": "output/cortex.mdv.h5ad validates (output/cortex.mdv.validation.json)",
+          "finishReason": "stop",
+          "capped": false,
+          "usage": {
+            "inputTokens": 515395,
+            "outputTokens": 9372,
+            "cacheCreationInputTokens": 58800,
+            "cacheReadInputTokens": 456569,
+            "reasoningTokens": 285
+          },
+          "tools": [
+            "skill_read(mdv-preparation/SKILL.md)",
+            "skill_read(mdv-preparation/references/asset-route.md)",
+            "skill_read(mdv-preparation/references/validation.md)",
+            "execute_command!",
+            "execute_command!",
+            "acquire_sandbox",
+            "execute_command",
+            "write_file",
+            "write_file",
+            "write_file",
+            "execute_command",
+            "edit_file",
+            "execute_command",
+            "write_file",
+            "execute_command",
+            "submit_file_metadata!"
+          ]
+        }
+      ]
+    }
+  ]
+}

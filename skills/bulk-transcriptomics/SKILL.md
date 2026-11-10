@@ -1,6 +1,6 @@
 ---
 name: bulk-transcriptomics
-description: Bulk RNA-seq and microarray differential expression analysis including method selection, batch correction, and complex experimental designs
+description: Read before you analyze bulk RNA-seq counts or normalized microarray data. It gives the test for each design and sample size (no replicates, small groups, interactions, repeated measures), the input that each test accepts, batch correction, and contrast traps.
 version: 1.0.0
 tags: [bulk-rna-seq, microarray, differential-expression, deseq2, limma, edger]
 ---

@@ -16,7 +16,6 @@ import { join } from "node:path";
 import { createCapturingLogger, type CapturedLog, type CapturingLogger } from "../../../__tests__/setup/logger.js";
 import { withSchema } from "../../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../../agents/sandbox-catalog.js";
-import { SANDBOX_AGENT_META } from "../../../agents/sandbox/index.js";
 import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../../providers/types.js";
@@ -26,7 +25,7 @@ import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, ty
 import type { Tool, ToolContext } from "../../define-tool.js";
 import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake-client.js";
 import { buildPlannerSearchTools, createGeneratePlanTool, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "../generate-plan.js";
-import { presentAt, presentFirst, presentGet } from "../../../lib/present.js";
+import { presentAt, presentFirst } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
 
 /** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
@@ -171,10 +170,6 @@ function blockImmediately(reason = "measurement complete"): ScriptedModel {
     return scriptedModel([callTools(toolCall("t1", "report_blocker", { reason })), reported]);
 }
 
-/** One phrase the first plannable agent really advertises — the planner schema takes nothing else. */
-const FIRST_AGENT_CAPABILITY = presentGet(SANDBOX_AGENT_META, PLANNABLE_AGENT_IDS[0]).capabilities[0];
-if (FIRST_AGENT_CAPABILITY === undefined) throw new Error("FIRST_AGENT_CAPABILITY is absent");
-
 /** A schema-valid planner plan — one step, on a real plannable agent. */
 function validCandidate(stepOverrides: Record<string, unknown> = {}) {
     return {
@@ -191,7 +186,6 @@ function validCandidate(stepOverrides: Record<string, unknown> = {}) {
                 acceptance_criteria: ["A ranked DE table is produced."],
                 depends_on: [],
                 agent: PLANNABLE_AGENT_IDS[0],
-                capability: FIRST_AGENT_CAPABILITY,
                 packages: ["pydeseq2"],
                 ...stepOverrides,
             },

@@ -55,12 +55,10 @@ function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputSto
     return createConversationAgent({
         provider: unusedChatProvider(),
         registerSubAgent: inProcessSubAgent,
-        utilityProvider: unusedChatProvider(),
         pool: new Pool(),
         embedding: unusedEmbedding,
         workspaceFs: makeFakeWorkspaceFs(),
         model: "anthropic/claude-opus-4-7",
-        utilityModel: "anthropic/claude-haiku-4-5",
         executeAnalysisWorkflow: refuseExecuteAnalysis,
         anchorReportSession: refuseAnchorReportSession,
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
@@ -91,14 +89,6 @@ describe("createConversationAgent", () => {
     // that something is absent.
     test("carries reference discovery, so provisioning is never decided blind", () => {
         expect(buildAgent().tools.map((tool) => tool.id)).toContain("list_available_refs");
-    });
-
-    // Discovery answers what the store HOLDS. It cannot answer what a capability WANTS: that lives
-    // in a skill pack, which a step agent reads and this agent never does. Without this tool an
-    // absent source reads as a dead end here, and the agent designs a method around it instead of
-    // naming the datasets a user can install.
-    test("carries the declared data requirement of a capability, which no skill reaches from here", () => {
-        expect(buildAgent().tools.map((tool) => tool.id)).toContain("inspect_capability_data");
     });
 
     // "Is Seurat installed?" is a manifest lookup, but without this tool the only way to

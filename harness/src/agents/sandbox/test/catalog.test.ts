@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { sandboxAnalysisStepStandardsPrompt, sandboxOrientCorePrompt } from "../../../prompts/sandbox-standards.js";
-import { bulkTranscriptomicsAgentPrompt } from "../../../prompts/sandbox/bulk-transcriptomics-agent.js";
+import { analystPrompt } from "../../../prompts/sandbox/analyst.js";
 import { dataProfilerPrompt } from "../../../prompts/sandbox/data-profiler.js";
 
 import { makeFakeSandboxAgentDeps } from "../__fixtures__/deps.js";
@@ -15,10 +15,6 @@ describe("createSandboxAgents", () => {
 
     it("returns one AgentDefinition per registered meta entry (key parity)", () => {
         expect(Object.keys(agents).sort()).toEqual(Object.keys(SANDBOX_AGENT_META).sort());
-    });
-
-    it("covers the full ported roster (22 agents)", () => {
-        expect(Object.keys(agents)).toHaveLength(22);
     });
 
     it("every agent lists the knowledge template through the base list, because the template follows the step, not the specialist", () => {
@@ -72,20 +68,20 @@ describe("createSandboxAgents", () => {
         }
     });
 
-    it("gives the Amass regulatory tool to the drug-repurposing agent only, and the patent tool to no sandbox agent", () => {
+    it("gives the Amass regulatory tool to the drug analyst only, and the patent tool to no sandbox agent", () => {
         for (const [id, def] of Object.entries(agents)) {
             const toolIds = new Set([...def.tools, ...(def.scriptTools ?? [])].map((t) => t.id));
-            expect(toolIds.has("search_regulatory_approvals"), `${id} search_regulatory_approvals`).toBe(id === "drug-repurposing-agent");
+            expect(toolIds.has("search_regulatory_approvals"), `${id} search_regulatory_approvals`).toBe(id === "drug-analyst");
             expect(toolIds.has("search_patents"), `${id} search_patents`).toBe(false);
         }
     });
 
     it("gives each host lookup only to the agents that need it, as script tools", () => {
         const holders: Record<string, readonly string[]> = {
-            humanbase: ["network-agent"],
-            // The network agent maps genes to the Entrez IDs of HumanBase, the genomic variant agent to the UniProt accessions of InterPro.
-            resolve_gene_ids: ["network-agent", "genomic-variant-agent"],
-            get_protein_domains: ["genomic-variant-agent"],
+            humanbase: ["analyst"],
+            // The analyst maps genes to the Entrez IDs of HumanBase and to the UniProt accessions of InterPro.
+            resolve_gene_ids: ["analyst"],
+            get_protein_domains: ["analyst"],
         };
         for (const [id, def] of Object.entries(agents)) {
             for (const [toolId, agentIds] of Object.entries(holders)) {
@@ -101,7 +97,7 @@ describe("createSandboxAgents", () => {
         }
     });
 
-    it("gives the gnomAD frequency tool to the genomic variant agent only, as a script tool", () => {
+    it("gives the gnomAD frequency tool to the analyst only, as a script tool", () => {
         for (const [id, def] of Object.entries(agents)) {
             expect(
                 def.tools.some((t) => t.id === "get_variant_frequencies"),
@@ -110,7 +106,7 @@ describe("createSandboxAgents", () => {
             expect(
                 (def.scriptTools ?? []).some((t) => t.id === "get_variant_frequencies"),
                 `${id} get_variant_frequencies`,
-            ).toBe(id === "genomic-variant-agent");
+            ).toBe(id === "analyst");
         }
     });
 
@@ -139,8 +135,8 @@ describe("createSandboxAgents", () => {
     });
 
     it("standard agents include the analysis-step layer", () => {
-        const bulk = presentGet(agents, "bulk-transcriptomics-agent");
-        expect(bulk.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(true);
+        const analyst = presentGet(agents, "analyst");
+        expect(analyst.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(true);
     });
 
     it("every AgentDefinition.model equals deps.model", () => {
@@ -151,8 +147,8 @@ describe("createSandboxAgents", () => {
 
     it("per-agent prompt text appears verbatim in the composed systemPrompt", () => {
         // Spot-check parity for two agents — one with appendAnalysisStepStandards
-        // (bulk-transcriptomics-agent) and one without (data-profiler).
-        expect(presentGet(agents, "bulk-transcriptomics-agent").systemPrompt.includes(bulkTranscriptomicsAgentPrompt.trim())).toBe(true);
+        // (analyst) and one without (data-profiler).
+        expect(presentGet(agents, "analyst").systemPrompt.includes(analystPrompt.trim())).toBe(true);
         expect(presentGet(agents, "data-profiler").systemPrompt.includes(dataProfilerPrompt.trim())).toBe(true);
     });
 
@@ -167,6 +163,5 @@ describe("createSandboxAgents", () => {
 
     it("non-plannable agents flagged in meta carry plannable=false", () => {
         expect(presentGet(SANDBOX_AGENT_META, "data-profiler").plannable).toBe(false);
-        expect(presentGet(SANDBOX_AGENT_META, "scientific-executor").plannable).toBe(false);
     });
 });

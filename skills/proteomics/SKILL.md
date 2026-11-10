@@ -1,6 +1,6 @@
 ---
 name: proteomics
-description: Proteomics analysis covering DDA, DIA, TMT/iTRAQ, Olink, and SomaScan platforms including preprocessing, normalization, differential expression, and PTM analysis
+description: Read before you analyze mass spectrometry or affinity proteomics data (label-free, isobaric labels, Olink, SomaScan) or phosphosites. It gives the preprocessing for each platform, the imputation for each pattern of missing values, the DE method, and which data is already normalized.
 version: 1.0.0
 tags: [proteomics, dda, dia, tmt, olink, somascan, mass-spectrometry]
 ---

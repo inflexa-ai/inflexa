@@ -135,9 +135,9 @@ describe("createChatPrinter", () => {
                 planId: "pln-abc12345",
                 title: "Differential expression",
                 steps: [
-                    { id: "T1S1", name: "load", agent: "scientific-executor", question: "q", depends_on: [], maxSteps: 30 },
-                    { id: "T2S1", name: "align", agent: "scientific-executor", question: "q", depends_on: ["T1S1"], maxSteps: 30 },
-                    { id: "T3S1", name: "quantify", agent: "scientific-executor", question: "q", depends_on: ["T1S1"], maxSteps: 30 },
+                    { id: "T1S1", name: "load", agent: "analyst", question: "q", depends_on: [], maxSteps: 30 },
+                    { id: "T2S1", name: "align", agent: "analyst", question: "q", depends_on: ["T1S1"], maxSteps: 30 },
+                    { id: "T3S1", name: "quantify", agent: "analyst", question: "q", depends_on: ["T1S1"], maxSteps: 30 },
                 ],
             },
         });

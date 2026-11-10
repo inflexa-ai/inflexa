@@ -28,7 +28,7 @@ const PLAN = AnalysisPlanSchema.parse({
             acceptance_criteria: ["a"],
             depends_on: [],
             maxSteps: 8,
-            agent: "scientific-executor",
+            agent: "analyst",
         },
         {
             id: "T1S2",
@@ -239,7 +239,7 @@ describe("triggerAnalysisRun — happy path", () => {
         expect(input.planStepById["T1S2"]).toEqual(PLAN.steps[1]);
         expect(input).not.toHaveProperty("promptByStepId");
         // T1S2 declares no agent → the "unknown" default.
-        expect(input.agentByStepId).toEqual({ T1S1: "scientific-executor", T1S2: "unknown" });
+        expect(input.agentByStepId).toEqual({ T1S1: "analyst", T1S2: "unknown" });
         expect(input.runSession).toBe(RUN_SESSION);
     });
 });

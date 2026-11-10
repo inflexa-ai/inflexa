@@ -1,6 +1,6 @@
 ---
 name: dna-methylation
-description: DNA methylation analysis — array (450K/EPIC), bisulfite-seq, DMP/DMR detection, clocks, deconvolution, and EWAS
+description: Read before you analyze methylation array or bisulfite data (DMP or DMR tests, epigenetic clocks, cell type deconvolution, EWAS). It tells which array steps cannot run here and the alternative, the correct scale for statistics, and the confounders that a blood study must control.
 version: 1.0.0
 tags: [methylation, 450k, epic, bisulfite-seq, wgbs, rrbs, dmp, dmr]
 ---

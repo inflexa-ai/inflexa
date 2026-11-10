@@ -31,6 +31,8 @@ import { makeSession } from "@inflexa-ai/harness/providers/__fixtures__/session.
 import { composeProfilerSeed, createSubmitProfileTool } from "@inflexa-ai/harness/tasks/data-profile.js";
 import { createWorkspaceFilesystem } from "@inflexa-ai/harness/workspace/filesystem.js";
 
+import { generateInputs, openRealSandbox, type RealSandbox } from "./docker-exec.js";
+
 export const ANALYSIS_ID = "analysis-001";
 export const RUN_ID = "run-001";
 
@@ -83,7 +85,15 @@ export type SandboxSetup = {
     readonly refs?: Readonly<Record<string, string>>;
     /** The knowledge service of the step. Present: the agent holds `knowledge_template`. An operation it omits refuses. */
     readonly knowledge?: Partial<KnowledgeClient>;
+    /**
+     * A Python program that writes the binary inputs of a real trial under the working directory of the program,
+     * which is the analysis root. A scripted trial reads the stub text of `files` in their place.
+     */
+    readonly generate?: string;
 };
+
+/** How a command of a trial runs: the rules of the case, or a container of the sandbox image. */
+export type ExecMode = "scripted" | "docker";
 
 /** The agent id of the data profiler, which profiles the inputs before any run. */
 export const PROFILER_ID = "data-profiler";
@@ -108,7 +118,7 @@ export type SandboxTrial = {
     readonly fileMetadata?: FileMetadataCell;
     /** The text of each file under the working directory, by working-directory-relative path. */
     files(): Readonly<Record<string, string>>;
-    dispose(): void;
+    dispose(): Promise<void>;
 };
 
 // The top-level modules of `sys.stdlib_module_names` (Python 3.14), plus the modules that PEP 594 removed in 3.13,
@@ -361,7 +371,7 @@ const REFUSING_KNOWLEDGE: KnowledgeClient = {
 /** The agent of a setup over a fresh tree, for one trial. */
 export async function openSandboxTrial(
     setup: SandboxSetup,
-    options: { readonly toolOutputStore: ToolOutputStore; readonly label: string },
+    options: { readonly toolOutputStore: ToolOutputStore; readonly label: string; readonly exec?: ExecMode },
 ): Promise<SandboxTrial> {
     mkdirSync(TRIALS_DIR, { recursive: true });
     const dir = mkdtempSync(join(TRIALS_DIR, `${options.label}-`));
@@ -375,6 +385,21 @@ export async function openSandboxTrial(
 
     const refsRoot = join(dir, "refs");
     writeTree(refsRoot, setup.refs ?? {});
+    let real: RealSandbox | undefined;
+    if (options.exec === "docker") {
+        if (setup.generate !== undefined) await generateInputs(setup.generate, root);
+        real = await openRealSandbox({
+            analysisId: ANALYSIS_ID,
+            runId: profiler ? DATA_PROFILE_RUN_LITERAL : RUN_ID,
+            stepId: profiler ? "profile" : setup.stepId,
+            treeRoot: root,
+            hostWorkingDir: workingDir,
+            workingDir: workingDirOf(setup),
+            refsRoot,
+            cpu: 2,
+            memoryGb: 8,
+        });
+    }
     const host = (path: string, cwd: string): string | undefined => {
         const absolute = path.startsWith("/") ? path : `${cwd}/${path}`;
         if (absolute === REFS_MOUNT || absolute.startsWith(`${REFS_MOUNT}/`)) return join(refsRoot, absolute.slice(REFS_MOUNT.length));
@@ -484,18 +509,20 @@ export async function openSandboxTrial(
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: () => Promise.resolve(root) }),
         model: "eval",
         skillsDir: join(REPO, "skills"),
-        farmLockFile: lockFile,
-        imagePackagesFile: join(dir, "env", "image-packages.json"),
+        farmLockFile: real?.farmLockFile ?? lockFile,
+        imagePackagesFile: real?.imagePackagesFile ?? join(dir, "env", "image-packages.json"),
         // The reference store of the trial. A case that scripts `list_available_refs` never reads it.
         refStorePath: refsRoot,
-        extendAnalysisFarm: (_analysisId, queries) =>
-            okAsync(
-                queries.map((query): PackageRequestOutcome => {
-                    const outcome = setup.link?.(query) ?? { kind: "absent", spelling: query.spelling, acquisitionPossible: false };
-                    if (outcome.kind === "linked") linked.add(fold(query.spelling));
-                    return outcome;
-                }),
-            ),
+        extendAnalysisFarm:
+            real?.extendAnalysisFarm ??
+            ((_analysisId, queries) =>
+                okAsync(
+                    queries.map((query): PackageRequestOutcome => {
+                        const outcome = setup.link?.(query) ?? { kind: "absent", spelling: query.spelling, acquisitionPossible: false };
+                        if (outcome.kind === "linked") linked.add(fold(query.spelling));
+                        return outcome;
+                    }),
+                )),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         // The CLI binds an embedding provider, thus the agent declares `workspace_search`. A case scripts its answer.
         embedding: {
@@ -511,7 +538,11 @@ export async function openSandboxTrial(
         toolOutputStore: options.toolOutputStore,
         step: {
             // A step acquires its sandbox with `acquire_sandbox`, and the profiler gets its lease before its loop.
-            lease: leaseOverClient({ exec }, { sandboxId: "sb-eval", host: "127.0.0.1", port: 8765, backend: "docker" }, { held: profiler }),
+            lease: leaseOverClient(
+                { exec: real === undefined ? exec : (_ref, request) => real.exec(request) },
+                { sandboxId: "sb-eval", host: "127.0.0.1", port: 8765, backend: "docker" },
+                { held: profiler },
+            ),
             workspaceRoot: root,
             analysisId: ANALYSIS_ID,
             allowedWritePrefix: workingDir,
@@ -546,6 +577,9 @@ export async function openSandboxTrial(
         unscripted,
         fileMetadata: deps.fileMetadata,
         files: () => textsUnder(workingDir),
-        dispose: () => rmSync(dir, { recursive: true, force: true }),
+        dispose: async () => {
+            await real?.dispose();
+            rmSync(dir, { recursive: true, force: true });
+        },
     };
 }

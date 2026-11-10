@@ -6,9 +6,9 @@
  * telemetry every completed LLM call produces. The harness names no storage or
  * display technology — it emits records; the embedder decides where they land.
  *
- * Delivery sites: the loop's `accountForChatCall`, and the two direct
- * `provider.chat` callers outside a loop — the ad hoc router and the analogy
- * conversion. OSS default: `createNoopUsageRecorder` (`./noop-usage-recorder.ts`).
+ * Delivery sites: the loop's `accountForChatCall`, and the one direct
+ * `provider.chat` caller outside a loop — the analogy conversion. OSS default:
+ * `createNoopUsageRecorder` (`./noop-usage-recorder.ts`).
  */
 
 import type { ResultAsync } from "neverthrow";

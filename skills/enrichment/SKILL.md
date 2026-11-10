@@ -1,6 +1,6 @@
 ---
 name: enrichment
-description: Functional enrichment and pathway analysis including GSEA, ORA, ssGSEA, GSVA, and decoupler-based activity inference
+description: Read before you do gene set enrichment, over-representation, per-sample pathway scores, or TF activity scores. It gives the method for a ranked or an unranked list, which gene set collections are available, the background and identifier traps, and how to report redundant GO terms.
 version: 1.0.0
 tags: [enrichment, gsea, ora, pathway, go, functional-annotation, gseapy, decoupler]
 ---

@@ -138,18 +138,12 @@ This SHALL hold for the phase's whole agent tree. Sub-agents derive from the pha
 - **WHEN** its record keys are composed
 - **THEN** they carry the step segment, so that phase and a plan step of the same run cannot mint one key from one call path
 
-### Requirement: Each LLM call produces an attributed usage record
+### Requirement: Each LLM call of the loop produces an attributed usage record
 
-For each LLM call that the harness completes, the harness MUST produce an `LlmUsageRecord`. The calls are each call of `runLoop`, each call of a follow-up request (`continueLoop`), and the call of the ad hoc router. The record carries these fields:
-
-- `recordKey`: an idempotency key.
-- The session attribution at the call site: `agentId`, `callPath`, the scope ids, and `runId` and `stepId` when the session carries a `RunFrame`.
-- `requestedModelId` and `servedModelId`, when the response reports them.
-- `usage`: the `ChatUsage` of the call.
-
-A field that a provider or a session does not supply MUST be absent. It MUST NOT be zero, and the harness MUST NOT invent it. A sub-agent run MUST produce its own records under its own `agentId` and `callPath`. Thus the ledger of records is complete across the agent tree. A continuation with an accounting agent id MUST produce its records under that id, and under the `callPath` that `forSubAgent` extends with that id.
-
-The harness MUST deliver each record when its call completes. It MUST NOT defer the record to the end of the run. Thus the calls that completed before a later fatal termination are in the ledger already. An aborted reply that reported usage MUST produce a record like each other reply. A call that reported nothing produces no record.
+For each LLM call that the harness completes, the harness MUST produce an `LlmUsageRecord`. The calls are each call
+of `runLoop` and each call of a follow-up request (`continueLoop`). The record carries `recordKey`, an idempotency
+key. It carries the session attribution: `agentId`, `callPath`, the scope ids, and the `runId` and `stepId` of a
+`RunFrame`. It carries `requestedModelId` and `servedModelId` when the response reports them, and the `ChatUsage`.
 
 #### Scenario: A workflow-step call is fully attributed
 
@@ -162,11 +156,30 @@ The harness MUST deliver each record when its call completes. It MUST NOT defer 
 - **WHEN** the loop of the sub-agent makes LLM calls
 - **THEN** each call MUST produce its own record, with the `agentId` of the sub-agent and the extended `callPath`
 
+#### Scenario: A post-step continuation is recorded under its accounting id
+
+- **GIVEN** a sandbox step whose file-metadata continuation makes a call that reports usage
+- **WHEN** the call completes
+- **THEN** the record MUST carry the `agentId` `file-metadata-describer`, and the `runId` and the `stepId` of the step
+
+### Requirement: A usage record holds only the reported fields
+
+A field that a provider or a session does not supply MUST be absent from a usage record. It MUST NOT be zero, and
+the harness MUST NOT invent it. A sub-agent run MUST produce its own records under its own `agentId` and
+`callPath`. A continuation with an accounting agent id MUST produce its records under that id, and under the
+`callPath` that `forSubAgent` extends with that id.
+
 #### Scenario: Unreported fields stay absent
 
 - **GIVEN** a provider that reports usage without a cache breakdown and without a served model id
 - **WHEN** the record is produced
 - **THEN** the fields that the provider did not report MUST be absent from the record, not zero and not a default
+
+### Requirement: The harness delivers a usage record when its call completes
+
+The harness MUST deliver each usage record when its call completes. It MUST NOT defer the record to the end of the
+run. Thus the calls that completed before a later fatal termination are in the ledger already. An aborted reply that
+reported usage MUST produce a record like each other reply. A call that reported nothing produces no record.
 
 #### Scenario: Calls before a fatal termination are recorded
 
@@ -179,44 +192,3 @@ The harness MUST deliver each record when its call completes. It MUST NOT defer 
 - **GIVEN** a streamed call that the client aborts after the provider reported usage
 - **WHEN** the loop processes the aborted reply
 - **THEN** the harness MUST produce a record that carries the reported usage
-
-#### Scenario: The ad hoc router call is recorded
-
-- **GIVEN** an ad hoc `execute_analysis` call whose router call reports usage
-- **WHEN** the router call completes
-- **THEN** the `UsageRecorder` MUST receive one record with the `agentId` `adhoc-router` and the `ChatUsage` of that call
-
-#### Scenario: A post-step continuation is recorded under its accounting id
-
-- **GIVEN** a sandbox step whose file-metadata continuation makes a call that reports usage
-- **WHEN** the call completes
-- **THEN** the record MUST carry the `agentId` `file-metadata-describer`, and the `runId` and the `stepId` of the step
-
-### Requirement: The ad hoc router call uses the accounting path of the loop
-
-The ad hoc router MUST run its call as a `runLoop` run of one request, under the agent id `adhoc-router` and a session that `forSubAgent` derives. Thus the loop accounts for the call the same as for each other call:
-
-- Fold the usage of the call into the turn accumulator of the tool context, when the context has one. Thus the root finish of the turn includes the call.
-- Deliver the usage record through the notice helper of the host-hooks capability.
-
-The call path of the record key MUST end with `adhoc-router`. The key also carries the `invocationId` of the tool call that runs the router. Thus a replay gives the same key again, and the key cannot collide with a key of the calling loop.
-
-A router call that fails reports no usage, thus it produces no record and no counter.
-
-#### Scenario: The router call reaches the turn total
-
-- **GIVEN** a chat turn in which `execute_analysis` routes an ad hoc request, and the router call reports usage
-- **WHEN** the root loop of the turn emits `finish`
-- **THEN** the turn total MUST include the usage of the router call
-
-#### Scenario: The router key does not collide with a key of the loop
-
-- **GIVEN** an ad hoc route under a `RunFrame`, in a turn whose loop also reports usage
-- **WHEN** the records are produced
-- **THEN** the call path of the router key MUST end with `adhoc-router`, and the key MUST differ from each key of the loop
-
-#### Scenario: A failed router call records nothing
-
-- **GIVEN** a router call that fails with a provider error
-- **WHEN** the router falls back
-- **THEN** the `UsageRecorder` MUST receive no record for that call

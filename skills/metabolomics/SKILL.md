@@ -1,6 +1,6 @@
 ---
 name: metabolomics
-description: Metabolomics and lipidomics analysis — untargeted/targeted workflows, normalization, annotation, and pathway mapping
+description: Read before you analyze untargeted or targeted metabolomics or lipidomics data. It gives the normalization for each case (drift, internal standards), the limits of spectral annotation and identification levels, the absent pathway data, and the traps of adducts, blanks, and PLS-DA.
 version: 1.0.0
 tags: [metabolomics, lipidomics, untargeted, targeted, xcms, mass-spectrometry]
 ---

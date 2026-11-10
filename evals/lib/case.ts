@@ -324,7 +324,6 @@ export type PlanStepView = {
     readonly question: string;
     readonly depends_on: readonly string[];
     readonly packages: readonly string[];
-    readonly capability: string;
     readonly status: string;
     readonly description: string;
 };
@@ -339,7 +338,6 @@ const PlanViewSchema = z.object({
                 question: z.string().catch(""),
                 depends_on: z.array(z.string()).catch([]),
                 packages: z.array(z.string()).catch([]),
-                capability: z.string().catch(""),
                 status: z.string().catch(""),
                 description: z.string().catch(""),
             }),

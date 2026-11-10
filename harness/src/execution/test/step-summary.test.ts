@@ -77,7 +77,7 @@ const ARTIFACT_PATHS = ["output/de-results.csv", "figures/volcano.png", "scripts
 
 function stepAgent(fs: WorkspaceFilesystem, stepDir: string, extra: readonly Tool[] = []): AgentDefinition {
     return {
-        id: "bulk-transcriptomics-agent",
+        id: "analyst",
         systemPrompt: "You are a test step agent.",
         model: "claude-opus-4-7",
         tools: [createReadFileTool(fs, stepDir), createGrepTool(fs, stepDir), ...extra],
@@ -93,7 +93,7 @@ function options(provider: ChatProvider, over: Partial<GenerateStepSummaryOption
         conversation: TRANSCRIPT,
         artifactPaths: ARTIFACT_PATHS,
         stepId: "step-1",
-        agentId: "bulk-transcriptomics-agent",
+        agentId: "analyst",
         runId: "run-1",
         ...over,
     };
@@ -109,7 +109,7 @@ describe("generateStepSummary", () => {
         const out = await generateStepSummary(options(provider));
         expect(out).toEqual({
             stepId: "step-1",
-            agentId: "bulk-transcriptomics-agent",
+            agentId: "analyst",
             markdown: "# Results\n\n- DE genes: 42",
         });
     });

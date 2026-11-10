@@ -1,6 +1,6 @@
 ---
 name: omics-general
-description: Cross-cutting principles for all omics analysis — AnnData/MuData universal containers, Python-first policy, data format detection, analysis phases, and shared analytical methods
+description: Read before your first step on omics data. It gives the rules for all omics steps (language and container defaults, how to find and read reference data, what to do when a dataset is absent, gene identifier conversion without network access, output standards).
 version: 2.0.0
 tags: [omics, bioinformatics, general-principles, anndata, mudata, python-first]
 ---

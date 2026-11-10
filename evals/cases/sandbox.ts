@@ -49,7 +49,7 @@ import {
 } from "../lib/case.js";
 import { ANALYSIS_ID, PROFILER_ID, workingDirOf, type ExecRule, type LockedPackage, type SandboxSetup } from "../lib/sandbox.js";
 
-const ROOT = `/${ANALYSIS_ID}`;
+export const ROOT = `/${ANALYSIS_ID}`;
 const INSTALL = /pip install|install\.packages|BiocManager|remotes::|devtools::|conda install|mamba install|uv pip/;
 
 /** The genes of the fixtures. The first 412 respond to the treatment: 280 up, 132 down. */
@@ -125,7 +125,7 @@ const BULK_PROFILE = profileOf(HUMAN, [
     },
 ]);
 
-type StepSpec = {
+export type StepSpec = {
     readonly stepId: string;
     readonly agent: string;
     readonly name: string;
@@ -143,6 +143,8 @@ type StepSpec = {
     readonly templateNotRetrieved?: string;
     /** The request that the plan answers. */
     readonly request?: string;
+    /** The goal of the analysis memory. Absent: the transcriptional response of the bulk fixtures. */
+    readonly goal?: string;
 };
 
 /** The briefing of a step, as the scheduler composes it at dispatch. */
@@ -169,7 +171,7 @@ function briefing(spec: StepSpec): string {
         profile: spec.profile,
         upstream: spec.upstream ?? [],
         memory: {
-            goal: "Find the transcriptional response to the treatment.",
+            goal: spec.goal ?? "Find the transcriptional response to the treatment.",
             constraints: (spec.memoryConstraints ?? []).map((text, i) => ({ id: `c${String(i).padStart(7, "0")}`, text, origin: "user" as const })),
         },
     });
@@ -196,11 +198,11 @@ const QC_TABLE = `sample,library_size,detected_genes\n${["T1", "T2", "T3", "C1",
 const QC_SUMMARY =
     "# Quality control\n\nAll 6 libraries pass: 2.1-2.4 M reads each, 1800-1850 genes detected. No sample is an outlier on the PCA. The table `output/qc_metrics.csv` holds the metrics of each sample.\n";
 
-function deHandoff(stepId: string): UpstreamHandoff {
+export function deHandoff(stepId: string): UpstreamHandoff {
     const dir = `${ROOT}/runs/run-001/${stepId}`;
     return {
         stepId,
-        agentId: "bulk-transcriptomics-agent",
+        agentId: "analyst",
         summaryMarkdown: DE_SUMMARY,
         summaryPath: `${dir}/output/summary.md`,
         outputDir: `${dir}/output`,
@@ -212,7 +214,7 @@ function qcHandoff(stepId: string): UpstreamHandoff {
     const dir = `${ROOT}/runs/run-001/${stepId}`;
     return {
         stepId,
-        agentId: "bulk-transcriptomics-agent",
+        agentId: "analyst",
         summaryMarkdown: QC_SUMMARY,
         summaryPath: `${dir}/output/summary.md`,
         outputDir: `${dir}/output`,
@@ -224,7 +226,7 @@ function qcFiles(stepId: string): Readonly<Record<string, string>> {
     return { [`runs/run-001/${stepId}/output/qc_metrics.csv`]: QC_TABLE, [`runs/run-001/${stepId}/output/summary.md`]: QC_SUMMARY };
 }
 
-function deFiles(stepId: string, style: SymbolStyle = "human"): Readonly<Record<string, string>> {
+export function deFiles(stepId: string, style: SymbolStyle = "human"): Readonly<Record<string, string>> {
     return { [`runs/run-001/${stepId}/output/de_results.csv`]: `${deTableOf(style)}\n`, [`runs/run-001/${stepId}/output/summary.md`]: DE_SUMMARY };
 }
 
@@ -233,7 +235,7 @@ function rodentFiles(style: "mouse" | "rat"): Readonly<Record<string, string>> {
     return { "data/inputs/f-counts/counts.tsv": `${countsOf(style)}\n`, "data/inputs/f-meta/samples.csv": `${SAMPLES}\n` };
 }
 
-const PYTHON_BASE: readonly LockedPackage[] = [
+export const PYTHON_BASE: readonly LockedPackage[] = [
     { name: "pandas", version: "2.2.3", track: "python" },
     { name: "numpy", version: "2.1.3", track: "python" },
     { name: "matplotlib", version: "3.9.2", track: "python" },
@@ -242,7 +244,7 @@ const PYTHON_BASE: readonly LockedPackage[] = [
 ];
 
 /** PyDESeq2 with the distributions that it imports. */
-const PYDESEQ2: readonly LockedPackage[] = [
+export const PYDESEQ2: readonly LockedPackage[] = [
     { name: "pydeseq2", version: "0.4.12", track: "python" },
     { name: "anndata", version: "0.11.1", track: "python" },
     { name: "scikit-learn", version: "1.5.2", track: "python" },
@@ -250,7 +252,7 @@ const PYDESEQ2: readonly LockedPackage[] = [
 ];
 
 /** A canned answer of `list_available_refs`. */
-function refs(lines: readonly string[]): ToolScript {
+export function refs(lines: readonly string[]): ToolScript {
     const content = ["Reference files visible beneath /mnt/refs:", ...lines].join("\n");
     return {
         ok: {
@@ -283,7 +285,7 @@ function gmtOf(style: SymbolStyle): string {
 }
 
 /** The files of the reference store that the step cases read. */
-const REF_FILES: Readonly<Record<string, string>> = {
+export const REF_FILES: Readonly<Record<string, string>> = {
     "msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt": gmtOf("human"),
     "msigdb/hallmark/mh.all.v2024.1.Mm.symbols.gmt": gmtOf("mouse"),
     "msigdb/hallmark/rh.all.v2024.1.Rn.symbols.gmt": gmtOf("rat"),
@@ -355,7 +357,7 @@ function unavailableLink(reason: string): (query: PackageQuery) => PackageReques
     return (query) => ({ kind: "unavailable", spelling: query.spelling, reason });
 }
 
-type SandboxCaseSpec = {
+export type SandboxCaseSpec = {
     readonly id: string;
     readonly set: EvalCase["set"];
     readonly source: string;
@@ -367,7 +369,7 @@ type SandboxCaseSpec = {
     readonly grade: EvalCase["grade"];
 };
 
-function sandboxCase(spec: SandboxCaseSpec): EvalCase {
+export function sandboxCase(spec: SandboxCaseSpec): EvalCase {
     return {
         id: spec.id,
         set: spec.set,
@@ -384,7 +386,7 @@ function sandboxCase(spec: SandboxCaseSpec): EvalCase {
 
 const DE_STEP: StepSpec = {
     stepId: "T1S1",
-    agent: "bulk-transcriptomics-agent",
+    agent: "analyst",
     name: "Differential expression",
     question: "Which genes change between treated and control?",
     acceptance: ["A table of each gene with log2 fold change and adjusted p-value", "A volcano plot"],
@@ -606,7 +608,7 @@ function usesBriefing(): EvalCase["grade"] {
 
 const ENRICH_STEP: StepSpec = {
     stepId: "T1S2",
-    agent: "enrichment-agent",
+    agent: "analyst",
     name: "Hallmark enrichment",
     question: "Which hallmark pathways do the treatment-responsive genes enrich for?",
     acceptance: ["A table of hallmark sets with enrichment statistics", "A dot plot of the top sets"],
@@ -645,7 +647,7 @@ function namedOutputs(text: string): Record<string, string> {
 }
 
 /** A run of a Python or R script under `scripts/` that leaves the files that the script names. */
-function namedOutputsRun(stdout: string): ExecRule {
+export function namedOutputsRun(stdout: string): ExecRule {
     return ({ argv, line, read, cwd }) => {
         if (!["python", "python3", "Rscript"].includes(argv[0] ?? "")) return undefined;
         const script = /scripts\/\S+\.(py|R)\b/.exec(line)?.[0];
@@ -707,7 +709,7 @@ const DOC_FILES = { ...BULK_FILES, "data/inputs/f-doc/methods.md": METHODS_DOC, 
 
 const DOC_STEP: StepSpec = {
     stepId: "T1S1",
-    agent: "statistical-modeling-agent",
+    agent: "analyst",
     name: "Methods summary",
     question: "Summarize the library preparation and the treatment protocol of the study in one markdown document. No new computation.",
     acceptance: ["A markdown summary in output/ of the methods and the protocol"],
@@ -1130,7 +1132,7 @@ const stepCases: readonly EvalCase[] = [
         source: "paraphrase of step-absent-package-blocks",
         step: {
             stepId: "T2S1",
-            agent: "microbiome-agent",
+            agent: "analyst",
             name: "Differential abundance",
             question: "Which taxa differ in abundance between treated and control?",
             constraints: ["Use ANCOM-BC2 from the ANCOMBC package, as the protocol requires."],
@@ -1187,7 +1189,7 @@ const stepCases: readonly EvalCase[] = [
         step: {
             ...DE_STEP,
             stepId: "T1S4",
-            agent: "single-cell-agent",
+            agent: "analyst",
             name: "Cell clusters",
             question: "Which cell clusters does the data hold, and what cell type is each?",
             constraints: ["Use scanpy, as in the earlier analyses of the lab."],
@@ -1290,7 +1292,7 @@ const stepCases: readonly EvalCase[] = [
         source: "paraphrase of step-raw-reads-scope",
         step: {
             stepId: "T1S1",
-            agent: "genomic-variant-agent",
+            agent: "analyst",
             name: "Somatic variants",
             question: "Which somatic variants does the tumor carry against its matched normal?",
             acceptance: ["A filtered VCF of somatic variants", "A table of the variants with their consequences"],
@@ -1334,7 +1336,7 @@ const stepCases: readonly EvalCase[] = [
         source: "paraphrase of step-persists-script",
         step: {
             stepId: "T1S1",
-            agent: "statistical-modeling-agent",
+            agent: "analyst",
             name: "Survival model",
             question: "Does the treatment arm change overall survival, adjusted for age and stage?",
             acceptance: ["A table of hazard ratios with 95% intervals", "A Kaplan-Meier plot by arm"],
