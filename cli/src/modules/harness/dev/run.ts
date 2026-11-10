@@ -171,6 +171,10 @@ function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, runSession:
         threadId: null,
         steps: plan.steps.map((s) => ({ id: s.id, depends_on: s.depends_on })),
         planStepById: Object.fromEntries(plan.steps.map((s) => [s.id, s])),
+        // The request and the claim views of the plan ride with the steps, as on the chat path. Without them
+        // the seed of a step loses the request, and the briefing and the summary lose the claims of the plan.
+        request: plan.request,
+        claims: plan.claims,
         agentByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, s.agent ?? "unknown"])),
         runSession,
     };
