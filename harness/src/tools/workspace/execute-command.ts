@@ -35,13 +35,14 @@ import type { BoundLease } from "../../sandbox/leases.js";
 import type { ProvenanceFrame } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame, stripMountPrefix } from "../../provenance/exec-frame.js";
-import { decisionRecordPathFor, reconcileScriptRecord, type DecisionRecordStore } from "./decision-record.js";
+import { decisionRecordPathFor, noteScriptRun, reconcileScriptRecord, type DecisionRecordStore } from "./decision-record.js";
 import type { WorkspaceMutator, WriteRecord } from "./mutator.js";
 import { EXEC_STREAM_BYTE_CAP, boundExecResult, type BoundedExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { collapseWhitespace } from "../../lib/text.js";
+import { errorMessageOf } from "../../lib/thrown.js";
 import type { Logger } from "../../lib/logger.js";
 
 const ExecuteCommandInputSchema = z.object({
@@ -133,7 +134,111 @@ export function scriptPathsOf(command: readonly string[], cwd: string): string[]
             for (const dir of dirs) add(dir, word);
         }
     }
+    // The script that a runner takes can have a name with no extension, thus the words above do not find it.
+    for (const path of runScriptPathsOf(command, cwd)) paths.add(path);
     return [...paths];
+}
+
+/** The commands that run the script after them and give its arguments to it. A word that is not here, for example `cat`, reads the script as data. */
+const SCRIPT_RUNNERS: ReadonlySet<string> = new Set(["bash", "sh", "zsh", "node", "bun", "deno"]);
+
+function isScriptRunner(word: string): boolean {
+    const name = posixPath.basename(word);
+    return SCRIPT_RUNNERS.has(name) || name.startsWith("Rscript") || name.startsWith("python");
+}
+
+/**
+ * The options of a runner that still run the script. Any other option stops the detection: `--version`, `--check`,
+ * and `-n` end with exit code 0 and run nothing, and `-e` and `-c` run a different program.
+ */
+const RUN_OPTIONS: ReadonlySet<string> = new Set([
+    "--vanilla",
+    "--no-save",
+    "--no-restore",
+    "--no-environ",
+    "--no-site-file",
+    "--no-init-file",
+    "--no-echo",
+    "--quiet",
+    "-q",
+    "-u",
+    "-B",
+]);
+
+/**
+ * The script that the command of `words` runs: the command itself, or the first word after the run options of a
+ * runner. Each word after the script is an argument of the script, thus it changes nothing here.
+ */
+function runScriptOf(words: readonly string[]): string | undefined {
+    const [head] = words;
+    if (head === undefined) return undefined;
+    if (hasScriptExtension(head)) return head;
+    if (!isScriptRunner(head)) return undefined;
+    // The first word after the run options is the script, with or without an extension: a rendered script can
+    // have a name with none. `--file=` is an option of R, and R reads the options after it also, thus it is no script here.
+    const script = words.slice(1).find((word) => !RUN_OPTIONS.has(word));
+    return script === undefined || script.startsWith("-") ? undefined : script;
+}
+
+/** What a shell line must not hold for its exit code to be the exit code of one script. `&` is permitted only as `&&`. */
+const NOT_ONE_COMMAND: readonly string[] = [";", "|", "(", ")", "'", '"', "`", "$", "\\", "\n", "<", "{", "}", "*", "?", "~", "!", "#"];
+
+/** The words of a plain shell text, at the spaces and the tabs only. */
+function spaceWords(text: string): string[] {
+    return text
+        .split("\t")
+        .join(" ")
+        .split(" ")
+        .filter((word) => word.length > 0);
+}
+
+/**
+ * The script whose exit code is the exit code of the command, as a list of no path or one path. A run entry of a
+ * record is for this script only, and a second fit trusts that entry. Thus the function takes a small set of
+ * forms, and each other form gives no path:
+ *
+ * - A direct argv: the script, or a runner such as `Rscript` with run options and then the script.
+ * - A shell line that is one such command, with output redirects after it.
+ * - A chain of `&&` that ends with such a command, when each command before it is `cd <directory>` or
+ *   `mkdir -p <directory>`. Such a chain ends with exit code 0 only when the script ran and ended with 0. A `cd`
+ *   moves the script.
+ *
+ * A pipe, a list, a subshell, a quote, an expansion, and an input redirect give a different exit code, a different
+ * script, or a word that is not a command. The host does not parse the shell.
+ */
+export function runScriptPathsOf(command: readonly string[], cwd: string): string[] {
+    const [line] = command;
+    if (line === undefined) return [];
+    if (command.length > 1) {
+        const script = runScriptOf(command);
+        return script === undefined ? [] : [posixPath.resolve(cwd, script)];
+    }
+    if (NOT_ONE_COMMAND.some((mark) => line.includes(mark))) return [];
+    // The word `2>&1` holds an `&` that is no operator. Each other `&` must be the word `&&`. A `2>&1` or an `&&`
+    // that touches a different word gives no path: the host cannot tell where that word ends.
+    const words = spaceWords(line).filter((word) => word !== "2>&1");
+    if (words.some((word) => word.includes("&") && word !== "&&")) return [];
+    const segments: string[][] = [[]];
+    for (const word of words) {
+        if (word === "&&") segments.push([]);
+        else segments.at(-1)?.push(word);
+    }
+    if (segments.some((segment) => segment.length === 0)) return [];
+    let dir = cwd;
+    for (const segment of segments.slice(0, -1)) {
+        if (segment.some((word) => word.includes(">"))) return [];
+        const [head, first, second] = segment;
+        if (head === "cd" && segment.length === 2 && first !== undefined && !first.startsWith("-")) dir = posixPath.resolve(dir, first);
+        else if (!(head === "mkdir" && segment.length === 3 && first === "-p" && second !== undefined && !second.startsWith("-"))) return [];
+    }
+    // The command ends at its first redirect. A redirect can touch the word before it (`de.R>log.txt`): the text
+    // before the `>` is then a word of the command, unless it is the file descriptor `1` or `2`.
+    const last = segments.at(-1) ?? [];
+    const redirect = last.findIndex((word) => word.includes(">"));
+    const before = redirect === -1 ? "" : (last[redirect]?.split(">")[0] ?? "");
+    const commandWords = redirect === -1 ? last : [...last.slice(0, redirect), ...(before === "" || before === "1" || before === "2" ? [] : [before])];
+    const script = runScriptOf(commandWords);
+    return script === undefined ? [] : [posixPath.resolve(dir, script)];
 }
 
 /**
@@ -254,6 +359,9 @@ export function createExecuteCommandTool(
             // filesystem resolves it the same way.
             const recordWrites: WriteRecord[] = [];
             const restored: string[] = [];
+            // The digest of each script that has a record, as the check before the run read it. The run entry takes
+            // this digest: the run can change the script, thus nothing reads the script again after it.
+            const recordedDigests = new Map<string, string>();
             if (deps.workspaceFilesystem && deps.mutator && deps.records) {
                 for (const scriptPath of scriptPathsOf(command, effectiveCwd)) {
                     const checked = await reconcileScriptRecord({
@@ -265,6 +373,7 @@ export function createExecuteCommandTool(
                         toolName: "execute_command",
                         scriptPath,
                     });
+                    if ("sha256" in checked && checked.sha256 !== undefined) recordedDigests.set(scriptPath, checked.sha256);
                     if (checked.status === "noted") recordWrites.push(...checked.writes);
                     if (checked.status === "restored") recordWrites.push(checked.write);
                     if (checked.status === "noted" && !checked.copyWritten) {
@@ -292,6 +401,35 @@ export function createExecuteCommandTool(
             });
             if (ran.isErr()) return err(ran.error);
             const result = ran.value;
+
+            // The record of each script that the command ran takes one run entry. The command already ran, thus a
+            // failed write is a warning and never an error of the call. A script with no record has no digest here.
+            if (deps.workspaceFilesystem && deps.mutator && deps.records) {
+                for (const scriptPath of runScriptPathsOf(command, effectiveCwd)) {
+                    const sha256 = recordedDigests.get(scriptPath);
+                    if (sha256 === undefined) continue;
+                    try {
+                        const noted = await noteScriptRun({
+                            filesystem: deps.workspaceFilesystem,
+                            mutator: deps.mutator,
+                            records: deps.records,
+                            session: ctx.session,
+                            invocationId: ctx.invocationId,
+                            toolName: "execute_command",
+                            scriptPath,
+                            exitCode: result.exitCode,
+                            sha256,
+                        });
+                        if (noted.status === "noted") recordWrites.push(...noted.writes);
+                        else recordLogger.warn("the decision record took no run entry", { path: scriptPath, status: noted.status });
+                    } catch (cause) {
+                        recordLogger.warn("the write of a run entry of a decision record failed", {
+                            path: scriptPath,
+                            cause: errorMessageOf(cause) ?? "unknown",
+                        });
+                    }
+                }
+            }
 
             const bounded: ExecuteCommandResult =
                 restored.length > 0
