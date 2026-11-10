@@ -1,6 +1,7 @@
 # knowledge-plane-tools Specification
 
 ## Purpose
+
 The tools that ground a plan on the knowledge service: the optional knowledge client, the recommend and check tools of the planner, and the template tool of a step. The client is an interface that an embedder binds at its composition root, or does not bind. A plan pins one release of the service. A local slot never leaves the machine, and a decision record follows each rendered script.
 
 ## Requirements
@@ -253,6 +254,8 @@ A departure of the plan changes a setting before the intersection. A setting tha
 
 A rule can give a setting as a policy word, which is not a value of a slot. The served contract can carry `setting_bindings`. Each entry maps one setting with one value to one slot with one slot value. The service gives no more than one entry for one setting with one value, and the parent MUST take the first such entry. The parent MUST bind the slot of an entry when a setting of the step has the name and the value of that entry. The parent MUST read the setting after its departure. Thus a departure that changes the value binds the slot only when an entry maps the new value. A departure with no value MUST NOT bind the slot, and it MUST NOT name the slot as excluded. The source of the bound slot MUST name the setting and the source of the setting. The parent MUST NOT bind the slot of an entry when the slot is not an adaptable slot of the served contract, when the slot is local, or when the slot value does not fit the slot. The seed MUST list that setting as unbound with the reason. A slot takes the first value that binds it. A later setting that gives a different value MUST be listed as unbound.
 
+A script does some settings with no slot, for example the adjustment of a fit script. The served contract can carry `settings_by_construction`. Each entry names one setting with the value that the script does. The service gives no more than one entry for one setting, and the parent MUST take the first such entry. An entry whose setting is the name of a slot of the served contract says nothing, because the slot carries that setting. The parent MUST read the setting after its departure. A setting of the step can have the name and the value of an entry. The seed MUST then list it under `Done by the script` with its procedure step and its source. The seed MUST NOT list that setting as unbound, and the binding MUST NOT hold a slot or a source for it. When the setting has a different value, the seed MUST list it as unbound, and the line MUST name the value that the script does. A departure with no value can name the setting. The seed MUST then list it as unbound, and the line MUST say that the script does it with no slot. The binding MUST NOT name an excluded slot for it. When the served version differs from the version of the plan, the seed MUST list no setting under `Done by the script`.
+
 A template gives each slot a value, and an omitted slot takes the default of the template. Thus the binding MUST name an adaptable slot as excluded when a departure with no value names it. `knowledge_template` MUST refuse a render that sends no value for an excluded slot. It MUST also refuse a value with no override. The decision record MUST keep the override of an excluded slot with a `plan_value` of `null`.
 
 #### Scenario: A policy word on an integer slot
@@ -319,6 +322,23 @@ A template gives each slot a value, and an omitted slot takes the default of the
 - **GIVEN** a served contract whose `setting_bindings` name a slot that is local, a slot that the contract does not hold, or a value that does not fit the slot
 - **WHEN** the seed composes
 - **THEN** the binding holds no value for that slot, and the seed lists the setting as unbound with the reason
+
+#### Scenario: A setting that the script does with no slot
+
+- **GIVEN** a step whose settings hold `adjustment = BH` with the source `rule:R-0003`
+- **AND** a served contract whose `settings_by_construction` hold `adjustment = BH`
+- **WHEN** the seed composes
+- **THEN** the seed lists `adjustment` under `Done by the script` with its procedure step and its source
+- **AND** the seed does not list it as unbound, and the binding holds no slot for it
+
+#### Scenario: A plan value that the script does not do
+
+- **GIVEN** the same step and the same contract, and a departure that gives `adjustment = bonferroni`
+- **WHEN** the seed composes
+- **THEN** the seed lists `adjustment` as unbound, and the line names the value `BH` that the script does
+- **WHEN** the departure gives `adjustment` no value
+- **THEN** the seed lists `adjustment` as unbound, and the line says that the script does it with no slot
+- **AND** the binding names no excluded slot
 
 #### Scenario: A render of an excluded slot
 

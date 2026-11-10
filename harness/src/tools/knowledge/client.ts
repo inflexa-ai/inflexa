@@ -248,6 +248,19 @@ export const TemplateContractSchema = z.looseObject({
             }),
         )
         .optional(),
+    /**
+     * The settings of a rule that the script of the template does with no slot, for example the adjustment of a
+     * fit script. The seed lists such a setting of the plan step as done by the script. Absent when the template
+     * lists none.
+     */
+    settings_by_construction: z
+        .array(
+            z.looseObject({
+                setting: z.string(),
+                value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]),
+            }),
+        )
+        .optional(),
     inputs: z.array(TemplateInputSchema).optional(),
     outputs: z.array(z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() })),
     /** The input requirements in prose, from the applicability of the template. */

@@ -653,6 +653,74 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).not.toContain("`min_count` = 10");
     });
 
+    describe("a setting that the script of the template does with no slot", () => {
+        const ADJUSTMENT = { step: "multiple_testing", name: "adjustment", value: "BH", source: "rule:R-0003" } as const;
+        const doneContract = (entries: { setting: string; value: string | number | boolean }[] = [{ setting: "adjustment", value: "BH" }]) => ({
+            ...contractAnswer(),
+            settings_by_construction: entries,
+        });
+        const compose = async (grounding: AnalysisStep["grounding"], contract: ReturnType<typeof contractAnswer> = doneContract()) => {
+            const root = await makeWorkspace();
+            const fake = fakeKnowledgeClient({ contract });
+            return composeStepSeed({ input: input([planStep("T1S2", [], grounding)]), stepId: "T1S2", runId: RUN_ID, deps: deps(root, {}, fake.client) });
+        };
+        const DONE = "Done by the script (the plan states them, and the script does them with no slot; send no value for them):";
+        const LINE = '`adjustment` = "BH" (multiple_testing; rule:R-0003)';
+
+        it("lists the setting as done by the script, binds no slot, and does not list it as unbound", async () => {
+            const seed = await compose(grounded([ADJUSTMENT]));
+            // The decision record holds only what the script reads, thus the binding holds no slot and no source.
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(seed.prompt).toContain(`${DONE}\n- ${LINE}`);
+            expect(seed.prompt).not.toContain("no slot of the template carries it");
+            expect(seed.prompt).not.toContain("Unbound settings");
+        });
+
+        it("lists the setting as unbound with no entry of the contract", async () => {
+            const seed = await compose(grounded([ADJUSTMENT]), contractAnswer());
+            expect(seed.prompt).toContain(`${LINE}: no slot of the template carries it`);
+            expect(seed.prompt).not.toContain("Done by the script");
+        });
+
+        it("reports a different plan value as a conflict: no slot can send it", async () => {
+            const changed = { rule: "R-0003@bb22", setting: "adjustment", value: "bonferroni", reason: "the plan controls the family-wise error rate" };
+            const seed = await compose(departed(grounded([ADJUSTMENT]), [changed]));
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {}, departures: [changed] });
+            expect(seed.prompt).toContain('the script of the template does `adjustment` = "BH" with no slot, and the plan value cannot be sent');
+            expect(seed.prompt).not.toContain("Done by the script");
+        });
+
+        it("reports a setting that the plan removes: the script does it with no slot, and the binding excludes no slot", async () => {
+            const removed = { rule: "R-0003@bb22", setting: "adjustment", reason: "the plan reports the raw p-values" };
+            const seed = await compose(departed(grounded([ADJUSTMENT]), [removed]));
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {}, departures: [removed] });
+            expect(seed.prompt).toContain(
+                'the plan departs from R-0003@bb22 and does not apply it (the plan reports the raw p-values), but the script of the template does `adjustment` = "BH" with no slot',
+            );
+            expect(seed.prompt).not.toContain("Done by the script");
+        });
+
+        it("matches a boolean of the contract against the value of the plan", async () => {
+            const filtering = { step: "multiple_testing", name: "independent_filtering", value: true };
+            const seed = await compose(grounded([filtering]), doneContract([{ setting: "independent_filtering", value: true }]));
+            expect(seed.prompt).toContain(`${DONE}\n- \`independent_filtering\` = true (multiple_testing)`);
+        });
+
+        it("lets a slot of the same name carry the setting: the entry of the contract then says nothing", async () => {
+            const direct = { step: "filter_low_counts", name: "min_count", value: 10, source: "doi:10.12688/f1000research.7035.1" };
+            const seed = await compose(grounded([direct]), doneContract([{ setting: "min_count", value: 10 }]));
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: { min_count: 10 }, sources: { min_count: "doi:10.12688/f1000research.7035.1" } });
+            expect(seed.prompt).not.toContain("Done by the script");
+        });
+
+        it("says nothing as done when the served version differs from the plan", async () => {
+            const seed = await compose(grounded([ADJUSTMENT]), { ...doneContract(), version: "9.9.9" });
+            expect(seed.templateBinding).toBeUndefined();
+            expect(seed.prompt).toContain("not bound, because the served version differs from the plan");
+            expect(seed.prompt).not.toContain("Done by the script");
+        });
+    });
+
     describe("a policy setting that the template maps to a slot", () => {
         const POLICY = { step: "filter_low_counts", name: "depth_policy", value: "low_depth_panel", source: "rule:R-0571" } as const;
         const mappedContract = (slot = "min_count", slotValue: string | number = 5) => ({
