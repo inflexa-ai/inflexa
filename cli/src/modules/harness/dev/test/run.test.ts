@@ -242,6 +242,26 @@ describe("triggerAnalysisRun — happy path", () => {
         expect(input.agentByStepId).toEqual({ T1S1: "analyst", T1S2: "unknown" });
         expect(input.runSession).toBe(RUN_SESSION);
     });
+
+    test("passes the request and the claim views of the plan, as the chat path does", async () => {
+        const { seams, rec } = makeSeams();
+        const claim = { id: "R-0001@e7d0", snapshot: "sha256:abc", title: "A rule", statement: "Use the Wald test.", strength: "strong", evidence: [] };
+        const plan = AnalysisPlanSchema.parse({ ...PLAN, request: "Which genes differ?", claims: [claim] });
+
+        (await triggerAnalysisRun(seams, { ...PARAMS, plan }))._unsafeUnwrap();
+
+        expect(rec.launched?.input.request).toBe("Which genes differ?");
+        expect(rec.launched?.input.claims).toEqual([claim]);
+    });
+
+    test("passes no request and no claim view for a plan that holds none", async () => {
+        const { seams, rec } = makeSeams();
+
+        (await triggerAnalysisRun(seams, PARAMS))._unsafeUnwrap();
+
+        expect(rec.launched?.input.request).toBeUndefined();
+        expect(rec.launched?.input.claims).toBeUndefined();
+    });
 });
 
 describe("renderRunProgress — a paused run keeps waiting, and its progress names each wait", () => {
