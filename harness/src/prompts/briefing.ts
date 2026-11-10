@@ -329,6 +329,12 @@ export type TemplateBrief = {
     /** The plan settings bound to a slot, in plan order. Empty when the served version differs from the plan. */
     readonly bound: readonly TemplateBoundSetting[];
     /**
+     * The render of the reported fit that the carried slots of the contract read. `source` names its step and its
+     * template. `shown` holds the values that the host does not bind, one line each. `note` gives the reason when
+     * the host found no one record of that render. Absent when the contract carries no slot.
+     */
+    readonly reported_fit?: { readonly source?: string; readonly shown: readonly string[]; readonly note?: string };
+    /**
      * The plan settings that the script of the template does with no slot, one line each. The agent does not do
      * them again, and no slot takes them. Empty when the served contract lists none.
      */
@@ -417,6 +423,13 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
 
     if (brief.bound.length > 0) {
         blocks.push(`Bound by the plan:\n${bullets(brief.bound.map((setting) => `\`${setting.name}\` = ${slotValue(setting.value)} (${setting.source})`))}`);
+    }
+
+    if (brief.reported_fit?.note) blocks.push(`Values of the reported fit: ${brief.reported_fit.note}`);
+    if (brief.reported_fit && brief.reported_fit.shown.length > 0) {
+        blocks.push(
+            `Values of ${brief.reported_fit.source ?? "the reported fit"} that are not bound (a path is a fact of the step that wrote it, and the script of the fit can change a value at run time; make sure of each one against the summary of the fit, then send it):\n${bullets(brief.reported_fit.shown)}`,
+        );
     }
 
     if (brief.done_by_script.length > 0) {

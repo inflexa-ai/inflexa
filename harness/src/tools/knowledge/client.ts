@@ -249,6 +249,14 @@ export const TemplateContractSchema = z.looseObject({
         )
         .optional(),
     /**
+     * The slots that take the values of the render of a template of `from_templates` in a step before this one,
+     * for example the filter of the reported fit in a script that fits that model again. The host binds each
+     * `bind` slot to the value in the decision record of that render, and the seed shows each `show` slot.
+     */
+    carried_slots: z
+        .looseObject({ from_templates: z.array(z.string()), bind: z.array(z.string()).optional(), show: z.array(z.string()).optional() })
+        .optional(),
+    /**
      * The settings of a rule that the script of the template does with no slot, for example the adjustment of a
      * fit script. The seed lists such a setting of the plan step as done by the script. Absent when the template
      * lists none.
