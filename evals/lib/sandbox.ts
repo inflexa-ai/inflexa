@@ -13,6 +13,7 @@ import { dirname, join, relative } from "node:path";
 import { okAsync } from "neverthrow";
 
 import { createSandboxAgents, type SandboxAgentDeps } from "@inflexa-ai/harness/agents/sandbox/index.js";
+import { unusedCitationResolver } from "@inflexa-ai/harness/citations/__fixtures__/resolver.js";
 import { createPool } from "@inflexa-ai/harness/lib/storage.js";
 import type { ToolOutputStore } from "@inflexa-ai/harness/loop/tool-output.js";
 import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
@@ -524,6 +525,7 @@ export async function openSandboxTrial(
                     }),
                 )),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        citationResolver: unusedCitationResolver,
         // The CLI binds an embedding provider, thus the agent declares `workspace_search`. A case scripts its answer.
         embedding: {
             dimensions: 1536,

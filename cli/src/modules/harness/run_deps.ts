@@ -166,6 +166,7 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
         imagePackagesFile: comp.imagePackagesFile,
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
+        citationResolver: ctx.citationResolver,
         knowledge: comp.knowledge,
         scriptRuntime: comp.scriptRuntime,
         reportsBlocker: ctx.reportsBlocker,

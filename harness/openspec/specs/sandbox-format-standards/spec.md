@@ -101,6 +101,7 @@ The seed of a step is its sole initial user message. `composeStepBriefing` (`har
 
 - the instruction fields of the plan step: `name`, `question`, `description`, `context`, `constraints`, `acceptance_criteria`, and `caveats`. The seed skips each empty field.
 - a Workspace section from `renderWorkspace`, which names the two in-sandbox paths as they are.
+- a Sandbox section from `renderSandbox`, which says that the step holds no sandbox at its start. The profiler holds its lease before its loop, thus its seed has no such section.
 - a Template contract section from `renderTemplateContract(brief)`, when the parent retrieved the contract of the template that the step renders.
 - a read-only copy of the goal and the constraints of the working memory of the analysis, under its own heading (see the harness-working-memory capability).
 - the request that the plan answers, under `## The request of the analysis`, when the stored plan carries one. `generate_plan` stores the `researchQuestion` it received as the `request` of the plan, and the run input snapshots it. The seed bounds it to 8000 characters.

@@ -112,6 +112,13 @@ must act before the plan can proceed.
 
 ${packagesSection()}
 
+### A Design That Cannot Answer the Question
+When the data context shows that the design cannot answer the question as
+asked — the condition coincides with a batch, or a group of a comparison has no
+replicate — call \`report_blocker\` with that fact and what would make the
+question answerable. Do not plan a step whose only work is to confirm the
+defect: it costs a run to learn what the data context already says.
+
 ### Building on Prior Work
 If the context mentions prior run results, do NOT re-plan steps that already
 completed successfully unless the user explicitly wants a different approach.

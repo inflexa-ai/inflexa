@@ -7,6 +7,7 @@
 import { okAsync } from "neverthrow";
 import { Pool } from "pg";
 
+import { unusedCitationResolver } from "../../../citations/__fixtures__/resolver.js";
 import { unusedChatProvider } from "../../../providers/__fixtures__/chat-provider.js";
 import type { ChatProvider } from "../../../providers/types.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
@@ -83,6 +84,7 @@ export function makeFakeSandboxAgentDeps(over: MakeDepsOverrides = {}): SandboxA
         workspaceFs: makeFakeWorkspaceFs(),
         model: over.model ?? "claude-opus-4-7",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        citationResolver: unusedCitationResolver,
         step: {
             lease: leaseOverClient(makeFakeSandboxClient(), { sandboxId: "sb-test", host: "127.0.0.1", port: 8765, backend: "docker" }),
             workspaceRoot: "/tmp/sessions/analysis-001",

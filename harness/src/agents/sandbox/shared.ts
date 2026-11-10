@@ -58,6 +58,8 @@ import {
     searchGeneTool,
     searchGeoDatasetsTool,
     searchInteractionsTool,
+    searchProteinTool,
+    alphafoldPredictionTool,
     targetSafetyTool,
 } from "../../tools/bio/index.js";
 import { createAmassTools, createNcbiTools, createChemDbTools, type BioToolKeys } from "../../tools/bio/keys.js";
@@ -87,7 +89,9 @@ import type { CitationResolver } from "../../citations/types.js";
 import { createResolveCitationTool } from "../../tools/research/resolve-citation.js";
 import { createKnowledgeTemplateTool, type KnowledgeClient, type TemplateBinding } from "../../tools/knowledge/index.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
-import { createReadPdfTool } from "../../tools/script/file-tools.js";
+import { createReadScriptTools } from "../../tools/script/file-tools.js";
+import { searchArxivTool } from "../../tools/research/search-arxiv.js";
+import { createSearchSemanticScholarTool } from "../../tools/research/search-semantic-scholar.js";
 import type { ScriptRuntime } from "../../tools/script/run-script.js";
 
 /**
@@ -236,6 +240,8 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         queryDocs: queryDocsTool,
         pubmed: ncbi.pubmed,
         resolve_citation: deps.citationResolver === undefined ? undefined : createResolveCitationTool(deps.citationResolver),
+        searchArxiv: searchArxivTool,
+        searchSemanticScholar: createSearchSemanticScholarTool({ apiKey: deps.bioKeys.semanticScholar }),
         searchGene: searchGeneTool,
         resolveGeneIds: resolveGeneIdsTool,
         lookupAnnotation: lookupAnnotationTool,
@@ -247,6 +253,8 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         geneDiseaseEvidence: chemDb.geneDiseaseEvidence,
         getVariantFrequencies: getVariantFrequenciesTool,
         getProteinDomains: getProteinDomainsTool,
+        searchProtein: searchProteinTool,
+        alphafoldPrediction: alphafoldPredictionTool,
         drugGeneInteractions: chemDb.drugGeneInteractions,
         genePreclinicalProfile: genePreclinicalProfileTool,
         searchFaers: searchFaersTool,
@@ -409,10 +417,15 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         systemPrompt,
         model: deps.model,
         tools,
-        // A paper of the analysis is a PDF, and each step can need it, thus each agent reads PDFs in a script.
+        // A table, a paper, or a compressed file of the analysis is a first look that needs no sandbox, thus each agent
+        // reads them in a script on the host.
         scriptTools: [
             ...allowlisted.filter((tool) => !DIRECT_ALLOWLIST_TOOLS.has(tool.id)),
-            createReadPdfTool({ workspaceFs: deps.workspaceFs, resolveWorkspaceRoot: () => Promise.resolve(deps.step.workspaceRoot), lineage: readLineage }),
+            ...createReadScriptTools({
+                workspaceFs: deps.workspaceFs,
+                resolveWorkspaceRoot: () => Promise.resolve(deps.step.workspaceRoot),
+                lineage: readLineage,
+            }),
         ],
         scriptRuntime: deps.scriptRuntime,
         maxIterations: meta.defaultMaxSteps ?? SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS,

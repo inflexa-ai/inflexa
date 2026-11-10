@@ -34,6 +34,12 @@ Choose the method based on your input data and analytical goal:
    - Use **decoupler** with **CollecTRI** regulon resource (NOT enrichment databases).
    - This is TF activity, not pathway enrichment -- use the correct framing.
 
+6. **Input is CpG sites or methylated regions mapped to genes**
+   - A gene with more tested CpGs gets more hits by chance, thus a plain ORA finds the long, CpG-rich genes.
+   - Correct for the number of tested CpGs of each gene. For an array with its annotation, use `missMethyl::gometh()` or `gsameth()`.
+   - For other data, use a weighted null: `goseq` with the CpG count as its bias data, or a logistic model of hit status with the CpG count as a covariate.
+   - Count the CpGs over all the tested sites, not only the hits. The `dna-methylation` skill has the rest of the method.
+
 ## Gene Set Database Selection
 
 Ask for a database by name and resolve it from the reference data available to

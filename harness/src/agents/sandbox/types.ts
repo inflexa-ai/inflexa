@@ -26,6 +26,9 @@ export type SandboxToolName =
     | "pubmed"
     // Bibliographic verification (tool id is the same snake-case value).
     | "resolve_citation"
+    // Preprints and the citation graph.
+    | "searchArxiv"
+    | "searchSemanticScholar"
     // Identifier resolution.
     | "searchGene"
     // The mapping across the symbol, Entrez, Ensembl and UniProt spaces (MyGene.info).
@@ -46,6 +49,9 @@ export type SandboxToolName =
     | "getVariantFrequencies"
     // The InterPro domains of one protein, with their residue ranges.
     | "getProteinDomains"
+    // UniProt entries and AlphaFold structure predictions.
+    | "searchProtein"
+    | "alphafoldPrediction"
     | "drugGeneInteractions"
     | "genePreclinicalProfile"
     // Clinical / public-data landscape.
