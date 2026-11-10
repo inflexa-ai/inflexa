@@ -64,6 +64,8 @@ const DecisionRecordSchema = z.looseObject({
         .optional(),
     environment: z.looseObject({ match: z.string() }).optional(),
     script_path: z.string().optional(),
+    /** The digest of the script that the render wrote. */
+    written_sha256: z.string().optional(),
     /**
      * The slots that the script read, with the value of each. A step that fits the same model again takes them.
      * A value of a different shape reads as no value, thus one such slot does not remove the record from the methods.
@@ -99,6 +101,28 @@ async function recordFileNames(dir: string): Promise<string[]> {
         return [];
     }
     return names.filter((name) => name.startsWith(RECORD_PREFIX) && name.endsWith(RECORD_SUFFIX)).sort();
+}
+
+/** The largest script that the digest check of a record reads. */
+const MAX_RECORD_SCRIPT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * True when the script of `record` in `stepDir` (the host directory of the step) holds the bytes that the render
+ * wrote. A script that a file tool did not change can still differ: a shell command can write it, and the record
+ * then lists no change. An absent script, a script outside the step, and a record with no digest give false.
+ */
+export async function recordScriptIsAsRendered(stepDir: string, record: StepDecisionRecord): Promise<boolean> {
+    const relative = stepScriptPath(record.script_path);
+    if (relative === undefined || record.written_sha256 === undefined) return false;
+    const path = join(stepDir, relative);
+    try {
+        if ((await classifyWithinRoot(stepDir, path)) !== "in") return false;
+        const info = await stat(path);
+        if (!info.isFile() || info.size > MAX_RECORD_SCRIPT_BYTES) return false;
+        return computeSha256(await readFile(path)) === record.written_sha256;
+    } catch {
+        return false;
+    }
 }
 
 /**
