@@ -36,7 +36,7 @@ const meta: AgentMeta = {
 
 const body = "# Test Agent\n\nDo testy things.";
 
-const ORIENT_CORE_MARKER = "# Sandbox Orient-Core";
+const ORIENT_CORE_MARKER = "# Sandbox Environment";
 const ANALYSIS_STEP_MARKER = "# Sandbox Analysis-Step Conventions";
 
 describe("createSandboxAgent", () => {
@@ -271,15 +271,14 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         expect(def.tools.map((t) => t.id)).not.toContain("link_packages");
     });
 
-    it("the description names the failed-import trigger, and an unavailable answer is no absence", () => {
+    it("the description names the failed-import trigger, and the result explains each outcome", () => {
         // A false absence sends the agent to report a package that the pool
         // holds, thus `unavailable` must never read as a reason for a missing report.
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
         const description = presentFind(def.tools, (tool) => tool.id === "link_packages").description;
 
         expect(description).toContain("so an import that failed works without a restart");
-        expect(description).toContain("it says nothing about the package's presence, so report the reason");
-        expect(description).toContain("report the package as missing, do not retry");
+        expect(description).toContain("the result says what to do about each");
     });
 
     it("the description names the prefixed retry", () => {
@@ -289,8 +288,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
         const description = presentFind(def.tools, (tool) => tool.id === "link_packages").description;
 
-        expect(description).toContain("call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`");
-        expect(description).toContain("terminal only after that second call also refuses");
+        expect(description).toContain("`collision`");
     });
 
     it("the description of list_available_packages stops at absent only when the seam is bound", () => {
@@ -340,6 +338,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
                 { kind: "unavailable", spelling: "scanpy", reason: "the dependency graph is unreadable" },
                 { kind: "unavailable", spelling: "Seurat", reason: "the dependency graph is unreadable" },
             ],
+            notes: [expect.stringContaining("says nothing about the package")],
         });
     });
 
@@ -369,6 +368,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
                 { kind: "linked", spelling: "scanpy", version: "1.10.0" },
                 { kind: "absent", spelling: "nonesuch", acquisitionPossible: true },
             ],
+            notes: [expect.stringContaining("Report the package as missing")],
         });
     });
 });

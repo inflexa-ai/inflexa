@@ -220,7 +220,7 @@ export function skillIndex(skillsDir: string, skills: readonly string[]): string
     return [
         "## Your Skills",
         "",
-        "`skill_read` reads a skill: its `SKILL.md` holds the method guidance, and its references hold the API of each library.",
+        "Skills hold the decision trees, the API references, the worked examples, and the anti-patterns of each domain. They are your authoritative source on methods: find the guidance with `skill_search`, then read it with `skill_read`. A `SKILL.md` holds the method guidance, and its references hold the API of each library.",
         "",
         ...entries,
     ].join("\n");

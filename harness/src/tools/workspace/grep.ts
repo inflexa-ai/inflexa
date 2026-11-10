@@ -80,7 +80,8 @@ export function createGrepTool(
             `capped at ${DEFAULT_MAX_MATCHES} matches, and each preview at ${DEFAULT_MAX_MATCH_BYTES} characters of its line. ` +
             `Only the first ${MAX_GREP_FILE_BYTES / (1024 * 1024)} MiB of each file is searched, and a file with a NUL byte ` +
             "in its first KiB is skipped as binary. A `truncated` status means the match cap or the file cap cut the search; " +
-            "narrow your path or pattern. No matches, missing paths, and out-of-scope paths return data variants, not errors.",
+            "narrow your path or pattern. No matches, missing paths, and out-of-scope paths return data variants, not errors." +
+            " A relative path resolves against your working directory; a file that you did not make in this step has an absolute '/<analysisId>/...' path.",
         inputSchema: GrepInputSchema,
         view: {
             input: (input) => input,

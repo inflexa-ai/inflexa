@@ -229,10 +229,10 @@ extend the farm from the pool.
 - **WHEN** the agent calls `link_packages` with `["bioc:fgsea"]`
 - **THEN** the tool refuses with an issue that names the entry and the two permitted prefixes, and no link lands
 
-#### Scenario: The description names the prefixed retry
+#### Scenario: A collision result names the prefixed retry
 
-- **WHEN** the description of `link_packages` is inspected
-- **THEN** it directs the agent to call the tool again with `python:<name>` or `r:<name>` after a two-track `collision`
+- **WHEN** `link_packages` answers a two-track `collision`
+- **THEN** its result directs the agent to call the tool again with `python:<name>` or `r:<name>`
 
 ### Requirement: Sandbox agent system prompt is a pure function of the agent type
 

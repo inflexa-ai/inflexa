@@ -195,17 +195,14 @@ describe("execute_command tool", () => {
         expect(out.stdoutTruncated).toBe(false);
     });
 
-    it("names the real cap of each stream in its description", () => {
+    it("names the lease and the deliverable in its description", () => {
         const tool = createExecuteCommandTool({
             lease: leaseOverClient(makeFakeClient(), makeSandboxRef()),
             defaultCwd: DEFAULT_CWD,
         });
 
-        // The text comes from the cap itself, thus the two cannot differ.
-        expect(EXEC_STREAM_BYTE_CAP).toBe(1024 * 1024);
-        expect(tool.description).toContain("capped at 1 MiB");
-        expect(tool.description).toContain("excerpt");
         expect(tool.description).toContain("not a deliverable");
+        expect(tool.description).toContain("acquire_sandbox");
     });
 
     it("gives back a stdout of 200 KiB whole", async () => {
@@ -267,6 +264,14 @@ describe("execute_command tool", () => {
         expect(out.exitCode).toBe(137);
         expect(out.durationMs).toBe(4321);
         expect(out.timedOut).toBe(true);
+        // The result explains the states that it carries, thus the description need not explain them before the call.
+        expect(out.note).toContain("The timeout stopped the command.");
+        expect(out.note).toContain(`cap of ${EXEC_STREAM_BYTE_CAP / (1024 * 1024)} MiB`);
+    });
+
+    it("carries no note for a plain exit", async () => {
+        const out = (await makeTool(makeFakeClient()).execute({ command: ["true"] }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(out.note).toBeUndefined();
     });
 
     it("passes through cwd/env/timeoutSeconds when supplied", async () => {

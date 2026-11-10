@@ -655,20 +655,11 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
     return defineTool({
         id: "list_available_refs",
         description:
-            "Resolve reference data you need into a real path. Reports the reference data provisioned for this environment right now — the only reference data an analysis script can open. " +
-            "Nothing inside the analysis environment reaches the network, so never write a download into a script. " +
-            "Search by what the data IS, not by where you expect it: the store's directory layout is an installer detail and is not a stable interface. " +
-            "Catalogued files come back with the organism, the format, and the file's internal shape (key columns, identifier space), so you can pick the right reader and the right species without opening the file first. " +
-            "User-added files are returned too, with whatever labels exist — often none. Symlinks are never followed. " +
-            "Paths are reported as the analysis environment sees them, so a returned path can be used verbatim in a script. " +
-            "Results are ALWAYS bounded — prefer a targeted query over a full dump: " +
-            '`query` is the main entry point, a case-insensitive substring filter over each entry\'s path and its dataset/title/category/organism/format/contents labels (e.g. "regulon", "hallmark", "mouse"); ' +
-            "`path` inspects one directory beneath /mnt/refs (a returned path, or store-relative) — drill in with it when a listing is truncated; " +
-            '`categories` in the response lists the top-level directory names and the dataset group labels (for example "pathways") present; ' +
-            "pass a group label as `query`, because `category` inspects a top-level directory by name and a label that is not a directory reads as `not_found`; " +
-            "`limit` caps the entries returned. The response carries `returned`, `total`, and `hasMore`, so truncation is never silent. " +
-            "An empty result means the dataset is absent right now — not that it is unobtainable. Say so; never guess a path, and never silently substitute a different dataset. " +
-            "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path between runs, and whatever is added shows up in a later run. Within one run the listing does not change, thus one call per question is enough.",
+            "Find the reference data that you need, as a real path. It lists the reference data of this environment: the only reference data that an analysis script can open. " +
+            'Search by what the data is, with `query` (for example "hallmark", "regulon", "mouse"), not by where you expect it: the layout of the store is not a stable interface. ' +
+            "Each entry gives the organism, the format, and the internal shape of the file, and its path works verbatim in a script. " +
+            "Pass the path to the library explicitly: nothing points a library at the store, thus a library that finds its data through an environment variable needs that variable in the `env` of the command. " +
+            "The listing does not change within a run, thus one call for each question is enough.",
         inputSchema: ListAvailableRefsInputSchema,
         view: {
             input: (input) => input,
@@ -766,7 +757,8 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
                     ...response,
                     content:
                         `No reference beneath ${requested.path} matches "${query?.trim() ?? ""}". ` +
-                        `The store at ${REFS_ROOT} is the only reference data that the sandbox can read, and the sandbox has no network.`,
+                        `The store at ${REFS_ROOT} is the only reference data that the sandbox can read, and the sandbox has no network. ` +
+                        "Say that the dataset is absent now. Do not guess a path, and do not use a different dataset in its place.",
                 };
             }
             while (Buffer.byteLength(JSON.stringify(response), "utf8") > MAX_ENVELOPE_BYTES && boundedEntries.length > 0) {

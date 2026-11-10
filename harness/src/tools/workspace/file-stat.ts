@@ -31,7 +31,8 @@ export function createFileStatTool(fs: WorkspaceFilesystem, workingDir?: string)
         description:
             "Stat a workspace path: whether it is a file or directory and its size " +
             "in bytes. It reads the workspace directly and runs no sandbox command. Use before reading to size a file. Missing and out-of-scope " +
-            "paths return a data variant, not an error.",
+            "paths return a data variant, not an error." +
+            " A relative path resolves against your working directory; a file that you did not make in this step has an absolute '/<analysisId>/...' path.",
         inputSchema: FileStatInputSchema,
         view: {
             input: (input) => input,

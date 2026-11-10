@@ -107,7 +107,8 @@ export function createReadFileTool(
             "the end for tailLines), `totalSize`, and `returnedBytes`. This tool is for " +
             "text; a binary file (one holding NUL bytes, e.g. a .gz or image) comes " +
             "back as a `binary` data variant rather than decoded garbage. Missing " +
-            "paths and paths outside the analysis tree return a data variant — not an error.",
+            "paths and paths outside the analysis tree return a data variant — not an error." +
+            "A relative path resolves against your working directory; a file that you did not make in this step has an absolute '/<analysisId>/...' path.",
         inputSchema: ReadFileInputSchema,
         view: {
             input: (input) => input,

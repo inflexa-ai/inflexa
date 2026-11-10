@@ -16,8 +16,8 @@ and do NOT wrap any `mcp__…` tool — there is no MCP server, protocol, or pro
 this path. "Not found" / "no docs" are returned as `{ found: false }` data
 variants; an upstream HTTP failure throws and the agent loop surfaces it as an
 `is_error` tool result. Usage discipline (when to look up, when the skill
-references already suffice) is taught in the shared sandbox orient prompt, not
-enforced in code.
+references already suffice) is in the description of `resolve_library_id`,
+not enforced in code.
 
 ## Requirements
 

@@ -59,7 +59,7 @@ function renderSnippets(snippets: Context7Snippet[]): string {
 export const resolveLibraryIdTool = defineTool({
     id: "resolve_library_id",
     description:
-        "Resolve a package name (e.g., 'scanpy', 'DESeq2', 'scikit-learn') to the Context7 library ID that `query_docs` needs. " +
+        "When you are not sure of the signature or the behavior of a library function, resolve the package name (e.g., 'scanpy', 'DESeq2', 'scikit-learn') to the Context7 library ID that `query_docs` needs. " +
         "Returns the single best match as {found: true, libraryId, name, description}, or {found: false} when Context7 holds no library for the name. " +
         "`query` ranks the candidates and only the top one comes back, thus make sure that `name` is the package you meant. " +
         "A failed Context7 request returns an error result.",

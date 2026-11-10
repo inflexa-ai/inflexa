@@ -139,6 +139,12 @@ describe("createSandboxAgents", () => {
         expect(analyst.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(true);
     });
 
+    it("the step contract holds no working preference, which belongs to the agent body", () => {
+        expect(sandboxAnalysisStepStandardsPrompt).not.toContain("## Language Policy");
+        expect(sandboxAnalysisStepStandardsPrompt).not.toContain("## Figure Standards");
+        for (const id of ["analyst", "drug-analyst"]) expect(presentGet(agents, id).systemPrompt, id).toContain("## How You Work");
+    });
+
     it("every AgentDefinition.model equals deps.model", () => {
         for (const [id, def] of Object.entries(agents)) {
             expect(def.model, `${id} model`).toBe("claude-opus-4-7");
