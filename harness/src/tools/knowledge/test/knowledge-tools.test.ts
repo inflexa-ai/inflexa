@@ -27,6 +27,7 @@ import {
     recommendAnswer,
     SNAPSHOT,
     substitutionAnswer,
+    renderAnswer,
 } from "../__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "../check.js";
 import { createClaimShelf, createKnowledgeClaimsTool } from "../claims.js";
@@ -735,6 +736,24 @@ describe("knowledge_template", () => {
         expect(record.slots).toEqual([
             { name: "counts_path", value: "/analysis-001/data/inputs/f1/counts.csv", source: "caller", adaptable: true, lines: [1] },
         ]);
+    });
+
+    it("leaves a slot that the script does not read out of the record, names it, and keeps it in the answer", async () => {
+        const answer = renderAnswer();
+        const unread = { name: "quantifier", value: "salmon", source: "default", adaptable: true, lines: [], read: false };
+        const { tool, workingDir } = build({ render: { ...answer, slots: [...answer.slots, unread] } });
+        const { ctx } = makeToolContext();
+        const out = (
+            await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: "/analysis-001/data/inputs/f1/counts.csv" } }, ctx)
+        )._unsafeUnwrap();
+        if (!("status" in out) || out.status !== "ok") throw new Error("the render did not write");
+        const record = asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.json()));
+        expect(record.slots).toEqual([
+            { name: "counts_path", value: "/analysis-001/data/inputs/f1/counts.csv", source: "caller", adaptable: true, lines: [1] },
+        ]);
+        expect(record.inactive_slots).toEqual(["quantifier"]);
+        // The value is in the script, thus the answer to the agent keeps the entry with its flag.
+        expect(out.slots.find((slot) => slot.name === "quantifier")).toMatchObject({ value: "salmon", read: false });
     });
 
     it("never sends a local value to the service, with or without a binding", async () => {

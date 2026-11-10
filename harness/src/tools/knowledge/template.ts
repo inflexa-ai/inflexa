@@ -403,9 +403,13 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z
                 const local = boundByName.get(slot.name);
                 return local ? [local] : [];
             });
+            // The record keeps the slots that the script reads. A slot whose condition fails is in the script with a value
+            // that nothing reads, thus the record names it and leaves its value out.
+            const inactiveSlots = reportedSlots.filter((slot) => slot.read === false).map((slot) => slot.name);
             const record = {
                 ...answer.decision_record,
-                slots: reportedSlots,
+                slots: reportedSlots.filter((slot) => slot.read !== false),
+                inactive_slots: inactiveSlots.length > 0 ? inactiveSlots : undefined,
                 script_path: scriptWrite.path,
                 written_sha256: scriptSha256(bound.script),
                 bound_slots: boundSlots,
