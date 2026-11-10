@@ -19,7 +19,7 @@ import { createWorkspaceMutator } from "../mutator.js";
 import { createDecisionRecordStore, scriptSha256 } from "../decision-record.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecEmit, ExecRequest, ExecResult, SandboxRef } from "../../../sandbox/types.js";
-import { createExecuteCommandTool } from "../execute-command.js";
+import { createExecuteCommandTool, scriptPathsOf } from "../execute-command.js";
 import { leaseOverClient } from "../../../sandbox/__fixtures__/leases.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
 import { presentAt } from "../../../lib/present.js";
@@ -264,6 +264,60 @@ describe("execute_command and the decision record of a script", () => {
         // The record of another step is outside the write prefix of this one: its host copy and its copy stay as they are.
         expect(await readFile(otherHost, "utf8")).toBe(held);
         expect(await readFile(join(other, "output", "decision_record_de.json"), "utf8")).toBe(held);
+    });
+
+    it("notes a changed script that a shell line runs, in each form of the line", async () => {
+        const written = "ALPHA <- 0.05\n";
+        const changed = "ALPHA <- 0.5\n";
+        const lines: readonly (readonly string[])[] = [
+            ["Rscript scripts/de.R > output/log.txt 2>&1"],
+            ["cd scripts && Rscript de.R"],
+            ["(Rscript 'scripts/de.R'); echo done"],
+            ["bash", "-lc", "Rscript scripts/de.R | tee output/log.txt"],
+            ["Rscript", "--file=scripts/de.R"],
+        ];
+        for (const command of lines) {
+            await writeFile(join(stepDir(), "scripts", "de.R"), changed);
+            await writeFile(
+                join(stepDir(), "output", "decision_record_de.json"),
+                JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }),
+            );
+            const { tool, client } = buildTool();
+            const { ctx } = makeToolContext();
+            await awaitOk(tool.execute({ command: [...command] }, ctx));
+            expect((await record()).unvetted_edits, command.join(" ")).toEqual([
+                {
+                    path: `${DEFAULT_CWD}/scripts/de.R`,
+                    note: "the script changed by a path no file tool recorded, before it ran",
+                    sha256: scriptSha256(changed),
+                },
+            ]);
+            // The command runs as the model sent it.
+            expect(presentAt(client.execs, 0).request.command).toEqual([...command]);
+        }
+    });
+
+    it("resolves a path of a shell line against the directory after a cd and against the cwd of the command", () => {
+        expect(scriptPathsOf(["cd scripts && Rscript de.R"], "/an/step")).toEqual(["/an/step/scripts/de.R", "/an/step/de.R"]);
+        // A subshell ends the move, thus the second script resolves against the two directories.
+        expect(scriptPathsOf(["(cd a && python x.py); python scripts/y.py"], "/an/step")).toEqual([
+            "/an/step/a/x.py",
+            "/an/step/x.py",
+            "/an/step/a/scripts/y.py",
+            "/an/step/scripts/y.py",
+        ]);
+        // A second cd after a subshell starts from the cwd of the command, and the paths hold that script.
+        expect(scriptPathsOf(["(cd scripts && Rscript a.R); cd scripts && Rscript b.R"], "/an/step")).toContain("/an/step/scripts/b.R");
+        // A target that the shell expands moves nothing.
+        expect(scriptPathsOf(["cd $OUT && Rscript de.R"], "/an/step")).toEqual(["/an/step/de.R"]);
+        // An element of a direct argv is one path, also with a space in it.
+        expect(scriptPathsOf(["Rscript", "my scripts/de.R"], "/an/step")).toEqual(["/an/step/my scripts/de.R", "/an/step/scripts/de.R"]);
+        expect(scriptPathsOf(["ls", "-la"], "/an/step")).toEqual([]);
+        // A command names a small number of scripts, and the check has a bound.
+        const many = Array.from({ length: 40 }, (_, i) => `s${String(i)}.R`).join(" ");
+        expect(scriptPathsOf([many], "/an/step")).toHaveLength(16);
+        // The bound is for the words of a line. An element that is a path always gets its check, also after a long element.
+        expect(scriptPathsOf(["env", `FILES=${many}`, "Rscript", "scripts/de.R"], "/an/step")).toContain("/an/step/scripts/de.R");
     });
 
     it("runs a script without a record, and a command without a script, with no record read", async () => {

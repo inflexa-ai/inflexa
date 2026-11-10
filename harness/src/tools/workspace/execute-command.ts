@@ -74,6 +74,68 @@ function scriptToken(command: readonly string[]): string | undefined {
     return command.find((arg) => SCRIPT_EXTENSIONS.some((extension) => arg.endsWith(extension)));
 }
 
+const hasScriptExtension = (word: string): boolean => SCRIPT_EXTENSIONS.some((extension) => word.endsWith(extension));
+
+/** What ends a word of a shell line beside whitespace: an operator, a grouping mark, a quote, or the `=` of an option. */
+const SHELL_WORD_BREAKS: ReadonlySet<string> = new Set([" ", "\t", "\n", "\r", ";", "|", "&", "<", ">", "(", ")", "'", '"', "`", "="]);
+
+/** The words of a shell line. A walk over the characters, with no regular expression over model text. */
+function shellWords(line: string): string[] {
+    const words: string[] = [];
+    let word = "";
+    for (const char of line) {
+        if (!SHELL_WORD_BREAKS.has(char)) {
+            word += char;
+            continue;
+        }
+        if (word.length > 0) words.push(word);
+        word = "";
+    }
+    if (word.length > 0) words.push(word);
+    return words;
+}
+
+/** The most directories that the words of one shell line resolve against. A line has one `cd`, or a small number. */
+const MAX_SHELL_DIRECTORIES = 8;
+
+/** The most script paths inside shell lines that one command gets a digest check for. A command names one script, or a small number. */
+const MAX_CHECKED_SCRIPTS = 16;
+
+/**
+ * Each absolute path that a command can run as a script, for the digest check before the run. An argv element can
+ * be a shell line, for example the one element of an `sh -c` call or the string after `bash -c`, thus each element
+ * gives its words also. A `cd` in a line moves the words after it, and a subshell can end that move. Thus a
+ * relative word resolves against each directory that a `cd` before it can give, and against the cwd of the command. The check
+ * compares a digest and writes no script, thus a path that the command does not run costs one read.
+ */
+export function scriptPathsOf(command: readonly string[], cwd: string): string[] {
+    // An element of a direct argv is one path, also when it holds a space. These paths come first and have no
+    // bound, thus a long element before the script cannot use the bound of the words.
+    const paths = new Set<string>(command.length > 1 ? command.filter(hasScriptExtension).map((arg) => posixPath.resolve(cwd, arg)) : []);
+    const bound = paths.size + MAX_CHECKED_SCRIPTS;
+    const add = (base: string, word: string): void => {
+        if (paths.size < bound) paths.add(posixPath.resolve(base, word));
+    };
+    for (const arg of command) {
+        const words = shellWords(arg);
+        // Each directory that a word of the line can run in, the newest first. A subshell or a failed `cd` ends a
+        // move, and the host does not parse the scopes of the shell. Thus a `cd` adds a directory for each
+        // directory before it, and takes none away.
+        let dirs: readonly string[] = [cwd];
+        for (const [index, word] of words.entries()) {
+            const target = word === "cd" ? words[index + 1] : undefined;
+            // A target that the shell expands (`~`, `$HOME`, `-`) names no directory that the host can resolve.
+            if (target !== undefined && !["-", "~", "$"].some((mark) => target.startsWith(mark))) {
+                const moved = dirs.map((dir) => posixPath.resolve(dir, target));
+                dirs = [...new Set([...moved, ...dirs])].slice(0, MAX_SHELL_DIRECTORIES);
+            }
+            if (!hasScriptExtension(word)) continue;
+            for (const dir of dirs) add(dir, word);
+        }
+    }
+    return [...paths];
+}
+
 /**
  * The analysis-relative path of the script that an argv runs, resolved against the cwd of the exec. A one-element
  * argv is a shell line, thus its words are the tokens. A script outside the mount is no file of the analysis, and
@@ -187,13 +249,13 @@ export function createExecuteCommandTool(
         ): Promise<Result<ExecuteCommandResult | WithToolCallRecord<ExecuteCommandResult, ExecCallRecord>, ToolError>> => {
             const effectiveCwd = cwd === undefined ? defaultCwd : cwd.startsWith("/") ? cwd : posixPath.join(defaultCwd, cwd);
 
-            // Each script the argv names, as the sandbox resolves it. A relative token resolves against the cwd of the
-            // command, which is a `/{analysisId}/...` path, thus the workspace filesystem resolves it the same way.
+            // Each script the command names, as the sandbox resolves it, also inside a shell line. A relative path
+            // resolves against the cwd of the command, which is a `/{analysisId}/...` path, thus the workspace
+            // filesystem resolves it the same way.
             const recordWrites: WriteRecord[] = [];
             const restored: string[] = [];
             if (deps.workspaceFilesystem && deps.mutator && deps.records) {
-                for (const token of command.filter((arg) => SCRIPT_EXTENSIONS.some((extension) => arg.endsWith(extension)))) {
-                    const scriptPath = token.startsWith("/") ? token : posixPath.join(effectiveCwd, token);
+                for (const scriptPath of scriptPathsOf(command, effectiveCwd)) {
                     const checked = await reconcileScriptRecord({
                         filesystem: deps.workspaceFilesystem,
                         mutator: deps.mutator,
