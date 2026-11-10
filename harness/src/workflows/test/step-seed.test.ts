@@ -653,6 +653,78 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).not.toContain("`min_count` = 10");
     });
 
+    describe("a policy setting that the template maps to a slot", () => {
+        const POLICY = { step: "filter_low_counts", name: "depth_policy", value: "low_depth_panel", source: "rule:R-0571" } as const;
+        const mappedContract = (slot = "min_count", slotValue: string | number = 5) => ({
+            ...contractAnswer(),
+            setting_bindings: [{ setting: "depth_policy", value: "low_depth_panel", slot, slot_value: slotValue }],
+        });
+        const compose = async (grounding: AnalysisStep["grounding"], contract: ReturnType<typeof contractAnswer> = mappedContract()) => {
+            const root = await makeWorkspace();
+            const fake = fakeKnowledgeClient({ contract });
+            return composeStepSeed({ input: input([planStep("T1S2", [], grounding)]), stepId: "T1S2", runId: RUN_ID, deps: deps(root, {}, fake.client) });
+        };
+
+        it("binds the slot value of the map, and names the setting and its source", async () => {
+            const seed = await compose(grounded([POLICY]));
+            expect(seed.templateBinding).toEqual({
+                ...BINDING_BASE,
+                slots: { min_count: 5 },
+                sources: { min_count: "the plan setting `depth_policy`; rule:R-0571" },
+            });
+            expect(seed.prompt).toContain("`min_count` = 5 (the plan setting `depth_policy`; rule:R-0571)");
+            expect(seed.prompt).not.toContain("no slot of the template carries it");
+        });
+
+        it("matches a list setting, whose members the skeleton keeps as text, against the typed list of the map", async () => {
+            const listed = { step: "filter_low_counts", name: "depth_bounds", value: ["1", "2"] };
+            const contract = { ...contractAnswer(), setting_bindings: [{ setting: "depth_bounds", value: [1, 2], slot: "min_count", slot_value: 5 }] };
+            const seed = await compose(grounded([listed]), contract);
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: { min_count: 5 }, sources: { min_count: "the plan setting `depth_bounds`" } });
+        });
+
+        it("binds nothing with no map: the policy stays a plan setting", async () => {
+            const seed = await compose(grounded([POLICY]), contractAnswer());
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(seed.prompt).toContain('`depth_policy` = "low_depth_panel" (filter_low_counts; rule:R-0571): no slot of the template carries it');
+        });
+
+        it("reads the setting after its departure: a different word binds nothing, and a removed word binds nothing and excludes no slot", async () => {
+            const changed = { rule: "R-0571@aa11", setting: "depth_policy", value: "full_depth", reason: "the panel has the depth of a full library" };
+            const withValue = await compose(departed(grounded([POLICY]), [changed]));
+            expect(withValue.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {}, departures: [changed] });
+            expect(withValue.prompt).toContain("no slot of the template carries it");
+
+            const removed = { rule: "R-0571@aa11", setting: "depth_policy", reason: "the plan keeps the default filter" };
+            const withoutValue = await compose(departed(grounded([POLICY]), [removed]));
+            expect(withoutValue.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {}, departures: [removed] });
+            expect(withoutValue.prompt).toContain("the plan departs from R-0571@aa11 and does not apply it");
+        });
+
+        it("keeps the first value of a slot that a setting by name and a mapped setting both give", async () => {
+            const direct = { step: "filter_low_counts", name: "min_count", value: 10, source: "doi:10.12688/f1000research.7035.1" };
+            const seed = await compose(grounded([direct, POLICY]));
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: { min_count: 10 }, sources: { min_count: "doi:10.12688/f1000research.7035.1" } });
+            expect(seed.prompt).toContain(
+                '`depth_policy` = "low_depth_panel" (filter_low_counts; rule:R-0571): differs from the bound value 10 of the same slot',
+            );
+        });
+
+        it("binds nothing when the served contract does not take the mapped value", async () => {
+            for (const contract of [mappedContract("absent_slot"), mappedContract("counts_path", "x.csv"), mappedContract("min_count", "many")]) {
+                const seed = await compose(grounded([POLICY]), contract);
+                expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+                expect(seed.prompt).toContain("which the served contract does not take");
+            }
+        });
+
+        it("binds nothing when the served version differs from the plan", async () => {
+            const seed = await compose(grounded([POLICY]), { ...mappedContract(), version: "9.9.9" });
+            expect(seed.templateBinding).toBeUndefined();
+            expect(seed.prompt).toContain("not bound, because the served version differs from the plan");
+        });
+    });
+
     it("binds no value for a slot that a departure does not apply, names it as excluded, and asks for the value of the plan", async () => {
         const root = await makeWorkspace();
         const fake = fakeKnowledgeClient();

@@ -251,6 +251,8 @@ At dispatch the parent MUST intersect the `grounding.settings` of the step with 
 
 A departure of the plan changes a setting before the intersection. A setting that a departure names with a value MUST take the value of the departure, with the source `departure from <claim id>`. A setting that a departure names with no value MUST NOT bind. The seed MUST list that setting as unbound, with the claim id and the reason. The binding MUST carry the departures of the step, and the decision record MUST carry them as `departures`.
 
+A rule can give a setting as a policy word, which is not a value of a slot. The served contract can carry `setting_bindings`. Each entry maps one setting with one value to one slot with one slot value. The service gives no more than one entry for one setting with one value, and the parent MUST take the first such entry. The parent MUST bind the slot of an entry when a setting of the step has the name and the value of that entry. The parent MUST read the setting after its departure. Thus a departure that changes the value binds the slot only when an entry maps the new value. A departure with no value MUST NOT bind the slot, and it MUST NOT name the slot as excluded. The source of the bound slot MUST name the setting and the source of the setting. The parent MUST NOT bind the slot of an entry when the slot is not an adaptable slot of the served contract, when the slot is local, or when the slot value does not fit the slot. The seed MUST list that setting as unbound with the reason. A slot takes the first value that binds it. A later setting that gives a different value MUST be listed as unbound.
+
 A template gives each slot a value, and an omitted slot takes the default of the template. Thus the binding MUST name an adaptable slot as excluded when a departure with no value names it. `knowledge_template` MUST refuse a render that sends no value for an excluded slot. It MUST also refuse a value with no override. The decision record MUST keep the override of an excluded slot with a `plan_value` of `null`.
 
 #### Scenario: A policy word on an integer slot
@@ -296,6 +298,27 @@ A template gives each slot a value, and an omitted slot takes the default of the
 - **WHEN** the seed composes
 - **THEN** the binding holds no `lfc_shrink`, and the seed lists `lfc_shrink` as unbound with the claim id and the reason
 - **AND** the binding names `lfc_shrink` as excluded
+
+#### Scenario: A policy word that the template maps
+
+- **GIVEN** a step whose settings hold `depth_policy = low_depth_panel` with the source `rule:R-0571`
+- **AND** a served contract whose `setting_bindings` map that setting and that value to `min_count = 5`
+- **WHEN** the seed composes
+- **THEN** the binding holds `min_count = 5`, and its source names the setting `depth_policy` and `rule:R-0571`
+
+#### Scenario: A departure from a mapped policy word
+
+- **GIVEN** the same step and the same contract, and a departure that gives `depth_policy` a value that no entry maps
+- **WHEN** the seed composes
+- **THEN** the binding holds no `min_count`, and the seed lists `depth_policy` as unbound
+- **WHEN** the departure gives `depth_policy` no value
+- **THEN** the binding holds no `min_count`, and it names no excluded slot
+
+#### Scenario: A map that the served contract does not take
+
+- **GIVEN** a served contract whose `setting_bindings` name a slot that is local, a slot that the contract does not hold, or a value that does not fit the slot
+- **WHEN** the seed composes
+- **THEN** the binding holds no value for that slot, and the seed lists the setting as unbound with the reason
 
 #### Scenario: A render of an excluded slot
 
