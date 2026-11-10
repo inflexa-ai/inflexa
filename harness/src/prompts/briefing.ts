@@ -333,6 +333,11 @@ export type TemplateBrief = {
     readonly inputs: readonly TemplateBriefInput[];
     /** The plan settings bound to a slot, in plan order. Empty when the served version differs from the plan. */
     readonly bound: readonly TemplateBoundSetting[];
+    /**
+     * The plan settings that the script of the template does with no slot, one line each. The agent does not do
+     * them again, and no slot takes them. Empty when the served contract lists none.
+     */
+    readonly done_by_script: readonly string[];
     /** The plan settings no bound slot carries, one line each with the reason. */
     readonly unbound_settings: readonly string[];
     /** The input requirements of the template in prose. Absent when the template gives none. */
@@ -417,6 +422,12 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
 
     if (brief.bound.length > 0) {
         blocks.push(`Bound by the plan:\n${bullets(brief.bound.map((setting) => `\`${setting.name}\` = ${slotValue(setting.value)} (${setting.source})`))}`);
+    }
+
+    if (brief.done_by_script.length > 0) {
+        blocks.push(
+            `Done by the script (the plan states them, and the script does them with no slot; send no value for them):\n${bullets(brief.done_by_script)}`,
+        );
     }
 
     if (brief.unbound_settings.length > 0) {

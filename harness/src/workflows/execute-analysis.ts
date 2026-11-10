@@ -738,9 +738,18 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
 
     const bound: TemplateBoundSetting[] = [];
     const unbound: string[] = [];
+    const doneByScript: string[] = [];
     const slots: Record<string, TemplateBindingValue> = {};
     const sources: Record<string, string> = {};
     const excluded: string[] = [];
+
+    // The settings that the script does with no slot, by name. A name that is also a slot is not such a setting:
+    // the slot carries it. The service gives one entry for one setting, and the first entry is the entry.
+    const byConstruction = new Map<string, unknown>();
+    for (const entry of contract.settings_by_construction ?? []) {
+        if (!byConstruction.has(entry.setting) && !adaptableNames.has(entry.setting) && !pinnedByName.has(entry.setting))
+            byConstruction.set(entry.setting, entry.value);
+    }
 
     const departureBySetting = new Map(
         grounding.departures.flatMap((departure) => (departure.setting === undefined ? [] : [[departure.setting, departure] as const])),
@@ -759,6 +768,11 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                 );
             } else if (pinnedByName.has(rule.name)) {
                 unbound.push(`${departs}, but the template pins \`${rule.name}\``);
+            } else if (versionMatches && byConstruction.has(rule.name)) {
+                // The script has no slot for it, thus the plan cannot remove it from the script.
+                unbound.push(
+                    `${departs}, but the script of the template does \`${rule.name}\` = ${JSON.stringify(byConstruction.get(rule.name))} with no slot`,
+                );
             } else {
                 unbound.push(departs);
             }
@@ -822,6 +836,17 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
             );
             continue;
         }
+        // The script does some settings with no slot. The plan value that the script does needs no bind and no
+        // act of the agent. A different plan value is a conflict: no slot can send it.
+        if (byConstruction.has(setting.name)) {
+            const done = byConstruction.get(setting.name);
+            if (sameSettingValue(listAsText(done), listAsText(setting.value))) doneByScript.push(shown);
+            else
+                unbound.push(
+                    `${shown}: the script of the template does \`${setting.name}\` = ${JSON.stringify(done)} with no slot, and the plan value cannot be sent`,
+                );
+            continue;
+        }
         unbound.push(`${shown}: no slot of the template carries it`);
     }
 
@@ -837,6 +862,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                     description: input.description,
                 })),
                 bound,
+                done_by_script: doneByScript,
                 unbound_settings: unbound,
                 notes: contract.notes?.trim() || undefined,
             },
