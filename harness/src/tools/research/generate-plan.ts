@@ -646,6 +646,16 @@ type RepairedClaim = {
     readonly to: string;
 };
 
+/** True when a candidate step gives no settings: the field is absent, or it is an empty list. Any other value goes to the validation. */
+function givesNoSettings(settings: unknown): boolean {
+    return settings === undefined || (isUnknownArray(settings) && settings.length === 0);
+}
+
+/** The skeleton step with settings that renders a template, when the answer holds one. */
+function skeletonStepOfTemplate(memory: RecommendMemory, template: string): SkeletonStep | undefined {
+    return [...memory.steps.values()].find((step) => step.grounding.template === template && step.grounding.settings.length > 0);
+}
+
 /**
  * Restore the grounding fields the host owns on each candidate step, from the
  * last answer. A model copies the skeleton into the plan, and it drops the
@@ -658,7 +668,9 @@ type RepairedClaim = {
  * binds the contract to. The host also writes the settings of the skeleton
  * step on a step that gives none: the settings are a copy of the answer, and
  * a model that types them again spends a large part of its output on them.
- * Settings that the model wrote stay as they are. A step whose snapshot is `none` states that it does
+ * Settings that the model wrote stay as they are. A step under another id
+ * that renders the template of a skeleton step and gives no settings is an
+ * issue that rejects the plan. A step whose snapshot is `none` states that it does
  * not use the answer, and it stays as it is. A step whose status is
  * `ungrounded` states a departure from the answer: the digest is stamped,
  * and no template is restored, because the template realizes the method the
@@ -722,8 +734,7 @@ function restoreSkeletonGrounding(
                 next = { ...next, template: source.grounding.template };
             }
             // The settings of a skeleton step are a copy of the answer, thus the model leaves them out and the host writes them.
-            const absent = next.settings === undefined || (isUnknownArray(next.settings) && next.settings.length === 0);
-            if (absent && source.grounding.settings.length > 0 && current.status !== "ungrounded") {
+            if (givesNoSettings(next.settings) && source.grounding.settings.length > 0 && current.status !== "ungrounded") {
                 filled.push(label);
                 next = { ...next, settings: source.grounding.settings };
             }
@@ -746,6 +757,16 @@ function restoreSkeletonGrounding(
                 return claim;
             });
             if (changed) next = { ...next, claims };
+        }
+        // A step under another id gets no settings from the host. With the template of a skeleton step and no
+        // settings, the plan would lose the settings of the answer in silence.
+        const twin = source === undefined && typeof next.template === "string" ? skeletonStepOfTemplate(memory, next.template) : undefined;
+        if (twin !== undefined && current.status !== "ungrounded" && givesNoSettings(next.settings)) {
+            unknown.push({
+                path: `plan.steps.${index}.grounding.settings`,
+                code: "semantic",
+                message: `Step ${label} renders the template of the skeleton step ${twin.id} and gives no settings. Give the step the id ${twin.id}, or write its grounding.settings.`,
+            });
         }
         next = repairDepartureRules(next, label, repaired);
         // The repaired claims are the ones compared, thus a step whose only claim was miscopied still gets the digest.

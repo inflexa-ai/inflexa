@@ -773,6 +773,52 @@ describe("generatePlan loop-driving tool", () => {
             expect(steps[0]?.grounding?.settings).toEqual(settings);
         });
 
+        it("refuses a step under another id that renders the template of a skeleton step and gives no settings", async () => {
+            const grounding = {
+                status: "grounded",
+                snapshot: SNAPSHOT.digest,
+                claims: ["R-0001@e7d0"],
+                template: "tpl-deseq2-two-group@1.0.0",
+                reason: "DESeq2 Wald test per R-0001@e7d0",
+            };
+            const renamed = validCandidate({ id: "T9S9", grounding });
+            const corrected = validCandidate({ id: "T1S2", grounding });
+            await seedAnalysis(pool, "an-renamed-step", { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const model = scriptedModel([
+                callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(toolCall("k1", "knowledge_check", CHECKED_DRAFT)),
+                callTools(submitPlan("s1", renamed)),
+                callTools(submitPlan("s2", corrected)),
+            ]);
+
+            const result = planResultOf((await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext("an-renamed-step")))._unsafeUnwrap());
+
+            expect(JSON.stringify(toolResultIn(presentAt(model.calls, 3), "s1"))).toContain("Give the step the id T1S2, or write its grounding.settings.");
+            expect(presentFirst(acceptedStepsOf(result)).grounding?.settings).toHaveLength(1);
+        });
+
+        it("refuses malformed settings on a skeleton step, and does not write over them", async () => {
+            const grounding = { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" };
+            const malformed = validCandidate({ id: "T1S2", grounding: { ...grounding, settings: { alpha: 0.1 } } });
+            const corrected = validCandidate({ id: "T1S2", grounding });
+            await seedAnalysis(pool, "an-malformed-settings", { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const model = scriptedModel([
+                callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(toolCall("k1", "knowledge_check", CHECKED_DRAFT)),
+                callTools(submitPlan("s1", malformed)),
+                callTools(submitPlan("s2", corrected)),
+            ]);
+
+            const result = planResultOf(
+                (await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext("an-malformed-settings")))._unsafeUnwrap(),
+            );
+
+            expect(JSON.stringify(toolResultIn(presentAt(model.calls, 3), "s1"))).toContain("grounding.settings");
+            expect(result.event).toBe("plan_complete");
+        });
+
         it("writes no settings on a step that departs from the method of the skeleton step", async () => {
             const departed = validCandidate({
                 id: "T1S2",
