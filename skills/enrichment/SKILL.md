@@ -1,6 +1,6 @@
 ---
 name: enrichment
-description: Read before you do gene set enrichment, over-representation, per-sample pathway scores, or TF activity scores. It gives the method for a ranked or an unranked list, which gene set collections are available, the background and identifier traps, and how to report redundant GO terms.
+description: Read before you do gene set enrichment, over-representation, per-sample pathway scores, or TF activity scores. It gives the method for a ranked list, an unranked list, or genes of CpG sites, which gene set collections are available, the background and identifier traps, and how to report redundant GO terms.
 version: 1.0.0
 tags: [enrichment, gsea, ora, pathway, go, functional-annotation, gseapy, decoupler]
 ---
@@ -37,7 +37,7 @@ Choose the method based on your input data and analytical goal:
 6. **Input is CpG sites or methylated regions mapped to genes**
    - A gene with more tested CpGs gets more hits by chance, thus a plain ORA finds the long, CpG-rich genes.
    - Correct for the number of tested CpGs of each gene. For an array with its annotation, use `missMethyl::gometh()` or `gsameth()`.
-   - For other data, use a weighted null: `goseq` with the CpG count as its bias data, or a logistic model of hit status with the CpG count as a covariate.
+   - For other data, use a weighted null: a logistic model of hit status with the CpG count as a covariate, or random gene sets drawn with a probability that follows the CpG count.
    - Count the CpGs over all the tested sites, not only the hits. The `dna-methylation` skill has the rest of the method.
 
 ## Gene Set Database Selection
