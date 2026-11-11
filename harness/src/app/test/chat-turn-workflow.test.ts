@@ -141,7 +141,11 @@ const childPark = defineTool({
 const RESEARCHER = "test-researcher";
 const researcherAgent = { id: RESEARCHER, systemPrompt: "Research.", model: "scripted-model", tools: [childPark], maxIterations: 4 };
 
-const researcher = registerSubAgent<{ readonly brief: string }, string>(RESEARCHER, async ({ payload, ctx, loop }) => {
+/** The answer of each child to the question of a changed body, in the order of the runs of the body. */
+const researcherPatched: boolean[] = [];
+
+const researcher = registerSubAgent<{ readonly brief: string }, string>(RESEARCHER, async ({ payload, ctx, loop, patched }) => {
+    researcherPatched.push(await patched("test-researcher-change"));
     const { messages } = await runLoop(researcherAgent, [{ role: "user", content: payload.brief }], forSubAgent(ctx.session, RESEARCHER), {
         ...loop,
         provider: childProvider,
@@ -861,6 +865,19 @@ describe("the sub-agents of a chat turn workflow", () => {
         const childFrames = frames.filter((frame) => frame.source?.callPath.at(-1) === RESEARCHER);
         expect(childFrames.filter((frame) => frame.type === "iteration")).toHaveLength(2);
         expect(childFrames.every((frame) => frame.source?.callPath.join("/") === `conversation-agent/${RESEARCHER}`)).toBe(true);
+    });
+
+    it("gives the new operations of a changed body to a child that starts after the change", async () => {
+        credentialAfterRestart = makeLocalAuth();
+        researcherPatched.length = 0;
+        childProvider = scriptedModel([reply([text("a report")])]).provider;
+        provider = scriptedModel([callTools(toolCall("r1", "research", { brief: "a" })), reply([text("Done.")])]).provider;
+
+        const turnId = await startTurn(`thread-${rig.nextWorkflowId()}`);
+        const frames = await readAll(turnId);
+
+        expect(textOf(frames)).toBe("Done.");
+        expect(researcherPatched).toEqual([true]);
     });
 
     it("recovers a child from its checkpoints, and the child makes no model request again", async () => {

@@ -271,6 +271,8 @@ export type FollowUpRequest = {
     readonly accountingAgentId?: string;
     /** A `provider` error with the status `400` or `413` ends the request with the finish reason `error`, and no throw. */
     readonly endOnRequestRefusal?: boolean;
+    /** Ends the requests when the steps of this follow-up hold a final outcome. The stop condition of the run does not apply here. */
+    readonly stopWhen?: (steps: readonly LoopStep[]) => boolean;
 };
 
 export type FollowUpResult = LoopResult & {
@@ -294,7 +296,7 @@ export async function continueLoop(
     const accountingAgentId = request.accountingAgentId;
     const runSession = accountingAgentId === undefined ? session : forSubAgent(session, accountingAgentId);
     const { onRound: _onRound, compaction: _compaction, turnInput: _turnInput, stopWhen: _stopWhen, capWhen: _capWhen, ...followUp } = opts;
-    const open = openConversation(agent, conversation, runSession, followUp, accountingAgentId ?? agent.id);
+    const open = openConversation(agent, conversation, runSession, { ...followUp, stopWhen: request.stopWhen }, accountingAgentId ?? agent.id);
     const result = await open.guard(() =>
         open.run({
             mask: request.mask,
@@ -317,6 +319,8 @@ export type TerminalSalvage = {
     readonly nudge: string;
     /** The cap of salvage requests. Defaults to {@link DEFAULT_SALVAGE_REQUESTS}. */
     readonly maxRequests?: number;
+    /** Ends the salvage requests when their steps hold a final outcome, for example an accepted submission. */
+    readonly stopWhen?: (steps: readonly LoopStep[]) => boolean;
     /** Whether the recorded steps hold the outcome of the agent. */
     readonly hasOutcome: (steps: readonly LoopStep[]) => boolean;
 };
@@ -365,10 +369,16 @@ export async function runWithSalvage(
         salvageTools: salvage.tools,
         salvageMaxRequests: maxRequests,
     });
-    const salvaged = await continueLoop(agent, first.messages, { text: salvage.nudge, mask: { allow: salvage.tools }, maxRequests }, session, {
-        ...opts,
-        provider: first.provider,
-    });
+    const salvaged = await continueLoop(
+        agent,
+        first.messages,
+        { text: salvage.nudge, mask: { allow: salvage.tools }, maxRequests, stopWhen: salvage.stopWhen },
+        session,
+        {
+            ...opts,
+            provider: first.provider,
+        },
+    );
     return {
         messages: [...first.messages, ...salvaged.messages],
         steps: [...first.steps, ...salvaged.steps],

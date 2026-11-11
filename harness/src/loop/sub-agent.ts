@@ -44,6 +44,11 @@ export type SubAgentCall<P> = {
     readonly loop: SubAgentLoopOptions;
     /** Run a read or a write of the body once: a step in a child workflow, a plain call in a process. */
     readonly durably: <T>(name: string, run: () => Promise<T>) => Promise<T>;
+    /**
+     * True when this run takes the new operations of a named change of the body. A child workflow that started
+     * before the change replays its old operations, thus it gets false. A plain call in a process gets true.
+     */
+    readonly patched: (name: string) => Promise<boolean>;
 };
 
 export type SubAgentBody<P, R> = (call: SubAgentCall<P>) => Promise<R>;
@@ -109,6 +114,7 @@ export function inProcessSubAgent<P, R>(_name: string, body: SubAgentBody<P, R>)
             ctx,
             loop: { signal: ctx.signal, emit: ctx.emit, invocationId: ctx.invocationId, turnUsage: ctx.turnUsage },
             durably: (_name, run) => run(),
+            patched: () => Promise.resolve(true),
         });
 }
 
@@ -168,6 +174,7 @@ export function registerSubAgent<P, R>(name: string, body: SubAgentBody<P, R>, p
                         pause,
                     },
                     durably: (stepName, step) => DBOS.runStep(step, { name: stepName }),
+                    patched: (patchName) => DBOS.patch(patchName),
                 });
             const result = input.rootTurnId === undefined ? await run() : await withRootTurn(input.rootTurnId, run);
             await writer.settle();

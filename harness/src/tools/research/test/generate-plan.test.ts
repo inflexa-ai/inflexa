@@ -405,8 +405,19 @@ describe("generatePlan loop-driving tool", () => {
         expect(model.calls).toHaveLength(2);
     });
 
+    it("ends the salvage at its accepted plan, with no more request", async () => {
+        const analysisId = "an-salvage-stop";
+        await seedAnalysis(pool, analysisId, { dpStatus: null });
+        const model = scriptedModel([reply([text("Here is a plan, described in prose.")]), callTools(submitPlan("t1", validCandidate())), submitted]);
+
+        const result = planResultOf((await toolFor(model.provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
+
+        expect(result.event).toBe("plan_complete");
+        expect(model.calls).toHaveLength(2);
+    });
+
     it("keeps an accepted plan that is longer than the cap of a tool result", async () => {
-        // The loop cuts the result of this call into an excerpt, and the planner stops after its one request.
+        // The record of the call holds the plan, and the accepted plan ends the run with no more request.
         const analysisId = "an-long-plan";
         await seedAnalysis(pool, analysisId, { dpStatus: null });
         const question = `Which genes differ between the two conditions? ${"The contrast is treated against control. ".repeat(1000)}`;
@@ -417,7 +428,7 @@ describe("generatePlan loop-driving tool", () => {
         expect(question.length).toBeGreaterThan(TOOL_RESULT_CAP);
         expect(result.event).toBe("plan_complete");
         expect(presentFirst(PlannerPlanSchema.parse(result.plan).steps).question).toBe(question);
-        expect(model.calls).toHaveLength(2);
+        expect(model.calls).toHaveLength(1);
     });
 
     it("gives a refused candidate its issues, and the planner submits again", async () => {
@@ -1156,16 +1167,13 @@ describe("generatePlan loop-driving tool", () => {
                     toolCall(`c${i + 1}`, "knowledge_check", { ...SITUATION, steps: [{ step_type: "differential_expression", method: `method-${i + 1}` }] }),
                 ),
             ];
-            const model = scriptedModel([callTools(...searches), callTools(refs("r13", "collection-13"), submitPlan("t1", validCandidate())), submitted]);
+            const model = scriptedModel([callTools(...searches), callTools(refs("r13", "collection-13")), callTools(submitPlan("t1", validCandidate()))]);
 
             const result = planResultOf((await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
 
+            // The accepted plan is the proof that the guard let the terminal tool run.
+            expect(errorTextIn(presentAt(model.calls, 2), "r13")).toContain("made 40 calls across its search tools");
             expect(result.event).toBe("plan_complete");
-            const answer = presentAt(model.calls, 2);
-            expect(errorTextIn(answer, "r13")).toContain("made 40 calls across its search tools");
-            expect(z.object({ type: z.literal("json"), value: z.object({ accepted: z.literal(true) }) }).safeParse(toolResultIn(answer, "t1")).success).toBe(
-                true,
-            );
         });
 
         it("refuses the same calls when the same calls run again, as a replay does", async () => {
@@ -1196,7 +1204,7 @@ describe("generatePlan loop-driving tool", () => {
             await seedAnalysis(pool, analysisId, { dpStatus: null });
             // Two calls run, and the six after them are refused.
             const looping = Array.from({ length: 8 }, (_, i) => refs(`r${i + 1}`, "hallmark"));
-            const model = scriptedModel([callTools(...looping), callTools(refs("r9", "another collection"), submitPlan("t1", validCandidate())), submitted]);
+            const model = scriptedModel([callTools(...looping), callTools(refs("r9", "another collection")), callTools(submitPlan("t1", validCandidate()))]);
             const logger = createCapturingLogger();
 
             const result = planResultOf((await toolFor(model.provider, { logger }).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
