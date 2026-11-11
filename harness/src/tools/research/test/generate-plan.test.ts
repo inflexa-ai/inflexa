@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { createCapturingLogger, type CapturedLog, type CapturingLogger } from "../../../__tests__/setup/logger.js";
 import { withSchema } from "../../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../../agents/sandbox-catalog.js";
-import type { ToolOutputStore } from "../../../loop/tool-output.js";
+import { TOOL_RESULT_CAP, type ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../../providers/types.js";
 import { PlannerPlanSchema, PlanningAgentOutputSchema, type PlanningAgentOutput } from "../../../schemas/plan-schemas.js";
@@ -402,6 +402,21 @@ describe("generatePlan loop-driving tool", () => {
 
         expect(result.event).toBe("error");
         expect(result.error).toContain("without a terminal outcome");
+        expect(model.calls).toHaveLength(2);
+    });
+
+    it("keeps an accepted plan that is longer than the cap of a tool result", async () => {
+        // The loop cuts the result of this call into an excerpt, and the planner stops after its one request.
+        const analysisId = "an-long-plan";
+        await seedAnalysis(pool, analysisId, { dpStatus: null });
+        const question = `Which genes differ between the two conditions? ${"The contrast is treated against control. ".repeat(1000)}`;
+        const model = scriptedModel([callTools(submitPlan("t1", validCandidate({ question }))), submitted]);
+
+        const result = planResultOf((await toolFor(model.provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
+
+        expect(question.length).toBeGreaterThan(TOOL_RESULT_CAP);
+        expect(result.event).toBe("plan_complete");
+        expect(presentFirst(PlannerPlanSchema.parse(result.plan).steps).question).toBe(question);
         expect(model.calls).toHaveLength(2);
     });
 
