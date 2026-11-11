@@ -20,6 +20,7 @@ import type { Connectable } from "../../lib/db-result.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { finalText, runLoop } from "../../loop/run-loop.js";
 import { registerSubAgent } from "../../loop/sub-agent.js";
+import { TOOL_RESULT_CAP } from "../../loop/tool-output.js";
 import { turnCredentials } from "../../loop/turn-credentials.js";
 import type { Querier } from "../../state/db.js";
 import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
@@ -157,6 +158,7 @@ const research = defineTool({
     id: "research",
     description: "Research a brief in a sub-agent.",
     inputSchema: z.object({ brief: z.string() }),
+    resultCap: TOOL_RESULT_CAP * 2,
     view: "none",
     describeCall: "none",
     startsWorkflow: true,
@@ -878,6 +880,24 @@ describe("the sub-agents of a chat turn workflow", () => {
 
         expect(textOf(frames)).toBe("Done.");
         expect(researcherPatched).toEqual([true]);
+    });
+
+    it("gives a body call the cap of its tool, thus a result that only the cap of the loop cuts arrives whole", async () => {
+        credentialAfterRestart = makeLocalAuth();
+        const report = "A finding. ".repeat(TOOL_RESULT_CAP / 8);
+        childProvider = scriptedModel([reply([text(report)])]).provider;
+        const root = scriptedModel([callTools(toolCall("r1", "research", { brief: "a" })), reply([text("Done.")])]);
+        provider = root.provider;
+
+        const turnId = await startTurn(`thread-${rig.nextWorkflowId()}`);
+        const frames = await readAll(turnId);
+
+        expect(textOf(frames)).toBe("Done.");
+        expect(report.length).toBeGreaterThan(TOOL_RESULT_CAP);
+        const results = (root.calls[1]?.prompt ?? [])
+            .flatMap((message) => (message.role === "tool" ? message.content : []))
+            .flatMap((part) => (part.type === "tool-result" ? [part.output] : []));
+        expect(results).toEqual([{ type: "json", value: { report } }]);
     });
 
     it("recovers a child from its checkpoints, and the child makes no model request again", async () => {

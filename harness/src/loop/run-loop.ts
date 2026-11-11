@@ -66,6 +66,7 @@ import { COMPACTION_MAX_REQUESTS, type CompactionPolicy } from "./compaction.js"
 import { addChatUsage, hasReportedUsage, recordAgentRun, recordModelRefusal, type AgentRunUsage } from "./metrics.js";
 import {
     adaptTools,
+    takesBodyResultCaps,
     deniedReason,
     foldCallRecords,
     isFatalToolError,
@@ -877,10 +878,12 @@ async function runSeries(
         fatal = err;
         fatalController.abort(err);
     };
+    const takesCaps = await takesBodyResultCaps(agent.tools);
     const tools = adaptTools(agent.tools, {
         session,
         source,
         emit: opts.emit,
+        takesBodyResultCaps: takesCaps,
         turnUsage: target.rollups.at(-1) ?? {},
         capabilities: active.capabilities,
         // Only the read tool of the agent can read a kept text, thus an agent without it keeps nothing.

@@ -429,9 +429,13 @@ describe("generatePlan loop-driving tool", () => {
         const question = `Which genes differ between the two conditions? ${"The contrast is treated against control. ".repeat(1000)}`;
         const model = scriptedModel([callTools(submitPlan("t1", validCandidate({ question }))), submitted]);
 
-        const result = planResultOf((await toolFor(model.provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
+        const tool = toolFor(model.provider);
+        const value = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap();
+        const result = planResultOf(value);
 
         expect(question.length).toBeGreaterThan(TOOL_RESULT_CAP);
+        // The conversation agent reads the whole result, with no knowledge tool in the run.
+        expect(JSON.stringify(value).length).toBeLessThanOrEqual(tool.resultCap ?? TOOL_RESULT_CAP);
         expect(result.event).toBe("plan_complete");
         expect(presentFirst(PlannerPlanSchema.parse(result.plan).steps).question).toBe(question);
         expect(model.calls).toHaveLength(1);

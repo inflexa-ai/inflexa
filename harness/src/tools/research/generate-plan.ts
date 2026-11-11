@@ -99,6 +99,12 @@ const PLANNER_MAX_ITERATIONS = 300;
 const PLAN_TIMEOUT_MS = 1_800_000;
 
 /**
+ * The conversation agent describes the plan to the user from the result, thus it must read the whole result. A
+ * grounded plan of eight to ten steps with its claim titles gives 61,000 to 64,000 characters.
+ */
+const PLAN_RESULT_CAP = 96 * 1024;
+
+/**
  * The refusals of the call guard that end the search phase of one plan. A
  * planner that the guard refused this many times is not searching, it is
  * looping, and the salvage request lets it submit the plan it has. Six
@@ -1716,6 +1722,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
             "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
         inputSchema: generatePlanInputSchema,
+        resultCap: PLAN_RESULT_CAP,
         view: {
             input: (input) => input,
             error: true,

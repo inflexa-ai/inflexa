@@ -132,6 +132,12 @@ function headingOf(claim: KeptClaim): ClaimHeading {
     };
 }
 
+/**
+ * The planner copies each skeleton step from the answer, thus it must read the whole answer. The answer of a
+ * question with eight to twelve steps gives 33,000 to 51,000 characters.
+ */
+const RECOMMEND_RESULT_CAP = 96 * 1024;
+
 /** The answer as the model reads it: a heading of each claim, and each other field as the host keeps it. */
 export function toModelView(answer: KnowledgeRecommendAnswer): KnowledgeRecommendView {
     return { ...answer, claims: answer.claims.map(headingOf) };
@@ -178,6 +184,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
             "That is the environment answer; do not call the listing tools for a package or a collection the answer already reports. " +
             "Call it once per situation; a second call with the same situation gives the same answer.",
         inputSchema: SituationFieldsSchema,
+        resultCap: RECOMMEND_RESULT_CAP,
         view: "none",
         describeCall: ({ question, n_per_group_min, n_per_group_max, batch }) => `${question}: ${n_per_group_min}-${n_per_group_max} per group, batch ${batch}`,
         describeResult: (_input, result: KnowledgeRecommendOutput) =>
