@@ -11,10 +11,10 @@
  * database already holds, and it would lose fidelity at every hop.
  *
  * The tool drives an internal "planner" agent that gives its outcome through
- * three terminal tools. None of them ends the run, and none writes:
+ * three terminal tools. Only an accepted plan ends the run, and none writes:
  *
- *   - submit_plan(plan)         → checks a candidate; gives back the accepted
- *                                 plan or structured issues
+ *   - submit_plan(plan)         → checks a candidate; an accepted plan ends the
+ *                                 run, and a refusal gives structured issues
  *   - request_clarification(…)  → the planner needs more context
  *   - report_blocker(reason)    → no viable plan
  *
@@ -276,16 +276,17 @@ const UNCHECKED_ISSUE: ValidationIssue = {
 
 const ValidationIssueSchema = z.object({ path: z.string(), code: z.enum(["schema", "semantic"]), message: z.string(), hint: z.string().optional() });
 
-/** The call record of an accepted submission. The loop cuts a long result into an excerpt, and the record stays whole. */
+/** The call record of an accepted submission: the plan as the harness saves it. The model does not read the record. */
 const AcceptedPlanRecordSchema = z.object({ plan: PlannerPlanSchema });
 
 type SubmitPlanOutput =
     | { accepted: false; issues: ValidationIssue[] }
-    | WithToolCallRecord<{ accepted: true; plan: PlannerPlan }, z.infer<typeof AcceptedPlanRecordSchema>>;
+    | WithToolCallRecord<{ accepted: true; steps: number }, z.infer<typeof AcceptedPlanRecordSchema>>;
 
+/** The value of a submission. An accepted value that a checkpoint of an older version holds carries the plan. */
 const SubmitPlanOutputSchema = z.discriminatedUnion("accepted", [
     z.object({ accepted: z.literal(false), issues: z.array(ValidationIssueSchema) }),
-    z.object({ accepted: z.literal(true), plan: PlannerPlanSchema }),
+    z.object({ accepted: z.literal(true), plan: PlannerPlanSchema.optional() }),
 ]);
 
 const SUBMIT_PLAN_TOOL_ID = "submit_plan";
@@ -302,16 +303,22 @@ function submitIssuesOf(output: NonNullable<LoopStep["calls"][number]["output"]>
 }
 
 /**
- * The plan of an accepted submission, or `undefined` for each other output. A
- * plan with grounding is longer than the cap of a tool result, and the cut
- * result has an excerpt and no value. Thus the record is the first source. The
- * value is the source of a result that a checkpoint holds with no record.
+ * The plan of an accepted submission, or `undefined` for each other output.
+ * The record holds the plan. The value is the source of a result that a
+ * checkpoint of an older version holds with no record.
  */
 function acceptedPlanOf(output: Extract<NonNullable<LoopStep["calls"][number]["output"]>, { outcome: "ok" }>): PlannerPlan | undefined {
     const record = AcceptedPlanRecordSchema.safeParse(output.record);
     if (record.success) return record.data.plan;
     const parsed = SubmitPlanOutputSchema.safeParse(output.value);
     return parsed.success && parsed.data.accepted ? parsed.data.plan : undefined;
+}
+
+/** True when the last request of a run ended with an accepted plan. The plan is the outcome, thus the run has no more work. */
+function endsWithAcceptedPlan(steps: readonly LoopStep[]): boolean {
+    const last = steps.at(-1);
+    if (last === undefined) return false;
+    return last.calls.some((call) => call.toolName === SUBMIT_PLAN_TOOL_ID && call.output?.outcome === "ok" && acceptedPlanOf(call.output) !== undefined);
 }
 
 /**
@@ -917,8 +924,8 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?:
     const submitPlanTool = defineTool({
         id: SUBMIT_PLAN_TOOL_ID,
         description:
-            "Submit the plan. Checks the plan; on success returns {accepted: true, plan} " +
-            "with the plan as the harness saves it — stop after an accepted plan. On " +
+            "Submit the plan. Checks the plan; on success returns {accepted: true, steps} " +
+            "with the count of the steps, the harness saves the plan, and the session ends. On " +
             "rejection returns {accepted: false, issues} — fix and call again, " +
             "or switch to report_blocker if the plan cannot be made valid. The last " +
             "accepted plan is the plan of this session. This arg schema is the " +
@@ -970,7 +977,7 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?:
                 stepCount: result.plan.steps.length,
                 agents: [...new Set(result.plan.steps.map((s) => s.agent))],
             });
-            return ok(withToolCallRecord({ accepted: true as const, plan: result.plan }, { plan: result.plan }));
+            return ok(withToolCallRecord({ accepted: true as const, steps: result.plan.steps.length }, { plan: result.plan }));
         },
     });
 
@@ -1398,7 +1405,7 @@ type PlannerSeed =
 /** Build the `generate_plan` tool bound to its provider and pool. */
 export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent: SubAgentRegistrar): Tool {
     const baseLogger = (deps.logger ?? createNoopLogger()).named("generate-plan");
-    const plan = registerSubAgent<GeneratePlanInput, PlannerResult>(PLANNER_AGENT_ID, async ({ payload: input, ctx, loop, durably }) => {
+    const plan = registerSubAgent<GeneratePlanInput, PlannerResult>(PLANNER_AGENT_ID, async ({ payload: input, ctx, loop, durably, patched }) => {
         const analysisId = scopeResource(ctx.session.scope).resourceId;
         // Bound per invocation: `analysisId` comes from the call-time session, not from
         // the construction-time deps the factory closes over.
@@ -1574,6 +1581,8 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         let refusals = 0;
         let runError: unknown = null;
         let run: SalvagedResult | null = null;
+        // A run that started before this change made one more request after its accepted plan, and its replay makes it again.
+        const stopsAtPlan = await patched("planner-stops-at-accepted-plan");
         try {
             run = await runWithSalvage(
                 planner,
@@ -1596,6 +1605,8 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                     // the early cap ends the search, and the salvage request
                     // submits the plan it has.
                     capWhen: () => refusals >= PLANNER_REFUSAL_LIMIT,
+                    // An accepted plan is the outcome. One more request would give prose that no surface reads.
+                    stopWhen: stopsAtPlan ? endsWithAcceptedPlan : undefined,
                     // No forced tool choice: some Claude models reject it with a
                     // 400. The prompt names the terminal tools, and the salvage
                     // request below recovers a run that ends on prose.
@@ -1610,6 +1621,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                         "your final plan now, or request_clarification / report_blocker " +
                         "if you cannot. Do not reply with prose.",
                     hasOutcome: (steps) => selectedOutcomeOf(steps) !== null,
+                    stopWhen: stopsAtPlan ? endsWithAcceptedPlan : undefined,
                 },
             );
         } catch (err) {
