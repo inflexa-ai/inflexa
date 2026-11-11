@@ -181,7 +181,7 @@ A tool result can carry an ordered list of pictures beside its data. When the pr
 
 ### Requirement: A long tool result is cut to an excerpt
 
-When the text of a tool result is longer than the cap of its tool, the model MUST get an excerpt. The cap is 32,768 characters, and a tool can declare a different cap. The excerpt holds a line that states the cut and the cap, and the reference when the text is kept. Then it holds the first 4,096 characters, a marker with the count of the characters left out, and the last 8,192 characters. A denial keeps its text. The excerpt depends only on the text, the reference, and the choice to keep.
+When the text of a tool result is longer than the cap of its tool, the model MUST get an excerpt. The cap is 32,768 characters, and a tool can declare a different cap. The excerpt holds a line that states the cut and the cap, and the reference when the text is kept. Then it holds the first 4,096 characters, a marker with the count of the characters left out, and the last 8,192 characters. A denial keeps its text. The excerpt depends only on the text, the cap, the reference, and the choice to keep. A call that runs in the body of a workflow takes the cap of its tool only in a workflow that started after the tool declared the cap. Thus a replay of an earlier workflow gives the same excerpt.
 
 #### Scenario: A tool declares a larger cap
 

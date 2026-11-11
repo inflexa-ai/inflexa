@@ -13,6 +13,7 @@ import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { continueLoop, runLoop, type LoopOptions } from "../run-loop.js";
+import { resultCapOf } from "../tool-adapter.js";
 import {
     EXCERPT_HEAD_CHARS,
     EXCERPT_TAIL_CHARS,
@@ -120,6 +121,20 @@ function textOf(result: ToolResultPart): string {
 const runSession = (scope: AgentSession["scope"] = { kind: "analysis", analysisId: "analysis-001" }): AgentSession => ({
     ...makeSession({ scope }),
     runFrame: { runId: "run-1", stepId: "T1S1" },
+});
+
+describe("resultCapOf", () => {
+    const cap = TOOL_RESULT_CAP * 2;
+
+    it("gives a body call the cap of the loop in a workflow that started before its tool had a cap", () => {
+        expect(resultCapOf({ resultCap: cap, startsWorkflow: true }, false)).toBe(TOOL_RESULT_CAP);
+        expect(resultCapOf({ resultCap: cap, startsWorkflow: true }, true)).toBe(cap);
+    });
+
+    it("gives a call in a step the cap of its tool, because the step keeps the cut result", () => {
+        expect(resultCapOf({ resultCap: cap }, false)).toBe(cap);
+        expect(resultCapOf({}, true)).toBe(TOOL_RESULT_CAP);
+    });
 });
 
 describe("runLoop — long tool results", () => {
