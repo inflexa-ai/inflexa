@@ -670,6 +670,12 @@ describe("generatePlan loop-driving tool", () => {
             return storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap()).steps;
         }
 
+        /** The steps of the accepted plan, as the planner gives them to its caller. */
+        function acceptedStepsOf(result: PlanningAgentOutput) {
+            expect(result.event).toBe("plan_complete");
+            return PlannerPlanSchema.parse(result.plan).steps;
+        }
+
         it("keeps the departures of a step, and gives a departure the claim id of the step for a rule id", async () => {
             const reason = "the plan reports the fold changes with ashr";
             const plan = validCandidate({
@@ -732,6 +738,55 @@ describe("generatePlan loop-driving tool", () => {
             const steps = await storedStepsOf("an-restored-template", await plannedWithAnswer("an-restored-template", [grounded]));
 
             expect(steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
+        });
+
+        it("writes the settings of the skeleton step on a step that gives none, and a departure names one of them", async () => {
+            const departure = { rule: "R-0001@e7d0", setting: "alpha", value: 0.1, reason: "the plan reports at a false discovery rate of 10 percent" };
+            const grounded = validCandidate({
+                id: "T1S2",
+                grounding: {
+                    status: "grounded",
+                    snapshot: SNAPSHOT.digest,
+                    claims: ["R-0001@e7d0"],
+                    departures: [departure],
+                    reason: "DESeq2 Wald test per R-0001@e7d0",
+                },
+            });
+
+            const steps = acceptedStepsOf(await plannedWithAnswer("an-filled-settings", [grounded]));
+
+            expect(steps[0]?.grounding?.settings).toEqual([
+                { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" },
+            ]);
+            expect(steps[0]?.grounding?.departures).toEqual([departure]);
+        });
+
+        it("keeps the settings that the model wrote on a skeleton step", async () => {
+            const settings = [{ step: "differential_expression", name: "lfc_shrink", value: "apeglm" }];
+            const grounded = validCandidate({
+                id: "T1S2",
+                grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], settings, reason: "DESeq2 Wald test per R-0001@e7d0" },
+            });
+
+            const steps = acceptedStepsOf(await plannedWithAnswer("an-kept-settings", [grounded]));
+
+            expect(steps[0]?.grounding?.settings).toEqual(settings);
+        });
+
+        it("writes no settings on a step that departs from the method of the skeleton step", async () => {
+            const departed = validCandidate({
+                id: "T1S2",
+                grounding: {
+                    status: "ungrounded",
+                    snapshot: SNAPSHOT.digest,
+                    claims: [],
+                    reason: "The design has one sample per group, thus no test of the answer fits.",
+                },
+            });
+
+            const steps = acceptedStepsOf(await plannedWithAnswer("an-no-settings", [departed]));
+
+            expect(steps[0]?.grounding?.settings).toBeUndefined();
         });
 
         it("keeps the view of each claim that a step cites with the stored plan, and gives its title in plan_complete", async () => {

@@ -152,7 +152,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
             "(the status, the snapshot, the claim ids, the template, the `settings`, and the reason) filled. " +
             "`claims` holds the id, the title, the strength, and the severity of each claim the steps cite; `knowledge_claims` gives the statement and the evidence of a claim on demand. " +
             "Cite a claim by its id, and never copy its text into the plan. " +
-            "Read the answer this way. `match: applicable`: copy each skeleton step into `submit_plan` as it is, including `grounding.settings`, " +
+            "Read the answer this way. `match: applicable`: copy each skeleton step into `submit_plan` with its id, and leave `grounding.settings` out, because the host writes the settings of the skeleton step that has the same id, " +
             "then add the question, the acceptance criteria, the resources, and the step budget from the data profile. " +
             "A skeleton step is the vetted default, not the only permitted method. When the design or the question does not fit its method, plan the step with your method: " +
             "set `grounding.status: ungrounded`, keep the snapshot digest, cite no claim, and give the reason for the departure in `grounding.reason`. A departure the plan states is not a fault; a silent one is. " +
