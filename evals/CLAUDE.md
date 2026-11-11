@@ -74,6 +74,10 @@ and the prompt digest. Commit the report with the change that it measures. A
 report of a commit with uncommitted changes carries `-dirty`, thus it is not a
 baseline that a later run can trust.
 
+`results/` holds only the latest report of each case set, as the baseline of the
+next change. When a run replaces a report, delete the old report. Git keeps the
+history.
+
 ## Measure a change
 
 Do these steps for each change of a prompt or of a tool description:
