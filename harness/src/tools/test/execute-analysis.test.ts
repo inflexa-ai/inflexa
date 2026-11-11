@@ -257,7 +257,6 @@ const validPlan = {
     created_at: "2026-01-01T00:00:00Z",
 };
 
-
 describe("createExecuteAnalysisTool plan mode", () => {
     it("exposes one flat refined schema with mode, planId, request, agent, and packages", () => {
         const tool = createExecuteAnalysisTool({
