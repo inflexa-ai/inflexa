@@ -47,7 +47,7 @@ import { effectiveDeadlineMs, type ChatProvider } from "../../providers/types.js
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { createReadToolOutputTool } from "../read-tool-output.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { censusResolver, createListAvailablePackagesTool, readInventorySections } from "../sandbox/list-available-packages.js";
@@ -276,7 +276,12 @@ const UNCHECKED_ISSUE: ValidationIssue = {
 
 const ValidationIssueSchema = z.object({ path: z.string(), code: z.enum(["schema", "semantic"]), message: z.string(), hint: z.string().optional() });
 
-type SubmitPlanOutput = { accepted: false; issues: ValidationIssue[] } | { accepted: true; plan: PlannerPlan };
+/** The call record of an accepted submission. The loop cuts a long result into an excerpt, and the record stays whole. */
+const AcceptedPlanRecordSchema = z.object({ plan: PlannerPlanSchema });
+
+type SubmitPlanOutput =
+    | { accepted: false; issues: ValidationIssue[] }
+    | WithToolCallRecord<{ accepted: true; plan: PlannerPlan }, z.infer<typeof AcceptedPlanRecordSchema>>;
 
 const SubmitPlanOutputSchema = z.discriminatedUnion("accepted", [
     z.object({ accepted: z.literal(false), issues: z.array(ValidationIssueSchema) }),
@@ -297,6 +302,19 @@ function submitIssuesOf(output: NonNullable<LoopStep["calls"][number]["output"]>
 }
 
 /**
+ * The plan of an accepted submission, or `undefined` for each other output. A
+ * plan with grounding is longer than the cap of a tool result, and the cut
+ * result has an excerpt and no value. Thus the record is the first source. The
+ * value is the source of a result that a checkpoint holds with no record.
+ */
+function acceptedPlanOf(output: Extract<NonNullable<LoopStep["calls"][number]["output"]>, { outcome: "ok" }>): PlannerPlan | undefined {
+    const record = AcceptedPlanRecordSchema.safeParse(output.record);
+    if (record.success) return record.data.plan;
+    const parsed = SubmitPlanOutputSchema.safeParse(output.value);
+    return parsed.success && parsed.data.accepted ? parsed.data.plan : undefined;
+}
+
+/**
  * The outcome of a run, selected from its recorded calls: the last accepted
  * plan, else the last clarification, else the first blocker.
  */
@@ -309,8 +327,7 @@ function selectedOutcomeOf(
         for (const call of step.calls) {
             if (call.output?.outcome !== "ok") continue;
             if (call.toolName === SUBMIT_PLAN_TOOL_ID) {
-                const parsed = SubmitPlanOutputSchema.safeParse(call.output.value);
-                if (parsed.success && parsed.data.accepted) plan = parsed.data.plan;
+                plan = acceptedPlanOf(call.output) ?? plan;
             } else if (call.toolName === REQUEST_CLARIFICATION_TOOL_ID) {
                 const parsed = ClarificationSchema.safeParse(call.output.value);
                 if (parsed.success) clarification = { kind: "clarification", question: parsed.data.question, questionContext: parsed.data.questionContext };
@@ -953,7 +970,7 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?:
                 stepCount: result.plan.steps.length,
                 agents: [...new Set(result.plan.steps.map((s) => s.agent))],
             });
-            return ok({ accepted: true as const, plan: result.plan });
+            return ok(withToolCallRecord({ accepted: true as const, plan: result.plan }, { plan: result.plan }));
         },
     });
 
