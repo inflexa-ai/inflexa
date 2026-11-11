@@ -249,3 +249,31 @@ The `data-plan` part MUST have the optional field `claims`. It holds the view of
 - **GIVEN** a stored plan whose step holds the setting `n_top_genes_pca = 500` and a departure from `R-0001@e7d0` that gives 364
 - **WHEN** the plan card builder builds the `data-plan` part
 - **THEN** the grounding of the step in the part holds the setting and the departure
+
+### Requirement: read_plan gives the text of a stored plan to the model
+
+The conversation agent MUST hold a `read_plan` tool that reads a stored plan of the analysis of the session by its plan id. The tool MUST show nothing to the user, because `show_plan` shows the card of a stored plan.
+
+With no step id, the result MUST hold the plan as `generate_plan` gives it: each step with its `grounding` and no `grounding.settings`, and the id, the title, and the strength of each claim view that the stored plan keeps. With step ids, the result MUST hold only those steps, each with its `grounding.settings`, and only the claims that those steps cite. The result MUST name each step id that the plan does not hold.
+
+The result MUST name the parent plan of a revision, and the newest plan that names this plan as its parent. An absent plan and a stored plan that does not parse MUST give `plan_not_found` as data, and no error.
+
+#### Scenario: The whole plan has no settings
+
+- **GIVEN** a stored plan whose steps hold `grounding.settings` and cite claims
+- **WHEN** `read_plan` reads the plan with no step id
+- **THEN** the result holds each step with no `grounding.settings`
+- **AND** `claims` gives the id, the title, and the strength of each claim view
+
+#### Scenario: A named step has its settings
+
+- **GIVEN** a stored plan with the steps `T1S1` and `T1S2`
+- **WHEN** `read_plan` reads the plan with the step ids `T1S2` and `T9S9`
+- **THEN** the result holds only the step `T1S2`, with its `grounding.settings`
+- **AND** `claims` holds only the claims that `T1S2` cites
+- **AND** `absentStepIds` holds `T9S9`
+
+#### Scenario: A plan of another analysis is not found
+
+- **WHEN** `read_plan` reads a plan id that the analysis of the session does not hold
+- **THEN** the result is `{ found: false, reason: "plan_not_found" }`

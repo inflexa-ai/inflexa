@@ -29,6 +29,7 @@ import { createListFilesTool } from "../workspace/list-files.js";
 import { createReadFileTool } from "../workspace/read-file.js";
 import { showFileTool } from "../workspace/show-file.js";
 import { createShowPlanTool } from "../workspace/show-plan.js";
+import { createReadPlanTool } from "../workspace/read-plan.js";
 import { createWorkspaceSearchTool } from "../workspace/workspace-search.js";
 import { createWriteFileTool } from "../workspace/write-file.js";
 import { Pool } from "pg";
@@ -298,6 +299,13 @@ describe("describeCall — conversation roster", () => {
         const tool = createShowPlanTool(notDrivenQuerier);
 
         expect(describeCall(tool, { planId: "pln-1a2b3c4d", title: "Revised plan" })).toBe("pln-1a2b3c4d");
+    });
+
+    it("read_plan names the plan, and the steps when it reads some", () => {
+        const tool = createReadPlanTool(notDrivenQuerier);
+
+        expect(describeCall(tool, { planId: "pln-1a2b3c4d" })).toBe("pln-1a2b3c4d");
+        expect(describeCall(tool, { planId: "pln-1a2b3c4d", stepIds: ["T1S2", "T2S1"] })).toBe("pln-1a2b3c4d: T1S2, T2S1");
     });
 
     it("show_file names the one file, or counts the group", () => {

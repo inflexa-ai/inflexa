@@ -67,7 +67,8 @@ import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from 
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../../config/resource-limits.js";
 import { plannerPrompt } from "../../prompts/planner.js";
 import { planCardOf } from "../../memory/card-builders.js";
-import { hydratePlanSteps, PlannerPlanSchema, type PlanClaimTitle, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
+import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
+import { claimTitlesOf, planForModel } from "../../schemas/plan-view.js";
 import { ClaimViewSchema, type ClaimView } from "../../schemas/workflow-state.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
@@ -620,11 +621,6 @@ function claimViewsOf(plan: PlannerPlan, memory: RecommendMemory): ClaimView[] {
         }
     }
     return [...views.values()];
-}
-
-/** The title and the strength of each view, for the conversation agent. */
-function claimTitlesOf(views: readonly ClaimView[]): PlanClaimTitle[] {
-    return views.map((view) => ({ id: view.id, title: view.title, strength: view.strength }));
 }
 
 /** The rule of a claim id: `R-0001` of `R-0001@e7d0`. */
@@ -1204,22 +1200,6 @@ type PlannerResult = PlanningAgentOutput & {
 };
 
 /**
- * The plan as the conversation agent reads it: each step without its `grounding.settings`. The settings are a copy
- * of the knowledge answer that the host binds at dispatch. The stored plan and the plan card keep them, and the
- * conversation agent cannot change one, thus they only add to each later request of the thread.
- */
-export function planForModel(plan: PlannerPlan): PlannerPlan {
-    return {
-        ...plan,
-        steps: plan.steps.map((step) => {
-            if (step.grounding?.settings === undefined) return step;
-            const { settings: _settings, ...grounding } = step.grounding;
-            return { ...step, grounding };
-        }),
-    };
-}
-
-/**
  * Translate the captured `PlannerOutcome` (plus any loop error) into the
  * `PlanningAgentOutput` contract the conversation agent consumes, alongside the
  * kind the diagnostic record carries.
@@ -1744,7 +1724,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             "The planner is a multi-step sub-agent, thus a call can take many minutes. " +
             "The result carries an `event`: `plan_complete` with {planId, plan, claims?} — the plan is saved, the call shows its plan card to the user, " +
             "and it does not run it (execute_analysis plan mode does, after the approval). `claims` gives the title and the strength of each knowledge rule that a step cites by id in `grounding.claims`; " +
-            "the `plan` of the result leaves out the `grounding.settings` of each step: the saved plan and the plan card hold them, and the `departures` of a step name each setting that the plan changes; " +
+            "the `plan` of the result leaves out the `grounding.settings` of each step: the saved plan and the plan card hold them, `read_plan` gives them for a step, and the `departures` of a step name each setting that the plan changes; " +
             "when you describe the plan, name a rule by its title, not by its id. `clarification_needed` with {question, questionContext?} " +
             "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
             "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
