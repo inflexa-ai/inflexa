@@ -402,6 +402,12 @@ export async function takesBodyResultCaps(tools: readonly Tool[]): Promise<boole
     return DBOS.patch("result-caps-of-body-calls");
 }
 
+/** The cap of a result of `tool`. A body call takes the cap of its tool only when the run takes those caps. */
+export function resultCapOf(tool: Pick<Tool, "resultCap" | "startsWorkflow">, takesBodyCaps: boolean): number {
+    if (tool.startsWorkflow === true && !takesBodyCaps) return TOOL_RESULT_CAP;
+    return tool.resultCap ?? TOOL_RESULT_CAP;
+}
+
 /**
  * The output with an excerpt in place of a text longer than the cap. The text
  * is kept first under a reference that a rerun of the call gives again, and the
@@ -411,7 +417,7 @@ export async function takesBodyResultCaps(tools: readonly Tool[]): Promise<boole
 async function cutLongOutput(output: ToolCallOutput, tool: Tool, toolCallId: string, run: ToolRunContext): Promise<ToolCallOutput> {
     if (output.outcome === "denied") return output;
     const text = output.outcome === "ok" ? JSON.stringify(output.value ?? null) : output.text;
-    const cap = tool.startsWorkflow === true && !run.takesBodyResultCaps ? TOOL_RESULT_CAP : (tool.resultCap ?? TOOL_RESULT_CAP);
+    const cap = resultCapOf(tool, run.takesBodyResultCaps);
     if (text.length <= cap) return output;
     const toolName = tool.id;
 
