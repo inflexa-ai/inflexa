@@ -1,4 +1,9 @@
-## ADDED Requirements
+# knowledge-plane-connection Specification
+
+## Purpose
+The CLI binds the knowledge plane client of the harness from the user config and the environment. Without the config, the CLI runs with no knowledge client.
+
+## Requirements
 
 ### Requirement: The knowledge plane is configured by an endpoint and an environment key
 
