@@ -1193,7 +1193,31 @@ type ShapedOutcome = {
  * accepted plan for the card. The tool removes `claimViews` before the model gets the output, because
  * the model gets the titles in `claims`. A result that an older version checkpointed has no views.
  */
-type PlannerResult = PlanningAgentOutput & { readonly claimViews?: readonly ClaimView[] };
+type PlannerResult = PlanningAgentOutput & {
+    readonly claimViews?: readonly ClaimView[];
+    /**
+     * True when the model gets the plan with no `grounding.settings`. The planner writes the mark with its result,
+     * thus a result that an older version checkpointed has no mark, and a replay of its turn gives the model the
+     * same plan as before.
+     */
+    readonly settingsOffModelView?: true;
+};
+
+/**
+ * The plan as the conversation agent reads it: each step without its `grounding.settings`. The settings are a copy
+ * of the knowledge answer that the host binds at dispatch. The stored plan and the plan card keep them, and the
+ * conversation agent cannot change one, thus they only add to each later request of the thread.
+ */
+export function planForModel(plan: PlannerPlan): PlannerPlan {
+    return {
+        ...plan,
+        steps: plan.steps.map((step) => {
+            if (step.grounding?.settings === undefined) return step;
+            const { settings: _settings, ...grounding } = step.grounding;
+            return { ...step, grounding };
+        }),
+    };
+}
 
 /**
  * Translate the captured `PlannerOutcome` (plus any loop error) into the
@@ -1470,7 +1494,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                 rejectionsTruncated: trace.rejectedAttempts > trace.rejections.length ? true : undefined,
                 ...extra,
             });
-            return shaped.claimViews === undefined ? shaped.output : { ...shaped.output, claimViews: shaped.claimViews };
+            if (shaped.kind !== "plan_submitted") return shaped.output;
+            const marked: PlannerResult = { ...shaped.output, settingsOffModelView: true };
+            return shaped.claimViews === undefined ? marked : { ...marked, claimViews: shaped.claimViews };
         };
 
         const seed = await durably("planner.seed", async (): Promise<PlannerSeed> => {
@@ -1718,6 +1744,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             "The planner is a multi-step sub-agent, thus a call can take many minutes. " +
             "The result carries an `event`: `plan_complete` with {planId, plan, claims?} — the plan is saved, the call shows its plan card to the user, " +
             "and it does not run it (execute_analysis plan mode does, after the approval). `claims` gives the title and the strength of each knowledge rule that a step cites by id in `grounding.claims`; " +
+            "the `plan` of the result leaves out the `grounding.settings` of each step: the saved plan and the plan card hold them, and the `departures` of a step name each setting that the plan changes; " +
             "when you describe the plan, name a rule by its title, not by its id. `clarification_needed` with {question, questionContext?} " +
             "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
             "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
@@ -1730,7 +1757,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         describeCall: ({ researchQuestion }) => researchQuestion,
         startsWorkflow: true,
         execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => {
-            const { claimViews, ...output } = await plan(input, ctx);
+            const { claimViews, settingsOffModelView, ...output } = await plan(input, ctx);
             // The card comes from the result of the planner, with no read of the store, thus a replay of the body
             // gives the same card under the same id, and a reader keeps one card. The claim views go on the card
             // only: the model gets their titles in `claims`.
@@ -1742,7 +1769,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                 });
                 if (card !== null) await ctx.emit({ type: "data-plan", source: ctx.session.provenance, data: card });
             }
-            return ok(output);
+            return ok(settingsOffModelView === true && output.plan !== undefined ? { ...output, plan: planForModel(output.plan) } : output);
         },
     });
 }

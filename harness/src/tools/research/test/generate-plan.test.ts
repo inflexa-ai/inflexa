@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { createNoopLogger } from "../../../lib/console-logger.js";
 import { makeFakeChatProvider, makeFakeWorkspaceFs } from "../../../agents/sandbox/__fixtures__/deps.js";
-import { inProcessSubAgent } from "../../../loop/sub-agent.js";
+import { inProcessSubAgent, type SubAgentRegistrar } from "../../../loop/sub-agent.js";
 import { PLAN_ID_RE, PlanClaimViewSchema } from "../../../contracts/schemas/chat-parts.js";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { okAsync } from "neverthrow";
@@ -21,7 +21,13 @@ import { TOOL_RESULT_CAP, type ToolOutputStore } from "../../../loop/tool-output
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../../providers/types.js";
 import { PlannerPlanSchema, PlanningAgentOutputSchema, type PlanningAgentOutput } from "../../../schemas/plan-schemas.js";
-import { ClaimViewSchema, GroundingDepartureSchema, type GroundingDeparture } from "../../../schemas/workflow-state.js";
+import {
+    ClaimViewSchema,
+    GroundingDepartureSchema,
+    GroundingSettingSchema,
+    type GroundingDeparture,
+    type GroundingSetting,
+} from "../../../schemas/workflow-state.js";
 import { planPartOf } from "../../../memory/card-builders.js";
 import { loadPlan, loadPlanRecord, type DataProfileResult } from "../../../state/index.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptStep } from "../../../testing.js";
@@ -97,7 +103,17 @@ function planIdOf(result: PlanningAgentOutput): string {
  * test when the stored shape drifts.
  */
 function storedPlan(stored: unknown): {
-    steps: Array<{ id?: string; grounding?: { snapshot?: string; status?: string; template?: string; claims?: string[]; departures?: GroundingDeparture[] } }>;
+    steps: Array<{
+        id?: string;
+        grounding?: {
+            snapshot?: string;
+            status?: string;
+            template?: string;
+            claims?: string[];
+            settings?: GroundingSetting[];
+            departures?: GroundingDeparture[];
+        };
+    }>;
 } {
     return z
         .object({
@@ -110,6 +126,7 @@ function storedPlan(stored: unknown): {
                             status: z.string().optional(),
                             template: z.string().optional(),
                             claims: z.array(z.string()).optional(),
+                            settings: z.array(GroundingSettingSchema).optional(),
                             departures: z.array(GroundingDepartureSchema).optional(),
                         })
                         .optional(),
@@ -267,7 +284,7 @@ describe("generatePlan loop-driving tool", () => {
     });
 
     /** Rebuild the tool per test — the model and the optional deps are what vary. */
-    function toolFor(provider: ChatProvider, extra: Partial<GeneratePlanDeps> = {}): Tool {
+    function toolFor(provider: ChatProvider, extra: Partial<GeneratePlanDeps> = {}, registrar: SubAgentRegistrar = inProcessSubAgent): Tool {
         return createGeneratePlanTool(
             {
                 conversation: { provider, model: "claude-test" },
@@ -276,9 +293,19 @@ describe("generatePlan loop-driving tool", () => {
                 workspace: { workspaceFs: makeFakeWorkspaceFs(), pool, resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
                 ...extra,
             },
-            inProcessSubAgent,
+            registrar,
         );
     }
+
+    /** A registrar that gives the planner result as a version before the settings mark checkpointed it. */
+    const beforeSettingsMark: SubAgentRegistrar = (name, body) => {
+        const run = inProcessSubAgent(name, body);
+        return async (payload, ctx) => {
+            const result = await run(payload, ctx);
+            if (result instanceof Object) Reflect.deleteProperty(result, "settingsOffModelView");
+            return result;
+        };
+    };
 
     // ── Outcome shaping ──────────────────────────────────────────────
 
@@ -763,12 +790,50 @@ describe("generatePlan loop-driving tool", () => {
                 },
             });
 
-            const steps = acceptedStepsOf(await plannedWithAnswer("an-filled-settings", [grounded]));
+            const result = await plannedWithAnswer("an-filled-settings", [grounded]);
+            const steps = await storedStepsOf("an-filled-settings", result);
 
             expect(steps[0]?.grounding?.settings).toEqual([
                 { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" },
             ]);
             expect(steps[0]?.grounding?.departures).toEqual([departure]);
+        });
+
+        it("gives the model the accepted plan with no settings, and the stored plan keeps them", async () => {
+            const departure = { rule: "R-0001@e7d0", setting: "alpha", value: 0.1, reason: "the plan reports at a false discovery rate of 10 percent" };
+            const grounding = {
+                status: "grounded",
+                snapshot: SNAPSHOT.digest,
+                claims: ["R-0001@e7d0"],
+                departures: [departure],
+                reason: "DESeq2 Wald test per R-0001@e7d0",
+            };
+
+            const result = await plannedWithAnswer("an-settings-off-view", [validCandidate({ id: "T1S2", grounding })]);
+
+            const seen = presentFirst(acceptedStepsOf(result)).grounding;
+            expect(seen?.settings).toBeUndefined();
+            expect(seen?.departures).toEqual([departure]);
+            expect(seen?.claims).toEqual(["R-0001@e7d0"]);
+            expect(seen?.template).toBe("tpl-deseq2-two-group@1.0.0");
+            expect((await storedStepsOf("an-settings-off-view", result))[0]?.grounding?.settings).toHaveLength(1);
+        });
+
+        it("gives the plan with its settings for a planner result of an earlier version", async () => {
+            await seedAnalysis(pool, "an-earlier-result", { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const grounding = { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" };
+            const model = scriptedModel([
+                callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(toolCall("k1", "knowledge_check", CHECKED_DRAFT)),
+                callTools(submitPlan("s1", validCandidate({ id: "T1S2", grounding }))),
+                submitted,
+            ]);
+
+            const tool = toolFor(model.provider, { knowledge: client }, beforeSettingsMark);
+            const result = planResultOf((await tool.execute(INPUT, toolContext("an-earlier-result")))._unsafeUnwrap());
+
+            expect(presentFirst(acceptedStepsOf(result)).grounding?.settings).toHaveLength(1);
         });
 
         it("keeps the settings that the model wrote on a skeleton step", async () => {
@@ -778,7 +843,7 @@ describe("generatePlan loop-driving tool", () => {
                 grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], settings, reason: "DESeq2 Wald test per R-0001@e7d0" },
             });
 
-            const steps = acceptedStepsOf(await plannedWithAnswer("an-kept-settings", [grounded]));
+            const steps = await storedStepsOf("an-kept-settings", await plannedWithAnswer("an-kept-settings", [grounded]));
 
             expect(steps[0]?.grounding?.settings).toEqual(settings);
         });
@@ -805,7 +870,7 @@ describe("generatePlan loop-driving tool", () => {
             const result = planResultOf((await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext("an-renamed-step")))._unsafeUnwrap());
 
             expect(JSON.stringify(toolResultIn(presentAt(model.calls, 3), "s1"))).toContain("Give the step the id T1S2, or write its grounding.settings.");
-            expect(presentFirst(acceptedStepsOf(result)).grounding?.settings).toHaveLength(1);
+            expect(presentFirst(await storedStepsOf("an-renamed-step", result)).grounding?.settings).toHaveLength(1);
         });
 
         it("refuses malformed settings on a skeleton step, and does not write over them", async () => {
