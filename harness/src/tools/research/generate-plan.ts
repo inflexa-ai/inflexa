@@ -655,7 +655,10 @@ type RepairedClaim = {
  * On a step that copies a skeleton step, by step id, the host stamps the
  * snapshot digest of the answer and restores a dropped template: the digest
  * is what pins the step to the snapshot, and the template is what the host
- * binds the contract to. A step whose snapshot is `none` states that it does
+ * binds the contract to. The host also writes the settings of the skeleton
+ * step on a step that gives none: the settings are a copy of the answer, and
+ * a model that types them again spends a large part of its output on them.
+ * Settings that the model wrote stay as they are. A step whose snapshot is `none` states that it does
  * not use the answer, and it stays as it is. A step whose status is
  * `ungrounded` states a departure from the answer: the digest is stamped,
  * and no template is restored, because the template realizes the method the
@@ -673,7 +676,7 @@ type RepairedClaim = {
  * answer, and the digest it typed is as prone to a miscopy as any other. A
  * step with no claim of the answer stays as the model wrote it, because
  * nothing of the answer vouches for it. Returns the stamped steps, the
- * restored steps, the repaired claims, and the issues beside the new
+ * restored steps, the steps with filled settings, the repaired claims, and the issues beside the new
  * candidate. A candidate that is not a plan-shaped object, or a plan with no
  * answer, comes back as it is.
  */
@@ -684,6 +687,7 @@ function restoreSkeletonGrounding(
     readonly candidate: unknown;
     readonly stamped: readonly string[];
     readonly restored: readonly string[];
+    readonly filled: readonly string[];
     readonly repaired: readonly RepairedClaim[];
     readonly unknown: readonly ValidationIssue[];
 } {
@@ -691,11 +695,12 @@ function restoreSkeletonGrounding(
     const decodedRecord = parseUnknownRecord(decoded);
     const decodedSteps = decodedRecord?.steps;
     if (memory.steps.size === 0 || !isUnknownArray(decodedSteps)) {
-        return { candidate: decoded, stamped: [], restored: [], repaired: [], unknown: [] };
+        return { candidate: decoded, stamped: [], restored: [], filled: [], repaired: [], unknown: [] };
     }
     const byRule = claimsByRule(memory.claims);
     const stamped: string[] = [];
     const restored: string[] = [];
+    const filled: string[] = [];
     const repaired: RepairedClaim[] = [];
     const unknown: ValidationIssue[] = [];
     const steps = decodedSteps.map((step, index) => {
@@ -715,6 +720,12 @@ function restoreSkeletonGrounding(
             if (next.template === undefined && source.grounding.template !== undefined && current.status !== "ungrounded") {
                 restored.push(label);
                 next = { ...next, template: source.grounding.template };
+            }
+            // The settings of a skeleton step are a copy of the answer, thus the model leaves them out and the host writes them.
+            const absent = next.settings === undefined || (isUnknownArray(next.settings) && next.settings.length === 0);
+            if (absent && source.grounding.settings.length > 0 && current.status !== "ungrounded") {
+                filled.push(label);
+                next = { ...next, settings: source.grounding.settings };
             }
         }
         if (isUnknownArray(current.claims)) {
@@ -745,7 +756,7 @@ function restoreSkeletonGrounding(
         }
         return next === current ? step : { ...fields, grounding: next };
     });
-    return { candidate: { ...decodedRecord, steps }, stamped, restored, repaired, unknown };
+    return { candidate: { ...decodedRecord, steps }, stamped, restored, filled, repaired, unknown };
 }
 
 /**
@@ -944,9 +955,10 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?:
         describeCall: "none",
         execute: async (input, ctx): Promise<Result<SubmitPlanOutput, ToolError>> => {
             // The host owns the grounding fields: it fills them from the last answer of the run.
-            const { candidate, stamped, restored, repaired, unknown } = restoreSkeletonGrounding(input.plan, memory);
+            const { candidate, stamped, restored, filled, repaired, unknown } = restoreSkeletonGrounding(input.plan, memory);
             if (stamped.length > 0) logger.info("submit_plan stamped the snapshot digest of the answer on steps", { steps: stamped });
             if (restored.length > 0) logger.info("submit_plan restored the template of skeleton steps", { steps: restored });
+            if (filled.length > 0) logger.info("submit_plan wrote the settings of the answer on skeleton steps", { steps: filled });
             if (repaired.length > 0) logger.info("submit_plan repaired the claim ids of plan steps", { claims: repaired });
             // The check is the review of the draft against the rules of the answer, thus a plan after an answer waits for it.
             if (memory.digest !== undefined && memory.checked !== true) {

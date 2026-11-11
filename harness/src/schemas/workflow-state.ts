@@ -76,7 +76,7 @@ export const GroundingSchema = z.object({
         .optional()
         .describe(
             "The scientific settings of the step: the parameters of the procedure steps the plan step holds, as `knowledge_recommend` returned them. " +
-                "Copy the `grounding.settings` of the skeleton step as it is, one entry per parameter, with its step, name, value, and source. " +
+                "Leave this field out on a step that keeps the id of a skeleton step: the host writes the `grounding.settings` of that skeleton step, one entry per parameter, with its step, name, value, and source. " +
                 "Do not restate a setting as prose only, and do not change a value here: give a different value as an entry of `departures`. Absent when the step is ungrounded.",
         ),
     departures: z
