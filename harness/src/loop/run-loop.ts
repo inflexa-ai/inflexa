@@ -153,6 +153,12 @@ export type LoopOptions = {
     /** Receives each text delta of the reply as it streams. A loop with a live reader of its text gives it. */
     readonly onText?: (text: string) => void | Promise<void>;
     /**
+     * Receives each text delta of the reply in the order of the stream, also from a replayed model step. It does not
+     * make a model call live, thus a loop that streams its text through `chatStream` can record the text with it and
+     * keep the retry of a whole attempt. A loop that gives `onText` too must not record the same text there.
+     */
+    readonly recordText?: (text: string) => void;
+    /**
      * The round sink. The loop awaits it before each model request, at each exit, and before a throw.
      * A durable loop passes no sink, because DBOS replays the loop body.
      */
@@ -454,6 +460,8 @@ type SeriesTarget = {
     readonly beforeRequest?: () => Promise<void>;
     /** Receives each text delta of the reply. */
     readonly onText?: (text: string) => void | Promise<void>;
+    /** Receives each text delta of the reply, and makes no call live. */
+    readonly recordText?: (text: string) => void;
     /** The durable stream that the text of the reply goes to. A compaction exchange streams no text. */
     readonly textStream?: string;
     /** Each step of the run so far, which a stop condition reads. */
@@ -629,6 +637,7 @@ function openConversation(
         viewOf,
         beforeRequest,
         onText: opts.onText,
+        recordText: opts.recordText,
         textStream: opts.chatStream,
         steps,
         stopWhen: opts.stopWhen,
@@ -1020,6 +1029,7 @@ async function runSeries(
             switch (chunk.type) {
                 case "text-delta":
                     open.text += chunk.text;
+                    target.recordText?.(chunk.text);
                     await target.onText?.(chunk.text);
                     return;
                 case "tool-call":

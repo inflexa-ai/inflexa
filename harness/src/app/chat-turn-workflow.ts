@@ -363,6 +363,7 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
     const transport: TurnTransport = {
         signal,
         emit: writer.emit,
+        recordText: (delta) => recorder.observe({ type: "text-delta", text: delta, source: rootSource }),
         chatStream: CHAT_STREAM_KEY,
         toolWriter: writer.toolWriter,
         recorder,

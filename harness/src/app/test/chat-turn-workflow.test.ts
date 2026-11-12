@@ -15,6 +15,7 @@ import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { forSubAgent, type AuthContext } from "../../auth/types.js";
 import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import type { ChatFrame } from "../../contracts/chat-events.js";
+import { applyChatFrame } from "../../contracts/chat-frame.js";
 import type { ChatMessage } from "../../contracts/message.js";
 import type { Connectable } from "../../lib/db-result.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
@@ -368,6 +369,65 @@ describe("a chat turn as a workflow", () => {
         expect(JSON.stringify(stored)).toContain('"toolName":"crash_after"');
         expect(textOf(await readAll(turnId))).toBe("Done after the crash.");
     });
+
+    it("stores the text before a tool call ahead of its part, in the order of the stream", async () => {
+        provider = scriptedModel([callTools(text("Let me look."), toolCall("c1", "echo", { text: "a" })), reply([text("Found it.")])]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        const frames = await readAll(turnId);
+
+        const assistants = (await transcriptOf(threadId)).filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(1);
+        expect(partOrderOf(assistants[0])).toEqual(["Let me look.", "tool-call", "Found it."]);
+        const assistantId = frames.find((frame) => frame.type === "message-start" && frame.role === "assistant");
+        if (assistantId?.type !== "message-start") throw new Error("the stream has no assistant message-start");
+        const folded = frames.reduce<ChatMessage[]>((messages, frame) => applyChatFrame(messages, frame, assistantId.messageId).messages, []);
+        expect(partOrderOf(folded.find((message) => message.role === "assistant"))).toEqual(["Let me look.", "tool-call", "Found it."]);
+    });
+
+    it("keeps the order of the stream when the turn recovers after its tool step", async () => {
+        toolRuns = 0;
+        parkedWrite = false;
+        credentialAfterRestart = makeLocalAuth();
+        provider = scriptedModel([callTools(text("Running it."), toolCall("c1", "crash_after", {})), reply([text("Done after the crash.")])]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        const ended = DBOS.retrieveWorkflow(turnId)
+            .getResult()
+            .catch(() => undefined);
+        const handle = await recoverAtCrashPoint(turnId, () => parkedWrite, { ended });
+        await handle.getResult();
+
+        expect(toolRuns).toBe(1);
+        const assistants = (await transcriptOf(threadId)).filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(1);
+        expect(partOrderOf(assistants[0])).toEqual(["Running it.", "tool-call", "Done after the crash."]);
+    });
+
+    it("retries a model call that fails after a text as a whole, and keeps only the text of the retry", async () => {
+        const unavailable = new APICallError({
+            message: "HTTP 503",
+            url: "https://models.example/v1/messages",
+            requestBodyValues: {},
+            statusCode: 503,
+            responseHeaders: { "retry-after-ms": "10" },
+        });
+        provider = scriptedModel([{ breakAfter: [text("lost text")], error: unavailable }, reply([text("the retry")])], { maxRetries: 1 }).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        const frames = await readAll(turnId);
+
+        expect(textOf(frames)).toBe("the retry");
+        expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
+        const stored = await transcriptOf(threadId);
+        const assistants = stored.filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(1);
+        expect(partOrderOf(assistants[0])).toEqual(["the retry"]);
+        expect(stored.flatMap((message) => message.parts.filter((part) => part.type === "data-pause"))).toEqual([]);
+    }, 30_000);
 
     it("continues on the model of the host a turn whose stored prepare result holds no model", async () => {
         toolRuns = 0;
@@ -907,6 +967,11 @@ const work = createWork({
     },
     ...WORK_DEPS,
 });
+
+/** The parts of a message in order: the text of a text part, and the type of any other part. */
+function partOrderOf(message: ChatMessage | undefined): string[] {
+    return (message?.parts ?? []).map((part) => (part.type === "text" ? part.text : part.type));
+}
 
 /** The transcript of a thread as a host reads it after a reload. */
 async function transcriptOf(threadId: string): Promise<ChatMessage[]> {

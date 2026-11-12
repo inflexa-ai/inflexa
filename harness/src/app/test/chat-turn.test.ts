@@ -729,6 +729,16 @@ describe("the run of a chat turn", () => {
         expect(textPart).toEqual({ type: "text", text: "the groups differ" });
     });
 
+    it("stores the text before a tool call ahead of its part, in the order of the stream", async () => {
+        const model = scriptedModel([callTools(text("Let me look."), toolCall("tu-1", "echo", { label: "a" })), reply([text("Found it.")])]);
+        await runInProcessTurn(depsFor(resolverFor(agentWith([echoTool()])), model), params());
+
+        const replay = storedMessagesToChat(await storedRows());
+
+        expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(presentAt(replay, 1).parts.map((part) => (part.type === "text" ? part.text : part.type))).toEqual(["Let me look.", "tool-call", "Found it."]);
+    });
+
     it("stores no secret of the input or of the result of a call, and the stream carries none", async () => {
         const token = "ghp_0123456789abcdefghij0123456789abcdef";
         const leaky = defineTool({
