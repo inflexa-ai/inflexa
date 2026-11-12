@@ -39,6 +39,8 @@ When the loop runs in workflow code and a request series fails with a cause, the
 
 A live call that failed after its first output part leaves a partial reply. The loop MUST keep that reply as an interrupted reply. Then it MUST append one harness request that asks the model to continue its reply. A failed call with no partial reply MUST NOT change the conversation, thus the next request sends the same view.
 
+Inside a workflow body, the loop MUST record the partial reply of a failed live call in a durable step before the pause. A replay of a failed model step gives no output parts. Thus a recovery MUST take the partial reply from that step, and it MUST keep the same interrupted reply and the same harness request. The display of the turn MUST also get the text of the recorded reply, in the order of the stream. A workflow that waited in a pause before the upgrade that added the step MUST replay its recorded operations.
+
 The pause MUST apply to each request series of the loop: the series of the run, a follow-up request, and a compaction request.
 
 #### Scenario: A resumed turn sends the same request
@@ -54,6 +56,14 @@ The pause MUST apply to each request series of the loop: the series of the run, 
 - **WHEN** the timer of the pause sends the request again
 - **THEN** the conversation holds the partial reply as an interrupted reply, and then one harness request to continue
 - **AND** the stream of the turn keeps the partial text, and the new text comes after it
+
+#### Scenario: A recovery during the pause keeps the partial reply
+
+- **GIVEN** a live reply of a turn that fails with a retryable `provider` error after some text
+- **AND** the host stops while the turn waits in the pause
+- **WHEN** the turn recovers, and the timer of the pause sends the request again
+- **THEN** the conversation holds the partial reply as an interrupted reply, and then one harness request to continue
+- **AND** the stored turn holds the partial text before the new text
 
 ### Requirement: A gate refusal with the suspend flag pauses the work at the gate
 

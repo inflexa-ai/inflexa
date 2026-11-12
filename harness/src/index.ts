@@ -415,6 +415,7 @@ export type {
     ChatFrame,
     ChatPartFrame,
     TextDeltaEvent,
+    TextSupersededEvent,
     IterationEvent,
     ToolStartedEvent,
     ToolFinishedEvent,

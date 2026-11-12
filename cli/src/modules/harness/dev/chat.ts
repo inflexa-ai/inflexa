@@ -423,6 +423,11 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 streamedText = true;
                 sink.out(frame.text);
                 return;
+            case "text-superseded":
+                // The text above is already on the terminal and cannot leave it, thus the line tells the
+                // reader that the reply repeats from its start below.
+                sink.out("\n  [recovery] the model call ran again — the reply starts again below\n");
+                return;
             case "tool-started": {
                 const name = frame.name;
                 // Opaque display text the harness computed from this call's input — printed, never parsed.

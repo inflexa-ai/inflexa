@@ -176,6 +176,16 @@ Diagnostics go to stderr. Only the conversation goes to stdout.
 - **WHEN** the agent emits a conversation part the printer has no renderer for
 - **THEN** stdout shows a one-line tagged mention of the part type
 
+### Requirement: The printer marks the text of a superseded model attempt
+
+The printer MUST write one line on a `text-superseded` frame of the top-level agent, because it cannot remove text that it already wrote to stdout. The line MUST tell that a recovery ran the model call again, and that the reply starts again after the line. The printer MUST write nothing for such a frame of a sub-agent.
+
+#### Scenario: A rerun reply is marked
+
+- **GIVEN** a turn whose stream gives the text `Hello wor`, then a `text-superseded` frame, and then the text `Hello world.`
+- **WHEN** the printer renders the frames
+- **THEN** stdout holds `Hello wor`, then one line that tells that the reply starts again, and then `Hello world.`
+
 ### Requirement: Plan approval is conversational
 
 The command MUST NOT add an approval mechanism beyond the conversation itself. The prompt-enforced product gate is the whole mechanism: the agent presents a plan, it asks, and the user's message licenses `execute_plan`.

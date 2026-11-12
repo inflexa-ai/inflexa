@@ -11,6 +11,7 @@ The harness MUST export `applyChatFrame(messages, frame, assistantId)`. The func
 
 - A frame whose `source.callPath` has more than one entry comes from a sub-agent, and it changes nothing. The root agent of a chat turn has the call path `[agent.id]`.
 - A `text-delta` adds its text to the last part if that part is text. If the last part is not text, the frame adds a text part.
+- A `text-superseded` removes the last `length` UTF-16 code units of the text of the assistant message. It takes them from the last text part first, and then from the text parts before it. When the text holds fewer units, the frame removes all of the text. A text part keeps its position when it becomes empty. The frame changes no other part, and it does not end the turn.
 - A `tool-started` adds a tool-call part with no outcome. The part holds the `input` when the frame has one.
 - A `tool-finished` sets the outcome on the tool-call part with the same call id. It also sets the detail, `durationMs`, `input`, `result`, and `error` when the frame has them. If no part has that call id, the frame adds a tool-call part with the outcome and these fields.
 - A `data-*` part goes at the end. A part of a type that the registry marks `reconciling` replaces the part with the same type and id, in the position of that part.
@@ -67,6 +68,13 @@ The harness MUST export `applyChatFrame(messages, frame, assistantId)`. The func
 - **GIVEN** a message list that holds a user message with the id of the frame
 - **WHEN** `applyChatFrame` applies the `message-start` frame of the user
 - **THEN** the messages do not change
+
+#### Scenario: A superseded text leaves the message
+
+- **GIVEN** an assistant message that holds a tool-call part and then the text `Hello wor`
+- **WHEN** `applyChatFrame` applies a `text-superseded` frame with `length` 9, and then a `text-delta` with the text `Hello world.`
+- **THEN** the message holds the tool-call part and then one text part `Hello world.`
+- **AND** the turn does not end
 
 ### Requirement: The display of a tool call holds its duration
 

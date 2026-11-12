@@ -38,6 +38,7 @@ export {
 export {
     EventSourceSchema,
     TextDeltaEventSchema,
+    TextSupersededEventSchema,
     IterationEventSchema,
     ToolStartedEventSchema,
     ToolFinishedEventSchema,

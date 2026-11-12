@@ -111,7 +111,7 @@ The turn MUST give `runLoop` a round sink. For each round, the sink MUST store t
 
 The display projection MUST keep the order of those frames in the stream. A text that streams before a tool call MUST come before the part of that call. A text after the call MUST come after it. The turn workflow, a turn workflow that recovers from its checkpoints, and the turn in the process of a test MUST give the same order.
 
-The record of the text MUST NOT change the retry of a model call. A model call of the turn workflow has no live reader, thus it retries a failed attempt as a whole.
+The text of a model call that failed after its first output part stays in the conversation as an interrupted reply (see work-pause). The display projection MUST keep that text before the text of the request that continues the reply. A turn workflow that recovers from its checkpoints MUST give the same projection.
 
 A store fault MUST NOT stop the turn. The turn keeps the rows of the failed write. The next write of the turn stores them first, in its transaction and in order. Thus a row never lands before an earlier row of its turn.
 
@@ -172,10 +172,17 @@ A host MUST NOT append a record of its own to a thread while a turn of that thre
 
 #### Scenario: A failed attempt of a model call retries as a whole
 
-- **GIVEN** a turn workflow whose provider retries a request, and whose first attempt fails with a retryable error after a text
+- **GIVEN** a turn workflow whose provider retries a request, and whose first attempt fails with a retryable error before its first output part
 - **WHEN** the retry gives a complete reply and the turn ends
 - **THEN** the stream of the turn and the stored turn hold only the text of the retry
 - **AND** the turn does not pause
+
+#### Scenario: A failure after a text keeps the text before the continuation
+
+- **GIVEN** a turn workflow whose model call fails with a retryable error after a text
+- **WHEN** the pause sends the request again, the model continues the reply, and the turn ends
+- **THEN** the stream of the turn and the stored turn hold the text of the failed call, and then the text of the continuation
+- **AND** the stored assistant message holds the two texts in this order
 
 ### Requirement: A turn closes with one outcome
 

@@ -34,6 +34,16 @@ export type TextDeltaEvent = {
 };
 
 /**
+ * The text that an earlier execution of a model step wrote is no longer part of the reply. A host removes the last
+ * `length` UTF-16 code units of the reply text, which the later text of the new execution then replaces.
+ */
+export type TextSupersededEvent = {
+    type: "text-superseded";
+    length: number;
+    source: EventSource;
+};
+
+/**
  * How a tool call ended.
  *
  * Three states, not a boolean: a user who rejects an approval made a decision,
@@ -207,7 +217,15 @@ export type MessageStartEvent =
       };
 
 /** The discriminated union of all chat-stream events. */
-export type ChatEvent = TextDeltaEvent | IterationEvent | ToolStartedEvent | ToolFinishedEvent | FinishEvent | ChatErrorEvent | MessageStartEvent;
+export type ChatEvent =
+    | TextDeltaEvent
+    | TextSupersededEvent
+    | IterationEvent
+    | ToolStartedEvent
+    | ToolFinishedEvent
+    | FinishEvent
+    | ChatErrorEvent
+    | MessageStartEvent;
 
 /**
  * A `data-*` part as a frame, with the source of its emitter when the emitter stamped one. A part whose type the

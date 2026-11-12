@@ -18,6 +18,12 @@ export const TextDeltaEventSchema = z.object({
     source: EventSourceSchema,
 });
 
+export const TextSupersededEventSchema = z.object({
+    type: z.literal("text-superseded"),
+    length: z.number().int().positive(),
+    source: EventSourceSchema,
+});
+
 export const IterationEventSchema = z.object({
     type: z.literal("iteration"),
     source: EventSourceSchema,
@@ -117,6 +123,7 @@ export const MessageStartEventSchema = z.discriminatedUnion("role", [
 
 export const ChatEventSchema = z.discriminatedUnion("type", [
     TextDeltaEventSchema,
+    TextSupersededEventSchema,
     IterationEventSchema,
     ToolStartedEventSchema,
     ToolFinishedEventSchema,
