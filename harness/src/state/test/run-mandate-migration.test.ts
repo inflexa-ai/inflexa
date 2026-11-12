@@ -19,8 +19,8 @@ afterEach(async () => {
     await drop();
 });
 
-async function mandateColumns(): Promise<string[]> {
-    const { rows } = await pool.query<{ column_name: string }>(
+async function mandateColumns(target: Pool = pool): Promise<string[]> {
+    const { rows } = await target.query<{ column_name: string }>(
         "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'cortex_runs' AND column_name LIKE 'mandate%' ORDER BY column_name",
     );
     return rows.map((row) => row.column_name);
@@ -55,5 +55,14 @@ describe("the migration that references the run mandate", () => {
         expect(await mandateColumns()).toEqual(["mandate_id"]);
         const { rows } = await pool.query<{ mandate_id: string }>("SELECT mandate_id FROM cortex_runs WHERE run_id = 'r2'");
         expect(rows).toEqual([{ mandate_id: "mandate-2" }]);
+    });
+
+    it("gives a new schema the column when a different schema of the database holds it", async () => {
+        const other = await withSchema("run-mandate-migration-other");
+        try {
+            expect(await mandateColumns(other.pool)).toEqual(["mandate_id"]);
+        } finally {
+            await other.drop();
+        }
     });
 });

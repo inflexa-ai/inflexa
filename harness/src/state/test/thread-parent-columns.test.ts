@@ -163,6 +163,7 @@ describe("initCortexState and an open transaction on cortex_analysis_threads", (
             "20261030120200_keep_the_report_derivations",
             "20261102120000_record_the_waiter_of_a_pause",
             "20261106120000_pin_the_model_of_a_thread",
+            "20261112120000_add_the_run_mandate_column_again",
         ]);
     }, 20_000);
 });

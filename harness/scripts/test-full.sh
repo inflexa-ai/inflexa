@@ -13,10 +13,13 @@
 #   - It matches CI, which sets `CORTEX_TEST_PG_URL` to one `services:`
 #     container (see .github/workflows/test.yml).
 #
-# Point at an already-running Postgres instead by setting CORTEX_TEST_PG_URL
-# before invoking — the script then skips container startup:
+# Point at an already-running dedicated Postgres instead by setting
+# CORTEX_TEST_PG_URL before invoking — the script then skips container startup.
+# The database must hold no relation that an extension does not own in `public`,
+# because the test setup refuses a database that a host uses
+# (src/__tests__/setup/require-dedicated-database.ts):
 #
-#   CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex bun run test:full
+#   CORTEX_TEST_PG_URL=<url of a dedicated Postgres> bun run test:full
 #
 # Extra args pass through to `bun test`, e.g. `bun run test:full src/state`.
 set -euo pipefail
