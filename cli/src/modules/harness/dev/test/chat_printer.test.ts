@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toChatFrame, type EmitFn, type EventSource, type PlanPart, type RunCardPart } from "@inflexa-ai/harness";
+import { toChatFrame, type ChatFrame, type EmitFn, type EventSource, type PlanPart, type RunCardPart } from "@inflexa-ai/harness";
 
 import type { ClientOpts } from "../../../../client/api.ts";
 import { fakeClient } from "../../../../test_support/fake_client.ts";
@@ -16,6 +16,7 @@ import { present } from "../../../../lib/present.ts";
 function harness(options?: PrinterOptions): {
     emit: (e: Parameters<EmitFn>[0]) => void;
     emitCard: (e: Parameters<EmitFn>[0]) => Promise<void>;
+    sendFrame: (frame: ChatFrame) => Promise<void>;
     finishTurn: (t?: string) => void;
     out: () => string;
     errs: string[];
@@ -33,7 +34,7 @@ function harness(options?: PrinterOptions): {
         const frame = toChatFrame(e, { agentId: "chat", callPath: ["chat"] });
         if (frame !== null) await printer.frame(frame);
     };
-    return { emit, emitCard, finishTurn: printer.finishTurn, out: () => outChunks.join(""), errs };
+    return { emit, emitCard, sendFrame: printer.frame, finishTurn: printer.finishTurn, out: () => outChunks.join(""), errs };
 }
 
 /** A server that resolves the one entry of a card to `path`. */
@@ -53,6 +54,26 @@ describe("createChatPrinter", () => {
         h.emit({ type: "text-delta", text: "llo wor" });
         h.emit({ type: "text-delta", text: "ld" });
         expect(h.out()).toBe("hello world");
+    });
+
+    test("a rerun reply is marked by one line, and the text after it follows", async () => {
+        const h = harness();
+        h.emit({ type: "text-delta", text: "Hello wor" });
+        await h.sendFrame({ type: "text-superseded", length: 9, source: { agentId: "cli-chat", callPath: ["cli-chat"] } });
+        h.emit({ type: "text-delta", text: "Hello world." });
+        const out = h.out();
+        expect(out.startsWith("Hello wor\n")).toBe(true);
+        expect(out.endsWith("\nHello world.")).toBe(true);
+        const middle = out.slice("Hello wor".length, out.length - "Hello world.".length);
+        expect(middle.split("\n").filter((line) => line.trim() !== "")).toEqual(["  [recovery] the model call ran again — the reply starts again below"]);
+    });
+
+    test("a text-superseded frame of a sub-agent writes nothing", async () => {
+        const h = harness();
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "plan_analysis" });
+        const before = h.out();
+        await h.sendFrame({ type: "text-superseded", length: 9, source: { agentId: "planner", callPath: ["cli-chat", "planner"] } });
+        expect(h.out()).toBe(before);
     });
 
     test("sub-agent traffic outside any tool call is dropped — it has nothing to be subordinate to", () => {

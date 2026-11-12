@@ -439,6 +439,8 @@ export function noteAskFeedback(askId: string, feedback: string): void {
  *   - each other frame goes to {@link applyFrame}, which applies it with `applyChatFrame`: the one
  *     translation path of the harness. Thus the live message holds the parts that the reload of the
  *     turn gives, less the differences that the parity test of the harness names;
+ *   - a `text-superseded` frame goes the same way as a `text-delta`: the fold of the harness cuts the text of the
+ *     model call that a recovery ran again, and the sub-agent routing above drops the frame of a sub-agent;
  *   - `tool-started`/`tool-finished` also open and close the call in `openTools`: the start stamp gives
  *     the fallback duration;
  *   - a data frame is checked with `checkChatPart` at receipt: an invalid part of a known type is
@@ -479,6 +481,11 @@ export function applyServerFrame(frame: ChatFrame): void {
 
     switch (frame.type) {
         case "text-delta":
+            applyFrame(frame);
+            return;
+        case "text-superseded":
+            // The fold of the harness shortens the text part, and the first delta of the new attempt continues
+            // that part. The TUI cuts nothing itself, thus it holds no second text rule beside the fold.
             applyFrame(frame);
             return;
         case "tool-started":

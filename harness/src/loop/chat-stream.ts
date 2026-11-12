@@ -9,12 +9,13 @@
  * converter drops it, thus a client gets the frames of an in-process turn.
  */
 
+import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { functionIDGetIncrement, getCurrentContextStore } from "@dbos-inc/dbos-sdk/internal/context";
 import { readDurableStream, toolWriter, writeDurableStream, type DurableStreamSource } from "@dbos-inc/vercel-ai";
-import type { UIMessageChunk, UIMessageStreamWriter } from "ai";
+import type { LanguageModelMiddleware, UIMessageChunk, UIMessageStreamWriter } from "ai";
 import { z } from "zod";
 
 import type { ChatFrame, EventSource } from "../contracts/chat-events.js";
@@ -32,6 +33,13 @@ export const SUB_AGENT_STREAM_PART = "data-subagent-stream";
 const SubAgentStreamFrameSchema = z.object({ type: z.literal(SUB_AGENT_STREAM_PART), workflowId: z.string() });
 
 const HARNESS_FRAME_CHUNK = "data-harness-frame";
+
+const MODEL_EXECUTION_CHUNK = "data-model-execution";
+
+const ModelExecutionChunkSchema = z.object({
+    type: z.literal(MODEL_EXECUTION_CHUNK),
+    data: z.object({ step: z.number(), execution: z.string() }),
+});
 
 /** The source of a frame that comes before the first frame of the harness. A turn writes no such frame. */
 const UNKNOWN_SOURCE: EventSource = { agentId: "", callPath: [] };
@@ -57,6 +65,24 @@ export function chunkOfFrame(frame: ChatFrame, transient = false): UIMessageChun
 function isProgressFrame(frame: ChatFrame): boolean {
     if (!isRootFrame(frame) || frame.type === "tool-started" || frame.type === "iteration") return true;
     return isKnownPartType(frame.type) && PART_REGISTRY[frame.type].transient;
+}
+
+/**
+ * A model middleware that writes one marker to the stream before each execution of a model step. A reader tells a
+ * new execution of a step from the one before it by the marker, also when the new execution writes no text. A
+ * checkpointed step does not run its body, thus a replay writes no marker. Outside a step the middleware writes nothing.
+ */
+export function modelExecutionMarker(key: string): LanguageModelMiddleware {
+    return {
+        specificationVersion: "v4",
+        wrapStream: async ({ doStream }) => {
+            const step = DBOS.isInStep() ? DBOS.stepID : undefined;
+            if (step === undefined) return await doStream();
+            // The write lands before each record of the library writer of this execution, because the request starts after it.
+            await writeDurableStream(key, [{ type: MODEL_EXECUTION_CHUNK, data: { step, execution: randomUUID() }, transient: true }]);
+            return await doStream();
+        },
+    };
 }
 
 /** What the body of a turn workflow writes to its stream, and what each of its tool steps writes. */
@@ -220,6 +246,50 @@ export type ReadChatTurnOptions = {
     readonly client?: DurableStreamSource;
 };
 
+/**
+ * The executions of the model steps that the root stream shows. The reader gives each text chunk to `admit`, and it
+ * gives each marker to `mark`.
+ */
+type ExecutionLedger = {
+    /** Record a marker. Gives the length of the text that the execution before it gave, when it is of the same step. */
+    mark(step: number, execution: string): number;
+    /** Whether a text chunk of an attempt shows. A text of an attempt that a later execution superseded does not. */
+    admit(attempt: string, length: number): boolean;
+};
+
+function createExecutionLedger(): ExecutionLedger {
+    let last: { readonly step: number; readonly execution: string } | undefined;
+    let count = 0;
+    let attempts = new Set<string>();
+    const stale = new Set<string>();
+    return {
+        mark(step, execution) {
+            if (last?.step === step && last.execution === execution) return 0;
+            const sameStep = last?.step === step;
+            const superseded = sameStep ? count : 0;
+            if (sameStep) {
+                for (const attempt of attempts) stale.add(attempt);
+            }
+            last = { step, execution };
+            count = 0;
+            attempts = new Set();
+            return superseded;
+        },
+        admit(attempt, length) {
+            if (stale.has(attempt)) return false;
+            count += length;
+            attempts.add(attempt);
+            return true;
+        },
+    };
+}
+
+/** The library composes the id of a text chunk as `${attempt}:${partId}`, and an attempt id holds no colon. */
+function attemptOfTextChunk(id: string): string {
+    const colon = id.indexOf(":");
+    return colon === -1 ? id : id.slice(0, colon);
+}
+
 type ChunkReader = AsyncIterator<UIMessageChunk>;
 type StreamRead = { readonly reader: ChunkReader; readonly next: IteratorResult<UIMessageChunk> };
 
@@ -266,6 +336,7 @@ export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions
     };
     const root = open(readDurableStream({ workflowID: turnId, key: CHAT_STREAM_KEY, client: options.client, sendReasoning: false }));
     let rootSource = options.rootSource;
+    const executions = createExecutionLedger();
     const ends: ChatFrame[] = [];
     try {
         while (reads.size > 0) {
@@ -286,6 +357,13 @@ export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions
                 continue;
             }
             rootSource ??= frame?.source;
+            const marker = ModelExecutionChunkSchema.safeParse(next.value);
+            if (marker.success) {
+                const superseded = executions.mark(marker.data.data.step, marker.data.data.execution);
+                if (superseded > 0) yield { type: "text-superseded", length: superseded, source: rootSource ?? UNKNOWN_SOURCE };
+                continue;
+            }
+            if (next.value.type === "text-delta" && !executions.admit(attemptOfTextChunk(next.value.id), next.value.delta.length)) continue;
             for (const rootFrame of framesOfChunk(next.value, rootSource ?? UNKNOWN_SOURCE)) {
                 if (rootFrame.type === "finish" || rootFrame.type === "error") ends.push(rootFrame);
                 else yield rootFrame;

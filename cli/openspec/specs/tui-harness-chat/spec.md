@@ -844,6 +844,22 @@ When the stream of a turn breaks, the TUI MUST read the turn again from its star
 - **WHEN** the stream of a turn breaks, and the server does not hold the turn
 - **THEN** the TUI keeps what streamed, and the banner says that the connection to the turn was lost
 
+### Requirement: The TUI drops the text of a superseded model attempt
+
+The TUI MUST apply a `text-superseded` frame of the top-level agent with `applyChatFrame` of the harness. The assistant message then loses the last `length` characters of its text. When the streaming text part holds that text, the streaming signal MUST lose it too. The text of the new attempt MUST then continue the same text part. A `text-superseded` frame of a sub-agent MUST change nothing.
+
+#### Scenario: A read during a recovery shows the reply one time
+
+- **GIVEN** a turn whose stream gives the text `Hello wor`, then a `text-superseded` frame with `length` 9, and then the text `Hello world.`
+- **WHEN** the TUI applies the frames
+- **THEN** the assistant message shows `Hello world.` one time, and not `Hello wor`
+
+#### Scenario: A sealed text loses the superseded text
+
+- **GIVEN** a turn whose streaming text part sealed into the store before the `text-superseded` frame came
+- **WHEN** the TUI applies the frame
+- **THEN** the stored text part loses the last `length` characters, and the other parts do not change
+
 ### Requirement: A paused turn docks a pause prompt
 
 When the stream of a turn gives a `data-pause` frame with the state `retrying` or `paused`, the TUI MUST dock a pause prompt above the chat bar. The prompt MUST take the form of the docked ask prompt (see the `tui-ask-approval` capability). It MUST give the cause in words. It MUST also give the reason of the host for the cause `host`, and the remedy of the server for the cause `credential`. In `retrying`, it MUST give the attempt and the time of the next retry.

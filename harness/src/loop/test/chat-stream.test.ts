@@ -7,8 +7,9 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { DBOS } from "@dbos-inc/dbos-sdk";
-import { closeDurableStream } from "@dbos-inc/vercel-ai";
+import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
+import { closeDurableStream, type DurableStreamRecord, type DurableStreamSource } from "@dbos-inc/vercel-ai";
+import { wrapLanguageModel } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
@@ -16,12 +17,14 @@ import { z } from "zod";
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
 import { recoverAtCrashPoint } from "../../__tests__/setup/dbos-crash.js";
 import type { ChatFrame, EventSource } from "../../contracts/chat-events.js";
+import { applyChatFrame } from "../../contracts/chat-frame.js";
+import type { ChatMessage } from "../../contracts/message.js";
 import { runLoop } from "../run-loop.js";
 import { createAiSdkProvider } from "../../providers/ai-sdk.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
 import { defineTool } from "../../tools/define-tool.js";
-import { CHAT_STREAM_KEY, createTurnStreamWriter, framesOfChunk, readChatTurn } from "../chat-stream.js";
+import { CHAT_STREAM_KEY, createTurnStreamWriter, framesOfChunk, modelExecutionMarker, readChatTurn } from "../chat-stream.js";
 
 if (DBOS.isInitialized()) {
     await DBOS.shutdown();
@@ -184,6 +187,23 @@ async function readAll(turnId: string): Promise<ChatFrame[]> {
 
 const textOf = (frames: readonly ChatFrame[]): string => frames.map((frame) => (frame.type === "text-delta" ? frame.text : "")).join("");
 
+const MarkerRecordSchema = z.object({
+    kind: z.literal("ui"),
+    chunks: z.tuple([z.object({ type: z.literal("data-model-execution"), data: z.object({ step: z.number(), execution: z.string() }) })]),
+});
+
+/** The records of the stream of a turn that a model step wrote as its execution marker, in order, with their offsets. */
+async function readMarkers(turnId: string): Promise<{ offset: number; step: number; execution: string }[]> {
+    const markers: { offset: number; step: number; execution: string }[] = [];
+    let offset = 0;
+    for await (const record of DBOS.readStream<DurableStreamRecord>(turnId, CHAT_STREAM_KEY)) {
+        const marker = MarkerRecordSchema.safeParse(record);
+        if (marker.success) markers.push({ offset, ...marker.data.chunks[0].data });
+        offset += 1;
+    }
+    return markers;
+}
+
 let rig: DbosTestRig;
 
 beforeAll(async () => {
@@ -222,6 +242,7 @@ describe("the durable stream of a chat turn", () => {
         });
         expect(JSON.stringify(failed)).not.toContain('"result"');
         expect(frames.at(-1)?.type).toBe("finish");
+        expect(frames.some((frame) => frame.type === "text-superseded")).toBe(false);
         const serialized = JSON.stringify(frames);
         expect(serialized).not.toContain(SECRET_INPUT);
         expect(serialized).not.toContain(SECRET_OUTPUT);
@@ -265,11 +286,173 @@ describe("the durable stream of a chat turn", () => {
 
         expect(attempts).toBe(2);
         expect(textOf(await readAll(turnId))).toBe("The whole answer.");
+
+        const markers = await readMarkers(turnId);
+        expect(markers).toHaveLength(2);
+        expect(markers[0]?.step).toBe(markers[1]?.step);
+        expect(markers[0]?.execution).not.toBe(markers[1]?.execution);
+    });
+
+    it("writes one marker before each model step of the turn, with the id of the step and a fresh execution", async () => {
+        const turnId = rig.nextWorkflowId("chat-stream-marker-");
+        scripted = freshModel();
+        await (await DBOS.startWorkflow(streamWorkflow, { workflowID: turnId })()).getResult();
+
+        const markers = await readMarkers(turnId);
+        const modelSteps = ((await DBOS.listWorkflowSteps(turnId)) ?? []).filter((step) => step.name.endsWith(".model"));
+        expect(markers.map((marker) => marker.step)).toEqual(modelSteps.map((step) => step.functionID));
+        expect(new Set(markers.map((marker) => marker.execution)).size).toBe(markers.length);
+    });
+});
+
+describe("the execution marker of a model step", () => {
+    it("writes nothing outside a step and gives the call to the model", async () => {
+        const model = wrapLanguageModel({
+            model: freshModel().provider.bind({ session: makeSession(), live: false }).model,
+            middleware: [modelExecutionMarker(CHAT_STREAM_KEY)],
+        });
+        const result = await model.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "go" }] }] });
+        expect(result.stream).toBeInstanceOf(ReadableStream);
     });
 });
 
 describe("the frames of one chunk of the stream", () => {
     it("ends a workflow that the library aborted with a finish frame of the reason aborted", () => {
         expect(framesOfChunk({ type: "abort" }, ROOT)).toEqual([{ type: "finish", source: ROOT, finishReason: "aborted" }]);
+    });
+});
+
+const STEP = 3;
+const ASSISTANT_ID = "assistant-1";
+
+const marker = (execution: string, step = STEP): DurableStreamRecord => ({
+    kind: "ui",
+    chunks: [{ type: "data-model-execution", data: { step, execution }, transient: true }],
+});
+
+const attemptText = (attempt: string, delta: string, step = STEP): DurableStreamRecord => ({
+    kind: "model",
+    step,
+    attempt,
+    parts: [
+        { type: "text-start", id: "t" },
+        { type: "text-delta", id: "t", delta },
+        { type: "text-end", id: "t" },
+    ],
+});
+
+const END: DurableStreamRecord = { kind: "end", finishReason: "stop" };
+
+/**
+ * A stream of recorded values. A read takes `history` as the records that are already stored, and it takes `live` as the
+ * records that arrive after it. The real reader of the library converts them.
+ */
+function recordedSource(history: readonly DurableStreamRecord[], live: readonly DurableStreamRecord[] = []): DurableStreamSource {
+    const all = [...history, ...live];
+    // The overload signature is the generic one that the source declares. The implementation signature gives the record
+    // type that the fake stores, and TypeScript accepts the pair because it compares them with the type parameter erased.
+    function readStreamOffset<T>(workflowID: string, key: string, offset: number): Promise<T>;
+    function readStreamOffset(workflowID: string, key: string, offset: number): Promise<DurableStreamRecord> {
+        const record = all[offset];
+        return offset < history.length && record !== undefined
+            ? Promise.resolve(record)
+            : Promise.reject(new DBOSErrors.DBOSStreamTimeoutError(workflowID, key, 0));
+    }
+    function readStream<T>(workflowID: string, key: string, options?: { offset?: number }): AsyncGenerator<T, void, unknown>;
+    async function* readStream(_workflowID: string, _key: string, options?: { offset?: number }): AsyncGenerator<DurableStreamRecord, void, unknown> {
+        for (const record of all.slice(options?.offset ?? 0)) yield await Promise.resolve(record);
+    }
+    return {
+        readStreamOffset,
+        readStream,
+        retrieveWorkflow: () => ({ getStatus: () => Promise.resolve({ status: "SUCCESS" }) }),
+    };
+}
+
+async function readRecorded(history: readonly DurableStreamRecord[], live: readonly DurableStreamRecord[] = []): Promise<ChatFrame[]> {
+    const frames: ChatFrame[] = [];
+    for await (const frame of readChatTurn("recorded-turn", { rootSource: ROOT, client: recordedSource(history, live) })) frames.push(frame);
+    return frames;
+}
+
+/** The text of the reply that a client holds after it applies the frames. */
+function foldedText(frames: readonly ChatFrame[]): string {
+    let messages: ChatMessage[] = [];
+    for (const frame of frames) messages = applyChatFrame(messages, frame, ASSISTANT_ID).messages;
+    return (messages[0]?.parts ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
+}
+
+const frameKinds = (frames: readonly ChatFrame[]): string[] =>
+    frames.map((frame) => (frame.type === "text-delta" ? `+${frame.text}` : frame.type === "text-superseded" ? `-${frame.length}` : frame.type));
+
+describe("the reader of a turn and the execution marker", () => {
+    it("drops the half text when a second execution starts after the read gave the half text", async () => {
+        const frames = await readRecorded([marker("a"), attemptText("A", "Half of the")], [marker("b"), attemptText("B", "Whole reply."), END]);
+
+        expect(frameKinds(frames)).toEqual(["+Half of the", "-11", "+Whole reply."]);
+        expect(frames.find((frame) => frame.type === "text-superseded")).toMatchObject({ source: ROOT });
+        expect(foldedText(frames)).toBe("Whole reply.");
+    });
+
+    it("drops the half text when the second execution fails before its first output", async () => {
+        const frames = await readRecorded([marker("a"), attemptText("A", "Half of the"), marker("b"), END]);
+
+        expect(frameKinds(frames)).toEqual(["+Half of the", "-11"]);
+        expect(foldedText(frames)).toBe("");
+    });
+
+    it("drops the text that an earlier execution writes after the marker of a new execution", async () => {
+        const frames = await readRecorded([], [marker("a"), attemptText("A", "Half"), marker("b"), attemptText("A", " late"), attemptText("B", "Whole."), END]);
+
+        expect(frameKinds(frames)).toEqual(["+Half", "-4", "+Whole."]);
+        expect(foldedText(frames)).toBe("Whole.");
+    });
+
+    it("counts only the text after the last marker, thus a third execution drops the text of the second", async () => {
+        const frames = await readRecorded(
+            [],
+            [marker("a"), attemptText("A", "Half"), marker("b"), attemptText("B", "Second."), marker("c"), attemptText("C", "Third."), END],
+        );
+
+        expect(frameKinds(frames)).toEqual(["+Half", "-4", "+Second.", "-7", "+Third."]);
+        expect(foldedText(frames)).toBe("Third.");
+    });
+
+    it("gives no frame for a repeated marker of the same execution", async () => {
+        const frames = await readRecorded([], [marker("a"), attemptText("A", "Half"), marker("a"), attemptText("A", " more"), END]);
+
+        expect(frameKinds(frames)).toEqual(["+Half", "+ more"]);
+        expect(foldedText(frames)).toBe("Half more");
+    });
+
+    it("gives only the text of the last execution to a read that starts after it wrote its text", async () => {
+        const frames = await readRecorded([marker("a"), attemptText("A", "Half"), marker("b"), attemptText("B", "Whole."), END]);
+
+        expect(frameKinds(frames)).toEqual(["+Whole."]);
+    });
+
+    it("keeps the text of an earlier step when the marker is of a new step", async () => {
+        const frames = await readRecorded([marker("a", 3), attemptText("A", "one", 3), marker("b", 5), attemptText("B", " two", 5), END]);
+
+        expect(frameKinds(frames)).toEqual(["+one", "+ two"]);
+    });
+
+    it("counts a code unit of a surrogate pair as two", async () => {
+        const frames = await readRecorded([marker("a"), attemptText("A", "ok \u{1F9EC}"), marker("b"), END]);
+
+        expect(frames.find((frame) => frame.type === "text-superseded")).toMatchObject({ length: 5 });
+        expect(foldedText(frames)).toBe("");
+    });
+
+    it("gives the text of a stream with no marker as before", async () => {
+        const frames = await readRecorded([attemptText("A", "Hello."), END]);
+
+        expect(frameKinds(frames)).toEqual(["+Hello."]);
+    });
+
+    it("gives no marker as a frame", async () => {
+        const frames = await readRecorded([marker("a"), attemptText("A", "Hi"), marker("b"), attemptText("B", "Hey"), END]);
+
+        expect(JSON.stringify(frames)).not.toContain("model-execution");
     });
 });

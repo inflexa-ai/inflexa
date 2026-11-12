@@ -3,10 +3,11 @@
  * credential, the claim of a thread, the stop, the approval, and the sub-agents as child workflows.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { APICallError } from "@ai-sdk/provider";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { APICallError, type LanguageModelV4CallOptions, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, errAsync, ok, okAsync } from "neverthrow";
+import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 
 import { recoverAtCrashPoint } from "../../__tests__/setup/dbos-crash.js";
@@ -19,13 +20,14 @@ import { applyChatFrame } from "../../contracts/chat-frame.js";
 import type { ChatMessage } from "../../contracts/message.js";
 import type { Connectable } from "../../lib/db-result.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
-import { finalText, runLoop } from "../../loop/run-loop.js";
+import { CONTINUE_REQUEST, finalText, runLoop } from "../../loop/run-loop.js";
 import { registerSubAgent } from "../../loop/sub-agent.js";
 import { turnCredentials } from "../../loop/turn-credentials.js";
 import type { Querier } from "../../state/db.js";
 import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
 import { createThreadHistory } from "../../memory/thread-history.js";
 import { createThreadStore } from "../../memory/thread-store.js";
+import { createAiSdkProvider } from "../../providers/ai-sdk.js";
 import type { ResolveRequestHeaders } from "../../providers/request-headers.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { ThreadAgentResolver } from "../../runtime/assemble.js";
@@ -406,15 +408,8 @@ describe("a chat turn as a workflow", () => {
         expect(partOrderOf(assistants[0])).toEqual(["Running it.", "tool-call", "Done after the crash."]);
     });
 
-    it("retries a model call that fails after a text as a whole, and keeps only the text of the retry", async () => {
-        const unavailable = new APICallError({
-            message: "HTTP 503",
-            url: "https://models.example/v1/messages",
-            requestBodyValues: {},
-            statusCode: 503,
-            responseHeaders: { "retry-after-ms": "10" },
-        });
-        provider = scriptedModel([{ breakAfter: [text("lost text")], error: unavailable }, reply([text("the retry")])], { maxRetries: 1 }).provider;
+    it("retries a model call that fails before its first output part as a whole, and the turn does not pause", async () => {
+        provider = scriptedModel([{ fail: unavailable() }, reply([text("the retry")])], { maxRetries: 1 }).provider;
         const threadId = `thread-${rig.nextWorkflowId()}`;
 
         const turnId = await startTurn(threadId);
@@ -427,6 +422,173 @@ describe("a chat turn as a workflow", () => {
         expect(assistants).toHaveLength(1);
         expect(partOrderOf(assistants[0])).toEqual(["the retry"]);
         expect(stored.flatMap((message) => message.parts.filter((part) => part.type === "data-pause"))).toEqual([]);
+    }, 30_000);
+
+    it("gives a reader the text of a model call before the call ends", async () => {
+        const release = gate();
+        provider = plannedModel([{ deltas: ["First text. ", () => release.opened, "The rest."], end: "finish" }]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        const first = await readUntil(turnId, (frame) => frame.type === "text-delta");
+
+        expect(textOf(first)).toBe("First text. ");
+        expect((await DBOS.getWorkflowStatus(turnId))?.status).toBe("PENDING");
+        release.open();
+        await DBOS.retrieveWorkflow(turnId).getResult();
+        expect(textOf(await readAll(turnId))).toBe("First text. The rest.");
+    }, 30_000);
+
+    it("pauses a turn whose model call fails after a text, and the continuation follows the text", async () => {
+        const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        const beforePause = await readUntil(turnId, (frame) => frame.type === "data-pause");
+
+        expect(textOf(beforePause)).toBe("Half of the ");
+        expect(beforePause.at(-1)).toMatchObject({ type: "data-pause", state: "retrying", cause: { kind: "outage" } });
+        expect(scripted.calls).toHaveLength(1);
+
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        await DBOS.retrieveWorkflow(turnId).getResult();
+
+        expect(scripted.calls).toHaveLength(2);
+        const prompt = JSON.stringify(scripted.calls[1]?.prompt);
+        expect(prompt).toContain("Half of the ");
+        expect(prompt).toContain(CONTINUE_REQUEST.slice(1, 40));
+        expect(textOf(await readAll(turnId))).toBe("Half of the answer.");
+        const assistants = (await transcriptOf(threadId)).filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(1);
+        expect(textPartsOf(assistants[0])).toBe("Half of the answer.");
+    }, 30_000);
+
+    it("keeps the partial reply of a failed model call when the turn recovers during the pause", async () => {
+        const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
+        provider = scripted.provider;
+        credentialAfterRestart = makeLocalAuth();
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        await pausedWorkOf(turnId);
+        const ended = DBOS.retrieveWorkflow(turnId)
+            .getResult()
+            .catch(() => undefined);
+        const handle = await recoverAtCrashPoint(turnId, () => true, { ended });
+
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        await handle.getResult();
+
+        expect(scripted.calls).toHaveLength(2);
+        const prompt = JSON.stringify(scripted.calls[1]?.prompt);
+        expect(prompt).toContain("Half of the ");
+        expect(prompt).toContain(CONTINUE_REQUEST.slice(1, 40));
+        const assistants = (await transcriptOf(threadId)).filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(1);
+        expect(textPartsOf(assistants[0])).toBe("Half of the answer.");
+    }, 30_000);
+
+    it("replays the recorded operations of a turn that paused before the partial reply was recorded", async () => {
+        const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
+        provider = scripted.provider;
+        credentialAfterRestart = makeLocalAuth();
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        // A patch that gives false with no record makes the body run the operations of a turn from before the upgrade.
+        const patch = spyOn(DBOS, "patch").mockResolvedValue(false);
+        let turnId: string;
+        try {
+            turnId = await startTurn(threadId);
+            await pausedWorkOf(turnId);
+        } finally {
+            patch.mockRestore();
+        }
+        const ended = DBOS.retrieveWorkflow(turnId)
+            .getResult()
+            .catch(() => undefined);
+        const handle = await recoverAtCrashPoint(turnId, () => true, { ended });
+
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        await handle.getResult();
+
+        expect(await turnRecords(threadId)).toEqual([{ status: "done", reason: null }]);
+        const steps = (await DBOS.listWorkflowSteps(turnId)) ?? [];
+        expect(steps.filter((step) => step.name.endsWith(".model.partial"))).toEqual([]);
+        const assistants = (await transcriptOf(threadId)).filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(1);
+        expect(textPartsOf(assistants[0])).toContain("answer.");
+    }, 30_000);
+
+    it("gives a read during a recovery the superseded text and then the text of the second execution", async () => {
+        credentialAfterRestart = makeLocalAuth();
+        const secondMayStream = gate();
+        provider = plannedModel([
+            { deltas: ["Half of the "], end: "hang" },
+            { before: () => secondMayStream.opened, deltas: ["The whole reply."], end: "finish" },
+        ]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        await readUntil(turnId, (frame) => frame.type === "text-delta");
+        const ended = DBOS.retrieveWorkflow(turnId)
+            .getResult()
+            .catch(() => undefined);
+        const handle = await recoverAtCrashPoint(turnId, () => true, { ended });
+
+        // The second execution waits before its first output, and the read gets its marker before it streams.
+        const frames: ChatFrame[] = [];
+        for await (const frame of turns.read(turnId)) {
+            frames.push(frame);
+            if (frame.type === "text-superseded") secondMayStream.open();
+        }
+        await handle.getResult();
+
+        expect(frames.filter((frame) => frame.type === "text-delta" || frame.type === "text-superseded")).toMatchObject([
+            { type: "text-delta", text: "Half of the " },
+            { type: "text-superseded", length: "Half of the ".length },
+            { type: "text-delta", text: "The whole reply." },
+        ]);
+        expect(textPartsOf(foldedAssistantOf(frames))).toBe("The whole reply.");
+        expect(textPartsOf((await transcriptOf(threadId)).find((message) => message.role === "assistant"))).toBe("The whole reply.");
+    }, 30_000);
+
+    it("drops the half text of a rerun that fails before its first output part", async () => {
+        credentialAfterRestart = undefined;
+        const scripted = plannedModel([
+            { deltas: ["Half of the "], end: "hang" },
+            { deltas: ["Fresh reply."], end: "finish" },
+        ]);
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        await readUntil(turnId, (frame) => frame.type === "text-delta");
+        // The cancelled execution drops the live credential when it leaves, thus the rerun finds none.
+        const ended = Promise.all([
+            DBOS.retrieveWorkflow(turnId)
+                .getResult()
+                .catch(() => undefined),
+            waitUntil(() => turnCredentials.of(turnId) === undefined),
+        ]);
+        const handle = await recoverAtCrashPoint(turnId, () => true, { ended });
+
+        expect(await pausedWorkOf(turnId)).toMatchObject({ waiting: [{ workflowId: turnId, state: "paused", cause: { kind: "credential" } }] });
+        const paused = await readUntil(turnId, (frame) => frame.type === "data-pause" && "state" in frame && frame.state === "paused");
+
+        expect(paused.filter((frame) => frame.type === "text-delta" || frame.type === "text-superseded")).toMatchObject([
+            { type: "text-delta", text: "Half of the " },
+            { type: "text-superseded", length: "Half of the ".length },
+        ]);
+        expect(textPartsOf(foldedAssistantOf(paused))).toBe("");
+        expect(scripted.calls).toHaveLength(1);
+
+        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
+        await handle.getResult();
+
+        expect(scripted.calls).toHaveLength(2);
+        expect(textPartsOf(foldedAssistantOf(await readAll(turnId)))).toBe("Fresh reply.");
+        credentialAfterRestart = makeLocalAuth();
     }, 30_000);
 
     it("continues on the model of the host a turn whose stored prepare result holds no model", async () => {
@@ -967,6 +1129,109 @@ const work = createWork({
     },
     ...WORK_DEPS,
 });
+
+/** A retryable failure of the model service. */
+function unavailable(): APICallError {
+    return new APICallError({
+        message: "HTTP 503",
+        url: "https://models.example/v1/messages",
+        requestBodyValues: {},
+        statusCode: 503,
+        responseHeaders: { "retry-after-ms": "10" },
+    });
+}
+
+/** A latch: `opened` settles when `open` runs. */
+function gate(): { readonly opened: Promise<void>; readonly open: () => void } {
+    let open: () => void = () => undefined;
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    return { opened, open };
+}
+
+/** One request of {@link plannedModel}: the text it streams, and how its stream ends. */
+type RequestPlan = {
+    /** Settles before the request opens its stream, thus the model holds the request before its first output part. */
+    readonly before?: () => Promise<void>;
+    /** The text deltas of the reply. A function is a wait between two deltas. */
+    readonly deltas: readonly (string | (() => Promise<void>))[];
+    /** `hang`: the stream stays open until the cancel of its step ends it, as a crash in the middle of a reply does. */
+    readonly end: "finish" | "hang";
+};
+
+/** A provider over a model that streams the planned text of each request, for a test that stops a reply while it streams. */
+function plannedModel(plans: readonly RequestPlan[]): { readonly provider: ChatProvider; readonly calls: LanguageModelV4CallOptions[] } {
+    const calls: LanguageModelV4CallOptions[] = [];
+    const model = new MockLanguageModelV4({
+        provider: "scripted",
+        modelId: "scripted-model",
+        doStream: async (call) => {
+            const index = calls.length;
+            calls.push(call);
+            const plan = plans[index];
+            if (plan === undefined) throw new Error(`the plan has no request ${index}`);
+            await plan.before?.();
+            const stream = new ReadableStream<LanguageModelV4StreamPart>({
+                start(controller) {
+                    void (async () => {
+                        controller.enqueue({ type: "stream-start", warnings: [] });
+                        controller.enqueue({ type: "response-metadata", id: `response-${index}`, modelId: "scripted-model", timestamp: new Date(0) });
+                        controller.enqueue({ type: "text-start", id: "t" });
+                        for (const delta of plan.deltas) {
+                            if (typeof delta === "string") controller.enqueue({ type: "text-delta", id: "t", delta });
+                            else await delta();
+                        }
+                        if (plan.end === "hang") return;
+                        controller.enqueue({ type: "text-end", id: "t" });
+                        controller.enqueue({
+                            type: "finish",
+                            finishReason: { unified: "stop", raw: "stop" },
+                            usage: {
+                                inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+                                outputTokens: { total: undefined, text: undefined, reasoning: undefined },
+                            },
+                        });
+                        controller.close();
+                    })().catch(() => undefined);
+                },
+            });
+            return { stream };
+        },
+    });
+    return { provider: createAiSdkProvider({ model, maxRetries: 0 }), calls };
+}
+
+/**
+ * The frames of a read, up to and including the first frame that `stop` accepts. The read goes on in the background
+ * until the turn ends, because a read that stops early waits for the next chunk of the stream before it closes.
+ */
+async function readUntil(turnId: string, stop: (frame: ChatFrame) => boolean, timeoutMs = 10_000): Promise<ChatFrame[]> {
+    const frames: ChatFrame[] = [];
+    let seen: (frames: ChatFrame[]) => void = () => undefined;
+    const found = new Promise<ChatFrame[]>((resolve) => (seen = resolve));
+    const read = (async () => {
+        for await (const frame of turns.read(turnId)) {
+            frames.push(frame);
+            if (stop(frame)) seen([...frames]);
+        }
+        throw new Error("the read ended before the frame that the test waits for");
+    })();
+    read.catch(() => undefined);
+    return await Promise.race([found, read, Bun.sleep(timeoutMs).then(() => Promise.reject(new Error("the read did not give the frame in time")))]);
+}
+
+/** The assistant message that the frames of a turn fold to. */
+function foldedAssistantOf(frames: readonly ChatFrame[]): ChatMessage | undefined {
+    const start = frames.find((frame) => frame.type === "message-start" && frame.role === "assistant");
+    if (start?.type !== "message-start") throw new Error("the frames have no assistant message-start");
+    return frames
+        .reduce<ChatMessage[]>((messages, frame) => applyChatFrame(messages, frame, start.messageId).messages, [])
+        .find((message) => message.role === "assistant");
+}
+
+/** The text of the text parts of a message, joined. */
+function textPartsOf(message: ChatMessage | undefined): string {
+    return (message?.parts ?? []).map((part) => (part.type === "text" ? part.text : "")).join("");
+}
 
 /** The parts of a message in order: the text of a text part, and the type of any other part. */
 function partOrderOf(message: ChatMessage | undefined): string[] {

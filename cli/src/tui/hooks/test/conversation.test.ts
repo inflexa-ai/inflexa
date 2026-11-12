@@ -79,6 +79,9 @@ type LoopEvent = Parameters<typeof toChatFrame>[0];
 /** Send the frame of one loop event to the hook. It resolves after the hook applied the frame. */
 type Emit = (event: LoopEvent) => Promise<void>;
 
+/** Send a frame as it is, for a kind that no event of the agent loop gives, for example `text-superseded`. */
+type SendFrame = (frame: ChatFrame) => Promise<void>;
+
 /** What a turn of the fake server ends with: the fields of the summary that `GET {T}/turns/:turnId` gives. */
 type End = Pick<TurnSummary, "status"> & Partial<Pick<TurnSummary, "opened" | "turnUsage" | "fallbackText" | "storeFailed" | "failure">>;
 
@@ -109,7 +112,7 @@ type FakeServer = SendOpts & {
  * A server whose turn streams the frames of what `drive` emits, then the terminal frame of `end`, and
  * whose summary is `end`. The transcript reload after the turn does nothing, unless a case replaces it.
  */
-function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () => {}): FakeServer {
+function fakeServer(end: End, drive: (emit: Emit, sendFrame: SendFrame) => void | Promise<void> = () => {}): FakeServer {
     const started: FakeServer["started"] = [];
     const aborted: string[] = [];
     let count = 0;
@@ -126,7 +129,7 @@ function fakeServer(end: End, drive: (emit: Emit) => void | Promise<void> = () =
             };
             void (async () => {
                 try {
-                    await drive(emit);
+                    await drive(emit, (frame) => channel.send(frame));
                 } catch (cause) {
                     driveFailures.push(cause);
                 }
@@ -1226,6 +1229,58 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
         expect(textParts.map((p) => p.text)).toEqual(["before", "after"]);
         expect(textParts[0]?.key).not.toBe(textParts[1]?.key);
         expect(assistantParts()).toEqual([{ type: "text", text: "before" }, { type: "data-plan" }, { type: "text", text: "after" }]);
+    });
+});
+
+describe("send() drops the text of a superseded model attempt", () => {
+    const superseded = (length: number, source = ROUTE_SOURCE): ChatFrame => ({ type: "text-superseded", length, source });
+    const textsOf = (): string[] => (messages[1]?.parts ?? []).flatMap((p) => (p.type === "text" ? [p.text] : []));
+
+    test("a read during a recovery shows the reply one time", async () => {
+        const server = fakeServer(done(), async (emit, sendFrame) => {
+            await emit({ type: "text-delta", text: "Hello wor" });
+            expect(streamText()).toBe("Hello wor");
+            await sendFrame(superseded(9));
+            // The streaming part lost the text, and it stays the part that the next delta continues.
+            expect(streamText()).toBe("");
+            expect(streamPartId()).not.toBeNull();
+            await emit({ type: "text-delta", text: "Hello world." });
+            expect(streamText()).toBe("Hello world.");
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(textsOf()).toEqual(["Hello world."]);
+        expect(streamPartId()).toBeNull();
+    });
+
+    test("a sealed text loses the superseded text and the other parts do not change", async () => {
+        const server = fakeServer(done(), async (emit, sendFrame) => {
+            await emit({ type: "text-delta", text: "Hello wor" });
+            await emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "read_file" });
+            await emit({ type: "tool-finished", source: ROOT, toolUseId: "t1", name: "read_file", outcome: "ok" });
+            // The tool part sealed the streaming text into the store before the frame comes.
+            expect(streamPartId()).toBeNull();
+            expect(textsOf()).toEqual(["Hello wor"]);
+            const tool = messages[1]?.parts[1];
+            await sendFrame(superseded(9));
+            expect(textsOf()).toEqual([""]);
+            expect(messages[1]?.parts[1]).toBe(tool);
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(messages[1]?.parts.map((p) => p.type)).toEqual(["text", "tool-call"]);
+    });
+
+    test("a frame of a sub-agent changes nothing", async () => {
+        const SUB = { agentId: "planner", callPath: ["tui-chat", "planner"] };
+        const server = fakeServer(done(), async (emit, sendFrame) => {
+            await emit({ type: "text-delta", text: "Hello wor" });
+            await sendFrame(superseded(9, SUB));
+            expect(streamText()).toBe("Hello wor");
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
+
+        expect(textsOf()).toEqual(["Hello wor"]);
     });
 });
 

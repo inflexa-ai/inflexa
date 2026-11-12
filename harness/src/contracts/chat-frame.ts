@@ -3,7 +3,16 @@
 import type { ChatDataPart, EmitEvent } from "../loop/types.js";
 import { z } from "zod";
 import type { ChatStreamEvent } from "../providers/types.js";
-import type { ChatErrorEvent, ChatFrame, ChatPartFrame, EventSource, FinishEvent, IterationEvent, MessageStartEvent } from "./chat-events.js";
+import type {
+    ChatErrorEvent,
+    ChatFrame,
+    ChatPartFrame,
+    EventSource,
+    FinishEvent,
+    IterationEvent,
+    MessageStartEvent,
+    TextSupersededEvent,
+} from "./chat-events.js";
 import type { KnownChatPart } from "./chat-parts.js";
 import type { ChatMessage, MessagePart, TextPart, ToolCallPart } from "./message.js";
 import { isKnownPartType, isReconciling } from "./part-registry.js";
@@ -181,6 +190,8 @@ function applyPartFrame(parts: MessagePart[], frame: Exclude<ChatFrame, FinishEv
     switch (frame.type) {
         case "text-delta":
             return mergeTextDelta(parts, frame.text);
+        case "text-superseded":
+            return removeSupersededText(parts, frame);
         case "tool-started":
             return [
                 ...parts,
@@ -229,6 +240,20 @@ function mergeTextDelta(parts: MessagePart[], delta: string): MessagePart[] {
         return [...parts.slice(0, -1), merged];
     }
     return [...parts, { type: "text", text: delta } satisfies TextPart];
+}
+
+/** Remove the last `length` code units of text, from the last text part backward. A part that empties keeps its position. */
+function removeSupersededText(parts: MessagePart[], frame: TextSupersededEvent): MessagePart[] {
+    const next = parts.slice();
+    let remaining = frame.length;
+    for (let index = next.length - 1; index >= 0 && remaining > 0; index--) {
+        const part = next[index];
+        if (part === undefined || part.type !== "text") continue;
+        const removed = Math.min(remaining, part.text.length);
+        next[index] = { type: "text", text: part.text.slice(0, part.text.length - removed) } satisfies TextPart;
+        remaining -= removed;
+    }
+    return next;
 }
 
 function stampUsage(messages: ChatMessage[], assistantId: string, usage: TokenUsageRollup): ChatMessage[] {
