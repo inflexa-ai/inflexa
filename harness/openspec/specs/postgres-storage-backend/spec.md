@@ -150,11 +150,12 @@ repository names, the count for each test mode is:
   thus each worker that runs a database test file starts its own container.
 
 When `CORTEX_TEST_PG_URL` names one Postgres, each mode uses that Postgres and
-starts no container.
+starts no container. That Postgres MUST be a database that no host uses (see
+"The test override refuses a database that a host uses").
 
 #### Scenario: Override via env var
 
-- **WHEN** `CORTEX_TEST_PG_URL` is set to a running Postgres instance
+- **WHEN** `CORTEX_TEST_PG_URL` is set to a running Postgres instance that no host uses
 - **THEN** tests use that instance instead of starting a container
 - **AND** schemas are still isolated per test
 
@@ -167,6 +168,52 @@ starts no container.
 
 - **WHEN** `CORTEX_TEST_PG_URL` is unset, and `bun test --isolate` or `bun test --parallel` runs more than one database test file
 - **THEN** each of those files starts its own container, because each file gets a fresh module registry
+
+### Requirement: The test override refuses a database that a host uses
+
+When `CORTEX_TEST_PG_URL` is set, the test setup MUST make sure that no host uses that database before the first test uses it.
+
+The guard MUST read two schemas of the override database: `public`, and the schema that `current_schema()` gives on the base pool of the override. The base pool sets no `search_path`. A host on the same URL makes its tables in that second schema. The guard MUST refuse the database when one of the two schemas holds a relation that no extension owns. A relation here is a table, a partitioned table, a view, a materialized view, or a foreign table. An object that an extension owns MUST NOT cause a refusal, for example the objects of pgvector in `public`.
+
+The guard MUST run before the setup installs an extension, makes a test schema, or launches DBOS. The guard MUST only read. It MUST NOT read the `dbos` schema, and it MUST NOT write a marker. Thus a run that uses one override database for each test file, under each test mode, meets a database that the guard permits again. A dedicated test database that a developer uses for more than one run stays permitted.
+
+The refusal MUST be an error that names the host, the port, and the database, but not the password. It MUST name the relations that it found, up to a limit, and say when it omits some. It MUST name the routes that are safe:
+
+- `bun run test:full`, with `CORTEX_TEST_PG_URL` unset first, because the script uses a set `CORTEX_TEST_PG_URL` again
+- the container fallback, with `CORTEX_TEST_PG_URL` unset
+- `CORTEX_TEST_PG_URL` set to a dedicated Postgres whose `public` schema is empty
+
+The refusal MUST NOT give a database that a host uses as a safe route. The reaper guard and the documents of the harness MUST name the same dedicated Postgres for the override route.
+
+#### Scenario: A database with host tables is refused
+
+- **GIVEN** an override database whose `public` schema holds a table that no extension owns
+- **WHEN** a database test file asks for the test pool
+- **THEN** the setup throws the refusal, and the refusal names that table and the safe routes
+- **AND** no test schema is made, and DBOS does not launch
+
+#### Scenario: A host schema of the connecting role is refused
+
+- **GIVEN** an override database where the schema of the connecting role exists and holds a table that no extension owns, and `public` is empty
+- **WHEN** a database test file asks for the test pool
+- **THEN** the setup throws the refusal, and the refusal names that table
+
+#### Scenario: Objects of an extension are permitted
+
+- **GIVEN** an override database whose `public` schema holds only objects that an extension owns, a relation of the extension included
+- **WHEN** a database test file asks for the test pool
+- **THEN** the guard permits the database
+
+#### Scenario: A test database that earlier files used is permitted
+
+- **GIVEN** an override database where earlier test files of the run or of an earlier run made test schemas and the `dbos` schema
+- **WHEN** a later database test file asks for the test pool, also under `--isolate` or `--parallel`
+- **THEN** the guard permits the database
+
+#### Scenario: The container fallback does not meet the guard
+
+- **WHEN** `CORTEX_TEST_PG_URL` is unset
+- **THEN** the override guard does not run, because the fallback starts its own empty database
 
 ### Requirement: The container fallback starts a container only when ryuk runs
 
@@ -294,6 +341,8 @@ Each migration MUST set `lock_timeout` to 5 s for its transaction. Thus a statem
 
 The first migration, `20260927120000_baseline`, MUST hold only idempotent statements. Thus it applies to an empty database and to a database that an earlier harness made with its DDL at each start.
 
+The tables and the columns that the migrations make in the current schema MUST NOT depend on a different schema of the database. A test schema shares its database with other test schemas, and a host database can hold a test schema from an earlier run. A probe of the catalog in a migration MUST read only `current_schema()`. A released migration that reads more than the current schema stays as it is, and a later migration MUST repair its result.
+
 #### Scenario: Fresh database is initialized
 
 - **WHEN** `initCortexState(pool)` runs against an empty database
@@ -321,3 +370,9 @@ The first migration, `20260927120000_baseline`, MUST hold only idempotent statem
 - **WHEN** `initCortexState(pool)` runs
 - **THEN** it fails with a lock timeout after 5 s
 - **AND** `cortex_migration` records nothing, thus the next run applies the migration
+
+#### Scenario: A different schema with the mandate reference does not remove it from a new schema
+
+- **GIVEN** a schema of the database whose `cortex_runs` holds `mandate_id`
+- **WHEN** `initCortexState(pool)` runs against a new, empty schema of the same database
+- **THEN** `cortex_runs` of the new schema holds `mandate_id`, and it holds no `mandate_jti` and no `mandate_expires_at`

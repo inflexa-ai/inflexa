@@ -50,7 +50,7 @@ const RYUK_PRIVILEGED_ENV = "TESTCONTAINERS_RYUK_PRIVILEGED";
 const ROUTES = `Use one of the two routes that start ONE container for the whole run:
 
   bun run test:full [paths...]     starts one container, exports CORTEX_TEST_PG_URL, removes it on exit
-  CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex bun test [paths...]
+  CORTEX_TEST_PG_URL=<url of a dedicated Postgres whose public schema is empty> bun test [paths...]
                                    points every file at a Postgres that already runs; starts nothing
 
 Unset ${RYUK_DISABLED_ENV} if it is set. If ryuk cannot start, check these:

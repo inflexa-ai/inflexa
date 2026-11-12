@@ -12,7 +12,10 @@ const POSTGRES_READY_LOG = /database system is ready to accept connections/;
  *     full suite runs: `bun run test:full` (scripts/test-full.sh) starts ONE
  *     container, exports `CORTEX_TEST_PG_URL`, and removes it on exit; CI does
  *     the same with a `services:` container. It is also how you point tests at
- *     an already-running dev Postgres for tight iteration.
+ *     an already-running dedicated Postgres for tight iteration. That database
+ *     must be one that no host uses: the first `getTestPool()` refuses a database
+ *     that holds a relation in `public`, or in the default schema of the role,
+ *     that no extension owns (see `require-dedicated-database.ts`).
  *
  *  2. Fallback: with no `CORTEX_TEST_PG_URL`, a testcontainers-managed
  *     container is launched on the first `getTestPool()` call. Cold start
@@ -41,6 +44,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { Pool, type PoolConfig } from "pg";
 import { initCortexState } from "../../state/init.js";
+import { assertDatabaseIsDedicated } from "./require-dedicated-database.js";
 import { assertContainerWillBeReaped } from "./require-reaper.js";
 
 const PG_IMAGE = "pgvector/pgvector:pg18";
@@ -54,7 +58,16 @@ let _extensionPromise: Promise<void> | undefined;
 async function startContainer(): Promise<{ pool: Pool; container?: StartedTestContainer }> {
     const override = process.env.CORTEX_TEST_PG_URL;
     if (override) {
-        return { pool: new Pool({ connectionString: override }) };
+        const pool = new Pool({ connectionString: override });
+        try {
+            await assertDatabaseIsDedicated(pool);
+        } catch (err) {
+            await pool.end().catch(() => {
+                /* the refusal is the error to report */
+            });
+            throw err;
+        }
+        return { pool };
     }
 
     // Only the fallback creates a container, so only the fallback has to prove

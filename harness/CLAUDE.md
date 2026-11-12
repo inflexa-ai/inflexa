@@ -699,9 +699,24 @@ because that couples a test to an implementation detail.
 isolated schema scoped through `search_path`, against one
 `pgvector/pgvector:pg18` database. The cold start is about 3 seconds.
 
-Set `CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex` to skip the
-container start. It points each test at a local Postgres, and it gives instant
-feedback during tight iteration.
+Set `CORTEX_TEST_PG_URL` to the URL of a dedicated Postgres to skip the container
+start. It points each test at that Postgres, and it gives instant feedback during
+tight iteration. Use a Postgres that no host uses, and keep its `public` schema
+empty. Do not use the dev database of a host. The pool of a test resolves a name
+that is not in its test schema in `public`. Thus a test can read and drop the
+tables of a host.
+
+The setup refuses a database that a host uses. At the first `getTestPool()` of a
+module registry, `__tests__/setup/require-dedicated-database.ts` reads `public` and
+the default schema of the role. If one of them holds a relation that no extension
+owns, the dedicated-database guard refuses the database. The dedicated-database
+guard permits the objects of an extension, for example pgvector. It only reads.
+The refusal names the safe routes:
+
+- `unset CORTEX_TEST_PG_URL; bun run test:full`, because `bun run test:full`
+  reuses a `CORTEX_TEST_PG_URL` that is set, and the refusal then occurs again
+- the container fallback, with `CORTEX_TEST_PG_URL` unset
+- a dedicated Postgres with an empty `public` schema
 
 The container fallback keeps its container in the module state of `postgres.ts`.
 Thus it starts one container for each Bun module registry that runs a database
@@ -721,11 +736,11 @@ When `CORTEX_TEST_PG_URL` is set, each mode starts no container.
 
 Only the ryuk sidecar removes those containers. The fallback refuses to start a
 container until a reaper can remove it again
-(`__tests__/setup/require-reaper.ts`). The guard has no opt-out. The refusal
+(`__tests__/setup/require-reaper.ts`). The reaper guard has no opt-out. The refusal
 names the routes below.
 
 On a rootful podman machine, ryuk starts when it runs privileged. SELinux in the
-VM blocks the runtime socket for an unprivileged ryuk. The guard sets
+VM blocks the runtime socket for an unprivileged ryuk. The reaper guard sets
 `TESTCONTAINERS_RYUK_PRIVILEGED=true` when that variable is absent. A value that
 you set stays.
 
@@ -733,10 +748,10 @@ On a rootless podman machine, the runtime socket in the VM is not at
 `/var/run/docker.sock`. Set `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` to that
 path. If `/var/run/docker.sock` does not reach your machine, set `DOCKER_HOST`.
 
-The guard sits on the container-creation path. It is not in a `pretest` script,
+The reaper guard sits on the container-creation path. It is not in a `pretest` script,
 because `bun test` runs no lifecycle script. It is not in a `bunfig.toml`
 preload, because bun resolves bunfig from the cwd only. Thus a file that starts
-no container never meets the guard, and each unit test is such a file.
+no container never meets the reaper guard, and each unit test is such a file.
 
 After a plain `bun test`, ryuk removes the container of the run and its volumes.
 `bun run test:full` has three properties that the fallback does not have:
@@ -745,7 +760,7 @@ After a plain `bun test`, ryuk removes the container of the run and its volumes.
 - It keeps one container under `--isolate` and `--parallel`.
 - It matches CI, which sets `CORTEX_TEST_PG_URL` to one service container.
 
-To use a Postgres that already runs, export `CORTEX_TEST_PG_URL` at it.
+To use a dedicated Postgres that already runs, export `CORTEX_TEST_PG_URL` at it.
 
 A harness module receives its `Pool` as an injected construction dep
 (`createPool`). Thus a test passes the schema-scoped test pool directly into the
