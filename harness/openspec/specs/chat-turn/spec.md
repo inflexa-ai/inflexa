@@ -109,6 +109,10 @@ A record carries its kind and its hash in the harness namespace, and it is a syn
 
 The turn MUST give `runLoop` a round sink. For each round, the sink MUST store the messages of the round and the display projection of the round in one transaction. The display projection holds the parts that the frames of the round in the stream of the turn carry. The two rounds of a compaction obey their own rule (see "The chat turn stores each compaction round").
 
+The display projection MUST keep the order of those frames in the stream. A text that streams before a tool call MUST come before the part of that call. A text after the call MUST come after it. The turn workflow, a turn workflow that recovers from its checkpoints, and the turn in the process of a test MUST give the same order.
+
+The record of the text MUST NOT change the retry of a model call. A model call of the turn workflow has no live reader, thus it retries a failed attempt as a whole.
+
 A store fault MUST NOT stop the turn. The turn keeps the rows of the failed write. The next write of the turn stores them first, in its transaction and in order. Thus a row never lands before an earlier row of its turn.
 
 The result MUST carry `opened`, which is true when the opening landed. It MUST carry the store error when rows of the turn did not land by the close.
@@ -144,6 +148,34 @@ A host MUST NOT append a record of its own to a thread while a turn of that thre
 - **GIVEN** a round whose tool step completed before a crash
 - **WHEN** the turn recovers and stores the round
 - **THEN** the display projection of the round holds the tool part of that step
+
+#### Scenario: The stored turn keeps the order of the stream
+
+- **GIVEN** a turn workflow whose model streams a text, then calls a tool, and then streams a second text
+- **WHEN** the turn ends and a host replays the stored turn
+- **THEN** the assistant message holds the first text, the part of the tool call, and the second text, in this order
+- **AND** the frames of the stream of the turn give the same order
+
+#### Scenario: A recovered turn keeps the order of the stream
+
+- **GIVEN** a turn workflow whose model streams a text, then calls a tool, and then streams a second text
+- **AND** the process of the turn stops after the tool step
+- **WHEN** the turn recovers from its checkpoints and ends
+- **THEN** the replay of the stored turn holds the first text, the part of the tool call, and the second text, in this order
+- **AND** the tool step does not run again
+
+#### Scenario: The turn in the process of a test keeps the same order
+
+- **GIVEN** a turn in the process of a test whose model streams a text, then calls a tool, and then streams a second text
+- **WHEN** the turn ends and a host replays the stored turn
+- **THEN** the assistant message holds the first text, the part of the tool call, and the second text, in this order
+
+#### Scenario: A failed attempt of a model call retries as a whole
+
+- **GIVEN** a turn workflow whose provider retries a request, and whose first attempt fails with a retryable error after a text
+- **WHEN** the retry gives a complete reply and the turn ends
+- **THEN** the stream of the turn and the stored turn hold only the text of the retry
+- **AND** the turn does not pause
 
 ### Requirement: A turn closes with one outcome
 
