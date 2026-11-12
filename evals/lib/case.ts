@@ -31,6 +31,8 @@ export type TrialCall = {
     readonly ok?: boolean;
     /** The ok value of a terminal `submit_` call, or of a call of a script, which a grader reads. Absent for each other call. */
     readonly value?: unknown;
+    /** Why a call that ran gave no ok result: the error text, the denial, the refusal, or an input that did not parse. */
+    readonly error?: string;
 };
 
 /** One approval that a call asked the user for, before the call ran. */
@@ -163,6 +165,13 @@ export type ScriptCallInputs = ReadonlyMap<string, ReadonlyArray<{ readonly tool
  * its script, with the input that the script gave each one, thus a grader reads a call the same in a script and in a
  * direct call.
  */
+/** The reason of a call with no ok result. A call with no output did not run: the policy refused it, or its input did not parse. */
+function callError(call: LoopStep["calls"][number]): string {
+    if (call.output?.outcome === "error") return call.output.text;
+    if (call.output?.outcome === "denied") return `denied: ${call.output.reason}`;
+    return call.refused ? "refused by the call policy" : "no output: the input did not parse";
+}
+
 export function trialOf(
     steps: readonly LoopStep[],
     asks: readonly TrialAsk[],
@@ -179,6 +188,7 @@ export function trialOf(
                 input: call.input,
                 refused: call.refused,
                 ok,
+                error: ok ? undefined : callError(call),
                 value: ok && call.toolName.startsWith("submit_") && call.output?.outcome === "ok" ? call.output.value : undefined,
             };
             const script = call.toolName === "run_script" && call.output?.outcome === "ok" ? ScriptCallsSchema.safeParse(call.output.value) : undefined;
@@ -449,12 +459,14 @@ export function numbersGrounded(allowed: readonly string[], floor = 10, opts: { 
     };
 }
 
-const CommandInputSchema = z.object({ command: z.array(z.string()) });
+const CommandInputSchema = z.object({ command: z.union([z.string(), z.array(z.string())]) });
 
 /** The command line of an `execute_command` input, or `undefined` for an input of another shape. */
 export function commandLine(input: unknown): string | undefined {
     const parsed = CommandInputSchema.safeParse(input);
-    return parsed.success ? parsed.data.command.join(" ") : undefined;
+    if (!parsed.success) return undefined;
+    const { command } = parsed.data;
+    return typeof command === "string" ? command : command.join(" ");
 }
 
 /** The command line of an `execute_command` call, or `undefined` for another call. */

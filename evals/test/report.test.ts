@@ -110,14 +110,14 @@ describe("the cost of a comparison", () => {
 });
 
 describe("buildReport", () => {
-    test("keeps the calls and the text of a failed trial, and only the call names of a passing trial", () => {
+    test("keeps the calls and the text of a failed trial, and the call names and the failed calls of a passing trial", () => {
         const trial = (pass: boolean): TrialResult => ({
             kind: "graded",
             pass,
             detail: pass ? "ok" : "no export",
             calls: [
                 { step: 1, tool: "read_file", input: { path: "a.txt" }, refused: false, ok: true },
-                { step: 2, tool: "grep", input: { pattern: "x" }, refused: false, ok: false },
+                { step: 2, tool: "grep", input: { pattern: "x" }, refused: false, ok: false, error: "no output: the input did not parse" },
                 { step: 3, tool: "skill_read", input: { skill: "enrichment", path: "SKILL.md" }, refused: false, ok: true },
             ],
             asks: [],
@@ -140,6 +140,7 @@ describe("buildReport", () => {
             finishReason: "stop",
             capped: false,
             tools: ["read_file", "grep!", "skill_read(enrichment/SKILL.md)"],
+            failedCalls: [{ tool: "grep", error: "no output: the input did not parse", input: '{"pattern":"x"}' }],
         });
         expect(JSON.stringify(failed)).toBe(JSON.stringify(trial(false)));
     });

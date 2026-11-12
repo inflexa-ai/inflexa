@@ -195,6 +195,17 @@ describe("execute_command tool", () => {
         expect(out.stdoutTruncated).toBe(false);
     });
 
+    it("runs a shell line as a one-element argv", async () => {
+        const client = makeFakeClient();
+        const { ctx } = makeToolContext();
+        const tool = makeTool(client);
+        const input = tool.inputSchema.parse({ command: "python scripts/cox.py 2>&1 | tail -70" });
+
+        await awaitOk(tool.execute(input, ctx));
+
+        expect(presentAt(client.execs, 0).request.command).toEqual(["python scripts/cox.py 2>&1 | tail -70"]);
+    });
+
     it("names the lease and the deliverable in its description", () => {
         const tool = createExecuteCommandTool({
             lease: leaseOverClient(makeFakeClient(), makeSandboxRef()),
