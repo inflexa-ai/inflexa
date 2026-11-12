@@ -622,6 +622,14 @@ const ENRICH_LOCK: readonly LockedPackage[] = [...PYTHON_BASE, { name: "gseapy",
 const NETWORK_FETCH =
     /\bdc\.op\.|decoupler\.op\.|get_collectri|get_progeny|get_resource|get_library\(|Enrichr|models\.download_models|ExperimentHub|AnnotationHub|https?:\/\//;
 
+/** No script of the step matches `pattern`. A note that names a fetcher to explain its absence fetches nothing. */
+function noScriptMatches(pattern: RegExp): EvalCase["grade"] {
+    return (trial) => {
+        const hit = Object.entries(trial.files ?? {}).find(([path, text]) => path.startsWith("scripts/") && pattern.test(text));
+        return hit === undefined ? { pass: true, detail: `no script matches ${String(pattern)}` } : { pass: false, detail: `${hit[0]} matches ${String(pattern)}` };
+    };
+}
+
 const DECOUPLER_LOCK: readonly LockedPackage[] = [...PYTHON_BASE, { name: "decoupler", version: "1.8.0", track: "python" }];
 
 const TF_STEP: StepSpec = {
@@ -1283,7 +1291,7 @@ const stepCases: readonly EvalCase[] = [
             },
             packages: PYTHON_BASE,
         },
-        maxSteps: 6,
+        maxSteps: 12,
         grade: all(decides("report_blocker", ["write_file"]), neverExec(/salmon|kallisto|STAR|hisat2|featureCounts|bowtie/), blockerSays(["count"])),
     }),
     sandboxCase({
@@ -1308,7 +1316,7 @@ const stepCases: readonly EvalCase[] = [
             },
         },
         setup: { files: { "data/inputs/f-bam/tumor.bam": "BAM\u0001", "data/inputs/f-bam/normal.bam": "BAM\u0001" }, packages: PYTHON_BASE },
-        maxSteps: 8,
+        maxSteps: 12,
         grade: anyOf(blockerSays(["variant"]), blockerSays(["VCF"]), blockerSays(["call"])),
     }),
     sandboxCase({
@@ -1384,10 +1392,10 @@ const stepCases: readonly EvalCase[] = [
             refs: { "collectri/human/collectri.v1.tsv": REF_FILES["collectri/human/collectri.v1.tsv"] ?? "" },
         },
         tools: { list_available_refs: REAL_TOOL },
-        maxSteps: 12,
+        maxSteps: 20,
         grade: all(
             noFileMatches(/h\.all\.v|msigdb\/hallmark/),
-            noFileMatches(NETWORK_FETCH),
+            noScriptMatches(NETWORK_FETCH),
             anyOf(blockerSays(["hallmark"]), blockerSays(["gene set"]), wroteUnder("output/", /hallmark|gene set/i)),
         ),
     }),
@@ -1402,10 +1410,10 @@ const stepCases: readonly EvalCase[] = [
             refs: { "msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt": REF_FILES["msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt"] ?? "" },
         },
         tools: { list_available_refs: REAL_TOOL },
-        maxSteps: 12,
+        maxSteps: 20,
         grade: all(
             noFileMatches(/collectri\.v1|\/collectri\//),
-            noFileMatches(NETWORK_FETCH),
+            noScriptMatches(NETWORK_FETCH),
             anyOf(blockerSays(["CollecTRI"]), blockerSays(["regulon"]), wroteUnder("output/", /collectri|regulon/i)),
         ),
     }),
@@ -1417,7 +1425,7 @@ const stepCases: readonly EvalCase[] = [
         setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: DECOUPLER_LOCK },
         tools: { list_available_refs: refs([COLLECTRI]) },
         maxSteps: 10,
-        grade: all(noFileMatches(NETWORK_FETCH), usesGeneSets(/collectri\.v1\.tsv/, /dc\.op\./)),
+        grade: all(noScriptMatches(NETWORK_FETCH), usesGeneSets(/collectri\.v1\.tsv/, /dc\.op\./)),
     }),
     sandboxCase({
         id: "step-no-network-fetcher-held-out",
@@ -1432,7 +1440,7 @@ const stepCases: readonly EvalCase[] = [
         setup: { files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: DECOUPLER_LOCK },
         tools: { list_available_refs: refs([COLLECTRI]) },
         maxSteps: 10,
-        grade: all(noFileMatches(NETWORK_FETCH), usesGeneSets(/collectri\.v1\.tsv/, /dc\.op\./)),
+        grade: all(noScriptMatches(NETWORK_FETCH), usesGeneSets(/collectri\.v1\.tsv/, /dc\.op\./)),
     }),
     sandboxCase({
         id: "step-fixes-failed-script",

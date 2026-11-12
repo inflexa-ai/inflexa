@@ -9,16 +9,21 @@
 
 import { z } from "zod";
 
+import { collapseWhitespace } from "../lib/text.js";
+
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the anchored placeholder words and their n/a spellings, at the start of the text; the alternation is the guard's own word list.
 const PLACEHOLDER_TEXT = /^\s*(?:placeholder|todo|tbd|skip|n\/?a|none|null|test|x+|\.+|-+)\b/i;
 export const MIN_TERMINAL_TEXT = 4;
+/** A text of at most this many words that names a placeholder is a draft. A longer text can describe placeholder data. */
+const PLACEHOLDER_DRAFT_WORDS = 8;
 
 /** The reason a text cannot end a run, or undefined when it can. */
 export function degenerateTerminalText(text: string): string | undefined {
     const trimmed = text.trim();
     if (trimmed.length < MIN_TERMINAL_TEXT)
         return `The text has ${trimmed.length} characters, and a real question or reason has at least ${MIN_TERMINAL_TEXT}.`;
-    if (PLACEHOLDER_TEXT.test(trimmed) || holdsStandaloneWord(trimmed, "placeholder")) return "The text is a placeholder.";
+    const draft = collapseWhitespace(trimmed).split(" ").length <= PLACEHOLDER_DRAFT_WORDS && holdsStandaloneWord(trimmed, "placeholder");
+    if (PLACEHOLDER_TEXT.test(trimmed) || draft) return "The text is a placeholder.";
     return undefined;
 }
 
