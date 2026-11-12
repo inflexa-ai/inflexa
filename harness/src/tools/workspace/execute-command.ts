@@ -46,11 +46,10 @@ import type { Logger } from "../../lib/logger.js";
 
 const ExecuteCommandInputSchema = z.object({
     command: z
-        .array(z.string().min(1))
-        .min(1)
+        .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
         .describe(
-            "argv array — e.g. ['python', 'scripts/run.py'] or ['Rscript', 'scripts/de.R']. " +
-                "A one-element array runs through `sh -c`, so pipes, `&&`, quoting, and globbing work, and a path that holds a space " +
+            "A shell line, or an argv array — e.g. 'Rscript scripts/de.R' or ['python', 'scripts/run.py']. " +
+                "A string or a one-element array runs through `sh -c`, so pipes, `&&`, quoting, and globbing work, and a path that holds a space " +
                 "needs double quotes there; an array of two or more elements runs directly, with no shell, and nothing is expanded.",
         ),
     cwd: z
@@ -77,6 +76,11 @@ const ExecuteCommandInputSchema = z.object({
 const SCRIPT_EXTENSIONS = [".py", ".R", ".r", ".sh", ".js", ".ts", ".ipynb"];
 
 /** The first script-like token in an argv, or `undefined` when none looks like one. */
+/** A shell line runs as a one-element argv, which the sandbox runs through `sh -c`. */
+function argvOf(command: string | readonly string[]): readonly string[] {
+    return typeof command === "string" ? [command] : command;
+}
+
 function scriptToken(command: readonly string[]): string | undefined {
     return command.find((arg) => SCRIPT_EXTENSIONS.some((extension) => arg.endsWith(extension)));
 }
@@ -191,11 +195,15 @@ export function createExecuteCommandTool(
         // stays inside the session's own analysis and never reaches the model,
         // but display-only does not mean transient. A secret typed into an argv
         // outlives the turn that ran it.
-        describeCall: ({ command }) => scriptToken(command) ?? command.join(" "),
+        describeCall: ({ command }) => {
+            const argv = argvOf(command);
+            return scriptToken(argv) ?? argv.join(" ");
+        },
         execute: async (
-            { command, cwd, env, timeoutSeconds },
+            { command: input, cwd, env, timeoutSeconds },
             ctx,
         ): Promise<Result<ExecuteCommandResult | WithToolCallRecord<ExecuteCommandResult, ExecCallRecord>, ToolError>> => {
+            const command = argvOf(input);
             const effectiveCwd = cwd === undefined ? defaultCwd : cwd.startsWith("/") ? cwd : posixPath.join(defaultCwd, cwd);
 
             // Each script the argv names, as the sandbox resolves it. A relative token resolves against the cwd of the

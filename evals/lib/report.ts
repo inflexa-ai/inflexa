@@ -67,6 +67,7 @@ function trialRecord(result: TrialResult):
     | TrialResult
     | (Pick<Extract<TrialResult, { kind: "graded" }>, "kind" | "pass" | "detail" | "finishReason" | "capped" | "usage"> & {
           readonly tools: readonly string[];
+          readonly failedCalls?: readonly { readonly tool: string; readonly error: string; readonly input: string }[];
       }) {
     if (result.kind === "error" || !result.pass) return result;
     return {
@@ -77,7 +78,23 @@ function trialRecord(result: TrialResult):
         capped: result.capped,
         usage: result.usage,
         tools: result.calls.map((call) => `${nameOf(call)}${call.ok === false ? "!" : ""}`),
+        ...failedCallsOf(result.calls),
     };
+}
+
+/** The longest text that a failed call keeps of its error and of its input. */
+const FAILED_CALL_CHARS = 600;
+
+/** Each call of a passing trial that gave no ok result, with its reason and its input, which show what the agent got wrong. */
+function failedCallsOf(calls: Extract<TrialResult, { kind: "graded" }>["calls"]): { failedCalls?: { tool: string; error: string; input: string }[] } {
+    const failed = calls
+        .filter((call) => call.ok === false)
+        .map((call) => ({
+            tool: call.tool,
+            error: (call.error ?? "").slice(0, FAILED_CALL_CHARS),
+            input: (JSON.stringify(call.input) ?? "").slice(0, FAILED_CALL_CHARS),
+        }));
+    return failed.length === 0 ? {} : { failedCalls: failed };
 }
 
 /** The name of a call in a passing trial. A read of a skill keeps the file that it read, which shows the knowledge that the agent used. */
