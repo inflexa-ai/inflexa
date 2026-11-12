@@ -91,6 +91,11 @@ export type SandboxSetup = {
      * which is the analysis root. A scripted trial reads the stub text of `files` in their place.
      */
     readonly generate?: string;
+    /**
+     * The case answers a link or makes a command fail with its own rules. A real sandbox and the real farm give other
+     * answers, thus a run with `--exec docker` runs the trial of this case with its rules.
+     */
+    readonly scriptedOnly?: boolean;
 };
 
 /** How a command of a trial runs: the rules of the case, or a container of the sandbox image. */
@@ -387,7 +392,7 @@ export async function openSandboxTrial(
     const refsRoot = join(dir, "refs");
     writeTree(refsRoot, setup.refs ?? {});
     let real: RealSandbox | undefined;
-    if (options.exec === "docker") {
+    if (options.exec === "docker" && setup.scriptedOnly !== true) {
         if (setup.generate !== undefined) await generateInputs(setup.generate, root);
         real = await openRealSandbox({
             analysisId: ANALYSIS_ID,
