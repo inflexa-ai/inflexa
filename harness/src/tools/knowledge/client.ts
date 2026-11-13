@@ -78,7 +78,7 @@ const ProcedureStepSchema = z.looseObject({
     flags: z.array(z.looseObject({ rule: z.string(), severity: z.string(), message: z.string(), outcome: z.string().optional() })).optional(),
     alternatives: z.array(z.looseObject({ method: z.string(), label: z.string(), when: z.string(), rules: z.array(z.string()) })).optional(),
     disputed: z.looseObject({ rule: z.string(), sides: z.array(z.string()) }).optional(),
-    parameters: z.array(z.looseObject({ name: z.string(), value: z.json(), default_source: z.string().optional() })).optional(),
+    parameters: z.array(z.looseObject({ name: z.string(), value: z.json(), default_source: z.string().optional(), rule: z.string().optional() })).optional(),
     conflicts: z.array(ProcedureConflictSchema).optional(),
     substitution: ProcedureSubstitutionSchema.optional(),
     limit: ProcedureLimitSchema.optional(),

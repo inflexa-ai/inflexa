@@ -39,6 +39,7 @@ export const PlanStepSchema = z.object({
                         name: z.string(),
                         value: PlanStepValueSchema,
                         source: z.string().optional(),
+                        rule: z.string().optional(),
                     }),
                 )
                 .optional(),
