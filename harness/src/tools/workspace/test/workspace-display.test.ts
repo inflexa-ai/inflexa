@@ -7,6 +7,7 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { showFileTool } from "../show-file.js";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { createShowPlanTool } from "../show-plan.js";
+import { createReadPlanTool } from "../read-plan.js";
 import { showUserTool } from "../../display/show-user.js";
 import { createWorkspaceSearchTool, type WorkspaceSearchQuerier } from "../workspace-search.js";
 import { presentAt } from "../../../lib/present.js";
@@ -232,6 +233,76 @@ describe("createShowPlanTool (dependency-bearing factory)", () => {
 
         const event = emittedEvent(emitted);
         expect(event.data).not.toHaveProperty("parentPlanId");
+    });
+});
+
+describe("createReadPlanTool (dependency-bearing factory)", () => {
+    const setting = { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" };
+    const stepOf = (id: string, claim: string) => ({
+        id,
+        name: `Step ${id}`,
+        description: "Fit the model.",
+        question: "Which genes differ?",
+        agent: "bulk-transcriptomics-agent",
+        depends_on: [],
+        status: "pending",
+        track: "T1",
+        step_type: "analysis",
+        acceptance_criteria: [],
+        maxSteps: 40,
+        grounding: { status: "grounded", snapshot: "sha256:0001", claims: [claim], settings: [setting], reason: "per the rule" },
+    });
+    const stored = {
+        title: "Two fits",
+        analytical_narrative: "why",
+        created_at: "2026-10-01T00:00:00.000Z",
+        steps: [stepOf("T1S1", "R-0001@e7d0"), stepOf("T1S2", "R-0002@6b60")],
+        claims: [
+            { id: "R-0001@e7d0", snapshot: "sha256:0001", title: "Wald test", strength: "established", statement: "long text", evidence: [] },
+            { id: "R-0002@6b60", snapshot: "sha256:0001", title: "Shrinkage", strength: "common_practice", statement: "long text", evidence: [] },
+        ],
+    };
+
+    function poolWith(plan: unknown): PlanRowQuerier {
+        const rows = plan === undefined ? [] : [{ plan, parent_plan_id: "pln-0000000a", created_at: "2026-10-02T00:00:00.000Z", superseded_by: null }];
+        return { query: () => Promise.resolve({ rows, rowCount: rows.length }) };
+    }
+
+    async function read(plan: unknown, stepIds?: string[]) {
+        const { ctx, emitted } = makeToolContext();
+        const result = (await createReadPlanTool(poolWith(plan)).execute({ planId: "pln-0000000b", stepIds }, ctx))._unsafeUnwrap();
+        expect(emitted).toHaveLength(0);
+        return result;
+    }
+
+    it("gives the whole plan with no settings, and the title of each claim", async () => {
+        const result = await read(stored);
+
+        if (!result.found) throw new Error("the plan was not found");
+        expect(result.parentPlanId).toBe("pln-0000000a");
+        expect(result.plan.steps.map((step) => step.id)).toEqual(["T1S1", "T1S2"]);
+        expect(result.plan.steps.map((step) => step.grounding?.settings)).toEqual([undefined, undefined]);
+        expect(result.plan.steps[0]?.grounding?.claims).toEqual(["R-0001@e7d0"]);
+        expect(result.plan).not.toHaveProperty("claims");
+        expect(result.claims).toEqual([
+            { id: "R-0001@e7d0", title: "Wald test", strength: "established" },
+            { id: "R-0002@6b60", title: "Shrinkage", strength: "common_practice" },
+        ]);
+    });
+
+    it("gives only the named steps, each with its settings and the claims that it cites", async () => {
+        const result = await read(stored, ["T1S2", "T9S9"]);
+
+        if (!result.found) throw new Error("the plan was not found");
+        expect(result.plan.steps.map((step) => step.id)).toEqual(["T1S2"]);
+        expect(result.plan.steps[0]?.grounding?.settings).toEqual([setting]);
+        expect(result.claims).toEqual([{ id: "R-0002@6b60", title: "Shrinkage", strength: "common_practice" }]);
+        expect(result.absentStepIds).toEqual(["T9S9"]);
+    });
+
+    it("gives plan_not_found for an absent plan and for a stored plan that does not parse", async () => {
+        expect(await read(undefined)).toEqual({ found: false, reason: "plan_not_found" });
+        expect(await read({ steps: "none" })).toEqual({ found: false, reason: "plan_not_found" });
     });
 });
 

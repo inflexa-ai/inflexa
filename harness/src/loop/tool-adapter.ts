@@ -15,6 +15,7 @@
  * reads the call record.
  */
 
+import { DBOS } from "@dbos-inc/dbos-sdk";
 import { durableTools } from "@dbos-inc/vercel-ai";
 import { jsonSchema, tool as aiTool, type ToolSet, type UIMessageStreamWriter } from "ai";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
@@ -87,6 +88,8 @@ export type ToolRunContext = {
     readonly capabilities: ProviderCapabilities;
     /** Keeps the text of each cut result. Absent: the run cuts, and it keeps nothing. */
     readonly store?: ToolOutputStore;
+    /** The answer of `takesBodyResultCaps` for this run. */
+    readonly takesBodyResultCaps: boolean;
     readonly invocationId?: string;
     readonly log: Logger;
     /** Ends the run with a fatal error of a tool call. */
@@ -239,7 +242,7 @@ async function runToolCall(
     const [, settled] = await Promise.all([started, settleCall(tool, input, ctx, run, showsValues)]);
     // The values come from the output before the cut for the model, thus a host shows the start and the end of the whole text.
     const shownError = showsValues && settled.output.outcome === "error" ? viewErrorValue(tool, settled.output.text) : undefined;
-    const output = await cutLongOutput(settled.output, tool.id, toolCallId, run);
+    const output = await cutLongOutput(settled.output, tool, toolCallId, run);
     await run.emit({
         type: "tool-finished",
         source: run.source,
@@ -387,15 +390,36 @@ function errorOutput(text: string): ToolCallOutput {
 }
 
 /**
+ * True when the body calls of a run take the caps of their tools. A call that starts a workflow runs in the body of
+ * its workflow, thus a replay cuts its result again. A workflow that recorded a later operation before such a tool
+ * had its cap gets false, and its transcript keeps the excerpts that its later replies read. Ask one time before the
+ * first request of a series, because parallel calls must not ask. A call in a step needs no answer, because the step
+ * keeps the cut result.
+ */
+export async function takesBodyResultCaps(tools: readonly Tool[]): Promise<boolean> {
+    if (!tools.some((tool) => tool.startsWorkflow === true && tool.resultCap !== undefined)) return true;
+    if (!DBOS.isInWorkflow() || DBOS.isInStep()) return true;
+    return DBOS.patch("result-caps-of-body-calls");
+}
+
+/** The cap of a result of `tool`. A body call takes the cap of its tool only when the run takes those caps. */
+export function resultCapOf(tool: Pick<Tool, "resultCap" | "startsWorkflow">, takesBodyCaps: boolean): number {
+    if (tool.startsWorkflow === true && !takesBodyCaps) return TOOL_RESULT_CAP;
+    return tool.resultCap ?? TOOL_RESULT_CAP;
+}
+
+/**
  * The output with an excerpt in place of a text longer than the cap. The text
  * is kept first under a reference that a rerun of the call gives again, and the
  * excerpt does not depend on the outcome of the put. Thus a rerun gives the
  * same bytes.
  */
-async function cutLongOutput(output: ToolCallOutput, toolName: string, toolCallId: string, run: ToolRunContext): Promise<ToolCallOutput> {
+async function cutLongOutput(output: ToolCallOutput, tool: Tool, toolCallId: string, run: ToolRunContext): Promise<ToolCallOutput> {
     if (output.outcome === "denied") return output;
     const text = output.outcome === "ok" ? JSON.stringify(output.value ?? null) : output.text;
-    if (text.length <= TOOL_RESULT_CAP) return output;
+    const cap = resultCapOf(tool, run.takesBodyResultCaps);
+    if (text.length <= cap) return output;
+    const toolName = tool.id;
 
     let kept: { readonly ref: string; readonly keptLength: number } | undefined;
     if (run.store !== undefined) {
@@ -416,7 +440,7 @@ async function cutLongOutput(output: ToolCallOutput, toolName: string, toolCallI
         if (put.isErr()) run.log.warn("tool output not kept", { toolName, toolCallId, ref, errorType: put.error.type });
         kept = { ref, keptLength: content.length };
     }
-    const excerpt = excerptOf(text, kept);
+    const excerpt = excerptOf(text, kept, cap);
     if (output.outcome === "error") return { outcome: "error", text: excerpt };
     const cut: { -readonly [K in keyof Extract<ToolCallOutput, { outcome: "ok" }>]: Extract<ToolCallOutput, { outcome: "ok" }>[K] } = {
         outcome: "ok",

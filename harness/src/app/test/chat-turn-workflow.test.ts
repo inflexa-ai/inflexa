@@ -22,6 +22,7 @@ import type { Connectable } from "../../lib/db-result.js";
 import { parseJsonAs } from "../../lib/parse-json.js";
 import { CONTINUE_REQUEST, finalText, runLoop } from "../../loop/run-loop.js";
 import { registerSubAgent } from "../../loop/sub-agent.js";
+import { TOOL_RESULT_CAP } from "../../loop/tool-output.js";
 import { turnCredentials } from "../../loop/turn-credentials.js";
 import type { Querier } from "../../state/db.js";
 import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
@@ -144,7 +145,11 @@ const childPark = defineTool({
 const RESEARCHER = "test-researcher";
 const researcherAgent = { id: RESEARCHER, systemPrompt: "Research.", model: "scripted-model", tools: [childPark], maxIterations: 4 };
 
-const researcher = registerSubAgent<{ readonly brief: string }, string>(RESEARCHER, async ({ payload, ctx, loop }) => {
+/** The answer of each child to the question of a changed body, in the order of the runs of the body. */
+const researcherPatched: boolean[] = [];
+
+const researcher = registerSubAgent<{ readonly brief: string }, string>(RESEARCHER, async ({ payload, ctx, loop, patched }) => {
+    researcherPatched.push(await patched("test-researcher-change"));
     const { messages } = await runLoop(researcherAgent, [{ role: "user", content: payload.brief }], forSubAgent(ctx.session, RESEARCHER), {
         ...loop,
         provider: childProvider,
@@ -156,6 +161,7 @@ const research = defineTool({
     id: "research",
     description: "Research a brief in a sub-agent.",
     inputSchema: z.object({ brief: z.string() }),
+    resultCap: TOOL_RESULT_CAP * 2,
     view: "none",
     describeCall: "none",
     startsWorkflow: true,
@@ -1083,6 +1089,37 @@ describe("the sub-agents of a chat turn workflow", () => {
         const childFrames = frames.filter((frame) => frame.source?.callPath.at(-1) === RESEARCHER);
         expect(childFrames.filter((frame) => frame.type === "iteration")).toHaveLength(2);
         expect(childFrames.every((frame) => frame.source?.callPath.join("/") === `conversation-agent/${RESEARCHER}`)).toBe(true);
+    });
+
+    it("gives the new operations of a changed body to a child that starts after the change", async () => {
+        credentialAfterRestart = makeLocalAuth();
+        researcherPatched.length = 0;
+        childProvider = scriptedModel([reply([text("a report")])]).provider;
+        provider = scriptedModel([callTools(toolCall("r1", "research", { brief: "a" })), reply([text("Done.")])]).provider;
+
+        const turnId = await startTurn(`thread-${rig.nextWorkflowId()}`);
+        const frames = await readAll(turnId);
+
+        expect(textOf(frames)).toBe("Done.");
+        expect(researcherPatched).toEqual([true]);
+    });
+
+    it("gives a body call the cap of its tool, thus a result that only the cap of the loop cuts arrives whole", async () => {
+        credentialAfterRestart = makeLocalAuth();
+        const report = "A finding. ".repeat(TOOL_RESULT_CAP / 8);
+        childProvider = scriptedModel([reply([text(report)])]).provider;
+        const root = scriptedModel([callTools(toolCall("r1", "research", { brief: "a" })), reply([text("Done.")])]);
+        provider = root.provider;
+
+        const turnId = await startTurn(`thread-${rig.nextWorkflowId()}`);
+        const frames = await readAll(turnId);
+
+        expect(textOf(frames)).toBe("Done.");
+        expect(report.length).toBeGreaterThan(TOOL_RESULT_CAP);
+        const results = (root.calls[1]?.prompt ?? [])
+            .flatMap((message) => (message.role === "tool" ? message.content : []))
+            .flatMap((part) => (part.type === "tool-result" ? [part.output] : []));
+        expect(results).toEqual([{ type: "json", value: { report } }]);
     });
 
     it("recovers a child from its checkpoints, and the child makes no model request again", async () => {

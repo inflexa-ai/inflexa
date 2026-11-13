@@ -84,6 +84,7 @@ import {
     createReadFileTool,
     createDecisionRecordStore,
     createSessionWorkspaceMutator,
+    createReadPlanTool,
     createShowPlanTool,
     createWorkspaceSearchTool,
     createWriteFileTool,
@@ -409,6 +410,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // Display.
         showUserTool,
         createShowPlanTool(pool),
+        createReadPlanTool(pool),
         showFileTool,
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
         createGenerateAnalogyReportTool(

@@ -132,6 +132,12 @@ function headingOf(claim: KeptClaim): ClaimHeading {
     };
 }
 
+/**
+ * The planner copies each skeleton step from the answer, thus it must read the whole answer. The answer of a
+ * question with eight to twelve steps gives 33,000 to 51,000 characters.
+ */
+const RECOMMEND_RESULT_CAP = 96 * 1024;
+
 /** The answer as the model reads it: a heading of each claim, and each other field as the host keeps it. */
 export function toModelView(answer: KnowledgeRecommendAnswer): KnowledgeRecommendView {
     return { ...answer, claims: answer.claims.map(headingOf) };
@@ -152,7 +158,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
             "(the status, the snapshot, the claim ids, the template, the `settings`, and the reason) filled. " +
             "`claims` holds the id, the title, the strength, and the severity of each claim the steps cite; `knowledge_claims` gives the statement and the evidence of a claim on demand. " +
             "Cite a claim by its id, and never copy its text into the plan. " +
-            "Read the answer this way. `match: applicable`: copy each skeleton step into `submit_plan` as it is, including `grounding.settings`, " +
+            "Read the answer this way. `match: applicable`: copy each skeleton step into `submit_plan` with its id, and leave `grounding.settings` out, because the host writes the settings of the skeleton step that has the same id, " +
             "then add the question, the acceptance criteria, the resources, and the step budget from the data profile. " +
             "A skeleton step is the vetted default, not the only permitted method. When the design or the question does not fit its method, plan the step with your method: " +
             "set `grounding.status: ungrounded`, keep the snapshot digest, cite no claim, and give the reason for the departure in `grounding.reason`. A departure the plan states is not a fault; a silent one is. " +
@@ -178,6 +184,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
             "That is the environment answer; do not call the listing tools for a package or a collection the answer already reports. " +
             "Call it once per situation; a second call with the same situation gives the same answer.",
         inputSchema: SituationFieldsSchema,
+        resultCap: RECOMMEND_RESULT_CAP,
         view: "none",
         describeCall: ({ question, n_per_group_min, n_per_group_max, batch }) => `${question}: ${n_per_group_min}-${n_per_group_max} per group, batch ${batch}`,
         describeResult: (_input, result: KnowledgeRecommendOutput) =>

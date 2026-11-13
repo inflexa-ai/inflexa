@@ -11,10 +11,10 @@
  * database already holds, and it would lose fidelity at every hop.
  *
  * The tool drives an internal "planner" agent that gives its outcome through
- * three terminal tools. None of them ends the run, and none writes:
+ * three terminal tools. Only an accepted plan ends the run, and none writes:
  *
- *   - submit_plan(plan)         → checks a candidate; gives back the accepted
- *                                 plan or structured issues
+ *   - submit_plan(plan)         → checks a candidate; an accepted plan ends the
+ *                                 run, and a refusal gives structured issues
  *   - request_clarification(…)  → the planner needs more context
  *   - report_blocker(reason)    → no viable plan
  *
@@ -47,7 +47,7 @@ import { effectiveDeadlineMs, type ChatProvider } from "../../providers/types.js
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { isUnknownArray } from "../../lib/unknown-array.js";
 import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { createReadToolOutputTool } from "../read-tool-output.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { censusResolver, createListAvailablePackagesTool, readInventorySections } from "../sandbox/list-available-packages.js";
@@ -67,7 +67,8 @@ import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from 
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../../config/resource-limits.js";
 import { plannerPrompt } from "../../prompts/planner.js";
 import { planCardOf } from "../../memory/card-builders.js";
-import { hydratePlanSteps, PlannerPlanSchema, type PlanClaimTitle, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
+import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
+import { claimTitlesOf, planForModel } from "../../schemas/plan-view.js";
 import { ClaimViewSchema, type ClaimView } from "../../schemas/workflow-state.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
@@ -97,6 +98,12 @@ const PLANNER_MAX_ITERATIONS = 300;
 
 /** Wall-clock guard for a single plan-generation invocation. */
 const PLAN_TIMEOUT_MS = 1_800_000;
+
+/**
+ * The conversation agent describes the plan to the user from the result, thus it must read the whole result. A
+ * grounded plan of eight to ten steps with its claim titles gives 61,000 to 64,000 characters.
+ */
+const PLAN_RESULT_CAP = 96 * 1024;
 
 /**
  * The refusals of the call guard that end the search phase of one plan. A
@@ -276,11 +283,17 @@ const UNCHECKED_ISSUE: ValidationIssue = {
 
 const ValidationIssueSchema = z.object({ path: z.string(), code: z.enum(["schema", "semantic"]), message: z.string(), hint: z.string().optional() });
 
-type SubmitPlanOutput = { accepted: false; issues: ValidationIssue[] } | { accepted: true; plan: PlannerPlan };
+/** The call record of an accepted submission: the plan as the harness saves it. The model does not read the record. */
+const AcceptedPlanRecordSchema = z.object({ plan: PlannerPlanSchema });
 
+type SubmitPlanOutput =
+    | { accepted: false; issues: ValidationIssue[] }
+    | WithToolCallRecord<{ accepted: true; steps: number }, z.infer<typeof AcceptedPlanRecordSchema>>;
+
+/** The value of a submission. An accepted value that a checkpoint of an older version holds carries the plan. */
 const SubmitPlanOutputSchema = z.discriminatedUnion("accepted", [
     z.object({ accepted: z.literal(false), issues: z.array(ValidationIssueSchema) }),
-    z.object({ accepted: z.literal(true), plan: PlannerPlanSchema }),
+    z.object({ accepted: z.literal(true), plan: PlannerPlanSchema.optional() }),
 ]);
 
 const SUBMIT_PLAN_TOOL_ID = "submit_plan";
@@ -297,6 +310,25 @@ function submitIssuesOf(output: NonNullable<LoopStep["calls"][number]["output"]>
 }
 
 /**
+ * The plan of an accepted submission, or `undefined` for each other output.
+ * The record holds the plan. The value is the source of a result that a
+ * checkpoint of an older version holds with no record.
+ */
+function acceptedPlanOf(output: Extract<NonNullable<LoopStep["calls"][number]["output"]>, { outcome: "ok" }>): PlannerPlan | undefined {
+    const record = AcceptedPlanRecordSchema.safeParse(output.record);
+    if (record.success) return record.data.plan;
+    const parsed = SubmitPlanOutputSchema.safeParse(output.value);
+    return parsed.success && parsed.data.accepted ? parsed.data.plan : undefined;
+}
+
+/** True when the last request of a run ended with an accepted plan. The plan is the outcome, thus the run has no more work. */
+function endsWithAcceptedPlan(steps: readonly LoopStep[]): boolean {
+    const last = steps.at(-1);
+    if (last === undefined) return false;
+    return last.calls.some((call) => call.toolName === SUBMIT_PLAN_TOOL_ID && call.output?.outcome === "ok" && acceptedPlanOf(call.output) !== undefined);
+}
+
+/**
  * The outcome of a run, selected from its recorded calls: the last accepted
  * plan, else the last clarification, else the first blocker.
  */
@@ -309,8 +341,7 @@ function selectedOutcomeOf(
         for (const call of step.calls) {
             if (call.output?.outcome !== "ok") continue;
             if (call.toolName === SUBMIT_PLAN_TOOL_ID) {
-                const parsed = SubmitPlanOutputSchema.safeParse(call.output.value);
-                if (parsed.success && parsed.data.accepted) plan = parsed.data.plan;
+                plan = acceptedPlanOf(call.output) ?? plan;
             } else if (call.toolName === REQUEST_CLARIFICATION_TOOL_ID) {
                 const parsed = ClarificationSchema.safeParse(call.output.value);
                 if (parsed.success) clarification = { kind: "clarification", question: parsed.data.question, questionContext: parsed.data.questionContext };
@@ -592,11 +623,6 @@ function claimViewsOf(plan: PlannerPlan, memory: RecommendMemory): ClaimView[] {
     return [...views.values()];
 }
 
-/** The title and the strength of each view, for the conversation agent. */
-function claimTitlesOf(views: readonly ClaimView[]): PlanClaimTitle[] {
-    return views.map((view) => ({ id: view.id, title: view.title, strength: view.strength }));
-}
-
 /** The rule of a claim id: `R-0001` of `R-0001@e7d0`. */
 function ruleOf(claim: string): string {
     return claim.split("@")[0] ?? claim;
@@ -622,6 +648,16 @@ type RepairedClaim = {
     readonly to: string;
 };
 
+/** True when a candidate step gives no settings: the field is absent, or it is an empty list. Any other value goes to the validation. */
+function givesNoSettings(settings: unknown): boolean {
+    return settings === undefined || (isUnknownArray(settings) && settings.length === 0);
+}
+
+/** The skeleton step with settings that renders a template, when the answer holds one. */
+function skeletonStepOfTemplate(memory: RecommendMemory, template: string): SkeletonStep | undefined {
+    return [...memory.steps.values()].find((step) => step.grounding.template === template && step.grounding.settings.length > 0);
+}
+
 /**
  * Restore the grounding fields the host owns on each candidate step, from the
  * last answer. A model copies the skeleton into the plan, and it drops the
@@ -631,7 +667,12 @@ type RepairedClaim = {
  * On a step that copies a skeleton step, by step id, the host stamps the
  * snapshot digest of the answer and restores a dropped template: the digest
  * is what pins the step to the snapshot, and the template is what the host
- * binds the contract to. A step whose snapshot is `none` states that it does
+ * binds the contract to. The host also writes the settings of the skeleton
+ * step on a step that gives none: the settings are a copy of the answer, and
+ * a model that types them again spends a large part of its output on them.
+ * Settings that the model wrote stay as they are. A step under another id
+ * that renders the template of a skeleton step and gives no settings is an
+ * issue that rejects the plan. A step whose snapshot is `none` states that it does
  * not use the answer, and it stays as it is. A step whose status is
  * `ungrounded` states a departure from the answer: the digest is stamped,
  * and no template is restored, because the template realizes the method the
@@ -649,7 +690,7 @@ type RepairedClaim = {
  * answer, and the digest it typed is as prone to a miscopy as any other. A
  * step with no claim of the answer stays as the model wrote it, because
  * nothing of the answer vouches for it. Returns the stamped steps, the
- * restored steps, the repaired claims, and the issues beside the new
+ * restored steps, the steps with filled settings, the repaired claims, and the issues beside the new
  * candidate. A candidate that is not a plan-shaped object, or a plan with no
  * answer, comes back as it is.
  */
@@ -660,6 +701,7 @@ function restoreSkeletonGrounding(
     readonly candidate: unknown;
     readonly stamped: readonly string[];
     readonly restored: readonly string[];
+    readonly filled: readonly string[];
     readonly repaired: readonly RepairedClaim[];
     readonly unknown: readonly ValidationIssue[];
 } {
@@ -667,11 +709,12 @@ function restoreSkeletonGrounding(
     const decodedRecord = parseUnknownRecord(decoded);
     const decodedSteps = decodedRecord?.steps;
     if (memory.steps.size === 0 || !isUnknownArray(decodedSteps)) {
-        return { candidate: decoded, stamped: [], restored: [], repaired: [], unknown: [] };
+        return { candidate: decoded, stamped: [], restored: [], filled: [], repaired: [], unknown: [] };
     }
     const byRule = claimsByRule(memory.claims);
     const stamped: string[] = [];
     const restored: string[] = [];
+    const filled: string[] = [];
     const repaired: RepairedClaim[] = [];
     const unknown: ValidationIssue[] = [];
     const steps = decodedSteps.map((step, index) => {
@@ -691,6 +734,11 @@ function restoreSkeletonGrounding(
             if (next.template === undefined && source.grounding.template !== undefined && current.status !== "ungrounded") {
                 restored.push(label);
                 next = { ...next, template: source.grounding.template };
+            }
+            // The settings of a skeleton step are a copy of the answer, thus the model leaves them out and the host writes them.
+            if (givesNoSettings(next.settings) && source.grounding.settings.length > 0 && current.status !== "ungrounded") {
+                filled.push(label);
+                next = { ...next, settings: source.grounding.settings };
             }
         }
         if (isUnknownArray(current.claims)) {
@@ -712,6 +760,16 @@ function restoreSkeletonGrounding(
             });
             if (changed) next = { ...next, claims };
         }
+        // A step under another id gets no settings from the host. With the template of a skeleton step and no
+        // settings, the plan would lose the settings of the answer in silence.
+        const twin = source === undefined && typeof next.template === "string" ? skeletonStepOfTemplate(memory, next.template) : undefined;
+        if (twin !== undefined && current.status !== "ungrounded" && givesNoSettings(next.settings)) {
+            unknown.push({
+                path: `plan.steps.${index}.grounding.settings`,
+                code: "semantic",
+                message: `Step ${label} renders the template of the skeleton step ${twin.id} and gives no settings. Give the step the id ${twin.id}, or write its grounding.settings.`,
+            });
+        }
         next = repairDepartureRules(next, label, repaired);
         // The repaired claims are the ones compared, thus a step whose only claim was miscopied still gets the digest.
         const vouched = Array.isArray(next.claims) && next.claims.some((claim) => typeof claim === "string" && memory.claims.has(claim));
@@ -721,7 +779,7 @@ function restoreSkeletonGrounding(
         }
         return next === current ? step : { ...fields, grounding: next };
     });
-    return { candidate: { ...decodedRecord, steps }, stamped, restored, repaired, unknown };
+    return { candidate: { ...decodedRecord, steps }, stamped, restored, filled, repaired, unknown };
 }
 
 /**
@@ -900,8 +958,8 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?:
     const submitPlanTool = defineTool({
         id: SUBMIT_PLAN_TOOL_ID,
         description:
-            "Submit the plan. Checks the plan; on success returns {accepted: true, plan} " +
-            "with the plan as the harness saves it — stop after an accepted plan. On " +
+            "Submit the plan. Checks the plan; on success returns {accepted: true, steps} " +
+            "with the count of the steps, the harness saves the plan, and the session ends. On " +
             "rejection returns {accepted: false, issues} — fix and call again, " +
             "or switch to report_blocker if the plan cannot be made valid. The last " +
             "accepted plan is the plan of this session. This arg schema is the " +
@@ -920,9 +978,10 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?:
         describeCall: "none",
         execute: async (input, ctx): Promise<Result<SubmitPlanOutput, ToolError>> => {
             // The host owns the grounding fields: it fills them from the last answer of the run.
-            const { candidate, stamped, restored, repaired, unknown } = restoreSkeletonGrounding(input.plan, memory);
+            const { candidate, stamped, restored, filled, repaired, unknown } = restoreSkeletonGrounding(input.plan, memory);
             if (stamped.length > 0) logger.info("submit_plan stamped the snapshot digest of the answer on steps", { steps: stamped });
             if (restored.length > 0) logger.info("submit_plan restored the template of skeleton steps", { steps: restored });
+            if (filled.length > 0) logger.info("submit_plan wrote the settings of the answer on skeleton steps", { steps: filled });
             if (repaired.length > 0) logger.info("submit_plan repaired the claim ids of plan steps", { claims: repaired });
             // The check is the review of the draft against the rules of the answer, thus a plan after an answer waits for it.
             if (memory.digest !== undefined && memory.checked !== true) {
@@ -953,7 +1012,7 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?:
                 stepCount: result.plan.steps.length,
                 agents: [...new Set(result.plan.steps.map((s) => s.agent))],
             });
-            return ok({ accepted: true as const, plan: result.plan });
+            return ok(withToolCallRecord({ accepted: true as const, steps: result.plan.steps.length }, { plan: result.plan }));
         },
     });
 
@@ -1130,7 +1189,15 @@ type ShapedOutcome = {
  * accepted plan for the card. The tool removes `claimViews` before the model gets the output, because
  * the model gets the titles in `claims`. A result that an older version checkpointed has no views.
  */
-type PlannerResult = PlanningAgentOutput & { readonly claimViews?: readonly ClaimView[] };
+type PlannerResult = PlanningAgentOutput & {
+    readonly claimViews?: readonly ClaimView[];
+    /**
+     * True when the model gets the plan with no `grounding.settings`. The planner writes the mark with its result,
+     * thus a result that an older version checkpointed has no mark, and a replay of its turn gives the model the
+     * same plan as before.
+     */
+    readonly settingsOffModelView?: true;
+};
 
 /**
  * Translate the captured `PlannerOutcome` (plus any loop error) into the
@@ -1381,7 +1448,7 @@ type PlannerSeed =
 /** Build the `generate_plan` tool bound to its provider and pool. */
 export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent: SubAgentRegistrar): Tool {
     const baseLogger = (deps.logger ?? createNoopLogger()).named("generate-plan");
-    const plan = registerSubAgent<GeneratePlanInput, PlannerResult>(PLANNER_AGENT_ID, async ({ payload: input, ctx, loop, durably }) => {
+    const plan = registerSubAgent<GeneratePlanInput, PlannerResult>(PLANNER_AGENT_ID, async ({ payload: input, ctx, loop, durably, patched }) => {
         const analysisId = scopeResource(ctx.session.scope).resourceId;
         // Bound per invocation: `analysisId` comes from the call-time session, not from
         // the construction-time deps the factory closes over.
@@ -1407,7 +1474,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                 rejectionsTruncated: trace.rejectedAttempts > trace.rejections.length ? true : undefined,
                 ...extra,
             });
-            return shaped.claimViews === undefined ? shaped.output : { ...shaped.output, claimViews: shaped.claimViews };
+            if (shaped.kind !== "plan_submitted") return shaped.output;
+            const marked: PlannerResult = { ...shaped.output, settingsOffModelView: true };
+            return shaped.claimViews === undefined ? marked : { ...marked, claimViews: shaped.claimViews };
         };
 
         const seed = await durably("planner.seed", async (): Promise<PlannerSeed> => {
@@ -1557,6 +1626,8 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         let refusals = 0;
         let runError: unknown = null;
         let run: SalvagedResult | null = null;
+        // A run that started before this change made one more request after its accepted plan, and its replay makes it again.
+        const stopsAtPlan = await patched("planner-stops-at-accepted-plan");
         try {
             run = await runWithSalvage(
                 planner,
@@ -1579,6 +1650,8 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                     // the early cap ends the search, and the salvage request
                     // submits the plan it has.
                     capWhen: () => refusals >= PLANNER_REFUSAL_LIMIT,
+                    // An accepted plan is the outcome. One more request would give prose that no surface reads.
+                    stopWhen: stopsAtPlan ? endsWithAcceptedPlan : undefined,
                     // No forced tool choice: some Claude models reject it with a
                     // 400. The prompt names the terminal tools, and the salvage
                     // request below recovers a run that ends on prose.
@@ -1593,6 +1666,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                         "your final plan now, or request_clarification / report_blocker " +
                         "if you cannot. Do not reply with prose.",
                     hasOutcome: (steps) => selectedOutcomeOf(steps) !== null,
+                    stopWhen: stopsAtPlan ? endsWithAcceptedPlan : undefined,
                 },
             );
         } catch (err) {
@@ -1650,10 +1724,12 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             "The planner is a multi-step sub-agent, thus a call can take many minutes. " +
             "The result carries an `event`: `plan_complete` with {planId, plan, claims?} — the plan is saved, the call shows its plan card to the user, " +
             "and it does not run it (execute_analysis plan mode does, after the approval). `claims` gives the title and the strength of each knowledge rule that a step cites by id in `grounding.claims`; " +
+            "the `plan` of the result leaves out the `grounding.settings` of each step: the saved plan and the plan card hold them, `read_plan` gives them for a step, and the `departures` of a step name each setting that the plan changes; " +
             "when you describe the plan, name a rule by its title, not by its id. `clarification_needed` with {question, questionContext?} " +
             "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
             "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
         inputSchema: generatePlanInputSchema,
+        resultCap: PLAN_RESULT_CAP,
         view: {
             input: (input) => input,
             error: true,
@@ -1661,7 +1737,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         describeCall: ({ researchQuestion }) => researchQuestion,
         startsWorkflow: true,
         execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => {
-            const { claimViews, ...output } = await plan(input, ctx);
+            const { claimViews, settingsOffModelView, ...output } = await plan(input, ctx);
             // The card comes from the result of the planner, with no read of the store, thus a replay of the body
             // gives the same card under the same id, and a reader keeps one card. The claim views go on the card
             // only: the model gets their titles in `claims`.
@@ -1673,7 +1749,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                 });
                 if (card !== null) await ctx.emit({ type: "data-plan", source: ctx.session.provenance, data: card });
             }
-            return ok(output);
+            return ok(settingsOffModelView === true && output.plan !== undefined ? { ...output, plan: planForModel(output.plan) } : output);
         },
     });
 }

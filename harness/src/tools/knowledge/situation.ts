@@ -132,7 +132,9 @@ export const SituationFieldsSchema = z.object({
         .array(z.enum(["sex", "age", "clinical", "technical", "other"]))
         .optional()
         .describe(
-            'The role of each other sample covariate the design must hold, one entry per covariate and never a column name, for example ["sex", "age"]: `clinical` for a stage, a grade, or a diagnosis; `technical` for a variable that is not the batch, for example the RNA integrity. Omit when there are none. The column names stay in the step.',
+            'The role of each other sample covariate that the Data Context or the user request names as a candidate for the design, one entry per covariate and never a column name, for example ["sex", "age"]: `clinical` for a stage, a grade, or a diagnosis; `technical` for a variable that is not the batch, for example the RNA integrity. ' +
+                "Send a candidate also when it is not balanced across the conditions, or when the design has too few samples to hold it: the rules then say whether the fit holds it, and how the plan states it. " +
+                "Omit only when the Data Context and the user request name no such covariate. The column names stay in the step.",
         ),
     n_timepoints: z.number().int().min(1).nullable().optional().describe("The number of time points when the design is a time course. Omit otherwise."),
     continuous_predictor: z
@@ -152,7 +154,8 @@ export const SituationFieldsSchema = z.object({
         .boolean()
         .optional()
         .describe(
-            "Set true when the plan drops some delivered samples before the analysis, for example an on-treatment biopsy in a pre-treatment cohort or a failed library. The service then adds a cohort assembly step that counts the units per group after the drop, so the plan states no count before that step. Omit when every delivered sample enters the analysis.",
+            "Set true when the plan drops some delivered samples before the analysis, for example an on-treatment biopsy in a pre-treatment cohort or a failed library. The service then adds a cohort assembly step that counts the units per group after the drop, so the plan states no count before that step. Omit when every delivered sample enters the primary analysis: " +
+                "a sample that only a sensitivity analysis leaves out is not a drop (send `outlier_sample` in `quality_flags` for it), and a sample that the delivered data does not hold is not a drop.",
         ),
     heterogeneous_samples: z
         .boolean()
@@ -233,7 +236,7 @@ export const SituationFieldsSchema = z.object({
         )
         .optional()
         .describe(
-            "The quality concerns of the profile as typed flags: a sample with a library size far below the median; a sample that does not cluster with its group; a doubt about the identity of a sample; high duplication; degraded RNA (a low RNA integrity number, a 3' coverage bias, or formalin-fixed material); " +
+            "The quality concerns of the profile as typed flags: a sample with a library size far below the median; a sample that does not cluster with its group, or a sample whose quality the source record or the user request puts in doubt while it stays in the primary analysis (`outlier_sample`); a doubt about the identity of a sample; high duplication; degraded RNA (a low RNA integrity number, a 3' coverage bias, or formalin-fixed material); " +
                 "no measure of the RNA integrity per sample (`integrity_unmeasured`: the sample table holds no integrity number, and the input holds no reads for a coverage ratio); " +
                 "one feature that holds a large share of the reads of one or more samples (`dominant_feature`), when the profile or the user request states that share.",
         ),

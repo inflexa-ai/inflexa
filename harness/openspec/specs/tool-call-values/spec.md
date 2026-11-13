@@ -307,7 +307,7 @@ These tools MUST declare these views. Each is a root tool of the conversation ag
 
 - `run_script`: the view of "run_script shows its code, its output, and its value" in `script-tools`
 - `write_file`, `edit_file`, `update_working_memory`, `workspace_search`, `list_files`, `file_stat`, `scan_inputs`, `inspect_run`, `inspect_data_profile`, `list_available_refs`, `list_available_packages`, `examine_page`, and `list_pinned_artifacts`: the input, the result, and the error
-- `read_file`, `grep`, `read_tool_output`, `generate_plan`, and `execute_analysis`: the input and the error. The result of each holds workspace bytes or shows in its own card, thus it does not show
+- `read_file`, `grep`, `read_tool_output`, `read_plan`, `generate_plan`, and `execute_analysis`: the input and the error. The result of each holds workspace bytes or shows in its own card, thus it does not show
 - `show_user`, `show_plan`, `show_file`, `start_report_session`, `generate_analogy_report`, `preview_report`, and `record_report_version`: `"none"`
 
 Each other tool of the harness MUST declare `"none"`.

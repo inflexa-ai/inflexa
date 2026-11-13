@@ -13,6 +13,7 @@ import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { continueLoop, runLoop, type LoopOptions } from "../run-loop.js";
+import { resultCapOf } from "../tool-adapter.js";
 import {
     EXCERPT_HEAD_CHARS,
     EXCERPT_TAIL_CHARS,
@@ -68,11 +69,12 @@ function fill(length: number): string {
 }
 
 /** A tool whose ok value is a string with a JSON text of exactly `length` characters. */
-function sizedTool(): Tool {
+function sizedTool(resultCap?: number): Tool {
     return defineTool({
         id: "big",
         description: "Give a text of a length.",
         inputSchema: z.object({ length: z.number().int() }),
+        resultCap,
         view: "none",
         describeCall: "none",
         execute: ({ length }) => Promise.resolve(ok(fill(length - 2))),
@@ -121,6 +123,20 @@ const runSession = (scope: AgentSession["scope"] = { kind: "analysis", analysisI
     runFrame: { runId: "run-1", stepId: "T1S1" },
 });
 
+describe("resultCapOf", () => {
+    const cap = TOOL_RESULT_CAP * 2;
+
+    it("gives a body call the cap of the loop in a workflow that started before its tool had a cap", () => {
+        expect(resultCapOf({ resultCap: cap, startsWorkflow: true }, false)).toBe(TOOL_RESULT_CAP);
+        expect(resultCapOf({ resultCap: cap, startsWorkflow: true }, true)).toBe(cap);
+    });
+
+    it("gives a call in a step the cap of its tool, because the step keeps the cut result", () => {
+        expect(resultCapOf({ resultCap: cap }, false)).toBe(cap);
+        expect(resultCapOf({}, true)).toBe(TOOL_RESULT_CAP);
+    });
+});
+
 describe("runLoop — long tool results", () => {
     it("gives a result of exactly the cap back as the json result with no change", async () => {
         const store = memoryStore();
@@ -153,6 +169,29 @@ describe("runLoop — long tool results", () => {
             `[... ${length - EXCERPT_HEAD_CHARS - EXCERPT_TAIL_CHARS} characters not shown ...]`,
             text.slice(-EXCERPT_TAIL_CHARS),
         ]);
+    });
+
+    it("gives a result under the cap of its tool back whole, when the result is longer than the cap of the loop", async () => {
+        const cap = TOOL_RESULT_CAP * 2;
+        const store = memoryStore();
+
+        const { messages } = await runLoop(agentDef([sizedTool(cap), readToolStub]), GO, makeSession(), opts(callBig(cap), { toolOutputStore: store }));
+
+        expect(onlyResult(messages).output).toEqual({ type: "json", value: fill(cap - 2) });
+        expect(store.puts).toHaveLength(0);
+    });
+
+    it("cuts a result over the cap of its tool, and the first line names that cap", async () => {
+        const cap = TOOL_RESULT_CAP * 2;
+        const length = cap + 1;
+        const store = memoryStore();
+
+        const { messages } = await runLoop(agentDef([sizedTool(cap), readToolStub]), GO, makeSession(), opts(callBig(length), { toolOutputStore: store }));
+
+        expect(presentFirst(textOf(onlyResult(messages)).split("\n"))).toBe(
+            `[Tool result cut: ${length} characters, over the limit of ${cap}. Shown: the first ${EXCERPT_HEAD_CHARS} and the last ${EXCERPT_TAIL_CHARS} characters.]`,
+        );
+        expect(presentFirst(store.puts).totalLength).toBe(length);
     });
 
     it("cuts a thrown error into an error-text excerpt, and tool-finished reports an error", async () => {

@@ -97,8 +97,16 @@ without any other context.
 
 - **WHEN** the planner submits a valid plan
 - **THEN** the output is `{ event: "plan_complete", planId, plan, claims? }`
+- **AND** the `plan` of the output has no `grounding.settings` on a step, because the stored plan and the plan card hold them
+- **AND** the `plan` of the output keeps the `departures`, the `claims`, and the `template` of each step
 - **AND** `claims` gives the id, the title, and the strength of each claim view that the stored plan keeps
 - **AND** `claims` is absent when the plan keeps no view
+
+#### Scenario: A planner result of an earlier version
+
+- **GIVEN** a planner result that a version before this requirement checkpointed
+- **WHEN** a replay of its turn reads that result
+- **THEN** the `plan` of the output keeps the `grounding.settings`, as the turn read it before
 
 #### Scenario: Clarification needed
 
