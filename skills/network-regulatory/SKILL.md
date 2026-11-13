@@ -70,30 +70,29 @@ Choose the method based on your data type and analytical goal:
 
 ## Memory Management
 
-- Filter to top **3000-5000 variable genes** before building any correlation matrix.
-- For N genes, the correlation matrix is N x N float64. At 5000 genes: ~200 MB. At 10000: ~800 MB.
-- Use `float32` where possible to halve memory.
-- For very large networks (>10k nodes), use sparse representations or adjacency list format.
+- Filter to the top **3000-5000 variable genes** before you build a correlation matrix.
+- For N genes, the correlation matrix is N x N float64. At 5000 genes: ~200 MB. At 10000: ~800 MB. Use `float32` to halve the memory.
+- For a network with > 10k nodes, use a sparse representation or an adjacency list.
 
 ## Output Conventions
 
 - Save module assignments as TSV: gene, module_id, module_color, kME.
 - Save network edges as TSV: source, target, weight, type (co-expression/PPI/regulatory).
-- Generate module-trait heatmap (modules x traits, color = correlation, annotate with p-value).
-- Generate network visualization for key modules (top 50 genes by kME, colored by module).
 - Export networks in GML or GraphML format for external visualization tools.
-- Write a summary describing module count, sizes, key hub genes, and trait associations.
 
 ## Anti-Patterns
 
-- **WGCNA on >5000 genes without filtering**: Memory explosion and loss of biological signal in noise. Always pre-filter by variance or differential expression.
-- **Correlation on raw/normalized counts**: Log-transform first. Pearson correlation on count data is dominated by high-count genes.
-- **Not filtering low-variance genes**: Genes with near-zero variance contribute noise, not signal. Apply a variance threshold before network construction.
-- **PPI network without confidence filtering**: interaction files carry all interactions including low-confidence predictions. Filter on the confidence/evidence column (STRING-style scores: combined_score >= 700) after loading the file — the filtering the web API would have done server-side has to happen locally.
-- **Reporting hubs without biological validation**: Hub status from network topology alone is insufficient. Cross-reference with known TFs, pathway databases, or literature.
-- **Using Pearson correlation for non-linear relationships**: Consider Spearman rank correlation or mutual information for non-linear co-expression patterns.
-- **Ignoring batch effects in co-expression**: Batch-driven correlation creates spurious modules. Correct batch effects before network construction.
+- **A request for de novo regulons**: pySCENIC and GRNBoost2 are not installed. Say so, then offer the CollecTRI activity scores or the PyWGCNA modules.
+- **A STRING or OmniPath web query**: The sandbox has no network, and each query fails. Load an interaction file from the reference data.
+- **PPI network without confidence filtering**: An interaction file carries all interactions, and the low-confidence predictions too. The web API filters on the server, but a file does not. Filter on the confidence column after you load the file (STRING-style scores: combined_score >= 700).
+- **WGCNA on more than 5000 genes**: The N x N correlation matrix exceeds the memory of the step. Filter by variance or by differential expression first.
+- **Forked workers on top of PyWGCNA**: PyWGCNA uses threads. Give its one process the full CPU budget of the step.
 - **Calling a co-expression module a regulon**: A module carries no motif evidence and no direction. Report modules as modules.
+- **Correlation on raw counts**: Log-transform first. Pearson correlation on counts is dominated by the high-count genes.
+- **Low-variance genes in the network**: Genes with near-zero variance add noise. Apply a variance threshold first.
+- **Pearson only for non-linear relations**: Use Spearman rank correlation or mutual information for non-linear co-expression.
+- **Batch effects in co-expression**: A batch makes spurious modules. Correct the batch before you build the network.
+- **Hubs without biological validation**: Topology alone is not sufficient. Compare the hubs with known TFs, pathway databases, or literature.
 
 ## References
 

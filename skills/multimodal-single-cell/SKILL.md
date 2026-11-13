@@ -82,49 +82,25 @@ Analysis goal?
     └── Per-protein analysis from TOTALVI denoised values or DSB-normalized
 ```
 
-## Integration Workflow
+## Integration Constraints
 
-### CITE-seq with TOTALVI
-
-1. Store RNA counts in `adata.X`, protein counts in `adata.obsm["protein_expression"]`.
-2. `scvi.model.TOTALVI.setup_anndata(adata, protein_expression_obsm_key="protein_expression", batch_key="batch")`.
-3. Train: `model = scvi.model.TOTALVI(adata); model.train()`.
-4. Extract: `adata.obsm["X_totalVI"] = model.get_latent_representation()`.
-5. Denoised protein: `_, protein_fg = model.get_normalized_expression(n_samples=25, return_mean=True)`.
-6. Cluster on `X_totalVI` embedding.
-
-### Multiome with MultiVI
-
-1. Store RNA and ATAC in MuData: `mdata.mod['rna']`, `mdata.mod['atac']`.
-2. `scvi.model.MULTIVI.setup_mudata(mdata, ...)` — use `setup_mudata`, not `setup_anndata` (deprecated for MULTIVI since scvi-tools 1.4).
-3. Train: pass the feature-block sizes explicitly so the model knows where RNA ends and ATAC begins:
-   `model = scvi.model.MULTIVI(mdata, n_genes=mdata.mod['rna'].n_vars, n_regions=mdata.mod['atac'].n_vars); model.train()`.
-4. Extract joint latent space for clustering.
-5. Impute missing modalities if cells have only one modality.
-
-### WNN via muon (any combination)
-
-1. Compute per-modality PCA/LSI: `sc.pp.pca(mdata.mod['rna'])`, `mu.atac.tl.lsi(mdata.mod['atac'])`.
-2. Compute per-modality neighbors: `sc.pp.neighbors(mdata.mod['rna'])`, etc.
-3. Compute WNN: `mu.pp.neighbors(mdata, key_added="wnn")`.
-4. Cluster: `sc.tl.leiden(mdata, neighbors_key="wnn")`.
-5. Visualize: `mu.tl.umap(mdata, neighbors_key="wnn")`.
+- **TOTALVI**: Keep the RNA counts in `adata.X` and the protein counts in `adata.obsm["protein_expression"]`. Give the key to `setup_anndata` with `protein_expression_obsm_key`, and cluster on `X_totalVI`.
+- **MultiVI**: Use `scvi.model.MULTIVI.setup_mudata`. `setup_anndata` is deprecated for MULTIVI since scvi-tools 1.4. Give `n_genes` and `n_regions` to the model, because the model cannot find the boundary between the RNA and the ATAC features.
+- **WNN via muon**: Compute the PCA (RNA) or the LSI (ATAC) and the neighbors of each modality first. Then run `mu.pp.neighbors(mdata, key_added="wnn")`, and cluster with `neighbors_key="wnn"`.
 
 ## Output Conventions
 
 - Save processed data as MuData (.h5mu) with per-modality layers preserved.
-- Joint UMAP colored by cluster, cell type, batch, and modality-specific markers.
 - Per-modality QC metrics as CSV or in MuData .obs.
-- Protein heatmap for CITE-seq (denoised protein expression by cluster).
-- Peak accessibility browser tracks or aggregate profiles for ATAC.
 
 ## Anti-Patterns
 
+- **GLUE without genomic coordinates**: GLUE must have `chrom`, `chromStart`, and `chromEnd` in `rna.var`. A GTF usually gives them, and no GTF is available. If the data does not carry the coordinates, report the blocker and use MultiVI.
 - **Treating protein data like RNA**: Protein counts have a different noise model (ambient antibody background, non-specific binding). Use TOTALVI or DSB normalization, not standard scRNA-seq normalization.
-- **Ignoring ambient protein signal in CITE-seq**: Isotype controls reveal background levels. Without correction, low-expression proteins are dominated by ambient signal.
-- **Skipping per-modality QC and preprocessing before joint analysis**: Each modality has its own quality metrics and its own feature selection — cells passing RNA QC may fail ATAC QC, and a joint embedding built on unprocessed modalities inherits every one of those problems without surfacing them.
+- **Ignoring ambient protein signal in CITE-seq**: The isotype controls show the background level. Without a correction, the ambient signal controls the low-expression proteins.
+- **Joint analysis before per-modality QC**: Each modality has its own QC metrics and feature selection. A cell that passes RNA QC can fail ATAC QC, and a joint embedding hides the problem.
 - **Applying scRNA-seq normalization to ATAC**: ATAC data is binary/sparse. Use TF-IDF + LSI (via `mu.atac.pp.tfidf` + `mu.atac.tl.lsi`), not normalize_total + log1p.
-- **Ignoring modality weights in WNN**: WNN computes per-cell modality weights. Cells where one modality is low-quality will down-weight it automatically, but only if per-modality QC was run.
+- **WNN without per-modality QC**: WNN lowers the weight of a low-quality modality for each cell only when the QC of each modality ran first.
 
 ## References
 

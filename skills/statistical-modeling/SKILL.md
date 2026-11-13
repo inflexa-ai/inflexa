@@ -25,7 +25,7 @@ Choose the method based on your outcome type and analytical goal:
 - **ML-based survival (non-linear, high-dimensional)**
   - `scikit-survival.RandomSurvivalForest` for non-linear survival prediction.
   - `scikit-survival.GradientBoostingSurvivalAnalysis` for best predictive performance.
-- **Censoring encoding**: event indicator = 1 means the event occurred, 0 means censored. Verify this before fitting.
+- **Censoring encoding**: lifelines and scikit-survival take event indicator = 1 for the event and 0 for censored. Read the coding of the input from the data before you fit.
 
 ### 2. Binary Classification (predict discrete outcome)
 
@@ -66,39 +66,27 @@ Escalate complexity only when simpler models underperform:
   - `pingouin.corr()`: correlation with multiple methods and CI.
   - `pingouin.pairwise_tests()`: post-hoc comparisons with correction.
 
-## Model Evaluation Protocol
+## Model Evaluation Constraints
 
-- **ALWAYS cross-validate**: Use `sklearn.StratifiedKFold` (classification) or `sklearn.KFold` (regression) with k=5 or k=10.
-- **Report confidence intervals**: Bootstrap the performance metric (1000 iterations) or use cross-validation folds to compute mean and 95% CI.
-- **Appropriate metrics by task**:
-  - Binary classification: AUC-ROC, AUPRC, sensitivity, specificity at optimal threshold.
-  - Survival: Concordance index (C-index), time-dependent AUC, Brier score.
-  - Regression: RMSE, R-squared, MAE.
-- **Calibration**: For probabilistic predictions, report calibration curves (`sklearn.calibration.calibration_curve`).
-- **Train/test split**: Hold out 20-30% as a final test set. Never tune hyperparameters on the test set.
-
-## Interpretability
-
-- **SHAP TreeExplainer**: Primary choice for tree-based models (RandomForest, XGBoost). Produces summary plots, dependence plots, and force plots.
-- **SHAP KernelExplainer**: Model-agnostic fallback for non-tree models. Slower but universal.
-- **Permutation importance**: Quick, model-agnostic. Use as a sanity check alongside SHAP.
-- **Partial dependence plots**: `sklearn.inspection.PartialDependenceDisplay` for marginal effect of top features.
-- Always report top 10-20 features with their importance scores and direction of effect.
+- Cross-validate with `StratifiedKFold` (classification) or `KFold` (regression), k = 5 or 10.
+- Give a 95% CI for each metric: bootstrap 1000 times, or use the CV folds.
+- Metrics: AUC-ROC, AUPRC, sensitivity, and specificity for binary classification. C-index, time-dependent AUC, and Brier score for survival. RMSE, R-squared, and MAE for regression.
+- Report a calibration curve for probabilistic predictions.
+- Hold out 20-30% as a final test set. Never tune hyperparameters on the test set.
 
 ## Output Conventions
 
 - Save model performance as JSON: metric name, mean, CI_lower, CI_upper, n_folds.
 - Save feature importance as TSV: feature, importance_score, rank, direction (if applicable).
-- Generate ROC curve plot (with AUC and CI in legend) for classification.
-- Generate Kaplan-Meier plot (with risk table, log-rank p-value, median survival) for survival.
-- Generate SHAP summary plot (beeswarm) for top 20 features.
-- Write methods section describing model choice, cross-validation strategy, and evaluation metrics.
 
 ## Anti-Patterns
 
+- **xgboost under forked workers**: xgboost uses threads. Give its one process the full CPU budget of the step.
 - **Data leakage**: Preprocessing (scaling, feature selection, imputation) MUST happen inside the cross-validation loop, not before the split. Use `sklearn.Pipeline` to enforce this. Selecting features over all samples first is the most common form and the hardest to spot, because nothing errors — the estimate is simply optimistic by several AUC points.
-- **Ignoring multicollinearity in linear models**: Highly correlated features inflate coefficient variance. Use VIF checks or regularization (Ridge/ElasticNet).
-- **Overly complex models on small datasets**: With N < 100 samples, prefer simple models (logistic regression, Cox PH). Tree ensembles overfit on small N.
+- **A feature list from an upstream step on the same samples**: An upstream DE gene list is a selection over all samples already. See Multi-Marker Panel Development.
+- **An event column with a different coding**: A `censored` column, or a status coded 1 and 2, gives inverted or invalid events with no error. Convert it to 1 = event before you fit.
+- **Multicollinearity in linear models**: Correlated features inflate the coefficient variance. Do a VIF check, or use Ridge/ElasticNet.
+- **Complex models on small datasets**: With N < 100, use simple models (logistic regression, Cox PH). Tree ensembles overfit.
 
 ## Additional Available Packages
 
@@ -109,27 +97,9 @@ Escalate complexity only when simpler models underperform:
 
 ## Biomarker Discovery & Qualification
 
-### BEST Framework (FDA Biomarkers, EndpointS, and other Tools)
+### Biomarker Phase
 
-Biomarker development has distinct phases. Each analysis step should
-know which phase it operates in:
-
-1. **Discovery** — identify candidate markers from omics data (DE genes,
-   ML feature importance, survival-associated features). This is what
-   most omics analyses produce.
-2. **Analytical Validation** — assess measurement properties: precision,
-   reproducibility, dynamic range, limits of detection. Requires
-   replicate measurements or technical validation data.
-3. **Clinical Validation** — test marker-outcome association in an
-   independent clinical cohort. Requires outcome data separate from
-   the discovery cohort.
-4. **Clinical Utility** — demonstrate that using the biomarker improves
-   patient outcomes. Requires interventional trial data (rare in
-   computational-only work).
-
-Most analyses here operate at phase 1 (discovery) or phase 3 (clinical
-validation if outcome data is available). Be explicit about which phase
-the current analysis addresses.
+State which phase of the FDA BEST framework the step addresses: discovery, analytical validation, clinical validation, or clinical utility. Most analyses here are discovery, or clinical validation when an independent outcome cohort exists.
 
 ### Predictive vs Prognostic Biomarkers — CRITICAL DISTINCTION
 
@@ -175,19 +145,7 @@ Use nested CV or a held-out test set.
 
 ### Multi-Marker Panel Development
 
-When building a biomarker panel (signature of multiple markers):
-
-1. **Feature selection** — LASSO, elastic net, or recursive feature
-   elimination with cross-validation. Report the number of features
-   selected and their identities.
-2. **Panel construction** — fit a model using selected features.
-   Logistic regression for classification, Cox for survival.
-3. **Internal validation** — report performance on held-out folds
-   (AUC-ROC, AUC-PRC, C-index). Include confidence intervals via
-   bootstrap (1000 iterations).
-4. **Panel lock-down** — after validation, freeze the feature set and
-   model coefficients. Report the locked signature for external
-   validation.
+The goal is a locked panel: the selected features and the model coefficients, with the performance on held-out folds (AUC-ROC, AUC-PRC, or C-index) and bootstrap confidence intervals.
 
 Feature selection belongs **inside** the cross-validation loop, not before it —
 selecting over all samples first is the most common leak in panel development

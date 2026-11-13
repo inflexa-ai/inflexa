@@ -55,8 +55,8 @@ Peak calls from replicated conditions
 
 - DiffBind is the unified framework across ATAC-seq, ChIP-seq and CUT&Tag. It
   counts over peaks you supply; it does not call them.
-- Always use biological replicates (minimum n=2 per condition, n=3 preferred).
-- Use consensus peak sets (peaks present in >=2 replicates) to reduce noise.
+- Use biological replicates: n >= 2 per condition, n = 3 preferred.
+- Use consensus peak sets (peaks present in >=2 replicates).
 
 ### 2. Signal summarisation
 
@@ -77,7 +77,7 @@ bigWig track, or an aligned BAM
   opt-in download rather than part of a default install**, so resolve it before
   planning on it and expect it may not be staged. If it is absent, report the
   gap rather than substituting an arbitrary region set.
-- Always normalize signal (RPKM or CPM) for cross-sample comparisons.
+- Normalize the signal (RPKM or CPM) before you compare samples.
 
 ### 3. Peak annotation
 
@@ -104,8 +104,6 @@ Fragment files or a peak/tile count matrix
   the peak/tile count matrix with scanpy: TF-IDF + TruncatedSVD for LSI,
   `sc.pp.neighbors` on the LSI embedding, `sc.tl.leiden` for clustering.
 - Signac (R via rpy2) when the work is Seurat-shaped.
-- Do NOT use PCA directly on scATAC count matrices. Use TF-IDF + LSI, which
-  handles the extreme sparsity of single-cell chromatin data.
 
 ### 5. Motif analysis and footprinting — not available
 
@@ -121,15 +119,21 @@ TF from a peak's nearest gene and present it as motif evidence.
 
 ## Anti-Patterns
 
-- **Calling peaks**: Do NOT attempt to call peaks, or reimplement a caller. The
-  peak set is an input. Report what you need instead.
+- **Calling peaks**: No aligner and no peak caller is installed. Do NOT
+  reimplement a caller. The peak set is an input. Report the input that is
+  necessary.
+- **A motif or footprint result**: No motif scanner, no motif database, and no
+  Tn5-bias scorer is staged. chromVAR is not in Bioconductor. Do not
+  approximate the method, and do not name a TF from the nearest gene of a peak.
+- **A failed `import snapatac2` on arm64**: This is expected. SnapATAC2 has no
+  linux-aarch64 wheel. Use the scanpy route on the count matrix.
+- **Comparing CUT&Tag/CUT&Run conditions with different signal levels** when the
+  counts were not spike-in normalised upstream. It cannot be corrected here.
 - **Single-replicate differential binding**: DiffBind's statistics assume
   replication. A consensus set built on one replicate per condition produces
   confident-looking results with no basis.
 - **Removing CUT&Tag duplicates**, or reporting counts from data where they were
   removed without saying so — tagmentation creates duplicates by design.
-- **Comparing CUT&Tag/CUT&Run conditions with different signal levels** when the
-  counts were not spike-in normalised upstream. It cannot be corrected here.
 - **PCA on scATAC count matrices**: use TF-IDF + LSI for the extreme sparsity.
 - **Treating peak width or count as biology** when the sets came from different
   callers or settings. Harmonise to a consensus set first.
@@ -142,8 +146,6 @@ TF from a peak's nearest gene and present it as motif evidence.
 - Differential results: CSV with `chr`, `start`, `end`, `log2FC`, `pvalue`,
   `padj`, `nearest_gene`, `distance_to_TSS`.
 - Signal tracks: bigWig files (RPKM-normalized).
-- Figures: peak heatmaps and average profiles, volcano plots for differential
-  peaks, peak-annotation distribution over genomic features.
 
 ## Additional Available Packages
 

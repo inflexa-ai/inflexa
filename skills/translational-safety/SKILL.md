@@ -121,16 +121,8 @@ interaction lookup available to you — there is no egress, so its web API is
 not a route from a script. That lookup spans several corpora and reports which
 of them answered; a corpus that could not be reached is not one with nothing
 to say. If the annotation does not resolve, fall back to the CYP table above
-and say it was not consulted. Flag these metabolizer phenotypes:
-- **Poor metabolizer (PM)**: reduced enzyme activity → drug accumulation → toxicity risk
-- **Ultrarapid metabolizer (UM)**: increased activity → subtherapeutic levels or excess active metabolite (codeine → morphine toxicity in CYP2D6 UM)
-
-### CYP Expression in Omics Data
-
-When analyzing transcriptomic data with safety implications:
-- Check CYP gene expression levels in treatment vs control
-- CYP induction (upregulation) may indicate enzyme induction → drug interaction risk
-- CYP inhibition (downregulation or competitive binding) → toxicity risk for co-administered drugs
+and say it was not consulted. Flag the poor metabolizer (PM) and the ultrarapid metabolizer (UM)
+phenotypes.
 
 ## Structural Alert Analysis
 
@@ -161,20 +153,17 @@ When clinical lab data is available alongside omics data:
 | Bone Marrow | ANC, platelets, hemoglobin, reticulocytes | CTCAE Grade 3+ |
 | Pancreas | Amylase, lipase | >3x ULN |
 
-### Analysis Approach
-1. Compute per-patient max toxicity grade across timepoints
-2. Correlate safety biomarker levels with omics features (DE genes,
-   pathway scores) — use Spearman correlation with FDR correction
-3. Identify molecular signatures predictive of high-grade toxicity
-4. Report as safety biomarker associations, NOT causal claims
+Compute the maximum toxicity grade of each patient across the
+timepoints. Correlate the safety biomarkers with the omics features with
+Spearman correlation and FDR correction, and report the result as an
+association, not a causal claim.
 
 ## Drug-Drug Interaction Assessment
 
-When multiple drugs are in scope:
-1. Identify CYP metabolism pathways for each drug (PharmGKB via the interaction lookup, or the CYP table above where it returns nothing)
-2. Flag overlapping CYP substrates — co-administration risk
-3. Check for known inhibitor-substrate pairs
-4. Search FAERS for the drug combination to assess real-world signal
+When more than one drug is in scope, find the CYP pathways of each drug
+(PharmGKB through the interaction lookup, or the CYP table above where it
+returns nothing). Flag the CYP substrates that overlap and the known
+inhibitor-substrate pairs, and search FAERS for the combination.
 
 ## Pharmacovigilance Signal Detection
 
@@ -198,32 +187,17 @@ compute from them.
 Contingency table: a = drug+event, b = drug+no-event,
 c = no-drug+event, d = no-drug+no-event.
 
-### Signal Detection Workflow
+### Signal Constraints
 
-1. Query FAERS adverse-event reports for the drug of interest.
-2. For each adverse event, compute PRR and ROR from FAERS counts.
-3. Apply signal threshold: PRR > 2 AND N >= 3 AND chi-squared > 4.
-4. Rank signals by PRR magnitude and report count.
-5. Cross-reference with known drug label adverse events to distinguish
-   known from novel signals.
-
-### Temporal Pattern Analysis
-
-When longitudinal FAERS data is available:
-- Time-to-onset distribution for each adverse event
-- Early signals (< 30 days) suggest direct pharmacological effect
-- Late signals (> 90 days) suggest cumulative or immune-mediated
-  toxicity
-- Compare temporal patterns with known mechanism of action
-
-### Drug-Drug Interaction Signal Detection
-
-When assessing DDI safety:
-1. Query FAERS for drug A alone, drug B alone, and combination.
-2. Compute interaction signal: is the combination PRR significantly
-   higher than either drug alone?
-3. Flag synergistic toxicity signals (combination PRR > max(PRR_A, PRR_B)).
-4. Cross-reference with CYP metabolism data from PharmGKB.
+- With longitudinal FAERS data, report the time-to-onset of each event. An
+  onset < 30 days suggests a direct pharmacological effect. An onset > 90
+  days suggests cumulative or immune-mediated toxicity.
+- Apply the signal threshold: PRR > 2 AND N >= 3 AND chi-squared > 4.
+- Compare each signal with the adverse events of the drug label, to
+  separate known signals from novel signals.
+- For a drug-drug interaction, query drug A alone, drug B alone, and the
+  combination. Flag the combination when its PRR is more than the PRR of
+  each drug alone.
 
 See `references/pharmacovigilance.md` for PRR/ROR computation
 functions and visualization patterns.
@@ -256,25 +230,30 @@ name the absent source instead.
 | Pharmacovigilance | `references/pharmacovigilance.md` | PRR, ROR, IC computation from FAERS data, signal detection workflow, DDI signal analysis, temporal pattern visualization |
 | Matched negative gene set | `references/matched-negative-gene-set.md` | Symbol resolution across mouse and human, the tissue expression universe, the exclusion sources, the two negative definitions, matching on expression and connectivity, balance diagnostics |
 
-## Do NOT
+## Anti-Patterns
 
-- Claim computational predictions are equivalent to experimental safety
-  assays (hERG patch-clamp, Ames test, in vivo toxicology)
-- Use predicted ADMET properties as definitive safety assessments —
-  they are screening-level signals, not regulatory-grade data
-- Present structural alerts as toxicity proof — many drugs have alerts
-  and are safe; context matters
-- Skip the "experimental validation needed" caveat for any computational
-  safety prediction
+- **A script that looks for a safety-panel file**: The panel is a lookup in
+  the agent runtime, not a file on disk. Run the lookup, write the result
+  to the working directory, and read it from the script.
+- **A clean panel screen reported as a clear result**: The panel holds the
+  tier-1 targets only. Add Open Targets and ToxCast signals through the
+  lookups.
+- **A hERG prediction**: No predictive hERG model is in the sandbox. Use
+  the ChEMBL bioactivity for CHEMBL240 and the ALogP and basic-nitrogen
+  flag, and report the gap.
+- **An HTTP call to openFDA, ChEMBL, or PharmGKB from a script**: The
+  sandbox has no network. Use the lookups.
+- **A PharmGKB corpus that did not answer, reported as no interaction**:
+  Say that it was not consulted.
 - Assign CTCAE grades without actual clinical lab values — grading
   requires measured values, not predicted values
 - Report disproportionality signals as confirmed causal associations —
   FAERS data has known limitations (underreporting, confounding,
   notoriety bias)
+- Report FAERS counts as rates, or a signal without a comparator — the
+  reporting denominator changes over time and across regions
 - Use PRR alone without minimum case count (N >= 3) — low-count
   signals are statistically unreliable
-- Ignore the denominator problem — FAERS reporting rates change over
-  time and across regions
 - Infer the species of a gene symbol from its case — match the human
   table and the mouse table, then map the ortholog
 - Join the expression table to the network on the symbol — a renamed
@@ -284,3 +263,11 @@ name the absent source instead.
 - Report a clean mouse knockout screen as proof of safety — it is
   evidence of absence in the mouse, not in the human
 - Pad a short negative tier from the other tier — report the shortfall
+- Claim that a computational prediction equals an experimental safety
+  assay (hERG patch-clamp, Ames test, in vivo toxicology)
+- Use predicted ADMET properties as a definitive safety assessment — they
+  are screening-level signals
+- Present a structural alert as proof of toxicity — many drugs with
+  alerts are safe
+- Omit the "experimental validation needed" caveat from a computational
+  safety prediction

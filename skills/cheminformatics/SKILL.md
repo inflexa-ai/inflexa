@@ -68,11 +68,7 @@ written into the workspace before any sandbox analysis reads it.
 - cross-references bridging a PubChem CID to ChEMBL, DrugBank, KEGG, and PDB identifiers
 - HTS assay screening results (active/inactive/inconclusive)
 
-**Recommended workflow for unknown compounds:**
-1. Try ChEMBL first if the query is target-based or drug-related
-2. Fall back to PubChem for compounds not in ChEMBL
-3. Bridge a PubChem CID to a ChEMBL ID via cross-references, then query ChEMBL for curated activity data
-4. Use PubChem assay data for broader screening evidence when ChEMBL has no bioactivity
+For an unknown compound, try ChEMBL first. Use PubChem for a compound that ChEMBL does not have, and bridge its CID to a ChEMBL ID through the cross-references to get curated activity data.
 
 If a lookup returns nothing, report the gap — never fabricate structures,
 identifiers, or activity values to fill it.
@@ -86,44 +82,12 @@ identifiers, or activity values to fill it.
 | Ghose | 160 <= MW <= 480, -0.4 <= logP <= 5.6, 40 <= MR <= 130, 20 <= atoms <= 70 | Drug-like chemical space |
 | REOS | MW 200-500, logP -5 to 5, HBD 0-5, HBA 0-10, formal charge -2 to 2, RotBonds 0-8, heavy atoms 15-50 | Rapid elimination of swill |
 
-## Standardization-First Principle
+## Structure and Fingerprint Constraints
 
-Always standardize structures before any analysis: strip salts, neutralize charges, canonicalize tautomers. Use `datamol.standardize_mol()` as the default pipeline. This handles the most common issues in a single call:
-
-1. **Salt stripping**: Remove counterions (Na+, Cl-, etc.) to get the parent compound.
-2. **Neutralization**: Convert charged species to neutral form where chemically reasonable.
-3. **Tautomer canonicalization**: Pick a consistent tautomeric form so the same compound always produces the same canonical SMILES.
-4. **Validation**: Parse with `Chem.MolFromSmiles()` and check for `None`. Invalid SMILES must be flagged or removed before any downstream analysis.
-
-Structures from different sources (ChEMBL, PubChem, vendor catalogs) will have different salt forms, charge states, and tautomers. Without standardization, the same compound can appear as multiple distinct entries, corrupting scaffold counts, similarity calculations, and clustering results. Standardization is not optional.
-
-## Fingerprint Selection Guide
-
-| Fingerprint | Best For |
-|-------------|----------|
-| Morgan/ECFP4 (radius=2, 2048 bits) | General similarity, clustering, QSAR (default choice) |
-| Morgan/ECFP6 (radius=3, 2048 bits) | Higher resolution substructure capture |
-| RDKit/Daylight-like (2048 bits) | Path-based similarity, alternative to Morgan |
-| MACCS keys (166 bits) | Fast screening |
-
-Default recommendation: **Morgan radius=2 (ECFP4), 2048 bits**. This is the most widely used fingerprint in cheminformatics. Always report the fingerprint type, radius, and bit length in outputs so results are reproducible.
-
-## Chemical Space Visualization
-
-For chemical space maps, compute Morgan fingerprints (radius=2, 2048 bits) for all compounds, then apply UMAP or t-SNE to reduce to 2D. Color points by activity value, cluster assignment, or set membership. Always report: fingerprint type, radius, bits, dimensionality reduction method, and key hyperparameters (n_neighbors, min_dist for UMAP; perplexity for t-SNE).
-
-For activity cliff detection, plot pairwise delta-Activity vs Tanimoto similarity. Activity cliffs are compound pairs with high structural similarity but large activity differences -- these are the most informative pairs for SAR.
-
-## Figure Conventions
-
-| Type | Tool | When |
-|------|------|------|
-| Molecule grids | RDKit Draw module | Annotated with activity, top hits |
-| Property radar | matplotlib spider plot | MW, logP, TPSA, HBD, HBA, RotBonds |
-| Chemical space | UMAP/t-SNE on Morgan FPs | Colored by activity, cluster, or set |
-| Activity cliffs | scatter plot | delta-Activity vs Tanimoto similarity |
-| SAR heatmap | seaborn | Scaffold x property matrix |
-| Property distributions | violin/histogram | With Ro5 reference lines overlaid |
+- Standardize each structure with `datamol.standardize_mol()` before any analysis. Parse each SMILES with `Chem.MolFromSmiles()`, and flag or remove each `None`.
+- The default fingerprint is Morgan radius 2 (ECFP4), 2048 bits, as a bit vector for Tanimoto.
+- Report the fingerprint type, the radius, the bit length, the clustering cutoff, and the dimensionality reduction parameters with each result.
+- For activity cliffs, plot the pairwise delta-activity against the Tanimoto similarity. A pair with high similarity and a large activity difference is the most informative pair for SAR.
 
 ## Output Conventions
 
@@ -131,8 +95,6 @@ For activity cliff detection, plot pairwise delta-Activity vs Tanimoto similarit
 - Property tables as CSV with columns: SMILES, name, MW, logP, TPSA, HBD, HBA, RotBonds, scaffold, alerts
 - QSAR model reports: algorithm, fingerprint type/radius/bits, train/test split method, CV folds, R2, RMSE (regression) or ROC-AUC, accuracy (classification)
 - Structural alert reports: per-compound alert status, alert description, clean/flagged counts, most common alert classes
-- Figures: PNG 300 DPI + PDF vector
-- Write a summary narrative describing key findings: library composition, chemotype diversity, druglikeness profile, notable structural alerts
 
 ## Target Engagement Assessment
 
@@ -141,22 +103,7 @@ free drug hypothesis, residence time pharmacology, functional readout
 selection guide, and integrated assessment framework. Read it before
 writing occupancy or engagement analysis code.
 
-### When to Assess Target Engagement
-
-- Compound has in vitro binding data (Kd/Ki) and PK parameters (Cmax, Ctrough, fu) available
-- Evaluating whether a compound achieves sufficient target coverage at clinical doses
-- Comparing compounds in a series by predicted occupancy
-- Assessing whether residence time contributes to sustained pharmacology
-
-### Key Concepts
-
-- **Occupancy estimation**: Predict fraction of target bound from free drug concentration and Kd. Use free (unbound) concentration, not total plasma — see free drug hypothesis in reference.
-- **Residence time**: tau = 1/koff. Long residence time sustains effect beyond plasma exposure.
-- **Functional readouts**: Always pair occupancy estimates with at least one functional readout (phospho-protein, reporter gene, enzyme activity). Occupancy without functional consequence may indicate a non-productive binding mode.
-
-### Reporting
-
-Report predicted occupancy at Cmax, Ctrough, and steady-state Cavg. A target engagement threshold of >= 90% occupancy at Ctrough is a common benchmark for continuous target suppression.
+Use free (unbound) concentration, not total plasma. Pair each occupancy estimate with at least one functional readout. Report the predicted occupancy at Cmax, Ctrough, and steady-state Cavg. A common benchmark for continuous target suppression is >= 90% occupancy at Ctrough.
 
 ## Drug Perturbation Signature Matching (CMap-Style)
 
@@ -166,23 +113,17 @@ query signature best practices, and sandbox constraints (custom dicts
 work offline; Enrichr library names do NOT). Read it before writing
 CMap-style analysis code.
 
-### When to Use
+### Goal and Constraints
 
-- Matching a disease gene signature against drug perturbation profiles to find compounds that reverse or mimic the query
-- Drug repurposing: identify compounds whose perturbation profile opposes a disease signature
-- Mechanism-of-action similarity: find compounds with concordant profiles
+The goal is a connectivity score for each drug against a query signature of the top up and the top down genes (gene symbols, typically N = 100-500 each).
 
-### Workflow
-
-1. **Generate query signature** — from differential expression analysis, take the top N up-regulated and top N down-regulated genes (typically N = 100-500). Use gene symbols as identifiers.
-2. **Obtain reference profiles** — a drug-perturbation signature collection is in the reference inventory as an opt-in download, so resolve it by what it is and expect it may not be staged; ChEMBL is not a substitute, carrying bioactivity rather than transcriptomic perturbation profiles. The collection arrives as directional gene sets, one pair per experiment: **score the up and down halves of a pair separately and subtract**, because connectivity is that difference. Pair them by their shared term prefix rather than by position. If nothing resolves, fall back to perturbation experiments already staged in the workspace; if there are none either, report that CMap-style scoring cannot be run and say what would be needed. Never invent a reference path and never substitute drug-target gene lists for perturbation signatures — scoring target sets against a disease ranking is target enrichment, not connectivity, and must not be reported as a connectivity score.
-   - Signatures are cell-line responses, so a reversal found in one line is a hypothesis about that context, not about a tissue or a patient. Report the cell line alongside the score.
-3. **Score all references** — use `gseapy.prerank` (preferred) or KS-based connectivity scoring from the reference.
-4. **Assess significance** — permutation-based FDR from gseapy, or empirical p-value from 1000 label permutations.
-5. **Interpret results**:
-   - Score < -0.5, p < 0.05 → strong reversal candidate (drug repurposing lead)
-   - Score > 0.5, p < 0.05 → strong mimicry (similar mechanism or toxicity concern)
-   - |Score| < 0.3 → no meaningful connectivity
+- A drug-perturbation signature collection is in the reference inventory as an opt-in download. Resolve it by what it is, and expect that it can be absent. ChEMBL is not a substitute, because it holds bioactivity, not transcriptomic perturbation profiles.
+- The collection arrives as directional gene sets, one up and one down set per experiment. **Score the up and down halves of a pair separately and subtract**, because connectivity is that difference. Pair them by their shared term prefix rather than by position.
+- If nothing resolves, use perturbation experiments already staged in the workspace. If there are none, report that CMap-style scoring cannot be run, and say what would be needed. Never invent a reference path.
+- Never substitute drug-target gene lists for perturbation signatures. Scoring target sets against a disease ranking is target enrichment, not connectivity, and must not be reported as a connectivity score.
+- Signatures are cell-line responses. Report the cell line with the score, because a reversal in one line is a hypothesis about that context only.
+- Score with `gseapy.prerank` and its permutation FDR.
+- Interpret: score < -0.5 with p < 0.05 is a strong reversal candidate, score > 0.5 with p < 0.05 is strong mimicry, and |score| < 0.3 is no meaningful connectivity.
 
 ## Selectivity Profiling
 
@@ -219,18 +160,16 @@ When profiling a compound against a panel of targets (kinase panel, GPCR panel, 
 
 ## Anti-Patterns
 
-- **Skipping standardization**: Structures from different sources have different salt forms, charge states, tautomers. Always standardize first.
-- **Assuming SMILES validity**: Always parse with `Chem.MolFromSmiles()` and check for `None` before proceeding.
-- **Fingerprint without specifying type/radius**: Always state fingerprint type (Morgan/ECFP) and radius (default 2 for Morgan = ECFP4).
+- **DeepChem pretrained weights or MoleculeNet loaders**: Both fetch over the network, and the sandbox has none. Train on labelled data in the workspace.
+- **An Enrichr library name in `gseapy.prerank`**: The name makes an HTTP request and fails. Pass a gene set dictionary that you built from a resolved file.
+- **A compound lookup from a sandbox script**: Egress is blocked. Get the ChEMBL and PubChem data through the lookup capabilities of the conversation, and write it into the workspace.
 - **DeepChem GNN on CPU with >10K compounds**: Will be extremely slow. Use fingerprint-based sklearn models instead.
-- **Tanimoto on counted fingerprints**: Use bit vectors (`GetMorganFingerprintAsBitVect`), not count vectors, for Tanimoto similarity.
-- **Interpreting PAINS as definitive rejection**: PAINS flags indicate potential assay interference, not definitive exclusion. Report and flag, don't silently filter.
-- **Not reporting which Ro5 rule is violated**: Don't just say "fails Ro5" -- report which specific rules are violated.
-- **Chemical space UMAP without standardizing fingerprint parameters**: Different FP radius/bits gives different spaces. Always report parameters.
 - **Running QSAR without scaffold split**: Random train/test splits allow similar scaffolds in both sets, inflating apparent performance. Use scaffold split for realistic evaluation.
-- **Mordred on raw (unstandardized) molecules**: Descriptor values change with salt forms and charge states. Standardize first.
-- **Not checking feature matrix for NaN before ML**: Mordred and RDKit descriptor calculation can fail on some molecules. Always check and clean before model fitting.
-- **Clustering without reporting parameters**: Always report fingerprint type, radius, bits, and distance cutoff used for clustering.
+- **Tanimoto on count fingerprints**: Use bit vectors (`GetMorganFingerprintAsBitVect`).
+- **PAINS as a definitive rejection**: A PAINS flag shows possible assay interference. Report and flag the compound. Do not remove it silently.
+- **"Fails Ro5" without the rule**: Report which rules the compound violates.
+- **Mordred on unstandardized molecules**: Descriptor values change with salt forms and charge states.
+- **NaN in the feature matrix**: Mordred and RDKit descriptors fail on some molecules. Clean the matrix before the model fit.
 
 ## QSAR Model Selection
 

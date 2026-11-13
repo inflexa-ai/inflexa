@@ -73,23 +73,14 @@ Choose the method based on your analytical question and data characteristics:
 - Both hinge on a prior-knowledge network that cannot be fetched at run time. Confirm one
   resolves from the reference data available to you *before* planning either step.
 
-## Integration Paradigm Selection
+## Goal and Constraints
 
-| Paradigm | Approach | When to Use | Limitations |
-|-|-|-|-|
-| Early | Concatenate features across modalities | Quick exploratory PCA/UMAP | Dominated by largest modality |
-| Intermediate | Shared latent space (MOFA+, DIABLO) | Primary recommendation | Requires matched samples |
-| Late | Combine per-modality results | When modalities processed independently | Misses cross-omics interactions |
+Start with MOFA+ (unsupervised). Move to DIABLO if the question has a clear categorical outcome.
 
-**Default recommendation**: Start with MOFA+ (intermediate, unsupervised), then move to DIABLO (intermediate, supervised) if there is a clear outcome variable.
-
-## Data Preparation Requirements
-
-1. **Per-modality QC and normalization BEFORE integration**: Each modality must be individually quality-controlled and normalized. Integration does not fix upstream data problems.
-2. **Match samples across modalities**: Ensure sample identifiers are consistent. Document which samples are missing in which modalities.
-3. **Handle missing modalities explicitly**: MOFA+ handles missing data natively. For other methods, either impute or restrict to complete cases.
-4. **Standardize scales**: If concatenating features (early fusion), standardize each modality to zero mean, unit variance — TPM spans 0-1M and methylation beta values 0-1, so without it the larger-scale modality is the entire result.
-5. **Feature pre-selection**: For high-dimensional modalities (e.g., methylation 450k/EPIC), pre-filter to top variable features (top 5000-10000) before integration.
+- QC and normalize each modality before the integration.
+- Match the sample identifiers across the modalities, and record which samples each modality does not have. MOFA+ accepts a sample without a modality. For the other methods, impute or keep the complete cases, and say which.
+- If you concatenate the features, standardize each modality first. Otherwise the modality with the largest scale (TPM to 1M, beta values to 1) controls the result.
+- Filter a high-dimensional modality (for example methylation 450k/EPIC) to the top 5000-10000 variable features.
 
 ## MuData as Standard Container
 
@@ -103,17 +94,17 @@ Choose the method based on your analytical question and data characteristics:
 - Save factor/component scores as TSV: sample, factor_1, factor_2, ..., factor_k.
 - Save feature loadings/weights as TSV: feature, modality, factor, loading, rank.
 - Save variance explained as TSV: factor, modality, variance_explained_pct.
-- Generate variance decomposition heatmap (factors x modalities, color = % variance).
-- Generate factor scatter plots colored by phenotype for top factors.
-- For DIABLO: generate circos plot showing cross-modality feature correlations.
-- For SNF: generate fused similarity heatmap with cluster assignments.
-- Write a summary describing key factors/components, which modalities contribute most, and biological interpretation.
 
 ## Anti-Patterns
 
-- **Too many MOFA+ factors**: Start with 10-15 factors. Most biological signal is in the first 5-8. Excess factors capture noise.
-- **Not validating integration quality**: Check that integrated clusters/factors are not driven by batch, modality, or technical artifacts. Plot factors colored by batch variables.
-- **Applying supervised methods without sufficient samples**: DIABLO with small N and many features overfits easily. Require N > 3x the number of selected features per component.
+- **An OmniPath web query or a `dc.op.*()` loader**: The sandbox has no network, and each call fails. Use the static export from the reference inventory.
+- **The python `snfpy` port**: It is not installed, because it breaks against the current scikit-learn. Use `SNFtool` through rpy2.
+- **The default MILP solver for CARNIVAL or COSMOS**: `lpSolve` does not close on a full-size network, and the symptom is a hang, not an error. Pass `cbc` and the path from `Sys.which("cbc")`. If the path is empty, report that CBC is absent.
+- **A scored PPI as the network of CARNIVAL**: The PPI has no sign and no direction. Use a causal interaction set, with one signed edge for each source/target pair.
+- **Planning CARNIVAL or COSMOS before the network resolves**: The prior-knowledge network cannot be fetched at run time. Make sure that it resolves from the reference data before you plan the step.
+- **Too many MOFA+ factors**: Start with 10-15 factors. Most biological signal is in the first 5-8, and the extra factors capture noise.
+- **No check of the integration quality**: Plot the factors by batch, by modality, and by technical variables. A factor that a batch drives is not biology.
+- **DIABLO on too few samples**: DIABLO with a small N and many features overfits. N must be more than 3x the number of selected features per component.
 
 ## References
 

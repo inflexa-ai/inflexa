@@ -69,38 +69,29 @@ the multiple-testing burden when the question usually names one of them.
 
 ## Redundancy Reduction
 
-After enrichment, collapse redundant terms to improve interpretability:
+After enrichment, collapse redundant terms with **rrvgo** (R via rpy2, GO semantic similarity), with `fgsea::collapsePathways()`, or by Jaccard similarity on the leading-edge genes.
 
-- **rrvgo** (R via rpy2): Semantic similarity-based GO term reduction. Produces treemaps.
-- **fgsea::collapsePathways()**: Greedy filtering of overlapping gene sets based on enrichment significance.
-- **Manual**: cluster by Jaccard similarity on leading-edge genes, pick representative per cluster.
+## Reporting Constraints
 
-## Multiple Testing and Thresholds
-
-- Apply **Benjamini-Hochberg FDR correction** to all enrichment p-values.
-- Standard threshold: FDR < 0.05. Report both nominal p-value and adjusted p-value.
-- For GSEA: report NES (normalized enrichment score), FDR q-value, and leading-edge gene count.
-- For ORA: report fold enrichment, p-value, adjusted p-value, and overlap gene list.
-- Gene set size filters: **minimum 15**, **maximum 500** genes. Enforce before running.
-
-## Output Conventions
-
-- Save enrichment results as TSV/CSV with columns: term, source, size, overlap/NES, p-value, FDR, genes.
-- Generate a dotplot (top 20 terms, x = gene ratio or NES, size = gene count, color = FDR).
-- Generate a barplot of top terms ordered by significance.
-- For GSEA: include enrichment score plots for top pathways.
-- Write a summary narrative describing top findings, grouped by biological theme.
+- Filter the gene sets to a size of 15 to 500 genes before the test.
+- Report the nominal p-value and the Benjamini-Hochberg FDR.
+- For GSEA, report the NES, the FDR q-value, and the number of leading-edge genes.
+- For ORA, report the fold enrichment, the p-value, the adjusted p-value, and the overlap genes.
+- Write the results as TSV or CSV with the columns term, source, size, overlap/NES, p-value, FDR, and genes.
 
 ## Anti-Patterns
 
-- **ORA without proper background**: Defaults to whole genome, inflating significance. ALWAYS set `background=` to all expressed/detected genes.
-- **GSEA on an unranked list**: GSEA requires a continuous ranking. If you only have a gene list, use ORA.
-- **Ignoring gene set size limits**: Very small sets (<15) are noisy; very large sets (>500) are uninformative. Filter before running.
-- **Gene ID mismatch**: Verify gene identifiers match the database organism and ID type (symbol vs. Ensembl vs. Entrez). Map offline before enrichment: use the ID-mapping tables in the reference data available to you (NCBI gene info, UniProt ID mapping), or `org.Hs.eg.db` via rpy2 for human. `biomaRt` cannot be used — it queries Ensembl over the network.
-- **Not reporting database version**: Always log which gene set database and release you used, as reported by the reference inventory for the file you resolved.
-- **Treating enrichment as validation**: Enrichment finds statistical associations, not causal mechanisms. Frame results as "consistent with" not "proves".
-- **Running ORA on the full DE list without a threshold**: ORA requires a discrete gene list. Apply a significance cutoff first.
+- **An Enrichr library name in place of a gene set file**: A name such as `"MSigDB_Hallmark_2020"` makes an HTTP request, and the sandbox has no network. Pass the gene sets of a file that you resolved from the reference data.
+- **`organism=` in `gp.enrich()`**: Only the web-only `gp.enrichr()` takes that argument. `gp.enrich()` raises `TypeError`. Select the organism through the gene set file that you resolve.
+- **KEGG entry points**: KEGG is not staged. `enrichKEGG()`, `gseKEGG()`, and KEGGREST use the network and fail. Use Reactome or WikiPathways.
+- **Gene ID mismatch**: Make sure that the identifiers match the organism and the ID type of the gene sets. Map offline with the ID-mapping tables in the reference data (NCBI gene info, UniProt ID mapping), or with `org.Hs.eg.db` through rpy2. `biomaRt` cannot be used, because it queries Ensembl over the network.
+- **No database release in the report**: Write the gene set database and the release that the reference inventory gives for the file that you resolved.
+- **ORA without a background**: The default background is the whole genome, and it inflates the significance. Always set `background=` to all expressed or detected genes.
 - **Ignoring direction**: Separate up- and down-regulated genes for ORA, or use a signed ranking for GSEA.
+- **GSEA on an unranked list**: GSEA needs a continuous ranking. If you have only a gene list, use ORA.
+- **ORA on the full DE list without a threshold**: ORA takes a discrete gene list. Apply a significance cutoff first.
+- **Ignoring gene set size limits**: Sets with < 15 genes are noisy, and sets with > 500 genes give no information. Filter before the test.
+- **Enrichment as validation**: Enrichment finds statistical associations, not causal mechanisms. Write "consistent with", not "proves".
 
 ## Additional Available Packages
 

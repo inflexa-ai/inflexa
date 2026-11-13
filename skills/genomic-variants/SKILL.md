@@ -64,8 +64,8 @@ Genotype data (VCF or PLINK format)
   `references/plink2-cli.md` maps each step to its substitute.
 - ALWAYS include PCA covariates to adjust for population structure. Omitting
   this produces inflated results.
-- Check genomic inflation factor (lambda_GC); values >1.05 suggest residual
-  confounding.
+- Do a check of the genomic inflation factor (lambda_GC). A value > 1.05 shows
+  residual confounding.
 
 ### 3. Mendelian randomization (post-GWAS causal inference)
 
@@ -139,15 +139,25 @@ on position and alleles.
 
 ## Anti-Patterns
 
-- **Calling variants**: Do NOT attempt to produce calls from BAM, CRAM or reads.
-  A hand-rolled pileup threshold is not a variant caller. Report what the called
-  input needs to contain.
+- **Calling variants**: No caller is installed. Do NOT attempt to produce calls
+  from BAM, CRAM or reads. A hand-rolled pileup threshold is not a variant
+  caller. Report what the called input needs to contain.
+- **A pipeline that assumes `plink2`**: `plink2` is installed on x86_64 only.
+  On arm64, use the substitutes in `references/plink2-cli.md`.
+- **A join of ClinVar and GENCODE without a contig check**: ClinVar uses `1`,
+  and GENCODE uses `chr1`. If you do not reconcile the names, each intersect is
+  empty and no error occurs.
+- **The 1000 Genomes entry as a resource for a filter**: It is a phased haplotype
+  panel for phasing, not an allele frequency set or an LD panel. gnomAD and
+  dbSNP are not staged.
+- **An OpenGWAS call or LD clumping in a Mendelian randomization step**: Both
+  use the network or an LD panel, and neither is available. Ask for the summary
+  statistics as files, with the instruments clumped already.
 - **Ignoring population stratification in GWAS**: Do NOT run association tests
   without PCA covariates. This is the single most common source of false
   positives in GWAS.
-- **Not filtering by quality/depth**: Do NOT trust raw VCF output without
-  quality filtering. Unfiltered calls contain abundant false positives from
-  mapping artifacts, low coverage, and strand bias.
+- **Ignoring relatedness**: Do NOT assume samples are unrelated in GWAS. Cryptic
+  relatedness inflates test statistics. Exclude or model related pairs.
 - **Wrong reference genome build**: Do NOT mix GRCh37/hg19 and GRCh38/hg38
   coordinates. Verify the reference build of all input files before analysis.
   Conversion chains for both directions are in the reference inventory as an
@@ -156,10 +166,11 @@ on position and alleles.
   rearranged between builds drop out entirely — so compare the count going in
   against the count coming out and report the loss rather than presenting a
   converted set as complete.
-- **Ignoring relatedness**: Do NOT assume samples are unrelated in GWAS. Cryptic
-  relatedness inflates test statistics. Exclude or model related pairs.
-- **Raw allele counts as frequencies**: Do NOT report allele counts without
-  normalizing by total alleles. Always compute allele frequency (AF) from AC/AN.
+- **Not filtering by quality/depth**: Do not trust raw VCF output. Unfiltered
+  calls hold many false positives from mapping artifacts, low coverage, and
+  strand bias.
+- **Raw allele counts as frequencies**: Compute the allele frequency (AF) from
+  AC/AN.
 
 ## Output Conventions
 
@@ -169,7 +180,6 @@ on position and alleles.
   annotation came from.
 - GWAS results: CSV with `rsid`, `chrom`, `pos`, `ref`, `alt`, `beta`/`OR`,
   `se`, `pvalue`, `maf`.
-- Figures: Manhattan plot, QQ plot (GWAS), variant allele frequency spectrum.
 
 ## Additional Available Packages
 

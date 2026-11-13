@@ -66,7 +66,6 @@ Only the first step of this tree is runnable here, and only if a library is prov
 - **Annotation stops at spectral matching.** De novo formula prediction and structure elucidation — SIRIUS, MetFrag, CSI:FingerID — are not available, so a feature with no library match stays unidentified. Report it that way rather than inferring a formula.
 - matchms handles spectral similarity scoring (cosine, modified cosine, entropy).
 - Always report annotation confidence levels (MSI levels 1-4).
-- Check adduct annotations: [M+H]+, [M+Na]+, [M-H]-, [M+FA-H]- are common.
 
 ### 5. Statistical Analysis
 
@@ -93,25 +92,27 @@ Normalized, log2-transformed feature matrix
 
 **Pathway mapping needs metabolite-set reference data that is not provisioned here.** KEGG compound mapping, SMPDB/KEGG-module metabolite sets, and KEGG pathway-map rendering all resolve over the network, which is blocked — and no metabolite-set collection is in the reference inventory (the catalogued pathway sets are gene-based: Reactome, WikiPathways, MSigDB hallmark). Check what is available before planning this step; if nothing is, report it and stop at the annotated, statistically-tested feature table rather than inventing a mapping.
 
-- KEGG metabolic pathways: map annotated metabolites to KEGG compound IDs, run enrichment — only if a KEGG compound mapping is available locally.
-- MetaboAnalyst-style enrichment: hypergeometric test on metabolite sets (SMPDB, KEGG modules), given a resolved metabolite-set file.
-- For integrated views, overlay metabolomics onto KEGG pathway maps with fold-change coloring. The KEGG map-rendering API is a network call and fails here; plot your own summary instead.
+- If a KEGG compound mapping or a metabolite-set file resolves locally, map the annotated metabolites and run a hypergeometric test on the metabolite sets.
+- The KEGG map-rendering API is a network call and fails here. Plot your own summary of the pathway.
 
 ## Anti-Patterns
 
+- **Library matches on precursor mass alone**: The spectral library of the reference inventory mixes precursor-only records with fragmentation spectra, and it covers both ionization modes. Keep only the fragmentation spectra of the mode of your data before you match.
+- **A formula or a structure for a feature with no library match**: SIRIUS, MetFrag, and CSI:FingerID are not installed. Report the feature as unidentified.
+- **A metabolite pathway enrichment from a network resource**: KEGG and SMPDB use the network, and the reference inventory has no metabolite-set collection. Stop at the annotated and tested feature table, and say why.
+- **An OpenMS pipeline**: OpenMS is not installed and cannot be. Use XCMS.
 - **WRONG normalization for drift**: Do NOT use TIC or PQN to correct instrument signal drift across a batch. Use LOESS on QC pool injections for drift correction.
-- **Ignoring adduct/isotope patterns**: Do NOT treat every feature as independent. Deisotope and deadduct before counting "significant features." Failing to do this inflates hit counts.
-- **Not checking peak quality**: Do NOT blindly trust the feature table. Inspect chromatographic peak shapes for top hits — poor peak shapes indicate noise or misintegration.
-- **Gene-centric tools on metabolites**: Do NOT apply GSEA, DESeq2, or other gene-centric statistical frameworks to metabolite data. Metabolite IDs are not gene IDs, and the distributional assumptions differ.
-- **Skipping blank subtraction**: Do NOT skip blank/solvent control filtering. Features present in blanks at >30% of sample intensity are likely contaminants.
-- **PLS-DA without validation**: Do NOT report PLS-DA results without permutation testing. PLS-DA will always find separation, even on random data.
-- **Mixing positive and negative mode**: Do NOT combine features from positive and negative ionization modes without proper deduplication and annotation reconciliation.
+- **Skipping blank subtraction**: Remove the features that are present in the blanks at more than 30% of the sample intensity.
+- **Each feature as an independent compound**: Deisotope and deadduct (CAMERA) before you count significant features. Common adducts are [M+H]+, [M+Na]+, [M-H]-, and [M+FA-H]-.
+- **No peak quality check**: Inspect the chromatographic peak shapes of the top hits. A poor shape shows noise or a bad integration.
+- **Gene-centric tools on metabolites**: Do not use GSEA, DESeq2, or other gene-centric frameworks on metabolite data.
+- **PLS-DA without validation**: PLS-DA finds a separation even in random data. Report it only with a permutation test (n >= 1000).
+- **Mixing positive and negative mode**: Do not combine the features of the two ionization modes without deduplication and reconciliation of the annotations.
 
 ## Output Conventions
 
 - Feature tables: AnnData (.h5ad) with m/z, RT, and annotation metadata in `var`.
 - Statistical results: CSV with columns `feature_id`, `log2FC`, `pvalue`, `padj`, `annotation`.
-- Figures: volcano plots, PCA score plots, heatmaps of top features, pathway enrichment bar plots.
 - All intensity values reported as log2-transformed unless stated otherwise.
 - Annotation tables: include MSI confidence level, adduct, m/z error (ppm), spectral score.
 
