@@ -12,7 +12,8 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { DBOS } from "@dbos-inc/dbos-sdk";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { functionIDGetIncrement, getCurrentContextStore } from "@dbos-inc/dbos-sdk/internal/context";
 import { readDurableStream, toolWriter, writeDurableStream, type DurableStreamSource } from "@dbos-inc/vercel-ai";
 import type { LanguageModelMiddleware, UIMessageChunk, UIMessageStreamWriter } from "ai";
@@ -68,9 +69,11 @@ function isProgressFrame(frame: ChatFrame): boolean {
 }
 
 /**
- * A model middleware that writes one marker to the stream before each execution of a model step. A reader tells a
- * new execution of a step from the one before it by the marker, also when the new execution writes no text. A
- * checkpointed step does not run its body, thus a replay writes no marker. Outside a step the middleware writes nothing.
+ * A model middleware that writes one marker to the stream before each execution of a model step, and that puts the
+ * execution in the id of each text part of the step. A reader tells a new execution of a step from the one before it by
+ * the marker, also when the new execution writes no text, and it drops a text that carries another execution than the
+ * last marker. A checkpointed step does not run its body, thus a replay writes no marker. Outside a step the
+ * middleware writes nothing.
  */
 export function modelExecutionMarker(key: string): LanguageModelMiddleware {
     return {
@@ -78,11 +81,27 @@ export function modelExecutionMarker(key: string): LanguageModelMiddleware {
         wrapStream: async ({ doStream }) => {
             const step = DBOS.isInStep() ? DBOS.stepID : undefined;
             if (step === undefined) return await doStream();
+            const execution = randomUUID();
             // The write lands before each record of the library writer of this execution, because the request starts after it.
-            await writeDurableStream(key, [{ type: MODEL_EXECUTION_CHUNK, data: { step, execution: randomUUID() }, transient: true }]);
-            return await doStream();
+            await writeDurableStream(key, [{ type: MODEL_EXECUTION_CHUNK, data: { step, execution }, transient: true }]);
+            const result = await doStream();
+            return { ...result, stream: result.stream.pipeThrough(tagTextWithExecution(execution)) };
         },
     };
+}
+
+/**
+ * The library writer composes the id of a text chunk as `${attempt}:${part id}`, and the part id of a text is only
+ * unique within one model call. The execution goes in front of the part id, thus a read takes the execution of a text
+ * from its chunk id. The AI SDK matches a text delta to its start by this id, and the three types change in the same way.
+ */
+function tagTextWithExecution(execution: string): TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart> {
+    return new TransformStream({
+        transform(part, controller) {
+            const tagged = part.type === "text-start" || part.type === "text-delta" || part.type === "text-end";
+            controller.enqueue(tagged ? { ...part, id: `${execution}:${part.id}` } : part);
+        },
+    });
 }
 
 /** What the body of a turn workflow writes to its stream, and what each of its tool steps writes. */
@@ -236,6 +255,13 @@ export function framesOfChunk(chunk: UIMessageChunk, rootSource: EventSource): C
     }
 }
 
+/** What a read needs from DBOS: the `DBOS` class in a launched process, or a `DBOSClient` anywhere else. */
+export type ChatStreamSource = {
+    readStream<T>(workflowID: string, key: string, options?: { offset?: number; timeoutSeconds?: number }): AsyncGenerator<T, void, unknown>;
+    readStreamOffset<T>(workflowID: string, key: string, offset: number, options?: { timeoutSeconds?: number }): Promise<T>;
+    retrieveWorkflow(workflowID: string): { getStatus(): Promise<{ status: string; error?: unknown } | null> };
+};
+
 export type ReadChatTurnOptions = {
     /**
      * The source of the root agent of the turn, which the text of each model call takes. Absent: the source of the
@@ -243,8 +269,46 @@ export type ReadChatTurnOptions = {
      */
     readonly rootSource?: EventSource;
     /** A `DBOSClient` for a process that did not launch DBOS. Absent: the `DBOS` of this process. */
-    readonly client?: DurableStreamSource;
+    readonly client?: ChatStreamSource;
 };
+
+/**
+ * How long a live read of the stream waits for a value before it asks again. DBOS looks at the deadline of a wait
+ * only after a query, thus a read in progress ends one poll after its window, and the window stays below the 5 seconds
+ * that a stopped read can take.
+ */
+const READ_WINDOW_SECONDS = 4;
+
+/**
+ * The source that a read gives to the library reader. A live read waits one window for each value and then asks
+ * again from the next offset, until the signal aborts. After the abort no read of the stream starts, and the read in
+ * progress ends within one window.
+ */
+function stoppableSource(inner: ChatStreamSource, signal: AbortSignal): DurableStreamSource {
+    async function* readStream<T>(workflowID: string, key: string, options?: { offset?: number }): AsyncGenerator<T, void, unknown> {
+        let offset = options?.offset ?? 0;
+        while (!signal.aborted) {
+            try {
+                for await (const value of inner.readStream<T>(workflowID, key, { offset, timeoutSeconds: READ_WINDOW_SECONDS })) {
+                    offset += 1;
+                    yield value;
+                }
+                return;
+            } catch (error) {
+                if (!DBOSErrors.isStreamTimeoutError(error)) throw error;
+            }
+        }
+    }
+    return {
+        readStream,
+        // The library keeps one attempt of each model step from the stored records that it reads here, and it skips the
+        // other attempts. The reader tells the executions of a step apart by their markers, and a skipped record can be
+        // the one that holds the new reply. A timeout at each offset gives the library no stored record, thus it reads
+        // each record live.
+        readStreamOffset: (workflowID, key) => Promise.reject(new DBOSErrors.DBOSStreamTimeoutError(workflowID, key, 0)),
+        retrieveWorkflow: (workflowID) => inner.retrieveWorkflow(workflowID),
+    };
+}
 
 /**
  * The executions of the model steps that the root stream shows. The reader gives each text chunk to `admit`, and it
@@ -253,41 +317,35 @@ export type ReadChatTurnOptions = {
 type ExecutionLedger = {
     /** Record a marker. Gives the length of the text that the execution before it gave, when it is of the same step. */
     mark(step: number, execution: string): number;
-    /** Whether a text chunk of an attempt shows. A text of an attempt that a later execution superseded does not. */
-    admit(attempt: string, length: number): boolean;
+    /** Whether a text chunk of an execution shows. After a marker, only a text of the execution of the last marker does. */
+    admit(execution: string | undefined, length: number): boolean;
 };
 
 function createExecutionLedger(): ExecutionLedger {
     let last: { readonly step: number; readonly execution: string } | undefined;
     let count = 0;
-    let attempts = new Set<string>();
-    const stale = new Set<string>();
     return {
         mark(step, execution) {
             if (last?.step === step && last.execution === execution) return 0;
-            const sameStep = last?.step === step;
-            const superseded = sameStep ? count : 0;
-            if (sameStep) {
-                for (const attempt of attempts) stale.add(attempt);
-            }
+            const superseded = last?.step === step ? count : 0;
             last = { step, execution };
             count = 0;
-            attempts = new Set();
             return superseded;
         },
-        admit(attempt, length) {
-            if (stale.has(attempt)) return false;
+        admit(execution, length) {
+            if (last === undefined) return true;
+            if (execution !== last.execution) return false;
             count += length;
-            attempts.add(attempt);
             return true;
         },
     };
 }
 
-/** The library composes the id of a text chunk as `${attempt}:${partId}`, and an attempt id holds no colon. */
-function attemptOfTextChunk(id: string): string {
-    const colon = id.indexOf(":");
-    return colon === -1 ? id : id.slice(0, colon);
+/** The id of a text chunk is `${attempt}:${execution}:${part id}`, and an attempt id and an execution id hold no colon. */
+function executionOfTextChunk(id: string): string | undefined {
+    const first = id.indexOf(":");
+    const second = first === -1 ? -1 : id.indexOf(":", first + 1);
+    return second === -1 ? undefined : id.slice(first + 1, second);
 }
 
 type ChunkReader = AsyncIterator<UIMessageChunk>;
@@ -302,14 +360,14 @@ const CHILD_START_POLL_MS = 50;
  * thus the name can arrive before the child exists, and a read of a stream of no workflow fails. A child that never
  * starts fails the tool call of its caller, and the result of that call tells it.
  */
-async function* childChunks(workflowID: string, client: DurableStreamSource | undefined): AsyncGenerator<UIMessageChunk> {
-    const source = client ?? DBOS;
+async function* childChunks(workflowID: string, source: DurableStreamSource, signal: AbortSignal): AsyncGenerator<UIMessageChunk> {
     const deadline = Date.now() + CHILD_START_WAIT_MS;
     while ((await source.retrieveWorkflow(workflowID).getStatus()) === null) {
-        if (Date.now() > deadline) return;
+        if (signal.aborted || Date.now() > deadline) return;
         await sleep(CHILD_START_POLL_MS);
     }
-    yield* readDurableStream({ workflowID, key: CHAT_STREAM_KEY, client, sendReasoning: false });
+    if (signal.aborted) return;
+    yield* readDurableStream({ workflowID, key: CHAT_STREAM_KEY, client: source, sendReasoning: false });
 }
 
 /**
@@ -320,6 +378,8 @@ async function* childChunks(workflowID: string, client: DurableStreamSource | un
  * tells its outcome. The end frame of the turn comes last.
  */
 export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions): AsyncGenerator<ChatFrame> {
+    const stop = new AbortController();
+    const source = stoppableSource(options.client ?? DBOS, stop.signal);
     const readers: ChunkReader[] = [];
     const reads = new Map<ChunkReader, Promise<StreamRead>>();
     const pull = (reader: ChunkReader): void => {
@@ -334,7 +394,7 @@ export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions
         pull(reader);
         return reader;
     };
-    const root = open(readDurableStream({ workflowID: turnId, key: CHAT_STREAM_KEY, client: options.client, sendReasoning: false }));
+    const root = open(readDurableStream({ workflowID: turnId, key: CHAT_STREAM_KEY, client: source, sendReasoning: false }));
     let rootSource = options.rootSource;
     const executions = createExecutionLedger();
     const ends: ChatFrame[] = [];
@@ -349,7 +409,7 @@ export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions
             const frame = harnessFrameOf(next.value);
             const child = SubAgentStreamFrameSchema.safeParse(frame);
             if (child.success) {
-                open(childChunks(child.data.workflowId, options.client));
+                open(childChunks(child.data.workflowId, source, stop.signal));
                 continue;
             }
             if (reader !== root) {
@@ -363,7 +423,7 @@ export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions
                 if (superseded > 0) yield { type: "text-superseded", length: superseded, source: rootSource ?? UNKNOWN_SOURCE };
                 continue;
             }
-            if (next.value.type === "text-delta" && !executions.admit(attemptOfTextChunk(next.value.id), next.value.delta.length)) continue;
+            if (next.value.type === "text-delta" && !executions.admit(executionOfTextChunk(next.value.id), next.value.delta.length)) continue;
             for (const rootFrame of framesOfChunk(next.value, rootSource ?? UNKNOWN_SOURCE)) {
                 if (rootFrame.type === "finish" || rootFrame.type === "error") ends.push(rootFrame);
                 else yield rootFrame;
@@ -371,6 +431,10 @@ export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions
         }
         yield* ends;
     } finally {
-        await Promise.all(readers.map(async (reader) => await reader.return?.()));
+        // A reader that waits for its next value closes only after that value, thus the close is not awaited. The stop
+        // ends each read of the stream within one window, and the readers then close in the background.
+        stop.abort();
+        for (const read of reads.values()) void read.catch(() => undefined);
+        for (const reader of readers) void Promise.resolve(reader.return?.()).catch(() => undefined);
     }
 }
