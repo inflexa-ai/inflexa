@@ -99,6 +99,7 @@ function failure(e: AmassError): Result<never, ToolError> {
 export function createSearchPatentsTool(deps: { apiKey: string }): Tool<z.infer<typeof inputSchema>, PatentsOutput> {
     return defineTool({
         id: "search_patents",
+        concurrent: true,
         description:
             "Patents from Amass PatentCore, across the patent offices (US, EP, WO, CN, JP, …), with one member for each patent family: the " +
             "title, the abstract, the assignees, the inventors, the CPC codes, the priority, filing, publication and grant dates, and the citation " +

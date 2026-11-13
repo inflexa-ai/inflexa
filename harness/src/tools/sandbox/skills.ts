@@ -91,6 +91,7 @@ export function createSkillTools(deps: SkillToolsDeps): {
 
     const skillSearch = defineTool({
         id: "skill_search",
+        concurrent: true,
         description:
             "Search your skills (method decision trees, API references, worked " +
             "examples) by keyword. Start here when picking a method or verifying an " +
@@ -155,6 +156,7 @@ export function createSkillTools(deps: SkillToolsDeps): {
 
     const skillRead = defineTool({
         id: "skill_read",
+        concurrent: true,
         description:
             "Read a file from one of your skills (e.g. its SKILL.md or a reference " +
             "found via skill_search). Confined to your declared skills. Undeclared " +

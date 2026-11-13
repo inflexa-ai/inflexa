@@ -41,6 +41,7 @@ const outputSchema = z.object({
 
 export const resolveGeneIdsTool = defineTool({
     id: "resolve_gene_ids",
+    concurrent: true,
     description:
         "Map gene identifiers across the HGNC symbol, the NCBI Entrez Gene ID, the Ensembl gene ID and the reviewed UniProt accession, through " +
         "MyGene.info — the ID step for a tool keyed on an ID that search_gene does not give, such as the Entrez IDs of humanbase.\n" +

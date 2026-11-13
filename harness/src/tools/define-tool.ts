@@ -24,6 +24,7 @@ import type { Result } from "neverthrow";
 import { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
+import type { CallLock } from "../loop/call-lock.js";
 import type { AgentRunUsage } from "../loop/metrics.js";
 import type { EmitFn } from "../loop/types.js";
 import type { AskRequest } from "./approval/contract.js";
@@ -162,6 +163,11 @@ export type ToolContext = {
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
     /**
+     * The lock of the series that dispatched the call. Each call of a tool that is not `concurrent` runs under it, thus
+     * the calls of one reply that change state run one at a time. `run_script` gives it to each nested call.
+     */
+    readonly callLock: CallLock;
+    /**
      * The turn's usage accumulator — the mutable total every loop under this
      * turn folds its LLM calls into. A tool that drives a child loop
      * passes it straight into that run's options, which is what puts the
@@ -212,6 +218,8 @@ export type Tool<Input = unknown, Output = unknown> = {
     readonly startsWorkflow?: boolean;
     /** See {@link ToolDefinition.ownStep}. */
     readonly ownStep?: boolean;
+    /** See {@link ToolDefinition.concurrent}. */
+    readonly concurrent?: boolean;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
@@ -329,6 +337,12 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output, O
      */
     readonly startsWorkflow?: boolean;
     /**
+     * A call of the tool can run at the same time as each other call, because it changes no state that another call
+     * reads or writes. A call of a tool that is not concurrent waits until the calls before it in its series end. A tool
+     * that starts a workflow must be concurrent, because it starts its child before its first `await`.
+     */
+    readonly concurrent?: boolean;
+    /**
      * The call must be one durable step of its own, for example an exec whose id comes from its step. Each call of
      * a script runs inside the one step of the script, thus `withRunScript` refuses such a tool as a script tool.
      */
@@ -359,6 +373,10 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output ex
         );
     }
 
+    if (def.startsWorkflow === true && def.concurrent !== true) {
+        throw new Error(`defineTool("${def.id}"): a tool that starts a workflow must declare concurrent: true, because it cannot wait for its turn.`);
+    }
+
     let packaged: Tool<z.infer<Schema>, Output> = {
         id: def.id,
         description: def.description,
@@ -380,6 +398,7 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output ex
     if (def.describeResult !== undefined) packaged.describeResult = def.describeResult;
     if (def.view !== "none") packaged.view = def.view;
     if (def.ownStep === true) packaged = { ...packaged, ownStep: true };
+    if (def.concurrent === true) packaged = { ...packaged, concurrent: true };
     if (def.startsWorkflow === true) return { ...packaged, startsWorkflow: true };
     return packaged;
 }

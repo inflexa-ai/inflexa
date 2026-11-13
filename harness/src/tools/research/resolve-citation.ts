@@ -6,6 +6,7 @@ import { defineTool, type Tool } from "../define-tool.js";
 export function createResolveCitationTool(resolver: CitationResolver): Tool {
     return defineTool({
         id: "resolve_citation",
+        concurrent: true,
         description:
             "Verify one supplied citation against the applicable bibliographic authorities — the DOI registry, Crossref, PubMed, arXiv and Semantic " +
             "Scholar — and report where they agree. " +

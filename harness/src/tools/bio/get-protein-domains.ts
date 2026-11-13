@@ -37,6 +37,7 @@ const outputSchema = z.object({
 
 export const getProteinDomainsTool = defineTool({
     id: "get_protein_domains",
+    concurrent: true,
     description:
         "InterPro — the families, domains, repeats, and sites of one protein, keyed by a UniProt accession ('P38398'). EMBL-EBI integrates the " +
         "signatures of Pfam, PROSITE, SMART, CDD, PANTHER, CATH-Gene3D, SUPERFAMILY, and the other member databases into one InterPro entry each " +

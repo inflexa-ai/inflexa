@@ -18,6 +18,7 @@ export type AlphaFoldPredictionOutput = { readonly found: false; readonly unipro
 
 export const alphafoldPredictionTool = defineTool({
     id: "alphafold_prediction",
+    concurrent: true,
     description:
         "AlphaFold DB — the predicted 3-D protein structure of EMBL-EBI and DeepMind, keyed by a UniProt accession ('P38398'). Predicted confidence " +
         "(pLDDT), not experimental certainty: it tells apart a folded domain from a disordered loop, it does not replace a solved structure.\n" +

@@ -73,6 +73,7 @@ export function createGrepTool(
 ): Tool<z.infer<typeof GrepInputSchema>, GrepToolOutput> {
     return defineTool({
         id: "grep",
+        concurrent: true,
         description:
             "Regex search over the text files of the workspace (input data, prior runs, step " +
             "outputs, summaries, syntheses). It reads the workspace directly and runs no sandbox command. Pass a file or a " +

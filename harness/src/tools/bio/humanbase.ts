@@ -152,6 +152,7 @@ const inputSchema = z
 
 export const humanbaseTool = defineTool({
     id: "humanbase",
+    concurrent: true,
     description:
         "HumanBase — the GIANT functional networks of the Flatiron Institute (Greene et al., Nature Genetics 2015): for each tissue, cell type, or " +
         "biological process, a genome-wide network whose edge weight is the posterior probability that two genes work together IN THAT CONTEXT, " +

@@ -25,6 +25,7 @@ export type SearchProteinOutput = {
 
 export const searchProteinTool = defineTool({
     id: "search_protein",
+    concurrent: true,
     description:
         "UniProtKB — the curated protein knowledgebase of EMBL-EBI, SIB and PIR. Resolves a protein and answers with its accession, its UniProtKB ID " +
         "('BRCA1_HUMAN'), its recommended name, its gene names, its sequence length, its curated FUNCTION summary, and its subcellular locations.\n" +

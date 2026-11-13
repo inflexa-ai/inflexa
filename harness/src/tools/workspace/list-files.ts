@@ -31,6 +31,7 @@ const ListFilesInputSchema = z.object({
 export function createListFilesTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof ListFilesInputSchema>, ListFilesOutput> {
     return defineTool({
         id: "list_files",
+        concurrent: true,
         description:
             "List the entries (files and directories, with file sizes) in a directory of the analysis's " +
             "own workspace tree. It reads the tree directly and runs no sandbox command. It does not recurse. Its scope is that tree and nothing " +

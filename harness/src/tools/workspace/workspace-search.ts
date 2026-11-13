@@ -100,6 +100,7 @@ export function createWorkspaceSearchTool(
 ): Tool<z.infer<typeof WorkspaceSearchInputSchema>, WorkspaceSearchOutput> {
     return defineTool({
         id: "workspace_search",
+        concurrent: true,
         description:
             "Semantic search over the analysis workspace. It returns the nearest entries with their descriptions and metadata, up to `limit`; read a file separately to see its contents. " +
             "`score` is the cosine similarity, and a low score is a weak match, not a hit. An empty result means that nothing of that type is indexed yet. " +

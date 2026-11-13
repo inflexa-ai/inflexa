@@ -102,6 +102,7 @@ type OpenTargetsOutput =
 
 export const openTargetsTool = defineTool({
     id: "opentargets",
+    concurrent: true,
     description:
         "Query the Open Targets Platform — the integrated target-disease evidence corpus of EMBL-EBI, GSK and their partners. One 'target' query " +
         "gives the tractability of the target and its disease associations, already scored and ranked, each with a per-datatype score for genetic " +

@@ -190,6 +190,7 @@ type AnnotationOutput = { terms?: GoTerm[]; annotations?: GoAnnotation[] } | { p
 
 export const lookupAnnotationTool = defineTool({
     id: "lookup_annotation",
+    concurrent: true,
     description:
         "Functional annotation for a gene, protein or term — the Gene Ontology (through EBI QuickGO) and the pathway databases KEGG and Reactome, behind " +
         "one `vocabulary`. Names what a gene is known to do, resolves a GO or pathway identifier, or finds the pathways a term belongs to.\n" +

@@ -136,6 +136,7 @@ const inputSchema = z
 
 export const targetSafetyTool = defineTool({
     id: "target_safety",
+    concurrent: true,
     description:
         "TARGET-level, mechanism-based safety liability — the curated secondary-pharmacology panel and Open Targets' curated liabilities in one call. " +
         "Judges what engaging a target is likely to do to an organ system, before any specific molecule exists.\n" +

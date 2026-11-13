@@ -51,6 +51,7 @@ import { synthesisAgentPrompt } from "../../prompts/synthesis-agent.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { presentAt } from "../../lib/present.js";
 import { awaitOk } from "../../lib/test/result-assert.js";
+import { createCallLock } from "../../loop/call-lock.js";
 
 const RUN_ID = "run-001";
 
@@ -72,6 +73,7 @@ function makeToolCtx(): ToolContext {
         invocationId: "tool-call-test",
         session: makeRunSession(),
         signal: new AbortController().signal,
+        callLock: createCallLock(),
         emit: () => {},
     };
 }

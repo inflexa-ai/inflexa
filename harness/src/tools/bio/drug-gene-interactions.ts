@@ -157,6 +157,7 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
 
     return defineTool({
         id: "drug_gene_interactions",
+        concurrent: true,
         description:
             "Drug↔gene interactions across DGIdb (the Drug Gene Interaction Database), DrugBank and PharmGKB, in one call — 'what drugs hit these " +
             "genes?' and 'what genes does this drug act on?'. See `direction` and `sources` for the modes.\n" +

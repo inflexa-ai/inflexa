@@ -3,6 +3,7 @@
  * runner ignores it; imported by the tool unit tests.
  */
 
+import { createCallLock } from "../../loop/call-lock.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ToolContext } from "../define-tool.js";
 
@@ -20,6 +21,7 @@ export function makeToolContext(signal?: AbortSignal): TestToolContext {
         invocationId: "test-tool-call",
         session: makeSession(),
         signal: signal ?? new AbortController().signal,
+        callLock: createCallLock(),
         emit: (event) => {
             emitted.push(event);
         },

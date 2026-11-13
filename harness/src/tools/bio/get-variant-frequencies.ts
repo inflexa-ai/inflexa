@@ -43,6 +43,7 @@ const outputSchema = z.object({
 
 export const getVariantFrequenciesTool = defineTool({
     id: "get_variant_frequencies",
+    concurrent: true,
     description:
         "Population allele frequencies of short variants from gnomAD, the Genome Aggregation Database of the Broad Institute (Chen et al., Nature 2024) " +
         "— the primary filter of rare-variant interpretation: a variant that is more common in the population than its disease allows is unlikely to cause it.\n" +

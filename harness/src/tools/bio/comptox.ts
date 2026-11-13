@@ -144,6 +144,7 @@ type ComptoxOutput =
 export function createComptoxTool(deps: { apiKey: string }): Tool<z.infer<typeof inputSchema>, ComptoxOutput> {
     return defineTool({
         id: "comptox",
+        concurrent: true,
         description:
             "The CompTox Chemicals Dashboard (CTX) of the U.S. Environmental Protection Agency — the chemical-safety corpus that holds ToxCast, ToxValDB, " +
             "the genotoxicity and cancer summaries, and the SEEM exposure predictions. Four datasets behind `dataset`: 'toxcast' (in-vitro HTS " +
