@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { APICallError } from "@ai-sdk/provider";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, okAsync, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
@@ -13,6 +16,10 @@ import { modelFailureOf } from "../../providers/errors.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { defineTool, withToolCallRecord, withToolResultImages, type Tool, type ToolError } from "../../tools/define-tool.js";
 import { viewCode, viewFields, viewJson, viewText, type ToolCallView } from "../../tools/tool-view.js";
+import { createEditFileTool } from "../../tools/workspace/edit-file.js";
+import { createWorkspaceMutator } from "../../tools/workspace/mutator.js";
+import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
+import { stepWritePrefix } from "../../workspace/paths.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedReply, type ScriptStep } from "../../testing.js";
 import type { ChatProvider } from "../../providers/types.js";
 import { presentAt } from "../../lib/present.js";
@@ -768,6 +775,109 @@ describe("runLoop — tool results", () => {
         expect(durations.get("fast")).toBeGreaterThanOrEqual(45);
         expect(durations.get("fast")).toBeLessThan(250);
         expect(durations.get("slow")).toBeGreaterThanOrEqual(295);
+    });
+});
+
+/** A tool that sleeps for each call, and counts the calls that run at the same time. */
+function overlapTool(id: string, concurrent: boolean): { readonly tool: Tool; readonly maxActive: () => number } {
+    let active = 0;
+    let max = 0;
+    const tool = defineTool({
+        id,
+        description: `The tool ${id}.`,
+        inputSchema: z.looseObject({}),
+        view: "none",
+        describeCall: "none",
+        concurrent,
+        execute: async () => {
+            active++;
+            max = Math.max(max, active);
+            await Bun.sleep(100);
+            active--;
+            return ok({ done: id });
+        },
+    });
+    return { tool, maxActive: () => max };
+}
+
+describe("runLoop — the order of tool calls", () => {
+    it("keeps both edits when one reply edits one file two times", async () => {
+        const root = mkdtempSync(join(tmpdir(), "order-test-"));
+        try {
+            const workspaceRoot = join(root, "analysis-001");
+            const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "step-1" });
+            mkdirSync(join(workingDir, "output"), { recursive: true });
+            writeFileSync(join(workingDir, "output", "notes.md"), "alpha beta");
+            const editFile = createEditFileTool({
+                mutator: createWorkspaceMutator({ workspaceRoot, analysisId: "analysis-001", workingDir }),
+                workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(root, id)) }),
+                workingDir,
+                intents: { put: () => okAsync(undefined), get: () => okAsync(null) },
+            });
+            const { provider } = scriptedModel([
+                callTools(
+                    toolCall("c1", "edit_file", { path: "output/notes.md", old_string: "alpha", new_string: "ALPHA" }),
+                    toolCall("c2", "edit_file", { path: "output/notes.md", old_string: "beta", new_string: "BETA" }),
+                ),
+                reply([text("done")]),
+            ]);
+
+            const result = await runLoop(
+                agentWith([editFile]),
+                [user("go")],
+                makeSession(),
+                options(provider, () => undefined),
+            );
+
+            expect(readFileSync(join(workingDir, "output", "notes.md"), "utf8")).toBe("ALPHA BETA");
+            expect(result.steps[0]?.calls.map((call) => call.output?.outcome)).toEqual(["ok", "ok"]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("runs the calls of a tool that is not concurrent one at a time, and times each call apart from its wait", async () => {
+        const { tool, maxActive } = overlapTool("slow_write", false);
+        const { provider } = scriptedModel([callTools(toolCall("c1", "slow_write", {}), toolCall("c2", "slow_write", {})), reply([text("done")])]);
+        const { emit, events } = recordingEmit();
+
+        await runLoop(agentWith([tool]), [user("go")], makeSession(), options(provider, emit));
+
+        expect(maxActive()).toBe(1);
+        const durations = events.flatMap((e) => (e.type === "tool-finished" ? [e.durationMs ?? -1] : []));
+        expect(durations).toHaveLength(2);
+        for (const duration of durations) expect(duration).toBeLessThan(180);
+    });
+
+    it("runs the calls of a concurrent tool at the same time", async () => {
+        const { tool, maxActive } = overlapTool("lookup", true);
+        const { provider } = scriptedModel([callTools(toolCall("c1", "lookup", {}), toolCall("c2", "lookup", {})), reply([text("done")])]);
+
+        await runLoop(
+            agentWith([tool]),
+            [user("go")],
+            makeSession(),
+            options(provider, () => undefined),
+        );
+
+        expect(maxActive()).toBe(2);
+    });
+
+    it("does not order the calls of two runs against each other", async () => {
+        const { tool, maxActive } = overlapTool("slow_write", false);
+        const runOnce = (): Promise<unknown> => {
+            const { provider } = scriptedModel([callTools(toolCall("c1", "slow_write", {})), reply([text("done")])]);
+            return runLoop(
+                agentWith([tool]),
+                [user("go")],
+                makeSession(),
+                options(provider, () => undefined),
+            );
+        };
+
+        await Promise.all([runOnce(), runOnce()]);
+
+        expect(maxActive()).toBe(2);
     });
 });
 

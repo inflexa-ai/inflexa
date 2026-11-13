@@ -209,6 +209,7 @@ export function createGeneDiseaseEvidenceTool(deps: {
 }): Tool<z.infer<typeof inputSchema>, GeneDiseaseEvidenceOutput> {
     return defineTool({
         id: "gene_disease_evidence",
+        concurrent: true,
         description:
             "Genetic evidence linking a gene to a disease or trait, across the NHGRI-EBI GWAS Catalog, DisGeNET, NCBI ClinVar and cBioPortal in one call " +
             "— 'is there human genetic support for this target in this indication?'. See `sources` for what each corpus carries.\n" +

@@ -96,6 +96,7 @@ type PubchemOutput = { results: PubChemCompound[] } | { crossRefs: PubChemCrossR
 
 export const pubchemTool = defineTool({
     id: "pubchem",
+    concurrent: true,
     description:
         "Query PubChem — the open chemical database of the NCBI, with over 110M compounds and their BioAssay screening records. Pick the lookup with " +
         "`action`: 'compound' (resolve an identifier), 'crossrefs' (external registry ids for a CID), 'assays' (bioassay screening summaries for a CID). " +

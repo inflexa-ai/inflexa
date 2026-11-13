@@ -95,6 +95,7 @@ const SearchGithubReposInputSchema = z.object({
 export function createSearchGithubReposTool(deps: { githubToken?: string }): Tool<z.infer<typeof SearchGithubReposInputSchema>, SearchGithubReposOutput> {
     return defineTool({
         id: "search_github_repos",
+        concurrent: true,
         description:
             "Search GitHub for code repositories matching a free-text query, " +
             "optionally filtered by programming language. Results are sorted by " +

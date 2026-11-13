@@ -25,6 +25,7 @@ type ClinicalTrialsOutput = { trial: TrialDetails | null } | { totalFound: numbe
 
 export const searchClinicalTrialsTool = defineTool({
     id: "search_clinical_trials",
+    concurrent: true,
     description:
         "Search ClinicalTrials.gov — the trial registry of the U.S. National Library of Medicine, which holds interventional and observational studies " +
         "worldwide — to map the clinical development landscape for a target, drug, or indication: what is being tried, at what phase, by whom, and what " +

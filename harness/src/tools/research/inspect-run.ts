@@ -183,6 +183,7 @@ export type InspectRunQuerier = {
 export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunClock = systemClock): Tool<z.infer<typeof inputSchema>, InspectRunOutput> {
     return defineTool({
         id: "inspect_run",
+        concurrent: true,
         description:
             "Inspect workflow runs for this analysis. A run never posts its completion into the conversation; this tool is how you read it. " +
             "Without a runId, returns a paged list (running runs first, then each other run) with total and hasMore. " +

@@ -262,6 +262,7 @@ const InspectDataProfileInputSchema = z.object({
 export function createInspectDataProfileTool(pool: Querier): Tool<z.infer<typeof InspectDataProfileInputSchema>, InspectDataProfileOutput> {
     return defineTool({
         id: "inspect_data_profile",
+        concurrent: true,
         description:
             "Read the data profile of this analysis: the authoritative record of what the input dataset is — the organism, the domain, the tissue, the condition, " +
             "the design, the caveats, the accessions, the groups of files, and the dimensions that vary across them. " +

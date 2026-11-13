@@ -38,6 +38,7 @@ type FaersOutput =
 
 export const searchFaersTool = defineTool({
     id: "search_faers",
+    concurrent: true,
     description:
         "openFDA — the post-market drug record of the U.S. Food and Drug Administration, across two corpora: FAERS (the FDA Adverse Event Reporting " +
         "System, spontaneous reports) and the Structured Product Labels (the approved prescribing information, served through DailyMed). Three lookups; " +

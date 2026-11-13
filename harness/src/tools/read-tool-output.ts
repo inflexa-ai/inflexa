@@ -131,6 +131,7 @@ function search(ref: string, text: string, start: number, limit: number | undefi
 export function createReadToolOutputTool(store: ToolOutputStore): Tool {
     return defineTool({
         id: READ_TOOL_OUTPUT_TOOL_ID,
+        concurrent: true,
         description:
             "Read the kept text of a tool result that came back as an excerpt. A tool result longer than " +
             `${TOOL_RESULT_CAP} characters comes back as its start and its end, and the excerpt gives a reference when the harness kept the text. ` +

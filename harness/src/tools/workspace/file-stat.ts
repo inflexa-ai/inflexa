@@ -28,6 +28,7 @@ const FileStatInputSchema = z.object({
 export function createFileStatTool(fs: WorkspaceFilesystem, workingDir?: string): Tool<z.infer<typeof FileStatInputSchema>, FileStatOutput> {
     return defineTool({
         id: "file_stat",
+        concurrent: true,
         description:
             "Stat a workspace path: whether it is a file or directory and its size " +
             "in bytes. It reads the workspace directly and runs no sandbox command. Use before reading to size a file. Missing and out-of-scope " +

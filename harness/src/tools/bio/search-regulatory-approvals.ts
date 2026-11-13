@@ -125,6 +125,7 @@ function failure(e: AmassError): Result<never, ToolError> {
 export function createSearchRegulatoryApprovalsTool(deps: { apiKey: string }): Tool<z.infer<typeof inputSchema>, RegulatoryApprovalsOutput> {
     return defineTool({
         id: "search_regulatory_approvals",
+        concurrent: true,
         description:
             "The drug authorizations of the U.S. Food and Drug Administration (FDA) and the European Medicines Agency (EMA), from Amass " +
             "RegulatoryCore: the status, the approved indication, the marketing authorization holder, the dates, the orphan status and the " +

@@ -42,6 +42,7 @@ import {
     type ToolResultImage,
 } from "../tools/define-tool.js";
 import { recordKeyFor } from "./accounting.js";
+import { createCallLock, type CallLock } from "./call-lock.js";
 import type { AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import type { ToolOutcome } from "./tool-outcome.js";
@@ -121,6 +122,7 @@ export function isFatalToolError(err: unknown): boolean {
  * because the adapter turns each other failure into an output.
  */
 export function adaptTools(tools: readonly Tool[], run: ToolRunContext): ToolSet {
+    const callLock = createCallLock();
     const set: ToolSet = {};
     for (const harnessTool of tools) {
         set[harnessTool.id] = aiTool({
@@ -129,7 +131,7 @@ export function adaptTools(tools: readonly Tool[], run: ToolRunContext): ToolSet
             // the repair of a stringified argument and the hints of the harness.
             inputSchema: jsonSchema(harnessTool.jsonSchema),
             execute: (input: unknown, options: { readonly toolCallId: string; readonly abortSignal?: AbortSignal }): Promise<ToolCallOutput> =>
-                runToolCall(harnessTool, input, options, run),
+                runToolCall(harnessTool, input, options, run, callLock),
             toModelOutput: ({ output }: { readonly output: ToolCallOutput }): ToolResultOutput => modelViewOf(output),
         });
     }
@@ -211,8 +213,8 @@ async function runToolCall(
     input: unknown,
     options: { readonly toolCallId: string; readonly abortSignal?: AbortSignal },
     run: ToolRunContext,
+    callLock: CallLock,
 ): Promise<ToolCallOutput> {
-    const startedAt = performance.now();
     const { toolCallId } = options;
     const detail = computeDetail(tool, input, run.log);
     // Only a root call shows values: no reader shows the values of a sub-agent call or of a nested call of a script.
@@ -233,10 +235,19 @@ async function runToolCall(
         session: run.session,
         signal: options.abortSignal ?? new AbortController().signal,
         emit: run.emit,
+        callLock,
         turnUsage: run.turnUsage,
     };
+    // The duration of a call starts when the call gets its turn.
+    let startedAt = performance.now();
+    const settle = (): Promise<SettledCall> => {
+        startedAt = performance.now();
+        return settleCall(tool, input, ctx, run, showsValues);
+    };
+    // A concurrent call settles before its first `await`, thus a call that starts a workflow starts its child in order.
+    const settling = tool.concurrent === true ? settle() : callLock.run(settle);
     // One wait reads the two, thus a failed emit leaves no rejection of the call unread.
-    const [, settled] = await Promise.all([started, settleCall(tool, input, ctx, run, showsValues)]);
+    const [, settled] = await Promise.all([started, settling]);
     // The values come from the output before the cut for the model, thus a host shows the start and the end of the whole text.
     const shownError = showsValues && settled.output.outcome === "error" ? viewErrorValue(tool, settled.output.text) : undefined;
     const output = await cutLongOutput(settled.output, tool.id, toolCallId, run);

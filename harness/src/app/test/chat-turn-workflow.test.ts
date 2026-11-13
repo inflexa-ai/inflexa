@@ -159,6 +159,7 @@ const research = defineTool({
     view: "none",
     describeCall: "none",
     startsWorkflow: true,
+    concurrent: true,
     execute: async (input, ctx) => {
         try {
             return ok({ report: await researcher(input, ctx) });
@@ -192,6 +193,7 @@ const pausingResearch = defineTool({
     view: "none",
     describeCall: "none",
     startsWorkflow: true,
+    concurrent: true,
     execute: async (input, ctx) => {
         try {
             return ok({ report: await pausingResearcher(input, ctx) });

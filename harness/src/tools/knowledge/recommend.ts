@@ -103,6 +103,7 @@ export function toPlannerAnswer(joined: RecommendWithEnvironment): KnowledgeReco
 export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool<z.infer<typeof SituationFieldsSchema>, KnowledgeRecommendOutput> {
     return defineTool({
         id: "knowledge_recommend",
+        concurrent: true,
         description:
             "Get the cited, versioned procedure for an expression analysis situation (bulk RNA-seq, a microarray, or a TempO-Seq panel) from the Inflexa knowledge service, folded into plan steps: " +
             "which method for each step (for example QC, filter, normalize, model, test, shrinkage, multiple testing, enrichment, dose-response fit, point of departure, report), " +
