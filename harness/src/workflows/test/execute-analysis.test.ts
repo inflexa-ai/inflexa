@@ -75,7 +75,7 @@ import type { AnalysisStep } from "../../schemas/workflow-state.js";
 import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
 import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
-import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import { type CapturingLogger, createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { RUN_END_EVENT_KEY } from "../../execution/run-end-record.js";
 import { captureMetrics } from "../../__tests__/setup/metrics.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
@@ -1759,6 +1759,23 @@ describe("executeAnalysis run end ownership", () => {
 
     const cancelError = (): Error => new DBOSErrors.DBOSWorkflowCancelledError("run-test");
 
+    /** Runs a completed run over the pool, and records how many closes and revokes came before each run end. */
+    async function runWithEndOrder(pool: FakePool, logger?: CapturingLogger) {
+        const events: RunProvenanceEvent[] = [];
+        const order: string[] = [];
+        const { deps, record } = makeDeps({
+            pool,
+            emitRunEvent: (event) => {
+                if (event.type === "run_completed")
+                    order.push(`emit after ${record.chargeCloseCalls.length} close and ${record.mandateRevokeCalls.length} revoke`);
+                recordRunEnds(pool, events)(event);
+            },
+            childResults: completeA(),
+        });
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), logger ? { ...deps, logger } : deps);
+        return { result, events, order, record };
+    }
+
     it("a won status write emits one run end between the UPDATE and the COMMIT, then closes the charge and revokes inside the same step after the COMMIT", async () => {
         const pool = makeFakePool(WON_STATUS_WRITE);
         const events: RunProvenanceEvent[] = [];
@@ -1817,20 +1834,7 @@ describe("executeAnalysis run end ownership", () => {
     });
 
     it("a recovery after the own write landed closes the charge, emits the run end with the clock read of the first execution, and then revokes", async () => {
-        const pool = makeFakePool();
-        const events: RunProvenanceEvent[] = [];
-        const order: string[] = [];
-        const { deps, record } = makeDeps({
-            pool,
-            emitRunEvent: (event) => {
-                if (event.type === "run_completed")
-                    order.push(`emit after ${record.chargeCloseCalls.length} close and ${record.mandateRevokeCalls.length} revoke`);
-                recordRunEnds(pool, events)(event);
-            },
-            childResults: completeA(),
-        });
-
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
+        const { result, events, order, record } = await runWithEndOrder(makeFakePool());
 
         expect(result.status).toBe("completed");
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
@@ -1890,21 +1894,8 @@ describe("executeAnalysis run end ownership", () => {
     });
 
     it("a failed status write logs the failure, closes the charge, emits one run end, and then revokes", async () => {
-        const pool = makeFakePool({ [RUN_STATUS_WRITE]: new Error("connection reset") });
-        const events: RunProvenanceEvent[] = [];
-        const order: string[] = [];
         const logger = createCapturingLogger();
-        const { deps, record } = makeDeps({
-            pool,
-            emitRunEvent: (event) => {
-                if (event.type === "run_completed")
-                    order.push(`emit after ${record.chargeCloseCalls.length} close and ${record.mandateRevokeCalls.length} revoke`);
-                recordRunEnds(pool, events)(event);
-            },
-            childResults: completeA(),
-        });
-
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), { ...deps, logger });
+        const { result, events, order, record } = await runWithEndOrder(makeFakePool({ [RUN_STATUS_WRITE]: new Error("connection reset") }), logger);
 
         expect(result.status).toBe("completed");
         expect(order).toEqual(["emit after 1 close and 0 revoke"]);
@@ -1918,20 +1909,8 @@ describe("executeAnalysis run end ownership", () => {
 
     it("a COMMIT failure after the emit in the transaction logs the write failure, closes the charge and revokes in their own steps, and emits no second run end", async () => {
         const pool = makeFakePool({ ...WON_STATUS_WRITE, COMMIT: new Error("commit failed") });
-        const events: RunProvenanceEvent[] = [];
-        const order: string[] = [];
         const logger = createCapturingLogger();
-        const { deps, record } = makeDeps({
-            pool,
-            emitRunEvent: (event) => {
-                if (event.type === "run_completed")
-                    order.push(`emit after ${record.chargeCloseCalls.length} close and ${record.mandateRevokeCalls.length} revoke`);
-                recordRunEnds(pool, events)(event);
-            },
-            childResults: completeA(),
-        });
-
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), { ...deps, logger });
+        const { result, events, order, record } = await runWithEndOrder(pool, logger);
 
         expect(result.status).toBe("completed");
         expect(order).toEqual(["emit after 0 close and 0 revoke"]);
