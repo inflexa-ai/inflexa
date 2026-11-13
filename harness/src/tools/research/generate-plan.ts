@@ -1556,6 +1556,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
     });
     return defineTool({
         id: "generate_plan",
+        concurrent: true,
         description:
             "Generate an analysis plan (DAG of steps) for this analysis's data and the user's research question. " +
             "The dataset's own facts — domain, organism, experimental design, condition names, quality concerns, " +

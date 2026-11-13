@@ -27,6 +27,7 @@ import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake
 import { buildPlannerSearchTools, createGeneratePlanTool, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "../generate-plan.js";
 import { presentAt, presentFirst } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
+import { createCallLock } from "../../../loop/call-lock.js";
 
 /** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
 const TEST_BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
@@ -43,6 +44,7 @@ function toolContext(analysisId = "analysis-001", options: { readonly emitted?: 
             callPath: ["conversation-agent"],
         }),
         signal: new AbortController().signal,
+        callLock: createCallLock(),
         emit: (event) => {
             options.emitted?.push(event);
         },

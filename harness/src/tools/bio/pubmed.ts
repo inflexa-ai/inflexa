@@ -181,6 +181,7 @@ type PubMedOutput =
 export function createPubMedTool(deps: { ncbiApiKey?: string }): Tool<z.infer<typeof inputSchema>, PubMedOutput> {
     return defineTool({
         id: "pubmed",
+        concurrent: true,
         description:
             "Search and read the biomedical literature in PubMed and PubMed Central — the MEDLINE citation index and the open-access full-text archive of " +
             "the U.S. National Library of Medicine, through the NCBI E-utilities. The three actions form a chain " +

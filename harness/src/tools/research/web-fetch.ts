@@ -722,6 +722,7 @@ const WebFetchInputSchema = z.object({
 export function createWebFetchTool(deps: WebFetchToolDeps = {}): Tool<z.infer<typeof WebFetchInputSchema>, WebFetchOutput> {
     return defineTool({
         id: "web_fetch",
+        concurrent: true,
         description:
             "Read one web page from its http or https URL and get its text: an HTML page becomes Markdown, " +
             "a PDF becomes the text of at most its first 100 pages, and a plain-text or JSON body passes through. " +

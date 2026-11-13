@@ -13,6 +13,7 @@ import { buildResearchPrompt, createGenerateAnalogyReportTool } from "../generat
 import { presentAt } from "../../../lib/present.js";
 import { AnalogicalReasonerOutputSchema, AnalogyReportSchema } from "../../../contracts/analogy-report.js";
 import { analogicalReasonerPrompt } from "../../../prompts/analogical-reasoner.js";
+import { createCallLock } from "../../../loop/call-lock.js";
 
 const EXTRACTION = {
     problemSummary: "Source problem summary.",
@@ -79,6 +80,7 @@ function ctxFor(emitted: unknown[] = []): ToolContext {
             callPath: ["conversation-agent"],
         }),
         signal: new AbortController().signal,
+        callLock: createCallLock(),
         emit: (event) => {
             emitted.push(event);
         },

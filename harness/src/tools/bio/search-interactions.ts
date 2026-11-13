@@ -17,6 +17,7 @@ type InteractionsOutput =
 
 export const searchInteractionsTool = defineTool({
     id: "search_interactions",
+    concurrent: true,
     description:
         "Query the STRING database — the protein-protein association network of EMBL, which folds experimental, database, co-expression and text-mined " +
         "evidence into one confidence score — for interactions and gene-set functional enrichment. " +

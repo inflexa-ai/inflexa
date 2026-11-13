@@ -40,6 +40,7 @@ export function createSearchSemanticScholarTool(options: { readonly apiKey?: str
     });
     return defineTool({
         id: "search_semantic_scholar",
+        concurrent: true,
         description:
             "Search Semantic Scholar — the cross-disciplinary literature corpus of the Allen Institute for AI, which indexes over 200M papers across " +
             "biology, medicine, machine learning, physics, math, economics and engineering. Returns paper id, title, abstract, year, venue, citation " +

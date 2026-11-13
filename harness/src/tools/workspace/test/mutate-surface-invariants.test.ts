@@ -13,9 +13,10 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ToolContext } from "../../define-tool.js";
+import { createCallLock } from "../../../loop/call-lock.js";
 
 describe("mutate surface invariants", () => {
-    it("ToolContext is exactly { invocationId, session, signal, emit, ask }", () => {
+    it("ToolContext requires exactly { invocationId, session, signal, emit, callLock }", () => {
         // Build a value-level fake that satisfies the type; if the type adds a
         // new required field (e.g. `sandboxClient`), TS will refuse to compile
         // this object literal — the test fails at type-check time.
@@ -28,9 +29,10 @@ describe("mutate surface invariants", () => {
                 auth: {},
             },
             signal: new AbortController().signal,
+            callLock: createCallLock(),
             emit: () => {},
         };
-        expect(Object.keys(ctx).sort()).toEqual(["emit", "invocationId", "session", "signal"]);
+        expect(Object.keys(ctx).sort()).toEqual(["callLock", "emit", "invocationId", "session", "signal"]);
     });
 
     it("the SandboxClient dependency is confined to execute_command", () => {

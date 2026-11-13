@@ -252,6 +252,55 @@ describe("run_script", () => {
         expect(result.value).toEqual(["test-tool-call:1", "test-tool-call:2"]);
     });
 
+    test("runs the nested calls of a tool that is not concurrent one at a time", async () => {
+        let active = 0;
+        let max = 0;
+        const write = defineTool({
+            id: "slow_write",
+            description: "Write slowly.",
+            inputSchema: z.object({}),
+            view: "none",
+            describeCall: "none",
+            execute: async () => {
+                active++;
+                max = Math.max(max, active);
+                await sleep(100);
+                active--;
+                return ok({ done: true });
+            },
+        });
+
+        const result = await run(`await Promise.all([tools.slow_write({}), tools.slow_write({})]);`, [write]);
+
+        expect(result.ok).toBe(true);
+        expect(max).toBe(1);
+    });
+
+    test("runs the nested calls of a concurrent tool at the same time", async () => {
+        let active = 0;
+        let max = 0;
+        const lookup = defineTool({
+            id: "slow_lookup",
+            description: "Look up slowly.",
+            inputSchema: z.object({}),
+            view: "none",
+            describeCall: "none",
+            concurrent: true,
+            execute: async () => {
+                active++;
+                max = Math.max(max, active);
+                await sleep(100);
+                active--;
+                return ok({ done: true });
+            },
+        });
+
+        const result = await run(`await Promise.all([tools.slow_lookup({}), tools.slow_lookup({})]);`, [lookup]);
+
+        expect(result.ok).toBe(true);
+        expect(max).toBe(2);
+    });
+
     test("a cancel of the call rejects with the abort, and gives no result", async () => {
         const controller = new AbortController();
         controller.abort();

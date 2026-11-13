@@ -252,7 +252,7 @@ type CallContext = <R>(fn: () => R) => R;
 async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, log: Logger, args: unknown, signal: AbortSignal): Promise<unknown> {
     const invocationId = state.nextInvocationId();
     const detail = computeDetail(tool, args, log);
-    const started = performance.now();
+    let started = performance.now();
     const startFrame = { type: "tool-started", source: state.source, toolUseId: invocationId, name: tool.id, detail } as const;
     state.observe(startFrame);
     await ctx.emit(startFrame);
@@ -276,12 +276,16 @@ async function runNestedCall(tool: Tool, ctx: ToolContext, state: ScriptState, l
         await finish("error", detail);
         throw new Error(`${tool.id}: ${issuesOf(parsed.error)}`);
     }
-    const result = await tool.execute(parsed.data, {
-        ...ctx,
-        invocationId,
-        signal: AbortSignal.any([ctx.signal, signal]),
-        script: { code: state.code },
-    });
+    const execute = (): ReturnType<Tool["execute"]> => {
+        started = performance.now();
+        return tool.execute(parsed.data, {
+            ...ctx,
+            invocationId,
+            signal: AbortSignal.any([ctx.signal, signal]),
+            script: { code: state.code },
+        });
+    };
+    const result = await (tool.concurrent === true ? execute() : ctx.callLock.run(execute));
     if (result.isErr()) {
         await finish("error", detail);
         throw new Error(`${tool.id}: ${result.error.error}`);
@@ -499,6 +503,7 @@ export function createRunScriptTool(
         id: RUN_SCRIPT_TOOL_ID,
         description: descriptionOf(scriptTools),
         inputSchema,
+        concurrent: true,
         view: {
             input: ({ code }) => viewCode("javascript", code),
             result: (_input, result) => scriptResultView(result),
