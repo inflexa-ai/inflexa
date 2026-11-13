@@ -46,21 +46,24 @@ A live call retries a failed attempt only before its first output part, because 
 
 ### Requirement: The text of a rerun model call shows one time
 
-The text frames of a model call MUST carry the attempt of the call. When a recovery runs a model call again, a read that starts after the recovery MUST show only the text of the last attempt. This applies to each message.
+The text frames of a model call MUST carry the attempt of the call. When a recovery runs a model call again, the fold of each read MUST hold only the text of the last attempt. This applies to each message.
 
 Each execution of a model step of a turn MUST write a marker to the durable stream before its model request. The marker names the step and the execution. A read MUST NOT give a marker as a frame. A read that gets the marker of a new execution of a step MUST then give a `text-superseded` frame. The frame covers the text that the read gave after the earlier marker of that step. This also applies when the new execution fails before its first output part.
 
-The frame carries the source of the root agent and `length`. The value of `length` is the length of the text that the read gave after the earlier marker, in UTF-16 code units. A read that gave no such text MUST NOT give the frame. The read MUST NOT give more text of an earlier execution whose text it gave before the marker of a new execution. The fold of the frames MUST then hold the text of the last execution one time.
+Each text that an execution streams MUST carry the execution in the stream. A read MUST give a text of a model call only when the text carries the execution of the last marker that the read got. Thus a read MUST NOT give a text that an earlier execution writes after the marker of a new execution. This also applies when the read gave no text of the earlier execution before that marker. A cancel and a resume across two processes can cause that case.
 
-This guarantee has one exception. In a cancel and a resume across two processes at the same time, an earlier execution can write text after the new marker. When the read gave no text of that execution before the marker, it cannot tell that text from the text of the new execution. Thus the read gives each such text until the next marker of that step, and the fold keeps it.
+The frame carries the source of the root agent and `length`. The value of `length` is the length of the text that the read gave after the earlier marker, in UTF-16 code units. A read that gave no such text MUST NOT give the frame. The fold of the frames MUST then hold the text of the last execution one time.
 
-A stream that holds no marker, for example the stream of a turn from before the upgrade, MUST give its text as before.
+Each read MUST take the records of the stream in their order, from the start of the stream. A read that starts after a recovery thus gives the same frames as a read during the recovery. The text of a superseded execution and its `text-superseded` frame are in both reads.
+
+A stream that holds no marker comes from a turn from before the upgrade. A read of such a stream MUST give each text of the stream.
 
 #### Scenario: A crash during a reply
 
 - **GIVEN** a model call that streamed half of its text, and then the host stopped
 - **WHEN** the turn recovers and the call runs again
-- **THEN** a read after the recovery shows the text of the second attempt one time, and not the half text of the first
+- **THEN** the fold of a read after the recovery holds the text of the second attempt one time
+- **AND** the fold holds no half text of the first attempt
 
 #### Scenario: A read during a recovery drops the half text
 
@@ -85,6 +88,26 @@ A stream that holds no marker, for example the stream of a turn from before the 
 - **WHEN** a host reads the turn
 - **THEN** the read does not give that text
 
+#### Scenario: A first write of an earlier execution after the new marker does not show
+
+- **GIVEN** a read that gave no text of an earlier execution of a model step
+- **AND** the earlier execution writes its first text after the marker of a new execution of that step
+- **WHEN** a host reads the turn
+- **THEN** the read does not give that text
+- **AND** the fold of the read with `applyChatFrame` holds only the text of the new execution
+
+#### Scenario: A read after the recovery gives the frames of a read during it
+
+- **GIVEN** a read during a recovery that gave the half text, the `text-superseded` frame, and the text of the second execution
+- **WHEN** a host reads the turn again after the recovery
+- **THEN** the second read gives the same frames as the first read
+
+#### Scenario: A double run keeps the new reply
+
+- **GIVEN** a cancel and a resume across two processes, and an earlier execution that writes text after the end of the new execution
+- **WHEN** a host reads the turn after the two executions ended
+- **THEN** the fold of the read with `applyChatFrame` holds the text of the new execution one time, and no text of the earlier execution
+
 ### Requirement: A reader reads a turn again from its start
 
 A host MUST be able to read the frames of a turn by the turn id, live, until the terminal frame or the end of the workflow. A second read of the same turn MUST give the same frames from the start. The fold of the frames of a second read MUST give the same messages as the fold of a first read.
@@ -94,6 +117,25 @@ A host MUST be able to read the frames of a turn by the turn id, live, until the
 - **GIVEN** a client that lost its connection during a turn
 - **WHEN** the client reads the turn again by its id
 - **THEN** it gets each frame from the start, then the frames that come after, and its fold gives the same messages as a client that never lost its connection
+
+### Requirement: A read that a host stops ends at once
+
+When a host stops a read of a turn, the read MUST end without a wait for the next write of the turn. A host stops a read when it leaves its loop over the frames, for example with `break` or `return`. This also applies to a turn that waits in a pause, and to a model call that waits for its first token.
+
+After the stop, the read MUST NOT start a new read of the stream of the turn, or of the stream of a sub-agent. A read of the stream that is in progress at the stop MUST end within 5 seconds, also when the turn writes nothing more. A database that does not answer is the one exception. DBOS holds each query until the database answers again. Thus the read then ends at the first answer of the database after the 5 seconds.
+
+#### Scenario: A host leaves a read of a paused turn
+
+- **GIVEN** a turn that waits in a pause, and a host that read its frames up to the pause
+- **WHEN** the host leaves its loop over the frames
+- **THEN** the loop ends before the turn writes again
+
+#### Scenario: A stopped read ends its reads of the stream
+
+- **GIVEN** a read of a turn that writes nothing more, and a database that answers
+- **WHEN** the host stops the read
+- **THEN** the read starts no new read of the stream
+- **AND** the read of the stream that is in progress ends within 5 seconds
 
 ### Requirement: The stream of a turn includes the frames of its sub-agents
 

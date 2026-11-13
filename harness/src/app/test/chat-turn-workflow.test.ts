@@ -464,6 +464,29 @@ describe("a chat turn as a workflow", () => {
         expect(textPartsOf(assistants[0])).toBe("Half of the answer.");
     }, 30_000);
 
+    it("ends the loop of a host that leaves a read of a paused turn before the turn writes again", async () => {
+        const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        let leftAt = 0;
+        const loop = (async () => {
+            for await (const frame of turns.read(turnId)) {
+                if (frame.type !== "data-pause") continue;
+                leftAt = Date.now();
+                break;
+            }
+            return Date.now() - leftAt;
+        })();
+        const msToLeave = await Promise.race([loop, Bun.sleep(5_000).then(() => Number.POSITIVE_INFINITY)]);
+
+        expect((await DBOS.getWorkflowStatus(turnId))?.status).toBe("PENDING");
+        expect(msToLeave).toBeLessThan(1_000);
+        await work.resume(sessionWithSecret(), turnId);
+        await DBOS.retrieveWorkflow(turnId).getResult();
+    }, 30_000);
+
     it("keeps the partial reply of a failed model call when the turn recovers during the pause", async () => {
         const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
         provider = scripted.provider;
@@ -1200,23 +1223,18 @@ function plannedModel(plans: readonly RequestPlan[]): { readonly provider: ChatP
     return { provider: createAiSdkProvider({ model, maxRetries: 0 }), calls };
 }
 
-/**
- * The frames of a read, up to and including the first frame that `stop` accepts. The read goes on in the background
- * until the turn ends, because a read that stops early waits for the next chunk of the stream before it closes.
- */
+/** The frames of a read, up to and including the first frame that `stop` accepts. The read ends at that frame. */
 async function readUntil(turnId: string, stop: (frame: ChatFrame) => boolean, timeoutMs = 10_000): Promise<ChatFrame[]> {
     const frames: ChatFrame[] = [];
-    let seen: (frames: ChatFrame[]) => void = () => undefined;
-    const found = new Promise<ChatFrame[]>((resolve) => (seen = resolve));
     const read = (async () => {
         for await (const frame of turns.read(turnId)) {
             frames.push(frame);
-            if (stop(frame)) seen([...frames]);
+            if (stop(frame)) return frames;
         }
         throw new Error("the read ended before the frame that the test waits for");
     })();
     read.catch(() => undefined);
-    return await Promise.race([found, read, Bun.sleep(timeoutMs).then(() => Promise.reject(new Error("the read did not give the frame in time")))]);
+    return await Promise.race([read, Bun.sleep(timeoutMs).then(() => Promise.reject(new Error("the read did not give the frame in time")))]);
 }
 
 /** The assistant message that the frames of a turn fold to. */
