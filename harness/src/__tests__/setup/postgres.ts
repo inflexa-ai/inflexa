@@ -44,7 +44,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { Pool, type PoolConfig } from "pg";
 import { initCortexState } from "../../state/init.js";
-import { assertDatabaseIsDedicated } from "./require-dedicated-database.js";
+import { assertDatabaseIsDedicated, databaseLabel } from "./require-dedicated-database.js";
 import { assertContainerWillBeReaped } from "./require-reaper.js";
 
 const PG_IMAGE = "pgvector/pgvector:pg18";
@@ -117,6 +117,38 @@ async function startContainer(): Promise<{ pool: Pool; container?: StartedTestCo
 }
 
 /**
+ * Install pgvector in `public`, the schema that each test pool searches after its test schema. A statement with no
+ * `SCHEMA` clause installs in the first schema of `"$user", public` that exists, which is the schema of the role on a
+ * database that has one. `IF NOT EXISTS` skips an extension that exists in any schema and does not move it, so the
+ * schema is read back and a misplaced extension is refused. The setup never moves an extension that it did not install.
+ */
+export async function ensureVectorInPublic(pool: Pool): Promise<void> {
+    await pool.query("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public");
+    const { rows } = await pool.query<{ schema: string }>(
+        "SELECT n.nspname AS schema FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector'",
+    );
+    const schema = rows[0]?.schema;
+    if (schema === "public") return;
+    if (schema === undefined) {
+        throw new Error(`The pgvector extension is absent from ${databaseLabel(pool.options)} right after its install; a different session dropped it.`);
+    }
+    throw new Error(misplacedExtensionMessage(databaseLabel(pool.options), schema));
+}
+
+function misplacedExtensionMessage(label: string, schema: string): string {
+    return `Refusing to run the tests against ${label}: the pgvector extension is in the schema "${schema}", but each test pool searches only its test schema and public.
+
+Use one of these remedies:
+
+  ALTER EXTENSION vector SET SCHEMA public
+                                   run it in that database, then run the tests again
+  unset CORTEX_TEST_PG_URL; bun run test:full [paths...]
+                                   starts one container with pgvector in public, and removes it on exit
+  CORTEX_TEST_PG_URL=<url of a new dedicated Postgres with no pgvector> bun test [paths...]
+                                   the setup installs pgvector in public there`;
+}
+
+/**
  * Get the shared base `pg.Pool` for the default database. Lazily starts
  * the container (if no override is set) on first call. The caller SHALL
  * NOT close this pool — it lives for the duration of the test run.
@@ -127,8 +159,9 @@ export async function getTestPool(): Promise<Pool> {
     // of each starting its own.
     _startPromise ??= startContainer();
     const { pool } = await _startPromise;
-    // Install pgvector once per test run against the default database.
-    _extensionPromise ??= pool.query("CREATE EXTENSION IF NOT EXISTS vector").then(() => {});
+    // Install pgvector in `public` once per test run, and refuse a database that holds it in another schema. This
+    // runs before any test schema exists, because `withSchema` awaits this function before `CREATE SCHEMA`.
+    _extensionPromise ??= ensureVectorInPublic(pool);
     await _extensionPromise;
     return pool;
 }

@@ -1,7 +1,11 @@
 # host-memory-bounds Specification
 
 ## Purpose
-TBD - created by archiving change bound-host-memory. Update Purpose after archive.
+Define the standard for memory-heavy work in the host process of the harness. A decode of untrusted file content and the VM of a script each run in a worker thread with a V8 heap limit, not on the main thread.
+
+Under Node, a decode past its limit ends only its worker. Its call fails, and the host process continues. Bun accepts the heap limit of a worker, but it does not enforce it. Each heavy worker starts from one worker entry, thus a bundled host embeds one file for all of them.
+
+A heavy task waits for a slot in the queue of its kind, and each queue has a fixed width for the whole process. The host gives the memory that its workers hold together, and the harness fits its slots in that memory. Thus the host can size its own heap limit beside it. A nested result of a script has a JSON size limit before it goes into the VM.
 
 ## Requirements
 

@@ -57,6 +57,36 @@ describe("the migration that references the run mandate", () => {
         expect(rows).toEqual([{ mandate_id: "mandate-2" }]);
     });
 
+    it("keeps the values of a database from before it when a different schema holds the reference", async () => {
+        const other = await withSchema("run-mandate-migration-other");
+        try {
+            await pool.query("ALTER TABLE cortex_runs RENAME COLUMN mandate_id TO mandate_jti");
+            await pool.query("ALTER TABLE cortex_runs ADD COLUMN mandate_expires_at TEXT");
+            await pool.query(
+                `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at, mandate_jti, mandate_expires_at)
+                 VALUES ('r1', 'a1', 'executeAnalysis', 'running', NOW(), 'mandate-1', '2026-10-29T10:00:00.000Z')`,
+            );
+            await forgetMigrations(pool);
+
+            await initCortexState(pool);
+
+            expect(await mandateColumns()).toEqual(["mandate_id"]);
+            const { rows } = await pool.query<{ mandate_id: string | null }>("SELECT mandate_id FROM cortex_runs WHERE run_id = 'r1'");
+            expect(rows).toEqual([{ mandate_id: "mandate-1" }]);
+        } finally {
+            await other.drop();
+        }
+    });
+
+    it("adds the column again to a schema that lost it to the released migration", async () => {
+        await pool.query("ALTER TABLE cortex_runs DROP COLUMN mandate_id");
+        await pool.query("DELETE FROM cortex_migration WHERE name = '20261112120000_add_the_run_mandate_column_again'");
+
+        await initCortexState(pool);
+
+        expect(await mandateColumns()).toEqual(["mandate_id"]);
+    });
+
     it("gives a new schema the column when a different schema of the database holds it", async () => {
         const other = await withSchema("run-mandate-migration-other");
         try {
