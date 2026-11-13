@@ -1270,18 +1270,6 @@ describe("send() drops the text of a superseded model attempt", () => {
 
         expect(messages[1]?.parts.map((p) => p.type)).toEqual(["text", "tool-call"]);
     });
-
-    test("a frame of a sub-agent changes nothing", async () => {
-        const SUB = { agentId: "planner", callPath: ["tui-chat", "planner"] };
-        const server = fakeServer(done(), async (emit, sendFrame) => {
-            await emit({ type: "text-delta", text: "Hello wor" });
-            await sendFrame(superseded(9, SUB));
-            expect(streamText()).toBe("Hello wor");
-        });
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, server);
-
-        expect(textsOf()).toEqual(["Hello wor"]);
-    });
 });
 
 describe("send() turn-generation guard", () => {

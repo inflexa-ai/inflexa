@@ -60,7 +60,6 @@ import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakp
 import type { BoundModel, ChatProvider, PromptCachePolicy, ProviderOptions, ReasoningPolicy } from "../providers/types.js";
 import type { AskRequest } from "../tools/approval/contract.js";
 import { accountingMiddleware, rollupMiddleware } from "./accounting.js";
-import { modelExecutionMarker } from "./chat-stream.js";
 import { createCallPolicy, type CallPolicy, type CallPolicyState, type ToolMask } from "./call-policy.js";
 import { createRunScriptTool } from "../tools/script/run-script.js";
 import { COMPACTION_MAX_REQUESTS, type CompactionPolicy } from "./compaction.js";
@@ -151,14 +150,11 @@ export type LoopOptions = {
     readonly provider: ChatProvider;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
-    /** Receives each text delta of the reply as it streams. It makes each model call of the loop live. */
-    readonly onText?: (text: string) => void | Promise<void>;
     /**
-     * Receives each text delta of the reply in the order of the stream. A durable loop also gets the text of a
-     * partial reply that a replay took from its record. It does not make a model call live by itself: a loop that
-     * gives `chatStream` is live already, and a loop that gives `onText` too must not record the same text there.
+     * Receives each text delta of the reply in the order of the stream. It makes each model call of the loop live. A
+     * durable loop also gets the text of a partial reply that a replay took from its record.
      */
-    readonly recordText?: (text: string) => void;
+    readonly onText?: (text: string) => void | Promise<void>;
     /**
      * The round sink. The loop awaits it before each model request, at each exit, and before a throw.
      * A durable loop passes no sink, because DBOS replays the loop body.
@@ -210,9 +206,8 @@ export type LoopOptions = {
      */
     readonly turnUsage?: AgentRunUsage;
     /**
-     * The durable stream that each model call of the run writes its text to, from inside its step. Its reader
-     * sees the text while the call runs, thus each model call of the loop is live: the retry of a request ends at
-     * its first output part. A loop outside a workflow writes nothing, and `onText` gives its text.
+     * The durable stream that each model call of the run writes its text to, from inside its step. A loop
+     * outside a workflow writes nothing, and `onText` gives its text.
      */
     readonly chatStream?: string;
     /** Receives the chunks that each tool step writes through the tool writer of the library, on a replay too. */
@@ -481,9 +476,7 @@ type SeriesTarget = {
     readonly beforeRequest?: () => Promise<void>;
     /** Receives each text delta of the reply. */
     readonly onText?: (text: string) => void | Promise<void>;
-    /** Receives each text delta of the reply, and makes no call live by itself. */
-    readonly recordText?: (text: string) => void;
-    /** The durable stream that the text of the reply goes to. It makes each call live. A compaction exchange streams no text. */
+    /** The durable stream that the text of the reply goes to. A compaction exchange streams no text. */
     readonly textStream?: string;
     /** Each step of the run so far, which a stop condition reads. */
     readonly steps: LoopStep[];
@@ -658,7 +651,6 @@ function openConversation(
         viewOf,
         beforeRequest,
         onText: opts.onText,
-        recordText: opts.recordText,
         textStream: opts.chatStream,
         steps,
         stopWhen: opts.stopWhen,
@@ -848,12 +840,11 @@ async function runSeries(
 
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
     const source = sourceOf(session, opts.invocationId);
-    const live = target.onText !== undefined || target.textStream !== undefined;
     const modelOf = (provider: ChatProvider): { readonly bound: BoundModel; readonly model: LanguageModel } => {
         const bound = provider.bind({
             session,
             reasoning: opts.reasoning,
-            live,
+            live: target.onText !== undefined,
             // A reader sees the retries of a request, thus a wait of the envelope is no silence. The part is transient,
             // and a failed write of it changes nothing of the request.
             onRetry: (retry) => {
@@ -872,7 +863,6 @@ async function runSeries(
             middleware: [
                 rollupMiddleware(target.rollups),
                 durableCalls({ name: modelStepName(agent.id), retriesAllowed: false, durableStream: target.textStream }),
-                ...(target.textStream === undefined ? [] : [modelExecutionMarker(target.textStream)]),
                 accountingMiddleware({
                     session,
                     agentId: target.metricAgentId,
@@ -1052,7 +1042,6 @@ async function runSeries(
             switch (chunk.type) {
                 case "text-delta":
                     open.text += chunk.text;
-                    target.recordText?.(chunk.text);
                     await target.onText?.(chunk.text);
                     return;
                 case "tool-call":
@@ -1136,7 +1125,7 @@ async function runSeries(
         const refusal = spec.endsOnRequestRefusal === true ? requestRefusalOf(failure) : undefined;
         answerUnansweredToolCalls(messages, startIndex);
         if (refusal !== undefined) return { kind: "refused", refusal };
-        return { kind: "failed", failure, partial: await recordedPartialReply(agent.id, open, live, target.recordText) };
+        return { kind: "failed", failure, partial: await recordedPartialReply(agent.id, open, target.onText) };
     }
 
     if (declined !== undefined) return { kind: "declined", ...declined };
@@ -1157,13 +1146,13 @@ async function runSeries(
  * model step rejects with no parts, thus a recovery during the pause that follows takes the reply from the record.
  * A replay also gives the text of the recorded reply to the display, which got no delta from the replayed call.
  */
-async function recordedPartialReply(agentId: string, open: OpenStep, live: boolean, recordText: ((text: string) => void) | undefined): Promise<LoopMessage[]> {
+async function recordedPartialReply(agentId: string, open: OpenStep, onText: LoopOptions["onText"]): Promise<LoopMessage[]> {
     const streamed = openStepMessages(open);
-    if (!live || !DBOS.isInWorkflow() || DBOS.isInStep()) return streamed;
+    if (onText === undefined || !DBOS.isInWorkflow() || DBOS.isInStep()) return streamed;
     if (!(await DBOS.patch(PARTIAL_REPLY_PATCH))) return streamed;
     const partial = await DBOS.runStep(() => Promise.resolve(streamed), { name: partialStepName(agentId) });
     const recorded = partialReplyText(partial);
-    if (open.text.length === 0 && recorded.length > 0) recordText?.(recorded);
+    if (open.text.length === 0 && recorded.length > 0) await onText(recorded);
     return partial;
 }
 

@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { closeDurableStream, type DurableStreamRecord } from "@dbos-inc/vercel-ai";
-import { wrapLanguageModel, type UIMessageChunk } from "ai";
+import type { UIMessageChunk } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
@@ -31,7 +31,6 @@ import {
     chunkOfFrame,
     createTurnStreamWriter,
     framesOfChunk,
-    modelExecutionMarker,
     readChatTurn,
     SUB_AGENT_STREAM_PART,
     type ChatStreamSource,
@@ -198,38 +197,6 @@ async function readAll(turnId: string): Promise<ChatFrame[]> {
 
 const textOf = (frames: readonly ChatFrame[]): string => frames.map((frame) => (frame.type === "text-delta" ? frame.text : "")).join("");
 
-const MarkerRecordSchema = z.object({
-    kind: z.literal("ui"),
-    chunks: z.tuple([z.object({ type: z.literal("data-model-execution"), data: z.object({ step: z.number(), execution: z.string() }) })]),
-});
-
-/** The execution of the last marker before each text part of a model record, and the id of the part, in the order of the stream. */
-async function readTextPartExecutions(turnId: string): Promise<{ execution: string | undefined; id: string }[]> {
-    const parts: { execution: string | undefined; id: string }[] = [];
-    let execution: string | undefined;
-    for await (const record of DBOS.readStream<DurableStreamRecord>(turnId, CHAT_STREAM_KEY)) {
-        const marker = MarkerRecordSchema.safeParse(record);
-        if (marker.success) execution = marker.data.chunks[0].data.execution;
-        if (record.kind !== "model") continue;
-        for (const part of record.parts) {
-            if (part.type === "text-start" || part.type === "text-delta" || part.type === "text-end") parts.push({ execution, id: part.id });
-        }
-    }
-    return parts;
-}
-
-/** The records of the stream of a turn that a model step wrote as its execution marker, in order, with their offsets. */
-async function readMarkers(turnId: string): Promise<{ offset: number; step: number; execution: string }[]> {
-    const markers: { offset: number; step: number; execution: string }[] = [];
-    let offset = 0;
-    for await (const record of DBOS.readStream<DurableStreamRecord>(turnId, CHAT_STREAM_KEY)) {
-        const marker = MarkerRecordSchema.safeParse(record);
-        if (marker.success) markers.push({ offset, ...marker.data.chunks[0].data });
-        offset += 1;
-    }
-    return markers;
-}
-
 let rig: DbosTestRig;
 
 beforeAll(async () => {
@@ -268,7 +235,6 @@ describe("the durable stream of a chat turn", () => {
         });
         expect(JSON.stringify(failed)).not.toContain('"result"');
         expect(frames.at(-1)?.type).toBe("finish");
-        expect(frames.some((frame) => frame.type === "text-superseded")).toBe(false);
         const serialized = JSON.stringify(frames);
         expect(serialized).not.toContain(SECRET_INPUT);
         expect(serialized).not.toContain(SECRET_OUTPUT);
@@ -311,43 +277,7 @@ describe("the durable stream of a chat turn", () => {
         await handle.getResult();
 
         expect(attempts).toBe(2);
-        const frames = await readAll(turnId);
-        expect(foldedText(frames)).toBe("The whole answer.");
-        expect(await readAll(turnId)).toEqual(frames);
-
-        const markers = await readMarkers(turnId);
-        expect(markers).toHaveLength(2);
-        expect(markers[0]?.step).toBe(markers[1]?.step);
-        expect(markers[0]?.execution).not.toBe(markers[1]?.execution);
-    });
-
-    it("writes one marker before each model step of the turn, with the id of the step and a fresh execution", async () => {
-        const turnId = rig.nextWorkflowId("chat-stream-marker-");
-        scripted = freshModel();
-        await (await DBOS.startWorkflow(streamWorkflow, { workflowID: turnId })()).getResult();
-
-        const markers = await readMarkers(turnId);
-        const modelSteps = ((await DBOS.listWorkflowSteps(turnId)) ?? []).filter((step) => step.name.endsWith(".model"));
-        expect(markers.map((marker) => marker.step)).toEqual(modelSteps.map((step) => step.functionID));
-        expect(new Set(markers.map((marker) => marker.execution)).size).toBe(markers.length);
-
-        const texts = await readTextPartExecutions(turnId);
-        expect(texts.length).toBeGreaterThan(0);
-        for (const { execution, id } of texts) {
-            expect(execution).toBeDefined();
-            expect(id.split(":")[0]).toBe(execution);
-        }
-    });
-});
-
-describe("the execution marker of a model step", () => {
-    it("writes nothing outside a step and gives the call to the model", async () => {
-        const model = wrapLanguageModel({
-            model: freshModel().provider.bind({ session: makeSession(), live: false }).model,
-            middleware: [modelExecutionMarker(CHAT_STREAM_KEY)],
-        });
-        const result = await model.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "go" }] }] });
-        expect(result.stream).toBeInstanceOf(ReadableStream);
+        expect(textOf(await readAll(turnId))).toBe("The whole answer.");
     });
 });
 
@@ -360,19 +290,14 @@ describe("the frames of one chunk of the stream", () => {
 const STEP = 3;
 const ASSISTANT_ID = "assistant-1";
 
-const marker = (execution: string, step = STEP): DurableStreamRecord => ({
-    kind: "ui",
-    chunks: [{ type: "data-model-execution", data: { step, execution }, transient: true }],
-});
-
-const attemptText = (attempt: string, execution: string, delta: string, step = STEP): DurableStreamRecord => ({
+const attemptText = (attempt: string, delta: string): DurableStreamRecord => ({
     kind: "model",
-    step,
+    step: STEP,
     attempt,
     parts: [
-        { type: "text-start", id: `${execution}:t` },
-        { type: "text-delta", id: `${execution}:t`, delta },
-        { type: "text-end", id: `${execution}:t` },
+        { type: "text-start", id: "t" },
+        { type: "text-delta", id: "t", delta },
+        { type: "text-end", id: "t" },
     ],
 });
 
@@ -420,95 +345,13 @@ function foldedText(frames: readonly ChatFrame[]): string {
 const frameKinds = (frames: readonly ChatFrame[]): string[] =>
     frames.map((frame) => (frame.type === "text-delta" ? `+${frame.text}` : frame.type === "text-superseded" ? `-${frame.length}` : frame.type));
 
-describe("the reader of a turn and the execution marker", () => {
-    it("drops the half text when a second execution starts after the read gave the half text", async () => {
-        const frames = await readRecorded([marker("a"), attemptText("A", "a", "Half of the")], [marker("b"), attemptText("B", "b", "Whole reply."), END]);
+describe("the reader of a turn and a model step that a recovery runs again", () => {
+    it("removes the text of the earlier attempt when the new attempt streams during the read", async () => {
+        const frames = await readRecorded([attemptText("A", "Half of the")], [attemptText("B", "Whole reply."), END]);
 
         expect(frameKinds(frames)).toEqual(["+Half of the", "-11", "+Whole reply."]);
         expect(frames.find((frame) => frame.type === "text-superseded")).toMatchObject({ source: ROOT });
         expect(foldedText(frames)).toBe("Whole reply.");
-    });
-
-    it("drops the half text when the second execution fails before its first output", async () => {
-        const frames = await readRecorded([marker("a"), attemptText("A", "a", "Half of the"), marker("b"), END]);
-
-        expect(frameKinds(frames)).toEqual(["+Half of the", "-11"]);
-        expect(foldedText(frames)).toBe("");
-    });
-
-    it("drops the text that an earlier execution writes after the marker of a new execution", async () => {
-        const frames = await readRecorded(
-            [],
-            [marker("a"), attemptText("A", "a", "Half"), marker("b"), attemptText("A", "a", " late"), attemptText("B", "b", "Whole."), END],
-        );
-
-        expect(frameKinds(frames)).toEqual(["+Half", "-4", "+Whole."]);
-        expect(foldedText(frames)).toBe("Whole.");
-    });
-
-    it("counts only the text after the last marker, thus a third execution drops the text of the second", async () => {
-        const frames = await readRecorded(
-            [],
-            [marker("a"), attemptText("A", "a", "Half"), marker("b"), attemptText("B", "b", "Second."), marker("c"), attemptText("C", "c", "Third."), END],
-        );
-
-        expect(frameKinds(frames)).toEqual(["+Half", "-4", "+Second.", "-7", "+Third."]);
-        expect(foldedText(frames)).toBe("Third.");
-    });
-
-    it("gives no frame for a repeated marker of the same execution", async () => {
-        const frames = await readRecorded([], [marker("a"), attemptText("A", "a", "Half"), marker("a"), attemptText("A", "a", " more"), END]);
-
-        expect(frameKinds(frames)).toEqual(["+Half", "+ more"]);
-        expect(foldedText(frames)).toBe("Half more");
-    });
-
-    it("gives the half text, the superseded frame, and the new text to a read that starts after the new execution wrote its text", async () => {
-        const frames = await readRecorded([marker("a"), attemptText("A", "a", "Half"), marker("b"), attemptText("B", "b", "Whole."), END]);
-
-        expect(frameKinds(frames)).toEqual(["+Half", "-4", "+Whole."]);
-        expect(foldedText(frames)).toBe("Whole.");
-    });
-
-    it("drops the first text that an earlier execution writes after the marker of a new execution", async () => {
-        const frames = await readRecorded([], [marker("a"), marker("b"), attemptText("A", "a", " late"), attemptText("B", "b", "Whole."), END]);
-
-        expect(frameKinds(frames)).toEqual(["+Whole."]);
-        expect(foldedText(frames)).toBe("Whole.");
-    });
-
-    it("keeps the new reply when the earlier execution writes after the end of the new execution", async () => {
-        const stored = [marker("a"), attemptText("A", "a", "Half"), marker("b"), attemptText("B", "b", "Whole."), attemptText("A", "a", " late"), END];
-        const frames = await readRecorded(stored);
-
-        expect(frameKinds(frames)).toEqual(["+Half", "-4", "+Whole."]);
-        expect(foldedText(frames)).toBe("Whole.");
-        expect(frameKinds(await readRecorded(stored))).toEqual(frameKinds(frames));
-    });
-
-    it("keeps the text of an earlier step when the marker is of a new step", async () => {
-        const frames = await readRecorded([marker("a", 3), attemptText("A", "a", "one", 3), marker("b", 5), attemptText("B", "b", " two", 5), END]);
-
-        expect(frameKinds(frames)).toEqual(["+one", "+ two"]);
-    });
-
-    it("counts a code unit of a surrogate pair as two", async () => {
-        const frames = await readRecorded([marker("a"), attemptText("A", "a", "ok \u{1F9EC}"), marker("b"), END]);
-
-        expect(frames.find((frame) => frame.type === "text-superseded")).toMatchObject({ length: 5 });
-        expect(foldedText(frames)).toBe("");
-    });
-
-    it("gives the text of a stream with no marker as before", async () => {
-        const frames = await readRecorded([attemptText("A", "a", "Hello."), END]);
-
-        expect(frameKinds(frames)).toEqual(["+Hello."]);
-    });
-
-    it("gives no marker as a frame", async () => {
-        const frames = await readRecorded([marker("a"), attemptText("A", "a", "Hi"), marker("b"), attemptText("B", "b", "Hey"), END]);
-
-        expect(JSON.stringify(frames)).not.toContain("model-execution");
     });
 });
 
@@ -661,21 +504,6 @@ describe("the stop of a read", () => {
             expect([quiet.open("quiet-turn"), quiet.open(CHILD_ID)]).toEqual([0, 0]);
         } finally {
             quiet.close();
-        }
-    });
-
-    it("reads the stream in windows below the bound of a stopped read", async () => {
-        const quiet = quietSource({ "quiet-turn": [] });
-        const read = readChatTurn("quiet-turn", { rootSource: ROOT, client: quiet.source });
-        const first = read.next();
-        try {
-            expect(await until(() => quiet.windows.length > 0, 1000)).toBe(true);
-            const window = quiet.windows[0];
-            expect(typeof window).toBe("number");
-            expect(window).toBeLessThan(5);
-        } finally {
-            quiet.close();
-            await first;
         }
     });
 

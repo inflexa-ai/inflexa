@@ -228,11 +228,12 @@ export type TurnTransport = {
     readonly signal: AbortSignal;
     /** The emit sink of the loop. */
     readonly emit: EmitFn;
-    /** Receives each text delta of the root reply. A turn workflow gives none, because its model calls stream the text through `chatStream`. */
+    /**
+     * Receives each text delta of the root reply in the order of the stream. A turn workflow gives it to its recorder
+     * only, because its model calls write the text to `chatStream` themselves.
+     */
     readonly onText?: (text: string) => void | Promise<void>;
-    /** Receives each text delta of the root reply in the order of the stream, also the text of a partial reply that a recovery took from its record. A turn workflow gives it to its recorder. */
-    readonly recordText?: (text: string) => void;
-    /** The durable stream that the model calls write their text to. It makes the model calls of the root loop live. */
+    /** The durable stream that the model calls write their text to. */
     readonly chatStream?: string;
     /** Receives the chunks of each tool step, on a replay too. */
     readonly toolWriter?: UIMessageStreamWriter;
@@ -364,7 +365,6 @@ export async function runOpenTurn(
             signal: transport.signal,
             emit: transport.emit,
             onText: transport.onText,
-            recordText: transport.recordText,
             chatStream: transport.chatStream,
             toolWriter: transport.toolWriter,
             modelMiddleware: transport.modelMiddleware,
