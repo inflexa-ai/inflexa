@@ -266,7 +266,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
             snapshot: SNAPSHOT.digest,
             claims: ["R-0001@e7d0", "R-0010@2b3c", "R-0166@4d5e"],
             template: "tpl-deseq2-two-group@1.0.0",
-            settings: [{ step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" }],
+            settings: [{ step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8", rule: "R-0001@e7d0" }],
             reason: "Count-model Wald test with effect shrinkage per R-0001@e7d0",
         });
         const gsea = presentAt(skeleton, 2);
@@ -304,7 +304,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.forbids).toEqual(["M-0002", "M-0004"]);
         expect(analysis.disputed).toEqual({ rule: "R-0010@2b3c", sides: ["independent filtering on", "independent filtering off"] });
         expect(analysis.grounding.settings).toEqual([
-            { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" },
+            { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8", rule: "R-0001@e7d0" },
             { step: "multiple_testing", name: "adjust_method", value: "BH" },
         ]);
     });
@@ -318,7 +318,9 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const analysis = presentFind(out.plan_skeleton, (step) => step.id === "T1S2");
         expect(analysis.caveats).toEqual(["multiple_testing: independent_filtering conflicts between R-0010@2b3c and R-0166@4d5e"]);
         expect(analysis.grounding.settings.some((setting) => setting.name === "independent_filtering")).toBe(false);
-        expect(analysis.grounding.settings).toEqual([{ step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" }]);
+        expect(analysis.grounding.settings).toEqual([
+            { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8", rule: "R-0001@e7d0" },
+        ]);
     });
 
     it("names the substitute as the step method and renders the substitution as a caveat", async () => {

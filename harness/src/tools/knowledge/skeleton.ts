@@ -271,6 +271,7 @@ function stepSettings(steps: readonly ProcedureStep[]): GroundingSetting[] {
             name: parameter.name,
             value: settingValue(parameter.value),
             source: parameter.default_source,
+            rule: parameter.rule,
         })),
     );
 }

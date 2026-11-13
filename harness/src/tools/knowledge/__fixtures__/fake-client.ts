@@ -57,7 +57,7 @@ export function recommendAnswer(): RecommendResponse {
                 package: { name: "DESeq2", track: "bioconductor" },
                 template: "tpl-deseq2-two-group@1.0.0",
                 rules: ["R-0001@e7d0"],
-                parameters: [{ name: "alpha", value: 0.05, default_source: "doi:10.1186/s13059-014-0550-8" }],
+                parameters: [{ name: "alpha", value: 0.05, default_source: "doi:10.1186/s13059-014-0550-8", rule: "R-0001@e7d0" }],
                 alternatives: [{ method: "M-0003", label: "Alternative count-model F-test", when: "robustness", rules: ["R-0001@e7d0"] }],
             },
             {
