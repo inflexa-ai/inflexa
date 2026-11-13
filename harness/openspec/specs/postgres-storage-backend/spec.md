@@ -215,6 +215,34 @@ The refusal MUST NOT give a database that a host uses as a safe route. The reape
 - **WHEN** `CORTEX_TEST_PG_URL` is unset
 - **THEN** the override guard does not run, because the fallback starts its own empty database
 
+### Requirement: The test setup installs pgvector in `public`
+
+The test setup MUST install the pgvector extension in the `public` schema of the test database. Each test pool searches only its test schema and `public`. The setup MUST name `public` as the schema of the install, thus the default schema of the connecting role does not decide the location.
+
+When the extension already exists in a schema other than `public`, the setup MUST throw an error before it makes a test schema. The error MUST name the database with the same label as the refusal of the dedicated-database guard, and it MUST NOT name the password. The error MUST name the schema that holds the extension. It MUST name the remedies: move the extension to `public`, use `bun run test:full` with `CORTEX_TEST_PG_URL` unset, or use a new dedicated database. The setup MUST NOT move or drop an extension that it did not install.
+
+The dedicated-database guard runs before this install (see "The test override refuses a database that a host uses").
+
+#### Scenario: A schema of the connecting role exists
+
+- **GIVEN** a test database with no pgvector, where a schema with the name of the connecting role exists
+- **WHEN** the setup installs pgvector
+- **THEN** the extension is in `public`
+- **AND** a pool whose `search_path` is a test schema and `public` resolves the type `vector`
+
+#### Scenario: The extension is already in a different schema
+
+- **GIVEN** a test database where pgvector is installed in a schema other than `public`
+- **WHEN** a database test file asks for the test pool
+- **THEN** the setup throws an error that names that schema, the database, and the remedy
+- **AND** the extension stays in that schema, and no test schema is made
+
+#### Scenario: The extension is already in `public`
+
+- **GIVEN** a test database where pgvector is installed in `public`
+- **WHEN** a database test file asks for the test pool
+- **THEN** the setup continues, and the test pool resolves the type `vector`
+
 ### Requirement: The container fallback starts a container only when ryuk runs
 
 The container fallback MUST refuse to start a container when nothing will remove
@@ -335,13 +363,19 @@ The table holds conversation data, the same as `messages`: the text of a tool re
 
 ### Requirement: Versioned migrations for the cortex tables
 
-`initCortexState(pool)` MUST apply the pending migrations of `src/state/migrations/` with the Kysely migrator, in the order of their names. The migrator MUST record each applied migration in the table `cortex_migration`, and it MUST use the table `cortex_migration_lock`. It MUST keep the two tables in the current schema of the pool. A migration MUST NOT change after a release. A schema change MUST be a new migration, with a name that sorts after each existing name.
+`initCortexState(pool)` MUST apply the pending migrations of `src/state/migrations/` with the Kysely migrator, in the order of their names. The migrator MUST record each applied migration in the table `cortex_migration`, and it MUST use the table `cortex_migration_lock`. It MUST keep the two tables in the current schema of the pool.
+
+A migration MUST NOT change after a release. A schema change MUST be a new migration, with a name that sorts after each existing name. A step that keeps data is the one exception to these rules, as this requirement describes below. The migrator MUST refuse a pending name that sorts before an applied name.
 
 Each migration MUST set `lock_timeout` to 5 s for its transaction. Thus a statement that waits for a lock fails after 5 s, and it holds up the queries of the other sessions for 5 s at most.
 
 The first migration, `20260927120000_baseline`, MUST hold only idempotent statements. Thus it applies to an empty database and to a database that an earlier harness made with its DDL at each start.
 
-The tables and the columns that the migrations make in the current schema MUST NOT depend on a different schema of the database. A test schema shares its database with other test schemas, and a host database can hold a test schema from an earlier run. A probe of the catalog in a migration MUST read only `current_schema()`. A released migration that reads more than the current schema stays as it is, and a later migration MUST repair its result.
+The tables, the columns, and the values that the migrations give in the current schema MUST NOT depend on a different schema of the database. A test schema shares its database with other test schemas, and a host database can hold a test schema from an earlier run. A probe of the catalog in a migration MUST read only `current_schema()`. A released migration that reads more than the current schema stays as it is, and a later migration MUST repair its result.
+
+A later migration cannot restore a value that a released migration removed. Thus, when a released migration removes a value of the current schema because it reads a different schema, a step can keep that value. Only this case permits the step. The step MUST run before the code of the released migration, under its recorded name, in the same transaction. The step MUST read and write only the current schema, and it MUST change only what is necessary to keep the value. The code of the released migration MUST stay the same, thus a database that recorded the released migration runs nothing new.
+
+The released migration `20261029120000_reference_the_run_mandate` has such a step. When the current schema holds `mandate_jti` and no `mandate_id`, the step adds `mandate_id` and copies each value of `mandate_jti` into it.
 
 #### Scenario: Fresh database is initialized
 
@@ -376,3 +410,18 @@ The tables and the columns that the migrations make in the current schema MUST N
 - **GIVEN** a schema of the database whose `cortex_runs` holds `mandate_id`
 - **WHEN** `initCortexState(pool)` runs against a new, empty schema of the same database
 - **THEN** `cortex_runs` of the new schema holds `mandate_id`, and it holds no `mandate_jti` and no `mandate_expires_at`
+
+#### Scenario: A different schema with the mandate reference does not remove the values of an old schema
+
+- **GIVEN** a schema of the database whose `cortex_runs` holds `mandate_id`
+- **AND** a second schema whose `cortex_runs` holds `mandate_jti` with a value, and whose `cortex_migration` does not record `20261029120000_reference_the_run_mandate`
+- **WHEN** `initCortexState(pool)` runs against the second schema
+- **THEN** `cortex_runs` of the second schema holds `mandate_id` with that value
+- **AND** it holds no `mandate_jti` and no `mandate_expires_at`
+
+#### Scenario: A schema that lost the mandate reference gets the column again
+
+- **GIVEN** a schema whose `cortex_migration` records `20261029120000_reference_the_run_mandate` and does not record `20261112120000_add_the_run_mandate_column_again`
+- **AND** the `cortex_runs` of that schema holds no `mandate_id`
+- **WHEN** `initCortexState(pool)` runs against that schema
+- **THEN** `cortex_runs` of that schema holds `mandate_id`
