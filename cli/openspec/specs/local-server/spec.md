@@ -2859,7 +2859,7 @@ A refusal MUST answer as follows:
 - 409 `conflict` with `details.reason` for each other refusal: `superseded`, `plan_invalid`, `packages_missing`, `not_authorized`, and `suspended`
 - 500 `internal_error` for a failed store read or write, and for a failed start of the workflow
 
-A `superseded` refusal MUST carry `details.supersededBy`, the id of the newest plan that revised the plan. A `plan_invalid` refusal carries `details.errors`. A `packages_missing` refusal carries `details.missing` and `details.collisions`, and `details.unavailable` when the store cannot answer.
+A `superseded` refusal MUST carry `details.supersededBy`, the id of the newest plan that revised the plan. A `plan_invalid` refusal carries `details.errors`. A `packages_missing` refusal carries `details.missing` and `details.collisions`, and `details.unavailable` when the store cannot answer. A `not_authorized` refusal MUST carry the `details.kind` of the launch refusal of the harness, `failed` or `credential`. A `failed` refusal also carries `details.transient`. Thus a client can tell a credential failure and a transient failure from a refusal.
 
 The route needs the harness runtime, thus it MUST answer 503 `unavailable` before the phase is `ready`.
 

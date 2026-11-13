@@ -1644,7 +1644,17 @@ describe("POST {A}/plans/:planId/approve", () => {
             [
                 { type: "not_authorized", kind: "failed", transient: false, reason: "mint refused" },
                 "The run was not authorized: mint refused",
-                { reason: "not_authorized" },
+                { reason: "not_authorized", kind: "failed", transient: false },
+            ],
+            [
+                { type: "not_authorized", kind: "failed", transient: true, reason: "identity_unavailable" },
+                "The run was not authorized: identity_unavailable",
+                { reason: "not_authorized", kind: "failed", transient: true },
+            ],
+            [
+                { type: "not_authorized", kind: "credential", reason: "credential_expired" },
+                "The run was not authorized: credential_expired",
+                { reason: "not_authorized", kind: "credential" },
             ],
             [{ type: "suspended", reason: "no_funds" }, "The analysis is suspended: no_funds", { reason: "suspended" }],
         ];
