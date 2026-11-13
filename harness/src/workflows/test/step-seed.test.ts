@@ -267,6 +267,36 @@ describe("composeStepSeed", () => {
         expect(prompt).toContain(request);
     });
 
+    it("carries the title of each claim of the step, and no view of another snapshot or of another step", async () => {
+        const root = await makeWorkspace();
+        const view = (id: string, snapshot: string, title: string) => ({
+            id,
+            snapshot,
+            title,
+            statement: `The statement of ${id}`,
+            strength: "consensus",
+            evidence: [],
+        });
+
+        const { prompt } = await composeStepSeed({
+            input: {
+                ...input([planStep("T1S2", [], grounded(SETTINGS, null))]),
+                claims: [
+                    view("R-0001@e7d0", "sha256:9999", "A view of another release"),
+                    view("R-0001@e7d0", "sha256:71ac", "The title of R-0001"),
+                    view("R-0002@e7d0", "sha256:71ac", "A claim of another step"),
+                ],
+            },
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root),
+        });
+
+        expect(prompt).toContain("  - R-0001@e7d0 (consensus): The title of R-0001");
+        expect(prompt).not.toContain("A view of another release");
+        expect(prompt).not.toContain("A claim of another step");
+    });
+
     it("gives an independent step no upstream block", async () => {
         const root = await makeWorkspace();
         await writeStepSummary(root, "T1S1", "irrelevant sibling summary");
@@ -453,7 +483,7 @@ describe("composeStepSeed template contract", () => {
         // The setting that names an adaptable slot is bound, with its source.
         expect(seed.prompt).toContain('`lfc_shrink` = "apeglm" (doi:10.1093/bioinformatics/bty895)');
         // The pinned slot at the plan value, and the name no slot carries, are unbound with the reason.
-        expect(seed.prompt).toContain("`alpha` = 0.05 (differential_expression): pinned by the template at the same value");
+        expect(seed.prompt).toContain("`alpha` = 0.05 (differential_expression; doi:10.1186/s13059-014-0550-8): pinned by the template at the same value");
         expect(seed.prompt).toContain('`inference` = "none" (enrichment): no slot of the template carries it');
         expect(seed.templateBinding).toEqual({
             ...BINDING_BASE,
@@ -462,6 +492,24 @@ describe("composeStepSeed template contract", () => {
         });
         // The local slots are marked in the section, thus the agent knows which values never leave the machine.
         expect(seed.prompt).toContain("- `counts_path` (string; local; required)");
+    });
+
+    it("carries the notes of the served contract into the Template contract section", async () => {
+        const root = await makeWorkspace();
+        const fake = fakeKnowledgeClient({
+            contract: { ...contractAnswer(), notes: "  The condition column is renamed to `condition` inside the script.  " },
+        });
+
+        const seed = await composeStepSeed({
+            input: input([planStep("T1S2", [], grounded(SETTINGS))]),
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root, {}, fake.client),
+        });
+
+        expect(seed.prompt).toContain(
+            "Notes of the template (the input requirements of the script):\nThe condition column is renamed to `condition` inside the script.\n",
+        );
     });
 
     it("reports a plan value that differs from a pinned slot as a conflict, and binds it nowhere", async () => {
@@ -599,7 +647,9 @@ describe("composeStepSeed template contract", () => {
 
         expect(seed.prompt).toContain("## Template contract");
         expect(seed.prompt).toContain("the plan names version 1.0.0, and the service serves version 1.1.0");
-        expect(seed.prompt).toContain('`lfc_shrink` = "apeglm" (differential_expression): not bound, because the served version differs from the plan');
+        expect(seed.prompt).toContain(
+            '`lfc_shrink` = "apeglm" (differential_expression; doi:10.1093/bioinformatics/bty895): not bound, because the served version differs from the plan',
+        );
         expect(seed.prompt).not.toContain("Bound by the plan");
         expect(seed.templateBinding).toBeUndefined();
     });

@@ -36,7 +36,7 @@ import { decisionRecordPath, scriptSha256 } from "../workspace/decision-record.j
 import type { WorkspaceMutator, WriteFileResult, WriteOutcome, WriteRecord } from "../workspace/mutator.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "./client.js";
 import { installedPackages } from "./environment.js";
-import { bindLocalSlots, localParameters, validateLocalSlot, type BoundLocalSlot } from "./local-slots.js";
+import { bindLocalSlots, localParameters, validateLocalSlot, type BoundLocalSlot, type LocalSlotIssue } from "./local-slots.js";
 
 /** A slot value the plan binds: a scalar, or a list of strings. JSON-serialisable, as the durable step input needs. */
 export type TemplateBindingValue = string | number | boolean | readonly string[];
@@ -229,6 +229,16 @@ const KnowledgeTemplateInputSchema = z.object({
         .describe("The file name under `scripts/`. Defaults to `<template id>.R` or `<template id>.py` by the language of the template."),
 });
 
+/**
+ * A refusal of a local value with the description of its slot. A reason such as a failed pattern names
+ * the rule, and the description names the intent (a formula that ends with the condition, for example),
+ * thus the agent can correct the value in the next call.
+ */
+function describedIssue(issue: LocalSlotIssue, localByName: ReadonlyMap<string, TemplateParameter>): LocalSlotIssue {
+    const description = localByName.get(issue.slot)?.description.trim();
+    return description ? { ...issue, reason: `${issue.reason}. The slot: ${description}` } : issue;
+}
+
 export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z.infer<typeof KnowledgeTemplateInputSchema>, KnowledgeTemplateResult> {
     return defineTool({
         id: "knowledge_template",
@@ -290,7 +300,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z
             // A local value the contract refuses is refused before the service call, thus a bad path costs no render.
             const localIssues = Object.entries(localValues).flatMap(([name, value]) => {
                 const issue = validateLocalSlot(presentGet(localByName, name, "the template parameter of the local value"), value);
-                return issue ? [issue] : [];
+                return issue ? [describedIssue(issue, localByName)] : [];
             });
             if (localIssues.length > 0) {
                 return ok({ match: "rejected", message: "one or more local slot values are not valid for this template", issues: localIssues });
@@ -311,7 +321,11 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z
 
             const bound = bindLocalSlots({ language: answer.template.language, parameters: locals }, answer.script, localValues, answer.slots);
             if (!bound.ok) {
-                return ok({ match: "rejected", message: "one or more local slot values are not valid for this template", issues: bound.issues });
+                return ok({
+                    match: "rejected",
+                    message: "one or more local slot values are not valid for this template",
+                    issues: bound.issues.map((issue) => describedIssue(issue, localByName)),
+                });
             }
 
             const scriptFile = script_name ?? `${answer.template.id}.${answer.template.language === "R" ? "R" : "py"}`;

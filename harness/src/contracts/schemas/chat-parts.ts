@@ -309,6 +309,50 @@ export const StepSummaryPartSchema = z.object({
     markdown: z.string(),
 });
 
+// ── Step Methods ────────────────────────────────────────────────────
+
+export const StepMethodsTemplateSchema = z.object({
+    id: z.string(),
+    version: z.string(),
+    label: z.string(),
+    method: z.object({ id: z.string(), label: z.string() }),
+    environmentMatch: z.string().optional(),
+    script: z.string().optional(),
+});
+
+export const StepMethodsClaimSchema = z.object({
+    id: z.string(),
+    title: z.string().optional(),
+    strength: z.string().optional(),
+});
+
+export const StepMethodsSourceSchema = z.object({
+    doi: z.string().optional(),
+    pmid: z.string().optional(),
+    url: z.string().optional(),
+    title: z.string(),
+    year: z.number().optional(),
+});
+
+export const StepMethodsSchema = z.object({
+    grounding: z.enum(["grounded", "ungrounded", "flagged"]).optional(),
+    snapshot: z.string().optional(),
+    templates: z.array(StepMethodsTemplateSchema),
+    claims: z.array(StepMethodsClaimSchema),
+    claimsOmitted: z.number().int().positive().optional(),
+    sources: z.array(StepMethodsSourceSchema),
+    sourcesOmitted: z.number().int().positive().optional(),
+    license: z.string().optional(),
+});
+
+export const StepMethodsPartSchema = StepMethodsSchema.extend({
+    type: z.literal("data-step-methods"),
+    id: z.string(),
+    runId: z.string(),
+    stepId: z.string(),
+    agentId: z.string(),
+});
+
 // ── Step Usage ──────────────────────────────────────────────────────
 
 export const StepUsagePartSchema = z.object({
@@ -540,6 +584,7 @@ export const ChatPartSchema = z.discriminatedUnion("type", [
     StepFileTreePartSchema,
     StepOutputPartSchema,
     StepSummaryPartSchema,
+    StepMethodsPartSchema,
     StepUsagePartSchema,
     StepBlockedPartSchema,
     RunSynthesisPartSchema,

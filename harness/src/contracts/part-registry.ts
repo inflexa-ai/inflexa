@@ -32,6 +32,7 @@ export const PART_REGISTRY: Record<ChatPartType, PartDescriptor> = {
     "data-step-file-tree": { emitter: "workflow", consumer: "sidebar", transient: true, reconciling: true },
     "data-step-output": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-step-summary": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
+    "data-step-methods": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-step-usage": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-step-blocked": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-run-synthesis": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },

@@ -63,6 +63,36 @@ export const GroundingSchema = z.object({
 });
 export type Grounding = z.infer<typeof GroundingSchema>;
 
+/** One source of the evidence of a claim, as the knowledge snapshot holds it. */
+export const ClaimEvidenceSchema = z.object({
+    doi: z.string().optional(),
+    pmid: z.string().optional(),
+    url: z.string().optional(),
+    title: z.string(),
+    year: z.number(),
+    direction: z.string(),
+});
+
+/**
+ * The view of one claim that a step of the plan cites, as the snapshot of
+ * the step holds it. The host writes the views from the answer of
+ * `knowledge_recommend` when it saves the plan. A digest names one fixed
+ * release, thus the view of a claim id never changes for its digest, and a
+ * surface reads the rule text here with no call to the service.
+ */
+export const ClaimViewSchema = z.object({
+    id: z.string(),
+    snapshot: z.string(),
+    rule: z.string().optional(),
+    title: z.string().optional(),
+    statement: z.string(),
+    strength: z.string(),
+    severity: z.string().optional(),
+    evidence: z.array(ClaimEvidenceSchema),
+    license: z.string().optional(),
+});
+export type ClaimView = z.infer<typeof ClaimViewSchema>;
+
 /**
  * A step of an analysis plan. `PlanStepSchema` (schemas/plan-schemas.ts) narrows
  * this into the planner's output contract and emits it as the `submit_plan`
@@ -133,6 +163,12 @@ export const AnalysisPlanSchema = z.object({
         .optional()
         .describe(
             "The request that the plan answers, as `generate_plan` received it. The briefing of each step renders it. Absent on an ad hoc plan and on a historical plan.",
+        ),
+    claims: z
+        .array(ClaimViewSchema)
+        .optional()
+        .describe(
+            "The view of each claim that a step cites, one per claim id and snapshot, as the host saved it with the plan. Absent when no step cites a claim of a knowledge answer.",
         ),
 });
 

@@ -91,9 +91,22 @@ const ProcedureStepSchema = z.looseObject({
 
 const ClaimSchema = z.looseObject({
     id: z.string(),
+    rule: z.string().optional(),
+    title: z.string().optional(),
     statement: z.string(),
     strength: z.string(),
-    evidence: z.array(z.looseObject({ doi: z.string().optional(), pmid: z.string().optional(), title: z.string(), year: z.number(), direction: z.string() })),
+    severity: z.string().optional(),
+    evidence: z.array(
+        z.looseObject({
+            doi: z.string().optional(),
+            pmid: z.string().optional(),
+            url: z.string().optional(),
+            title: z.string(),
+            year: z.number(),
+            direction: z.string(),
+        }),
+    ),
+    license: z.string().optional(),
 });
 
 export const RecommendResponseSchema = z.looseObject({

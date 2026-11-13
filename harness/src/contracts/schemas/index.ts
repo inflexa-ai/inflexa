@@ -21,6 +21,8 @@ export {
     StepOutputFileSchema,
     StepOutputPartSchema,
     StepSummaryPartSchema,
+    StepMethodsSchema,
+    StepMethodsPartSchema,
     StepUsagePartSchema,
     StepBlockedPartSchema,
     FindingReferenceSchema,
