@@ -13,7 +13,8 @@
  * the tool merges the bound slots under the model values. A model value that
  * differs from a bound value is refused before the service call unless an
  * `overrides` entry names the slot with a reason, and the decision record
- * keeps the bound slots and the overrides beside the script path.
+ * keeps the bound slots, the overrides, and the departures of the plan step
+ * beside the script path.
  *
  * The facts of the machine never ride at all: a local slot of the template
  * (a path, a column name, a level label, a design formula) is split off the
@@ -64,6 +65,21 @@ export type TemplateBinding = {
     readonly local?: readonly TemplateParameter[];
     /** The names of every adaptable slot of the served contract, thus the tool refuses an unknown name before anything leaves the machine. */
     readonly adaptable?: readonly string[];
+    /** The departures of the plan step from its rules. The host applied each value to `slots` already; the decision record keeps the list. */
+    readonly departures?: readonly BindingDeparture[];
+    /**
+     * The adaptable slots that a departure of the plan does not apply. An omitted slot takes the default of the template, thus a
+     * render must send a value for each, with an override and its reason.
+     */
+    readonly excluded?: readonly string[];
+};
+
+/** One departure of the plan step from a rule it cites, as the grounding holds it. */
+export type BindingDeparture = {
+    readonly rule: string;
+    readonly setting?: string;
+    readonly value?: TemplateBindingValue;
+    readonly reason: string;
 };
 
 export type KnowledgeTemplateDeps = {
@@ -89,7 +105,8 @@ export type BoundSlotRecord = {
 /** One change of a bound value that an `overrides` entry declared, as the decision record keeps it. */
 export type SettingsOverrideRecord = {
     readonly slot: string;
-    readonly plan_value: TemplateBindingValue;
+    /** The bound value. `null` for an excluded slot, because the plan does not apply it. */
+    readonly plan_value: TemplateBindingValue | null;
     readonly new_value: unknown;
     readonly reason: string;
 };
@@ -176,6 +193,16 @@ function refusedByBinding(
             reason: "bound by the plan",
             message: `the plan binds ${slot} = ${shown} (${sourceOf(binding, slot)}); send that value, or name the slot in overrides with the reason for the change`,
             permitted: [shown],
+        });
+    }
+    for (const slot of binding.excluded ?? []) {
+        if (slots[slot] !== undefined && overridden.has(slot)) continue;
+        const departure = binding.departures?.find((entry) => entry.setting === slot);
+        const rule = departure === undefined ? "a rule" : `${departure.rule} (${departure.reason})`;
+        issues.push({
+            slot,
+            reason: "not applied by the plan",
+            message: `the plan departs from ${rule} and does not apply ${slot}, but the template gives each slot a value; send the value that matches the plan, and name the slot in overrides with the reason`,
         });
     }
     if (issues.length === 0) return undefined;
@@ -354,12 +381,20 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z
                 value,
                 source: binding ? sourceOf(binding, slot) : "plan",
             }));
-            const settingsOverrides: SettingsOverrideRecord[] = boundSlots.flatMap(({ slot, value }) => {
-                const reason = reasons.get(slot);
-                const sent = slots[slot];
-                if (reason === undefined || sent === undefined || sameValue(value, sent)) return [];
-                return [{ slot, plan_value: value, new_value: sent, reason }];
-            });
+            const settingsOverrides: SettingsOverrideRecord[] = [
+                ...boundSlots.flatMap(({ slot, value }) => {
+                    const reason = reasons.get(slot);
+                    const sent = slots[slot];
+                    if (reason === undefined || sent === undefined || sameValue(value, sent)) return [];
+                    return [{ slot, plan_value: value, new_value: sent, reason }];
+                }),
+                ...(binding?.excluded ?? []).flatMap((slot) => {
+                    const reason = reasons.get(slot);
+                    const sent = slots[slot];
+                    if (reason === undefined || sent === undefined) return [];
+                    return [{ slot, plan_value: null, new_value: sent, reason }];
+                }),
+            ];
             // The slot report of the record: the service entries, with each local marker entry replaced by the slot as
             // bound here. An optional local slot with no value has no entry, as in a full render.
             const boundByName = new Map<string, BoundLocalSlot>(bound.slots.map((slot) => [slot.name, slot]));
@@ -368,13 +403,18 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps): Tool<z
                 const local = boundByName.get(slot.name);
                 return local ? [local] : [];
             });
+            // The record keeps the slots that the script reads. A slot whose condition fails is in the script with a value
+            // that nothing reads, thus the record names it and leaves its value out.
+            const inactiveSlots = reportedSlots.filter((slot) => slot.read === false).map((slot) => slot.name);
             const record = {
                 ...answer.decision_record,
-                slots: reportedSlots,
+                slots: reportedSlots.filter((slot) => slot.read !== false),
+                inactive_slots: inactiveSlots.length > 0 ? inactiveSlots : undefined,
                 script_path: scriptWrite.path,
                 written_sha256: scriptSha256(bound.script),
                 bound_slots: boundSlots,
                 settings_overrides: settingsOverrides,
+                departures: binding?.departures ?? [],
             };
             const recordContent = `${JSON.stringify(record, null, 2)}\n`;
             const recordWrite = await write(decisionRecordPath(scriptFile), recordContent);

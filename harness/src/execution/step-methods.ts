@@ -13,7 +13,7 @@ import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import { join, posix as posixPath } from "node:path";
 import { z } from "zod";
 
-import type { StepMethods, StepMethodsClaim, StepMethodsSource, StepMethodsTemplate } from "../contracts/chat-parts.js";
+import type { PlanStepDeparture, StepMethods, StepMethodsClaim, StepMethodsSource, StepMethodsTemplate } from "../contracts/chat-parts.js";
 import { citationKey } from "../contracts/report-reference.js";
 import { classifyWithinRoot, computeSha256 } from "../lib/fs-helpers.js";
 import type { Logger } from "../lib/logger.js";
@@ -27,6 +27,9 @@ export const MAX_METHODS_CLAIMS = 60;
 
 /** Sources carried in the methods of one step. The tail is counted. */
 export const MAX_METHODS_SOURCES = 60;
+
+/** Departures carried in the methods of one step. The tail is counted. */
+export const MAX_METHODS_DEPARTURES = 30;
 
 /** Record files read for one step. A step renders one script for each record. */
 const MAX_RECORD_FILES = 16;
@@ -205,8 +208,8 @@ function stepScriptPath(scriptPath: string | undefined): string | undefined {
  * Build the methods of a step. The claims are the claims of the grounding, then the claims of the
  * records that the grounding does not cite. A view gives the title and the strength of a claim, else a
  * record gives its title. The sources are the citations of the records, then the evidence of the views,
- * one entry for each DOI, PubMed id, or URL. Gives `undefined` when the step has no grounding, no claim,
- * and no record.
+ * one entry for each DOI, PubMed id, or URL. The departures are the departures of the grounding. Gives
+ * `undefined` when the step has no grounding, no claim, and no record.
  */
 export function buildStepMethods(args: StepMethodsInput): StepMethods | undefined {
     return assembleStepMethods(args)?.methods;
@@ -265,6 +268,12 @@ function assembleStepMethods(args: StepMethodsInput): { readonly methods: StepMe
 
     if (!grounding && claims.size === 0 && templates.length === 0) return undefined;
 
+    const departures: PlanStepDeparture[] = (grounding?.departures ?? []).map((departure) => ({
+        rule: departure.rule,
+        setting: departure.setting,
+        value: departure.value,
+        reason: departure.reason,
+    }));
     const allClaims = [...claims.values()];
     const allSources = [...sources.values()];
     const licenses = new Set(claimViews.filter((view) => claims.has(view.id)).flatMap((view) => (view.license ? [view.license] : [])));
@@ -277,6 +286,8 @@ function assembleStepMethods(args: StepMethodsInput): { readonly methods: StepMe
         claimsOmitted: allClaims.length > MAX_METHODS_CLAIMS ? allClaims.length - MAX_METHODS_CLAIMS : undefined,
         sources: allSources.slice(0, MAX_METHODS_SOURCES),
         sourcesOmitted: allSources.length > MAX_METHODS_SOURCES ? allSources.length - MAX_METHODS_SOURCES : undefined,
+        departures: departures.length > 0 ? departures.slice(0, MAX_METHODS_DEPARTURES) : undefined,
+        departuresOmitted: departures.length > MAX_METHODS_DEPARTURES ? departures.length - MAX_METHODS_DEPARTURES : undefined,
         license: licenses.size > 0 ? [...licenses].sort().join(", ") : undefined,
     };
     return { methods, sources: allSources };
@@ -319,6 +330,16 @@ function renderSource(source: StepMethodsSource): string {
     return `${source.title}${source.year === undefined ? "" : ` (${source.year})`}${id ? `. ${id}` : ""}`;
 }
 
+/**
+ * The text of a departure: the rule, then the setting with the value of the plan, or the setting that
+ * the plan does not apply, then the reason.
+ */
+export function renderDeparture(departure: PlanStepDeparture): string {
+    if (departure.setting === undefined) return `${departure.rule}: ${departure.reason}`;
+    const change = departure.value === undefined ? "not applied" : `= ${JSON.stringify(departure.value)}`;
+    return `${departure.rule}: \`${departure.setting}\` ${change}. ${departure.reason}`;
+}
+
 /** The markdown block of the methods. The host appends it to the summary, after a horizontal rule. */
 export function renderMethodsBlock(methods: StepMethods): string {
     const lines: string[] = [METHODS_HEADING, "", "The host wrote this section from the plan grounding and the decision records of the step.", ""];
@@ -341,6 +362,12 @@ export function renderMethodsBlock(methods: StepMethods): string {
             lines.push(`- ${claim.id}${strength}${claim.title ? `: ${claim.title}` : ""}`);
         }
         if (methods.claimsOmitted) lines.push(`- (+${methods.claimsOmitted} more)`);
+    }
+
+    if (methods.departures && methods.departures.length > 0) {
+        lines.push("", "Departures from the rules:", "");
+        for (const departure of methods.departures) lines.push(`- ${renderDeparture(departure)}`);
+        if (methods.departuresOmitted) lines.push(`- (+${methods.departuresOmitted} more)`);
     }
 
     if (methods.sources.length > 0) {

@@ -27,6 +27,7 @@ import {
     recommendAnswer,
     SNAPSHOT,
     substitutionAnswer,
+    renderAnswer,
 } from "../__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "../check.js";
 import { createClaimShelf, createKnowledgeClaimsTool } from "../claims.js";
@@ -469,6 +470,72 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         // Without the step the QC depends on nothing, as before.
         expect(presentAt(buildPlanSkeleton(answer), 0).depends_on).toEqual([]);
     });
+
+    it("the normalization diagnostics are a group of their own after the QC, and the test and the report depend on it", () => {
+        const answer = recommendAnswer();
+        const diagnostics = {
+            step: "normalization_diagnostics",
+            method: { id: "M-0083", label: "Normalization diagnostics" },
+            template: "tpl-normalization-diagnostics@1.0.0",
+            rules: ["R-0574@aa11"],
+            parameters: [{ name: "scale_of_the_fit", value: "stated_with_the_other_scale_as_a_sensitivity", default_source: "rule:R-0574", required: true }],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [presentAt(answer.procedure, 0), diagnostics, ...answer.procedure.slice(1)] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S7", "T1S2", "T2S1"]);
+        const group = presentAt(skeleton, 1);
+        expect(group.step_type).toBe("qc");
+        expect(group.depends_on).toEqual(["T1S1"]);
+        expect(group.grounding.template).toBe("tpl-normalization-diagnostics@1.0.0");
+        expect(group.grounding.settings.map((setting) => setting.name)).toEqual(["scale_of_the_fit"]);
+        // The fit reads the scale that the diagnostics state, thus the test waits for the group.
+        expect(presentAt(skeleton, 2).depends_on).toEqual(["T1S7", "T1S1"]);
+        // Without the step the test depends on the QC only, as before.
+        expect(presentAt(buildPlanSkeleton(answer), 1).depends_on).toEqual(["T1S1"]);
+    });
+
+    it("the permutation calibration is a group of its own after the test, and the report depends on it", () => {
+        const answer = recommendAnswer();
+        const calibration = {
+            step: "permutation_calibration",
+            method: { id: "M-0084", label: "Permutation calibration" },
+            template: "tpl-permutation-calibration@1.0.0",
+            rules: ["R-0575@aa11"],
+            parameters: [{ name: "n_permutations", value: 1000, default_source: "rule:R-0056" }],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [...answer.procedure, calibration] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T1S8", "T2S1"]);
+        const group = presentAt(skeleton, 2);
+        expect(group.step_type).toBe("analysis");
+        expect(group.depends_on).toEqual(["T1S2"]);
+        expect(group.grounding.template).toBe("tpl-permutation-calibration@1.0.0");
+        expect(group.grounding.settings).toEqual([{ step: "permutation_calibration", name: "n_permutations", value: 1000, source: "rule:R-0056" }]);
+        // The test group keeps its own script: the calibration is not a step of it.
+        expect(presentAt(skeleton, 1).grounding.settings.some((setting) => setting.step === "permutation_calibration")).toBe(false);
+    });
+
+    it("the sensitivity fits are a group of their own after the test and before the calibration", () => {
+        const answer = recommendAnswer();
+        const fits = {
+            step: "sensitivity_fits",
+            method: { id: "M-0085", label: "Sensitivity fits" },
+            template: "tpl-edger-ql-sensitivity@1.0.0",
+            rules: ["R-0576@aa11"],
+            parameters: [{ name: "primary_fit_selected_from_the_comparison", value: "never", default_source: "rule:R-0195", required: true }],
+        };
+        const calibration = {
+            step: "permutation_calibration",
+            method: { id: "M-0084", label: "Permutation calibration" },
+            template: "tpl-permutation-calibration@1.0.0",
+            rules: ["R-0575@aa11"],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [...answer.procedure, fits, calibration] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T1S9", "T1S8", "T2S1"]);
+        const group = presentAt(skeleton, 2);
+        expect(group.step_type).toBe("analysis");
+        expect(group.depends_on).toEqual(["T1S2"]);
+        expect(group.grounding.template).toBe("tpl-edger-ql-sensitivity@1.0.0");
+        expect(group.grounding.settings.map((setting) => setting.name)).toEqual(["primary_fit_selected_from_the_comparison"]);
+    });
 });
 
 describe("the release pin of one plan", () => {
@@ -735,6 +802,24 @@ describe("knowledge_template", () => {
         expect(record.slots).toEqual([
             { name: "counts_path", value: "/analysis-001/data/inputs/f1/counts.csv", source: "caller", adaptable: true, lines: [1] },
         ]);
+    });
+
+    it("leaves a slot that the script does not read out of the record, names it, and keeps it in the answer", async () => {
+        const answer = renderAnswer();
+        const unread = { name: "quantifier", value: "salmon", source: "default", adaptable: true, lines: [], read: false };
+        const { tool, workingDir } = build({ render: { ...answer, slots: [...answer.slots, unread] } });
+        const { ctx } = makeToolContext();
+        const out = (
+            await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: "/analysis-001/data/inputs/f1/counts.csv" } }, ctx)
+        )._unsafeUnwrap();
+        if (!("status" in out) || out.status !== "ok") throw new Error("the render did not write");
+        const record = asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.json()));
+        expect(record.slots).toEqual([
+            { name: "counts_path", value: "/analysis-001/data/inputs/f1/counts.csv", source: "caller", adaptable: true, lines: [1] },
+        ]);
+        expect(record.inactive_slots).toEqual(["quantifier"]);
+        // The value is in the script, thus the answer to the agent keeps the entry with its flag.
+        expect(out.slots.find((slot) => slot.name === "quantifier")).toMatchObject({ value: "salmon", read: false });
     });
 
     it("never sends a local value to the service, with or without a binding", async () => {

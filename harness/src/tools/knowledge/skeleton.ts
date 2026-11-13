@@ -87,6 +87,17 @@ const GROUPS: readonly {
 }[] = [
     { id: "T0S1", track: "T1", step_type: "data_preparation", agent: "analyst", steps: ["cohort_assembly"], name: "Cohort assembly" },
     { id: "T1S1", track: "T1", step_type: "qc", agent: "analyst", steps: ["qc_sample_structure"], name: "Sample structure QC" },
+    // The service joins the diagnostics when the scale of a sample is in
+    // doubt. The step has its own script, and the fit reads the scale that
+    // the step states, thus it is a group of its own before the test.
+    {
+        id: "T1S7",
+        track: "T1",
+        step_type: "qc",
+        agent: "analyst",
+        steps: ["normalization_diagnostics"],
+        name: "Normalization diagnostics",
+    },
     {
         id: "T1S2",
         track: "T1",
@@ -94,6 +105,28 @@ const GROUPS: readonly {
         agent: "analyst",
         steps: ["filter_low_counts", "normalize", "model_design", "differential_expression", "shrink_lfc", "multiple_testing"],
         name: "Differential expression",
+    },
+    // The sensitivity fits run the model of the test again under a second
+    // design or a second scale, with a script of their own. They read the
+    // results table of the test, thus they are a group after it.
+    {
+        id: "T1S9",
+        track: "T1",
+        step_type: "analysis",
+        agent: "analyst",
+        steps: ["sensitivity_fits"],
+        name: "Sensitivity fits",
+    },
+    // The calibration fits the model of the test again on permuted labels,
+    // which is a long run with a script of its own. Thus it is a group
+    // after the test and not a step of the test group.
+    {
+        id: "T1S8",
+        track: "T1",
+        step_type: "analysis",
+        agent: "analyst",
+        steps: ["permutation_calibration"],
+        name: "Permutation calibration",
     },
     // The dose-response chain: each step reads the table that the step before
     // it writes, thus the four are one track in the order of the chain. The
@@ -175,7 +208,10 @@ const GROUPS: readonly {
 const DEPENDS: Readonly<Record<string, readonly string[]>> = {
     T0S1: [],
     T1S1: ["T0S1"],
-    T1S2: ["T1S1"],
+    T1S7: ["T1S1"],
+    T1S2: ["T1S7", "T1S1"],
+    T1S9: ["T1S2"],
+    T1S8: ["T1S2"],
     T4S1: ["T1S2"],
     T4S2: ["T4S1"],
     T4S3: ["T4S2", "T4S1"],
@@ -195,7 +231,10 @@ const DEPENDS: Readonly<Record<string, readonly string[]>> = {
     T1S5: ["T1S1"],
     T1S6: ["T1S1"],
     T1S3: [
+        "T1S7",
         "T1S2",
+        "T1S9",
+        "T1S8",
         "T4S1",
         "T4S2",
         "T4S3",

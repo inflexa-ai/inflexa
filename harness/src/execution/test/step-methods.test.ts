@@ -163,6 +163,37 @@ describe("renderMethodsBlock", () => {
         expect(block).toContain("under CC-BY-4.0.");
     });
 
+    it("renders each departure of the grounding with its rule, its setting, the value of the plan, and the reason", () => {
+        const grounding: Grounding = {
+            ...GROUNDING,
+            departures: [
+                { rule: "R-0028@d560", setting: "prior_count", value: 3, reason: "the panel holds 364 targets" },
+                { rule: "R-0056@d560", setting: "permutations", reason: "the cohort is too small for a permutation check" },
+                { rule: "R-0056@d560", reason: "the plan reports no empirical P" },
+            ],
+        };
+        const methods = buildStepMethods({ grounding, claimViews: [], records: [record()] });
+        if (!methods) throw new Error("the step has methods");
+        expect(methods.departures).toEqual(grounding.departures);
+        const block = renderMethodsBlock(methods);
+        expect(block).toContain(
+            [
+                "Departures from the rules:",
+                "",
+                "- R-0028@d560: `prior_count` = 3. the panel holds 364 targets",
+                "- R-0056@d560: `permutations` not applied. the cohort is too small for a permutation check",
+                "- R-0056@d560: the plan reports no empirical P",
+            ].join("\n"),
+        );
+    });
+
+    it("gives no departures for a grounding with none, and renders no departure section", () => {
+        const methods = buildStepMethods({ grounding: GROUNDING, claimViews: [], records: [record()] });
+        if (!methods) throw new Error("the step has methods");
+        expect(methods.departures).toBeUndefined();
+        expect(renderMethodsBlock(methods)).not.toContain("Departures");
+    });
+
     it("says that the step kept no valid decision record, and names no origin of the scripts", () => {
         const block = renderMethodsBlock({ grounding: "ungrounded", templates: [], claims: [], sources: [] });
         expect(block).toContain("- Template: the step kept no valid decision record.");

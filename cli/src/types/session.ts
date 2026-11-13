@@ -81,7 +81,10 @@ export type PlanCardGroundingView = {
     reason: string;
     /** One entry per claim id of the step, in the order of the grounding. */
     rules: PlanCardRuleView[];
+    /** The settings of the step. A setting with a departure shows the value of the plan, and its source names the departure. */
     settings: PlanCardSettingView[];
+    /** The departures of the step from its rules, in the order of the grounding. */
+    departures: PlanCardDepartureView[];
     /** The sources of the rules, one per paper. */
     sources: PlanCardSourceView[];
 };
@@ -98,10 +101,31 @@ export type PlanCardSettingView = {
     /** The procedure step of the setting, for example `differential_expression`. */
     step: string;
     name: string;
-    /** The value as text. A list value is joined with a comma. */
+    /** The value as text. A list value is joined with a comma. An empty list shows `[]`, and an empty string shows `""`. */
     value: string;
     /** The doi or the document that gives the value. Empty when the procedure names none. */
     source: string;
+};
+
+/** What a departure does to its setting. */
+export type PlanCardDepartureChange =
+    /** It gives the setting the value of the plan. */
+    | "value"
+    /** The plan does not apply the setting. */
+    | "not_applied"
+    /** It leaves out a part of the rule that no setting carries. */
+    | "left_out";
+
+/** One departure of a grounded step from a rule that it cites. */
+export type PlanCardDepartureView = {
+    /** The claim id of the rule. */
+    rule: string;
+    change: PlanCardDepartureChange;
+    /** The name of the setting. Empty when the change is `left_out`. */
+    setting: string;
+    /** The value of the plan as text, in the form of a setting value. Empty unless the change is `value`. */
+    value: string;
+    reason: string;
 };
 
 /** One source of the rules of a grounded step. */

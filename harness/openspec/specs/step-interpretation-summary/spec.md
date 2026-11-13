@@ -139,9 +139,10 @@ The host MUST NOT read a record that only the step holds. The read MUST refuse a
 - one template entry for each record, with the method, the environment match, and the script path
 - the claims of the grounding, then the claims of the records, with the title and the strength of the view when the plan kept one
 - one source for each DOI, PubMed id, or URL of the record citations and of the view evidence
+- the departures of the grounding, with the rule, the setting, the value of the plan, and the reason
 - the license of the rule text.
 
-The claim list and the source list MUST be bounded, and each MUST count its tail. When a step has no grounding, no claim, and no record, the step MUST have no methods. The host MUST append the methods block to the summary markdown after a horizontal rule. The step MUST emit one `data-step-methods` part with the methods, beside the `data-step-summary` part. The part MUST be persistent and not reconciling.
+The claim list, the source list, and the departure list MUST be bounded, and each MUST count its tail. When a step has no grounding, no claim, and no record, the step MUST have no methods. The host MUST append the methods block to the summary markdown after a horizontal rule. The step MUST emit one `data-step-methods` part with the methods, beside the `data-step-summary` part. The part MUST be persistent and not reconciling.
 
 #### Scenario: A grounded step with a decision record
 
@@ -167,3 +168,10 @@ The claim list and the source list MUST be bounded, and each MUST count its tail
 - **GIVEN** a record file in the record directory of the step that is a symlink to a file outside the directory
 - **WHEN** the host reads the records
 - **THEN** the host leaves the file out and reads nothing through it
+
+#### Scenario: A grounded step with a departure
+
+- **GIVEN** a step whose grounding departs from `R-0056@d560` and does not apply its setting `permutations`
+- **WHEN** the summary step runs
+- **THEN** the methods block lists the departure under `Departures from the rules`, with the rule, the setting, and the reason
+- **AND** the `data-step-methods` part carries the departure

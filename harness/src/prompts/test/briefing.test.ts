@@ -103,6 +103,7 @@ function brief(overrides: Partial<TemplateBrief> = {}): TemplateBrief {
         slots: contract.parameters,
         inputs: contract.inputs ?? [],
         bound: [{ name: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" }],
+        done_by_script: [],
         unbound_settings: ["`alpha` = 0.05 (differential_expression): pinned by the template at the same value"],
         ...overrides,
     };
@@ -207,6 +208,15 @@ describe("renderTemplateContract", () => {
         expect(ADAPTABLE_SLOTS.length).toBeGreaterThan(0);
         for (const name of ADAPTABLE_SLOTS) expect(rendered).toContain(`- \`${name}\` (`);
         expect(rendered).not.toContain("- `alpha` (");
+    });
+
+    it("renders the settings that the script does in a block of their own, and no block when there is none", () => {
+        const line = '`adjustment` = "BH" (multiple_testing; rule:R-0003)';
+        const rendered = renderTemplateContract(brief({ done_by_script: [line] }));
+        expect(rendered).toContain(`Done by the script (the plan states them, and the script does them with no slot; send no value for them):\n- ${line}`);
+        // The block comes before the unbound settings: the agent reads what needs no act first.
+        expect(rendered.indexOf("Done by the script")).toBeLessThan(rendered.indexOf("Unbound settings"));
+        expect(renderTemplateContract(brief())).not.toContain("Done by the script");
     });
 
     it("renders the permitted values, the pattern, the sourced default, and the required state", () => {
@@ -398,6 +408,27 @@ describe("renderUpstream", () => {
         expect(rendered).toContain("(+5 more in the full summary)");
         expect(rendered).toContain("- Sources: edgeR (2010), doi:10.1093/bioinformatics/btp616; From reads to genes, PMID:27008025");
         expect(rendered).toContain("- Decision records: `/an-1/runs/run-1/T1S1/output/decision_record_tpl-edger-ql_A.json`");
+    });
+
+    it("renders the departures of a dependency with the rule, the setting, the value of the plan, and the reason", () => {
+        const rendered = renderUpstream([
+            handoff({
+                methods: {
+                    grounding: "grounded",
+                    templates: [],
+                    claims: [],
+                    sources: [],
+                    departures: [
+                        { rule: "R-0028@d560", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" },
+                        { rule: "R-0147@d560", reason: "the inputs hold no amplicon sequence" },
+                    ],
+                },
+            }),
+        ]);
+
+        expect(rendered).toContain(
+            "- Departures: R-0028@d560: `n_top_genes_pca` = 364. the panel holds 364 targets; R-0147@d560: the inputs hold no amplicon sequence",
+        );
     });
 
     it("renders no methods line for a dependency with no methods", () => {

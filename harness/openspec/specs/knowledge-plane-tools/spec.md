@@ -1,6 +1,7 @@
 # knowledge-plane-tools Specification
 
 ## Purpose
+
 The tools that ground a plan on the knowledge service: the optional knowledge client, the recommend and check tools of the planner, and the template tool of a step. The client is an interface that an embedder binds at its composition root, or does not bind. A plan pins one release of the service. A local slot never leaves the machine, and a decision record follows each rendered script.
 
 ## Requirements
@@ -202,6 +203,15 @@ The input of `knowledge_recommend` and `knowledge_check` MUST be the flat situat
 - **WHEN** the tool runs with valid slot values
 - **THEN** the script and the decision record exist in the working directory, the result names both paths and the environment match, and the provenance record of each write names `knowledge_template`
 
+The service marks a slot with `read: false` when the script does not read it on this render. The decision record MUST leave such a slot out of `slots`, and it MUST name the slot in `inactive_slots`. The result of the tool MUST keep the slot with its flag, because the value is in the script.
+
+#### Scenario: A slot that the script does not read stays out of the record
+
+- **GIVEN** a render answer with the slot `quantifier` marked `read: false`
+- **WHEN** the tool writes the decision record
+- **THEN** `slots` of the record does not hold `quantifier`, and `inactive_slots` names it
+- **AND** the result of the tool keeps `quantifier` with `read: false`
+
 #### Scenario: A read-only agent gets no template tool
 
 - **GIVEN** an agent built with `readOnly: true`
@@ -240,6 +250,14 @@ When a plan step grounds on a template and the composition binds a knowledge cli
 
 At dispatch the parent MUST intersect the `grounding.settings` of the step with the adaptable slots of the served contract, by name. Each setting that names an adaptable slot MUST become a bound slot of the `templateBinding` of the child input, with its source. The seed MUST list each bound setting under `Bound by the plan` with its value and its source. The seed MUST list each other setting under `Unbound settings` with its procedure step, its source when the setting has one, and the reason. A setting that names a pinned slot with a different value is a pinned conflict. A setting that names no slot stays a plan setting. A setting binds only when its value fits the slot. A fit is a member of the enum of the slot, a number for a number slot, or a boolean for a boolean slot. A free-text slot never binds, because a plan setting can be a policy word and not a value of the slot. A setting that does not fit its slot MUST be listed as unbound with the reason. `knowledge_template` MUST merge the bound slots under the model values. The tool MUST refuse a model value that differs from a bound value when no `overrides` entry names the slot with a reason. The refusal MUST come before the service call, and it MUST name the slot, the bound value, and its source. The decision record on disk MUST carry `bound_slots` and `settings_overrides`.
 
+A departure of the plan changes a setting before the intersection. A setting that a departure names with a value MUST take the value of the departure, with the source `departure from <claim id>`. A setting that a departure names with no value MUST NOT bind. The seed MUST list that setting as unbound, with the claim id and the reason. The binding MUST carry the departures of the step, and the decision record MUST carry them as `departures`.
+
+A rule can give a setting as a policy word, which is not a value of a slot. The served contract can carry `setting_bindings`. Each entry maps one setting with one value to one slot with one slot value. The service gives no more than one entry for one setting with one value, and the parent MUST take the first such entry. The parent MUST bind the slot of an entry when a setting of the step has the name and the value of that entry. The parent MUST read the setting after its departure. Thus a departure that changes the value binds the slot only when an entry maps the new value. A departure with no value MUST NOT bind the slot, and it MUST NOT name the slot as excluded. The source of the bound slot MUST name the setting and the source of the setting. The parent MUST NOT bind the slot of an entry when the slot is not an adaptable slot of the served contract, when the slot is local, or when the slot value does not fit the slot. The seed MUST list that setting as unbound with the reason. A slot takes the first value that binds it. A later setting that gives a different value MUST be listed as unbound.
+
+A script does some settings with no slot, for example the adjustment of a fit script. The served contract can carry `settings_by_construction`. Each entry names one setting with the value that the script does. The service gives no more than one entry for one setting, and the parent MUST take the first such entry. An entry whose setting is the name of a slot of the served contract says nothing, because the slot carries that setting. The parent MUST read the setting after its departure. A setting of the step can have the name and the value of an entry. The seed MUST then list it under `Done by the script` with its procedure step and its source. The seed MUST NOT list that setting as unbound, and the binding MUST NOT hold a slot or a source for it. When the setting has a different value, the seed MUST list it as unbound, and the line MUST name the value that the script does. A departure with no value can name the setting. The seed MUST then list it as unbound, and the line MUST say that the script does it with no slot. The binding MUST NOT name an excluded slot for it. When the served version differs from the version of the plan, the seed MUST list no setting under `Done by the script`.
+
+A template gives each slot a value, and an omitted slot takes the default of the template. Thus the binding MUST name an adaptable slot as excluded when a departure with no value names it. `knowledge_template` MUST refuse a render that sends no value for an excluded slot. It MUST also refuse a value with no override. The decision record MUST keep the override of an excluded slot with a `plan_value` of `null`.
+
 #### Scenario: A policy word on an integer slot
 
 - **GIVEN** a step whose settings hold `min_samples = smallest_group_size` and `min_count = 10`
@@ -270,9 +288,80 @@ At dispatch the parent MUST intersect the `grounding.settings` of the step with 
 - **WHEN** the agent calls `knowledge_template` with `lfc_shrink = ashr` and an `overrides` entry that names `lfc_shrink` with a reason
 - **THEN** the script renders with `ashr`. The decision record lists the change under `settings_overrides` with the plan value, the new value, and the reason
 
+#### Scenario: A departure changes a bound value
+
+- **GIVEN** a step whose settings hold `min_count = 10`, and a departure from `R-0001@e7d0` that gives `min_count = 5`
+- **WHEN** the seed composes against a contract whose `min_count` slot is an integer
+- **THEN** the binding holds `min_count = 5` with the source `departure from R-0001@e7d0`
+- **AND** the decision record of the render lists the departure
+
+#### Scenario: A departure removes a setting
+
+- **GIVEN** a step whose settings hold `lfc_shrink = apeglm`, and a departure from `R-0001@e7d0` for `lfc_shrink` with no value
+- **WHEN** the seed composes
+- **THEN** the binding holds no `lfc_shrink`, and the seed lists `lfc_shrink` as unbound with the claim id and the reason
+- **AND** the binding names `lfc_shrink` as excluded
+
+#### Scenario: A policy word that the template maps
+
+- **GIVEN** a step whose settings hold `depth_policy = low_depth_panel` with the source `rule:R-0571`
+- **AND** a served contract whose `setting_bindings` map that setting and that value to `min_count = 5`
+- **WHEN** the seed composes
+- **THEN** the binding holds `min_count = 5`, and its source names the setting `depth_policy` and `rule:R-0571`
+
+#### Scenario: A departure from a mapped policy word
+
+- **GIVEN** the same step and the same contract, and a departure that gives `depth_policy` a value that no entry maps
+- **WHEN** the seed composes
+- **THEN** the binding holds no `min_count`, and the seed lists `depth_policy` as unbound
+- **WHEN** the departure gives `depth_policy` no value
+- **THEN** the binding holds no `min_count`, and it names no excluded slot
+
+#### Scenario: A map that the served contract does not take
+
+- **GIVEN** a served contract whose `setting_bindings` name a slot that is local, a slot that the contract does not hold, or a value that does not fit the slot
+- **WHEN** the seed composes
+- **THEN** the binding holds no value for that slot, and the seed lists the setting as unbound with the reason
+
+#### Scenario: A setting that the script does with no slot
+
+- **GIVEN** a step whose settings hold `adjustment = BH` with the source `rule:R-0003`
+- **AND** a served contract whose `settings_by_construction` hold `adjustment = BH`
+- **WHEN** the seed composes
+- **THEN** the seed lists `adjustment` under `Done by the script` with its procedure step and its source
+- **AND** the seed does not list it as unbound, and the binding holds no slot for it
+
+#### Scenario: A plan value that the script does not do
+
+- **GIVEN** the same step and the same contract, and a departure that gives `adjustment = bonferroni`
+- **WHEN** the seed composes
+- **THEN** the seed lists `adjustment` as unbound, and the line names the value `BH` that the script does
+- **WHEN** the departure gives `adjustment` no value
+- **THEN** the seed lists `adjustment` as unbound, and the line says that the script does it with no slot
+- **AND** the binding names no excluded slot
+
+#### Scenario: A render of an excluded slot
+
+- **GIVEN** a binding that names `lfc_shrink` as excluded
+- **WHEN** the model renders with no `lfc_shrink`, or with `lfc_shrink` and no override
+- **THEN** `knowledge_template` refuses the render
+- **WHEN** the model renders with `lfc_shrink = none` and an override with the reason
+- **THEN** the decision record keeps the override with a `plan_value` of `null`
+
 ### Requirement: The plan step carries an optional grounding
 
-`AnalysisStepSchema` and `PlanStepSchema` MUST carry an optional `grounding` object with `status` (`grounded`, `ungrounded`, `flagged`), `snapshot`, `claims`, an optional `template`, an optional `settings` list, and `reason`. Each entry of `settings` MUST carry the procedure step, the name, the value, and an optional source. The value is a string, a number, a boolean, or a list of strings. The planner MUST copy `settings` from the skeleton step as it is. A plan without the field MUST validate as before. The briefing MUST render the field beside the task fields.
+`AnalysisStepSchema` and `PlanStepSchema` MUST carry an optional `grounding` object with `status` (`grounded`, `ungrounded`, `flagged`), `snapshot`, `claims`, an optional `template`, an optional `settings` list, and `reason`. The object MUST also carry an optional `departures` list. Each entry of `settings` MUST carry the procedure step, the name, the value, and an optional source. The value is a string, a number, a boolean, or a list of strings. The planner MUST copy `settings` from the skeleton step as it is. A plan without the field MUST validate as before. The briefing MUST render the field beside the task fields.
+
+A departure states where a grounded step keeps its method and departs from a rule that it cites. Each entry of `departures` MUST carry the claim id of the rule and the reason. An entry MUST name the setting that it changes, unless it leaves out a part of the rule that no setting carries. An entry MUST carry the value of the plan, unless the plan does not apply the setting. The Grounding section of the briefing MUST render each departure with its rule, its setting, the value of the plan, and the reason.
+
+The validation of the plan MUST refuse a departure in these conditions:
+
+- its rule is not a claim of the grounding of the step
+- its setting is not the name of a setting of the step
+- it carries a value and no setting
+- a second departure names the same setting.
+
+A departure can name a rule id in place of a claim id. If exactly one claim of the step has that rule id, `submit_plan` MUST give the departure that claim id before the validation.
 
 #### Scenario: A stored plan without grounding loads
 
@@ -291,6 +380,23 @@ At dispatch the parent MUST intersect the `grounding.settings` of the step with 
 - **GIVEN** a step with a grounding that names a template
 - **WHEN** the briefing composes
 - **THEN** the seed carries the status, the template, the snapshot, the claims, and the reason
+
+#### Scenario: A departure names a rule id
+
+- **GIVEN** a recommend answer that holds `R-0001@e7d0`
+- **WHEN** the planner submits a step that cites `R-0001@e7d0` and departs from `R-0001` for the setting `lfc_shrink`
+- **THEN** the stored departure names `R-0001@e7d0`
+
+#### Scenario: A departure from a rule that the step does not cite
+
+- **WHEN** the planner submits a step whose departure names `R-0010@2b3c`, and the step does not cite `R-0010@2b3c`
+- **THEN** `submit_plan` refuses the plan, and the issue names the claims of the step
+
+#### Scenario: A step with a departure reaches its agent
+
+- **GIVEN** a step with a departure from `R-0001@e7d0` that gives `min_count = 5`
+- **WHEN** the briefing composes
+- **THEN** the Grounding section lists the departure with `R-0001@e7d0`, `min_count`, the value 5, and the reason
 
 ### Requirement: The planner restores the template of a skeleton step
 
@@ -405,7 +511,7 @@ The run input MUST carry the claim views of the stored plan. At dispatch the par
 
 ### Requirement: The briefing gives the methods of each upstream step
 
-At dispatch the parent MUST give the handoff of each completed dependency the methods of that dependency. The methods come from the grounding of its plan step, the claim views of the run input, and the host copies of its records. The read of the records MUST be the confined and bounded read of the methods of a step. The handoff MUST render the grounding and the snapshot digest, each template with its method, and the rules and the sources of the dependency. The rules and the sources MUST each be bounded by `UPSTREAM_METHODS_MAX_ITEMS`, with a count of the tail. The handoff MUST also list the in-sandbox path of the copy in the step of each decision record, bounded by `MAX_UPSTREAM_DECISION_RECORDS`. A dependency with no grounding and no record MUST render as before.
+At dispatch the parent MUST give the handoff of each completed dependency the methods of that dependency. The methods come from the grounding of its plan step, the claim views of the run input, and the host copies of its records. The read of the records MUST be the confined and bounded read of the methods of a step. The handoff MUST render the grounding and the snapshot digest, each template with its method, and the rules and the sources of the dependency. The handoff MUST also render the departures of the dependency. The rules, the departures, and the sources MUST each be bounded by `UPSTREAM_METHODS_MAX_ITEMS`, with a count of the tail. The handoff MUST also list the in-sandbox path of the copy in the step of each decision record, bounded by `MAX_UPSTREAM_DECISION_RECORDS`. A dependency with no grounding and no record MUST render as before.
 
 #### Scenario: A report step after a grounded step
 
@@ -418,6 +524,12 @@ At dispatch the parent MUST give the handoff of each completed dependency the me
 
 - **WHEN** the parent composes the seed of a step whose dependency has no grounding and no decision record
 - **THEN** the handoff of the dependency has no grounding line and no decision record line
+
+#### Scenario: A dependency with a departure
+
+- **GIVEN** a dependency whose grounding departs from `R-0028@d560` with `n_top_genes_pca = 364`
+- **WHEN** the parent composes the seed of a step that depends on it
+- **THEN** the handoff lists the departure with the rule, the setting, the value of the plan, and the reason
 
 ### Requirement: The host keeps a copy of each decision record
 

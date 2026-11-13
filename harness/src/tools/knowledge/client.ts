@@ -234,6 +234,33 @@ export const TemplateContractSchema = z.looseObject({
     /** The design requirements the script realizes. Absent: not subject to them. */
     honors: z.array(z.string()).optional(),
     parameters: z.array(TemplateParameterSchema),
+    /**
+     * The policy settings of a rule that a slot of the template realizes. A plan setting with the `value` of an entry binds
+     * `slot` to `slot_value`. Absent when the template maps none.
+     */
+    setting_bindings: z
+        .array(
+            z.looseObject({
+                setting: z.string(),
+                value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]),
+                slot: z.string(),
+                slot_value: z.union([z.string(), z.number(), z.boolean()]),
+            }),
+        )
+        .optional(),
+    /**
+     * The settings of a rule that the script of the template does with no slot, for example the adjustment of a
+     * fit script. The seed lists such a setting of the plan step as done by the script. Absent when the template
+     * lists none.
+     */
+    settings_by_construction: z
+        .array(
+            z.looseObject({
+                setting: z.string(),
+                value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]),
+            }),
+        )
+        .optional(),
     inputs: z.array(TemplateInputSchema).optional(),
     outputs: z.array(z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() })),
     /** The input requirements in prose, from the applicability of the template. */

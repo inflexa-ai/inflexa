@@ -235,6 +235,8 @@ plan-card part already carries — no harness round-trip. Both dialogs SHALL act
 
 For a grounded step, the step-detail dialog MUST also show the grounding of the step. The grounding gives the status, the knowledge release, the template, and the reason of the planner. It also gives the rules with their strength and their title, the settings with their sources, and the sources of the rules. The dialog MUST list at most `MAX_GROUNDING_ITEMS` rules and sources, with a count of the rest. A rule with no claim view MUST show its claim id. A step with no grounding MUST show no grounding section.
 
+The dialog MUST list each departure of a grounded step from its rules, after the settings. A departure gives its rule, its setting, the value of the plan, and the reason. A departure that does not apply its setting MUST show `not applied` in place of the value. A step with no departure MUST show no departure section.
+
 #### Scenario: The command lists the latest plan's steps
 
 - **WHEN** the transcript contains a plan card and the user runs "Explore plan steps…"
@@ -256,6 +258,12 @@ For a grounded step, the step-detail dialog MUST also show the grounding of the 
 - **WHEN** the user opens the step-detail dialog of that step
 - **THEN** the dialog shows the status, the knowledge release, the template, and the reason
 - **AND** the dialog shows `R-0028@d560` with its strength and its title, and the DOI in the sources
+
+#### Scenario: A grounded step shows its departures
+
+- **GIVEN** a plan card whose step departs from `R-0001@e7d0` with `n_top_genes_pca = 364`
+- **WHEN** the user opens the step-detail dialog of that step
+- **THEN** the dialog lists the departure with `R-0001@e7d0`, `n_top_genes_pca`, the value 364, and the reason
 
 ### Requirement: Show runs command
 

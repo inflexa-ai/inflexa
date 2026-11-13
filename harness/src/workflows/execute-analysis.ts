@@ -116,7 +116,7 @@ import {
     type UpstreamHandoff,
 } from "../prompts/briefing.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
-import type { AnalysisStep, ClaimView, GroundingSetting } from "../schemas/workflow-state.js";
+import type { AnalysisStep, ClaimView, GroundingDeparture, GroundingSetting } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "../tools/knowledge/client.js";
 import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
@@ -664,6 +664,7 @@ async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClie
         stepId: step.id,
         claims: step.grounding?.claims ?? [],
         snapshot: step.grounding?.snapshot && step.grounding.snapshot !== "none" ? step.grounding.snapshot : undefined,
+        departures: step.grounding?.departures ?? [],
     });
 }
 
@@ -676,6 +677,11 @@ function versionOfRef(ref: string): string | undefined {
 /** Two setting values agree when their JSON agrees: the values are scalars or lists of strings. */
 function sameSettingValue(a: unknown, b: unknown): boolean {
     return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** A list with each member as text. The skeleton keeps the members of a list setting as text, and the contract keeps their types. */
+function listAsText(value: unknown): unknown {
+    return Array.isArray(value) ? value.map(String) : value;
 }
 
 /**
@@ -705,15 +711,23 @@ function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
  *   a pinned conflict the agent must know about, an equal value is satisfied
  * - a setting that names no slot stays a plan setting the agent applies itself
  *
+ * A departure of the plan replaces the value of its setting before the
+ * intersection, thus the value of the plan takes each path above in place of
+ * the value of the rule. A departure that names a setting and gives no value
+ * removes the setting: the plan does not apply it, and nothing binds it. When
+ * that setting names an adaptable slot, the binding names the slot as excluded,
+ * and the render must send its value with an override.
+ *
  * A served version that differs from the version the plan names binds
  * nothing: the render refuses the plan version, and the settings then ride
  * as unbound lines under the caveat the section renders.
  */
-/** What binds the render to the plan step beside the settings: its id, its claims, and the release the plan pinned. */
+/** What binds the render to the plan step beside the settings: its id, its claims, the release the plan pinned, and its departures. */
 type StepGroundingRef = {
     readonly stepId: string;
     readonly claims: readonly string[];
     readonly snapshot?: string;
+    readonly departures: readonly GroundingDeparture[];
 };
 
 function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
@@ -725,29 +739,92 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
 
     const bound: TemplateBoundSetting[] = [];
     const unbound: string[] = [];
+    const doneByScript: string[] = [];
     const slots: Record<string, TemplateBindingValue> = {};
     const sources: Record<string, string> = {};
+    const excluded: string[] = [];
 
-    for (const setting of settings) {
-        const shown = `\`${setting.name}\` = ${JSON.stringify(setting.value)} (${setting.step}${setting.source ? `; ${setting.source}` : ""})`;
+    // The settings that the script does with no slot, by name. A name that is also a slot is not such a setting:
+    // the slot carries it. The service gives one entry for one setting, and the first entry is the entry.
+    const byConstruction = new Map<string, unknown>();
+    for (const entry of contract.settings_by_construction ?? []) {
+        if (!byConstruction.has(entry.setting) && !adaptableNames.has(entry.setting) && !pinnedByName.has(entry.setting))
+            byConstruction.set(entry.setting, entry.value);
+    }
+
+    const departureBySetting = new Map(
+        grounding.departures.flatMap((departure) => (departure.setting === undefined ? [] : [[departure.setting, departure] as const])),
+    );
+
+    for (const rule of settings) {
+        const departure = departureBySetting.get(rule.name);
+        if (departure !== undefined && departure.value === undefined) {
+            const departs = `\`${rule.name}\` = ${JSON.stringify(rule.value)} (${rule.step}${rule.source ? `; ${rule.source}` : ""}): the plan departs from ${departure.rule} and does not apply it (${departure.reason})`;
+            // A slot of the template always takes a value, and an omitted slot takes the default of the template. Thus the
+            // render must send the value that matches the plan, and the decision record keeps it as an override.
+            if (versionMatches && adaptableNames.has(rule.name)) {
+                excluded.push(rule.name);
+                unbound.push(
+                    `${departs}, but the template gives each slot a value; send the value that matches the plan, with an \`overrides\` entry and the reason`,
+                );
+            } else if (pinnedByName.has(rule.name)) {
+                unbound.push(`${departs}, but the template pins \`${rule.name}\``);
+            } else if (versionMatches && byConstruction.has(rule.name)) {
+                // The script has no slot for it, thus the plan cannot remove it from the script.
+                unbound.push(
+                    `${departs}, but the script of the template does \`${rule.name}\` = ${JSON.stringify(byConstruction.get(rule.name))} with no slot`,
+                );
+            } else {
+                unbound.push(departs);
+            }
+            continue;
+        }
+        const setting: GroundingSetting =
+            departure?.value === undefined ? rule : { ...rule, value: departure.value, source: `departure from ${departure.rule}` };
+        const where = departure === undefined ? setting.source : `departure from ${departure.rule}: ${departure.reason}`;
+        const shown = `\`${setting.name}\` = ${JSON.stringify(setting.value)} (${setting.step}${where ? `; ${where}` : ""})`;
         if (!versionMatches) {
             unbound.push(`${shown}: not bound, because the served version differs from the plan`);
             continue;
         }
-        if (adaptableNames.has(setting.name)) {
-            const slot = adaptable.find((candidate) => candidate.name === setting.name);
-            if (slot && !fitsSlot(slot, setting.value)) {
-                unbound.push(`${shown}: a policy of the plan, not a value of the \`${setting.name}\` slot (${slot.type}); state the value it gives`);
+        // A policy word is no value of a slot. The template can map the word to a slot value, and the map reads
+        // the setting after its departure: a departure that changes the word or removes it also changes the bind.
+        // The service refuses a template with two entries for one setting with one value, thus the first entry is the entry.
+        const mapped = (contract.setting_bindings ?? []).find(
+            (entry) => entry.setting === setting.name && sameSettingValue(listAsText(entry.value), listAsText(setting.value)),
+        );
+        const mappedSlot = mapped === undefined ? undefined : adaptable.find((candidate) => candidate.name === mapped.slot && candidate.local !== true);
+        if (mapped !== undefined && (mappedSlot === undefined || !fitsSlot(mappedSlot, mapped.slot_value))) {
+            unbound.push(
+                `${shown}: the template maps it to \`${mapped.slot}\` = ${JSON.stringify(mapped.slot_value)}, which the served contract does not take`,
+            );
+            continue;
+        }
+        const target =
+            mapped !== undefined && mappedSlot !== undefined
+                ? {
+                      slot: mappedSlot,
+                      value: mapped.slot_value,
+                      source: `the plan setting \`${setting.name}\`${where ? `; ${where}` : ""}`,
+                  }
+                : adaptableNames.has(setting.name)
+                  ? { slot: adaptable.find((candidate) => candidate.name === setting.name), value: setting.value, source: setting.source ?? "plan" }
+                  : undefined;
+        if (target !== undefined) {
+            const name = target.slot?.name ?? setting.name;
+            if (target.slot && !fitsSlot(target.slot, target.value)) {
+                unbound.push(`${shown}: a policy of the plan, not a value of the \`${name}\` slot (${target.slot.type}); state the value it gives`);
                 continue;
             }
-            const prior = slots[setting.name];
+            const prior = slots[name];
             if (prior !== undefined) {
-                if (!sameSettingValue(prior, setting.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
+                if (!sameSettingValue(prior, target.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
                 continue;
             }
-            slots[setting.name] = setting.value;
-            if (setting.source) sources[setting.name] = setting.source;
-            bound.push({ name: setting.name, value: setting.value, source: setting.source ?? "plan" });
+            slots[name] = target.value;
+            if (mapped !== undefined) sources[name] = target.source;
+            else if (setting.source) sources[name] = setting.source;
+            bound.push({ name, value: target.value, source: target.source });
             continue;
         }
         const pinned = pinnedByName.get(setting.name);
@@ -758,6 +835,17 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                     ? `${shown}: pinned by the template at the same value`
                     : `${shown}: the template pins \`${setting.name}\` at ${pinnedValue}, and the plan value cannot be sent`,
             );
+            continue;
+        }
+        // The script does some settings with no slot. The plan value that the script does needs no bind and no
+        // act of the agent. A different plan value is a conflict: no slot can send it.
+        if (byConstruction.has(setting.name)) {
+            const done = byConstruction.get(setting.name);
+            if (sameSettingValue(listAsText(done), listAsText(setting.value))) doneByScript.push(shown);
+            else
+                unbound.push(
+                    `${shown}: the script of the template does \`${setting.name}\` = ${JSON.stringify(done)} with no slot, and the plan value cannot be sent`,
+                );
             continue;
         }
         unbound.push(`${shown}: no slot of the template carries it`);
@@ -775,6 +863,7 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                     description: input.description,
                 })),
                 bound,
+                done_by_script: doneByScript,
                 unbound_settings: unbound,
                 notes: contract.notes?.trim() || undefined,
             },
@@ -791,6 +880,9 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                   // without a second read of the contract.
                   local: contract.parameters.filter((slot) => slot.local === true),
                   adaptable: adaptable.map((slot) => slot.name),
+                  // The decision record keeps the departures of the step beside the bound slots.
+                  departures: grounding.departures.length > 0 ? grounding.departures : undefined,
+                  excluded: excluded.length > 0 ? excluded : undefined,
               }
             : undefined,
     };

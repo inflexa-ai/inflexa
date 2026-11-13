@@ -20,7 +20,7 @@ import type { ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../../providers/types.js";
 import { PlannerPlanSchema, PlanningAgentOutputSchema, type PlanningAgentOutput } from "../../../schemas/plan-schemas.js";
-import { ClaimViewSchema } from "../../../schemas/workflow-state.js";
+import { ClaimViewSchema, GroundingDepartureSchema, type GroundingDeparture } from "../../../schemas/workflow-state.js";
 import { planPartOf } from "../../../memory/card-builders.js";
 import { loadPlan, loadPlanRecord, type DataProfileResult } from "../../../state/index.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptStep } from "../../../testing.js";
@@ -96,7 +96,7 @@ function planIdOf(result: PlanningAgentOutput): string {
  * test when the stored shape drifts.
  */
 function storedPlan(stored: unknown): {
-    steps: Array<{ id?: string; grounding?: { snapshot?: string; status?: string; template?: string; claims?: string[] } }>;
+    steps: Array<{ id?: string; grounding?: { snapshot?: string; status?: string; template?: string; claims?: string[]; departures?: GroundingDeparture[] } }>;
 } {
     return z
         .object({
@@ -109,6 +109,7 @@ function storedPlan(stored: unknown): {
                             status: z.string().optional(),
                             template: z.string().optional(),
                             claims: z.array(z.string()).optional(),
+                            departures: z.array(GroundingDepartureSchema).optional(),
                         })
                         .optional(),
                 }),
@@ -594,6 +595,57 @@ describe("generatePlan loop-driving tool", () => {
             expect(result.event).toBe("plan_complete");
             return storedPlan((await loadPlan(pool, planIdOf(result), { analysisId }))._unsafeUnwrap()).steps;
         }
+
+        it("keeps the departures of a step, and gives a departure the claim id of the step for a rule id", async () => {
+            const reason = "the plan reports the fold changes with ashr";
+            const plan = validCandidate({
+                id: "T1S2",
+                grounding: {
+                    status: "grounded",
+                    snapshot: SNAPSHOT.digest,
+                    claims: ["R-0001@e7d0"],
+                    settings: [{ step: "differential_expression", name: "lfc_shrink", value: "apeglm" }],
+                    departures: [{ rule: "R-0001", setting: "lfc_shrink", value: "ashr", reason }],
+                    reason: "DESeq2 Wald test per R-0001@e7d0",
+                },
+            });
+
+            const steps = await storedStepsOf("an-departure-rule", await plannedWithAnswer("an-departure-rule", [plan]));
+
+            expect(steps[0]?.grounding?.departures).toEqual([{ rule: "R-0001@e7d0", setting: "lfc_shrink", value: "ashr", reason }]);
+        });
+
+        it("refuses a departure from a rule that the step does not cite, then takes the corrected plan", async () => {
+            const grounding = {
+                status: "grounded",
+                snapshot: SNAPSHOT.digest,
+                claims: ["R-0001@e7d0"],
+                settings: [{ step: "differential_expression", name: "lfc_shrink", value: "apeglm" }],
+                reason: "DESeq2 Wald test per R-0001@e7d0",
+            };
+            const departure = { setting: "lfc_shrink", value: "ashr", reason: "the plan reports the fold changes with ashr" };
+            const refused = validCandidate({ id: "T1S2", grounding: { ...grounding, departures: [{ ...departure, rule: "R-0010@2b3c" }] } });
+            const corrected = validCandidate({ id: "T1S2", grounding: { ...grounding, departures: [{ ...departure, rule: "R-0001@e7d0" }] } });
+
+            const analysisId = "an-departure-refused";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const model = scriptedModel([
+                callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(toolCall("k1", "knowledge_check", CHECKED_DRAFT)),
+                callTools(submitPlan("s1", refused)),
+                callTools(submitPlan("s2", corrected)),
+                submitted,
+            ]);
+
+            const result = planResultOf((await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
+
+            expect(JSON.stringify(toolResultIn(presentAt(model.calls, 3), "s1"))).toContain(
+                'Step \\"T1S2\\" departs from R-0010@2b3c, which is not a claim of its grounding',
+            );
+            const steps = await storedStepsOf(analysisId, result);
+            expect(steps[0]?.grounding?.departures?.[0]?.rule).toBe("R-0001@e7d0");
+        });
 
         it("restores the template of a skeleton step that the model dropped", async () => {
             // The model copies the T1S2 skeleton step with its claims and snapshot,

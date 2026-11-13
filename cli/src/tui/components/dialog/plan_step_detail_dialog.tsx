@@ -1,7 +1,7 @@
 import type { JSX } from "solid-js";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
-import type { PlanCardGroundingView, PlanCardStepView } from "../../../types/session.ts";
+import type { PlanCardDepartureView, PlanCardGroundingView, PlanCardStepView } from "../../../types/session.ts";
 import { ResultsDialog } from "./results_dialog.tsx";
 
 /** The most rules and sources that the grounding section lists. A count names the rest. */
@@ -19,7 +19,23 @@ function bounded(values: readonly string[]): string[] {
     return [...values.slice(0, MAX_GROUNDING_ITEMS), `(+${values.length - MAX_GROUNDING_ITEMS} more)`];
 }
 
-/** The grounding of the step: the release, the template, the reason, the rules, the settings, and the sources. */
+/** The text of one departure: the rule, then the setting with the value of the plan, or the setting that the plan does not apply, then the reason. */
+function departureText(departure: PlanCardDepartureView): string {
+    switch (departure.change) {
+        case "value":
+            return `${departure.rule}: ${departure.setting} = ${departure.value}. ${departure.reason}`;
+        case "not_applied":
+            return `${departure.rule}: ${departure.setting} not applied. ${departure.reason}`;
+        case "left_out":
+            return `${departure.rule}: ${departure.reason}`;
+        default: {
+            const unhandled: never = departure.change;
+            throw new Error(`unhandled departure change: ${String(unhandled)}`);
+        }
+    }
+}
+
+/** The grounding of the step: the release, the template, the reason, the rules, the settings, the departures, and the sources. */
 function groundingSection(lines: string[], grounding: PlanCardGroundingView): void {
     lines.push(
         "",
@@ -34,6 +50,7 @@ function groundingSection(lines: string[], grounding: PlanCardGroundingView): vo
         return setting.source ? `${value} (${setting.source})` : value;
     });
     section(lines, "settings", settings);
+    if (grounding.departures.length > 0) section(lines, "departures from the rules", grounding.departures.map(departureText));
     const sources = grounding.sources.map((source) => {
         const cited = `${source.title} (${source.year})`;
         return source.ref ? `${cited}, ${source.ref}` : cited;

@@ -121,12 +121,63 @@ describe("readPlanCard", () => {
                 { step: "differential_expression", name: "fdr", value: "0.05", source: "doi:10.1093/bioinformatics/btw014" },
                 { step: "differential_expression", name: "contrasts", value: "a, b", source: "" },
             ],
+            departures: [],
             sources: [
                 { title: "edgeR QL", year: 2016, ref: "doi:10.1093/bioinformatics/btw014" },
                 { title: "Manual A", year: 2020, ref: "https://example.org/A.pdf" },
                 { title: "Manual a", year: 2020, ref: "https://example.org/a.pdf" },
             ],
         });
+    });
+
+    test("shows a setting as the run binds it: the value of a departure, or not applied, with the departure as its source", () => {
+        const card = readPlanCard({
+            type: "data-plan",
+            id: "pres-1",
+            planId: "pln-abc12345",
+            steps: [
+                {
+                    id: "T1S1",
+                    name: "QC",
+                    agent: "bulk",
+                    question: "q",
+                    depends_on: [],
+                    maxSteps: 30,
+                    grounding: {
+                        status: "grounded",
+                        snapshot: "sha256:71ac",
+                        claims: ["R-0001@e7d0", "R-0147@3c1d"],
+                        settings: [
+                            { step: "qc_sample_structure", name: "n_top_genes_pca", value: 500, source: "doi:10.1186/s13059-014-0550-8" },
+                            { step: "qc_bias", name: "gc_bias", value: true },
+                            { step: "qc_bias", name: "alpha", value: 0.05 },
+                            { step: "differential_expression", name: "covariates", value: ["batch"] },
+                        ],
+                        departures: [
+                            { rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" },
+                            { rule: "R-0001@e7d0", setting: "covariates", value: [], reason: "the design has no covariate" },
+                            { rule: "R-0147@3c1d", setting: "gc_bias", reason: "the inputs hold no amplicon sequence" },
+                            { rule: "R-0147@3c1d", reason: "the plan runs no length diagnostic" },
+                        ],
+                        reason: "QC per R-0001@e7d0",
+                    },
+                },
+            ],
+        });
+
+        const grounding = present(card.steps[0]).grounding;
+        expect(grounding?.settings).toEqual([
+            { step: "qc_sample_structure", name: "n_top_genes_pca", value: "364", source: "departure from R-0001@e7d0" },
+            { step: "qc_bias", name: "gc_bias", value: "true", source: "not applied: departure from R-0147@3c1d" },
+            { step: "qc_bias", name: "alpha", value: "0.05", source: "" },
+            { step: "differential_expression", name: "covariates", value: "[]", source: "departure from R-0001@e7d0" },
+        ]);
+        expect(grounding?.departures).toEqual([
+            { rule: "R-0001@e7d0", change: "value", setting: "n_top_genes_pca", value: "364", reason: "the panel holds 364 targets" },
+            { rule: "R-0001@e7d0", change: "value", setting: "covariates", value: "[]", reason: "the design has no covariate" },
+            { rule: "R-0147@3c1d", change: "not_applied", setting: "gc_bias", value: "", reason: "the inputs hold no amplicon sequence" },
+            { rule: "R-0147@3c1d", change: "left_out", setting: "", value: "", reason: "the plan runs no length diagnostic" },
+        ]);
     });
 
     test("gives no grounding to a step that has none", () => {
