@@ -68,14 +68,6 @@ describe("createChatPrinter", () => {
         expect(middle.split("\n").filter((line) => line.trim() !== "")).toEqual(["  [recovery] the model call ran again — the reply starts again below"]);
     });
 
-    test("a text-superseded frame of a sub-agent writes nothing", async () => {
-        const h = harness();
-        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "plan_analysis" });
-        const before = h.out();
-        await h.sendFrame({ type: "text-superseded", length: 9, source: { agentId: "planner", callPath: ["cli-chat", "planner"] } });
-        expect(h.out()).toBe(before);
-    });
-
     test("sub-agent traffic outside any tool call is dropped — it has nothing to be subordinate to", () => {
         const h = harness();
         h.emit({ type: "tool-started", source: SUB, toolUseId: "t1", name: "grep" });

@@ -437,31 +437,6 @@ describe("applyChatFrame", () => {
         ]);
     });
 
-    test("a superseded text longer than the text removes all of it", () => {
-        const { messages } = applyMany(
-            [],
-            [
-                { type: "text-delta", text: "abc", source: SOURCE },
-                { type: "text-superseded", length: 50, source: SOURCE },
-            ],
-        );
-        expect(presentAt(messages, 0).parts).toEqual([{ type: "text", text: "" }]);
-    });
-
-    test("a superseded text of a sub-agent changes nothing", () => {
-        const sub = { agentId: "literature-reviewer", callPath: ["conversation-agent", "literature-reviewer"] };
-        const start: ChatMessage[] = [{ id: ASSISTANT_ID, role: "assistant", parts: [{ type: "text", text: "Hello" }] }];
-        const result = applyChatFrame(start, { type: "text-superseded", length: 5, source: sub }, ASSISTANT_ID);
-        expect(result).toEqual({ messages: start, terminal: null });
-        expect(result.messages).toBe(start);
-    });
-
-    test("a superseded text does not change the messages that it got", () => {
-        const start: ChatMessage[] = [{ id: ASSISTANT_ID, role: "assistant", parts: [{ type: "text", text: "Hello" }] }];
-        applyChatFrame(start, { type: "text-superseded", length: 2, source: SOURCE }, ASSISTANT_ID);
-        expect(start).toEqual([{ id: ASSISTANT_ID, role: "assistant", parts: [{ type: "text", text: "Hello" }] }]);
-    });
-
     test("an iteration frame of the root agent makes no part", () => {
         const { messages, terminal } = applyMany([], [{ type: "iteration", source: SOURCE }]);
         expect(terminal).toBeNull();
@@ -614,16 +589,6 @@ describe("applyChatFrame", () => {
         expect(presentAt(messages, 1).id).toBe(ASSISTANT_ID);
     });
 });
-
-describe("ChatEventSchema text-superseded", () => {
-    test("accepts a positive integer length and refuses zero, a fraction, and a negative number", () => {
-        expect(ChatEventSchema.safeParse({ type: "text-superseded", length: 9, source: SOURCE }).success).toBe(true);
-        for (const length of [0, 1.5, -3]) {
-            expect(ChatEventSchema.safeParse({ type: "text-superseded", length, source: SOURCE }).success).toBe(false);
-        }
-    });
-});
-
 describe("checkChatPart", () => {
     test("gives a valid part without the fields that its schema does not know, and keeps the source", () => {
         const frame = { type: "data-run-card", id: "r1", runId: "run-1", planId: "pln-0123abcd", title: "Run", stepCount: 2, stale: true, source: topLevel };

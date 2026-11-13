@@ -28,7 +28,7 @@ A chat turn MUST write each fact that a host shows to the durable stream of its 
 
 ### Requirement: The model calls of a turn stream their text live
 
-The turn workflow MUST write the text of each model call of its root loop to the durable stream while the call runs. A reader of the turn MUST get the text of a call while the call runs, and not only after it ends. A loop has a live reader of its text when it gives `onText` or a durable text stream. Only such a loop binds its model calls as live.
+The turn workflow MUST write the text of each model call of its root loop to the durable stream while the call runs. A reader of the turn MUST get the text of a call while the call runs, and not only after it ends. A loop has a live reader of its text when it gives `onText`. Only such a loop binds its model calls as live. The turn workflow gives `onText` to its display recorder.
 
 A live call retries a failed attempt only before its first output part, because a reader saw each part after it. A failure after that part ends the request, and the turn pauses or fails as the work-pause spec says. A loop with no live reader, for example a sub-agent or a sandbox step, keeps the retry of a whole attempt.
 
@@ -46,67 +46,22 @@ A live call retries a failed attempt only before its first output part, because 
 
 ### Requirement: The text of a rerun model call shows one time
 
-The text frames of a model call MUST carry the attempt of the call. When a recovery runs a model call again, the fold of each read MUST hold only the text of the last attempt. This applies to each message.
+The text frames of a model call MUST carry the attempt of the call. When a recovery runs a model call again, a read that starts after the recovery MUST show only the text of the last attempt for that message.
 
-Each execution of a model step of a turn MUST write a marker to the durable stream before its model request. The marker names the step and the execution. A read MUST NOT give a marker as a frame. A read that gets the marker of a new execution of a step MUST then give a `text-superseded` frame. The frame covers the text that the read gave after the earlier marker of that step. This also applies when the new execution fails before its first output part.
-
-Each text that an execution streams MUST carry the execution in the stream. A read MUST give a text of a model call only when the text carries the execution of the last marker that the read got. Thus a read MUST NOT give a text that an earlier execution writes after the marker of a new execution. This also applies when the read gave no text of the earlier execution before that marker. A cancel and a resume across two processes can cause that case.
-
-The frame carries the source of the root agent and `length`. The value of `length` is the length of the text that the read gave after the earlier marker, in UTF-16 code units. A read that gave no such text MUST NOT give the frame. The fold of the frames MUST then hold the text of the last execution one time.
-
-Each read MUST take the records of the stream in their order, from the start of the stream. A read that starts after a recovery thus gives the same frames as a read during the recovery. The text of a superseded execution and its `text-superseded` frame are in both reads.
-
-A stream that holds no marker comes from a turn from before the upgrade. A read of such a stream MUST give each text of the stream.
+A read that gave the text of an attempt, and then gets the text of a new attempt of the same model step, MUST give a `text-superseded` frame before the new text. The frame carries the source of the root agent and `length`. The value of `length` is the length of the text that the read gave for the earlier attempt, in UTF-16 code units.
 
 #### Scenario: A crash during a reply
 
 - **GIVEN** a model call that streamed half of its text, and then the host stopped
 - **WHEN** the turn recovers and the call runs again
-- **THEN** the fold of a read after the recovery holds the text of the second attempt one time
-- **AND** the fold holds no half text of the first attempt
+- **THEN** a read after the recovery shows the text of the second attempt one time, and not the half text of the first
 
 #### Scenario: A read during a recovery drops the half text
 
-- **GIVEN** a model call that streamed half of its text, and then the host of the turn stopped before the call ended
-- **AND** a read that gave the half text and the marker of the second execution, before the second execution wrote its text
-- **WHEN** the second execution streams its reply
-- **THEN** the read gives a `text-superseded` frame whose `length` is the length of the half text, and then the text of the second execution
-- **AND** the fold of the read with `applyChatFrame` holds the text of the second execution one time, and not the half text
-
-#### Scenario: A rerun that fails before its output drops the half text
-
-- **GIVEN** a model call that streamed half of its text, and then the host of the turn stopped before the call ended
-- **AND** the call runs again on recovery and fails before its first output part
-- **WHEN** a host reads the turn
-- **THEN** the read gives the half text, and then a `text-superseded` frame whose `length` is the length of the half text
-- **AND** the fold of the read with `applyChatFrame` holds no half text
-
-#### Scenario: A late write of an earlier execution does not show
-
-- **GIVEN** a read that gave text of an earlier execution of a model step
-- **AND** the earlier execution writes more text after the marker of a new execution of that step
-- **WHEN** a host reads the turn
-- **THEN** the read does not give that text
-
-#### Scenario: A first write of an earlier execution after the new marker does not show
-
-- **GIVEN** a read that gave no text of an earlier execution of a model step
-- **AND** the earlier execution writes its first text after the marker of a new execution of that step
-- **WHEN** a host reads the turn
-- **THEN** the read does not give that text
-- **AND** the fold of the read with `applyChatFrame` holds only the text of the new execution
-
-#### Scenario: A read after the recovery gives the frames of a read during it
-
-- **GIVEN** a read during a recovery that gave the half text, the `text-superseded` frame, and the text of the second execution
-- **WHEN** a host reads the turn again after the recovery
-- **THEN** the second read gives the same frames as the first read
-
-#### Scenario: A double run keeps the new reply
-
-- **GIVEN** a cancel and a resume across two processes, and an earlier execution that writes text after the end of the new execution
-- **WHEN** a host reads the turn after the two executions ended
-- **THEN** the fold of the read with `applyChatFrame` holds the text of the new execution one time, and no text of the earlier execution
+- **GIVEN** a read that gave the half text of a model call, and then the host of the turn stopped before the call ended
+- **WHEN** the turn recovers and the second attempt streams its reply
+- **THEN** the read gives a `text-superseded` frame whose `length` is the length of the half text, and then the text of the second attempt
+- **AND** the fold of the read with `applyChatFrame` holds the text of the second attempt one time, and not the half text
 
 ### Requirement: A reader reads a turn again from its start
 

@@ -464,29 +464,6 @@ describe("a chat turn as a workflow", () => {
         expect(textPartsOf(assistants[0])).toBe("Half of the answer.");
     }, 30_000);
 
-    it("ends the loop of a host that leaves a read of a paused turn before the turn writes again", async () => {
-        const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
-        provider = scripted.provider;
-        const threadId = `thread-${rig.nextWorkflowId()}`;
-
-        const turnId = await startTurn(threadId);
-        let leftAt = 0;
-        const loop = (async () => {
-            for await (const frame of turns.read(turnId)) {
-                if (frame.type !== "data-pause") continue;
-                leftAt = Date.now();
-                break;
-            }
-            return Date.now() - leftAt;
-        })();
-        const msToLeave = await Promise.race([loop, Bun.sleep(5_000).then(() => Number.POSITIVE_INFINITY)]);
-
-        expect((await DBOS.getWorkflowStatus(turnId))?.status).toBe("PENDING");
-        expect(msToLeave).toBeLessThan(1_000);
-        await work.resume(sessionWithSecret(), turnId);
-        await DBOS.retrieveWorkflow(turnId).getResult();
-    }, 30_000);
-
     it("ends each read of the stream within 5 seconds after a host leaves a read of a paused turn", async () => {
         const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
         provider = scripted.provider;
@@ -597,11 +574,11 @@ describe("a chat turn as a workflow", () => {
             .catch(() => undefined);
         const handle = await recoverAtCrashPoint(turnId, () => true, { ended });
 
-        // The second execution waits before its first output, and the read gets its marker before it streams.
+        // The second execution waits before its first output until the read gave the half text of the first.
         const frames: ChatFrame[] = [];
         for await (const frame of turns.read(turnId)) {
             frames.push(frame);
-            if (frame.type === "text-superseded") secondMayStream.open();
+            if (frame.type === "text-delta") secondMayStream.open();
         }
         await handle.getResult();
 
@@ -612,44 +589,6 @@ describe("a chat turn as a workflow", () => {
         ]);
         expect(textPartsOf(foldedAssistantOf(frames))).toBe("The whole reply.");
         expect(textPartsOf((await transcriptOf(threadId)).find((message) => message.role === "assistant"))).toBe("The whole reply.");
-    }, 30_000);
-
-    it("drops the half text of a rerun that fails before its first output part", async () => {
-        credentialAfterRestart = undefined;
-        const scripted = plannedModel([
-            { deltas: ["Half of the "], end: "hang" },
-            { deltas: ["Fresh reply."], end: "finish" },
-        ]);
-        provider = scripted.provider;
-        const threadId = `thread-${rig.nextWorkflowId()}`;
-
-        const turnId = await startTurn(threadId);
-        await readUntil(turnId, (frame) => frame.type === "text-delta");
-        // The cancelled execution drops the live credential when it leaves, thus the rerun finds none.
-        const ended = Promise.all([
-            DBOS.retrieveWorkflow(turnId)
-                .getResult()
-                .catch(() => undefined),
-            waitUntil(() => turnCredentials.of(turnId) === undefined),
-        ]);
-        const handle = await recoverAtCrashPoint(turnId, () => true, { ended });
-
-        expect(await pausedWorkOf(turnId)).toMatchObject({ waiting: [{ workflowId: turnId, state: "paused", cause: { kind: "credential" } }] });
-        const paused = await readUntil(turnId, (frame) => frame.type === "data-pause" && "state" in frame && frame.state === "paused");
-
-        expect(paused.filter((frame) => frame.type === "text-delta" || frame.type === "text-superseded")).toMatchObject([
-            { type: "text-delta", text: "Half of the " },
-            { type: "text-superseded", length: "Half of the ".length },
-        ]);
-        expect(textPartsOf(foldedAssistantOf(paused))).toBe("");
-        expect(scripted.calls).toHaveLength(1);
-
-        expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
-        await handle.getResult();
-
-        expect(scripted.calls).toHaveLength(2);
-        expect(textPartsOf(foldedAssistantOf(await readAll(turnId)))).toBe("Fresh reply.");
-        credentialAfterRestart = makeLocalAuth();
     }, 30_000);
 
     it("continues on the model of the host a turn whose stored prepare result holds no model", async () => {

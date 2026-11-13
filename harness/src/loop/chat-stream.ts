@@ -9,14 +9,12 @@
  * converter drops it, thus a client gets the frames of an in-process turn.
  */
 
-import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { functionIDGetIncrement, getCurrentContextStore } from "@dbos-inc/dbos-sdk/internal/context";
 import { readDurableStream, toolWriter, writeDurableStream, type DurableStreamSource } from "@dbos-inc/vercel-ai";
-import type { LanguageModelMiddleware, UIMessageChunk, UIMessageStreamWriter } from "ai";
+import type { UIMessageChunk, UIMessageStreamWriter } from "ai";
 import { z } from "zod";
 
 import type { ChatFrame, EventSource } from "../contracts/chat-events.js";
@@ -35,12 +33,11 @@ const SubAgentStreamFrameSchema = z.object({ type: z.literal(SUB_AGENT_STREAM_PA
 
 const HARNESS_FRAME_CHUNK = "data-harness-frame";
 
-const MODEL_EXECUTION_CHUNK = "data-model-execution";
-
-const ModelExecutionChunkSchema = z.object({
-    type: z.literal(MODEL_EXECUTION_CHUNK),
-    data: z.object({ step: z.number(), execution: z.string() }),
-});
+/**
+ * The chunk that the reader of the library gives a live read when a recovery runs a model step again. It names the
+ * attempt whose text the read gave, and that the new attempt replaces.
+ */
+const SupersededChunkSchema = z.object({ type: z.literal("data-dbos-superseded"), data: z.object({ attempt: z.string().optional() }) });
 
 /** The source of a frame that comes before the first frame of the harness. A turn writes no such frame. */
 const UNKNOWN_SOURCE: EventSource = { agentId: "", callPath: [] };
@@ -66,42 +63,6 @@ export function chunkOfFrame(frame: ChatFrame, transient = false): UIMessageChun
 function isProgressFrame(frame: ChatFrame): boolean {
     if (!isRootFrame(frame) || frame.type === "tool-started" || frame.type === "iteration") return true;
     return isKnownPartType(frame.type) && PART_REGISTRY[frame.type].transient;
-}
-
-/**
- * A model middleware that writes one marker to the stream before each execution of a model step, and that puts the
- * execution in the id of each text part of the step. A reader tells a new execution of a step from the one before it by
- * the marker, also when the new execution writes no text, and it drops a text that carries another execution than the
- * last marker. A checkpointed step does not run its body, thus a replay writes no marker. Outside a step the
- * middleware writes nothing.
- */
-export function modelExecutionMarker(key: string): LanguageModelMiddleware {
-    return {
-        specificationVersion: "v4",
-        wrapStream: async ({ doStream }) => {
-            const step = DBOS.isInStep() ? DBOS.stepID : undefined;
-            if (step === undefined) return await doStream();
-            const execution = randomUUID();
-            // The write lands before each record of the library writer of this execution, because the request starts after it.
-            await writeDurableStream(key, [{ type: MODEL_EXECUTION_CHUNK, data: { step, execution }, transient: true }]);
-            const result = await doStream();
-            return { ...result, stream: result.stream.pipeThrough(tagTextWithExecution(execution)) };
-        },
-    };
-}
-
-/**
- * The library writer composes the id of a text chunk as `${attempt}:${part id}`, and the part id of a text is only
- * unique within one model call. The execution goes in front of the part id, thus a read takes the execution of a text
- * from its chunk id. The AI SDK matches a text delta to its start by this id, and the three types change in the same way.
- */
-function tagTextWithExecution(execution: string): TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart> {
-    return new TransformStream({
-        transform(part, controller) {
-            const tagged = part.type === "text-start" || part.type === "text-delta" || part.type === "text-end";
-            controller.enqueue(tagged ? { ...part, id: `${execution}:${part.id}` } : part);
-        },
-    });
 }
 
 /** What the body of a turn workflow writes to its stream, and what each of its tool steps writes. */
@@ -301,51 +262,15 @@ function stoppableSource(inner: ChatStreamSource, signal: AbortSignal): DurableS
     }
     return {
         readStream,
-        // The library keeps one attempt of each model step from the stored records that it reads here, and it skips the
-        // other attempts. The reader tells the executions of a step apart by their markers, and a skipped record can be
-        // the one that holds the new reply. A timeout at each offset gives the library no stored record, thus it reads
-        // each record live.
-        readStreamOffset: (workflowID, key) => Promise.reject(new DBOSErrors.DBOSStreamTimeoutError(workflowID, key, 0)),
+        readStreamOffset: (workflowID, key, offset, options) => inner.readStreamOffset(workflowID, key, offset, options),
         retrieveWorkflow: (workflowID) => inner.retrieveWorkflow(workflowID),
     };
 }
 
-/**
- * The executions of the model steps that the root stream shows. The reader gives each text chunk to `admit`, and it
- * gives each marker to `mark`.
- */
-type ExecutionLedger = {
-    /** Record a marker. Gives the length of the text that the execution before it gave, when it is of the same step. */
-    mark(step: number, execution: string): number;
-    /** Whether a text chunk of an execution shows. After a marker, only a text of the execution of the last marker does. */
-    admit(execution: string | undefined, length: number): boolean;
-};
-
-function createExecutionLedger(): ExecutionLedger {
-    let last: { readonly step: number; readonly execution: string } | undefined;
-    let count = 0;
-    return {
-        mark(step, execution) {
-            if (last?.step === step && last.execution === execution) return 0;
-            const superseded = last?.step === step ? count : 0;
-            last = { step, execution };
-            count = 0;
-            return superseded;
-        },
-        admit(execution, length) {
-            if (last === undefined) return true;
-            if (execution !== last.execution) return false;
-            count += length;
-            return true;
-        },
-    };
-}
-
-/** The id of a text chunk is `${attempt}:${execution}:${part id}`, and an attempt id and an execution id hold no colon. */
-function executionOfTextChunk(id: string): string | undefined {
-    const first = id.indexOf(":");
-    const second = first === -1 ? -1 : id.indexOf(":", first + 1);
-    return second === -1 ? undefined : id.slice(first + 1, second);
+/** The attempt of a text chunk of the library, whose id is `${attempt}:${part id}`. An attempt id holds no colon. */
+function attemptOfTextChunk(id: string): string {
+    const end = id.indexOf(":");
+    return end === -1 ? id : id.slice(0, end);
 }
 
 type ChunkReader = AsyncIterator<UIMessageChunk>;
@@ -396,7 +321,8 @@ export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions
     };
     const root = open(readDurableStream({ workflowID: turnId, key: CHAT_STREAM_KEY, client: source, sendReasoning: false }));
     let rootSource = options.rootSource;
-    const executions = createExecutionLedger();
+    // The length of the text that the read gave for each attempt of a model step, in UTF-16 code units.
+    const shownText = new Map<string, number>();
     const ends: ChatFrame[] = [];
     try {
         while (reads.size > 0) {
@@ -417,13 +343,18 @@ export async function* readChatTurn(turnId: string, options: ReadChatTurnOptions
                 continue;
             }
             rootSource ??= frame?.source;
-            const marker = ModelExecutionChunkSchema.safeParse(next.value);
-            if (marker.success) {
-                const superseded = executions.mark(marker.data.data.step, marker.data.data.execution);
-                if (superseded > 0) yield { type: "text-superseded", length: superseded, source: rootSource ?? UNKNOWN_SOURCE };
+            const superseded = SupersededChunkSchema.safeParse(next.value);
+            if (superseded.success) {
+                const attempt = superseded.data.data.attempt;
+                const length = attempt === undefined ? 0 : (shownText.get(attempt) ?? 0);
+                if (attempt !== undefined) shownText.delete(attempt);
+                if (length > 0) yield { type: "text-superseded", length, source: rootSource ?? UNKNOWN_SOURCE };
                 continue;
             }
-            if (next.value.type === "text-delta" && !executions.admit(executionOfTextChunk(next.value.id), next.value.delta.length)) continue;
+            if (next.value.type === "text-delta") {
+                const attempt = attemptOfTextChunk(next.value.id);
+                shownText.set(attempt, (shownText.get(attempt) ?? 0) + next.value.delta.length);
+            }
             for (const rootFrame of framesOfChunk(next.value, rootSource ?? UNKNOWN_SOURCE)) {
                 if (rootFrame.type === "finish" || rootFrame.type === "error") ends.push(rootFrame);
                 else yield rootFrame;
