@@ -759,7 +759,11 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z
             if (launched.isErr()) {
                 const refusal = launched.error;
                 if (refusal.type === "suspended") return err({ error: `The host refused the run: ${refusal.reason}`, retryable: false });
-                if (refusal.type === "not_authorized") return err({ error: `The run was not authorized: ${refusal.reason}`, retryable: false });
+                if (refusal.type === "not_authorized")
+                    return err({
+                        error: `The run was not authorized: ${refusal.reason}`,
+                        retryable: refusal.kind === "failed" && refusal.transient,
+                    });
                 return throwLaunchRefusal(refusal, planId);
             }
 
