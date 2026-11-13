@@ -8,6 +8,7 @@ import { createNoopLogger } from "../../lib/console-logger.js";
 import { createEditFileTool, type EditIntentStore } from "../../tools/workspace/edit-file.js";
 import { createWriteFileTool } from "../../tools/workspace/write-file.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
+import { createDecisionRecordStore } from "../../tools/workspace/decision-record.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { ChatPartSchema } from "../../contracts/schemas/chat-parts.js";
 import { activityForTool, applyTreeDelta, buildFileTree, sandboxTreeDelta, stepPartId, synthesisEmission } from "../sandbox-step-translate.js";
@@ -56,7 +57,13 @@ describe("activityForTool", () => {
     };
     const tools = [
         createWriteFileTool({ mutator: notDrivenMutator }),
-        createEditFileTool({ mutator: notDrivenMutator, workspaceFilesystem: makeFakeWorkspaceFs(), workingDir: "/a/runs/r1/s1", intents: notDrivenIntents }),
+        createEditFileTool({
+            mutator: notDrivenMutator,
+            workspaceFilesystem: makeFakeWorkspaceFs(),
+            workingDir: "/a/runs/r1/s1",
+            intents: notDrivenIntents,
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.reject(new Error("records: not driven by this test")) }),
+        }),
         // Deliberately NOT a real tool id. The fallback needs a hookless tool to exercise, and
         // borrowing a shipped name would assert that tool is hookless — a claim that goes stale the
         // moment it gains one, while the test keeps passing on the fabricated stand-in.

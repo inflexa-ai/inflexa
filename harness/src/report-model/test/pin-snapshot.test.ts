@@ -13,6 +13,7 @@ import { insertRun } from "../../state/runs.js";
 import { createFixtureResolver } from "../fixture-resolver.js";
 import { pinReportSnapshot } from "../pin-snapshot.js";
 import type { CitationRecords } from "../reference-resolver.js";
+import { stepDecisionRecordDir } from "../../workspace/paths.js";
 
 const ANALYSIS = "analysis-pin";
 
@@ -376,7 +377,7 @@ describe("the citation evidence of the pin", () => {
     }
 
     async function writeDecisionRecord(runId: string, stepId: string, record: unknown): Promise<void> {
-        const dir = join(root, "runs", runId, stepId, "output");
+        const dir = stepDecisionRecordDir({ workspaceRoot: root, runId, stepId });
         await mkdir(dir, { recursive: true });
         await writeFile(join(dir, "decision_record_tpl.json"), JSON.stringify(record), "utf8");
     }

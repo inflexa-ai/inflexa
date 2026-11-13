@@ -62,7 +62,7 @@ const DEFAULT_FARM_LOCK_FILES = [`${LIBS_CONTAINER_PATH}/farm/inflexa.lock`, `${
  * configuration. A host that reads the store somewhere else injects
  * `imagePackagesFile`.
  */
-const DEFAULT_IMAGE_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/${IMAGE_PACKAGES_FILE}`;
+export const DEFAULT_IMAGE_PACKAGES_FILE = `${LIBS_CONTAINER_PATH}/${IMAGE_PACKAGES_FILE}`;
 
 /**
  * The two headings that a lock track and the image record can both carry.
@@ -287,7 +287,7 @@ function matchesLanguage(section: Section, language: PackagesQuery["language"]):
  * spellings, such as `decoupler` and `decoupleR`, needs no mark, because the
  * two identities differ and the spelling settles the track.
  */
-function bothTrackNames(sections: readonly Section[]): ReadonlySet<string> {
+export function bothTrackNames(sections: readonly Section[]): ReadonlySet<string> {
     const python = new Set<string>();
     const r = new Set<string>();
     for (const section of sections) {

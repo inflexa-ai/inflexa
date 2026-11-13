@@ -35,7 +35,7 @@ import type { BoundLease } from "../../sandbox/leases.js";
 import type { ProvenanceFrame } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame, stripMountPrefix } from "../../provenance/exec-frame.js";
-import { reconcileScriptRecord } from "./decision-record.js";
+import { decisionRecordPathFor, reconcileScriptRecord, type DecisionRecordStore } from "./decision-record.js";
 import type { WorkspaceMutator, WriteRecord } from "./mutator.js";
 import { EXEC_STREAM_BYTE_CAP, boundExecResult, type BoundedExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
@@ -110,7 +110,12 @@ type ExecCallRecord = {
     recordWrites?: readonly WriteRecord[];
 };
 
-type ExecuteCommandResult = { readonly status: "ok"; readonly note?: string } & BoundedExecResult;
+type ExecuteCommandResult = {
+    readonly status: "ok";
+    readonly note?: string;
+    /** The decision records that the host wrote to the step again before the command ran, because a copy was absent or changed. */
+    readonly decision_records_restored?: readonly string[];
+} & BoundedExecResult;
 
 /** What the agent must know about a result that is not a plain exit: a timeout, a dropped end of a stream, or an ended sandbox. */
 function execNote(result: BoundedExecResult): string | undefined {
@@ -151,18 +156,20 @@ export type ExecuteCommandDeps = {
     /** Analysis resource mount root (`/{resourceId}`) — strips frame paths to relative. */
     readonly mountRoot?: string;
     /**
-     * The workspace filesystem and the mutator of the step, for the record check of a
-     * script the command runs. Both absent (a read-only agent), no record is
-     * read or written.
+     * The workspace filesystem, the mutator of the step, and the host copies of
+     * the decision records, for the record check of a script the command runs.
+     * All absent (a read-only agent), no record is read or written.
      */
     readonly workspaceFilesystem?: WorkspaceFilesystem;
     readonly mutator?: WorkspaceMutator;
+    readonly records?: DecisionRecordStore;
 };
 
 export function createExecuteCommandTool(
     deps: ExecuteCommandDeps,
 ): Tool<z.infer<typeof ExecuteCommandInputSchema>, ExecuteCommandResult | WithToolCallRecord<ExecuteCommandResult, ExecCallRecord>> {
     const { lease, defaultCwd, lineageCollector, mountRoot } = deps;
+    const recordLogger = (deps.logger ?? createNoopLogger()).named("execute_command").named("decision-record");
 
     return defineTool({
         id: "execute_command",
@@ -209,17 +216,33 @@ export function createExecuteCommandTool(
             // Each script the argv names, as the sandbox resolves it. A relative token resolves against the cwd of the
             // command, which is a `/{analysisId}/...` path, thus the workspace filesystem resolves it the same way.
             const recordWrites: WriteRecord[] = [];
-            if (deps.workspaceFilesystem && deps.mutator) {
+            const restored: string[] = [];
+            if (deps.workspaceFilesystem && deps.mutator && deps.records) {
                 for (const token of command.filter((arg) => SCRIPT_EXTENSIONS.some((extension) => arg.endsWith(extension)))) {
-                    const noted = await reconcileScriptRecord({
+                    const scriptPath = token.startsWith("/") ? token : posixPath.join(effectiveCwd, token);
+                    const checked = await reconcileScriptRecord({
                         filesystem: deps.workspaceFilesystem,
                         mutator: deps.mutator,
+                        records: deps.records,
                         session: ctx.session,
                         invocationId: ctx.invocationId,
                         toolName: "execute_command",
-                        scriptPath: token.startsWith("/") ? token : posixPath.join(effectiveCwd, token),
+                        scriptPath,
                     });
-                    if (noted.status === "noted") recordWrites.push(noted.write);
+                    if (checked.status === "noted") recordWrites.push(...checked.writes);
+                    if (checked.status === "restored") recordWrites.push(checked.write);
+                    if (checked.status === "noted" && !checked.copyWritten) {
+                        recordLogger.warn("the copy of a decision record in the step takes no write, thus only the host copy holds the change", {
+                            path: decisionRecordPathFor(scriptPath) ?? scriptPath,
+                        });
+                    }
+                    if (checked.status === "restored" || (checked.status === "noted" && checked.restored)) {
+                        const recordPath = decisionRecordPathFor(scriptPath) ?? scriptPath;
+                        restored.push(recordPath);
+                        recordLogger.warn("the copy of a decision record in the step was absent or changed, thus the host wrote it again", {
+                            path: recordPath,
+                        });
+                    }
                 }
             }
 
@@ -236,7 +259,9 @@ export function createExecuteCommandTool(
 
             const execResult = boundExecResult(result);
             const note = execNote(execResult);
-            const bounded: ExecuteCommandResult = note === undefined ? { status: "ok", ...execResult } : { status: "ok", ...execResult, note };
+            const plain: ExecuteCommandResult =
+                restored.length > 0 ? { status: "ok", decision_records_restored: restored, ...execResult } : { status: "ok", ...execResult };
+            const bounded: ExecuteCommandResult = note === undefined ? plain : { ...plain, note };
             if ((!lineageCollector || !mountRoot) && recordWrites.length === 0) return ok(bounded);
             const record: ExecCallRecord = {
                 command,

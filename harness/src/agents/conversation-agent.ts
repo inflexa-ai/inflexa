@@ -82,6 +82,7 @@ import {
     createGrepTool,
     createListFilesTool,
     createReadFileTool,
+    createDecisionRecordStore,
     createSessionWorkspaceMutator,
     createShowPlanTool,
     createWorkspaceSearchTool,
@@ -188,7 +189,7 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
     /**
      * The knowledge service client, for the planner that `generate_plan` drives.
      * Absent, the planner attaches no knowledge tool. The conversation agent
-     * itself gets `knowledge_recommend` through `hostTools`, from the embedder.
+     * itself gets `knowledge_recommend` and `knowledge_claims` through `hostTools`, from the embedder.
      */
     readonly knowledge?: KnowledgeClient;
     /** Skills root. No tool of the roster reads it. */
@@ -435,7 +436,12 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // a symlink escape stay refused. No sandbox is involved — the mutator
         // writes host-side, exactly as it does for a sandbox agent.
         writeFileTool,
-        createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, intents: createEditIntentStore(pool) }),
+        createEditFileTool({
+            mutator,
+            workspaceFilesystem: workspaceFs,
+            intents: createEditIntentStore(pool),
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: deps.resolveWorkspaceRoot }),
+        }),
         // Working memory.
         createUpdateWorkingMemoryTool(workingMemory, pool),
         // Host-contributed tools ride the same context and dispatch path as the

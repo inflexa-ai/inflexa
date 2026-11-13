@@ -12,6 +12,7 @@ import { createSandboxAgents } from "../../../agents/sandbox/index.js";
 import { stepWritePrefix } from "../../../workspace/paths.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createWorkspaceMutator } from "../../workspace/mutator.js";
+import { createDecisionRecordStore } from "../../workspace/decision-record.js";
 import { contractAnswer, fakeKnowledgeClient, renderAnswer, SNAPSHOT, substituteRenderAnswer } from "../__fixtures__/fake-client.js";
 import { decisionRecordPath } from "../../workspace/decision-record.js";
 import { createKnowledgeTemplateTool, type TemplateBinding } from "../template.js";
@@ -53,7 +54,8 @@ describe("knowledge_template with a binding", () => {
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S2" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient(answers);
-        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, binding: bound });
+        const records = createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot), writePrefix: workingDir });
+        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, records, binding: bound });
         return { tool, workingDir, calls: fake.calls };
     }
 

@@ -7,11 +7,16 @@
  * description alone is a Phase 0 measurement.
  *
  * The model receives one representation. The procedure of the service is
- * folded into `plan_skeleton` (the shape `submit_plan` accepts), and the
- * claims ride beside it, cited by id from the steps. The procedure itself
- * stays out of the tool result: the same fact would otherwise reach the
- * model three times, as a procedure step, as a claim view, and as a skeleton
- * step.
+ * folded into `plan_skeleton` (the shape `submit_plan` accepts), and a
+ * heading of each claim rides beside it, cited by id from the steps. The
+ * procedure itself stays out of the tool result: the same fact would
+ * otherwise reach the model three times, as a procedure step, as a claim
+ * view, and as a skeleton step.
+ *
+ * The statement and the evidence of a claim stay in the call record. The
+ * full views of one answer hold about three quarters of its text, and a
+ * result past the cut of the loop reaches the model as an excerpt only.
+ * `knowledge_claims` gives a full view on demand.
  */
 
 import { ok, type Result } from "neverthrow";
@@ -22,6 +27,7 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { defineTool, withToolCallRecord, type Tool, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, RecommendResponse } from "./client.js";
+import type { ClaimShelf, KeptClaim } from "./claims.js";
 import type { SnapshotPin } from "./pin.js";
 import { joinEnvironment, type EnvironmentPaths, type RecommendWithEnvironment } from "./environment.js";
 import { SITUATION_EXAMPLE, SituationFieldsSchema, toPreferences, toSituation } from "./situation.js";
@@ -38,6 +44,8 @@ export type KnowledgeRecommendDeps = Omit<EnvironmentPaths, "farmLockFile"> & {
      * model dropped when it copied a skeleton step.
      */
     readonly onAnswer?: (answer: KnowledgeRecommendAnswer) => void;
+    /** Keeps the full view of each claim of each answer, after the round of its call, for `knowledge_claims`. */
+    readonly shelf: ClaimShelf;
     /**
      * The release of the plan. The first answer sets it after the round of its
      * call, and each later call of this tool and of `knowledge_check` sends it,
@@ -48,8 +56,9 @@ export type KnowledgeRecommendDeps = Omit<EnvironmentPaths, "farmLockFile"> & {
 };
 
 /**
- * The model-facing answer of the tool: the skeleton and the claims, with the
- * envelope of the service and the environment source. Never the procedure.
+ * The answer that the host keeps: the skeleton and the full view of each
+ * claim, with the envelope of the service and the environment source. Never
+ * the procedure. The model reads it as a `KnowledgeRecommendView`.
  */
 export type KnowledgeRecommendAnswer = {
     readonly match: RecommendResponse["match"];
@@ -69,8 +78,21 @@ export type KnowledgeRecommendAnswer = {
     reason?: string;
 };
 
+/** The heading of a claim that the model reads. The statement and the evidence are on demand, through `knowledge_claims`. */
+export type ClaimHeading = {
+    readonly id: string;
+    readonly title?: string;
+    /** Present only when the claim has no title, thus each heading carries a text. */
+    readonly statement?: string;
+    readonly strength: string;
+    readonly severity?: string;
+};
+
+/** The model-facing answer: the kept answer, with a heading of each claim in place of its view. */
+export type KnowledgeRecommendView = Omit<KnowledgeRecommendAnswer, "claims"> & { readonly claims: readonly ClaimHeading[] };
+
 export type KnowledgeRecommendOutput =
-    | WithToolCallRecord<KnowledgeRecommendAnswer, KnowledgeRecommendAnswer>
+    | WithToolCallRecord<KnowledgeRecommendView, KnowledgeRecommendAnswer>
     | KnowledgeUnavailable
     | KnowledgeRejected
     | KnowledgeSnapshotMismatch;
@@ -100,20 +122,36 @@ export function toPlannerAnswer(joined: RecommendWithEnvironment): KnowledgeReco
     return answer;
 }
 
+function headingOf(claim: KeptClaim): ClaimHeading {
+    return {
+        id: claim.id,
+        title: claim.title,
+        statement: claim.title === undefined ? claim.statement : undefined,
+        strength: claim.strength,
+        severity: claim.severity,
+    };
+}
+
+/** The answer as the model reads it: a heading of each claim, and each other field as the host keeps it. */
+export function toModelView(answer: KnowledgeRecommendAnswer): KnowledgeRecommendView {
+    return { ...answer, claims: answer.claims.map(headingOf) };
+}
+
 export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool<z.infer<typeof SituationFieldsSchema>, KnowledgeRecommendOutput> {
     return defineTool({
         id: "knowledge_recommend",
         description:
             "Get the cited, versioned procedure for an expression analysis situation (bulk RNA-seq, a microarray, or a TempO-Seq panel) from the Inflexa knowledge service, folded into plan steps: " +
             "which method for each step (for example QC, filter, normalize, model, test, shrinkage, multiple testing, enrichment, dose-response fit, point of departure, report), " +
-            "its settings with their sources, a tested script template per step, the rules that select them, and the evidence. " +
+            "its settings with their sources, a tested script template per step, and the rules that select them. " +
             "Call it BEFORE you draft a method step for a differential expression, an enrichment, a QC, a dose response, or any other question that `question` names. " +
             "Fill the situation from the Data Context (the design, the replicate counts, the batch structure, the data state, the quality concerns); never send a sample name or a file path. " +
             `Example input: ${SITUATION_EXAMPLE}. ` +
             "The answer holds one representation: `plan_skeleton`, the plan steps with the id, the name, the track, the agent, the packages, the dependencies, " +
             "the caveats, the `alternatives`, the `forbids`, the `disputed` sides, the `environment`, and the `grounding` " +
             "(the status, the snapshot, the claim ids, the template, the `settings`, and the reason) filled. " +
-            "`claims` holds one view per claim id the steps cite; cite a claim by its id, and never copy its text into the plan. " +
+            "`claims` holds the id, the title, the strength, and the severity of each claim the steps cite; `knowledge_claims` gives the statement and the evidence of a claim on demand. " +
+            "Cite a claim by its id, and never copy its text into the plan. " +
             "Read the answer this way. `match: applicable`: copy each skeleton step into `submit_plan` as it is, including `grounding.settings`, " +
             "then add the question, the acceptance criteria, the resources, and the step budget from the data profile. " +
             "A skeleton step is the vetted default, not the only permitted method. When the design or the question does not fit its method, plan the step with your method: " +
@@ -131,7 +169,10 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
             "A caveat is one of: a warn flag; a parameter conflict between two rules (the step omits that parameter, so state the value you choose and both rule ids); " +
             "a substitution (the template runs a substitute of the method of record, and the step method, package, and template are the substitute; the plan states it); " +
             "a language limit (the requested language has no template that realizes the method for this design, or its template refuses a value of the rules; the step keeps the named template, and the plan states the limit). " +
-            "A step carries `environment` when the host bound the stores: `package.present` and its version from the packages installed in the sandbox, and `collection.present` with its path in the reference store. " +
+            "A step carries `environment` when the host bound the stores. `package.state` is `installed` (the sandbox loads it now, at `version`), " +
+            "`in_store` (the package store holds it at `version`, and the launch links it when the step names it in `packages`), or `absent` (neither holds it); " +
+            "`package.entry`, when present, is the `packages` entry to write, because the store holds the name in two tracks. " +
+            "A package with no `state` has a store the host could not read. `collection.present` gives the collection with its path in the reference store. " +
             "That is the environment answer; do not call the listing tools for a package or a collection the answer already reports. " +
             "Call it once per situation; a second call with the same situation gives the same answer.",
         inputSchema: SituationFieldsSchema,
@@ -148,14 +189,16 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps): Tool
                 farmLockFile,
                 imagePackagesFile: deps.imagePackagesFile,
                 refStorePath: deps.refStorePath,
+                readPoolInventory: deps.readPoolInventory,
             });
             const planner = toPlannerAnswer(joined);
-            // The answer rides as the call record too. The pin and the memory of the planner
-            // fold it after the round, thus a replay that returns the recorded result sets both.
-            return ok(withToolCallRecord(planner, planner));
+            // The model reads the headings, and the call record keeps the full answer. The pin, the shelf, and
+            // the memory of the planner fold the record after the round, thus a replay of the recorded result sets all three.
+            return ok(withToolCallRecord(toModelView(planner), planner));
         },
         foldCallRecord: (answer) => {
             deps.pin?.set(answer.snapshot.digest);
+            deps.shelf.keep(answer.claims);
             deps.onAnswer?.(answer);
         },
     });

@@ -1,22 +1,24 @@
 /**
  * The methods and the sources of one step, as the host builds them after the agent loop. The input is
- * the grounding of the plan step, the claim views that the plan kept, and the decision records that
- * `knowledge_template` wrote into `output/`. The agent does not write the block: the host holds these
+ * the grounding of the plan step, the claim views that the plan kept, and the host copies of the decision
+ * records that `knowledge_template` wrote. The agent does not write the block: the host holds these
  * facts as data, and a summary in prose can drop them.
  *
- * The record files sit in the writable tree of the agent. Thus each read is confined against a planted
- * symlink, bounded in size and in count, and parsed as untrusted data. A record that does not parse is
- * left out, and the grounding still gives the claims and their evidence.
+ * No agent writes the host copies, but the service and the model give their content. Thus each read is
+ * confined against a symlink, bounded in size and in count, and parsed as untrusted data. A record that
+ * does not parse is left out, and the grounding still gives the claims and their evidence.
  */
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import { join, posix as posixPath } from "node:path";
 import { z } from "zod";
 
 import type { StepMethods, StepMethodsClaim, StepMethodsSource, StepMethodsTemplate } from "../contracts/chat-parts.js";
 import { citationKey } from "../contracts/report-reference.js";
-import { classifyWithinRoot } from "../lib/fs-helpers.js";
+import { classifyWithinRoot, computeSha256 } from "../lib/fs-helpers.js";
 import type { Logger } from "../lib/logger.js";
+import type { ProvenanceCollector } from "../provenance/collector.js";
+import { landWithinRoot } from "../tools/workspace/mutator.js";
 import { safeParseJsonAs } from "../lib/parse-json.js";
 import type { ClaimView, Grounding } from "../schemas/workflow-state.js";
 
@@ -67,30 +69,30 @@ export type ReadDecisionRecord = {
     readonly record: StepDecisionRecord;
 };
 
-/**
- * Read the decision records of a step from `output/decision_record_*.json`, in the order of the file
- * names. A file that escapes the step directory, that is too large, or that does not parse is left out
- * with a warning. An absent `output/` directory gives no record.
- */
-export async function readStepDecisionRecords(writePrefix: string, logger: Logger): Promise<ReadDecisionRecord[]> {
-    const outputDir = join(writePrefix, "output");
+/** The names of the record files in `dir`, in name order. An absent directory gives no name. */
+async function recordFileNames(dir: string): Promise<string[]> {
     let names: string[];
     try {
-        names = await readdir(outputDir);
+        names = await readdir(dir);
     } catch {
         return [];
     }
-    const recordNames = names
-        .filter((name) => name.startsWith(RECORD_PREFIX) && name.endsWith(RECORD_SUFFIX))
-        .sort()
-        .slice(0, MAX_RECORD_FILES);
+    return names.filter((name) => name.startsWith(RECORD_PREFIX) && name.endsWith(RECORD_SUFFIX)).sort();
+}
 
+/**
+ * Read the decision records of a step from `recordDir`, the host copies of its `output/decision_record_*.json`
+ * (`stepDecisionRecordDir`), in the order of the file names. Each entry names the copy in the step. A file that
+ * escapes the directory, that is too large, or that does not parse is left out with a warning. An absent directory
+ * gives no record.
+ */
+export async function readStepDecisionRecords(recordDir: string, logger: Logger): Promise<ReadDecisionRecord[]> {
     const records: ReadDecisionRecord[] = [];
-    for (const name of recordNames) {
-        const path = join(outputDir, name);
+    for (const name of (await recordFileNames(recordDir)).slice(0, MAX_RECORD_FILES)) {
+        const path = join(recordDir, name);
         try {
-            if ((await classifyWithinRoot(writePrefix, path)) !== "in") {
-                logger.warn("a decision record is not inside the step directory, thus the methods leave it out", { file: name });
+            if ((await classifyWithinRoot(recordDir, path)) !== "in") {
+                logger.warn("a decision record is not inside the record directory of the step, thus the methods leave it out", { file: name });
                 continue;
             }
             const info = await stat(path);
@@ -109,6 +111,60 @@ export async function readStepDecisionRecords(writePrefix: string, logger: Logge
         }
     }
     return records;
+}
+
+/**
+ * Write the copy in `output/` of the step again for each host copy in `recordDir` that the step does not hold
+ * byte for byte, because an agent can remove or change the files of its step. The restore takes each host copy, also
+ * past the bound of the methods. Each copy that it writes again gets a warning. A copy that it cannot write gets a
+ * warning too, and the step continues.
+ */
+export async function restoreStepDecisionRecords(args: {
+    readonly recordDir: string;
+    readonly writePrefix: string;
+    readonly stagingKey: string;
+    /** The lineage collector of the step. Each copy that equals its host copy keeps only a producer of those bytes. */
+    readonly collector?: ProvenanceCollector;
+    readonly logger: Logger;
+}): Promise<void> {
+    for (const name of await recordFileNames(args.recordDir)) {
+        const hostPath = join(args.recordDir, name);
+        const copyPath = join(args.writePrefix, "output", name);
+        try {
+            if ((await classifyWithinRoot(args.recordDir, hostPath)) !== "in") continue;
+            const info = await stat(hostPath);
+            if (!info.isFile() || info.size > MAX_RECORD_BYTES) continue;
+            const bytes = await readFile(hostPath);
+            const copy = await lstat(copyPath).catch(() => undefined);
+            const equal = copy?.isFile() === true && copy.size === bytes.length && bytes.equals(await readFile(copyPath));
+            if (!equal) {
+                const landed = await landWithinRoot({ root: args.writePrefix, absolute: copyPath, content: bytes, stagingKey: args.stagingKey });
+                if (landed !== "ok") {
+                    args.logger.warn("the copy of a decision record in the step is absent or changed, and the host cannot write it again", {
+                        file: `output/${name}`,
+                        status: landed,
+                    });
+                    continue;
+                }
+                args.logger.warn("the copy of a decision record in the step was absent or changed, thus the host wrote it again", { file: `output/${name}` });
+            }
+            if (args.collector) keepProducerOfBytes(args.collector, `output/${name}`, computeSha256(bytes));
+        } catch (err) {
+            args.logger.warn("a decision record restore failed", { file: `output/${name}`, ...args.logger.errorFields(err) });
+        }
+    }
+}
+
+/**
+ * Keep the provenance record of `path` only when a file tool wrote exactly `hash` there. Any other producer, for
+ * example the command that removed or changed the copy, did not write the bytes on disk. Thus its record goes, and
+ * the file falls to the step. The rule reads only the collector and the bytes, thus a replay gives the same result.
+ */
+function keepProducerOfBytes(collector: ProvenanceCollector, path: string, hash: string): void {
+    const current = collector.getRecords().find((record) => record.outputPath === path);
+    if (current === undefined) return;
+    if (current.producer.type === "file_tool" && current.outputHash === hash) return;
+    collector.removeRecord(path);
 }
 
 /**
@@ -241,10 +297,11 @@ export type StepMethodsRead = {
 export async function readStepMethods(args: {
     readonly grounding?: Grounding;
     readonly claimViews: readonly ClaimView[];
-    readonly writePrefix: string;
+    /** The host directory of the records of the step (`stepDecisionRecordDir`). */
+    readonly recordDir: string;
     readonly logger: Logger;
 }): Promise<StepMethodsRead> {
-    const read = await readStepDecisionRecords(args.writePrefix, args.logger);
+    const read = await readStepDecisionRecords(args.recordDir, args.logger);
     const assembled = assembleStepMethods({
         grounding: args.grounding,
         claimViews: claimViewsOfGrounding(args.grounding, args.claimViews),

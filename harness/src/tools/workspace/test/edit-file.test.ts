@@ -16,8 +16,9 @@ import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { createEditFileTool, type EditIntent, type EditIntentStore } from "../edit-file.js";
 import { createReadFileTool } from "../read-file.js";
 import { createWorkspaceMutator } from "../mutator.js";
+import { createDecisionRecordStore } from "../decision-record.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
-import { stepWritePrefix } from "../../../workspace/paths.js";
+import { stepDecisionRecordDir, stepWritePrefix } from "../../../workspace/paths.js";
 
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
@@ -74,6 +75,7 @@ describe("edit_file tool", () => {
             workingDir,
             intents: opts.intents ?? createFakeIntentStore().store,
             stepKey: opts.stepKey,
+            records: createDecisionRecordStore({ resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot), writePrefix: workingDir }),
         });
         return { tool, fs };
     }
@@ -153,6 +155,32 @@ describe("edit_file tool", () => {
         const own = (await tool.execute({ path: "scripts/own.R", old_string: "1", new_string: "2", replace_all: false, regex: false }, ctx))._unsafeUnwrap();
         expect(own).toMatchObject({ status: "ok" });
         expect("decision_record_noted" in own).toBe(false);
+    });
+
+    it("notes an edit of a script with a host record in the host copy, and writes the same bytes to the step", async () => {
+        const stepDir = join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP);
+        const recordDir = stepDecisionRecordDir({ workspaceRoot: join(sessionsBasePath, ANALYSIS), runId: RUN, stepId: STEP });
+        await mkdir(join(stepDir, "scripts"), { recursive: true });
+        await mkdir(recordDir, { recursive: true });
+        await writeFile(join(stepDir, "scripts", "de.R"), "ALPHA <- 0.05\n");
+        await writeFile(
+            join(recordDir, "decision_record_de.json"),
+            JSON.stringify({ template: { id: "tpl-x" }, written_sha256: "sha256:old", unvetted_edits: [] }),
+        );
+        // A command removed the copy in the step: the host copy is still the record.
+        const { tool } = buildTool();
+        const { ctx } = makeToolContext();
+
+        const out = (
+            await tool.execute({ path: "scripts/de.R", old_string: "0.05", new_string: "0.1", replace_all: false, regex: false }, ctx)
+        )._unsafeUnwrap();
+
+        expect(out).toMatchObject({ status: "ok", decision_record_noted: true });
+        const host = await readHostFile(join(recordDir, "decision_record_de.json"), "utf8");
+        const edits = asRecord(parseJsonAs(host, z.json())).unvetted_edits;
+        if (!isUnknownArray(edits)) throw new Error("the host record stored no unvetted edit");
+        expect(edits).toHaveLength(1);
+        expect(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8")).toBe(host);
     });
 
     it("rejects edits under the read-only inputs tree as out_of_prefix and lands nothing", async () => {

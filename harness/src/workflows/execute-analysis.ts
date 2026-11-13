@@ -126,7 +126,16 @@ import { withoutToolValues } from "../loop/tool-value.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
-import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import {
+    SYNTHESIS_STEP_ID,
+    runDir,
+    runStepDir,
+    stepDecisionRecordDir,
+    stepSubdir,
+    stepWritePrefix,
+    toSandboxPath,
+    type ResolveWorkspaceRoot,
+} from "../workspace/paths.js";
 import { isChatDataPart, synthesisEmission } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
@@ -826,7 +835,7 @@ async function collectUpstreamHandoffs(args: {
         const { methods, recordFiles } = await readStepMethods({
             grounding: args.planStepById[summary.stepId]?.grounding,
             claimViews: args.claims,
-            writePrefix: stepWritePrefix({ workspaceRoot, runId, stepId: summary.stepId }),
+            recordDir: stepDecisionRecordDir({ workspaceRoot, runId, stepId: summary.stepId }),
             logger: args.logger.with({ runId, stepId: summary.stepId }),
         });
         const stepDir = runStepDir(runId, summary.stepId);
