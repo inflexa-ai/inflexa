@@ -297,6 +297,35 @@ describe("composeStepSeed", () => {
         expect(prompt).not.toContain("A claim of another step");
     });
 
+    it("carries the methods of a grounded dependency and the paths of its decision records into the downstream seed", async () => {
+        const root = await makeWorkspace();
+        await writeStepSummary(root, "T1S1", "# DE results");
+        await writeFile(
+            join(root, "runs", RUN_ID, "T1S1", "output", "decision_record_tpl-deseq2-two-group_A.json"),
+            JSON.stringify({
+                template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "DESeq2", method: { id: "M-0008", label: "DESeq2 Wald test" } },
+                citations: [{ doi: "10.1186/s13059-014-0550-8", title: "DESeq2", year: 2014 }],
+            }),
+            "utf8",
+        );
+
+        const { prompt } = await composeStepSeed({
+            input: {
+                ...input([planStep("T1S1", [], grounded(SETTINGS)), planStep("T1S3", ["T1S1"])]),
+                claims: [{ id: "R-0001@e7d0", snapshot: "sha256:71ac", title: "Shrink the effect sizes", statement: "s", strength: "consensus", evidence: [] }],
+            },
+            stepId: "T1S3",
+            runId: RUN_ID,
+            deps: deps(root),
+        });
+
+        expect(prompt).toContain("- Grounding: grounded, knowledge release `sha256:71ac`");
+        expect(prompt).toContain("- Template `tpl-deseq2-two-group@1.0.0`: method M-0008, DESeq2 Wald test");
+        expect(prompt).toContain("- Rules: `R-0001@e7d0` Shrink the effect sizes");
+        expect(prompt).toContain("- Sources: DESeq2 (2014), doi:10.1186/s13059-014-0550-8");
+        expect(prompt).toContain(`- Decision records: \`/${ANALYSIS_ID}/runs/${RUN_ID}/T1S1/output/decision_record_tpl-deseq2-two-group_A.json\``);
+    });
+
     it("gives an independent step no upstream block", async () => {
         const root = await makeWorkspace();
         await writeStepSummary(root, "T1S1", "irrelevant sibling summary");

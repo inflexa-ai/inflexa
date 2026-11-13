@@ -11,13 +11,15 @@
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
 import { describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Querier } from "../../state/db.js";
 
 import { okAsync } from "neverthrow";
+import { z } from "zod";
+import { parseJsonAs } from "../../lib/parse-json.js";
 
 import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "../../lib/logger.js";
 import { presentFirst } from "../../lib/present.js";
@@ -228,6 +230,72 @@ describe("synthesizeRun", () => {
             // synthesis.json was written under the run directory.
             const path = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
             expect((await stat(path)).isFile()).toBe(true);
+        } finally {
+            await h.cleanup();
+        }
+    });
+
+    it("gives the synthesizer the method sources of the decision records, and keeps a method reference with no lookup", async () => {
+        const methodReferences = [{ stepId: STEP_ID, source: "doi:10.1186/S13059-014-0550-8", citation: "Love 2014", method: "DESeq2 Wald test" }];
+        const model = scriptedModel([
+            callTools(toolCall("tu-1", "submit_synthesis", { synthesis: { ...validSynthesisPayload(), methodReferences } })),
+            reply([text("done")]),
+        ]);
+        const h = await makeHarness(model.provider, { withSummary: true });
+        const outDir = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, STEP_ID, "output");
+        await writeFile(
+            join(outDir, "decision_record_tpl-deseq2-two-group_A.json"),
+            JSON.stringify({
+                template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "DESeq2", method: { id: "M-0008", label: "DESeq2 Wald test" } },
+                citations: [{ doi: "10.1186/s13059-014-0550-8", title: "DESeq2", year: 2014 }],
+            }),
+        );
+        const { onProgress } = captureProgress();
+        try {
+            const result = await synthesizeRun(h.deps, {
+                analysisId: ANALYSIS_ID,
+                runId: RUN_ID,
+                completedSteps: [STEP_ID],
+                session: makeRunSession(),
+                emit: () => {},
+                onProgress,
+                durably: runNow,
+            });
+
+            expect(result.synthesisStatus).toBe("produced");
+            expect(JSON.stringify(presentFirst(model.calls).prompt)).toContain("`doi:10.1186/s13059-014-0550-8`: DESeq2 (2014)");
+            const path = join(await h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
+            expect(parseJsonAs(await readFile(path, "utf8"), z.looseObject({ methodReferences: z.array(z.json()) })).methodReferences).toEqual(
+                methodReferences,
+            );
+        } finally {
+            await h.cleanup();
+        }
+    });
+
+    it("runs the synthesis from a checkpoint of the summaries that holds no methods", async () => {
+        const model = scriptedModel([callTools(toolCall("tu-1", "submit_synthesis", { synthesis: validSynthesisPayload() })), reply([text("done")])]);
+        const h = await makeHarness(model.provider, { withSummary: true });
+        const { onProgress } = captureProgress();
+        // An older version checkpointed the read of the summaries with no methods: the replay gives that value.
+        const replayOld = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+            const value = await run();
+            if (name === "synthesis.read-summaries" && value instanceof Object) Reflect.deleteProperty(value, "methods");
+            return value;
+        };
+        try {
+            const result = await synthesizeRun(h.deps, {
+                analysisId: ANALYSIS_ID,
+                runId: RUN_ID,
+                completedSteps: [STEP_ID],
+                session: makeRunSession(),
+                emit: () => {},
+                onProgress,
+                durably: replayOld,
+            });
+
+            expect(result.synthesisStatus).toBe("produced");
+            expect(JSON.stringify(presentFirst(model.calls).prompt)).not.toContain("Method Sources");
         } finally {
             await h.cleanup();
         }

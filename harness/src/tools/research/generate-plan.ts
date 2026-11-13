@@ -1095,7 +1095,16 @@ type OutcomeKind =
 type ShapedOutcome = {
     readonly output: PlanningAgentOutput;
     readonly kind: OutcomeKind;
+    /** The full views of the claims of an accepted plan, for its card. Absent on each other outcome. */
+    readonly claimViews?: readonly ClaimView[];
 };
+
+/**
+ * The result of the planner sub-agent: the output that the model gets, and the full claim views of an
+ * accepted plan for the card. The tool removes `claimViews` before the model gets the output, because
+ * the model gets the titles in `claims`. A result that an older version checkpointed has no views.
+ */
+type PlannerResult = PlanningAgentOutput & { readonly claimViews?: readonly ClaimView[] };
 
 /**
  * Translate the captured `PlannerOutcome` (plus any loop error) into the
@@ -1111,7 +1120,11 @@ function shapeOutcome(args: ShapeOutcomeArgs): ShapedOutcome {
 
     if (outcome?.kind === "plan_submitted") {
         const claims = outcome.claims.length > 0 ? claimTitlesOf(outcome.claims) : undefined;
-        return { output: { event: "plan_complete", planId: outcome.planId, plan: outcome.plan, claims }, kind: "plan_submitted" };
+        return {
+            output: { event: "plan_complete", planId: outcome.planId, plan: outcome.plan, claims },
+            kind: "plan_submitted",
+            claimViews: outcome.claims.length > 0 ? outcome.claims : undefined,
+        };
     }
     if (outcome?.kind === "clarification") {
         return {
@@ -1340,7 +1353,7 @@ type PlannerSeed =
 /** Build the `generate_plan` tool bound to its provider and pool. */
 export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent: SubAgentRegistrar): Tool {
     const baseLogger = (deps.logger ?? createNoopLogger()).named("generate-plan");
-    const plan = registerSubAgent<GeneratePlanInput, PlanningAgentOutput>(PLANNER_AGENT_ID, async ({ payload: input, ctx, loop, durably }) => {
+    const plan = registerSubAgent<GeneratePlanInput, PlannerResult>(PLANNER_AGENT_ID, async ({ payload: input, ctx, loop, durably }) => {
         const analysisId = scopeResource(ctx.session.scope).resourceId;
         // Bound per invocation: `analysisId` comes from the call-time session, not from
         // the construction-time deps the factory closes over.
@@ -1356,7 +1369,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         // `extra` carries the loop account on the paths that reached the loop. The two
         // parent-plan early returns never do, and a record claiming `loop.finishReason`
         // for a run that never started would be worse than one that omits the field.
-        const finish = (shaped: ShapedOutcome, extra: LogFields = {}): PlanningAgentOutput => {
+        const finish = (shaped: ShapedOutcome, extra: LogFields = {}): PlannerResult => {
             logger[OUTCOME_LEVEL[shaped.kind]]("plan generation finished", {
                 outcome: shaped.kind,
                 elapsedMs: Date.now() - startedAt,
@@ -1366,7 +1379,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
                 rejectionsTruncated: trace.rejectedAttempts > trace.rejections.length ? true : undefined,
                 ...extra,
             });
-            return shaped.output;
+            return shaped.claimViews === undefined ? shaped.output : { ...shaped.output, claimViews: shaped.claimViews };
         };
 
         const seed = await durably("planner.seed", async (): Promise<PlannerSeed> => {
@@ -1620,11 +1633,16 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         describeCall: ({ researchQuestion }) => researchQuestion,
         startsWorkflow: true,
         execute: async (input, ctx): Promise<Result<PlanningAgentOutput, ToolError>> => {
-            const output = await plan(input, ctx);
+            const { claimViews, ...output } = await plan(input, ctx);
             // The card comes from the result of the planner, with no read of the store, thus a replay of the body
-            // gives the same card under the same id, and a reader keeps one card.
+            // gives the same card under the same id, and a reader keeps one card. The claim views go on the card
+            // only: the model gets their titles in `claims`.
             if (output.event === "plan_complete" && output.planId !== undefined && output.plan !== undefined) {
-                const card = planCardOf({ planId: output.planId, plan: hydratePlanSteps(output.plan), parentPlanId: input.parentPlanId ?? null });
+                const card = planCardOf({
+                    planId: output.planId,
+                    plan: { ...hydratePlanSteps(output.plan), claims: claimViews },
+                    parentPlanId: input.parentPlanId ?? null,
+                });
                 if (card !== null) await ctx.emit({ type: "data-plan", source: ctx.session.provenance, data: card });
             }
             return ok(output);

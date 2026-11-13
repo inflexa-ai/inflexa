@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { createNoopLogger } from "../../../lib/console-logger.js";
 import { makeFakeChatProvider, makeFakeWorkspaceFs } from "../../../agents/sandbox/__fixtures__/deps.js";
 import { inProcessSubAgent } from "../../../loop/sub-agent.js";
-import { PLAN_ID_RE } from "../../../contracts/schemas/chat-parts.js";
+import { PLAN_ID_RE, PlanClaimViewSchema } from "../../../contracts/schemas/chat-parts.js";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { okAsync } from "neverthrow";
 import { z } from "zod";
@@ -21,7 +21,8 @@ import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../../providers/types.js";
 import { PlannerPlanSchema, PlanningAgentOutputSchema, type PlanningAgentOutput } from "../../../schemas/plan-schemas.js";
 import { ClaimViewSchema } from "../../../schemas/workflow-state.js";
-import { loadPlan, type DataProfileResult } from "../../../state/index.js";
+import { planPartOf } from "../../../memory/card-builders.js";
+import { loadPlan, loadPlanRecord, type DataProfileResult } from "../../../state/index.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptStep } from "../../../testing.js";
 import type { Tool, ToolContext } from "../../define-tool.js";
 import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake-client.js";
@@ -647,6 +648,47 @@ describe("generatePlan loop-driving tool", () => {
                     license: "CC-BY-4.0",
                 },
             ]);
+        });
+
+        it("puts the claim views on the live card, equal to the card of the stored plan, and keeps them out of the result of the model", async () => {
+            const plan = validCandidate({
+                id: "T1S2",
+                grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" },
+            });
+            const analysisId = "an-card-claims";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const model = scriptedModel([
+                callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(toolCall("k1", "knowledge_check", CHECKED_DRAFT)),
+                callTools(submitPlan("s1", plan)),
+                submitted,
+            ]);
+            const emitted: unknown[] = [];
+
+            const raw = (await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext(analysisId, { emitted })))._unsafeUnwrap();
+
+            // The model gets the titles in `claims`, and no `claimViews` key.
+            expect(parseUnknownRecord(raw)).not.toHaveProperty("claimViews");
+            const result = planResultOf(raw);
+            const live = z
+                // A strict parse refuses each key that the part schema does not name.
+                .object({ data: z.object({ claims: z.array(PlanClaimViewSchema.strict()) }) })
+                .parse(emitted.find((event) => parseUnknownRecord(event)?.type === "data-plan"));
+            // The card keeps the keys of the part schema: no rule, severity, license, or direction.
+            expect(live.data.claims).toEqual([
+                {
+                    id: "R-0001@e7d0",
+                    snapshot: SNAPSHOT.digest,
+                    title: "The title of R-0001",
+                    statement: "With 2 to 11 replicates use DESeq2 Wald or edgeR QL.",
+                    strength: "consensus",
+                    evidence: [{ doi: "10.1261/rna.053959.115", title: "How many biological replicates", year: 2016 }],
+                },
+            ]);
+            const record = (await loadPlanRecord(pool, planIdOf(result), { analysisId }))._unsafeUnwrap();
+            if (record === null) throw new Error("the stored plan is absent");
+            expect(planPartOf(record)?.claims).toEqual(live.data.claims);
         });
 
         it("keeps no claim view and gives no claims when no step cites a claim", async () => {

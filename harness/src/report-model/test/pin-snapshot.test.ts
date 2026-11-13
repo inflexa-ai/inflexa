@@ -7,6 +7,8 @@ import type { Pool } from "pg";
 import type { CitationReference } from "../../contracts/report-reference.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { upsertArtifact, upsertArtifacts, type RegisterArtifactInput } from "../../state/artifacts.js";
+import { upsertAnalysis } from "../../state/analyses.js";
+import { insertPlan } from "../../state/plans.js";
 import { insertRun } from "../../state/runs.js";
 import { createFixtureResolver } from "../fixture-resolver.js";
 import { pinReportSnapshot } from "../pin-snapshot.js";
@@ -344,6 +346,116 @@ describe("the citation evidence of the pin", () => {
         // reads the same as a pin that predates the map.
         expect(await pinCitations()).toEqual(["pmid:12345", "pmid:999"]);
         expect(await pinCitationRecords()).toBeUndefined();
+    });
+
+    /** A run of a plan whose step `T1S2` cites one claim, and whose claim view holds one DOI in upper case. */
+    async function seedGroundedRun(runId: string): Promise<void> {
+        (await upsertAnalysis(pool, ANALYSIS, null))._unsafeUnwrap();
+        const planId = (
+            await insertPlan(pool, {
+                analysisId: ANALYSIS,
+                plan: {
+                    steps: [
+                        { id: "T1S2", grounding: { status: "grounded", snapshot: "sha256:71ac", claims: ["R-0028@d560"], reason: "edgeR per R-0028" } },
+                        { id: "T1S3" },
+                    ],
+                    claims: [
+                        {
+                            id: "R-0028@d560",
+                            snapshot: "sha256:71ac",
+                            title: "Use the quasi-likelihood F-test",
+                            statement: "s",
+                            strength: "consensus",
+                            evidence: [{ doi: "10.1093/BIOINFORMATICS/btw014", title: "edgeR QL", year: 2016, direction: "supports" }],
+                        },
+                    ],
+                },
+            })
+        )._unsafeUnwrap();
+        (await insertRun(pool, { runId, analysisId: ANALYSIS, workflowName: "executeAnalysis", planId }))._unsafeUnwrap();
+    }
+
+    async function writeDecisionRecord(runId: string, stepId: string, record: unknown): Promise<void> {
+        const dir = join(root, "runs", runId, stepId, "output");
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "decision_record_tpl.json"), JSON.stringify(record), "utf8");
+    }
+
+    it("pins each DOI and PubMed id of the methods of a run, also with no synthesis", async () => {
+        await seedGroundedRun("run-methods");
+        await writeDecisionRecord("run-methods", "T1S3", {
+            template: { id: "tpl-reproducibility-record", version: "1.1.0", label: "Record", method: { id: "M-0090", label: "Record" } },
+            citations: [
+                { pmid: "19910308", title: "edgeR: a Bioconductor package", year: 2010 },
+                { url: "https://example.org/manual", title: "A manual" },
+            ],
+        });
+
+        // The claim view of T1S2 gives the DOI in lower case, and the record of T1S3 gives the PubMed id.
+        // A source with a URL alone has no citation key.
+        expect(await pinCitations()).toEqual(["doi:10.1093/bioinformatics/btw014", "pmid:19910308"]);
+        expect(await pinCitationRecords()).toEqual({
+            "doi:10.1093/bioinformatics/btw014": { citation: "edgeR QL (2016)" },
+            "pmid:19910308": { citation: "edgeR: a Bioconductor package (2010)" },
+        });
+    });
+
+    it("pins each source of a step past the bound of the methods display list", async () => {
+        await seedGroundedRun("run-many-sources");
+        const citations = Array.from({ length: 70 }, (_, i) => ({ pmid: String(1000 + i), title: `Paper ${i}` }));
+        await writeDecisionRecord("run-many-sources", "T1S3", {
+            template: { id: "tpl-reproducibility-record", version: "1.1.0", label: "Record", method: { id: "M-0090", label: "Record" } },
+            citations,
+        });
+
+        expect(await pinCitations()).toContain("pmid:1069");
+    });
+
+    it("pins each method reference of a run synthesis, and keeps its citation", async () => {
+        await seedRun("run-method-refs");
+        await writeSynthesis(
+            "run-method-refs",
+            JSON.stringify({
+                keyReferences: [],
+                methodReferences: [
+                    { stepId: "T1S2", source: "doi:10.1093/Bioinformatics/btp616", citation: "Robinson 2010", method: "edgeR" },
+                    { stepId: "T1S2", source: "url:https://example.org", citation: "A page", method: "edgeR" },
+                    { stepId: "T1S2", source: "doi:", citation: "Nothing", method: "edgeR" },
+                ],
+            }),
+        );
+
+        expect(await pinCitations()).toEqual(["doi:10.1093/bioinformatics/btp616"]);
+        expect(await pinCitationRecords()).toEqual({ "doi:10.1093/bioinformatics/btp616": { citation: "Robinson 2010" } });
+    });
+
+    it("resolves a DOI citation that an author types in a different case", async () => {
+        await seedGroundedRun("run-doi");
+
+        const snapshot = (await pinReportSnapshot(pool, ANALYSIS, { resolveWorkspaceRoot: resolveRoot }))._unsafeUnwrap();
+        const reference: CitationReference = {
+            kind: "citation",
+            idKind: "doi",
+            id: "10.1093/Bioinformatics/BTW014",
+            raw: "Lun 2016",
+            assert: { value: "doi:10.1093/BIOINFORMATICS/btw014" },
+        };
+        const resolved = await createFixtureResolver().resolve(reference, snapshot);
+
+        expect(resolved._unsafeUnwrap()).toEqual({ type: "citation", id: "doi:10.1093/bioinformatics/btw014" });
+    });
+
+    it("fails the pin when the plan read of a run fails", async () => {
+        await seedGroundedRun("run-plan-fault");
+        // The same fault shape as the run listing below: a table with no columns gives a real driver error.
+        await pool.query("ALTER TABLE cortex_runs DROP CONSTRAINT IF EXISTS cortex_runs_plan_id_fkey");
+        await pool.query("DROP TABLE cortex_plans CASCADE");
+        await pool.query("CREATE TABLE cortex_plans ()");
+
+        const result = await pinReportSnapshot(pool, ANALYSIS, { resolveWorkspaceRoot: resolveRoot });
+
+        expect(result.isErr()).toBe(true);
+        expect(result._unsafeUnwrapErr().kind).toBe("plan-read-failed");
     });
 
     it("fails the pin when the run listing fails", async () => {
