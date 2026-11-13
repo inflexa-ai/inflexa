@@ -487,6 +487,44 @@ describe("a chat turn as a workflow", () => {
         await DBOS.retrieveWorkflow(turnId).getResult();
     }, 30_000);
 
+    it("ends each read of the stream within 5 seconds after a host leaves a read of a paused turn", async () => {
+        const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
+        provider = scripted.provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        let open = 0;
+        let lastEndedAt = 0;
+        const readStream = DBOS.readStream.bind(DBOS);
+        const spy = spyOn(DBOS, "readStream").mockImplementation(async function* <T>(...args: Parameters<typeof DBOS.readStream>) {
+            open += 1;
+            try {
+                yield* readStream<T>(...args);
+            } finally {
+                open -= 1;
+                lastEndedAt = Date.now();
+            }
+        });
+        try {
+            const turnId = await startTurn(threadId);
+            let leftAt = 0;
+            for await (const frame of turns.read(turnId)) {
+                if (frame.type !== "data-pause") continue;
+                leftAt = Date.now();
+                break;
+            }
+
+            const deadline = leftAt + 6_000;
+            while (open > 0 && Date.now() < deadline) await Bun.sleep(50);
+
+            expect(open).toBe(0);
+            expect(lastEndedAt - leftAt).toBeLessThan(5_000);
+            await work.resume(sessionWithSecret(), turnId);
+            await DBOS.retrieveWorkflow(turnId).getResult();
+        } finally {
+            spy.mockRestore();
+        }
+    }, 30_000);
+
     it("keeps the partial reply of a failed model call when the turn recovers during the pause", async () => {
         const scripted = scriptedModel([{ breakAfter: [text("Half of the ")], error: unavailable() }, reply([text("answer.")])], { maxRetries: 1 });
         provider = scripted.provider;
