@@ -788,7 +788,7 @@ describe("generatePlan loop-driving tool", () => {
             const steps = await storedStepsOf("an-filled-settings", result);
 
             expect(steps[0]?.grounding?.settings).toEqual([
-                { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" },
+                { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8", rule: "R-0001@e7d0" },
             ]);
             expect(steps[0]?.grounding?.departures).toEqual([departure]);
         });

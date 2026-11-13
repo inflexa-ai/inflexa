@@ -98,7 +98,7 @@ The tool MUST give the planner one representation: `plan_skeleton` and `claims`.
 - the `environment` of the central step
 - the grounding, with `settings` filled
 
-Each entry of `settings` is one parameter of a procedure step of the group. The entry MUST name the procedure step, the name, the value, and the source.
+Each entry of `settings` is one parameter of a procedure step of the group. The entry MUST name the procedure step, the name, the value, and the source. When the service names the rule that gives the value of the parameter, the entry MUST also carry the claim id of that rule as `rule`.
 
 `claims` MUST hold one heading for each claim that the procedure references, in match order. A referenced claim is a rule of a step, a flag, an alternative, or a disputed rule. A heading MUST carry the claim id, the title, the strength, and the severity. A heading MUST NOT carry the statement or the evidence, except that the heading of a claim with no title MUST carry the statement.
 
@@ -398,7 +398,7 @@ A template gives each slot a value, and an omitted slot takes the default of the
 
 ### Requirement: The plan step carries an optional grounding
 
-`AnalysisStepSchema` and `PlanStepSchema` MUST carry an optional `grounding` object with `status` (`grounded`, `ungrounded`, `flagged`), `snapshot`, `claims`, an optional `template`, an optional `settings` list, and `reason`. The object MUST also carry an optional `departures` list. Each entry of `settings` MUST carry the procedure step, the name, the value, and an optional source. The value is a string, a number, a boolean, or a list of strings. The planner MUST copy `settings` from the skeleton step as it is. A plan without the field MUST validate as before. The briefing MUST render the field beside the task fields.
+`AnalysisStepSchema` and `PlanStepSchema` MUST carry an optional `grounding` object with `status` (`grounded`, `ungrounded`, `flagged`), `snapshot`, `claims`, an optional `template`, an optional `settings` list, and `reason`. The object MUST also carry an optional `departures` list. Each entry of `settings` MUST carry the procedure step, the name, the value, an optional source, and an optional `rule`. The `rule` is the claim id of the rule that gives the value. A setting of a plan that the harness stored before the field has no `rule`, and the harness MUST NOT derive one. The value is a string, a number, a boolean, or a list of strings. The planner MUST copy `settings` from the skeleton step as it is. A plan without the field MUST validate as before. The briefing MUST render the field beside the task fields.
 
 A departure states where a grounded step keeps its method and departs from a rule that it cites. Each entry of `departures` MUST carry the claim id of the rule and the reason. An entry MUST name the setting that it changes, unless it leaves out a part of the rule that no setting carries. An entry MUST carry the value of the plan, unless the plan does not apply the setting. The Grounding section of the briefing MUST render each departure with its rule, its setting, the value of the plan, and the reason.
 
@@ -422,6 +422,12 @@ A departure can name a rule id in place of a claim id. If exactly one claim of t
 - **GIVEN** a skeleton step whose grounding holds the alpha of the test with its step and source
 - **WHEN** the planner submits the plan with the step copied as it is
 - **THEN** the plan validates, and the stored step carries the setting with its step, name, value, and source
+
+#### Scenario: A setting names its rule
+
+- **GIVEN** a recommend answer whose differential expression step gives `alpha = 0.05` with the rule `R-0001@e7d0`, and whose adjustment step gives `adjust_method = BH` with no rule
+- **WHEN** the planner submits the plan with no `grounding.settings` on the skeleton step
+- **THEN** the stored step carries `alpha` with the rule `R-0001@e7d0`, and it carries `adjust_method` with no `rule`
 
 #### Scenario: A grounded step reaches its agent
 
