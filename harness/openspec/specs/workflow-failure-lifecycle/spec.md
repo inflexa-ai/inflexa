@@ -150,67 +150,40 @@ non-rolling-back rule.
 
 ### Requirement: The body owns the end of the run unless the canceler wins the row
 
-The run body and the run canceler race at the end of a run, and the first
-terminal write of the run row wins. The writer that wins the row owns each act
-of the run end: the `run_completed` emit, the charge close, and the
-run-authorization revoke. When the status write of the body fails, no writer
-owns the row, and the body owns the run end. The body MUST do these acts only
-as the owner of the row, or after its status write failed.
+The run body and the run canceler race at the end of a run, and the first terminal write of the run row wins. The writer that wins the row owns each act of the run end: the `run_completed` emit, the charge close, and the run-authorization revoke. When the status write of the body fails, no writer owns the row, and the body owns the run end. The body MUST do these acts only as the owner of the row, or after its status write failed.
 
-The body MUST NOT emit `run_completed` before its status write. When the write
-of `persist-final-status` changes the row, the same step MUST do these acts, in
-this order:
+When the body revokes the run authorization, it MUST emit `run_completed` before the revoke. A host can persist the run end under the run credential, and the revoke ends that credential.
 
-1. It emits `run_completed` with the status of the body. The emit MUST occur
-   before another reader can see the terminal status of the row.
+The body MUST NOT emit `run_completed` before its status write. When the write of `persist-final-status` changes the row, the same step MUST do these acts, in this order:
+
+1. It emits `run_completed` with the status of the body. The emit MUST occur before another reader can see the terminal status of the row.
 2. It records the outcome metrics.
 3. It closes the running charge with the outcome of the status.
 4. It revokes the run authorization.
 
 These acts come before `persist-synthesis-outcome` and `sweep-pending-steps`.
 
-The emit order lets a host that exits when its poll sees a terminal row flush
-the run end first. An engine cancel cannot stop a step that started, thus a
-cancel cannot cut the body between its won write and these acts.
+The emit order lets a host that exits when its poll sees a terminal row flush the run end first. An engine cancel cannot stop a step that started, thus a cancel cannot cut the body between its won write and these acts.
 
-When a recovery replays the body and gives the won step from the cache, the
-body MUST emit `run_completed` again, outside the step. The event MUST carry the
-same status, `atMs`, and `durationMs`. The body MUST NOT close the charge or
-revoke the authorization again.
+When the status write is refused or fails, the body MUST close the charge in the `close-running-charge` step. Then the `revoke-run-auth` step MUST emit `run_completed`, and then it MUST revoke the authorization. The step MUST NOT emit when an attempt of the status step emitted it in this execution. The charge close comes first, because it is the step that stops the body when the canceler won the row. A refused write has two causes:
 
-When the status write is refused or fails, the body MUST close the charge in
-the `close-running-charge` step, and then revoke the authorization in the
-`revoke-run-auth` step. Then it MUST emit `run_completed`, unless an attempt of
-the status step emitted it in this execution. A refused write has
-two causes:
+- The run canceler won the row. The canceler cancels the engine before its write, thus the `close-running-charge` step throws the engine cancel. The body then stops, and it does no act of the run end.
+- A recovery runs the status step again after its own write landed and before the step was recorded. The body owns the row, thus it completes the run end.
 
-- The run canceler won the row. The canceler cancels the engine before its
-  write, thus the `close-running-charge` step throws the engine cancel. The
-  body then stops, and it does no act of the run end.
-- A recovery runs the status step again after its own write landed and before
-  the step was recorded. The body owns the row, thus it completes the run end.
+After a failed write, an engine cancel can land after the charge close and before `revoke-run-auth`. The cancel then stops the body before the step emits. Thus the body emits no run end, and the canceler owns the rest of the run end.
 
-After a failed write, the row stays `running`. Thus, after the emit, the body
-MUST record its run end in the durability engine. The record is a workflow
-event that holds these values:
+When a recovery replays the body and gives the step that emitted from the cache, the body MUST emit `run_completed` again, outside the step. That step is the won `persist-final-status` step, or the `revoke-run-auth` step of a refused or failed write. The event MUST carry the same status, `atMs`, and `durationMs`. The body MUST NOT close the charge or revoke the authorization again.
+
+After a failed write, the row stays `running`. Thus, after the emit and the revoke, the body MUST record its run end in the durability engine. The record is a workflow event that holds these values:
 
 - the status and the error that the failed write tried to write
 - the result of the charge close, and the result of the revoke.
 
-The run canceler reads it, and then it does no act of the run end (see the
-`run-cancellation` capability). The body MUST NOT record a run end after a won
-or a refused write.
+The run canceler reads it, and then it does no act of the run end (see the `run-cancellation` capability). The body MUST NOT record a run end after a won or a refused write.
 
-The record MUST come after the charge close, the revoke, and the emit. A cancel
-that lands before the record stops the body, thus the body records nothing, and
-the canceler owns the rest of the run end. A failure of the record other than
-the cancel MUST go to the log, and the body MUST continue with its next
-terminal step.
+The record MUST come after the charge close, the emit, and the revoke. A cancel that lands before the record stops the body, thus the body records nothing, and the canceler owns the rest of the run end. A failure of the record other than the cancel MUST go to the log, and the body MUST continue with its next terminal step.
 
-One race keeps two run ends. An attempt emits `run_completed`, its commit
-fails, and an engine cancel lands before the next attempt. The canceler then
-wins the row and records the second run end. The emit before the commit causes
-this race, and this requirement accepts it.
+One race keeps two run ends. An attempt emits `run_completed`, its commit fails, and an engine cancel lands before the next attempt. The canceler then wins the row and records the second run end. The emit before the commit causes this race, and this requirement accepts it.
 
 #### Scenario: A won status write emits one run end before the row shows it
 
@@ -236,8 +209,8 @@ this race, and this requirement accepts it.
 
 - **GIVEN** a `persist-final-status` step whose write landed before a crash, and whose result DBOS did not record
 - **WHEN** the recovery runs the step again and the write changes nothing
-- **THEN** the body closes the charge in `close-running-charge` and revokes the authorization in `revoke-run-auth`
-- **AND** the body emits `run_completed` with the `atMs` of the terminal clock read of the first execution
+- **THEN** the body closes the charge in `close-running-charge`
+- **AND** the `revoke-run-auth` step emits `run_completed` with the `atMs` of the terminal clock read of the first execution, and then it revokes the authorization
 
 #### Scenario: A replay of a won step emits the run end again
 
@@ -245,16 +218,39 @@ this race, and this requirement accepts it.
 - **THEN** the body emits `run_completed` again with the same status, `atMs`, and `durationMs`
 - **AND** the body does not close the charge or revoke the authorization again
 
+#### Scenario: A replay of the revoke step emits the run end again
+
+- **GIVEN** a status write that was refused or that failed, and a `revoke-run-auth` step that completed
+- **WHEN** a recovery replays the body and DBOS gives `close-running-charge` and `revoke-run-auth` from the cache
+- **THEN** the body emits `run_completed` again with the same status, `atMs`, and `durationMs`
+- **AND** the body does not close the charge or revoke the authorization again
+
 #### Scenario: A failed status write still closes the charge
 
 - **WHEN** each attempt of the status write of `persist-final-status` fails
 - **THEN** the body logs the failure with the `runId` and the status
-- **AND** the body closes the charge in `close-running-charge`, revokes the authorization in `revoke-run-auth`, and then emits `run_completed`
+- **AND** the body closes the charge in `close-running-charge`
+- **AND** the `revoke-run-auth` step emits `run_completed`, and then it revokes the authorization
+
+#### Scenario: An attempt that emitted keeps one run end before the revoke
+
+- **GIVEN** an attempt of the status write that emits `run_completed` and whose commit then fails
+- **WHEN** each later attempt of the status write fails
+- **THEN** the run emit receives one `run_completed` event, and it comes before the revoke
+- **AND** the `revoke-run-auth` step revokes the authorization and emits nothing
+
+#### Scenario: A cancel after the charge close of a failed write leaves the run end to the canceler
+
+- **GIVEN** a status write that failed on each attempt, and a `close-running-charge` step that completed
+- **WHEN** an engine cancel of the parent lands before `revoke-run-auth`
+- **THEN** the `revoke-run-auth` step throws the engine cancel before it emits
+- **AND** the body emits no `run_completed` event, revokes no authorization, and records no run end in the engine
 
 #### Scenario: A failed status write records the run end
 
 - **WHEN** each attempt of the status write of `persist-final-status` fails
-- **THEN** after the emit, the body records its run end in the engine, with the status and the error of the failed write, and with the results of the charge close and the revoke
+- **THEN** after the emit and the revoke, the body records its run end in the engine
+- **AND** the record holds the status and the error of the failed write, and the results of the charge close and the revoke
 
 #### Scenario: A failed commit after the emit, then a cancel, keeps two run ends
 

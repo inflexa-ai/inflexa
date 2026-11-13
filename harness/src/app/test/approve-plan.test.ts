@@ -295,7 +295,7 @@ describe("approvePlan", () => {
 
         const refusal = (await approvePlan(depsOf(d, { runAuthorizer: refusing }), input()))._unsafeUnwrapErr();
 
-        expect(refusal).toEqual({ type: "not_authorized", reason: "mint refused" });
+        expect(refusal).toEqual({ type: "not_authorized", kind: "failed", transient: false, reason: "mint refused" });
         expect(d.events).toEqual([]);
         expect(await threadRowCount()).toBe(0);
     });

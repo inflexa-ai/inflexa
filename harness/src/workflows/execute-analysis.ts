@@ -55,9 +55,10 @@
  *       `failStep`), closes the running charge with the matching outcome, and
  *       revokes the run authorization through the injected `runAuthorizer`
  *     - the write retries with backoff on a failed transaction. When the write is
- *       refused, or fails on each attempt, close and revoke in their own steps, then
- *       emit `run_completed`. After a failed write the row stays `running`, so the
- *       body records its run end as a workflow event for the run canceler
+ *       refused, or fails on each attempt, the body closes the charge in its own
+ *       step. Then the revoke step emits `run_completed` and revokes. After a
+ *       failed write the row stays `running`, so the body records its run end as a
+ *       workflow event for the run canceler
  *     - emit terminal stream part
  *     - WRITES NOTHING to the conversation thread (results are pull-only
  *       via `inspectRun`)
@@ -1670,16 +1671,29 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // When a recovery runs the status step again after its own write landed, no cancel occurred and
     // the body completes the run end here. A failed write leaves the row `running` with no owner,
     // and the body still closes and revokes.
+    //
+    // The revoke step emits the run end before it revokes: a host can persist the run end under the
+    // run credential, and the revoke ends that credential. The step checks the cancel before its
+    // body, so a cancel after the charge close stops the body before any emit, and the canceler
+    // owns the only run end. An attempt of the status step that emitted before a failed commit
+    // already set `emittedInStep`, so the step emits nothing then.
+    const emitThenRevoke = async (): Promise<boolean> => {
+        if (!emittedInStep) {
+            emitRunEnd();
+            emittedInStep = true;
+        }
+        return await revokeAuthorization();
+    };
     let closed = false;
     let revoked = false;
     if (finalWrite !== "won") {
         closed = await DBOS.runStep(closeCharge, { name: "close-running-charge" });
-        revoked = await DBOS.runStep(revokeAuthorization, { name: "revoke-run-auth" });
+        revoked = await DBOS.runStep(emitThenRevoke, { name: "revoke-run-auth" });
     }
 
-    // The step emits only in the execution that ran it. A won step that DBOS gives from the cache
-    // did not run, and a refused or failed write did not emit; the body fires the run end here
-    // with the same checkpointed values. It is not step-wrapped, so a recovery replay fires it again.
+    // A step emits only in the execution that ran it. A won step or a revoke step that DBOS gives
+    // from the cache did not run; the body fires the run end here with the same checkpointed
+    // values. It is not step-wrapped, so a recovery replay fires it again.
     if (!emittedInStep) emitRunEnd();
 
     // After a failed write the row is not terminal, so the body records its run end for the run

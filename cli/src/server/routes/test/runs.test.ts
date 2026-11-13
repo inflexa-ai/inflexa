@@ -1641,7 +1641,11 @@ describe("POST {A}/plans/:planId/approve", () => {
                 `The packages of plan ${planId} cannot link.`,
                 { reason: "packages_missing", missing: [], collisions: [], unavailable: "the farm is locked" },
             ],
-            [{ type: "not_authorized", reason: "mint refused" }, "The run was not authorized: mint refused", { reason: "not_authorized" }],
+            [
+                { type: "not_authorized", kind: "failed", transient: false, reason: "mint refused" },
+                "The run was not authorized: mint refused",
+                { reason: "not_authorized" },
+            ],
             [{ type: "suspended", reason: "no_funds" }, "The analysis is suspended: no_funds", { reason: "suspended" }],
         ];
 

@@ -121,7 +121,10 @@ describe("registerStepArtifacts — a refusal of the register gate", () => {
             session,
         );
 
-        expect(registration._unsafeUnwrapErr()).toEqual({ kind: "refused", refusal: { kind: "failed", gate: "ArtifactRegistry.register", reason: "r" } });
+        expect(registration._unsafeUnwrapErr()).toEqual({
+            kind: "refused",
+            refusal: { kind: "failed", gate: "ArtifactRegistry.register", reason: "r", transient: false },
+        });
         expect(statements.some((sql) => sql.includes("INSERT INTO cortex_artifacts"))).toBe(true);
         expect(statements.some((sql) => sql.includes("SET artifact_id"))).toBe(false);
     });
