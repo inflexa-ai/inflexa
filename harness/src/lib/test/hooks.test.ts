@@ -12,7 +12,28 @@ describe("passGate", () => {
 
     it("turns a gate err into a failed refusal that carries the reason of the host", async () => {
         const refusal = (await passGate("RunCharge.open", errAsync<never, GateFailure>({ reason: "r", suspend: false })))._unsafeUnwrapErr();
-        expect(refusal).toEqual({ kind: "failed", gate: "RunCharge.open", reason: "r" });
+        expect(refusal).toEqual({ kind: "failed", gate: "RunCharge.open", reason: "r", transient: false });
+    });
+
+    it("turns a gate err with transient into a failed refusal that carries the transient flag", async () => {
+        const refusal = (
+            await passGate("RunAuthorizer.authorize", errAsync<never, GateFailure>({ reason: "unavailable", suspend: false, transient: true }))
+        )._unsafeUnwrapErr();
+        expect(refusal).toEqual({ kind: "failed", gate: "RunAuthorizer.authorize", reason: "unavailable", transient: true });
+    });
+
+    it("gives the credential flag priority over the transient flag", async () => {
+        const refusal = (
+            await passGate("RunAuthorizer.authorize", errAsync<never, GateFailure>({ reason: "expired", suspend: false, credential: true, transient: true }))
+        )._unsafeUnwrapErr();
+        expect(refusal).toEqual({ kind: "credential", gate: "RunAuthorizer.authorize", reason: "expired" });
+    });
+
+    it("gives the suspend flag priority over the transient flag", async () => {
+        const refusal = (
+            await passGate("RunAuthorizer.authorize", errAsync<never, GateFailure>({ reason: "r", suspend: true, transient: true }))
+        )._unsafeUnwrapErr();
+        expect(refusal).toEqual({ kind: "suspended", gate: "RunAuthorizer.authorize", reason: "r" });
     });
 
     it("turns a gate err with suspend into a suspended refusal, not a failed one", async () => {

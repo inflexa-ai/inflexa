@@ -175,7 +175,8 @@ export type LaunchPlanRunRefusal =
     | { type: "plan_invalid"; planId: string; malformed: boolean; errors: string[] }
     | { type: "packages_missing"; missing: string[]; collisions: string[]; unavailable?: string }
     | { type: "run_not_found"; runId: string }
-    | { type: "not_authorized"; reason: string }
+    | { type: "not_authorized"; kind: "failed"; transient: boolean; reason: string }
+    | { type: "not_authorized"; kind: "credential"; reason: string }
     | { type: "suspended"; reason: string }
     | { type: "store_failed"; cause: unknown }
     | { type: "launch_failed"; cause: unknown };
@@ -479,12 +480,24 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
     if (authorized.isErr()) {
         // The refusal ends the run before a workflow exists, thus the reserved row must not stay `running`. No work
         // exists yet, thus a refusal with the suspend flag does not pause, and it marks no analysis.
-        const { kind, reason } = authorized.error;
+        const refusal = authorized.error;
+        const { reason } = refusal;
         await updateRunStatus(deps.pool, runId, "failed", reason).match(
             () => {},
             () => {},
         );
-        return err(kind === "suspended" ? { type: "suspended", reason } : { type: "not_authorized", reason });
+        switch (refusal.kind) {
+            case "suspended":
+                return err({ type: "suspended", reason });
+            case "credential":
+                return err({ type: "not_authorized", kind: "credential", reason });
+            case "failed":
+                return err({ type: "not_authorized", kind: "failed", transient: refusal.transient, reason });
+            default: {
+                const exhaustive: never = refusal;
+                return exhaustive;
+            }
+        }
     }
     const runSession = authorized.value;
 

@@ -20,9 +20,16 @@ The function MUST do these steps in this order:
 4. Read the active run of the plan. When one exists, give its run id with `started: false`. The function then links nothing, reserves nothing, and authorizes nothing.
 5. Link the packages of the plan through the farm link function of the host, when the host gives one. A pool miss, a collision, or an unavailable store gives `packages_missing`, with the missing entries, the collisions, and the reason of an unavailable store. No run row exists after this refusal.
 6. Reserve a run row with a new run id, the plan id, and the thread id of the scope. The lock of the plan holds the reservation, as the next paragraph tells. A collision with a concurrent launch of the same plan gives the active run with `started: false`. When the collision finds no active run, the function gives `store_failed`.
-7. Authorize the run. A refusal marks the run `failed`. A refusal with the suspend flag gives `suspended` with the reason, and it does not mark the analysis. Each other refusal gives `not_authorized` with the reason. A failed write of the run status does not change the refusal.
+7. Authorize the run. A refusal marks the run `failed`. A refusal with the suspend flag gives `suspended` with the reason, and it does not mark the analysis. Each other refusal gives `not_authorized` with the reason and the kind of the refusal, as the next paragraph tells. A failed write of the run status does not change the refusal.
 8. Start the workflow under the run id. A failed start revokes the authorization, marks the run `failed`, and gives `launch_failed`. A failed write of the run status does not change this refusal either.
 9. Give the run id with `started: true`.
+
+The refusal `not_authorized` MUST carry the kind of the refusal of the run authorizer, as the `host-hooks` capability defines it:
+
+- A refusal of the credential of the caller gives `{ type: "not_authorized", kind: "credential", reason }`.
+- Each other refusal gives `{ type: "not_authorized", kind: "failed", transient, reason }`. `transient` is the transient flag of the host, and it is false when the host did not set it.
+
+Thus a host can tell these cases apart: a refusal of the run, a credential that is expired or absent, and a failure that time can repair.
 
 Each reservation of a stored plan MUST hold a lock of the plan, from its read of the newest run to its commit. Thus the reservations of one plan occur one after the other. Under the lock, the reservation reads the newest run of the plan. When the caller gives a newest run id, a mismatch reserves nothing, and it gives the outcome of step 3.
 
@@ -107,7 +114,22 @@ A failed store read or write gives `store_failed`. The function emits no chat pa
 
 - **GIVEN** a run authorizer that refuses the run with a reason that is not a suspension
 - **WHEN** a host launches the plan
-- **THEN** the result is the refusal `not_authorized` with the reason, and the run row is `failed`
+- **THEN** the result is the refusal `not_authorized` with the kind `failed`, `transient: false`, and the reason
+- **AND** the run row is `failed`
+
+#### Scenario: A transient failure of the authorization stays transient
+
+- **GIVEN** a run authorizer that refuses the run with the reason `identity_unavailable` and the transient flag
+- **WHEN** a host launches the plan
+- **THEN** the result is the refusal `not_authorized` with the kind `failed`, `transient: true`, and the reason `identity_unavailable`
+- **AND** the run row is `failed`
+
+#### Scenario: A refused credential keeps its kind
+
+- **GIVEN** a run authorizer that refuses the run with the reason `credential_expired` and the credential flag
+- **WHEN** a host launches the plan
+- **THEN** the result is the refusal `not_authorized` with the kind `credential` and the reason `credential_expired`
+- **AND** the run row is `failed`
 
 #### Scenario: A refused authorization with a suspension ends the reserved run
 

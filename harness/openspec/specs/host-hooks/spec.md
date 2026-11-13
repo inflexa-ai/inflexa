@@ -10,12 +10,15 @@ calls each hook through one helper for each kind, with no `try` and no `catch` a
 
 ### Requirement: A host hook is a gate or a notice
 
-Each host hook MUST be a gate or a notice, and the type of the hook MUST show its kind. A gate gives a value or a
-permission that is necessary before the harness can continue an operation. A notice reports a fact after the
-operation.
+Each host hook MUST be a gate or a notice, and the type of the hook MUST show its kind. A gate gives a value or a permission that is necessary before the harness can continue an operation. A notice reports a fact after the operation.
 
 ```ts
-type GateFailure = { readonly reason: string; readonly suspend: boolean; readonly credential?: boolean }
+type GateFailure = {
+    readonly reason: string;
+    readonly suspend: boolean;
+    readonly credential?: boolean;
+    readonly transient?: boolean;
+}
 type NoticeFailure = { readonly reason: string }
 
 // A gate.
@@ -24,27 +27,44 @@ type NoticeFailure = { readonly reason: string }
 (input) => ResultAsync<void, NoticeFailure>
 ```
 
-If a gate gives an `err`, the operation MUST fail with the reason of the host. If `suspend` is also true, and the
-gate runs inside a workflow, the work MUST pause in place of the failure, as the `work-pause` capability describes.
+If a gate gives an `err`, the operation MUST fail with the reason of the host. If `suspend` is also true, and the gate runs inside a workflow, the work MUST pause in place of the failure. The `work-pause` capability describes the pause.
 
-If `credential` is true and `suspend` is false, the host refuses the credential of the caller: it is expired, revoked,
-or absent. The gate helper MUST give a refusal of the kind `credential`. The request headers hook gives it as an `auth`
-error. Each other gate MUST treat it as a failure.
+If `credential` is true and `suspend` is false, the host refuses the credential of the caller: it is expired, revoked, or absent. The gate helper MUST give a refusal of the kind `credential`. The request headers hook gives it as an `auth` error. Each other gate MUST treat it as a failure.
 
-If a notice gives an `err`, the harness MUST log the reason at the error level. The outcome of the operation MUST NOT
-change, because the work is complete.
+If `transient` is true, the host reports a failure that time can repair. Examples are an outage of a service and a failed write of the host. The flags `suspend` and `credential` win over it. Thus, when `suspend` and `credential` are false, the gate helper MUST give a refusal of the kind `failed` with `transient: true`.
 
-The harness MUST call each hook through one of two internal helpers, one for each kind. Thus no call site selects its
-own failure policy. A call site MUST NOT put a `try` or a `catch` around a hook.
+Each refusal of the kind `failed` MUST carry `transient`. It is false when the host did not set the flag. The launch of a stored plan gives the flag to the host, as the `plan-approval` capability describes. Each other gate MUST treat a transient failure as a failure, with no other change.
 
-A hook MUST give a failure as an `err`, not as a throw or a rejected promise. If the promise inside a hook rejects,
-that is a defect of the host. The harness MUST NOT catch the rejection.
+If a notice gives an `err`, the harness MUST log the reason at the error level. The outcome of the operation MUST NOT change, because the work is complete.
+
+The harness MUST call each hook through one of two internal helpers, one for each kind. Thus no call site selects its own failure policy. A call site MUST NOT put a `try` or a `catch` around a hook.
+
+A hook MUST give a failure as an `err`, not as a throw or a rejected promise. If the promise inside a hook rejects, that is a defect of the host. The harness MUST NOT catch the rejection.
 
 #### Scenario: A gate err fails the operation
 
 - **GIVEN** a gate that gives `errAsync({ reason: "r", suspend: false })`
 - **WHEN** the harness calls the gate through the gate helper
 - **THEN** the operation fails, and the failure carries the reason `r`
+- **AND** the refusal has the kind `failed` and `transient: false`
+
+#### Scenario: A gate err with transient gives a transient failure
+
+- **GIVEN** a gate that gives `errAsync({ reason: "r", suspend: false, transient: true })`
+- **WHEN** the harness calls the gate through the gate helper
+- **THEN** the refusal has the kind `failed`, the reason `r`, and `transient: true`
+
+#### Scenario: The credential flag wins over the transient flag
+
+- **GIVEN** a gate that gives `errAsync({ reason: "r", suspend: false, credential: true, transient: true })`
+- **WHEN** the harness calls the gate through the gate helper
+- **THEN** the refusal has the kind `credential` and the reason `r`
+
+#### Scenario: The suspend flag wins over the transient flag
+
+- **GIVEN** a gate that gives `errAsync({ reason: "r", suspend: true, transient: true })`
+- **WHEN** the harness calls the gate through the gate helper
+- **THEN** the refusal has the kind `suspended` and the reason `r`
 
 #### Scenario: A gate err with suspend suspends the operation
 

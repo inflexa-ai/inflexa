@@ -32,6 +32,11 @@ export type GateFailure = {
      * it, thus a work that can pause waits for a resume. The suspend flag wins over it.
      */
     readonly credential?: boolean;
+    /**
+     * True when the host reports a failure that time can repair, for example an outage of a service or a failed
+     * write of the host. The flags `suspend` and `credential` win over it.
+     */
+    readonly transient?: boolean;
 };
 
 /**
@@ -80,13 +85,15 @@ export type NoticeName =
     | "syncSessionFile";
 
 export type GateRefusal =
-    | { readonly kind: "failed"; readonly gate: GateName; readonly reason: string }
+    | { readonly kind: "failed"; readonly gate: GateName; readonly reason: string; readonly transient: boolean }
     | { readonly kind: "suspended"; readonly gate: GateName; readonly reason: string }
     | { readonly kind: "credential"; readonly gate: GateName; readonly reason: string };
 
-function refusalKindOf(failure: GateFailure): GateRefusal["kind"] {
-    if (failure.suspend) return "suspended";
-    return failure.credential === true ? "credential" : "failed";
+function refusalOf(gate: GateName, failure: GateFailure): GateRefusal {
+    const { reason } = failure;
+    if (failure.suspend) return { kind: "suspended", gate, reason };
+    if (failure.credential === true) return { kind: "credential", gate, reason };
+    return { kind: "failed", gate, reason, transient: failure.transient === true };
 }
 
 /**
@@ -100,7 +107,7 @@ export function passGate<T>(gate: GateName, result: ResultAsync<T, GateFailure> 
         (async () => {
             const settled = await settlementOf(result);
             if (settlementOk(settled)) return ok(settled.value);
-            return err<T, GateRefusal>({ kind: refusalKindOf(settled.error), gate, reason: settled.error.reason });
+            return err<T, GateRefusal>(refusalOf(gate, settled.error));
         })(),
     );
 }

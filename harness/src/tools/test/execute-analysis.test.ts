@@ -1274,8 +1274,34 @@ describe("the launch of a stored plan, over a real database", () => {
 
             const refusal = (await launchPlanRun(deps({ runAuthorizer: refusing }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
 
-            expect(refusal).toEqual({ type: "not_authorized", reason: "mint refused" });
+            expect(refusal).toEqual({ type: "not_authorized", kind: "failed", transient: false, reason: "mint refused" });
             expect(await runRows()).toMatchObject([{ status: "failed", error: "mint refused" }]);
+        });
+
+        it("keeps the transient flag of a failure of the authorization", async () => {
+            await seedPlan(validPlan);
+            const unavailable: RunAuthorizer = {
+                ...throwingAuthorizer,
+                authorize: () => errAsync({ reason: "identity_unavailable", suspend: false, transient: true }),
+            };
+
+            const refusal = (await launchPlanRun(deps({ runAuthorizer: unavailable }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+            expect(refusal).toEqual({ type: "not_authorized", kind: "failed", transient: true, reason: "identity_unavailable" });
+            expect(await runRows()).toMatchObject([{ status: "failed", error: "identity_unavailable" }]);
+        });
+
+        it("keeps the kind of a refused credential", async () => {
+            await seedPlan(validPlan);
+            const expired: RunAuthorizer = {
+                ...throwingAuthorizer,
+                authorize: () => errAsync({ reason: "credential_expired", suspend: false, credential: true }),
+            };
+
+            const refusal = (await launchPlanRun(deps({ runAuthorizer: expired }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
+
+            expect(refusal).toEqual({ type: "not_authorized", kind: "credential", reason: "credential_expired" });
+            expect(await runRows()).toMatchObject([{ status: "failed", error: "credential_expired" }]);
         });
 
         it("ends the reserved run as failed when the host refuses with the suspend flag, gives suspended with the reason, and leaves the analysis as it was", async () => {
@@ -1299,7 +1325,7 @@ describe("the launch of a stored plan, over a real database", () => {
 
             const refusal = (await launchPlanRun(deps({ pool: flaky, runAuthorizer: refusing }), { session: session(), planId: PLAN_ID }))._unsafeUnwrapErr();
 
-            expect(refusal).toEqual({ type: "not_authorized", reason: "mint refused" });
+            expect(refusal).toEqual({ type: "not_authorized", kind: "failed", transient: false, reason: "mint refused" });
         });
 
         it("keeps the suspended refusal when the write of the run status fails", async () => {
@@ -1580,10 +1606,26 @@ describe("the launch of a stored plan, over a real database", () => {
         it("gives the error result of the authorization refusal and of the refusal with the suspend flag", async () => {
             await seedPlan(validPlan);
             const refusing: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "mint refused", suspend: false }) };
+            const unavailable: RunAuthorizer = {
+                ...throwingAuthorizer,
+                authorize: () => errAsync({ reason: "identity_unavailable", suspend: false, transient: true }),
+            };
+            const expired: RunAuthorizer = {
+                ...throwingAuthorizer,
+                authorize: () => errAsync({ reason: "credential_expired", suspend: false, credential: true }),
+            };
             const suspending: RunAuthorizer = { ...throwingAuthorizer, authorize: () => errAsync({ reason: "no_funds", suspend: true }) };
 
             expect((await toolFor({ runAuthorizer: refusing }).run())._unsafeUnwrapErr()).toEqual({
                 error: "The run was not authorized: mint refused",
+                retryable: false,
+            });
+            expect((await toolFor({ runAuthorizer: unavailable }).run())._unsafeUnwrapErr()).toEqual({
+                error: "The run was not authorized: identity_unavailable",
+                retryable: false,
+            });
+            expect((await toolFor({ runAuthorizer: expired }).run())._unsafeUnwrapErr()).toEqual({
+                error: "The run was not authorized: credential_expired",
                 retryable: false,
             });
             expect((await toolFor({ runAuthorizer: suspending }).run())._unsafeUnwrapErr()).toEqual({
