@@ -9,15 +9,9 @@ tags: [microbiome, 16s, its, shotgun, metagenomics, compositional, ancombc, alde
 
 Comprehensive guidelines for amplicon and shotgun metagenomics, with emphasis on compositional data analysis, diversity metrics, differential abundance, and functional profiling.
 
-## COMPOSITIONALITY WARNING — READ FIRST
+## Compositionality
 
-**Microbiome count data is compositional.** Sequencing produces counts that sum to a constant (library size). Each sample's counts represent relative proportions, NOT absolute abundances. This has profound statistical consequences:
-
-- An increase in one taxon's proportion **forces** decreases in others, even if their absolute abundance is unchanged.
-- Standard statistical tests (t-test, Wilcoxon, correlation) on raw counts or proportions produce **spurious correlations** and **false positives**.
-- Methods designed for gene expression (DESeq2, edgeR) assume count distributions that do NOT hold for compositional, zero-inflated microbiome data.
-
-**You MUST use compositional-aware methods for all statistical analyses.** This is not optional — it is a fundamental requirement of the data type. See the Differential Abundance section below for approved methods.
+Microbiome counts are compositional. Use a compositional-aware method for each statistical test. Do not use a t-test, a Wilcoxon test, a correlation, DESeq2, or edgeR on the counts or the proportions.
 
 ## Method-Selection Decision Tree
 
@@ -35,10 +29,7 @@ Alternative: QIIME2 artifacts
 ```
 
 - **DADA2 is installed**, so raw demultiplexed FASTQ is a supported entry point: the chain above runs end to end through `removeBimeraDenovo` and yields an ASV table, the ASV sequences, and per-step read tracking. Taxonomy assignment is the one step that may not complete — it needs a training set, which is a separate question covered below. QIIME2 is **not** installed, so that branch is import-only: bring an exported feature table rather than expecting a `.qza` to be read natively. A pre-computed feature table (BIOM, QIIME2 export, or counts matrix plus taxonomy) is still a perfectly good entry point when that is what you were handed — the rest of this pack (phyloseq, vegan, mia, ANCOM-BC2, ALDEx2, MaAsLin2, biom-format, scikit-bio) runs from it normally.
-- DADA2 produces ASVs (amplicon sequence variants) — single-nucleotide resolution, no OTU clustering needed.
-- ALWAYS inspect the error rate learning plots. Poor error models produce unreliable ASVs.
-- SILVA is the standard reference for 16S; UNITE for ITS (fungal). Resolve the release from the inventory rather than assuming a version.
-- **SILVA (16S/18S) and UNITE (ITS) training sets are in the reference inventory, but as opt-in downloads rather than part of a default install** — so they are resolvable, and may or may not actually be present. Resolve them by what they are before planning on them. If they are absent, report that taxonomy assignment cannot be run, say they are available to provision, and hand back the ASV table, sequences, and read tracking — which are complete and useful without it. Do not invent a path, do not substitute a general-purpose sequence database, and do not drop the taxonomy step silently.
+- **SILVA (16S/18S) and UNITE (ITS) training sets are opt-in downloads in the reference inventory.** Resolve the set and its release before you plan the taxonomy step. Do not assume a version.
 
 ### 2. Shotgun Metagenomics
 
@@ -66,8 +57,6 @@ Feature table (ASV or species counts)
       → Statistical comparison: Kruskal-Wallis (>2 groups), Wilcoxon (2 groups)
 ```
 
-- Report multiple diversity metrics — they capture different aspects of community structure.
-- Shannon is most commonly reported. Faith's PD adds phylogenetic perspective when a tree is available.
 
 ### 4. Beta Diversity
 
@@ -82,9 +71,6 @@ Feature table
           → Check dispersion: betadisper (PERMANOVA is sensitive to heterogeneous dispersion)
 ```
 
-- Bray-Curtis is the default distance metric. Use UniFrac when phylogenetic relationships matter.
-- ALWAYS run betadisper alongside PERMANOVA. A significant PERMANOVA with unequal dispersions may reflect dispersion differences, not centroid shifts.
-- Use phyloseq `distance()` + `ordinate()` for distance computation and ordination. Use vegan `adonis2()` for PERMANOVA (supports formula interface with covariates) and `betadisper()` for dispersion testing.
 
 ### 5. Differential Abundance
 
@@ -110,9 +96,6 @@ Longitudinal / repeated measures / complex covariates
     → CLR or log-transformed relative abundances internally
 ```
 
-- ANCOM-BC2 is the default. It corrects for the compositional bias term explicitly.
-- ALDEx2 is preferred for small studies because its Bayesian approach models technical variation.
-- MaAsLin2 is the only option that handles random effects for longitudinal designs.
 
 ### 6. Functional Profiling
 
@@ -135,18 +118,21 @@ Should I rarefy?
     → NEVER rarefy for differential abundance testing — it discards valid data.
 ```
 
-- Rarefaction is controversial and increasingly discouraged. ANCOM-BC2 and ALDEx2 handle library size differences without data loss.
-- If rarefaction is used for alpha diversity, repeat at multiple depths and report rarefaction curves.
 
 ## Anti-Patterns
 
-- **t-test/Wilcoxon on proportions**: INVALID. Relative abundances are compositional — standard tests produce spurious results. A taxon can appear "significantly different" purely because another taxon changed. Use ANCOM-BC2, ALDEx2, or MaAsLin2.
-- **Standard correlation on relative abundances**: SPURIOUS. Pearson/Spearman correlation on compositional data produces negative bias (spurious negative correlations). Use a compositional correlation measure instead. SparCC and the `propr` package are the standard references but **neither is installed here**; the proportionality statistics they implement are short to compute directly — CLR-transform the counts (log of each value over the sample's geometric mean, after a pseudocount or zero-replacement), then take the correlation of the CLR values, or compute rho proportionality as `1 - var(clr_i - clr_j) / (var(clr_i) + var(clr_j))` in numpy. State which measure you used.
-- **DESeq2 on microbiome counts**: INAPPROPRIATE. DESeq2 assumes a negative binomial distribution calibrated for RNA-seq count data. Microbiome data is zero-inflated and compositional — DESeq2 has elevated false positive rates on microbiome data (Nearing et al. 2022, Calgaro et al. 2020).
-- **Rarefaction for differential abundance**: WASTEFUL. Rarefying discards valid sequencing data to equalize library sizes. Modern compositional methods (ANCOM-BC2) handle library size differences properly. Do NOT rarefy before differential testing.
-- **Ignoring taxonomy assignment confidence**: Do NOT report taxa assigned with low bootstrap confidence (<70%). Unreliable assignments propagate errors through all downstream analyses.
-- **Pooling technical replicates incorrectly**: Do NOT average relative abundances across technical replicates. Sum the raw counts first, then compute relative abundances.
-- **Treating zeros as true absence**: Microbiome data contains both structural zeros (true absence) and sampling zeros (present but undetected). Do NOT filter low-prevalence taxa too aggressively — a taxon present in 10% of samples in one group may be biologically meaningful.
+- **SparCC or `propr` for a compositional correlation**: Neither is installed. CLR-transform the counts (log of each value over the geometric mean of the sample, after a pseudocount or zero replacement). Then take the correlation of the CLR values, or compute rho proportionality as `1 - var(clr_i - clr_j) / (var(clr_i) + var(clr_j))` in numpy. State which measure you used.
+- **A native read of a QIIME2 `.qza`**: QIIME2 is not installed. Ask for the exported feature table.
+- **Taxonomy without a resolved training set**: The SILVA and UNITE training sets are opt-in downloads. If they are absent, report that taxonomy assignment cannot run and that the sets can be provisioned. Deliver the ASV table, the sequences, and the read tracking. Do not use a different sequence database.
+- **Ignoring taxonomy assignment confidence**: Do NOT report taxa assigned with low bootstrap confidence (<70%).
+- **t-test or Wilcoxon on proportions**: A taxon can look different only because another taxon changed. Use ANCOM-BC2, ALDEx2, or MaAsLin2.
+- **Pearson or Spearman on relative abundances**: Compositional data gives spurious negative correlations. Use the CLR measure above.
+- **DESeq2 on microbiome counts**: The data is zero-inflated and compositional, and DESeq2 has elevated false positive rates on it (Nearing et al. 2022, Calgaro et al. 2020).
+- **Rarefaction before differential abundance**: It discards valid data. The compositional methods handle the library sizes.
+- **Rarefaction at one depth for alpha diversity**: Do it again at more than one depth, and report the rarefaction curves.
+- **No check of the DADA2 error model**: Inspect the error rate plots of `learnErrors`. A poor error model gives unreliable ASVs.
+- **Averaging relative abundances of technical replicates**: Sum the raw counts first. Then compute the relative abundances.
+- **Zeros as true absence**: Structural and sampling zeros both occur. Do not filter low-prevalence taxa too aggressively: a taxon in 10% of the samples of one group can be meaningful.
 
 ## Output Conventions
 
@@ -154,16 +140,7 @@ Should I rarefy?
 - Taxonomy tables: CSV with `feature_id`, `kingdom`, `phylum`, `class`, `order`, `family`, `genus`, `species`, `confidence`.
 - Differential results: CSV with `taxon`, `log2FC`, `se`, `pvalue`, `padj`, `method` (ANCOM-BC2/ALDEx2/MaAsLin2).
 - Diversity results: CSV with `sample_id`, `shannon`, `simpson`, `chao1`, `faiths_pd`.
-- Figures: stacked bar plots (relative abundance), PCoA/NMDS ordination plots, alpha diversity box plots, differential abundance forest plots, rarefaction curves.
 - Use biom-format package for BIOM file I/O in Python, phyloseq for R-based operations.
-
-## Entry Points
-
-Amplicon (16S/ITS) starts from demultiplexed FASTQ and runs end to end here via
-dada2 — the one place in this repo where read-level processing is in scope,
-because dada2 does it. Shotgun metagenomics starts from a **profiled abundance
-table**: taxonomic and functional profiling is upstream, so if you were handed
-raw shotgun FASTQ, say so and stop.
 
 ## Additional Available Packages
 

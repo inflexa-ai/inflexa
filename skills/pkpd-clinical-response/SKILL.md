@@ -23,10 +23,9 @@ clinical response evaluation in Phase 1/2 trial-adjacent contexts.
 | Stable Disease | SD | Neither PR nor PD criteria met |
 | Progressive Disease | PD | >=20% increase in sum + absolute increase >=5mm, or new lesion |
 
-When response data is present:
-- Binary: responder (CR+PR) vs non-responder (SD+PD)
-- Ordinal: CR > PR > SD > PD (use ordinal logistic regression)
-- Duration: time to best response, duration of response
+When response data is present, use responder (CR+PR) vs non-responder
+(SD+PD) for a binary outcome, or ordinal logistic regression for the
+ordered categories.
 
 ### iRECIST (for immunotherapy)
 Adds "unconfirmed" states (iUPD → must confirm with iCPD at next
@@ -38,8 +37,8 @@ assessment). For IO trials, always check if iRECIST was used.
 
 **Reference:** `references/nca-analysis.md` — read it for complete NCA functions (`auc_linear_trapezoidal`, `auc_log_linear_trapezoidal`, `auc_extrapolated`, `terminal_half_life`, `derive_pk_params`), concentration-time plots, and quality checks.
 
-Always report: Cmax, Tmax, AUC(0-last), AUC(0-inf), t1/2, CL/F, Vd/F.
-Plot: concentration-time profile (linear and semi-log scale).
+Always report: Cmax, Tmax, AUC(0-last), AUC(0-inf), t1/2, CL/F, Vd/F,
+for each subject, with the dose, the route, and the steady-state status.
 
 ### Population PK and Covariates
 
@@ -92,60 +91,30 @@ Link drug exposure (AUC, Cmax, Cmin) to efficacy outcomes. Use logistic regressi
 
 **Reference:** `references/lifelines-pkpd.md` — read it for `safety_exposure_response()` with KM + log-rank, `cox_exposure_safety()` for multivariate hazard models, and at-risk table formatting.
 
-Link exposure to adverse event probability:
-- Logistic regression: P(AE grade >= 3) ~ AUC_ss
-- Kaplan-Meier: time to first grade 3+ AE by exposure quartile
-- Identify therapeutic window: exposure range where efficacy is
-  maintained but safety is acceptable
+Link exposure to the probability of a grade 3+ adverse event, and to
+the time to the first grade 3+ event by exposure quartile.
 
 ### Dose-Response Curves
 
 Fit a 4-parameter logistic (Hill equation) to dose-response data. See the reference for 4PL/3PL fitting functions and plotting.
 
-Always plot: observed data points + fitted curve + 95% CI band.
 Report: EC50/IC50, Hill coefficient, Emax, R-squared.
 
 ## Responder vs Non-Responder Analysis with Omics
 
-When paired PK/response + omics data is available:
+Write the exact definition of the responder groups. In a single-arm
+trial, use the response classification as the DE contrast, because the
+treatment is constant. Compare the omics profiles across exposure
+quartiles to separate the PK effects from the PD effects. If treatment
+and control arms exist, test the marker x treatment interaction (see
+the `statistical-modeling` skill).
 
-1. **Define groups** — responder vs non-responder per RECIST or custom
-   criteria. Document the exact definition.
-2. **DE analysis** — standard differential expression between groups.
-   Use the response classification as the contrast, not treatment
-   (treatment is constant in single-arm trials).
-3. **Exposure-stratified analysis** — split by exposure quartiles, then
-   compare omics profiles. This separates pharmacokinetic effects
-   (dose-dependent transcriptional changes) from pharmacodynamic effects
-   (target-dependent biology).
-4. **Predictive biomarker analysis** — if treatment and control arms
-   exist, test marker x treatment interaction (see statistical-modeling
-   skill for predictive vs prognostic testing).
-
-## Waterfall and Spider Plots
-
-Standard clinical trial visualizations. See PD biomarker tracking reference for waterfall plot functions.
-
-- **Waterfall plot**: Best % change from baseline per patient, sorted ascending, colored by response category (green = PR threshold at -30%, red = PD threshold at +20%).
-- **Spider plot**: Per-patient tumor burden over time (individual traces), with RECIST thresholds overlaid.
+The waterfall and spider plot functions are in
+`references/pd-biomarker-tracking.md`.
 
 ## Pharmacodynamic Biomarker Tracking
 
 **Reference:** `references/pd-biomarker-tracking.md` — read it for complete PD assessment functions (`compute_pd_change`, `classify_pd_response`, `plot_pd_timecourse`, `plot_pd_by_dose`), hysteresis diagnosis, PD-exposure mixed-effects modeling, and waterfall plots.
-
-### Longitudinal PD Marker Assessment
-
-PD biomarkers measure target modulation and downstream biological
-effects over time. Track them at defined timepoints relative to dosing:
-
-| Phase | Typical Timepoints | Purpose |
-|-------|-------------------|---------|
-| Pre-treatment (baseline) | C1D1 pre-dose | Reference values |
-| On-treatment early | C1D2, C1D8, C1D15 | Onset of PD effect |
-| On-treatment steady-state | C2D1, C3D1 | Sustained modulation |
-| Post-treatment washout | 1w, 2w, 4w post-last-dose | Recovery kinetics |
-
-C = cycle, D = day, w = week.
 
 ### PD Response Criteria
 
@@ -163,21 +132,16 @@ the biological rationale for the threshold.
 
 ### PK-PD Hysteresis
 
-When plotting PD effect vs drug concentration, a hysteresis loop
-indicates temporal dissociation between PK and PD:
-
-- **Counter-clockwise hysteresis** — PD effect lags behind concentration
-  (common: indirect response mechanisms, signal transduction delays).
-- **Clockwise hysteresis** — PD effect precedes concentration decline
-  (rare: tolerance, receptor desensitization).
+In a plot of the PD effect against the concentration, a counter-clockwise
+loop means that the effect lags the concentration (indirect response,
+signal delay). A clockwise loop means tolerance or receptor
+desensitization.
 
 ### PD Marker-Exposure Correlation
 
-Link PD marker changes to drug exposure using mixed-effects models
-to account for repeated measures. Always report whether the PD-exposure relationship is:
-- **Monotonic** — more drug = more PD effect (expected for on-target)
-- **Saturating** — PD effect plateaus at high exposure (target fully engaged)
-- **Bell-shaped** — PD effect decreases at very high exposure (off-target or toxicity)
+Link the PD marker changes to the exposure with a mixed-effects model
+for the repeated measures. Report whether the relation is monotonic,
+saturating, or bell-shaped.
 
 ## References
 
@@ -194,20 +158,20 @@ gotchas. Read the reference file itself before writing code in that area.
 | PD Biomarker Tracking | `references/pd-biomarker-tracking.md` | PD change from baseline, PD response classification, PK-PD hysteresis (plot + diagnosis), PD-exposure correlation, waterfall plots |
 | Lifelines for PK/PD | `references/lifelines-pkpd.md` | KM for DOR/PFS/TTR, safety exposure-response, Cox PH for multivariate analysis, at-risk tables, competing risks guidance |
 
-## Do NOT
+## Anti-Patterns
 
-- Fit compartmental PK models without sufficient timepoints (need >=
-  2x the number of parameters)
-- Call a linear mixed model on concentrations "population PK" — it has no
-  compartmental structure and produces no PK parameters
 - Compare nlmixr2 fits before `addCwres()` — after SAEM the objective function
   is NA, so the comparison is between two missing values and concludes nothing
-- Report PK parameters without specifying the dose, route, and whether
-  steady-state was reached
+- Drive nlmixr2 through rpy2 — its models are R syntax, thus write a
+  native R script
+- Call a linear mixed model on concentrations "population PK" — it has no
+  compartmental structure and produces no PK parameters
+- Fit a compartmental PK model with too few timepoints — at least 2x the
+  number of parameters is necessary
 - Use NCA terminal half-life if the terminal phase has fewer than 3
   points or R-squared < 0.8
-- Conflate exposure-response with dose-response — exposure accounts
-  for PK variability, dose does not
+- Conflate exposure-response with dose-response — exposure accounts for
+  the PK variability, dose does not
 - Call a biomarker "predictive" without a treatment x marker interaction
   test (this is the single most common error)
 - Assume single-arm trial biomarkers are predictive — they can only be

@@ -20,18 +20,14 @@ An asset is **MDV-ready** when:
    readable labels as column names, labelled clusters, only useful columns, and a README that
    explains the columns, the processing, and the first charts to make.
 
-## Workflow
+## Deliverable
 
-```
-1. Inventory   what is the modality, the platform, the input form, the size?   (decision tree below)
-2. Build       one analysis-ready AnnData: counts in, QC, log-normalised sparse X,
-               embeddings, clusters, labels with evidence                       (modality reference)
-3. Curate      choose the columns, give each a readable label with units, keep grouping
-               columns at <= 256 categories, ids as words, dtypes that MDV maps  (asset-route.md)
-4. Write       the asset (.mdv.h5ad), the context tables (.tsv), the README     (asset-route.md)
-5. Validate    zero errors; fix and write again from step 3                     (validation.md)
-6. Deliver     asset + TSVs + README + validator report, and the analysis AnnData
-```
+Deliver the asset (`.mdv.h5ad`), the context tables (`.tsv`), the README, the validator report, and the analysis AnnData.
+
+- Estimate the size of the input before you load it (`memory-and-scale.md`).
+- Build one analysis-ready AnnData first: counts, QC, log-normalised sparse X, embeddings, clusters, and labels with evidence. The modality reference gives the method.
+- Make the asset from it with `asset-route.md`.
+- If the validator reports an error, fix the columns and write the asset again. Deliver only a report with zero errors.
 
 ## Input Decision Tree
 

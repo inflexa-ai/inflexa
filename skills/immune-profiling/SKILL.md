@@ -68,13 +68,8 @@ Choose the method based on input data and analytical goal:
      2 genes, so `tmin=2`.
 
 4. **Checkpoint expression analysis**
-   - Extract and visualize expression of immune checkpoint genes across
+   - Compare the expression of the immune checkpoint genes across
      conditions, cell types, or treatment groups.
-   - **Core checkpoint panel**: PDCD1 (PD-1), CD274 (PD-L1), PDCD1LG2
-     (PD-L2), CTLA4, LAG3, HAVCR2 (TIM-3), TIGIT, TNFRSF9 (4-1BB),
-     TNFRSF4 (OX40), ICOS, IDO1, VSIR (VISTA).
-   - Report as heatmap (samples x checkpoints) with condition
-     annotation.
 
 5. **TCR/BCR repertoire analysis**
    - Repertoire work goes through **scirpy** — it reads 10x VDJ and AIRR
@@ -109,44 +104,10 @@ Use for annotation and validation of deconvolution results:
 
 ## Tumor Microenvironment (TME) Classification
 
-When immune profiling is part of a translational analysis:
-
-### Immune Phenotypes
-| Phenotype | Signature | Clinical Implication |
-|-----------|-----------|---------------------|
-| Immune-hot (inflamed) | High TIS, high CD8, high IFN-g | Best IO response, checkpoint blockade candidate |
-| Immune-excluded | High immune scores at margin, low intratumoral | May need combination therapy |
-| Immune-desert (cold) | Low TIS, low CD8, low IFN-g | Poor IO candidate, consider priming strategies |
-
-### Integrated TME Assessment
-1. Run immune deconvolution (cell fractions)
-2. Score immune signatures (TIS, IFN-g, CYT)
-3. Assess checkpoint expression levels
-4. Classify TME phenotype
-5. Report with clinical IO context
-
-## Analysis Integration Patterns
-
-### With Differential Expression
-When DE results are available from upstream steps:
-- Overlay immune cell proportions on DE volcano plots
-- Test whether immune infiltration correlates with DE gene modules
-- Use immune cell fractions as covariates in DE to control for
-  composition effects
-
-### With Survival / Clinical Outcomes
-- Stratify patients by immune cell proportions or signature scores
-- Kaplan-Meier by high/low immune infiltration. A median split is a
-  pre-specified split, and it demands no cutpoint correction. An
-  optimal cutpoint demands the maxstat corrected p-value — see
-  Statistics below.
-- Multivariate Cox including immune scores alongside clinical
-  covariates
-
-### With Drug Response
-- Compare immune profiles between responders and non-responders
-- Test whether baseline immune state predicts treatment response
-- Assess on-treatment immune modulation (paired pre/post)
+A hot, excluded, or desert TME call comes from the deconvolution, the
+signature scores (TIS, IFN-g, CYT), and the checkpoint expression
+together. Say that a call from expression alone has no histological or
+spatial confirmation.
 
 ## Statistics
 
@@ -157,7 +118,8 @@ When DE results are available from upstream steps:
   p-values.
 - **Survival cutpoints**: The nominal log-rank p-value of an optimal
   cutpoint has no meaning — the scan over candidate cutpoints
-  inflates it. Report the maxstat corrected p-value. The
+  inflates it. Report the maxstat corrected p-value. A median split
+  is pre-specified, and no correction is necessary. The
   `statistical-modeling` skill carries the full rule and the
   `surv_cutpoint` API pattern.
 - **Cox models**: Include clinical covariates. Do a check of the
@@ -171,24 +133,27 @@ When DE results are available from upstream steps:
 | Immune Deconvolution | `references/immune-deconvolution.md` | immunedeconv R wrapper, MCP-counter, xCell, EPIC, quanTIseq API patterns, bulk deconvolution workflow, comparison across methods |
 | Immune Signatures | `references/immune-signatures.md` | TIS, IFN-g, CYT, exhaustion signature gene lists, ssGSEA/decoupler scoring, checkpoint heatmaps, TCR diversity metrics |
 
-## Do NOT
+## Anti-Patterns
 
-- Report deconvolution fractions as absolute cell counts — they are
-  relative proportions or enrichment scores, depending on the method
-- Use a single deconvolution method without cross-validation against
-  at least one other
-- Apply CIBERSORTx LM22 reference to non-human data — species-specific
-  references are required
-- Interpret immune signatures as causal — "associated with IO
-  response" not "predicts IO response" unless validated in the
-  specific tumor type
-- Classify TME phenotype from gene expression alone without noting
-  that histological/spatial validation is the gold standard
-- Assume all immune infiltration is anti-tumor — Tregs, M2
-  macrophages, and MDSCs are immunosuppressive
-- Score immune signatures without checking that the signature genes
-  are actually expressed in the dataset
-- Report the nominal p-value of an optimized survival cutpoint — only
-  the maxstat corrected p-value has meaning
-- Compare immune scores across conditions without BH FDR over the
-  full score set
+- **A CIBERSORTx plan**: Its source and the LM22 matrix are available
+  only through a licensed download over the network. The `cibersort` method of `immunedeconv`
+  fails without them. Do not report it as attempted.
+- **The default `tmin` of decoupler on a short signature**: The default
+  is 5, and decoupler drops a shorter set with no error. Set `tmin` to
+  the length of the shortest signature (CYT: `tmin=2`).
+- **Deconvolution scores reported as fractions**: MCP-counter and xCell
+  give scores. Only EPIC and quanTIseq give fractions. No method gives
+  absolute cell counts.
+- **One deconvolution method alone**: Compare with at least one other
+  method, and report the discordances.
+- **The nominal p-value of an optimized survival cutpoint**: Only the
+  maxstat corrected p-value has meaning.
+- **Immune scores compared across conditions without BH FDR over the
+  full score set**.
+- **Signature scores without an expression check**: Make sure that the
+  signature genes are expressed in the dataset.
+- **All infiltration as anti-tumor**: Tregs, M2 macrophages, and MDSCs
+  are immunosuppressive.
+- **Immune signatures as causal**: Write "associated with IO response",
+  not "predicts IO response", unless a study validated it in that tumor
+  type.

@@ -43,21 +43,7 @@ Cross-cutting guidance loaded by ALL sandbox agents.
 - Save as `.h5ad` / `.h5mu` — never `.rds` or `.pkl`
 
 ### Converting from R Objects
-When R produces objects (DESeqDataSet, phyloseq, SummarizedExperiment):
-1. Extract the data matrix, sample metadata, and feature metadata via rpy2
-2. Construct AnnData in Python from the extracted components
-3. Save as .h5ad for downstream steps
-
-## Data Format Detection
-
-When receiving input data, detect the format before processing:
-- `.h5ad` → AnnData (load with `anndata.read_h5ad`)
-- `.h5mu` → MuData (load with `mudata.read`)
-- `.csv`/`.tsv` → tabular (load with `pandas.read_csv`, consider converting to AnnData)
-- `.rds` → R object (load via rpy2, convert to AnnData)
-- `.h5`/`.hdf5` → HDF5 (inspect structure, may be AnnData)
-- `.mtx` + `barcodes.tsv` + `features.tsv` → 10x sparse (use `scanpy.read_10x_mtx`)
-- `.loom` → Loom format (use `scanpy.read_loom`, convert to AnnData)
+When R produces objects (DESeqDataSet, phyloseq, SummarizedExperiment), extract the data matrix, the sample metadata, and the feature metadata through rpy2. Then make the AnnData in Python, and save it as `.h5ad` for the steps that come after.
 
 ## Output Format Standards
 
@@ -66,24 +52,9 @@ When receiving input data, detect the format before processing:
 - **Figures**: PNG (300 DPI) + PDF (vector) with same base filename
 - **Dual-format output**: Save both native format AND generic CSV for cross-cutting agents
 
-## Analysis Plan Phases
+## Regulons
 
-1. **Data ingestion & QC** — format detection, quality metrics, sample/feature filtering
-2. **Preprocessing** — normalization, batch correction, feature selection
-3. **Core analysis** — the primary analytical methods (DE, clustering, etc.)
-4. **Downstream interpretation** — pathway enrichment, regulatory inference, integration
-5. **Visualization & reporting** — publication-quality figures, summary tables
-
-## Key Cross-Cutting Methods
-
-- **Differential analysis**: PyDESeq2 (bulk counts), limma via rpy2 (microarray/intensity), pseudobulk + PyDESeq2 (single-cell). Longitudinal: dream (variancePartition, R via rpy2)
-- **Pathway enrichment**: decoupler with gene sets or pathway weights from the reference store; gseapy for GSEA/ORA
-- **TF activity**: decoupler with a TF-target regulon network from the reference store.
-  No tool here discovers a regulon from the data alone, thus say so when asked for one
-- **Cell-cell communication**: LIANA+
-- **Trajectory**: scVelo, CellRank, Palantir
-- **Clustering**: Leiden (preferred over Louvain)
-- **Batch correction**: scVI (complex), Harmony (moderate), ComBat (bulk)
+The TF activity methods use a TF-target regulon network from the reference store. No tool here discovers a regulon from the data alone. If the step asks for one, say so.
 
 See `references/general-principles.md` for complete details.
 
@@ -125,20 +96,9 @@ When you need gene ID conversion, annotation, or organism databases:
 - **zellkonverter** (R via rpy2): Convert between AnnData (.h5ad) and SingleCellExperiment (.rds). Use `readH5AD()` / `writeH5AD()` in R when an R package requires SCE input.
 - **SeuratDisk** (R via rpy2): The Seurat-native route for the same crossing — `Convert()` between `.h5ad` and `.h5seurat`, then `LoadH5Seurat()`. Reach for it when the R side needs a Seurat object specifically (Azimuth, ProjecTILs, scGate) rather than an SCE.
 
-## Visualization Utilities
+## Visualization Packages
 
-### Python
-- **matplotlib** + **seaborn**: Primary plotting (always available)
-- **plotly**: Interactive plots. HTML export is built in; static PNG/SVG/PDF export goes through `kaleido` (`write_image`)
-- **matplotlib-venn**: Venn diagrams (2-3 set comparisons)
-- **adjustText**: Automatic label positioning to avoid overlap in scatter/volcano plots
-- **rnanorm**: Count normalization (CPM, TPM, FPKM, TMM, quantile)
+The package store holds these plotting packages:
 
-### R (via rpy2)
-- **ggplot2** + **ggrepel**: Publication-quality plots with non-overlapping labels
-- **pheatmap** / **ComplexHeatmap**: Heatmaps with clustering dendrograms. ComplexHeatmap for advanced multi-track annotations.
-- **EnhancedVolcano**: Publication-ready volcano plots with automatic labeling
-- **corrplot**: Correlation matrix visualization
-- **patchwork** / **cowplot**: Multi-panel figure layouts (combine ggplot panels)
-- **plotly** (R): Interactive plots from R
-- **ComplexUpset**: UpSet plots for set intersections (enrichment overlap, shared genes). A ggplot2 extension, so it themes and composes with patchwork like any other panel
+- **Python**: matplotlib, seaborn, plotly (static export through `kaleido` and `write_image`), matplotlib-venn, adjustText, and rnanorm (count normalization).
+- **R (via rpy2)**: ggplot2, ggrepel, pheatmap, ComplexHeatmap, EnhancedVolcano, corrplot, patchwork, cowplot, plotly, and ComplexUpset.

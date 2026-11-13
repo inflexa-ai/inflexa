@@ -40,21 +40,16 @@ Input data?
         platform publishes one, and it enters the branch above.
 ```
 
-## Workflow Phases
+## Goal and Constraints
 
-1. **Data ingestion**: Load count matrix + sample metadata. Verify counts are raw integers.
-2. **QC**: Library size distribution, gene detection rates, PCA for outlier detection.
-3. **Filtering**: Remove low-count genes (e.g., keep genes with >= 10 counts in >= n samples where n is the smallest group size).
-4. **Batch assessment**: PCA colored by batch — if batch clusters dominate, apply correction.
-5. **Normalization**: Handled internally by each method (DESeq2 median-of-ratios, edgeR TMM, limma-voom). Do NOT pre-normalize.
-6. **DE testing**: Apply the method from the decision tree. Extract results with log2FC, p-value, adjusted p-value.
-7. **Downstream**: Pathway enrichment via decoupler, volcano/MA plots.
+The goal is a differential expression (DE) table for the contrast that the step names. The design must support the test that you select.
 
-## Batch Correction Protocol
-
-- **ComBat_seq**: Operates on raw counts. Preserves count nature for downstream DESeq2/edgeR. Always include biological variables of interest in the model to avoid removing real signal.
-- **svaseq**: Estimates surrogate variables from residuals. Add SVs as covariates in the DE model formula — do NOT adjust the counts directly.
-- **Order**: Batch correct BEFORE DE, but AFTER filtering.
+- Give raw integer counts to DESeq2, edgeR, and voom. Each method normalizes the counts internally.
+- Filter the low-count genes: keep the genes with >= 10 counts in >= n samples, where n is the size of the smallest group.
+- Make sure that the library sizes are not very different before the DE test. An extreme outlier can control the result.
+- If a batch is known, keep the batch as a term of the design, or correct it with ComBat_seq on the raw counts. Correct after the gene filter and before the DE test.
+- Add the surrogate variables from svaseq to the design formula as covariates. Do not adjust the counts with them.
+- Write the DE table as CSV with the columns gene, log2FoldChange, pvalue, padj, and baseMean (or logCPM).
 
 ## Contrast Specification
 
@@ -63,24 +58,17 @@ Input data?
 - limma: Define contrast matrix with `makeContrasts()`. For interaction: `makeContrasts(groupB.time2 - groupA.time2 - groupB.time1 + groupA.time1, levels=design)`.
 - edgeR: `glmQLFTest(fit, contrast=con)` with the same contrast matrix as limma.
 
-## Output Conventions
-
-- Save DE results as CSV with columns: gene, log2FoldChange, pvalue, padj, baseMean (or logCPM).
-- Save normalized count matrix as CSV or in AnnData .h5ad.
-- Volcano plot (log2FC vs -log10 padj) and MA plot (baseMean vs log2FC) as PNG/PDF.
-- PCA plot of samples (top 500 variable genes) colored by condition and batch.
-
 ## Anti-Patterns
 
+- **A request to read raw CEL files**: The platform design packages are not staged, and the sandbox cannot install them. Ask for the normalized expression matrix.
+- **Wrong contrast syntax across the rpy2 bridge**: PyDESeq2 uses `["factor", "numerator", "denominator"]`. DESeq2 via rpy2 uses `c("factor", "numerator", "denominator")`. If you mix the two forms, the result is a wrong comparison with no error.
 - **Inferential DE without biological replication**: With one sample per group, there is no within-group variance to estimate. The edgeR statistics assume replication — a 1 vs 1 run produces confident-looking p-values with no inferential basis. Refuse the test. Report descriptive log2 fold changes only, state that no replication exists, and name the design that supports inference (n >= 2 per group, n >= 3 preferred).
-- **DESeq2/PyDESeq2 on TPM/FPKM**: These methods model raw counts with a negative binomial distribution. Normalized values break the statistical model and produce invalid results.
-- **Wrong contrast syntax**: PyDESeq2 uses `["factor", "numerator", "denominator"]`. DESeq2 via rpy2 uses `c("factor", "numerator", "denominator")`. Mixing them up silently returns wrong comparisons.
-- **Skipping normalization check**: Always verify library sizes are not wildly different before DE. Extreme outliers can dominate results.
-- **Ignoring batch effects**: If samples were processed in batches (different days, lanes, plates), check PCA. Uncorrected batch effects inflate false positives.
-- **Pre-filtering too aggressively**: Overly strict gene filters reduce power. Keep genes expressed in at least the smallest group size.
-- **ComBat_seq without biological covariates**: Omitting the condition variable from `ComBat_seq(covar_mod=...)` can remove real biological signal along with batch effects.
-- **Using svaseq-corrected counts for DE**: SVs should be added as covariates in the model formula, not used to adjust the count matrix.
-- **Applying voom to already-normalized data**: voom expects raw counts (or logCPM from edgeR's `cpm()`). Feeding it log-transformed or TPM data produces incorrect precision weights.
+- **DESeq2/PyDESeq2 on TPM/FPKM**: These methods model raw counts with a negative binomial distribution. Normalized values give invalid results. Use limma.
+- **voom on normalized data**: voom expects raw counts (or logCPM from edgeR's `cpm()`). Log or TPM input gives incorrect precision weights.
+- **Ignoring batch effects**: If samples ran in batches (days, lanes, plates), do a check with PCA. An uncorrected batch inflates false positives.
+- **ComBat_seq without biological covariates**: If you omit the condition from `ComBat_seq(covar_mod=...)`, the correction removes real biological signal with the batch effect.
+- **svaseq-corrected counts for DE**: Add the surrogate variables to the design. Do not adjust the count matrix.
+- **Pre-filtering too aggressively**: A strict gene filter reduces power. Keep the genes expressed in at least the smallest group size.
 
 ## Additional Available Packages
 

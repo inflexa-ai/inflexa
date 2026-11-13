@@ -72,8 +72,7 @@ Per-CpG coverage/methylation matrix
       → DMR calling: dmrseq or DSS
 ```
 
-- WGBS provides genome-wide coverage; RRBS enriches for CpG islands.
-- Coverage filtering is critical — low-coverage CpGs introduce noise. Remove CpGs below threshold before any analysis.
+- Remove the CpGs below the coverage threshold (5x WGBS, 10x RRBS) before any analysis.
 
 ### 3. DMP Analysis (Differentially Methylated Positions)
 
@@ -151,20 +150,22 @@ M-values + phenotype + covariates
 
 ## Anti-Patterns
 
+- **An array pipeline that assumes the annotation packages**: The manifest and annotation packages of 450K, EPIC, and EPICv2 are not staged, and `ExperimentHub`/`AnnotationHub` fetches fail. Make sure that the package loads first. If it does not, name the package that is absent and the step that it blocks. Do not use the annotation of a different array.
+- **`smartsva()` in SmartSVA**: The function is not exported. Call `smartsva.cpp()`.
 - **Statistics on beta-values**: Do NOT run limma, t-tests, or regression on beta-values. Beta-values are heteroscedastic. Use M-values for all statistical testing; report delta-beta for biological interpretation.
-- **Wrong array annotation**: Do NOT use 450K annotation manifests for EPIC data or vice versa. EPICv2 has a different probe set from EPIC v1. Mismatched annotations silently corrupt results.
-- **Not filtering cross-reactive probes**: Do NOT skip cross-reactive probe removal. ~6% of 450K probes and ~5% of EPIC probes map to multiple genomic locations. Published lists (Chen 2013, Pidsley 2016, Peters 2024) must be applied.
-- **Not filtering SNP probes**: Do NOT retain probes with known SNPs at the CpG site or single-base extension. These create artifactual methylation differences driven by genotype, not epigenetic state.
+- **Wrong array annotation**: Do not use 450K annotation for EPIC data or the reverse. EPICv2 has a different probe set from EPIC v1. A mismatch corrupts the results with no error.
+- **Not filtering cross-reactive probes**: ~6% of 450K probes and ~5% of EPIC probes map to more than one genomic location. Apply the published lists (Chen 2013, Pidsley 2016, Peters 2024).
+- **Not filtering SNP probes**: Remove the probes with a known SNP at the CpG site or at the single-base extension. They give methylation differences that the genotype causes.
 - **Ignoring cell composition in blood**: Do NOT analyze blood methylation data without adjusting for cell type proportions. Cell composition differences between groups drive the majority of apparent methylation differences.
+- **Standard enrichment on CpG-mapped genes**: A gene with more probes gets more hits by chance. Use `missMethyl::gometh()` / `gsameth()` (see below).
 - **Deduplicating RRBS**: Do NOT run PCR deduplication on RRBS data. RRBS uses restriction enzyme digestion, so identical fragment positions are expected. Deduplication removes real signal.
-- **Low coverage CpGs in BS-seq**: Do NOT include CpGs with <5x coverage in statistical analyses. Low-coverage estimates are noisy and introduce false discoveries.
+- **Low-coverage CpGs in BS-seq**: Do not use CpGs with < 5x coverage in a statistical test. Their estimates are noisy and give false discoveries.
 
 ## Output Conventions
 
 - Methylation matrices: AnnData (.h5ad) with CpGs as `var`, samples as `obs`, beta-values as `X`, M-values in a layer.
 - DMP results: CSV with `cpg_id`, `chromosome`, `position`, `gene`, `delta_beta`, `logFC_M`, `pvalue`, `padj`.
 - DMR results: CSV with `chr`, `start`, `end`, `n_cpgs`, `mean_delta_beta`, `pvalue`, `padj`, `overlapping_genes`.
-- Figures: density plots of beta distributions, volcano plots (delta-beta vs -log10 p), DMR genome browser tracks, cell proportion bar plots.
 - Clock results: table of predicted ages per sample with clock name and residuals.
 
 ## Additional Available Packages

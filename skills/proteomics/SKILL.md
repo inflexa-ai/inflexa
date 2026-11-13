@@ -108,36 +108,33 @@ Phosphoproteomics workflow:
 └── Critical: Do NOT roll up phospho-sites to protein level — this loses site-specific information
 ```
 
-## Preprocessing Workflow
+## Goal and Constraints
 
-1. **Load data**: Read platform-specific output format into pandas DataFrame.
-2. **Filter**: Remove contaminants, reverse hits (MaxQuant), low-detection proteins.
-3. **Transform**: Log2 intensities (skip for Olink NPX, already log2).
-4. **Normalize**: VSN (DDA/DIA), median (DDA/DIA alternative), MSstatsTMT (TMT), bridge (Olink multi-plate). Do NOT normalize SomaScan if ANML already applied.
-5. **Impute**: Assess missing value pattern (MNAR vs MAR). Apply appropriate imputation.
-6. **Batch check**: PCA colored by batch/plate/plex. Correct if needed (ComBat or include as covariate).
-7. **DE testing**: Apply method from decision tree. Extract results with log2FC, p-value, adjusted p-value.
-8. **Downstream**: Pathway enrichment via decoupler, protein-protein interaction networks.
+The goal is a DE table of the proteins or the sites, from a matrix that you normalized once.
+
+- Remove the contaminants and the reverse hits of MaxQuant, and the proteins with low detection, before you impute.
+- Do not log-transform Olink NPX. NPX is log2 already.
+- Do not normalize SomaScan RFU after ANML, or Olink NPX within one plate. Both are normalized already.
+- If the samples ran in more than one batch, plate, or plex, keep the batch as a covariate of the design, or correct it.
 
 ## Output Conventions
 
 - Save processed protein matrix as CSV: rows = proteins (UniProt ID + gene symbol), columns = samples.
 - DE results as CSV: protein, gene, log2FoldChange, pvalue, padj, avg_intensity.
-- Volcano plot (log2FC vs -log10 padj) and intensity distribution boxplots as PNG/PDF.
-- Missing value heatmap showing pattern (MNAR vs MAR assessment).
-- PCA plot of samples colored by condition and batch/plate.
 - Protein ID mapping table: UniProt accession to gene symbol.
 
 ## Anti-Patterns
 
+- **A kinase-substrate network from a fetcher**: No kinase-substrate network is in the reference inventory, and each `dc.op.*` fetcher uses the network. Deliver the site-level DE without kinase activity, and say why. Do not use a TF regulon in its place.
+- **Site context on an isoform**: The UniProt protein features use the canonical sequence. Report a site on an isoform accession ('-N' suffix) without context.
 - **Treating protein intensities like RNA-seq counts**: Protein intensities are continuous, not discrete counts. Do NOT use DESeq2/edgeR/PyDESeq2 on proteomics data. Use limma, DEP, or MSstats.
-- **Ignoring missing value patterns**: MNAR (below detection limit) and MAR (random dropout) require different imputation strategies. Using kNN for MNAR or MinProb for MAR introduces systematic bias.
-- **Not checking for batch effects in multi-plate studies**: Olink multi-plate, TMT multi-plex, and DDA multi-batch experiments all require explicit batch correction. Uncorrected batch effects dominate real biology.
-- **Protein-level analysis on phosphoproteomics data**: Rolling up phospho-sites to protein level destroys site-specific regulation. A protein can have sites with opposite regulation (activating vs inhibiting phosphorylation).
 - **Normalizing already-normalized data**: Olink NPX values are pre-normalized. SomaScan with ANML is pre-normalized. Double-normalization distorts the data.
-- **Imputing before filtering**: Impute after removing low-quality proteins/samples. Imputing values for proteins with >50% missing is unreliable.
-- **Using t-tests without multiple testing correction**: Always apply BH/FDR correction. With thousands of proteins, uncorrected p-values produce massive false positives.
-- **Ignoring protein grouping**: MaxQuant groups proteins sharing peptides. Using individual protein IDs without resolving groups inflates the number of "hits" and introduces redundancy.
+- **The wrong imputation for the missing-value pattern**: MNAR (below the detection limit) takes MinProb. MAR (random dropout) takes kNN. kNN on MNAR or MinProb on MAR gives a systematic bias.
+- **Imputing before filtering**: Impute after you remove the low-quality proteins and samples. An imputation for a protein with > 50% missing values is not reliable.
+- **No batch check in a multi-plate study**: Olink multi-plate, TMT multi-plex, and DDA multi-batch data need an explicit batch term or correction.
+- **Tests without multiple testing correction**: Apply BH FDR. Thousands of proteins give many false positives on raw p-values.
+- **Ignoring protein groups**: MaxQuant groups the proteins that share peptides. Single protein IDs without the groups inflate the number of hits.
+- **Protein-level analysis of phosphosites**: A rollup to the protein destroys the site-specific regulation. One protein can carry sites with opposite regulation.
 
 ## References
 
