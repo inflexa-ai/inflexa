@@ -67,6 +67,7 @@ import {
     type LaunchPlanRunDeps,
 } from "../execute-analysis.js";
 import { presentAt, presentGet } from "../../lib/present.js";
+import { createCallLock } from "../../loop/call-lock.js";
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
@@ -174,6 +175,7 @@ function fakeContext(invocationId = "tool-call-1", emitted: unknown[] = []): Too
         session,
         invocationId,
         signal: new AbortController().signal,
+        callLock: createCallLock(),
         emit: (part) => {
             emitted.push(part);
 

@@ -97,6 +97,7 @@ export function createReadFileTool(
 
     return defineTool({
         id: "read_file",
+        concurrent: true,
         description:
             "Read a workspace file: input data, prior-run outputs, current-run " +
             "outputs, step summaries, or run syntheses. It reads the workspace directly and runs no sandbox command. Returns the file content " +

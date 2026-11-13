@@ -217,6 +217,7 @@ export function createListPinnedArtifactsTool(deps: ListPinnedArtifactsToolDeps)
 
     return defineTool({
         id: "list_pinned_artifacts",
+        concurrent: true,
         description:
             "List the pinned evidence of this session. With no path, each entry gives the path of an artifact, its file type, " +
             'and "columnCount", the count of the header columns of a .csv or a .tsv file. ' +

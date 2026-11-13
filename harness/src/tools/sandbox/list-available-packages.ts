@@ -606,6 +606,7 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
           : "Query the R, Python, CLI, and Node packages installed in the sandbox. No packages can be installed at runtime — only what this tool reports is importable. ";
     return defineTool({
         id: "list_available_packages",
+        concurrent: true,
         description:
             scopeSentence +
             "Check a package that you are not sure of before a script imports it: an import of an absent package fails the script. " +

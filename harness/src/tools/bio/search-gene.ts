@@ -62,6 +62,7 @@ const SearchGeneOutputSchema = z.object({
 
 export const searchGeneTool = defineTool({
     id: "search_gene",
+    concurrent: true,
     description:
         "Resolve gene identifiers against Ensembl — the identifier step other tools depend on. Per gene: Ensembl gene ID (ENSG…), coordinates, strand, " +
         "biotype, assembly, description; plus resolvedFrom[] and notFound[]. Gene-level only — no transcripts or exons. Batch up to 200 identifiers per " +

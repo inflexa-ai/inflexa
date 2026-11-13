@@ -68,6 +68,7 @@ type ReadTableOutput = WithToolCallRecord<
 function createReadTableTool(deps: ReportScriptToolsDeps): Tool<z.infer<typeof readTableInput>, ReadTableOutput> {
     return defineTool({
         id: "read_table",
+        concurrent: true,
         description:
             "Read one table of the pinned evidence as rows: CSV, TSV, JSON (an array of flat objects), or parquet, up to 16 MiB. " +
             "Each row is an object keyed by column, and a cell that holds a plain number reads as a number. " +

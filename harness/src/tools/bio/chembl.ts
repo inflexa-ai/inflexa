@@ -143,6 +143,7 @@ export type ChemblOutput =
 
 export const chemblTool = defineTool({
     id: "chembl",
+    concurrent: true,
     description:
         "ChEMBL — the manually curated database of drug-like bioactives of EMBL-EBI (~2.4M compounds), the targets they were measured against, their " +
         "mechanisms and their approval status. Five lookups; pick with `action`, which gives each one's params and return fields.\n" +

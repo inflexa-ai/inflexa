@@ -990,6 +990,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
 
     const read_outline = defineTool({
         id: "read_outline",
+        concurrent: true,
         description:
             "Read the outline of the draft. Each entry gives the id, the kind, the nesting depth, and a short label. " +
             "A label that ends with the character … is clipped. Use the outline as the primary view of the draft, " +
@@ -1010,6 +1011,7 @@ export function createReportAuthoringTools(gateway: ReportSessionStateGateway, d
 
     const read_block = defineTool({
         id: "read_block",
+        concurrent: true,
         description:
             "Read one block by its id. An atom gives the full block with its bindings. A binding gives its path and no hash, " +
             "because the session owns the hash. A section gives its title and the id of each child, " +

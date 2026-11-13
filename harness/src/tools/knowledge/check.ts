@@ -101,6 +101,7 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps): Tool<z.infer
     let calls = 0;
     return defineTool({
         id: "knowledge_check",
+        concurrent: true,
         description:
             "Check the method steps you drafted for an expression analysis against the rules of the Inflexa knowledge service. " +
             "After a `knowledge_recommend` answer, `submit_plan` takes a plan only when a check of the draft ran. " +

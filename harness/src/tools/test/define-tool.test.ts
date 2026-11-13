@@ -53,6 +53,33 @@ describe("defineTool", () => {
         ).toThrow(UNION_TOOL_REFUSAL);
     });
 
+    it("refuses a tool that starts a workflow and is not concurrent", () => {
+        expect(() =>
+            defineTool({
+                id: "delegate",
+                description: "Starts a child workflow.",
+                inputSchema: z.object({}),
+                view: "none",
+                describeCall: "none",
+                startsWorkflow: true,
+                execute: () => Promise.resolve(ok({})),
+            }),
+        ).toThrow('defineTool("delegate"): a tool that starts a workflow must declare concurrent: true');
+    });
+
+    it("packages a tool with no declaration as not concurrent", () => {
+        const tool = defineTool({
+            id: "plain",
+            description: "A plain tool.",
+            inputSchema: z.object({}),
+            view: "none",
+            describeCall: "none",
+            execute: () => Promise.resolve(ok({})),
+        });
+
+        expect(tool.concurrent).toBeUndefined();
+    });
+
     describe("outputSchema", () => {
         it("emits the JSON Schema of the ok value", () => {
             const tool = defineTool({

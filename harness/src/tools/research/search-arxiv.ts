@@ -31,6 +31,7 @@ const source = createArxivSource({ maxRetries: 3, retryDelayMs: 1_000, timeoutMs
 
 export const searchArxivTool = defineTool({
     id: "search_arxiv",
+    concurrent: true,
     description:
         "Search arXiv — the open preprint server of Cornell University — for work in machine learning, physics, math, quantitative biology, control " +
         "theory, economics and the related quantitative fields. Returns id, title, abstract, authors, publication date, arXiv categories, and URLs.\n" +

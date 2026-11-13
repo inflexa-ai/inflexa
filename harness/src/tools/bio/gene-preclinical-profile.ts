@@ -201,6 +201,7 @@ async function fetchHumanPhenotypes(geneSymbol: string, phenotypeLimit: number):
 
 export const genePreclinicalProfileTool = defineTool({
     id: "gene_preclinical_profile",
+    concurrent: true,
     description:
         "The in-vivo profile of ONE human gene across three corpora in one call — baseline expression from Bgee, the mouse-knockout phenotype from IMPC " +
         "(the International Mouse Phenotyping Consortium), and the curated human phenotypes from the Monarch Initiative (HPO terms sourced from HPOA, " +

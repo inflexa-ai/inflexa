@@ -280,6 +280,7 @@ function createReadTableTool(deps: ReadScriptToolsDeps): Tool<z.infer<typeof rea
     const { lineage } = deps;
     return defineTool({
         id: "read_table",
+        concurrent: true,
         description:
             "Read one table of the workspace as rows: CSV, TSV, JSON (an array of flat objects), or parquet, up to 16 MiB. " +
             "Each row is an object keyed by column, and a cell that holds a plain number reads as a number. " +
@@ -330,6 +331,7 @@ function createListArchiveTool(deps: ReadScriptToolsDeps): Tool<z.infer<typeof l
     const { lineage } = deps;
     return defineTool({
         id: "list_archive",
+        concurrent: true,
         description:
             "List the files inside a compressed file of the workspace (zip, tar, tar.gz, gz), each with its decompressed size. " +
             "`read_table` and `read_pdf` then read one of them as their `entry`.",
@@ -406,6 +408,7 @@ export function createReadPdfTool(deps: ReadScriptToolsDeps): Tool<z.infer<typeo
     const { lineage } = deps;
     return defineTool({
         id: "read_pdf",
+        concurrent: true,
         description:
             `Read the text of a PDF of the workspace page by page, up to 64 MiB and ${String(PDF_PAGES_PER_READ)} pages for each call. ` +
             "`totalPages` gives the page count, thus a script reads a long PDF in more calls and keeps the pages that it needs. " +

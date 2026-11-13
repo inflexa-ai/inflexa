@@ -127,6 +127,7 @@ const WebSearchInputSchema = z
 export function createWebSearchTool(deps: WebSearchToolDeps): Tool<z.infer<typeof WebSearchInputSchema>, WebSearchOutput> {
     return defineTool({
         id: "web_search",
+        concurrent: true,
         description:
             "Search the web for pages: titles, URLs, and short snippets, plus any direct answers the engines returned. " +
             "Give `query` for one search, or `queries` (at most 5) for one pass whose answers and results merge into a single " +

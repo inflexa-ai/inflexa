@@ -27,6 +27,7 @@ import type { PauseWaiter, WorkKind, PausePart } from "../contracts/chat-parts.j
 import { DATA_PROFILE_RUN_LITERAL } from "../contracts/data-profile.js";
 import { createSubAgentActivityTracker } from "../contracts/subagent-activity.js";
 import type { ToolContext } from "../tools/define-tool.js";
+import { createCallLock } from "./call-lock.js";
 import { CHAT_STREAM_KEY, createTurnStreamWriter, SUB_AGENT_STREAM_PART } from "./chat-stream.js";
 import { addChatUsage, type AgentRunUsage } from "./metrics.js";
 import type { LoopOptions } from "./run-loop.js";
@@ -156,7 +157,7 @@ export function registerSubAgent<P, R>(name: string, body: SubAgentBody<P, R>, p
             const run = (): Promise<R> =>
                 body({
                     payload: input.payload,
-                    ctx: { invocationId: input.invocationId, session, signal, emit: writer.emit, turnUsage },
+                    ctx: { invocationId: input.invocationId, session, signal, emit: writer.emit, callLock: createCallLock(), turnUsage },
                     // The text of a sub-agent reaches no surface, thus its model calls write no text to the stream.
                     loop: {
                         signal,

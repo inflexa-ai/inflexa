@@ -654,6 +654,7 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
     const storeRoot = deps.refStorePath ?? REFS_ROOT;
     return defineTool({
         id: "list_available_refs",
+        concurrent: true,
         description:
             "Find the reference data that you need, as a real path. It lists the reference data of this environment: the only reference data that an analysis script can open. " +
             'Search by what the data is, with `query` (for example "hallmark", "regulon", "mouse"), not by where you expect it: the layout of the store is not a stable interface. ' +

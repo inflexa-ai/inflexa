@@ -105,6 +105,7 @@ const SearchGeoDatasetsOutputSchema = z.object({
 
 export const searchGeoDatasetsTool = defineTool({
     id: "search_geo_datasets",
+    concurrent: true,
     description:
         "Search the NCBI Gene Expression Omnibus (GEO) — the public functional-genomics repository of the U.S. National Library of Medicine — for " +
         "gene-expression datasets by disease, tissue, or experimental condition. Use it to find external validation cohorts or to cite published data. " +

@@ -319,6 +319,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
 
     return defineTool({
         id: "generate_analogy_report",
+        concurrent: true,
         description:
             "Idea-generation engine. Extracts structural analogies for an open-ended " +
             "scientific problem and returns real, cited solutions from other fields " +
