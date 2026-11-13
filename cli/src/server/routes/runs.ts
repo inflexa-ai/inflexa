@@ -515,7 +515,12 @@ function approvalRefusal(c: Context, planId: string, refusal: ApprovePlanRefusal
                 unavailable: refusal.unavailable,
             });
         case "not_authorized":
-            return conflict(`The run was not authorized: ${refusal.reason}`, { reason: "not_authorized" });
+            return conflict(
+                `The run was not authorized: ${refusal.reason}`,
+                refusal.kind === "credential"
+                    ? { reason: "not_authorized", kind: "credential" }
+                    : { reason: "not_authorized", kind: "failed", transient: refusal.transient },
+            );
         case "suspended":
             return conflict(`The analysis is suspended: ${refusal.reason}`, { reason: "suspended" });
         case "store_failed":

@@ -145,7 +145,9 @@ export type PlanApprovalConflict =
     | { reason: "superseded"; supersededBy: string }
     | { reason: "plan_invalid"; errors: string[] }
     | { reason: "packages_missing"; missing: string[]; collisions: string[]; unavailable?: string }
-    | { reason: "not_authorized" | "suspended" };
+    | { reason: "not_authorized"; kind: "failed"; transient: boolean }
+    | { reason: "not_authorized"; kind: "credential" }
+    | { reason: "suspended" };
 
 /** One plan of `GET {A}/plans`: its identity, its title, and its references. Timestamps are ISO 8601. */
 export type PlanSummary = {
