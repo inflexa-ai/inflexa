@@ -31,6 +31,8 @@ export type PlanStepSetting = {
     value: string | number | boolean | string[];
     /** The doi or the document that gives the value. Absent when the procedure names none. */
     source?: string;
+    /** The claim id of the rule that gives the value. Absent when the service names none, and on a plan stored before the field. */
+    rule?: string;
 };
 
 /** A place where the plan step departs from a rule it cites, as the grounding of the plan holds it. */

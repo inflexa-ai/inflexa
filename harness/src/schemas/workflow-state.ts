@@ -24,6 +24,12 @@ export const GroundingSettingSchema = z.object({
     name: z.string().describe("The parameter name as the procedure names it (for example `alpha` or `lfc_shrink`)."),
     value: GroundingValueSchema.describe("The value the procedure sets."),
     source: z.string().optional().describe("The source of the value (a doi or a document) when the procedure names one. Absent otherwise."),
+    rule: z
+        .string()
+        .optional()
+        .describe(
+            "The claim id of the rule that gives the value (for example `R-0147@3c1d`), as the skeleton step holds it. Absent when the service names none.",
+        ),
 });
 export type GroundingSetting = z.infer<typeof GroundingSettingSchema>;
 
