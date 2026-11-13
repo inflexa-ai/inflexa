@@ -349,6 +349,15 @@ describe("generatePlan loop-driving tool", () => {
         expect(ids.indexOf("knowledge_check")).toBeLessThan(ids.indexOf("submit_plan"));
     });
 
+    it("names no knowledge tool to the planner when no knowledge client is bound", async () => {
+        const model = blockImmediately("probe only");
+        await awaitOk(toolFor(model.provider).execute(INPUT, toolContext()));
+
+        // A prompt that names a tool that is not attached makes the planner call it. Thus the tool list and the text hold no such name.
+        expect(toolNamesOf(presentAt(model.calls, 0)).filter((name) => name.startsWith("knowledge_"))).toEqual([]);
+        expect(transcript(model)).not.toContain("knowledge_");
+    });
+
     it("reports no reference store to the planner when none is configured", async () => {
         const model = blockImmediately("probe only");
         await awaitOk(toolFor(model.provider).execute(INPUT, toolContext()));
@@ -589,6 +598,45 @@ describe("generatePlan loop-driving tool", () => {
             expect(result.event).toBe("plan_complete");
             expect(calls.check).toHaveLength(1);
             expect(JSON.stringify(model.calls[2]?.prompt)).toContain("No knowledge_check reviewed this draft");
+        });
+
+        it("completes a plan with no grounding when the service does not answer the recommend call", async () => {
+            await seedAnalysis(pool, "an-recommend-down", { dpStatus: null });
+            const { client, calls } = fakeKnowledgeClient({ recommend: { match: "unavailable", reason: "connect ECONNREFUSED" } });
+            const model = scriptedModel([
+                callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(submitPlan("s1", validCandidate())),
+                submitted,
+            ]);
+
+            const result = planResultOf(
+                (await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext("an-recommend-down")))._unsafeUnwrap(),
+            );
+
+            // No answer set the gate, thus the plan needs no check and the planner works as with no client.
+            expect(result.event).toBe("plan_complete");
+            expect(calls.check).toHaveLength(0);
+        });
+
+        it("completes a plan when the service answers the recommend call and then does not answer the check", async () => {
+            await seedAnalysis(pool, "an-check-down", { dpStatus: null });
+            const { client, calls } = fakeKnowledgeClient({ check: { match: "unavailable", reason: "Request timed out after 30000ms" } });
+            const plan = validCandidate({
+                id: "T1S2",
+                grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" },
+            });
+            const model = scriptedModel([
+                callTools(toolCall("t1", "knowledge_recommend", SITUATION)),
+                callTools(toolCall("k1", "knowledge_check", CHECKED_DRAFT)),
+                callTools(submitPlan("s1", plan)),
+                submitted,
+            ]);
+
+            const result = planResultOf((await toolFor(model.provider, { knowledge: client }).execute(INPUT, toolContext("an-check-down")))._unsafeUnwrap());
+
+            // The call is the review that the gate asks for. A service that fails after its first answer must not hold the plan.
+            expect(result.event).toBe("plan_complete");
+            expect(calls.check).toHaveLength(1);
         });
 
         async function storedStepsOf(analysisId: string, result: PlanningAgentOutput) {

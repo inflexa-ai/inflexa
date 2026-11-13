@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { PlanStepDeparture, StepMethods, StepMethodsClaim, StepMethodsSource, StepMethodsTemplate } from "../contracts/chat-parts.js";
 import { citationKey } from "../contracts/report-reference.js";
 import { classifyWithinRoot, computeSha256 } from "../lib/fs-helpers.js";
+import { errnoOf } from "../lib/fs-result.js";
 import type { Logger } from "../lib/logger.js";
 import type { ProvenanceCollector } from "../provenance/collector.js";
 import { landWithinRoot } from "../tools/workspace/mutator.js";
@@ -63,7 +64,43 @@ const DecisionRecordSchema = z.looseObject({
         .optional(),
     environment: z.looseObject({ match: z.string() }).optional(),
     script_path: z.string().optional(),
+    /** The digest of the script that the render wrote. */
+    written_sha256: z.string().optional(),
+    /**
+     * The slots that the script read, with the value of each. A step that fits the same model again takes them.
+     * A value of a different shape reads as no value, thus one such slot does not remove the record from the methods.
+     */
+    slots: z
+        .array(
+            z.looseObject({
+                name: z.string(),
+                value: z
+                    .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
+                    .optional()
+                    .catch(undefined),
+            }),
+        )
+        .optional(),
+    /** One entry for each change of the script after the render. With an entry, the slots can differ from the script that ran. */
+    unvetted_edits: z.array(z.looseObject({ sha256: z.string().optional() })).optional(),
+    /**
+     * One entry for each run of the script through `execute_command`. A list of a different shape reads as no run,
+     * thus such a record stays in the methods and gives no slot value to a second fit.
+     */
+    runs: z
+        .array(z.looseObject({ exit_code: z.number().nullable().optional().catch(undefined), sha256: z.string().optional().catch(undefined) }))
+        .optional()
+        .catch(undefined),
 });
+
+/**
+ * True when the record holds a run of the bytes that the render wrote, and the command of that run ended with exit
+ * code 0. A render that never ran gave no result, and a run of changed bytes read values that the record does not hold.
+ */
+export function recordHasRenderedRun(record: StepDecisionRecord): boolean {
+    if (record.written_sha256 === undefined) return false;
+    return (record.runs ?? []).some((run) => run.exit_code === 0 && run.sha256 === record.written_sha256);
+}
 export type StepDecisionRecord = z.infer<typeof DecisionRecordSchema>;
 
 /** One decision record that parsed, and its file relative to the step directory (`output/<name>`). */
@@ -81,6 +118,42 @@ async function recordFileNames(dir: string): Promise<string[]> {
         return [];
     }
     return names.filter((name) => name.startsWith(RECORD_PREFIX) && name.endsWith(RECORD_SUFFIX)).sort();
+}
+
+/** The largest script that the digest check of a record reads. */
+const MAX_RECORD_SCRIPT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * True when the script of `record` in `stepDir` (the host directory of the step) holds the bytes that the render
+ * wrote. A script that a file tool did not change can still differ: a shell command can write it, and the record
+ * then lists no change. An absent script, a script outside the step, and a record with no digest give false.
+ */
+export async function recordScriptIsAsRendered(stepDir: string, record: StepDecisionRecord): Promise<boolean> {
+    const relative = stepScriptPath(record.script_path);
+    if (relative === undefined || record.written_sha256 === undefined) return false;
+    const path = join(stepDir, relative);
+    try {
+        if ((await classifyWithinRoot(stepDir, path)) !== "in") return false;
+        const info = await stat(path);
+        if (!info.isFile() || info.size > MAX_RECORD_SCRIPT_BYTES) return false;
+        return computeSha256(await readFile(path)) === record.written_sha256;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The count of the record files of a step in `recordDir`, or `undefined` when the directory is there and the read of
+ * it failed. An absent directory gives 0. `readStepDecisionRecords` reads a bounded count of the files, and it
+ * leaves out a file that does not parse. A caller that needs each record compares the two counts.
+ */
+export async function countStepDecisionRecordFiles(recordDir: string): Promise<number | undefined> {
+    try {
+        const names = await readdir(recordDir);
+        return names.filter((name) => name.startsWith(RECORD_PREFIX) && name.endsWith(RECORD_SUFFIX)).length;
+    } catch (err) {
+        return errnoOf(err) === "ENOENT" ? 0 : undefined;
+    }
 }
 
 /**

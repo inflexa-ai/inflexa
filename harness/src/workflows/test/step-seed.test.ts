@@ -29,6 +29,7 @@ import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
 import { composeStepSeed } from "../execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput } from "../execute-analysis.js";
+import { scriptSha256 } from "../../tools/workspace/decision-record.js";
 import { stepDecisionRecordDir } from "../../workspace/paths.js";
 
 const ANALYSIS_ID = "an-1";
@@ -520,9 +521,15 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).toContain("`{{counts_path}}`");
         // The setting that names an adaptable slot is bound, with its source.
         expect(seed.prompt).toContain('`lfc_shrink` = "apeglm" (doi:10.1093/bioinformatics/bty895)');
-        // The pinned slot at the plan value, and the name no slot carries, are unbound with the reason.
-        expect(seed.prompt).toContain("`alpha` = 0.05 (differential_expression; doi:10.1186/s13059-014-0550-8): pinned by the template at the same value");
-        expect(seed.prompt).toContain('`inference` = "none" (enrichment): no slot of the template carries it');
+        // The script reads the pinned slot at the plan value, thus the setting needs no act of the agent.
+        expect(seed.prompt).toContain(
+            "Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):\n" +
+                "- `alpha` = 0.05 (differential_expression; doi:10.1186/s13059-014-0550-8): pinned by the template at the same value",
+        );
+        // The name that no slot carries is unbound with the reason, and the pinned setting is not in that list.
+        expect(seed.prompt).toContain(
+            'Unbound settings (the plan states them, and no bound slot carries them):\n- `inference` = "none" (enrichment): no slot of the template carries it',
+        );
         expect(seed.templateBinding).toEqual({
             ...BINDING_BASE,
             slots: { lfc_shrink: "apeglm" },
@@ -653,6 +660,281 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).not.toContain("`min_count` = 10");
     });
 
+    describe("a slot that takes the value of the reported fit", () => {
+        const FIT = { id: "tpl-fit", version: "2.0.0", label: "The fit", method: { id: "M-0008", label: "A count model" } };
+        const FIT_SLOTS = [
+            { name: "min_count", value: 5, source: "caller", adaptable: true, lines: [3] },
+            { name: "lfc_shrink", value: "ashr", source: "caller", adaptable: true, lines: [4] },
+            { name: "condition_column", value: "arm", source: "caller", adaptable: true, lines: [5] },
+            { name: "counts_path", value: "data/counts.csv", source: "caller", adaptable: true, lines: [1] },
+            // A slot that the fit did not read has no value in its record.
+            { name: "min_samples", source: "default", adaptable: true, lines: [6] },
+        ];
+        const SOURCE = "the reported fit of T1S1 (tpl-fit@2.0.0)";
+        const carriedContract = (bind = ["min_count", "lfc_shrink", "condition_column", "min_samples"]) => ({
+            ...contractAnswer(),
+            carried_slots: { from_templates: ["tpl-fit"], bind, show: ["counts_path"] },
+        });
+        const SCRIPT = "min_count <- 5\n";
+        // The record names its script and the digest of the bytes that the render wrote.
+        const RENDERED_NO_RUN = { script_path: "/an-1/runs/run-1/T1S1/scripts/tpl-fit.R", written_sha256: scriptSha256(SCRIPT) };
+        // The record also holds the run of those bytes, as `execute_command` writes it.
+        const RENDERED = { ...RENDERED_NO_RUN, runs: [{ exit_code: 0, sha256: scriptSha256(SCRIPT) }] };
+        const writeScript = async (root: string, content: string) => {
+            const dir = join(root, "runs", RUN_ID, "T1S1", "scripts");
+            await mkdir(dir, { recursive: true });
+            await writeFile(join(dir, "tpl-fit.R"), content, "utf8");
+        };
+        const writeRecord = async (root: string, stepId: string, file: string, record: unknown) => {
+            const recordDir = stepDecisionRecordDir({ workspaceRoot: root, runId: RUN_ID, stepId });
+            await mkdir(recordDir, { recursive: true });
+            await writeFile(join(recordDir, file), JSON.stringify(record), "utf8");
+        };
+        const compose = async (
+            records: readonly { readonly file: string; readonly record: unknown }[],
+            grounding: AnalysisStep["grounding"] = grounded([]),
+            contract: ReturnType<typeof contractAnswer> = carriedContract(),
+            script: string | null = SCRIPT,
+        ) => {
+            const root = await makeWorkspace();
+            for (const entry of records) await writeRecord(root, "T1S1", entry.file, entry.record);
+            if (script !== null) await writeScript(root, script);
+            const fake = fakeKnowledgeClient({ contract });
+            return composeStepSeed({
+                input: input([planStep("T1S1"), planStep("T1S2", ["T1S1"], grounding)]),
+                stepId: "T1S2",
+                runId: RUN_ID,
+                deps: deps(root, {}, fake.client),
+            });
+        };
+        const ONE = [{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS, ...RENDERED } }];
+        const CARRIED = { min_count: 5, lfc_shrink: "ashr", condition_column: "arm" };
+        const CARRIED_SOURCES = { min_count: SOURCE, lfc_shrink: SOURCE, condition_column: SOURCE };
+
+        it("binds each carried slot to the value in the record of the fit, a local slot also, and shows a path", async () => {
+            const seed = await compose(ONE);
+            // min_samples has no value in the record, thus the default of this template holds and nothing binds.
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: CARRIED, sources: CARRIED_SOURCES });
+            expect(seed.prompt).toContain(`\`min_count\` = 5 (${SOURCE})`);
+            expect(seed.prompt).toContain(`\`condition_column\` = "arm" (${SOURCE})`);
+            // A path is a fact of the step that wrote it: the seed shows it, and the binding does not hold it.
+            expect(seed.prompt).toContain(`Values of ${SOURCE} that are not bound`);
+            expect(seed.prompt).toContain('- `counts_path` = "data/counts.csv"');
+            expect(seed.templateBinding?.slots).not.toHaveProperty("counts_path");
+        });
+
+        it("binds nothing from the record of the fit when the service does not answer or no client is bound", async () => {
+            // A grounded plan of an earlier session, and the service is not there at the run. The record of the
+            // fit is on disk, and the step must start with no binding and no value of the fit.
+            for (const client of [fakeKnowledgeClient({ contract: { match: "unavailable", reason: "connect ECONNREFUSED" } }).client, undefined]) {
+                const root = await makeWorkspace();
+                await writeRecord(root, "T1S1", "decision_record_tpl-fit.R.json", { template: FIT, slots: FIT_SLOTS, ...RENDERED });
+                await writeScript(root, SCRIPT);
+                const seed = await composeStepSeed({
+                    input: input([planStep("T1S1"), planStep("T1S2", ["T1S1"], grounded(SETTINGS))]),
+                    stepId: "T1S2",
+                    runId: RUN_ID,
+                    deps: deps(root, {}, client),
+                });
+                expect(seed.templateBinding).toBeUndefined();
+                expect(seed.prompt).toContain("- Template contract: not retrieved (");
+                expect(seed.prompt).not.toContain("## Template contract");
+                expect(seed.prompt).not.toContain("reported fit");
+            }
+        });
+
+        it("binds nothing from a record with no run of the rendered script that ended with exit code 0", async () => {
+            const NOTE = "holds no run of its rendered script that ended with exit code 0";
+            const cases: readonly Record<string, unknown>[] = [
+                // A render that never ran, and a record of an older version.
+                RENDERED_NO_RUN,
+                // A run that failed, and a run that the sandbox ended.
+                { ...RENDERED_NO_RUN, runs: [{ exit_code: 1, sha256: scriptSha256(SCRIPT) }] },
+                { ...RENDERED_NO_RUN, runs: [{ exit_code: null, sha256: scriptSha256(SCRIPT) }] },
+                // A recovered call of a script that changed: the entry names two digests and no `sha256`.
+                {
+                    ...RENDERED_NO_RUN,
+                    runs: [{ exit_code: 0, sha256_before_the_command: scriptSha256(SCRIPT), sha256_at_the_recovery: scriptSha256("min_count <- 9\n") }],
+                },
+                // A run that started and did not end: the entry from before the command has no exit code.
+                { ...RENDERED_NO_RUN, runs: [{ sha256: scriptSha256(SCRIPT), invocation: "call-1" }] },
+                // A run of different bytes.
+                { ...RENDERED_NO_RUN, runs: [{ exit_code: 0, sha256: scriptSha256("min_count <- 9\n") }] },
+                // A list of a different shape reads as no run, and the record stays a record.
+                { ...RENDERED_NO_RUN, runs: "yes" },
+            ];
+            for (const rendered of cases) {
+                const seed = await compose([{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS, ...rendered } }]);
+                expect(seed.templateBinding, JSON.stringify(rendered)).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+                expect(seed.prompt).toContain(NOTE);
+            }
+        });
+
+        it("binds from a record with one good run among failed runs", async () => {
+            const runs = [
+                { exit_code: 1, sha256: scriptSha256(SCRIPT) },
+                { exit_code: 0, sha256: scriptSha256(SCRIPT) },
+                { exit_code: 137, sha256: scriptSha256(SCRIPT) },
+            ];
+            const seed = await compose([{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS, ...RENDERED_NO_RUN, runs } }]);
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: CARRIED, sources: CARRIED_SOURCES });
+        });
+
+        it("keeps the value of the fit when a plan setting of the step gives a different value", async () => {
+            const own = { step: "sensitivity_fits", name: "min_count", value: 10, source: "doi:10.12688/f1000research.7035.1" };
+            const same = { step: "sensitivity_fits", name: "lfc_shrink", value: "ashr" };
+            const seed = await compose(ONE, grounded([own, same]));
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: CARRIED, sources: CARRIED_SOURCES });
+            expect(seed.prompt).toContain(
+                "`min_count` = 10 (sensitivity_fits; doi:10.12688/f1000research.7035.1): differs from the bound value 5 of the same slot",
+            );
+            expect(seed.prompt).not.toContain('`lfc_shrink` = "ashr" (sensitivity_fits)');
+        });
+
+        it("does not bind a plan setting of a carried slot that the fit read no value for: the default of the template holds", async () => {
+            const own = { step: "sensitivity_fits", name: "min_samples", value: 3 };
+            const seed = await compose(ONE, grounded([own]));
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: CARRIED, sources: CARRIED_SOURCES });
+            expect(seed.prompt).toContain(
+                "`min_samples` = 3 (sensitivity_fits): the reported fit read no value for the slot `min_samples`, thus the default of the template holds",
+            );
+        });
+
+        it("does not bind a plan setting of a slot whose value of the fit the seed shows", async () => {
+            // The agent sends the shown value. A bound plan value would refuse it at the render with no override.
+            const contract = { ...contractAnswer(), carried_slots: { from_templates: ["tpl-fit"], bind: ["lfc_shrink"], show: ["min_count"] } };
+            const own = { step: "sensitivity_fits", name: "min_count", value: 10 };
+            const seed = await compose(ONE, grounded([own]), contract);
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: { lfc_shrink: "ashr" }, sources: { lfc_shrink: SOURCE } });
+            expect(seed.prompt).toContain("- `min_count` = 5");
+            expect(seed.prompt).toContain(
+                "`min_count` = 10 (sensitivity_fits): the slot `min_count` takes the value that the reported fit used, which the seed shows",
+            );
+        });
+
+        it("keeps the exclusion of a slot that a mapped setting binds: only a value of the fit stays under a departure", async () => {
+            const policy = { step: "filter_low_counts", name: "depth_policy", value: "low_depth_panel" };
+            const own = { step: "filter_low_counts", name: "min_count", value: 10 };
+            const removed = { rule: "R-0001@e7d0", setting: "min_count", reason: "the plan keeps each gene" };
+            const contract = {
+                ...contractAnswer(),
+                setting_bindings: [{ setting: "depth_policy", value: "low_depth_panel", slot: "min_count", slot_value: 5 }],
+            };
+            const seed = await compose([], departed(grounded([policy, own]), [removed]), contract);
+            expect(seed.templateBinding?.excluded).toEqual(["min_count"]);
+        });
+
+        it("does not exclude a carried slot that a departure of the step removes", async () => {
+            const own = { step: "sensitivity_fits", name: "min_count", value: 10 };
+            const removed = { rule: "R-0001@e7d0", setting: "min_count", reason: "the plan keeps each gene" };
+            const seed = await compose(ONE, departed(grounded([own]), [removed]));
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: CARRIED, sources: CARRIED_SOURCES, departures: [removed] });
+            expect(seed.prompt).toContain("but the slot takes the value 5 of the reported fit");
+        });
+
+        it("binds nothing with no record of a named template, and the seed gives the reason", async () => {
+            const other = [{ file: "decision_record_tpl-other.R.json", record: { template: { ...FIT, id: "tpl-other" }, slots: FIT_SLOTS } }];
+            for (const records of [[], other]) {
+                const seed = await compose(records);
+                expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+                expect(seed.prompt).toContain("Values of the reported fit: no step that this step depends on holds a decision record of `tpl-fit`");
+            }
+        });
+
+        it("does not bind a plan setting of a carried slot when the host found no record of the fit", async () => {
+            // A plan value is not the value that the fit used. A bound plan value would refuse the value of the fit at the render.
+            const own = { step: "sensitivity_fits", name: "min_count", value: 10 };
+            const seed = await compose([], grounded([own]));
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(seed.prompt).toContain(
+                "`min_count` = 10 (sensitivity_fits): the slot `min_count` takes the value that the reported fit used, and the host holds no valid value of it",
+            );
+        });
+
+        it("binds nothing with two records of the fit: the host cannot tell which fit the step reports", async () => {
+            const two = [...ONE, { file: "decision_record_tpl-fit_B.R.json", record: { template: FIT, slots: [{ name: "min_count", value: 1 }] } }];
+            const seed = await compose(two);
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(seed.prompt).toContain("2 decision records of `tpl-fit` are in the steps that this step depends on");
+            expect(seed.prompt).toContain("T1S1: output/decision_record_tpl-fit.R.json, T1S1: output/decision_record_tpl-fit_B.R.json");
+        });
+
+        it("binds nothing when the script of the fit changed after its render: the record does not prove the values that ran", async () => {
+            const edited = [
+                {
+                    file: "decision_record_tpl-fit.R.json",
+                    record: { template: FIT, slots: FIT_SLOTS, ...RENDERED, unvetted_edits: [{ sha256: "ab12", tool: "edit_file" }] },
+                },
+            ];
+            const seed = await compose(edited);
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            const NOTE =
+                "Values of the reported fit: the script of the reported fit is not the script that its render wrote (the record is T1S1: output/decision_record_tpl-fit.R.json)";
+            expect(seed.prompt).toContain(NOTE);
+            // A shell command can write the script, and the record then lists no change. The digest of the bytes
+            // on disk tells: a different script, an absent script, and a record with no digest bind nothing.
+            for (const script of ["min_count <- 10\n", null]) {
+                const changed = await compose(ONE, grounded([]), carriedContract(), script);
+                expect(changed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+                expect(changed.prompt).toContain(NOTE);
+            }
+            const noDigest = await compose([{ file: "decision_record_tpl-fit.R.json", record: { template: FIT, slots: FIT_SLOTS } }]);
+            expect(noDigest.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(seed.prompt).not.toContain("that are not bound");
+        });
+
+        it("binds nothing when the host did not read each record of a dependency: a record that it left out can be a second fit", async () => {
+            // A file that does not parse is left out of the read, and so is each file past the bound of the read.
+            const broken = [...ONE, { file: "decision_record_tpl-fit_B.R.json", record: { template: "not a template" } }];
+            const seed = await compose(broken);
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(seed.prompt).toContain("Values of the reported fit: the host did not read each decision record of T1S1");
+            const many = Array.from({ length: 17 }, (_, index) => ({
+                file: `decision_record_a${String(index).padStart(2, "0")}.R.json`,
+                record: { template: { ...FIT, id: index === 0 ? "tpl-fit" : "tpl-other" }, slots: FIT_SLOTS },
+            }));
+            const truncated = await compose(many);
+            expect(truncated.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(truncated.prompt).toContain("the host did not read each decision record of T1S1");
+        });
+
+        it("does not bind a value that the slot of this template does not take, and lists it with the reason", async () => {
+            const bad = [
+                {
+                    file: "decision_record_tpl-fit.R.json",
+                    record: {
+                        template: FIT,
+                        ...RENDERED,
+                        slots: [
+                            { name: "min_count", value: -1 },
+                            { name: "lfc_shrink", value: "other" },
+                        ],
+                    },
+                },
+            ];
+            const seed = await compose(bad);
+            expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(seed.prompt).toContain(`\`min_count\` = -1 (${SOURCE}): the slot of this template does not take it (the value must be at least 0)`);
+            expect(seed.prompt).toContain(`\`lfc_shrink\` = "other" (${SOURCE}): the slot of this template does not take it`);
+            // A plan value does not take the place of a value of the fit that the slot refuses.
+            const own = { step: "sensitivity_fits", name: "min_count", value: 10 };
+            const withPlan = await compose(bad, grounded([own]));
+            expect(withPlan.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(withPlan.prompt).toContain(
+                "`min_count` = 10 (sensitivity_fits): the slot `min_count` takes the value that the reported fit used, and the host holds no valid value of it",
+            );
+        });
+
+        it("reads no record for a contract with no carried slot, and binds nothing when the served version differs", async () => {
+            const plain = await compose(ONE, grounded([]), contractAnswer());
+            expect(plain.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
+            expect(plain.prompt).not.toContain("reported fit");
+            const moved = await compose(ONE, grounded([]), { ...carriedContract(), version: "9.9.9" });
+            expect(moved.templateBinding).toBeUndefined();
+            expect(moved.prompt).not.toContain("reported fit");
+        });
+    });
+
     describe("a setting that the script of the template does with no slot", () => {
         const ADJUSTMENT = { step: "multiple_testing", name: "adjustment", value: "BH", source: "rule:R-0003" } as const;
         const doneContract = (entries: { setting: string; value: string | number | boolean }[] = [{ setting: "adjustment", value: "BH" }]) => ({
@@ -664,7 +946,7 @@ describe("composeStepSeed template contract", () => {
             const fake = fakeKnowledgeClient({ contract });
             return composeStepSeed({ input: input([planStep("T1S2", [], grounding)]), stepId: "T1S2", runId: RUN_ID, deps: deps(root, {}, fake.client) });
         };
-        const DONE = "Done by the script (the plan states them, and the script does them with no slot; send no value for them):";
+        const DONE = "Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):";
         const LINE = '`adjustment` = "BH" (multiple_testing; rule:R-0003)';
 
         it("lists the setting as done by the script, binds no slot, and does not list it as unbound", async () => {
@@ -846,6 +1128,23 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).toContain(
             '`min_count` = "all_retained" (filter_low_counts; departure from R-0001@e7d0: the PCA uses each retained target): a policy of the plan, not a value of the `min_count` slot (integer)',
         );
+    });
+
+    it("gives a seed with no text of the knowledge service for a plan with no grounding and no client", async () => {
+        const root = await makeWorkspace();
+
+        const seed = await composeStepSeed({
+            input: input([planStep("T1S1"), planStep("T1S2", ["T1S1"])]),
+            stepId: "T1S2",
+            runId: RUN_ID,
+            deps: deps(root),
+        });
+
+        // The harness with no knowledge service: the seed names no tool that is not attached and no contract.
+        expect(seed.templateBinding).toBeUndefined();
+        expect(seed.prompt).not.toContain("knowledge_");
+        expect(seed.prompt).not.toContain("Template contract");
+        expect(seed.prompt).not.toContain("reported fit");
     });
 
     it("says the contract was not retrieved when no client is bound, and renders no section", async () => {

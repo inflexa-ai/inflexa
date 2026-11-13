@@ -19,7 +19,7 @@ import { createWorkspaceMutator } from "../mutator.js";
 import { createDecisionRecordStore, scriptSha256 } from "../decision-record.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecEmit, ExecRequest, ExecResult, SandboxRef } from "../../../sandbox/types.js";
-import { createExecuteCommandTool } from "../execute-command.js";
+import { createExecuteCommandTool, runScriptPathsOf, scriptPathsOf } from "../execute-command.js";
 import { leaseOverClient } from "../../../sandbox/__fixtures__/leases.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
 import { presentAt } from "../../../lib/present.js";
@@ -102,10 +102,10 @@ describe("execute_command and the decision record of a script", () => {
         return join(base, ANALYSIS, "runs", "run-abc", "step1");
     }
 
-    function buildTool() {
+    function buildTool(opts: FakeOpts = {}) {
         const workspaceRoot = join(base, ANALYSIS);
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-abc", stepId: "step1" });
-        const client = makeFakeClient();
+        const client = makeFakeClient(opts);
         const tool = createExecuteCommandTool({
             lease: leaseOverClient(client, makeSandboxRef()),
             defaultCwd: DEFAULT_CWD,
@@ -180,7 +180,10 @@ describe("execute_command and the decision record of a script", () => {
         const out = (await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx))._unsafeUnwrap();
 
         expect(out).toMatchObject({ status: "ok", decision_records_restored: [`${DEFAULT_CWD}/output/decision_record_de.json`] });
-        expect(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8")).toBe(held);
+        // The copy is the host copy again, and the two copies then take the run of the script.
+        const run = { exit_code: 0, sha256: scriptSha256(written), invocation: "test-tool-call" };
+        expect(await record()).toEqual({ written_sha256: scriptSha256(written), unvetted_edits: [], runs: [run] });
+        expect(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8")).toBe(await readFile(hostRecordPath(), "utf8"));
         expect(client.execs).toHaveLength(1);
 
         // The copy is back, thus the next run reports nothing.
@@ -264,6 +267,243 @@ describe("execute_command and the decision record of a script", () => {
         // The record of another step is outside the write prefix of this one: its host copy and its copy stay as they are.
         expect(await readFile(otherHost, "utf8")).toBe(held);
         expect(await readFile(join(other, "output", "decision_record_de.json"), "utf8")).toBe(held);
+    });
+
+    it("notes a changed script that a shell line runs, in each form of the line", async () => {
+        const written = "ALPHA <- 0.05\n";
+        const changed = "ALPHA <- 0.5\n";
+        const lines: readonly (readonly string[])[] = [
+            ["Rscript scripts/de.R > output/log.txt 2>&1"],
+            ["cd scripts && Rscript de.R"],
+            ["(Rscript 'scripts/de.R'); echo done"],
+            ["bash", "-lc", "Rscript scripts/de.R | tee output/log.txt"],
+            ["Rscript", "--file=scripts/de.R"],
+        ];
+        for (const command of lines) {
+            await writeFile(join(stepDir(), "scripts", "de.R"), changed);
+            await writeFile(
+                join(stepDir(), "output", "decision_record_de.json"),
+                JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }),
+            );
+            const { tool, client } = buildTool();
+            const { ctx } = makeToolContext();
+            await awaitOk(tool.execute({ command: [...command] }, ctx));
+            expect((await record()).unvetted_edits, command.join(" ")).toEqual([
+                {
+                    path: `${DEFAULT_CWD}/scripts/de.R`,
+                    note: "the script changed by a path no file tool recorded, before it ran",
+                    sha256: scriptSha256(changed),
+                },
+            ]);
+            // The command runs as the model sent it.
+            expect(presentAt(client.execs, 0).request.command).toEqual([...command]);
+        }
+    });
+
+    it("resolves a path of a shell line against the directory after a cd and against the cwd of the command", () => {
+        expect(scriptPathsOf(["cd scripts && Rscript de.R"], "/an/step")).toEqual(["/an/step/scripts/de.R", "/an/step/de.R"]);
+        // A subshell ends the move, thus the second script resolves against the two directories.
+        expect(scriptPathsOf(["(cd a && python x.py); python scripts/y.py"], "/an/step")).toEqual([
+            "/an/step/a/x.py",
+            "/an/step/x.py",
+            "/an/step/a/scripts/y.py",
+            "/an/step/scripts/y.py",
+        ]);
+        // A second cd after a subshell starts from the cwd of the command, and the paths hold that script.
+        expect(scriptPathsOf(["(cd scripts && Rscript a.R); cd scripts && Rscript b.R"], "/an/step")).toContain("/an/step/scripts/b.R");
+        // A target that the shell expands moves nothing.
+        expect(scriptPathsOf(["cd $OUT && Rscript de.R"], "/an/step")).toEqual(["/an/step/de.R"]);
+        // An element of a direct argv is one path, also with a space in it.
+        expect(scriptPathsOf(["Rscript", "my scripts/de.R"], "/an/step")).toEqual(["/an/step/my scripts/de.R", "/an/step/scripts/de.R"]);
+        expect(scriptPathsOf(["ls", "-la"], "/an/step")).toEqual([]);
+        // A command names a small number of scripts, and the check has a bound.
+        const many = Array.from({ length: 40 }, (_, i) => `s${String(i)}.R`).join(" ");
+        expect(scriptPathsOf([many], "/an/step")).toHaveLength(16);
+        // The bound is for the words of a line. An element that is a path always gets its check, also after a long element.
+        expect(scriptPathsOf(["env", `FILES=${many}`, "Rscript", "scripts/de.R"], "/an/step")).toContain("/an/step/scripts/de.R");
+    });
+
+    it("writes a run entry in both copies of the record after the command, with the exit code and the digest that ran", async () => {
+        const written = "ALPHA <- 0.05\n";
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeHeldRecord(`${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }, null, 2)}\n`);
+        const { tool } = buildTool();
+        const { ctx } = makeToolContext();
+
+        const out = (await tool.execute({ command: ["Rscript scripts/de.R > output/log.txt"] }, ctx))._unsafeUnwrap();
+
+        const run = { exit_code: 0, sha256: scriptSha256(written), invocation: "test-tool-call" };
+        expect((await record()).runs).toEqual([run]);
+        expect(asRecord(parseJsonAs(await readFile(hostRecordPath(), "utf8"), z.json())).runs).toEqual([run]);
+        // The two copies are the same bytes, thus the next command reports no restored record.
+        expect(await readFile(hostRecordPath(), "utf8")).toBe(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8"));
+        expect(out).not.toHaveProperty("decision_records_restored");
+        // The host does a tool call again after a recovery, and the command ran one time: no second entry.
+        await awaitOk(tool.execute({ command: ["Rscript scripts/de.R > output/log.txt"] }, ctx));
+        expect((await record()).runs).toEqual([run]);
+        const again = (await tool.execute({ command: ["Rscript", "scripts/de.R"] }, { ...ctx, invocationId: "call-2" }))._unsafeUnwrap();
+        expect(again).not.toHaveProperty("decision_records_restored");
+        expect((await record()).runs).toEqual([run, { ...run, invocation: "call-2" }]);
+        expect((await record()).unvetted_edits).toEqual([]);
+
+        // Two commands of one script that end together: each note reads the record and then writes it, in order.
+        await Promise.all(
+            ["call-3", "call-4", "call-5"].map((invocationId) => tool.execute({ command: ["Rscript", "scripts/de.R"] }, { ...ctx, invocationId })),
+        );
+        expect((await record()).runs).toHaveLength(5);
+    });
+
+    it("writes the entry of a run before the command, with the digest and with no exit code", async () => {
+        const written = "ALPHA <- 0.05\n";
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeHeldRecord(`${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }, null, 2)}\n`);
+        // The exec fails: the host stops between the entry before the command and the entry of its end.
+        const { tool } = buildTool({ execError: new Error("the host stopped") });
+        const { ctx } = makeToolContext();
+
+        const failed = await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx).then(
+            (result) => result.isErr(),
+            () => true,
+        );
+        expect(failed).toBe(true);
+
+        const started = { sha256: scriptSha256(written), invocation: "test-tool-call" };
+        expect((await record()).runs).toEqual([started]);
+        expect(asRecord(parseJsonAs(await readFile(hostRecordPath(), "utf8"), z.json())).runs).toEqual([started]);
+    });
+
+    it("gives the entry of a recovered call its digest only when the script still holds the bytes from before the command", async () => {
+        const written = "ALPHA <- 0.05\n";
+        const other = "ALPHA <- 0.5\n";
+        const { ctx } = makeToolContext();
+        const heldWith = (sha256: string) =>
+            `${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [], runs: [{ sha256, invocation: "test-tool-call" }] }, null, 2)}\n`;
+
+        // The same bytes at the recovery: the command ran them before the stop, or it runs them now.
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeHeldRecord(heldWith(scriptSha256(written)));
+        await awaitOk(buildTool().tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
+        expect((await record()).runs).toEqual([{ exit_code: 0, sha256: scriptSha256(written), invocation: "test-tool-call" }]);
+
+        // The script changed after the entry. The host stopped before the command or after it, and the entry does
+        // not say which. Thus the entry names the two digests and no `sha256`: it is a run of no known script.
+        await writeFile(join(stepDir(), "scripts", "de.R"), other);
+        await writeHeldRecord(heldWith(scriptSha256(written)));
+        await awaitOk(buildTool().tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
+        expect((await record()).runs).toEqual([
+            { exit_code: 0, sha256_before_the_command: scriptSha256(written), sha256_at_the_recovery: scriptSha256(other), invocation: "test-tool-call" },
+        ]);
+
+        // The script held different bytes at the entry, and it holds the rendered bytes again at the recovery.
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeHeldRecord(heldWith(scriptSha256(other)));
+        await awaitOk(buildTool().tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
+        expect((await record()).runs).toEqual([
+            { exit_code: 0, sha256_before_the_command: scriptSha256(other), sha256_at_the_recovery: scriptSha256(written), invocation: "test-tool-call" },
+        ]);
+    });
+
+    it("writes the run of a changed script with the digest of the bytes that ran, after the change note", async () => {
+        const written = "ALPHA <- 0.05\n";
+        const changed = "ALPHA <- 0.5\n";
+        await writeFile(join(stepDir(), "scripts", "de.R"), changed);
+        await writeHeldRecord(`${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }, null, 2)}\n`);
+        const { tool } = buildTool();
+        const { ctx } = makeToolContext();
+
+        await awaitOk(tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx));
+
+        const held = await record();
+        expect(held.unvetted_edits).toHaveLength(1);
+        expect(held.runs).toEqual([{ exit_code: 0, sha256: scriptSha256(changed), invocation: "test-tool-call" }]);
+    });
+
+    it("writes no run entry for a command that reads the script as data", async () => {
+        const written = "ALPHA <- 0.05\n";
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeHeldRecord(`${JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }, null, 2)}\n`);
+        const { tool } = buildTool();
+        const { ctx } = makeToolContext();
+
+        for (const command of [
+            ["cat", "scripts/de.R"],
+            ["cat scripts/de.R | head"],
+            ["wc", "-l", "scripts/de.R"],
+            // A pipe ends with the exit code of `tee`, thus it proves no run that ended well.
+            ["Rscript scripts/de.R | tee output/log.txt"],
+        ]) {
+            await awaitOk(tool.execute({ command }, ctx));
+        }
+
+        expect(await record()).not.toHaveProperty("runs");
+    });
+
+    it("tells a script that the command runs from a script that the command reads", () => {
+        const cwd = "/an/step";
+        const de = "/an/step/scripts/de.R";
+        for (const command of [
+            ["Rscript", "scripts/de.R"],
+            ["Rscript", "--vanilla", "scripts/de.R"],
+            ["/usr/bin/Rscript", "scripts/de.R"],
+            ["scripts/de.R"],
+            ["Rscript scripts/de.R"],
+            ["Rscript scripts/de.R > output/log.txt 2>&1"],
+            ["Rscript --vanilla scripts/de.R"],
+            ["Rscript scripts/de.R>output/log.txt"],
+            ["Rscript scripts/de.R 2> output/err.txt"],
+            ["Rscript scripts/de.R --input data/counts.csv >> output/log.txt"],
+            ["cd scripts && Rscript de.R"],
+            ["mkdir -p output && Rscript scripts/de.R > output/log.txt"],
+        ]) {
+            expect(runScriptPathsOf(command, cwd), command.join(" ")).toEqual([de]);
+        }
+        // A `2>&1` that touches a directory name is part of no word that the host can tell: no path, and not the wrong script.
+        expect(runScriptPathsOf(["cd scripts2>&1 && Rscript de.R"], cwd)).toEqual([]);
+        expect(runScriptPathsOf(["cd scripts&&Rscript de.R"], cwd)).toEqual([]);
+        // A rendered script can have a name with no extension. The runner names it, and the digest check reads it also.
+        expect(runScriptPathsOf(["Rscript", "scripts/fit"], cwd)).toEqual(["/an/step/scripts/fit"]);
+        expect(scriptPathsOf(["Rscript scripts/fit > output/log.txt"], cwd)).toEqual(["/an/step/scripts/fit"]);
+        // A cd of the chain moves the script: the script of the cwd did not run.
+        expect(runScriptPathsOf(["cd output && Rscript scripts/de.R"], cwd)).toEqual(["/an/step/output/scripts/de.R"]);
+        // In each of these forms the exit code is not the exit code of the script, or the script does not run.
+        for (const command of [
+            ["cat", "scripts/de.R"],
+            ["cat scripts/de.R"],
+            ["cp scripts/de.R scripts/copy.R"],
+            ["python", "scripts/own.py", "scripts/de.R"],
+            ["Rscript scripts/de.R | tee output/log.txt"],
+            ["echo 'Rscript scripts/de.R'"],
+            ["true || Rscript scripts/de.R"],
+            ["Rscript scripts/de.R; echo done"],
+            ["Rscript scripts/de.R && echo done"],
+            ["Rscript scripts/de.R &"],
+            ["(Rscript scripts/de.R)"],
+            ["bash", "-lc", "Rscript scripts/de.R"],
+            ["time", "Rscript", "scripts/de.R"],
+            ["Rscript -e \"source('scripts/de.R')\""],
+            ["echo $(Rscript scripts/de.R)"],
+            // A mode of the runner that ends with exit code 0 and runs nothing.
+            ["Rscript", "--version", "scripts/de.R"],
+            ["bash -n scripts/de.R"],
+            ["node", "--check", "scripts/de.R"],
+            // A cd that the host cannot resolve, and a word that is no command.
+            ["cd ~ && Rscript scripts/de.R"],
+            ["echo 2>&1 scripts/de.R extra && true"],
+            // An input redirect: the shell runs the other script.
+            ["python < scripts/de.R scripts/other.py"],
+            // A command of the chain that ends the shell before the script.
+            ["exit 0 && Rscript scripts/de.R"],
+            ["exec true && Rscript scripts/de.R"],
+            // R reads its options after the file also, thus `R` is no runner here.
+            ["R", "--vanilla", "-f", "scripts/de.R", "--version"],
+            ["Rscript", "-e", "1", "scripts/de.R"],
+            // `--file=` is an option of R, and an option after it can stop the run.
+            ["Rscript", "--file=scripts/de.R", "--version"],
+        ]) {
+            expect(runScriptPathsOf(command, cwd), command.join(" ")).not.toContain(de);
+            // The digest check before the run still reads the script.
+            expect(scriptPathsOf(command, cwd), command.join(" ")).toContain(de);
+        }
     });
 
     it("runs a script without a record, and a command without a script, with no record read", async () => {

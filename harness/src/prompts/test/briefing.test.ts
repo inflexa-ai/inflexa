@@ -104,7 +104,7 @@ function brief(overrides: Partial<TemplateBrief> = {}): TemplateBrief {
         inputs: contract.inputs ?? [],
         bound: [{ name: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" }],
         done_by_script: [],
-        unbound_settings: ["`alpha` = 0.05 (differential_expression): pinned by the template at the same value"],
+        unbound_settings: ['`inference` = "none" (enrichment): no slot of the template carries it'],
         ...overrides,
     };
 }
@@ -210,10 +210,26 @@ describe("renderTemplateContract", () => {
         expect(rendered).not.toContain("- `alpha` (");
     });
 
+    it("renders the values of the reported fit that are not bound, or the reason for their absence", () => {
+        const source = "the reported fit of T1S2 (tpl-fit@2.0.0)";
+        const shown = renderTemplateContract(brief({ reported_fit: { source, shown: ['`counts_path` = "data/counts.csv"'] } }));
+        expect(shown).toContain(
+            `Values of ${source} that are not bound (a path is a fact of the step that wrote it, and the script of the fit can change a value at run time; make sure of each one against the summary of the fit, then send it):\n- \`counts_path\` = "data/counts.csv"`,
+        );
+        const note = renderTemplateContract(brief({ reported_fit: { shown: [], note: "no step holds a record" } }));
+        expect(note).toContain("Values of the reported fit: no step holds a record");
+        expect(note).not.toContain("that are not bound");
+        // A record with no shown value, and a contract with no carried slot: no block.
+        expect(renderTemplateContract(brief({ reported_fit: { source, shown: [] } }))).not.toContain("reported fit");
+        expect(renderTemplateContract(brief())).not.toContain("reported fit");
+    });
+
     it("renders the settings that the script does in a block of their own, and no block when there is none", () => {
         const line = '`adjustment` = "BH" (multiple_testing; rule:R-0003)';
         const rendered = renderTemplateContract(brief({ done_by_script: [line] }));
-        expect(rendered).toContain(`Done by the script (the plan states them, and the script does them with no slot; send no value for them):\n- ${line}`);
+        expect(rendered).toContain(
+            `Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):\n- ${line}`,
+        );
         // The block comes before the unbound settings: the agent reads what needs no act first.
         expect(rendered.indexOf("Done by the script")).toBeLessThan(rendered.indexOf("Unbound settings"));
         expect(renderTemplateContract(brief())).not.toContain("Done by the script");
@@ -247,7 +263,7 @@ describe("renderTemplateContract", () => {
     it("names the unbound settings", () => {
         const rendered = renderTemplateContract(brief());
         expect(rendered).toContain("Unbound settings");
-        expect(rendered).toContain("`alpha` = 0.05 (differential_expression): pinned by the template at the same value");
+        expect(rendered).toContain('`inference` = "none" (enrichment): no slot of the template carries it');
     });
 
     it("collapses the bound and unbound lists when they are empty", () => {

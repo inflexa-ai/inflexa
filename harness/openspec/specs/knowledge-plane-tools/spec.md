@@ -256,6 +256,10 @@ A rule can give a setting as a policy word, which is not a value of a slot. The 
 
 A script does some settings with no slot, for example the adjustment of a fit script. The served contract can carry `settings_by_construction`. Each entry names one setting with the value that the script does. The service gives no more than one entry for one setting, and the parent MUST take the first such entry. An entry whose setting is the name of a slot of the served contract says nothing, because the slot carries that setting. The parent MUST read the setting after its departure. A setting of the step can have the name and the value of an entry. The seed MUST then list it under `Done by the script` with its procedure step and its source. The seed MUST NOT list that setting as unbound, and the binding MUST NOT hold a slot or a source for it. When the setting has a different value, the seed MUST list it as unbound, and the line MUST name the value that the script does. A departure with no value can name the setting. The seed MUST then list it as unbound, and the line MUST say that the script does it with no slot. The binding MUST NOT name an excluded slot for it. When the served version differs from the version of the plan, the seed MUST list no setting under `Done by the script`.
 
+A template can pin a slot at the value of a setting of the step. The script reads the pinned value, thus the setting needs no act of the agent. The seed MUST then list that setting under `Done by the script` with its procedure step and its source. The line MUST say that the template pins the slot at the same value. The seed MUST NOT list that setting as unbound.
+
+A script can fit the model of a fit in a step before it again. The served contract of such a template can carry `carried_slots`. The entry names the templates of that fit in `from_templates`. It names the slots that the parent binds in `bind`, and the slots that the seed shows in `show`. The parent MUST read the decision records of the steps that the step depends on. A record whose template is in `from_templates` is the record of the reported fit. With one such record, the parent MUST bind each `bind` slot to the value of the same slot in that record. The source of the bound slot MUST name the step and the template of the record. The parent MUST bind a local slot also, and `knowledge_template` binds that value on the machine. The parent MUST NOT bind a slot that has no value in the record, because the default of the template then applies. A setting of the step MUST NOT bind that slot, and the seed MUST list that setting as unbound. The parent MUST NOT bind a value that the slot of the served contract does not take. The seed MUST list that value as unbound with the reason. The seed MUST show the value of each `show` slot, and the binding MUST NOT hold it. A `show` slot is a path, or a slot whose value the script of the fit can change at run time. A carried slot binds before the settings of the step. A setting of the step that gives the slot a different value MUST be listed as unbound. A setting of the step MUST NOT bind a `show` slot, and the seed MUST list that setting as unbound. A departure with no value MUST NOT name a slot that holds a value of the reported fit as excluded. With no such record, or with more than one, the parent MUST bind no carried slot, and the seed MUST give the reason. The parent MUST also bind no carried slot when the record lists a change of the script after the render. The parent MUST compare the digest of the script on disk with the digest in the record. It MUST bind no carried slot when the two differ. The record MUST also hold a run of the rendered script that ended with exit code 0. Such a run is an entry of `runs` whose `sha256` is the `written_sha256` of the record. Without such a run, the parent MUST bind no carried slot, and the seed MUST give the reason. The same applies when the parent did not read each record file of a dependency. In each of these cases, a setting of the step MUST NOT bind a carried slot. When the served version differs from the version of the plan, the parent MUST read no carried slot.
+
 A template gives each slot a value, and an omitted slot takes the default of the template. Thus the binding MUST name an adaptable slot as excluded when a departure with no value names it. `knowledge_template` MUST refuse a render that sends no value for an excluded slot. It MUST also refuse a value with no override. The decision record MUST keep the override of an excluded slot with a `plan_value` of `null`.
 
 #### Scenario: A policy word on an integer slot
@@ -266,9 +270,16 @@ A template gives each slot a value, and an omitted slot takes the default of the
 
 #### Scenario: An unbound setting keeps its source
 
-- **GIVEN** a step whose settings hold `alpha = 0.05` with the source `doi:10.1186/s13059-014-0550-8`, and a contract that pins `alpha` at 0.05
+- **GIVEN** a step whose settings hold `alpha = 0.01` with the source `doi:10.1186/s13059-014-0550-8`, and a contract that pins `alpha` at 0.05
 - **WHEN** the seed composes
 - **THEN** the line of `alpha` under `Unbound settings` names the procedure step and the source
+
+#### Scenario: A setting that the template pins at the same value
+
+- **GIVEN** a step whose settings hold `alpha = 0.05`, and a contract that pins `alpha` at 0.05
+- **WHEN** the seed composes
+- **THEN** the seed lists `alpha` under `Done by the script`, and the line says that the template pins it at the same value
+- **AND** the seed does not list `alpha` as unbound
 
 #### Scenario: A bound slot rides without a model value
 
@@ -339,6 +350,43 @@ A template gives each slot a value, and an omitted slot takes the default of the
 - **WHEN** the departure gives `adjustment` no value
 - **THEN** the seed lists `adjustment` as unbound, and the line says that the script does it with no slot
 - **AND** the binding names no excluded slot
+
+#### Scenario: A slot that takes the value of the reported fit
+
+- **GIVEN** a step that depends on `T1S2`, and a served contract whose `carried_slots` name `tpl-fit`, bind `min_count`, and show `counts_path`
+- **AND** one decision record of `tpl-fit@2.0.0` in `T1S2` whose slots hold `min_count = 5` and a value of `counts_path`
+- **AND** the record holds a run of the rendered script that ended with exit code 0
+- **WHEN** the seed composes
+- **THEN** the binding holds `min_count = 5`, and its source names `T1S2` and `tpl-fit@2.0.0`
+- **AND** the seed shows the value of `counts_path`, and the binding does not hold it
+
+#### Scenario: A setting of the step that differs from the reported fit
+
+- **GIVEN** the same step, and a setting of the step that gives `min_count = 10`
+- **WHEN** the seed composes
+- **THEN** the binding holds `min_count = 5`, and the seed lists the setting as unbound
+
+#### Scenario: No one record of the reported fit
+
+- **GIVEN** the same contract, and no decision record of `tpl-fit` in the steps that the step depends on
+- **WHEN** the seed composes
+- **THEN** the binding holds no carried slot, and the seed gives the reason
+- **WHEN** those steps hold two decision records of `tpl-fit`
+- **THEN** the binding holds no carried slot, and the seed names the two records
+
+#### Scenario: A fit script that changed after its render
+
+- **GIVEN** the same contract, and one decision record of `tpl-fit` whose `unvetted_edits` hold an entry
+- **WHEN** the seed composes
+- **THEN** the binding holds no carried slot, and the seed names the record and gives the reason
+
+#### Scenario: A render of the fit that did not run
+
+- **GIVEN** the same contract, and one decision record of `tpl-fit` with no entry in `runs`
+- **WHEN** the seed composes
+- **THEN** the binding holds no carried slot, and the seed names the record and gives the reason
+- **WHEN** the only run of the record ended with exit code 1, or ran different bytes
+- **THEN** the binding holds no carried slot
 
 #### Scenario: A render of an excluded slot
 
@@ -462,6 +510,10 @@ A slot the contract marks `local` (a path, a column name, a level label, a desig
 
 The record on disk MUST carry the step, the claims, the digest of the script as the service rendered it, and `written_sha256`, the digest of the bytes the tool wrote. `edit_file` on a script under `scripts/` that has a record MUST append an entry to `unvetted_edits` with the path, a note, and the digest after the change. Before `execute_command` runs a script that has a record, it MUST compare the script with the last recorded digest, and a difference MUST be appended as an unvetted change with the digest of the bytes that run. A script without a record is untouched.
 
+A command can name its script inside a shell line: the one element of an `sh -c` call, or a string after `bash -c`. `execute_command` MUST find each word of such a line that has a script extension. It MUST make the same comparison for each one. A word ends at whitespace, at a shell operator, at a quote, and at the `=` of an option. A `cd` in the line moves the words after it, and a subshell can end that move. Thus `execute_command` MUST resolve a relative word against the cwd of the command. It MUST also resolve the word against each directory that a `cd` before the word can give. The command MUST run as the model sent it.
+
+Before `execute_command` runs a script that has a record, it MUST append an entry to `runs` in the record. The entry MUST hold `sha256`, the digest that the comparison before the run read, and `invocation`, the id of the tool call. After the command, the tool MUST add `exit_code`, the exit code of the command, to that entry. An entry with no `exit_code` is a run that did not end, and it MUST NOT count as a good run. A tool call that the host does again after a recovery MUST write no second entry. The entry from before the command does not say if the command ran before the host stopped. Thus that call MUST compare its digest with the digest of the entry. When the two agree, the entry keeps `sha256`. When the two differ, the entry MUST hold `sha256_before_the_command` and `sha256_at_the_recovery`, and it MUST hold no `sha256`. Such an entry is a run of no known script, and it MUST NOT count as a good run. If the write before the command fails, the tool MUST append the entry after the command. The tool MUST write the entries of one record in order, thus two commands that end together lose no entry. The tool MUST NOT read the script again after the run, because the run can change the script. The tool MUST write the entry only when the exit code of the command is the exit code of the script. A direct argv gives that when the script is the command. It also gives that when the script comes after a runner, for example `Rscript`, `python`, or `bash`. Only an option that still runs the script can be between the two, for example `--vanilla`. An option such as `--version` or `-e` MUST write no entry. A `cd` in a chain of `&&` moves the script, and a `cd` that the host cannot resolve MUST write no entry. A shell line gives that only when it is one such command, or a chain of `&&` that ends with one. Each command before the last one of a chain MUST be `cd` with one directory or `mkdir -p` with one directory. An output redirect and `2>&1` are permitted after the command. A line with a pipe, a list, a subshell, a quote, an expansion, or an input redirect MUST write no entry. A command that reads the script as data, for example `cat`, MUST write no entry. A failed write of the entry MUST NOT fail the call, because the command already ran. A record MUST keep no more than its last 50 entries.
+
 #### Scenario: An edit lands on the record
 
 - **GIVEN** a rendered script and its record
@@ -473,6 +525,32 @@ The record on disk MUST carry the step, the claims, the digest of the script as 
 - **GIVEN** a rendered script whose bytes differ from the last recorded digest
 - **WHEN** `execute_command` runs it
 - **THEN** the record lists the change with the digest of the bytes that run, before the command runs
+
+#### Scenario: A changed script in a shell line
+
+- **GIVEN** a rendered script whose bytes differ from the last recorded digest
+- **WHEN** `execute_command` runs the one element `cd scripts && Rscript de.R > log.txt`
+- **THEN** the record lists the change with the digest of the bytes that run, before the command runs
+- **AND** the command runs with no change
+
+#### Scenario: A run lands on the record
+
+- **GIVEN** a rendered script and its record
+- **WHEN** `execute_command` runs `Rscript scripts/de.R`, and the command ends with exit code 0
+- **THEN** the two copies of the record hold a `runs` entry with `exit_code` 0 and the digest of the script
+- **WHEN** `execute_command` runs `cat scripts/de.R`, or the one element `Rscript scripts/de.R | tee log.txt`
+- **THEN** the record gets no entry
+
+#### Scenario: A recovered call of a changed script names no script digest
+
+- **GIVEN** a record with a `runs` entry of a tool call that holds a digest and no `exit_code`
+- **AND** a script that now holds different bytes
+- **WHEN** the host does that tool call again, and the command ends with exit code 0
+- **THEN** the entry holds `exit_code` 0, `sha256_before_the_command`, and `sha256_at_the_recovery`
+- **AND** the entry holds no `sha256`, thus no carried slot binds from it
+- **AND** the record holds one entry of that tool call
+- **WHEN** the script holds the same bytes at the recovery
+- **THEN** the entry holds `exit_code` 0 and `sha256`
 
 ### Requirement: The plan keeps the view of each cited claim
 

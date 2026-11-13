@@ -178,11 +178,17 @@ export type ScriptChangeNote =
     | { readonly status: "noted"; readonly writes: readonly WriteRecord[]; readonly restored: boolean; readonly copyWritten: boolean }
     | { readonly status: "no_record" | "refused" };
 
+/** The digest of the script that a check before a run read. Present when the script has a record and the record took the check. */
+type CheckedDigest = { readonly sha256?: string };
+
 /**
  * The outcome of a check of a script before it runs: a change note, or `unchanged` when the script is the one the
  * record expects, or `restored` when the script is unchanged and the copy of its record in the step was written again.
  */
-export type ScriptRecordCheck = ScriptChangeNote | { readonly status: "unchanged" } | { readonly status: "restored"; readonly write: WriteRecord };
+export type ScriptRecordCheck =
+    | (ScriptChangeNote & CheckedDigest)
+    | ({ readonly status: "unchanged" } & CheckedDigest)
+    | ({ readonly status: "restored"; readonly write: WriteRecord } & CheckedDigest);
 
 /**
  * A record that the tools found. `hostBytes` is the host copy, which is the record when present. Without it, the
@@ -225,7 +231,17 @@ async function readHeldRecord(args: ReconcileScriptRecordArgs, recordPath: strin
  */
 async function appendChange(args: ReconcileScriptRecordArgs, recordPath: string, held: HeldRecord, entry: UnvettedEdit): Promise<ScriptChangeNote> {
     const edits = isUnknownArray(held.record.unvetted_edits) ? held.record.unvetted_edits : [];
-    const content = `${JSON.stringify({ ...held.record, unvetted_edits: [...edits, entry] }, null, 2)}\n`;
+    return writeHeldRecord(args, recordPath, held, { ...held.record, unvetted_edits: [...edits, entry] });
+}
+
+/** Write the next state of a held record to the copy in the step and to the host copy, as `appendChange` states. */
+async function writeHeldRecord(
+    args: ReconcileScriptRecordArgs,
+    recordPath: string,
+    held: HeldRecord,
+    next: Readonly<Record<string, unknown>>,
+): Promise<ScriptChangeNote> {
+    const content = `${JSON.stringify(next, null, 2)}\n`;
     const written = await args.mutator.writeFile({
         path: recordPath,
         content,
@@ -241,6 +257,25 @@ async function appendChange(args: ReconcileScriptRecordArgs, recordPath: string,
     return { status: "noted", writes, restored: written.status === "ok" && !held.copyMatches, copyWritten: written.status === "ok" };
 }
 
+/** The updates of a record that wait, by record. Each update reads the record and then writes it, and two tools can update one record at the same time. */
+const recordQueues = new Map<string, Promise<unknown>>();
+
+/**
+ * Do `work` after each earlier update of the same record ends, with or without an error. The key is the analysis
+ * and the file name of the record: one tool names the record by a relative path and a different tool by an
+ * absolute path, and the file name is the same in the two. Thus the records of two steps with one file name also wait in one line.
+ */
+async function inRecordOrder<T>(args: ReconcileScriptRecordArgs, recordPath: string, work: () => Promise<T>): Promise<T> {
+    const key = `${args.session.scope.analysisId}\n${posixPath.basename(recordPath)}`;
+    const next = (recordQueues.get(key) ?? Promise.resolve()).then(work, work);
+    recordQueues.set(key, next);
+    try {
+        return await next;
+    } finally {
+        if (recordQueues.get(key) === next) recordQueues.delete(key);
+    }
+}
+
 /**
  * Append a change to the record of a script. `no_record` when the path is
  * not a script under `scripts/`, or when no record exists for it, which is
@@ -251,12 +286,112 @@ async function appendChange(args: ReconcileScriptRecordArgs, recordPath: string,
 export async function noteScriptChange(args: NoteScriptChangeArgs): Promise<ScriptChangeNote> {
     const recordPath = decisionRecordPathFor(args.scriptPath);
     if (!recordPath) return { status: "no_record" };
-    const held = await readHeldRecord(args, recordPath);
-    if (!held) return { status: "no_record" };
-    return appendChange(args, recordPath, held, { path: args.scriptPath, note: args.note, sha256: args.sha256 });
+    return inRecordOrder(args, recordPath, async () => {
+        const held = await readHeldRecord(args, recordPath);
+        if (!held) return { status: "no_record" };
+        return appendChange(args, recordPath, held, { path: args.scriptPath, note: args.note, sha256: args.sha256 });
+    });
 }
 
 export type ReconcileScriptRecordArgs = Omit<NoteScriptChangeArgs, "note" | "sha256">;
+
+/** One run of a script, as the record keeps it. */
+export type ScriptRun = {
+    /**
+     * The exit code of the command that ran the script, or `null` when the sandbox ended under it. An entry with
+     * no exit code is a run that started: the host wrote it before the command, and the command did not end yet.
+     */
+    readonly exit_code?: number | null;
+    /**
+     * The digest of the script as the check before the run read it. Absent when the host did the call again after
+     * a recovery and the script then held different bytes: the host cannot tell which bytes ran.
+     */
+    readonly sha256?: string;
+    /** The digest from before the command, in an entry with no `sha256`. */
+    readonly sha256_before_the_command?: string;
+    /** The digest that the call after the recovery read, in an entry with no `sha256`. */
+    readonly sha256_at_the_recovery?: string;
+    /** The tool call that ran the command. A call that the host does again after a recovery writes no second entry. */
+    readonly invocation: string;
+};
+
+const RunEntrySchema = z.looseObject({
+    invocation: z.string(),
+    sha256: z.string().optional().catch(undefined),
+    exit_code: z.number().nullable().optional().catch(undefined),
+});
+
+/** The most run entries that a record keeps. A script runs one time, or a small number of times. */
+const MAX_RECORDED_RUNS = 50;
+
+/** The position of the entry of a tool call in `runs`, with the entry, or `undefined` when the call has none. */
+function runOfInvocation(
+    runs: readonly unknown[],
+    invocationId: string,
+): { readonly index: number; readonly sha256: string | undefined; readonly ended: boolean } | undefined {
+    for (const [index, run] of runs.entries()) {
+        const parsed = RunEntrySchema.safeParse(run);
+        if (!parsed.success || parsed.data.invocation !== invocationId) continue;
+        return { index, ended: parsed.data.exit_code !== undefined, sha256: parsed.data.sha256 };
+    }
+    return undefined;
+}
+
+/** The outcome of the entry that the host writes before a command runs a script. */
+export type ScriptRunStart = { readonly status: "started"; readonly writes: readonly WriteRecord[] } | { readonly status: "no_record" | "refused" };
+
+/**
+ * Write the entry of a run to the record of a script before the command runs, with the digest that the check
+ * before the run read and with no exit code. The host can stop after this write. The call that the host then
+ * does again finds this entry and writes no second one. `no_record` when the script has no record.
+ */
+export async function startScriptRun(args: ReconcileScriptRecordArgs & { readonly sha256: string }): Promise<ScriptRunStart> {
+    const recordPath = decisionRecordPathFor(args.scriptPath);
+    if (!recordPath) return { status: "no_record" };
+    return inRecordOrder(args, recordPath, async () => {
+        const held = await readHeldRecord(args, recordPath);
+        if (!held) return { status: "no_record" };
+        const runs = isUnknownArray(held.record.runs) ? held.record.runs : [];
+        // The entry of this call is there: the host does the call again, and the entry of the first time stands.
+        if (runOfInvocation(runs, args.invocationId)) return { status: "started", writes: [] };
+        const entry: ScriptRun = { sha256: args.sha256, invocation: args.invocationId };
+        const written = await writeHeldRecord(args, recordPath, held, { ...held.record, runs: [...runs, entry].slice(-MAX_RECORDED_RUNS) });
+        return written.status === "noted" ? { status: "started", writes: written.writes } : { status: written.status };
+    });
+}
+
+/**
+ * Give the run entry of a tool call its exit code, after the command that ran the script. The record then says
+ * that the script ran, with which bytes, and how the command ended. A step that fits the same model again takes
+ * the slot values of a record only when a run of the rendered bytes ended with exit code 0. The function reads
+ * the record again, thus a change note that landed while the command ran stays. A call with no entry from before
+ * the command gets a new entry. `no_record` when the script has no record.
+ *
+ * The host can stop before the command or after it, and it then does the call again. The entry from before the
+ * command does not say which of the two occurred. When the digest of this call is the digest of that entry, the
+ * same bytes ran in the two cases. When the two differ, the host cannot tell which bytes ran: the entry then
+ * holds the two digests and no `sha256`, thus it is a run of no known script.
+ */
+export async function noteScriptRun(args: ReconcileScriptRecordArgs & ScriptRunArgs): Promise<ScriptChangeNote> {
+    const recordPath = decisionRecordPathFor(args.scriptPath);
+    if (!recordPath) return { status: "no_record" };
+    return inRecordOrder(args, recordPath, async () => {
+        const held = await readHeldRecord(args, recordPath);
+        if (!held) return { status: "no_record" };
+        const runs = isUnknownArray(held.record.runs) ? held.record.runs : [];
+        const known = runOfInvocation(runs, args.invocationId);
+        // The entry of this call has its exit code: the host does the call again after a recovery, and the command ran one time.
+        if (known?.ended) return { status: "noted", writes: [], restored: false, copyWritten: true };
+        const entry: ScriptRun =
+            known === undefined || known.sha256 === args.sha256
+                ? { exit_code: args.exitCode, sha256: args.sha256, invocation: args.invocationId }
+                : { exit_code: args.exitCode, sha256_before_the_command: known.sha256, sha256_at_the_recovery: args.sha256, invocation: args.invocationId };
+        const next = known ? runs.map((run, index) => (index === known.index ? entry : run)) : [...runs, entry].slice(-MAX_RECORDED_RUNS);
+        return writeHeldRecord(args, recordPath, held, { ...held.record, runs: next });
+    });
+}
+
+type ScriptRunArgs = { readonly exitCode: number | null; readonly sha256: string };
 
 /**
  * Compare a script with the digest its record expects, before the script
@@ -269,6 +404,10 @@ export type ReconcileScriptRecordArgs = Omit<NoteScriptChangeArgs, "note" | "sha
 export async function reconcileScriptRecord(args: ReconcileScriptRecordArgs): Promise<ScriptRecordCheck> {
     const recordPath = decisionRecordPathFor(args.scriptPath);
     if (!recordPath) return { status: "no_record" };
+    return inRecordOrder(args, recordPath, () => reconcileHeldRecord(args, recordPath));
+}
+
+async function reconcileHeldRecord(args: ReconcileScriptRecordArgs, recordPath: string): Promise<ScriptRecordCheck> {
     const held = await readHeldRecord(args, recordPath);
     if (!held) return { status: "no_record" };
     const expected = expectedScriptSha256(held.record);
@@ -278,13 +417,14 @@ export async function reconcileScriptRecord(args: ReconcileScriptRecordArgs): Pr
     if (script.kind !== "ok") return { status: "no_record" };
     const actual = scriptSha256(script.content);
     if (actual !== expected) {
-        return appendChange(args, recordPath, held, {
+        const noted = await appendChange(args, recordPath, held, {
             path: args.scriptPath,
             note: "the script changed by a path no file tool recorded, before it ran",
             sha256: actual,
         });
+        return noted.status === "noted" ? { ...noted, sha256: actual } : noted;
     }
-    if (held.hostBytes === undefined || held.copyMatches) return { status: "unchanged" };
+    if (held.hostBytes === undefined || held.copyMatches) return { status: "unchanged", sha256: actual };
     const written = await args.mutator.writeFile({
         path: recordPath,
         content: held.hostBytes.toString("utf8"),
@@ -292,5 +432,5 @@ export async function reconcileScriptRecord(args: ReconcileScriptRecordArgs): Pr
         invocationId: args.invocationId,
         session: args.session,
     });
-    return written.status === "ok" ? { status: "restored", write: written.record } : { status: "refused" };
+    return written.status === "ok" ? { status: "restored", write: written.record, sha256: actual } : { status: "refused" };
 }
