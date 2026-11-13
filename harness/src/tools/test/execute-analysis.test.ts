@@ -1622,7 +1622,7 @@ describe("the launch of a stored plan, over a real database", () => {
             });
             expect((await toolFor({ runAuthorizer: unavailable }).run())._unsafeUnwrapErr()).toEqual({
                 error: "The run was not authorized: identity_unavailable",
-                retryable: false,
+                retryable: true,
             });
             expect((await toolFor({ runAuthorizer: expired }).run())._unsafeUnwrapErr()).toEqual({
                 error: "The run was not authorized: credential_expired",
