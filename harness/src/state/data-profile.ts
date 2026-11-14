@@ -438,7 +438,7 @@ export function completeEmptyDataProfile(pool: Querier, analysisId: string): Res
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'completed', data_profile_error = NULL,
                 data_profile_started_at = $1, data_profile_completed_at = $1,
-                data_profile_result = NULL, data_profile_workflow_id = NULL,
+                data_profile_result = NULL, data_profile_workflow_id = NULL, data_profile_user_id = NULL,
                 seed_input_file_ids = '[]'::jsonb
             WHERE analysis_id = $2 AND data_profile_status IS DISTINCT FROM 'running' AND ${UNSEEDED}`,
             values: [now, analysisId],
