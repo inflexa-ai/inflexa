@@ -1016,4 +1016,13 @@ describe("the person of a profile", () => {
 
         expect(await rawUser("a-clear-user")).toBeNull();
     });
+
+    it("completeEmptyDataProfile sets the user of the earlier attempt to null", async () => {
+        await seedAnalysis(pool, "a-empty-user", "completed", []);
+        await pool.query("UPDATE cortex_analysis_state SET data_profile_user_id = 'u-earlier' WHERE analysis_id = 'a-empty-user'");
+
+        expect((await completeEmptyDataProfile(pool, "a-empty-user"))._unsafeUnwrap()).toBe(true);
+
+        expect(await rawUser("a-empty-user")).toBeNull();
+    });
 });
