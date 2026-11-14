@@ -8,6 +8,7 @@
 import { okAsync, type ResultAsync } from "neverthrow";
 
 import type { DataProfileCoverage, DataProfileKind, DataProfileLifecycleStatus, DataProfilePartition } from "../contracts/data-profile.js";
+import { TOKEN_USAGE_FIELDS, type TokenUsageRollup } from "../contracts/usage.js";
 import { profileDatasetFileCount } from "../app/data-profile-view.js";
 import { tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
@@ -23,6 +24,11 @@ export type LatestRunSummary = {
     readonly totalSteps: number;
     readonly startedAt: string;
     readonly completedAt: string | null;
+    /**
+     * The sum of the usage of the step rows of the run, so it grows as each step ends. A field that no row reported is
+     * absent, and `null` means that no row reported a field.
+     */
+    readonly usage: TokenUsageRollup | null;
 };
 
 /** A run of a list of run ids, with the fields of the newest-run read and the thread of the run. */
@@ -43,6 +49,8 @@ export type EndedRunSummary = {
 export type DataProfileSummary = {
     readonly analysisId: string;
     readonly status: DataProfileLifecycleStatus;
+    /** The start of the latest profile attempt as the ledger stores it, or `null`. */
+    readonly startedAt: string | null;
     readonly completedAt: string | null;
     readonly profiledFiles: number | null;
 };
@@ -108,6 +116,7 @@ type RunProgressRow = {
     plan_title: string | null;
     done_steps: number;
     total_steps: number;
+    usage: TokenUsageRollup | null;
 };
 
 /**
@@ -118,16 +127,29 @@ type RunProgressRow = {
  */
 const RUN_PROGRESS_COLUMNS = `r.analysis_id, r.run_id, r.status, r.started_at, r.completed_at,
                     CASE WHEN jsonb_typeof(p.plan->'title') = 'string' THEN p.plan->>'title' END AS plan_title,
-                    s.done_steps, s.total_steps`;
+                    s.done_steps, s.total_steps, s.usage`;
+
+/**
+ * One sum for each field of the token usage rollup, as a JSONB object. A row adds to a field only when the stored value
+ * is a JSON number, so a malformed `usage` (a scalar, an array, a string or null field) adds nothing and cannot fail the
+ * cast. A field that no row reported sums to null, and `jsonb_strip_nulls` drops it: the field is absent, never zero.
+ * `NULLIF` turns an object with no field into null.
+ */
+const USAGE_SUM_SQL = `NULLIF(jsonb_strip_nulls(jsonb_build_object(${TOKEN_USAGE_FIELDS.map(
+    (field) => `'${field}', SUM(CASE WHEN jsonb_typeof(usage->'${field}') = 'number' THEN (usage->>'${field}')::numeric END)`,
+).join(", ")})), '{}'::jsonb)`;
 
 /** The plan join and the step count subquery for a run alias `r` that selects `analysis_id`, `run_id`, and `plan_id`. */
 const RUN_PROGRESS_JOINS = `LEFT JOIN cortex_plans p ON p.plan_id = r.plan_id AND p.analysis_id = r.analysis_id
              CROSS JOIN LATERAL (
                  SELECT COUNT(*)::int AS total_steps,
-                        (COUNT(*) FILTER (WHERE status = 'completed'))::int AS done_steps
+                        (COUNT(*) FILTER (WHERE status = 'completed'))::int AS done_steps,
+                        ${USAGE_SUM_SQL} AS usage
                  FROM cortex_step_executions
                  WHERE run_id = r.run_id
              ) s`;
+
+const MAX_RUNS_IN_FLIGHT = 200;
 
 function toRunSummary(row: RunProgressRow): LatestRunSummary {
     return {
@@ -139,6 +161,7 @@ function toRunSummary(row: RunProgressRow): LatestRunSummary {
         totalSteps: row.total_steps,
         startedAt: row.started_at,
         completedAt: row.completed_at,
+        usage: row.usage ?? null,
     };
 }
 
@@ -199,6 +222,38 @@ export function queryRunProgressByRuns(pool: Querier, runIds: string[]): ResultA
     });
 }
 
+export type RunsInFlightInput = {
+    readonly analysisIds: readonly string[];
+    /** Narrow to the runs of one person. A run with no user id never matches. Omitting it narrows nothing. */
+    readonly userId?: string;
+    /** The most runs to give. It clamps to 1 to 200, the bounds of `listRecentThreads`. */
+    readonly limit: number;
+};
+
+/**
+ * The `running` runs of a list of analyses, in one statement, newest start first, with `run_id` breaking a tie in
+ * descending order. Each entry is the progress entry of `queryRunProgressByRuns`, over the same column and join
+ * text. A user id narrows the result to the runs whose `user_id` equals it. The statement walks
+ * `idx_cortex_runs_analysis_started` for each analysis.
+ */
+export function queryRunsInFlightByAnalyses(pool: Querier, input: RunsInFlightInput): ResultAsync<RunProgressSummary[], DbError> {
+    if (input.analysisIds.length === 0) return okAsync([]);
+    return tryQuery("analysesMetrics.queryRunsInFlightByAnalyses", async () => {
+        const result = await pool.query<RunProgressRow & { thread_id: string | null }>({
+            text: `SELECT ${RUN_PROGRESS_COLUMNS}, r.thread_id
+             FROM cortex_runs r
+             ${RUN_PROGRESS_JOINS}
+             WHERE r.analysis_id = ANY($1::text[])
+               AND r.status = 'running'
+               AND ($2::text IS NULL OR r.user_id = $2)
+             ORDER BY r.started_at DESC, r.run_id DESC
+             LIMIT $3`,
+            values: [input.analysisIds, input.userId ?? null, Math.min(Math.max(input.limit, 1), MAX_RUNS_IN_FLIGHT)],
+        });
+        return result.rows.map((row) => ({ ...toRunSummary(row), threadId: row.thread_id }));
+    });
+}
+
 /**
  * The newest `limit` terminal runs of every analysis that ended at or after
  * `since`, newest completion first, with `run_id` breaking a tie in descending
@@ -239,12 +294,13 @@ export function queryDataProfileStatusByAnalyses(pool: Querier, analysisIds: str
         const result = await pool.query<{
             analysis_id: string;
             data_profile_status: DataProfileLifecycleStatus;
+            data_profile_started_at: string | null;
             data_profile_completed_at: string | null;
             partition: DataProfilePartition | null;
             coverage: DataProfileCoverage | null;
             kinds: DataProfileKind[] | null;
         }>({
-            text: `SELECT analysis_id, data_profile_status, data_profile_completed_at,
+            text: `SELECT analysis_id, data_profile_status, data_profile_started_at, data_profile_completed_at,
                     data_profile_result->'partition' AS partition,
                     data_profile_result->'coverage' AS coverage,
                     data_profile_result->'kinds' AS kinds
@@ -255,6 +311,7 @@ export function queryDataProfileStatusByAnalyses(pool: Querier, analysisIds: str
         return result.rows.map((r) => ({
             analysisId: r.analysis_id,
             status: r.data_profile_status,
+            startedAt: r.data_profile_started_at ?? null,
             completedAt: r.data_profile_completed_at ?? null,
             profiledFiles: profileDatasetFileCount({
                 partition: r.partition ?? undefined,

@@ -75,6 +75,7 @@ export const CortexRunRowSchema = z.object({
     parts: z.array(z.json()).nullable(),
     mandateId: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     planId: z.string().nullable(),
+    userId: z.string().nullable(),
 });
 export type CortexRunRow = z.infer<typeof CortexRunRowSchema>;
 

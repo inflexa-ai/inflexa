@@ -88,6 +88,7 @@ export {
     loadDataProfileStatus,
     loadSeedInputFileIds,
     queryRunningProfiles,
+    recordDataProfileUser,
     recordDataProfileWorkflowId,
 } from "./data-profile.js";
 export type {
@@ -120,8 +121,9 @@ export {
     queryLatestRunsByAnalyses,
     queryRunProgressByRuns,
     queryRunsEndedSince,
+    queryRunsInFlightByAnalyses,
 } from "./analyses-metrics.js";
-export type { DataProfileSummary, EndedRunSummary, LatestRunSummary, RunProgressSummary } from "./analyses-metrics.js";
+export type { DataProfileSummary, EndedRunSummary, LatestRunSummary, RunProgressSummary, RunsInFlightInput } from "./analyses-metrics.js";
 
 // Not per-entity: one analysis's whole Postgres footprint, reached from its id
 // alone, with the workflow ledger behind an injected seam.

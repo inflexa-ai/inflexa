@@ -189,6 +189,32 @@ describe("createThread + getThread", () => {
     });
 });
 
+describe("the person of a thread", () => {
+    it("gives the user of the make on the created row and on a later read", async () => {
+        const created = (await store.createThread({ threadId: "t-u1", analysisId: ANALYSIS_A, userId: "u1" }))._unsafeUnwrap();
+
+        expect(created.userId).toBe("u1");
+        expect((await store.getThread("t-u1"))._unsafeUnwrap()?.userId).toBe("u1");
+    });
+
+    it("keeps the first person when a second make names the same thread with another user", async () => {
+        (await store.createThread({ threadId: "t-keep", analysisId: ANALYSIS_A, userId: "u1" }))._unsafeUnwrap();
+
+        const second = (await store.createThread({ threadId: "t-keep", analysisId: ANALYSIS_A, userId: "u2" }))._unsafeUnwrap();
+
+        expect(second.userId).toBe("u1");
+        const { rows } = await pool.query<{ user_id: string | null }>("SELECT user_id FROM cortex_analysis_threads WHERE thread_id = 't-keep'");
+        expect(rows).toEqual([{ user_id: "u1" }]);
+    });
+
+    it("gives a null user for a thread that no person made", async () => {
+        const created = (await store.createThread({ threadId: "t-nobody", analysisId: ANALYSIS_A }))._unsafeUnwrap();
+
+        expect(created.userId).toBeNull();
+        expect((await store.getThread("t-nobody"))._unsafeUnwrap()?.userId).toBeNull();
+    });
+});
+
 describe("updateTitle", () => {
     it("changes only the title and bumps updated_at (2.2)", async () => {
         (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Old" }))._unsafeUnwrap();
@@ -496,9 +522,37 @@ describe("listThreads", () => {
     });
 });
 
+describe("listThreads narrowed to one person", () => {
+    it("narrows the count and the page to the threads of the person", async () => {
+        (await store.createThread({ threadId: "own-1", analysisId: ANALYSIS_A, userId: "u1" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "own-2", analysisId: ANALYSIS_A, userId: "u1" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "other", analysisId: ANALYSIS_A, userId: "u2" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "nobody", analysisId: ANALYSIS_A }))._unsafeUnwrap();
+
+        const page = (await store.listThreads({ analysisId: ANALYSIS_A, userId: "u1" }))._unsafeUnwrap();
+        const unfiltered = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
+
+        expect(page.threads.map((t) => t.threadId).sort()).toEqual(["own-1", "own-2"]);
+        expect(page.total).toBe(2);
+        expect(page.hasMore).toBe(false);
+        expect(unfiltered.total).toBe(4);
+    });
+
+    it("pages inside the narrowed set", async () => {
+        for (let i = 0; i < 3; i++) (await store.createThread({ threadId: `mine-${i}`, analysisId: ANALYSIS_A, userId: "u1" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "theirs", analysisId: ANALYSIS_A, userId: "u2" }))._unsafeUnwrap();
+
+        const first = (await store.listThreads({ analysisId: ANALYSIS_A, userId: "u1", perPage: 2 }))._unsafeUnwrap();
+
+        expect(first.threads).toHaveLength(2);
+        expect(first.total).toBe(3);
+        expect(first.hasMore).toBe(true);
+    });
+});
+
 describe("listRecentThreads", () => {
-    async function seedAt(threadId: string, analysisId: string, updatedAt: string, type: ThreadType = "conversation"): Promise<void> {
-        (await store.createThread({ threadId, analysisId, title: threadId, type }))._unsafeUnwrap();
+    async function seedAt(threadId: string, analysisId: string, updatedAt: string, type: ThreadType = "conversation", userId?: string): Promise<void> {
+        (await store.createThread({ threadId, analysisId, title: threadId, type, userId }))._unsafeUnwrap();
         await pool.query("UPDATE cortex_analysis_threads SET updated_at = $2 WHERE thread_id = $1", [threadId, updatedAt]);
     }
 
@@ -560,6 +614,62 @@ describe("listRecentThreads", () => {
         expect((await store.listRecentThreads({ limit: 0 }))._unsafeUnwrap()).toHaveLength(1);
         expect((await store.listRecentThreads({ limit: -5 }))._unsafeUnwrap()).toHaveLength(1);
         expect((await store.listRecentThreads({ limit: 1000 }))._unsafeUnwrap()).toHaveLength(3);
+    });
+
+    it("has a partial index on the user and the update time of the live rows after the migrations", async () => {
+        const { rows } = await pool.query<{ indexdef: string }>(
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'cortex_analysis_threads' AND indexdef LIKE '%(user_id, updated_at DESC, thread_id)%'",
+        );
+        expect(rows).toHaveLength(1);
+        expect(presentAt(rows, 0).indexdef).toContain("WHERE (deleted_at IS NULL)");
+    });
+
+    it("narrows to the threads of a list of analyses, and an omitted list narrows nothing", async () => {
+        await seedAt("in-a", ANALYSIS_A, "2026-10-01T10:00:00.000Z");
+        await seedAt("in-b", ANALYSIS_B, "2026-10-01T11:00:00.000Z");
+        await seedAt("in-c", "analysis-c", "2026-10-01T12:00:00.000Z");
+
+        const narrowed = (await store.listRecentThreads({ limit: 10, analysisIds: [ANALYSIS_A, ANALYSIS_B] }))._unsafeUnwrap();
+        const all = (await store.listRecentThreads({ limit: 10 }))._unsafeUnwrap();
+
+        expect(narrowed.map((t) => t.threadId)).toEqual(["in-b", "in-a"]);
+        expect(all.map((t) => t.threadId)).toEqual(["in-c", "in-b", "in-a"]);
+    });
+
+    it("gives the recent sessions of one person in a list of analyses", async () => {
+        await seedAt("p-a-u1", ANALYSIS_A, "2026-10-01T10:00:00.000Z", "conversation", "u1");
+        await seedAt("p-a-u2", ANALYSIS_A, "2026-10-01T11:00:00.000Z", "conversation", "u2");
+        await seedAt("p-a-none", ANALYSIS_A, "2026-10-01T11:30:00.000Z");
+        await seedAt("p-c-u1", "analysis-c", "2026-10-01T12:00:00.000Z", "conversation", "u1");
+
+        const threads = (await store.listRecentThreads({ limit: 10, analysisIds: [ANALYSIS_A], userId: "u1" }))._unsafeUnwrap();
+        const ofPerson = (await store.listRecentThreads({ limit: 10, userId: "u1" }))._unsafeUnwrap();
+
+        expect(threads.map((t) => t.threadId)).toEqual(["p-a-u1"]);
+        expect(ofPerson.map((t) => t.threadId)).toEqual(["p-c-u1", "p-a-u1"]);
+    });
+
+    it("gives an empty result and sends no query for an empty list of analyses", async () => {
+        await seedAt("empty-a", ANALYSIS_A, "2026-10-01T10:00:00.000Z");
+        const counted = countingQuerier(pool);
+        const countingPool = { ...counted.querier, connect: () => pool.connect() };
+
+        const threads = (await createThreadStore(countingPool).listRecentThreads({ limit: 10, analysisIds: [] }))._unsafeUnwrap();
+
+        expect(threads).toEqual([]);
+        expect(counted.calls()).toBe(0);
+    });
+
+    it("sends one query for the list of 20 analyses and a person", async () => {
+        const ids = Array.from({ length: 20 }, (_, i) => `analysis-person-${i}`);
+        for (const [i, id] of ids.entries()) await seedAt(`person-${i}`, id, "2026-10-01T10:00:00.000Z", "conversation", "u1");
+        const counted = countingQuerier(pool);
+        const countingPool = { ...counted.querier, connect: () => pool.connect() };
+
+        const threads = (await createThreadStore(countingPool).listRecentThreads({ limit: 50, analysisIds: ids, userId: "u1" }))._unsafeUnwrap();
+
+        expect(threads).toHaveLength(20);
+        expect(counted.calls()).toBe(1);
     });
 
     it("sends one query for threads of 20 analyses", async () => {

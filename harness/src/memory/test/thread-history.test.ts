@@ -21,6 +21,7 @@ import {
     syntheticUserMessage,
 } from "../ai-sdk-message-storage.js";
 import { countTokens } from "../count-tokens.js";
+import { storedMessagesToChat } from "../conversation-display-replay.js";
 import type { ConversationUIMessage } from "../conversation-display-storage.js";
 import {
     __resetThreadHistoryMetricsForTest,
@@ -1762,5 +1763,123 @@ describe("loadPage", () => {
 
         (await counting.loadPage("thread-with-no-rows", { limit: 2 }))._unsafeUnwrap();
         expect(counted.calls()).toBe(3);
+    });
+});
+
+describe("loadMessage", () => {
+    const ROLLUP: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+
+    function display(id: string, role: "user" | "assistant", text: string): ConversationUIMessage {
+        return { id, role, parts: [{ type: "text", text, state: "done" }] };
+    }
+
+    /** One turn: the opening with its author, two rounds of one assistant message, and a close with a rollup. */
+    async function writeTurn(threadId: string, n: number): Promise<void> {
+        const turn = await history.writeTurn(threadId, {
+            opening: { modelMessages: [userText(`ask ${n}`)], displayMessages: [display(`user-${n}`, "user", `ask ${n}`)], author: `u${n}` },
+            rounds: [
+                {
+                    modelMessages: [assistantToolUse(`call-${n}`, "run_pca", { k: 2 }), userToolResult(`call-${n}`, "done")],
+                    displayMessages: [display(`assistant-${n}`, "assistant", `first round ${n}`)],
+                },
+                { modelMessages: [assistantText(`answer ${n}`)], displayMessages: [display(`assistant-${n}`, "assistant", `second round ${n}`)] },
+            ],
+            close: { status: "done", turnUsage: ROLLUP, turnDurationMs: 1000 + n },
+        });
+        turn._unsafeUnwrap();
+    }
+
+    async function transcriptOf(threadId: string) {
+        return storedMessagesToChat((await history.loadAll(threadId))._unsafeUnwrap().flat());
+    }
+
+    it("gives an assistant message of a middle turn, with the rounds merged, as the transcript gives it", async () => {
+        const seed = conversationRecordTurn("A record before the first turn.");
+        (await history.appendTurn(THREAD, seed))._unsafeUnwrap();
+        for (let n = 1; n <= 5; n++) await writeTurn(THREAD, n);
+
+        const expected = (await transcriptOf(THREAD)).find((message) => message.id === "assistant-3");
+        expect(expected?.parts.length).toBeGreaterThan(1);
+        expect(expected?.usage).toEqual(ROLLUP);
+        expect((await history.loadMessage(THREAD, "assistant-3"))._unsafeUnwrap()).toEqual(expected ?? null);
+    });
+
+    it("gives a user message with its author", async () => {
+        for (let n = 1; n <= 3; n++) await writeTurn(THREAD, n);
+
+        const message = (await history.loadMessage(THREAD, "user-2"))._unsafeUnwrap();
+
+        expect(message).toMatchObject({ id: "user-2", role: "user", author: "u2" });
+        expect(message).toEqual((await transcriptOf(THREAD)).find((candidate) => candidate.id === "user-2") ?? null);
+    });
+
+    it("gives the seed message of a record before the first turn", async () => {
+        const seed = conversationRecordTurn("A record before the first turn.");
+        const seedId = presentAt(seed.displayMessages, 0).id;
+        (await history.appendTurn(THREAD, seed))._unsafeUnwrap();
+        for (let n = 1; n <= 2; n++) await writeTurn(THREAD, n);
+
+        const message = (await history.loadMessage(THREAD, seedId))._unsafeUnwrap();
+
+        expect(message).toMatchObject({ id: seedId, role: "system" });
+        expect(message).toEqual((await transcriptOf(THREAD)).find((candidate) => candidate.id === seedId) ?? null);
+    });
+
+    it("gives each message of the transcript as the transcript gives it", async () => {
+        (await history.appendTurn(THREAD, conversationRecordTurn("A record before the first turn.")))._unsafeUnwrap();
+        for (let n = 1; n <= 4; n++) await writeTurn(THREAD, n);
+        (await history.appendTurn(THREAD, conversationRecordTurn("A record between two turns.")))._unsafeUnwrap();
+        await writeTurn(THREAD, 5);
+
+        const transcript = await transcriptOf(THREAD);
+        expect(transcript.length).toBeGreaterThan(10);
+        for (const message of transcript) {
+            expect((await history.loadMessage(THREAD, message.id))._unsafeUnwrap()).toEqual(message);
+        }
+    });
+
+    it("gives null for an unknown id", async () => {
+        await writeTurn(THREAD, 1);
+
+        expect((await history.loadMessage(THREAD, "no-such-message"))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("gives null for the id of a message of a different thread", async () => {
+        await writeTurn(THREAD, 1);
+        await writeTurn("some-other-thread", 2);
+
+        expect((await history.loadMessage("some-other-thread", "assistant-1"))._unsafeUnwrap()).toBeNull();
+        expect((await history.loadMessage(THREAD, "assistant-2"))._unsafeUnwrap()).toBeNull();
+        expect((await history.loadMessage("some-other-thread", "assistant-2"))._unsafeUnwrap()).toMatchObject({ id: "assistant-2" });
+    });
+
+    it("sends one statement, and the planner reaches the rows through the GIN index on the message ids", async () => {
+        for (let n = 1; n <= 40; n++) await writeTurn(THREAD, n);
+        await pool.query("ANALYZE messages");
+        const statements: { text: string; values: unknown[] }[] = [];
+        const capturing = createThreadHistory({
+            query: (...args) => {
+                const [text, values] = args;
+                if (typeof text === "string") statements.push({ text, values: Array.isArray(values) ? values : [] });
+                return pool.query(...args);
+            },
+            connect: () => pool.connect(),
+        });
+
+        const message = (await capturing.loadMessage(THREAD, "assistant-20"))._unsafeUnwrap();
+
+        expect(message).toMatchObject({ id: "assistant-20" });
+        expect(statements).toHaveLength(1);
+        const statement = presentAt(statements, 0);
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            await client.query("SET LOCAL enable_seqscan = off");
+            const plan = await client.query<{ "QUERY PLAN": string }>(`EXPLAIN ${statement.text}`, statement.values);
+            await client.query("ROLLBACK");
+            expect(plan.rows.map((row) => row["QUERY PLAN"]).join("\n")).toContain("idx_messages_display_message_ids");
+        } finally {
+            client.release();
+        }
     });
 });

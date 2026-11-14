@@ -76,6 +76,11 @@ export type PauseScope = {
     readonly waiter: PauseWaiter;
     readonly analysisId: string;
     readonly threadId?: string;
+    /**
+     * The user id of the person of the work: the user of the turn for a turn and its sub-agents, and the
+     * `identity.user` of the run session for a run, a step, a lease, and a profile.
+     */
+    readonly userId: string | null;
     /** Writes the part of the pause to the stream of the work. */
     readonly emit: (part: PausePart) => Promise<void>;
     /** The delays of the timer of an outage. Absent: {@link DEFAULT_PAUSE_RETRY_DELAYS_MS}. */
@@ -150,6 +155,7 @@ export function workPause(scope: PauseScope): WorkPause {
                         ...work,
                         analysisId: scope.analysisId,
                         threadId: scope.threadId,
+                        userId: scope.userId,
                         state,
                         cause,
                         attempt,
@@ -188,6 +194,7 @@ export function workPause(scope: PauseScope): WorkPause {
                                 ...work,
                                 analysisId: scope.analysisId,
                                 threadId: scope.threadId,
+                                userId: scope.userId,
                                 state: "paused",
                                 cause,
                                 attempt,

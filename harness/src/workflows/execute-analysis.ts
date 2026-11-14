@@ -385,7 +385,101 @@ function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEv
  * The scheduler's live per-step state, keyed by step id. Named so the observation builder and the
  * scheduler loop share one shape rather than restating the inline literal at each site.
  */
-type StepRuntimeMap = Map<string, { status: StepRuntimeStatus; durationMs?: number; error?: string }>;
+type StepRuntimeMap = Map<string, { status: StepRuntimeStatus; durationMs?: number; error?: string; startedAt?: string }>;
+
+/**
+ * The operations that a run adds to its body to show the start of each step and the synthesis in the DAG: the
+ * clock read of each dispatch and the snapshot writes of the synthesis. A run that started before the patch
+ * replays its recorded operations, and it writes the snapshots without these fields.
+ */
+const DAG_DETAIL_PATCH = "dag-step-start-and-synthesis";
+
+/** The `synthesis` entry of a DAG snapshot: the in-run state of the synthesis. */
+type SynthesisDagState = {
+    readonly status: StepRuntimeStatus;
+    readonly startedAt?: string;
+    readonly durationMs?: number;
+    readonly error?: string;
+};
+
+/** The level of the synthesis: one above the deepest plan level, the wave of its ledger row. */
+function synthesisWaveOf(levels: ReadonlyMap<string, number>): number {
+    return Math.max(-1, ...levels.values()) + 1;
+}
+
+/** The `synthesis` entry that a classified synthesis outcome gives, with the clock reads of the body. */
+function synthesisDagState(outcome: { status: SynthesisStatus; reason: string | null }, startedAt: string, durationMs: number): SynthesisDagState {
+    switch (outcome.status) {
+        case "produced":
+            return { status: "completed", startedAt, durationMs };
+        case "skipped_no_summaries":
+        case "skipped_blocker":
+            return { status: "skipped", startedAt, durationMs };
+        case "failed": {
+            const failed: SynthesisDagState = { status: "failed", startedAt, durationMs };
+            return outcome.reason === null ? failed : { ...failed, error: outcome.reason };
+        }
+        default: {
+            const _exhaustive: never = outcome.status;
+            throw new Error(`unhandled synthesis status: ${String(_exhaustive)}`);
+        }
+    }
+}
+
+/**
+ * The `data-dag-state` part of a run, from the workflow input and the live step state. One builder gives the
+ * snapshots of the scheduler and the snapshots of the synthesis, thus they cannot disagree on a field. The
+ * `synthesis` entry follows the plan steps, and it is present only when the caller gives its state.
+ */
+function buildDagStatePart(args: {
+    input: ExecuteAnalysisInput;
+    runId: string;
+    levels: ReadonlyMap<string, number>;
+    stepStates: StepRuntimeMap;
+    synthesis?: SynthesisDagState;
+}): Record<string, unknown> {
+    const { input, runId, levels, stepStates, synthesis } = args;
+    const steps: Record<string, unknown>[] = input.steps.map((s) => {
+        const rt = presentGet(stepStates, s.id, "the runtime of the step");
+        const entry: Record<string, unknown> = {
+            id: s.id,
+            // `input.steps` is the SCHEDULER's projection — `{id, depends_on}` and nothing
+            // else — so the human name has to be joined from the snapshotted plan step. A
+            // consumer reading `name` is reading it to say what the step is FOR, which the
+            // id (a `T{track}S{step}` slug) cannot answer. Falling back to the id keeps the
+            // field populated for a step missing from the snapshot rather than emitting an
+            // empty label; `planStepById` is complete by contract (dispatch throws on a
+            // miss), so the fallback is unreachable in practice.
+            name: input.planStepById[s.id]?.name ?? s.id,
+            agent: input.agentByStepId[s.id] ?? "unknown",
+            status: rt.status,
+            level: levels.get(s.id) ?? 0,
+            dependsOn: [...s.depends_on],
+        };
+        if (rt.startedAt !== undefined) entry.startedAt = rt.startedAt;
+        if (rt.durationMs !== undefined) entry.durationMs = rt.durationMs;
+        if (rt.error !== undefined) entry.error = rt.error;
+        // `artifactCount` and `summary` are declared on `DagStepState` and deliberately not
+        // set: the parent holds neither at snapshot time, and a placeholder would make a
+        // consumer's rendering confidently wrong rather than honestly incomplete.
+        return entry;
+    });
+    if (synthesis !== undefined) {
+        const entry: Record<string, unknown> = {
+            id: SYNTHESIS_STEP_ID,
+            name: "Synthesis",
+            agent: SYNTHESIS_AGENT_ID,
+            status: synthesis.status,
+            level: synthesisWaveOf(levels),
+            dependsOn: input.steps.map((s) => s.id),
+        };
+        if (synthesis.startedAt !== undefined) entry.startedAt = synthesis.startedAt;
+        if (synthesis.durationMs !== undefined) entry.durationMs = synthesis.durationMs;
+        if (synthesis.error !== undefined) entry.error = synthesis.error;
+        steps.push(entry);
+    }
+    return { type: "data-dag-state", id: `dag-${runId}`, runId, steps };
+}
 
 /**
  * Build the whole-run snapshot from the workflow input and the scheduler's live step state.
@@ -956,6 +1050,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             workKind: "run",
             waiter,
             analysisId: input.analysisId,
+            userId: input.runSession.identity.user,
             emit: emitStreamPart,
             retryDelaysMs: deps.pauseRetryDelaysMs,
             run: { session: input.runSession, authorizer: deps.runAuthorizer },
@@ -1006,7 +1101,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // ("never ran, never will"), like any never-dispatched DAG step. Its wave
     // sits after every DAG level so ledger-ordered readers render it last.
     const synthesisEnabled = input.synthesisEnabled ?? true;
-    const synthesisWave = Math.max(-1, ...levels.values()) + 1;
+    const synthesisWave = synthesisWaveOf(levels);
     await DBOS.runStep(
         async () => {
             const dagRows = input.steps.map((step) => ({
@@ -1056,6 +1151,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // rather than learning the step list from whichever transition happens to land first.
     observeRunGuarded(deps, buildRunObservation({ input, runId, status: "running", stepStates: new Map() }));
 
+    const detailed = await DBOS.patch(DAG_DETAIL_PATCH);
+
     // (2-4) Scheduler loop + failure isolation + pause cascade.
     const final = await runSchedulerLoop({
         input,
@@ -1063,7 +1160,11 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         workflowId,
         levels,
         deps,
+        detailed,
+        synthesisEnabled,
     });
+    const emitSynthesisSnapshot = (synthesis: SynthesisDagState): Promise<void> =>
+        emitStreamPart(buildDagStatePart({ input, runId, levels, stepStates: final.stepStates, synthesis }));
 
     // (5) Run-level synthesis — a genuine failure must fail the run. The
     // honest non-fatal outcomes (report_blocker / no-summaries) resolve normally
@@ -1095,6 +1196,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 childWorkflowId: null,
             }),
         );
+        const synthStartedAt = new Date(synthStartedAtMs).toISOString();
+        if (detailed) await emitSynthesisSnapshot({ status: "running", startedAt: synthStartedAt });
         let rowOutcome: { status: SynthesisStatus; reason: string | null };
         try {
             const synthOut = await synthesizeFindings({
@@ -1138,6 +1241,10 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 recordStepCompleted({ agentId: SYNTHESIS_AGENT_ID, status: outcome, durationMs: synthEndedAtMs - synthStartedAtMs });
             return written;
         });
+        if (detailed) await emitSynthesisSnapshot(synthesisDagState(rowOutcome, synthStartedAt, synthEndedAtMs - synthStartedAtMs));
+    } else if (detailed && synthesisEnabled) {
+        // No step completed, thus the synthesis never runs: its entry ends as skipped.
+        await emitSynthesisSnapshot({ status: "skipped" });
     }
 
     // (6) collectAndComplete — terminal block. Runs on EVERY path. When synthesis
@@ -1244,6 +1351,9 @@ type SchedulerLoopArgs = {
     readonly workflowId: string;
     readonly levels: ReadonlyMap<string, number>;
     readonly deps: ExecuteAnalysisDeps;
+    /** True when the run took {@link DAG_DETAIL_PATCH}: the snapshots carry the step starts and the synthesis entry. */
+    readonly detailed: boolean;
+    readonly synthesisEnabled: boolean;
 };
 
 type SchedulerLoopOutcome = {
@@ -1266,7 +1376,7 @@ type SchedulerLoopOutcome = {
 };
 
 async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopOutcome> {
-    const { input, runId, workflowId, levels, deps } = args;
+    const { input, runId, workflowId, levels, deps, detailed, synthesisEnabled } = args;
 
     const completed = new Set<string>();
     const failed = new Set<string>();
@@ -1318,38 +1428,24 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
     let failureReason: string | null = null;
 
+    /** Set the settled state of a step. The start of the dispatch stays on it. */
+    const settleStep = (stepId: string, state: { status: StepRuntimeStatus; durationMs?: number; error?: string }): void => {
+        const startedAt = stepRuntime.get(stepId)?.startedAt;
+        stepRuntime.set(stepId, startedAt === undefined ? state : { ...state, startedAt });
+    };
+
     const stepIndexById = new Map(input.steps.map((s, i) => [s.id, i] as const));
 
     const emitDagSnapshot = async (): Promise<void> => {
-        await emitStreamPart({
-            type: "data-dag-state",
-            id: `dag-${runId}`,
-            runId,
-            steps: input.steps.map((s) => {
-                const rt = presentGet(stepRuntime, s.id, "the runtime of the step");
-                const entry: Record<string, unknown> = {
-                    id: s.id,
-                    // `input.steps` is the SCHEDULER's projection — `{id, depends_on}` and nothing
-                    // else — so the human name has to be joined from the snapshotted plan step. A
-                    // consumer reading `name` is reading it to say what the step is FOR, which the
-                    // id (a `T{track}S{step}` slug) cannot answer. Falling back to the id keeps the
-                    // field populated for a step missing from the snapshot rather than emitting an
-                    // empty label; `planStepById` is complete by contract (dispatch throws on a
-                    // miss), so the fallback is unreachable in practice.
-                    name: input.planStepById[s.id]?.name ?? s.id,
-                    agent: input.agentByStepId[s.id] ?? "unknown",
-                    status: rt.status,
-                    level: levels.get(s.id) ?? 0,
-                    dependsOn: [...s.depends_on],
-                };
-                if (rt.durationMs !== undefined) entry.durationMs = rt.durationMs;
-                if (rt.error !== undefined) entry.error = rt.error;
-                // `artifactCount` and `summary` are declared on `DagStepState` and deliberately not
-                // set: the parent holds neither at snapshot time, and a placeholder would make a
-                // consumer's rendering confidently wrong rather than honestly incomplete.
-                return entry;
+        await emitStreamPart(
+            buildDagStatePart({
+                input,
+                runId,
+                levels,
+                stepStates: stepRuntime,
+                synthesis: detailed && synthesisEnabled ? { status: "pending" } : undefined,
             }),
-        });
+        );
         // The host observer rides the DAG emission rather than getting its own instrumentation
         // points: these call sites already ARE the complete set of run-state transitions, and a
         // second set would drift from this one. Status is `running` here by construction — the
@@ -1396,11 +1492,12 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 ...baseChildInput,
                 runSession: forStep(input.runSession, stepId),
             };
+            const startedAt = detailed ? new Date(await DBOS.now()).toISOString() : undefined;
             const handle = await DBOS.startWorkflow(deps.sandboxStepCallable, {
                 workflowID: childWorkflowId,
             })(childInput);
             inFlight.set(childWorkflowId, { stepId, handle });
-            stepRuntime.set(stepId, { status: "running" });
+            stepRuntime.set(stepId, startedAt === undefined ? { status: "running" } : { status: "running", startedAt });
         }
         await emitDagSnapshot();
     };
@@ -1438,7 +1535,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             addChatUsage(runUsage, r.usage);
             if (r.status === "complete") {
                 completed.add(settled.stepId);
-                stepRuntime.set(settled.stepId, {
+                settleStep(settled.stepId, {
                     status: "completed",
                     durationMs: r.durationMs,
                 });
@@ -1448,7 +1545,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 await dispatchReady();
             } else if (r.status === "canceled") {
                 canceled.add(settled.stepId);
-                stepRuntime.set(settled.stepId, {
+                settleStep(settled.stepId, {
                     status: "failed",
                     durationMs: r.durationMs,
                     error: r.error ?? "canceled",
@@ -1463,7 +1560,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 // siblings and independent ready steps continue.
                 failed.add(settled.stepId);
                 failureReason ??= r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed");
-                stepRuntime.set(settled.stepId, {
+                settleStep(settled.stepId, {
                     status: "failed",
                     durationMs: r.durationMs,
                     error: r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed"),
@@ -1480,7 +1577,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             failed.add(settled.stepId);
             failureReason ??= errorMessageOf(settled.err) ?? textOf(settled.err);
             markDependentsSkipped(settled.stepId);
-            stepRuntime.set(settled.stepId, {
+            settleStep(settled.stepId, {
                 status: "failed",
                 error: errorMessageOf(settled.err) ?? textOf(settled.err),
             });

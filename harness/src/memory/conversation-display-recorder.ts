@@ -34,6 +34,8 @@ export type ConversationDisplayRecorder = {
 
 export type ConversationDisplayRecorderOptions = {
     readonly userText: string;
+    /** Who sent the user message. The `message-start` of the user message carries it when present. */
+    readonly author?: string;
     /** The root agent of the turn. Its call path is `[agentId]`, and an event with a longer path is from a sub-agent. */
     readonly agentId: string;
     readonly sink: EmitFn;
@@ -171,7 +173,15 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
     }
 
     function userMessageStart(): EmitEvent {
-        return { type: "message-start", messageId: userMessageId, role: "user", text: options.userText, source: rootSource };
+        const start: Extract<EmitEvent, { type: "message-start"; role: "user" }> = {
+            type: "message-start",
+            messageId: userMessageId,
+            role: "user",
+            text: options.userText,
+            source: rootSource,
+        };
+        if (options.author !== undefined) return { ...start, author: options.author };
+        return start;
     }
 
     function assistantMessageStart(messageId: string): EmitEvent {

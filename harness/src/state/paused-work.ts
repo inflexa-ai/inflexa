@@ -22,6 +22,8 @@ export type PauseRecord = {
     readonly waiter?: PauseWaiter;
     readonly analysisId: string;
     readonly threadId?: string;
+    /** The user id of the person of the work. `null`: a row that a wait wrote before the column, or work with no person. */
+    readonly userId: string | null;
     readonly state: "retrying" | "paused";
     readonly cause: PauseCause;
     /** The count of timer retries before this wait. */
@@ -36,7 +38,7 @@ export type PauseRecord = {
     readonly runSession?: RunSession;
 };
 
-const PauseCauseSchema = z.discriminatedUnion("kind", [
+export const PauseCauseSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("outage") }),
     z.object({ kind: z.literal("credential") }),
     z.object({ kind: z.literal("host"), reason: z.string() }),
@@ -49,6 +51,7 @@ const PauseRowSchema = z.object({
     waiter: PauseWaiterSchema.nullable(),
     analysis_id: z.string(),
     thread_id: z.string().nullable(),
+    user_id: z.string().nullable(),
     state: z.enum(["retrying", "paused"]),
     cause: PauseCauseSchema,
     attempt: z.number(),
@@ -76,7 +79,7 @@ export type PauseRowQuerier = {
     query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
 };
 
-const COLUMNS = "workflow_id, work_id, work_kind, waiter, analysis_id, thread_id, state, cause, attempt, retry_at, topic, paused_at, run_session";
+const COLUMNS = "workflow_id, work_id, work_kind, waiter, analysis_id, thread_id, user_id, state, cause, attempt, retry_at, topic, paused_at, run_session";
 
 function recordOf(row: unknown): PauseRecord {
     const parsed = PauseRowSchema.parse(row);
@@ -87,6 +90,7 @@ function recordOf(row: unknown): PauseRecord {
         waiter: parsed.waiter ?? undefined,
         analysisId: parsed.analysis_id,
         threadId: parsed.thread_id ?? undefined,
+        userId: parsed.user_id,
         state: parsed.state,
         cause: parsed.cause,
         attempt: parsed.attempt,
@@ -102,10 +106,10 @@ export function recordPause(pool: Querier, record: PauseRecord): ResultAsync<voi
     return tryMutation("pausedWork.record", () =>
         pool.query(
             `INSERT INTO cortex_paused_work (${COLUMNS})
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT (workflow_id) DO UPDATE SET
                work_id = EXCLUDED.work_id, work_kind = EXCLUDED.work_kind, waiter = EXCLUDED.waiter, analysis_id = EXCLUDED.analysis_id,
-               thread_id = EXCLUDED.thread_id, state = EXCLUDED.state, cause = EXCLUDED.cause, attempt = EXCLUDED.attempt,
+               thread_id = EXCLUDED.thread_id, user_id = EXCLUDED.user_id, state = EXCLUDED.state, cause = EXCLUDED.cause, attempt = EXCLUDED.attempt,
                retry_at = EXCLUDED.retry_at, topic = EXCLUDED.topic, paused_at = EXCLUDED.paused_at,
                run_session = EXCLUDED.run_session`,
             [
@@ -115,6 +119,7 @@ export function recordPause(pool: Querier, record: PauseRecord): ResultAsync<voi
                 record.waiter === undefined ? null : JSON.stringify(record.waiter),
                 record.analysisId,
                 record.threadId ?? null,
+                record.userId,
                 record.state,
                 JSON.stringify(record.cause),
                 record.attempt,

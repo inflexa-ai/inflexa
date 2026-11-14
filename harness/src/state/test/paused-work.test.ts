@@ -27,6 +27,7 @@ function pause(overrides: Partial<PauseRecord> & Pick<PauseRecord, "workflowId">
         workId: "run-1",
         workKind: "run",
         analysisId: "a1",
+        userId: null,
         state: "paused",
         cause: { kind: "host", reason: "payment_required" },
         attempt: 0,
@@ -51,6 +52,7 @@ describe("the rows of the paused work", () => {
             workId: "turn-1",
             workKind: "turn",
             threadId: "thread-1",
+            userId: "u1",
             state: "retrying",
             cause: { kind: "outage" },
             attempt: 2,
@@ -63,6 +65,20 @@ describe("the rows of the paused work", () => {
         expect((await queryPausesOfWork(pool, "a1", "turn-1"))._unsafeUnwrap()).toEqual([retrying]);
         expect((await queryPausesOfWork(pool, "a1", "profile-1"))._unsafeUnwrap()).toEqual([credential]);
         expect((await queryPausesOfWork(pool, "a1", "run-1"))._unsafeUnwrap()).toEqual([host]);
+    });
+
+    it("reads back the user of each row, and null for a row with no person", async () => {
+        await record(pause({ workflowId: "wf-person", workId: "work-person", userId: "u1" }), pause({ workflowId: "wf-nobody", workId: "work-nobody" }));
+
+        expect((await queryPausesOfWork(pool, "a1", "work-person"))._unsafeUnwrap().map((row) => row.userId)).toEqual(["u1"]);
+        expect((await queryPausesOfWork(pool, "a1", "work-nobody"))._unsafeUnwrap().map((row) => row.userId)).toEqual([null]);
+    });
+
+    it("replaces the user of a row that a new pause of the workflow rewrites", async () => {
+        await record(pause({ workflowId: "wf-1", userId: "u1" }));
+        await record(pause({ workflowId: "wf-1", userId: "u2" }));
+
+        expect((await queryPausesOfWork(pool, "a1", "run-1"))._unsafeUnwrap().map((row) => row.userId)).toEqual(["u2"]);
     });
 
     it("reads back each kind of waiter", async () => {

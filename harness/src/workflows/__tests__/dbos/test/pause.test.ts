@@ -20,10 +20,11 @@ import { captureMetrics } from "../../../../__tests__/setup/metrics.js";
 import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.js";
 import { createWork } from "../../../../app/work.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
-import type { RunSession } from "../../../../auth/types.js";
+import { forSubAgent, type RunSession } from "../../../../auth/types.js";
 import type { PauseWaiter, PausePart } from "../../../../contracts/chat-parts.js";
 import type { RunAuthorizer } from "../../../../execution/run-authorizer.js";
-import { CONTINUE_REQUEST, runLoop } from "../../../../loop/run-loop.js";
+import { CONTINUE_REQUEST, finalText, runLoop } from "../../../../loop/run-loop.js";
+import { registerSubAgent } from "../../../../loop/sub-agent.js";
 import { makeSession } from "../../../../providers/__fixtures__/session.js";
 import { queryPausesOfWork, type PauseRecord } from "../../../../state/paused-work.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../../../testing.js";
@@ -86,6 +87,7 @@ const pausingLoop = DBOS.registerWorkflow(
             workKind: "run",
             waiter: WAITER,
             analysisId: ANALYSIS_ID,
+            userId: current.run?.session.identity.user ?? null,
             emit: (part) => {
                 current.parts.push(part);
                 return Promise.resolve();
@@ -112,6 +114,37 @@ const pausingLoop = DBOS.registerWorkflow(
         };
     },
     { name: "pause-loop" },
+);
+
+/** The model of the sub-agent of the current test. */
+let subAgentScript: ReturnType<typeof scriptedModel>;
+
+const pausingSubAgent = registerSubAgent<{ readonly brief: string }, string>(
+    "pause-sub-agent",
+    async ({ payload, ctx, loop }) => {
+        const { messages } = await runLoop(
+            { id: "pause-sub-agent", systemPrompt: "Test.", model: "scripted-model", tools: [], maxIterations: 3 },
+            [{ role: "user", content: payload.brief }],
+            forSubAgent(ctx.session, "pause-sub-agent"),
+            { ...loop, provider: subAgentScript.provider },
+        );
+        return finalText(messages);
+    },
+    ({ runSession, ...work }, waiter, emit) =>
+        workPause({
+            pool,
+            ...work,
+            waiter,
+            emit,
+            run: runSession === undefined ? undefined : { session: runSession, authorizer: createLocalRunAuthorizer() },
+        }).afterFailure,
+);
+
+/** A workflow that calls the sub-agent under a run session, as a step of a run does. */
+const runWithSubAgent = DBOS.registerWorkflow(
+    async (runId: string): Promise<string> =>
+        pausingSubAgent({ brief: "go" }, { invocationId: "call-1", session: runSessionOf(runId), signal: new AbortController().signal, emit: () => undefined }),
+    { name: "pause-run-with-sub-agent" },
 );
 
 let rig: DbosTestRig;
@@ -158,6 +191,34 @@ async function waitForPause(workId: string, state: "retrying" | "paused", timeou
 }
 
 describe("the pause of a loop inside a workflow", () => {
+    it("writes a null user on the row of a workflow that has no person", async () => {
+        const { workId } = start([failure(402), reply([text("done")])]);
+        const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
+
+        const row = await waitForPause(workId, "paused");
+        expect(row.userId).toBeNull();
+
+        await createWork({ pool, ...WORK_DEPS }).resume(session, workId);
+        await handle.getResult();
+    });
+
+    it("writes the user of the run session on the row of a paused sub-agent of a run", async () => {
+        subAgentScript = scriptedModel([failure(402), reply([text("late report")])]);
+        const runId = rig.nextWorkflowId("pause-sub-agent-");
+        const handle = await DBOS.startWorkflow(runWithSubAgent, { workflowID: runId })(runId);
+
+        const row = await waitForPause(runId, "paused");
+        expect(row).toMatchObject({
+            workId: runId,
+            workKind: "run",
+            waiter: { kind: "sub-agent", agentId: "pause-sub-agent" },
+            userId: "u-1",
+        });
+
+        expect(await createWork({ pool, ...WORK_DEPS }).resume(session, runId)).toEqual({ kind: "resumed", workflows: 1 });
+        expect(await handle.getResult()).toBe("late report");
+    });
+
     it("waits on a suspend error, and a resume sends the same request again", async () => {
         toolRuns = 0;
         const { workId, current } = start([callTools(toolCall("c1", "echo", { text: "hi" })), failure(402), reply([text("done")])]);
@@ -436,6 +497,7 @@ describe("the run credential of paused work", () => {
 
         const row = await waitForPause(workId, "paused");
         expect(row.runSession).toEqual(runSessionOf(workId));
+        expect(row.userId).toBe("u-1");
         await waitFor(() => authorizer.suspended.length === 1);
         expect(authorizer.suspended).toEqual([`${workId}:paused:host`]);
 

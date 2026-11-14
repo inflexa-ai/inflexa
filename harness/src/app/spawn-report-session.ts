@@ -266,8 +266,16 @@ export type ReportSessionSpawn = {
      * `childThreadId` names the child, and a spawn with no id mints a random
      * one. A child with that id already stands after a first spawn, thus a
      * second spawn gives it back and writes no second seed.
+     *
+     * `userId` is the person of the session that spawns. The child takes it as
+     * its own person, and a spawn with no user id leaves the child with none.
      */
-    spawnReportSession(parentThreadId: string, brief: ReportBrief, childThreadId?: string): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>;
+    spawnReportSession(
+        parentThreadId: string,
+        brief: ReportBrief,
+        childThreadId?: string,
+        userId?: string,
+    ): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError>;
     /**
      * The report sessions of one analysis, through the thread listing narrowed
      * to the type `report`. It adds no predicate of its own, so its answer and
@@ -444,6 +452,7 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
         parentThreadId: string,
         brief: ReportBrief,
         childThreadId: string = randomUUID(),
+        userId?: string,
     ): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> {
         // The gate runs before the parent read. A session with no route to a look
         // reaches the record gate and refuses there forever, thus the spawn is the
@@ -484,6 +493,7 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
                                     type: "report",
                                     parentThreadId,
                                     parentSeq: anchor,
+                                    userId,
                                     // The seed rides as a record, not as user input: nobody typed it in
                                     // the child thread, and a record is displayed but it never opens a turn.
                                     firstTurn: conversationRecordTurn(composeSeed(brief, memory)),

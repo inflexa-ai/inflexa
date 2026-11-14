@@ -848,3 +848,27 @@ The body MUST pass the cancel of its workflow through its failure path, and it M
 - **GIVEN** a profile that a host stopped
 - **WHEN** the embedder retries the profile
 - **THEN** the retry claims the `failed` row, and a new profile workflow starts
+
+### Requirement: The trigger records the person of a profile
+
+`cortex_analysis_state` MUST carry a nullable `data_profile_user_id`, the person of the latest profile attempt. Each claim of a profile MUST set it to null in its claim update. After `RunAuthorizer.authorize` gives the run session, the dispatch MUST write the `identity.user` of that session to the column. The write MUST come before the start of the workflow.
+
+The write MUST change only a row that is `running`. A clear of the profile MUST set the user to null. A failed write of the user MUST go to the log, and the profile MUST continue with a null user. A refused authorization MUST leave a null user. A versioned migration MUST add the column, and a row that the migration finds MUST keep a null value.
+
+#### Scenario: A started profile names its person
+
+- **GIVEN** a run authorizer that gives a run session with the `identity.user` `u1`
+- **WHEN** the trigger claims and starts the profile of an analysis
+- **THEN** the profile row holds `data_profile_user_id` `u1`
+
+#### Scenario: A clear of the profile clears its person
+
+- **GIVEN** a completed profile of `u1`
+- **WHEN** the host clears the profile
+- **THEN** the profile row holds a null `data_profile_user_id`
+
+#### Scenario: A new claim clears the earlier person
+
+- **GIVEN** a completed profile of `u1`
+- **WHEN** a rerun claims the profile, and the authorization refuses it
+- **THEN** the profile row holds a null `data_profile_user_id`

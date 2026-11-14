@@ -67,6 +67,7 @@ function runRow(overrides: Partial<CortexRunRow> = {}): CortexRunRow {
         parts: null,
         mandateId: null,
         planId: "pln-abc12345",
+        userId: null,
         ...overrides,
     };
 }

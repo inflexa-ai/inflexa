@@ -111,6 +111,7 @@ export const MessageStartEventSchema = z.discriminatedUnion("role", [
         messageId: z.uuid(),
         role: z.literal("user"),
         text: z.string(),
+        author: z.string().optional(),
         source: EventSourceSchema,
     }),
     z.object({

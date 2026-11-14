@@ -277,6 +277,7 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
             workKind: input.work.kind,
             waiter: waiterOfLease(input),
             analysisId: input.analysisId,
+            userId: input.session.identity.user,
             // A host reads the streams of the work, not of the lease workflow. The wait of the consumer mirrors the pause.
             emit: () => Promise.resolve(),
             retryDelaysMs: config.pauseRetryDelaysMs,

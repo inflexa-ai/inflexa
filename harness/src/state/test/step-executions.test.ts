@@ -318,3 +318,52 @@ describe("report_blocker tool", () => {
         expect(blockerOf(steps)).toBeNull();
     });
 });
+
+describe("step-executions: usage", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("step_exec_usage");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    async function usageOf(runId: string, stepId: string): Promise<unknown> {
+        const { rows } = await pool.query<{ usage: unknown }>("SELECT usage FROM cortex_step_executions WHERE run_id = $1 AND step_id = $2", [runId, stepId]);
+        return rows[0]?.usage;
+    }
+
+    it("stores the usage of the result in the terminal write", async () => {
+        await seedRunning(pool, "run-usage", "step-1");
+        (
+            await updateStepExecution(pool, "run-usage", "step-1", { status: "completed", durationMs: 5, usage: { inputTokens: 100, outputTokens: 30 } })
+        )._unsafeUnwrap();
+
+        expect(await usageOf("run-usage", "step-1")).toEqual({ inputTokens: 100, outputTokens: 30 });
+    });
+
+    it("stores a null usage when the result has none, and leaves the column alone when the update omits it", async () => {
+        await seedRunning(pool, "run-null", "step-1");
+        (await updateStepExecution(pool, "run-null", "step-1", { status: "completed", durationMs: 5, usage: null }))._unsafeUnwrap();
+        expect(await usageOf("run-null", "step-1")).toBeNull();
+
+        await seedRunning(pool, "run-omit", "step-1");
+        (await updateStepExecution(pool, "run-omit", "step-1", { status: "running", usage: { inputTokens: 1 } }))._unsafeUnwrap();
+        (await updateStepExecution(pool, "run-omit", "step-1", { status: "running", attempts: 2 }))._unsafeUnwrap();
+        expect(await usageOf("run-omit", "step-1")).toEqual({ inputTokens: 1 });
+    });
+
+    it("keeps a null usage on a failed step and on a seeded row", async () => {
+        await seedRunning(pool, "run-failed", "step-1");
+        (await updateStepExecution(pool, "run-failed", "step-1", { status: "failed", durationMs: 5, error: "boom" }))._unsafeUnwrap();
+        (await seedStepExecutions(pool, [{ runId: "run-failed", stepId: "step-2", analysisId: "analysis-1", wave: 1, agentId: "analyst" }]))._unsafeUnwrap();
+
+        expect(await usageOf("run-failed", "step-1")).toBeNull();
+        expect(await usageOf("run-failed", "step-2")).toBeNull();
+    });
+});

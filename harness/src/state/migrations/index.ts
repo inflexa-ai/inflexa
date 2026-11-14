@@ -33,6 +33,7 @@ import { keepTheReportDerivations } from "./20261030120200_keep_the_report_deriv
 import { recordTheWaiterOfAPause } from "./20261102120000_record_the_waiter_of_a_pause.js";
 import { pinTheModelOfAThread } from "./20261106120000_pin_the_model_of_a_thread.js";
 import { addTheRunMandateColumnAgain } from "./20261112120000_add_the_run_mandate_column_again.js";
+import { recordThePersonOfWork } from "./20261114120000_record_the_person_of_work.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -64,5 +65,6 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261102120000_record_the_waiter_of_a_pause": recordTheWaiterOfAPause,
         "20261106120000_pin_the_model_of_a_thread": pinTheModelOfAThread,
         "20261112120000_add_the_run_mandate_column_again": addTheRunMandateColumnAgain,
+        "20261114120000_record_the_person_of_work": recordThePersonOfWork,
     };
 }

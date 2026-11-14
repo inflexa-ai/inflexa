@@ -48,6 +48,25 @@ const PendingAskRowSchema = z.object({
     created_at: z.string(),
 });
 
+/** The analysis and the person of one ask. `userId` is `null` for a row with no user. */
+export type AskScopeOfRow = {
+    readonly analysisId: string;
+    readonly userId: string | null;
+};
+
+/** The input of the pending read over a list of analyses. */
+export type PendingByAnalysesInput = {
+    readonly analysisIds: readonly string[];
+    /** Narrow to the asks raised for one person. An ask with no user never matches. Omitting it narrows nothing. */
+    readonly userId?: string;
+    /** The most asks to give. It clamps to 1 to 200, the bounds of `listRecentThreads`. */
+    readonly limit: number;
+};
+
+const MAX_PENDING_BY_ANALYSES = 200;
+
+const AskScopeRowSchema = z.object({ analysis_id: z.string(), user_id: z.string().nullable() });
+
 /** The columns the guarded UPDATE returns for the standing-grant insert. */
 const GrantedRowSchema = z.object({ analysis_id: z.string(), user_id: z.string(), grant_key: z.string() });
 
@@ -148,19 +167,51 @@ export function selectPending(querier: Querier): ResultAsync<PendingAsk[], DbErr
             text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, title, command, detail, created_at
               FROM cortex_asks WHERE status = 'pending' ORDER BY created_at ASC`,
         });
-        return result.rows.map((row: unknown) => {
-            const parsed = PendingAskRowSchema.parse(row);
-            return {
-                id: parsed.id,
-                analysisId: parsed.analysis_id,
-                userId: parsed.user_id,
-                threadId: parsed.thread_id ?? null,
-                title: parsed.title,
-                command: parsed.command,
-                detail: parsed.detail ?? null,
-                createdAt: parsed.created_at,
-            };
+        return result.rows.map(pendingAskOf);
+    });
+}
+
+function pendingAskOf(row: unknown): PendingAsk {
+    const parsed = PendingAskRowSchema.parse(row);
+    return {
+        id: parsed.id,
+        analysisId: parsed.analysis_id,
+        userId: parsed.user_id,
+        threadId: parsed.thread_id ?? null,
+        title: parsed.title,
+        command: parsed.command,
+        detail: parsed.detail ?? null,
+        createdAt: parsed.created_at,
+    };
+}
+
+/**
+ * Enumerate the unresolved asks of a list of analyses, oldest first, with the id breaking a tie in ascending order,
+ * in one statement. An empty list gives an empty result and sends no query.
+ */
+export function selectPendingByAnalyses(querier: Querier, input: PendingByAnalysesInput): ResultAsync<PendingAsk[], DbError> {
+    if (input.analysisIds.length === 0) return okAsync([]);
+    return tryQuery("asks.selectPendingByAnalyses", async () => {
+        const result = await querier.query({
+            text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, title, command, detail, created_at
+              FROM cortex_asks
+              WHERE status = 'pending' AND analysis_id = ANY($1::text[]) AND ($2::text IS NULL OR user_id = $2)
+              ORDER BY created_at ASC, id ASC
+              LIMIT $3`,
+            values: [input.analysisIds, input.userId ?? null, Math.min(Math.max(input.limit, 1), MAX_PENDING_BY_ANALYSES)],
         });
+        return result.rows.map(pendingAskOf);
+    });
+}
+
+/** The analysis and the person of the ask with this id, in each status. `null` for an unknown id. */
+export function selectAskScope(querier: Querier, id: string): ResultAsync<AskScopeOfRow | null, DbError> {
+    return tryQuery("asks.selectAskScope", async () => {
+        const result = await querier.query({ text: `SELECT analysis_id, user_id FROM cortex_asks WHERE id = $1`, values: [id] });
+        const row: unknown = result.rows[0];
+        if (row === undefined) return null;
+        const parsed = AskScopeRowSchema.parse(row);
+        return { analysisId: parsed.analysis_id, userId: parsed.user_id };
     });
 }
 

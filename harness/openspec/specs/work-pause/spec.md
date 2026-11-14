@@ -112,12 +112,15 @@ Before it waits, a workflow MUST write one row of its pause in `cortex_paused_wo
 - the work id and the work kind: the turn id and `turn`, the run id and `run`, or the id of the profile workflow and `profile`
 - the waiter of the wait
 - the analysis id, and the thread id of a turn
+- the user id of the person of the work
 - the state, the cause, the timer attempt, and the next retry
 - the topic of the resume message, and the time of the pause
 
 A sub-agent of a turn MUST write the turn id as its work id. A sandbox step and the synthesis of a run MUST write the run id. A lease workflow MUST write the work id and the work kind of the consumer of its lease.
 
-The workflow MUST also write a `data-pause` part to the stream of its work. The part MUST carry the workflow id, the waiter, the state, the cause, the timer attempt, the next retry, and the start of the wait. When the wait ends, the workflow MUST delete its row and write the part again with the state `running` and the end of the wait. The part MUST be a reconciling part, keyed by the workflow id.
+The user id of a turn and of a sub-agent of a turn MUST be the user of the session of the turn. The other pauses are the pauses of a run, a step, the synthesis, a lease workflow, and a profile. Their user id MUST be the `identity.user` of the run session of the workflow. `PauseRecord` MUST give the user id as `userId`, typed `string | null`. A versioned migration MUST add the column, and a row that the migration finds MUST keep a null user id.
+
+The workflow MUST also write a `data-pause` part to the stream of its work. The part MUST carry the workflow id, the waiter, the state, the cause, the timer attempt, the next retry, and the start of the wait. When the wait ends, the workflow MUST delete its row. Then it MUST write the part again with the state `running` and the end of the wait. The part MUST be a reconciling part, keyed by the workflow id.
 
 A lease workflow cannot write to the stream of its consumer. Thus the `acquire` wait of the consumer MUST read the row of the lease workflow. Then it MUST write the part to the stream of the consumer.
 
@@ -140,6 +143,18 @@ A lease workflow cannot write to the stream of its consumer. Thus the `acquire` 
 - **WHEN** the `acquire` of the step reads the row of the lease workflow
 - **THEN** the row holds the run id as its work id and `run` as its work kind
 - **AND** the stream of the step holds a `data-pause` part of the lease workflow
+
+#### Scenario: The row of a paused turn names the person of the turn
+
+- **GIVEN** a turn that a session of `u1` opened
+- **WHEN** the turn pauses on an outage
+- **THEN** the row of the pause holds the user id `u1`
+
+#### Scenario: The row of a paused step names the user of the run session
+
+- **GIVEN** a run whose run session has the `identity.user` `u1`
+- **WHEN** a step of the run pauses
+- **THEN** the row of the pause holds the user id `u1`
 
 ### Requirement: Each wait names what waits
 
@@ -416,3 +431,78 @@ Work inside a step MUST NOT pause, because a step cannot wait for a message. The
 
 - **WHEN** a data profile pauses with the cause `host`
 - **THEN** the status of its workflow is `PENDING`, and not `CANCELLED`
+
+### Requirement: Each work names its person
+
+`Work` MUST give `userId`, typed `string | null`, the person of the work. The value MUST come from the source row of the work:
+
+- a turn: the user of the active turn on the claim of its thread
+- a run: the user id of the run row
+- a data profile: the user id of the profile row
+
+A work that only its pause rows name MUST take the user id of its rows. A source row with no user id MUST give `null`. Each read of the work surface MUST fill the value, `list` included.
+
+#### Scenario: A running turn names its person
+
+- **GIVEN** a turn that a session of `u1` opened, and that runs with no pause
+- **WHEN** a host lists the active work of the analysis
+- **THEN** the turn has `userId` `u1`
+
+#### Scenario: A running profile names its person
+
+- **GIVEN** a profile whose run session has the `identity.user` `u1`, and that runs with no pause
+- **WHEN** a host lists the active work of the analysis
+- **THEN** the profile has `userId` `u1`
+
+### Requirement: One read gives the active work of a list of analyses
+
+`WorkSurface` MUST give `listByAnalyses({ analysisIds, userId?, limit })`. The read MUST give the active work of the listed analyses, with each waiting workflow of each work. The rules of `list` MUST apply: the same sources, the same active test of a workflow, one item for each work id, and the delete of the rows of ended pauses. 
+
+A user id MUST narrow the result to the work whose `userId` equals it. A work with a null `userId` MUST NOT match a user id. The read MUST give at most `limit` items. The limit MUST be clamped to the range 1 to 200, the bounds of `listRecentThreads`. An empty list of analysis ids MUST give an empty result and send no query.
+
+The items MUST come in this order:
+
+1. Each work that waits, the oldest pause first, with the work id as the tie break.
+2. Each run that does not wait, the newest start first, with the run id as the tie break.
+3. Each turn and each profile that does not wait, by work id.
+
+The read MUST send one SQL statement over the app tables, whatever the length of the list. It MUST then read the status of the listed workflows from DBOS one time. A work whose workflow ended MUST NOT be in the result, thus a result can hold fewer than `limit` items. The statement applies the limit before the status read. Thus a row of an ended pause can also change which work fills the limit, until the read deletes the row. The items of a result MUST obey the order above with the waits that the status read confirms.
+
+The `list` of `WorkSurface` MUST keep its behavior.
+
+#### Scenario: The paused work of one person across analyses
+
+- **GIVEN** a turn of `u1` in analysis `a1` that waits in `paused`, and a run of `u2` in `a1`
+- **AND** a profile of `u1` in analysis `a2` that waits in `paused`
+- **WHEN** a host calls `listByAnalyses` with `[a1, a2]`, the user id `u1`, and a limit of 10
+- **THEN** it gives the turn and the profile, each with its waiting workflow, and not the run
+
+#### Scenario: An analysis outside the list
+
+- **GIVEN** a run of `u1` in analysis `a3`
+- **WHEN** a host calls `listByAnalyses` with `[a1]` and the user id `u1`
+- **THEN** the result does not hold the run
+
+#### Scenario: The limit bounds the result
+
+- **GIVEN** three runs of `u1` that run with no pause
+- **WHEN** a host calls `listByAnalyses` with a limit of 2
+- **THEN** it gives the two runs with the newest start
+
+#### Scenario: A row of an ended pause goes away
+
+- **GIVEN** a row of a pause of a turn whose workflow an operator canceled
+- **WHEN** a host calls `listByAnalyses` for its analysis
+- **THEN** the result does not hold that turn, and the row is gone
+
+#### Scenario: A row of an ended pause does not move a run up
+
+- **GIVEN** an older run with a row of an ended pause, and a newer run, both `running`, with no active wait
+- **WHEN** a host calls `listByAnalyses` for their analysis with a limit of 2
+- **THEN** it gives the newer run first, then the older run, each with an empty `waiting`
+- **AND** the row of the ended pause is gone
+
+#### Scenario: One statement serves the list
+
+- **WHEN** a host calls `listByAnalyses` for a list of 20 analyses
+- **THEN** it sends one app query and one DBOS status read

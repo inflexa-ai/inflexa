@@ -196,6 +196,7 @@ function recordingSeams(calls: string[]): BootSeams {
                     // The offline boot never pauses work, thus the list is empty and no work resumes.
                     work: {
                         list: () => Promise.resolve([]),
+                        listByAnalyses: () => Promise.resolve([]),
                         stop: () => Promise.resolve({ kind: "not_found" }),
                         resume: () => Promise.resolve({ kind: "not_found" }),
                         hold: () => Promise.resolve({ kind: "not_found" }),

@@ -49,6 +49,7 @@ describe("the pause outside a workflow", () => {
             workKind: "run",
             waiter: { kind: "run" },
             analysisId: "a-1",
+            userId: null,
             emit: () => Promise.resolve(),
         });
         expect(await pause.forCause({ kind: "host", reason: "payment_required" }, 0)).toBeUndefined();

@@ -48,6 +48,7 @@ function work(over: Partial<PausedWork> = {}): PausedWork {
         workId: "run-1",
         kind: "run",
         analysisId: "A",
+        userId: null,
         waiting: [{ workflowId: "run-1-0", state: "paused", cause: { kind: "outage" }, attempt: 4, pausedAt: "2026-10-27T10:00:00.000Z" }],
         ...over,
     };

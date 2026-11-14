@@ -35,6 +35,7 @@ import { presentFirst } from "../lib/present.js";
 import type { Querier } from "../state/db.js";
 import { hasReportedUsage } from "../loop/metrics.js";
 import { countTokens } from "./count-tokens.js";
+import { storedMessagesToChat } from "./conversation-display-replay.js";
 import { conversationView, groupTurns, isGenuineUserStart } from "./conversation-view.js";
 import {
     HARNESS_PROVIDER_NAMESPACE,
@@ -44,7 +45,7 @@ import {
     syntheticRecordMessage,
     type StoredMessageEnvelope,
 } from "./ai-sdk-message-storage.js";
-import type { MessagePart } from "../contracts/message.js";
+import type { ChatMessage, MessagePart } from "../contracts/message.js";
 import {
     conversationDisplayPart,
     envelopeDisplayMessages,
@@ -291,6 +292,17 @@ export type ThreadHistory = {
      * `limit` reads as its integer part with a minimum of 1.
      */
     loadPage(threadId: string, options: LoadPageOptions): ResultAsync<TurnPage, DbError>;
+    /**
+     * Return one message of a thread by its id, or `null` when no stored display message of the thread
+     * has that id. The message equals the message with that id in the transcript replay of the whole
+     * thread: the rounds of an assistant message are merged, and the turn record is folded.
+     *
+     * An index on the message ids of the display envelopes finds the rows that hold the id. The read
+     * then selects only the rows of the turn of the message, thus its work grows with that turn and
+     * not with the thread. A record before the first turn start belongs to a turn that starts at the
+     * first row of the thread.
+     */
+    loadMessage(threadId: string, messageId: string): ResultAsync<ChatMessage | null, DbError>;
     /**
      * Remove the thread's most recent turn — every row from the last
      * genuine-user-start `seq` onward, and its turn record — in a single transaction.
@@ -602,6 +614,8 @@ const MAX_SEQ = "9223372036854775807";
 const MIN_SEQ = "'-9223372036854775808'";
 const PAGE_LOWER_BOUND = `COALESCE((SELECT seq FROM page_lower), ${MIN_SEQ}::bigint)`;
 const PAGE_UPPER_BOUND = `COALESCE((SELECT seq FROM page_upper), ${MAX_SEQ}::bigint)`;
+const TURN_LOWER_BOUND = `COALESCE((SELECT seq FROM turn_lower), ${MIN_SEQ}::bigint)`;
+const TURN_UPPER_BOUND = `COALESCE((SELECT seq FROM turn_upper), ${MAX_SEQ}::bigint)`;
 
 /**
  * The statement of one page of the display read (`$1` thread, `$2` cursor or `NULL`, `$3` limit).
@@ -679,6 +693,69 @@ const PAGE_SQL = `WITH RECURSIVE page_walk(seq, starts) AS (
          WHERE messages.thread_id = $1
            AND messages.seq >= ${PAGE_LOWER_BOUND}
            AND messages.seq < ${PAGE_UPPER_BOUND}
+         ORDER BY messages.seq ASC`;
+
+/**
+ * The statement of the turn of one message (`$1` thread, `$2` the `jsonb` array that holds an object of the message id).
+ *
+ * - `hit`: the rows whose display envelope holds the id. The `MATERIALIZED` keyword keeps the planner from folding the
+ *   read into an ordered scan of the primary key that would filter each row of the thread. The expression is the one
+ *   of the GIN index. The turn starts at the first row, because the rounds of one message share the turn.
+ * - `turn_walk`: a walk down from that row to the first turn start at or below it, with the same `LIMIT 1` reads of the
+ *   primary key as the page walk. A thread with no start below the row ends the walk at its first row.
+ * - `turn_climb`: a walk up to the first turn start above the row.
+ *
+ * A bound that no walk found becomes a `bigint` extreme through `COALESCE`, and the join to the turn records carries the
+ * bounds, for the reasons that {@link PAGE_SQL} gives.
+ */
+const MESSAGE_TURN_SQL = `WITH RECURSIVE hit AS MATERIALIZED (
+           SELECT messages.seq FROM messages
+            WHERE messages.thread_id = $1 AND (messages.display_envelope -> 'messages') @> $2::jsonb
+         ),
+         turn_walk(seq, is_start) AS (
+           SELECT first.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages first
+            WHERE first.thread_id = $1 AND first.seq = (SELECT min(hit.seq) FROM hit)
+           UNION ALL
+           SELECT below.seq, below.is_start
+             FROM turn_walk
+            CROSS JOIN LATERAL (
+              SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
+               WHERE messages.thread_id = $1 AND messages.seq < turn_walk.seq
+               ORDER BY messages.seq DESC
+               LIMIT 1
+            ) below
+            WHERE NOT turn_walk.is_start
+         ),
+         turn_lower AS (
+           SELECT turn_walk.seq FROM turn_walk WHERE turn_walk.is_start
+         ),
+         turn_climb(seq, is_start) AS (
+           SELECT above.seq, above.is_start FROM (
+             SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
+              WHERE messages.thread_id = $1 AND messages.seq > (SELECT min(hit.seq) FROM hit)
+              ORDER BY messages.seq ASC
+              LIMIT 1
+           ) above
+           UNION ALL
+           SELECT above.seq, above.is_start
+             FROM turn_climb
+            CROSS JOIN LATERAL (
+              SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
+               WHERE messages.thread_id = $1 AND messages.seq > turn_climb.seq
+               ORDER BY messages.seq ASC
+               LIMIT 1
+            ) above
+            WHERE NOT turn_climb.is_start
+         ),
+         turn_upper AS (
+           SELECT turn_climb.seq FROM turn_climb WHERE turn_climb.is_start
+         )
+         SELECT ${STORED_ROW_COLUMNS}
+         ${storedRowFrom(` AND turns.start_seq >= ${TURN_LOWER_BOUND} AND turns.start_seq < ${TURN_UPPER_BOUND}`)}
+         WHERE messages.thread_id = $1
+           AND EXISTS (SELECT 1 FROM hit)
+           AND messages.seq >= ${TURN_LOWER_BOUND}
+           AND messages.seq < ${TURN_UPPER_BOUND}
          ORDER BY messages.seq ASC`;
 
 /** The limit that the page statement receives: an integer, at least 1, and a bigint-safe size. */
@@ -873,6 +950,16 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
         return tryQuery("thread-history.loadPage", () => readPage(threadId, options));
     }
 
+    async function readMessage(threadId: string, messageId: string): Promise<ChatMessage | null> {
+        const { rows } = await pool.query<StoredRow>(MESSAGE_TURN_SQL, [threadId, JSON.stringify([{ id: messageId }])]);
+        const messages = storedMessagesToChat(await Promise.all(rows.map((row) => toStoredMessage(threadId, row))));
+        return messages.find((message) => message.id === messageId) ?? null;
+    }
+
+    function loadMessage(threadId: string, messageId: string): ResultAsync<ChatMessage | null, DbError> {
+        return tryQuery("thread-history.loadMessage", () => readMessage(threadId, messageId));
+    }
+
     function retractLastTurn(threadId: string): ResultAsync<RetractOutcome, DbError> {
         return withTransaction(pool, "thread-history.retractLastTurn", (client) =>
             // Take the SAME per-thread advisory lock `appendTurn` takes, and take it
@@ -972,5 +1059,5 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
         ).map(({ rows }) => Number(presentFirst(rows, "the user-turn count row").turns));
     }
 
-    return { appendTurn, writeTurn, loadRecent, loadAll, loadPage, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
+    return { appendTurn, writeTurn, loadRecent, loadAll, loadPage, loadMessage, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
 }

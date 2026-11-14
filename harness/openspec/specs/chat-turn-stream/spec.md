@@ -103,7 +103,9 @@ A sub-agent of a turn writes to the stream of its own workflow. The stream of th
 
 ### Requirement: The stream of a turn carries the user message
 
-The turn MUST write the `message-start` of the user message before the first frame of the reply. The frame MUST carry the sanitized user text, which is the text that the model gets. The turn stores the user message only with its first round, thus the stream is the only source of it before that round. The fold of the frames MUST give the user message with the id of the stream and its text.
+The turn MUST write the `message-start` of the user message before the first frame of the reply. The frame MUST carry the sanitized user text, which is the text that the model gets. When the open of the turn names an author, the frame MUST also carry that author. The turn stores the same author on its user row. The turn stores the user message only with its first round, thus the stream is the only source of it before that round.
+
+The fold of the frames MUST give the user message with the id of the stream and its text. When the frame carries an author, the folded message MUST carry it too. A frame of a turn with no author MUST carry no author key.
 
 #### Scenario: A client attaches to a turn that paused on its first request
 
@@ -116,6 +118,19 @@ The turn MUST write the `message-start` of the user message before the first fra
 - **GIVEN** a turn that ended with a reply
 - **WHEN** a client reads the turn again from its start
 - **THEN** the fold holds one user message, with the same id and text as the fold of the first read
+
+#### Scenario: The user frame names the author
+
+- **GIVEN** a turn that a host opens with the author `u1`
+- **WHEN** a client reads the turn before its first round is stored
+- **THEN** the user `message-start` frame carries the author `u1`
+- **AND** the fold holds the user message with the author `u1`
+
+#### Scenario: A turn with no author
+
+- **GIVEN** a turn that a host opens with no author
+- **WHEN** a client reads the turn
+- **THEN** the user `message-start` frame has no author key
 
 ### Requirement: The stream of a turn carries each retry of a model request
 

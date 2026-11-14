@@ -34,6 +34,7 @@ export function conversationThread(over: Partial<Thread> = {}): Thread {
         // live rows alone.
         deletedAt: null,
         model: null,
+        userId: null,
         ...over,
     };
 }
@@ -60,6 +61,7 @@ export function reportThread(over: Partial<Thread> = {}): Thread {
         updatedAt: new Date("2026-07-08T03:00:00.000Z"),
         deletedAt: null,
         model: null,
+        userId: null,
         ...over,
     };
 }

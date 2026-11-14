@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 import { z } from "zod";
 
+import { countingQuerier } from "../../../__tests__/setup/counting-querier.js";
 import { withSchema } from "../../../__tests__/setup/postgres.js";
 import type { AskRequest } from "../contract.js";
 import { askPartOf, createAskGateway, type AskGateway, type AskScope } from "../gateway.js";
@@ -47,6 +48,22 @@ async function raise(
 ): Promise<{ readonly id: string; readonly raised: "granted" | "pending" }> {
     const id = uuidv7();
     return { id, raised: await gateway.raise(id, request, scope(analysisId, userId)) };
+}
+
+/** A pool that answers every other member as the pool does, and answers `query` with `replacement`. */
+function poolWithQuery(base: Pool, replacement: (...args: unknown[]) => Promise<unknown>): Pool {
+    return new Proxy(base, { get: (target, property): unknown => (property === "query" ? replacement : Reflect.get(target, property)) });
+}
+
+/** A pool that counts the statements that reach `query`. */
+function countingPoolOf(base: Pool): { pool: Pool; calls: () => number } {
+    const counted = countingQuerier(base);
+    // The ledger sends its statements through the `query` of the pool, and the counting querier forwards each one.
+    const replacement = (...args: unknown[]): Promise<unknown> => {
+        const result: unknown = Reflect.apply(counted.querier.query.bind(counted.querier), undefined, args);
+        return Promise.resolve(result);
+    };
+    return { pool: poolWithQuery(base, replacement), calls: counted.calls };
 }
 
 async function selectRow(id: string): Promise<{ status: string; reply: unknown } | undefined> {
@@ -283,5 +300,125 @@ describe("createAskGateway — sweep", () => {
 
         expect(await gateway.sweepExpired(30_000)).toBe(1);
         expect((await selectRow(row.id))?.status).toBe("expired");
+    });
+});
+
+// ── The reads over a list of analyses, and the scope of one ask ───────
+
+describe("createAskGateway — pendingByAnalyses", () => {
+    function rowOf(id: string, analysisId: string, userId: string, createdAt: string): AskRow {
+        return { id, analysisId, userId, threadId: null, title: "t", command: `c-${id}`, detail: null, grantKey: null, createdAt };
+    }
+
+    async function seed(rows: readonly AskRow[]): Promise<void> {
+        for (const row of rows) (await insertPendingAsk(pool, row))._unsafeUnwrap();
+    }
+
+    function countingGateway(): { gateway: AskGateway; calls: () => number } {
+        const counted = countingPoolOf(pool);
+        return { gateway: createAskGateway({ pool: counted.pool }), calls: counted.calls };
+    }
+
+    it("gives the pending asks of one person and not a resolved ask or the ask of another person", async () => {
+        await seed([
+            rowOf("own-pending", "a1", "u1", "2026-10-01T10:00:00.000Z"),
+            rowOf("other-person", "a1", "u2", "2026-10-01T10:01:00.000Z"),
+            rowOf("own-resolved", "a1", "u1", "2026-10-01T10:02:00.000Z"),
+        ]);
+        expect(await gateway.answer("own-resolved", { kind: "once" })).toBe("applied");
+
+        const asks = await gateway.pendingByAnalyses({ analysisIds: ["a1"], userId: "u1", limit: 10 });
+
+        expect(asks.map((ask) => ask.id)).toEqual(["own-pending"]);
+        expect(asks[0]).toMatchObject({ analysisId: "a1", userId: "u1", command: "c-own-pending", createdAt: "2026-10-01T10:00:00.000Z" });
+    });
+
+    it("gives no ask of an analysis outside the list", async () => {
+        await seed([rowOf("outside", "a2", "u1", "2026-10-01T10:00:00.000Z")]);
+
+        expect(await gateway.pendingByAnalyses({ analysisIds: ["a1"], userId: "u1", limit: 10 })).toEqual([]);
+    });
+
+    it("gives the asks of each listed analysis, oldest first with the id as the tie break, when no user id narrows", async () => {
+        await seed([
+            rowOf("ask-c", "a2", "u2", "2026-10-01T10:00:00.000Z"),
+            rowOf("ask-b", "a1", "u1", "2026-10-01T10:00:00.000Z"),
+            rowOf("ask-a", "a1", "u1", "2026-10-01T09:00:00.000Z"),
+            rowOf("ask-z", "a3", "u1", "2026-10-01T08:00:00.000Z"),
+        ]);
+
+        const asks = await gateway.pendingByAnalyses({ analysisIds: ["a1", "a2"], limit: 10 });
+
+        expect(asks.map((ask) => ask.id)).toEqual(["ask-a", "ask-b", "ask-c"]);
+    });
+
+    it("never matches the ask with no user to a user id, and gives it an empty user id otherwise", async () => {
+        await seed([rowOf("no-user", "a1", "u1", "2026-10-01T10:00:00.000Z")]);
+        await pool.query("UPDATE cortex_asks SET user_id = NULL WHERE id = 'no-user'");
+
+        expect(await gateway.pendingByAnalyses({ analysisIds: ["a1"], userId: "u1", limit: 10 })).toEqual([]);
+        expect((await gateway.pendingByAnalyses({ analysisIds: ["a1"], limit: 10 })).map((ask) => [ask.id, ask.userId])).toEqual([["no-user", ""]]);
+    });
+
+    it("bounds the result with the limit, and clamps the limit to 1 to 200", async () => {
+        await seed([
+            rowOf("lim-1", "a1", "u1", "2026-10-01T10:00:00.000Z"),
+            rowOf("lim-2", "a1", "u1", "2026-10-01T10:01:00.000Z"),
+            rowOf("lim-3", "a1", "u1", "2026-10-01T10:02:00.000Z"),
+        ]);
+
+        expect((await gateway.pendingByAnalyses({ analysisIds: ["a1"], limit: 2 })).map((ask) => ask.id)).toEqual(["lim-1", "lim-2"]);
+        expect(await gateway.pendingByAnalyses({ analysisIds: ["a1"], limit: 0 })).toHaveLength(1);
+        expect(await gateway.pendingByAnalyses({ analysisIds: ["a1"], limit: -5 })).toHaveLength(1);
+        expect(await gateway.pendingByAnalyses({ analysisIds: ["a1"], limit: 1000 })).toHaveLength(3);
+    });
+
+    it("sends one query for a list of 20 analyses, and none for an empty list", async () => {
+        const ids = Array.from({ length: 20 }, (_, index) => `many-${index}`);
+        await seed(ids.map((id, index) => rowOf(`ask-${id}`, id, "u1", `2026-10-01T10:${String(index).padStart(2, "0")}:00.000Z`)));
+        const counted = countingGateway();
+
+        expect(await counted.gateway.pendingByAnalyses({ analysisIds: ids, userId: "u1", limit: 50 })).toHaveLength(20);
+        expect(counted.calls()).toBe(1);
+
+        expect(await counted.gateway.pendingByAnalyses({ analysisIds: [], limit: 50 })).toEqual([]);
+        expect(counted.calls()).toBe(1);
+    });
+
+    it("throws at the gateway when the query fails, the same as pending()", async () => {
+        const failing = createAskGateway({ pool: poolWithQuery(pool, () => Promise.reject(new Error("db down"))) });
+
+        await expect(failing.pendingByAnalyses({ analysisIds: ["a1"], limit: 10 })).rejects.toThrow();
+        await expect(failing.pending()).rejects.toThrow();
+    });
+});
+
+describe("createAskGateway — scopeOf", () => {
+    it("gives the analysis and the person of a known ask, in each status", async () => {
+        const { id } = await raise(REQUEST, "a1", "u1");
+
+        expect(await gateway.scopeOf(id)).toEqual({ analysisId: "a1", userId: "u1" });
+        expect(await gateway.answer(id, { kind: "once" })).toBe("applied");
+        expect(await gateway.scopeOf(id)).toEqual({ analysisId: "a1", userId: "u1" });
+    });
+
+    it("gives a null user for an ask with no user", async () => {
+        const { id } = await raise(REQUEST, "a1", "u1");
+        await pool.query("UPDATE cortex_asks SET user_id = NULL WHERE id = $1", [id]);
+
+        expect(await gateway.scopeOf(id)).toEqual({ analysisId: "a1", userId: null });
+    });
+
+    it("gives null for an unknown id", async () => {
+        expect(await gateway.scopeOf("no-such-ask")).toBeNull();
+    });
+
+    it("sends one query", async () => {
+        const { id } = await raise(REQUEST, "a1", "u1");
+        const counted = countingPoolOf(pool);
+
+        await createAskGateway({ pool: counted.pool }).scopeOf(id);
+
+        expect(counted.calls()).toBe(1);
     });
 });

@@ -251,6 +251,7 @@ function runOf(analysisId: string, over: Partial<LatestRunSummary> = {}): Latest
         totalSteps: 5,
         startedAt: "2026-10-05T10:00:00.000Z",
         completedAt: null,
+        usage: null,
         ...over,
     };
 }
@@ -317,7 +318,15 @@ describe("GET /api/v1/analyses: the summary of each analysis", () => {
         const listOpts = listOptsOf({
             latestRuns: () => okAsync([runOf(live.id)]),
             profiles: () =>
-                okAsync<DataProfileSummary[]>([{ analysisId: live.id, status: "completed", completedAt: "2026-10-04T10:00:00.000Z", profiledFiles: 12 }]),
+                okAsync<DataProfileSummary[]>([
+                    {
+                        analysisId: live.id,
+                        status: "completed",
+                        startedAt: "2026-10-04T09:00:00.000Z",
+                        completedAt: "2026-10-04T10:00:00.000Z",
+                        profiledFiles: 12,
+                    },
+                ]),
             liveWork: () => okAsync(new Map([[live.id, { runs: 1, profiles: 0, turns: 0 }]])),
             pendingAsks: () => Promise.resolve([{ analysisId: live.id }, { analysisId: live.id }, { analysisId: "someone-else" }]),
         });
@@ -346,7 +355,10 @@ describe("GET /api/v1/analyses: the summary of each analysis", () => {
     test("a running profile row reads as busy `data_profile`, as `GET {A}` does", async () => {
         const a = await seedAnalysis(tmp(), "Alpha");
         const listOpts = listOptsOf({
-            profiles: () => okAsync<DataProfileSummary[]>([{ analysisId: a.id, status: "running", completedAt: null, profiledFiles: null }]),
+            profiles: () =>
+                okAsync<DataProfileSummary[]>([
+                    { analysisId: a.id, status: "running", startedAt: "2026-10-04T09:00:00.000Z", completedAt: null, profiledFiles: null },
+                ]),
         });
 
         const { list } = await listOf(readyBoot, listOpts);

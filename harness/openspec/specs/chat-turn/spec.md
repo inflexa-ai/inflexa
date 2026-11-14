@@ -708,3 +708,30 @@ When the root loop of a chat turn moves the run to another model, the turn MUST 
 - **GIVEN** a turn whose run moves to `claude-opus-5` and then fails
 - **WHEN** the turn ends
 - **THEN** the thread reads the model `claude-opus-5`
+
+### Requirement: The open of a turn records the person of the turn
+
+The open of a turn MUST record the `identity.user` of its session as the person of the turn. When the open makes an absent thread, the new thread MUST get that user as its `user_id`. An existing thread MUST keep its `user_id`.
+
+The claim of the thread MUST write the user of the turn to `active_turn_user_id` of the thread, in the same update that writes `active_turn_id`. A claim that replaces a holder MUST replace its user too. The release of the thread MUST clear the two values together. A versioned migration MUST add the column, and a row that the migration finds MUST keep a null value.
+
+A report session thread that a turn spawns MUST get the user of the session of the turn as its `user_id`.
+
+#### Scenario: A new thread names the person of its first turn
+
+- **GIVEN** no thread with the id of the turn
+- **WHEN** a host opens a turn on that id with a session whose `identity.user` is `u1`
+- **THEN** the new thread has `userId` `u1`
+
+#### Scenario: A turn of a second person keeps the person of the thread
+
+- **GIVEN** a thread that `u1` opened
+- **WHEN** a host opens a turn on it with a session of `u2`
+- **THEN** the thread keeps `userId` `u1`
+- **AND** the claim of the thread names `u2` as the user of the active turn
+
+#### Scenario: The release clears the user of the turn
+
+- **GIVEN** a turn of `u1` that holds its thread
+- **WHEN** the turn ends and releases the thread
+- **THEN** the thread holds no active turn id and no active turn user

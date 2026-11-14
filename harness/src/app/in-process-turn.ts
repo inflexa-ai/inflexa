@@ -69,7 +69,13 @@ export async function openInProcessTurn(deps: RunChatTurnDeps, params: OpenChatT
         kind: "ready",
         agent: agent.value,
         run: (run) => {
-            const recorder = createConversationDisplayRecorder({ userText: userTextOf(ready.userMessage), agentId: agent.value.id, sink: run.emit });
+            const author = run.author === undefined ? {} : { author: run.author };
+            const recorder = createConversationDisplayRecorder({
+                userText: userTextOf(ready.userMessage),
+                ...author,
+                agentId: agent.value.id,
+                sink: run.emit,
+            });
             return runOpenTurn(
                 deps,
                 params,
@@ -92,7 +98,7 @@ export async function openInProcessTurn(deps: RunChatTurnDeps, params: OpenChatT
 /** Open a turn in process and run it. */
 export async function runInProcessTurn(deps: RunChatTurnDeps, params: InProcessTurnParams): Promise<InProcessTurnResult> {
     const { analysisId, threadId, userInput, ...run } = params;
-    const opened = await openInProcessTurn(deps, { analysisId, threadId, userInput });
+    const opened = await openInProcessTurn(deps, { analysisId, threadId, userInput, userId: run.session.identity.user });
     if (opened.kind !== "ready") return opened;
     return opened.run(run);
 }
@@ -144,7 +150,12 @@ export function inProcessChatTurns(deps: RunChatTurnDeps): ChatTurns {
     const turns = new Map<string, { readonly log: FrameLog; readonly controller: AbortController; readonly end: Promise<ChatTurnEnd | null> }>();
     return {
         async open(session, request) {
-            const opened = await openInProcessTurn(deps, { analysisId: request.analysisId, threadId: request.threadId, userInput: request.userInput });
+            const opened = await openInProcessTurn(deps, {
+                analysisId: request.analysisId,
+                threadId: request.threadId,
+                userInput: request.userInput,
+                userId: session.identity.user,
+            });
             if (opened.kind !== "ready") return opened;
             const turnId = randomUUID();
             const rootSource = { agentId: opened.agent.id, callPath: [opened.agent.id] };

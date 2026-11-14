@@ -121,6 +121,16 @@ describe("the started arm", () => {
         expect(await reportThreadCount()).toBe(1);
     });
 
+    it("gives the child the user of the calling session", async () => {
+        await seedConversation("p1", "Parent");
+        const ctx = ctxForThread("p1");
+
+        const result = await run(INPUT, { ...ctx, session: { ...ctx.session, identity: { user: "u-caller" } } });
+
+        if (result.outcome !== "started") throw new Error("the session did not start");
+        expect((await store.getThread(result.threadId))._unsafeUnwrap()?.userId).toBe("u-caller");
+    });
+
     it("starts a session for a parent that holds no report child", async () => {
         await seedConversation("p1", "Parent");
         // The brief carries the two optional fields as absent, thus the input with

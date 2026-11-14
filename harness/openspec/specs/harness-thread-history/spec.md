@@ -705,3 +705,38 @@ The transcript replay gives each stored envelope in order. Thus a reload shows a
 - **GIVEN** a stored compaction whose exchange holds a memory edit and a summary
 - **WHEN** the transcript replay runs
 - **THEN** no message of the replay holds the text of the summary or the call of the memory edit
+
+### Requirement: One read gives one message by its id
+
+`ThreadHistory` MUST give `loadMessage(threadId, messageId)`. The read MUST give the `ChatMessage` with that id in the thread, or `null` when no stored display message of the thread has that id. The message MUST equal the message with that id in the transcript replay of the whole thread. Thus the rounds of an assistant message are merged, and the turn record is folded, the same as in the transcript read.
+
+The work of the read MUST NOT grow with the length of the thread. An index on the message ids of the display envelopes MUST find the rows that hold the id. The read MUST then select only the rows of the turn of the message. The turn starts at the genuine user start at or before the first such row. When no user start comes before that row, the turn starts at the first row of the thread. The turn ends before the next genuine user start. A versioned migration MUST add the index, with no change of a row. A failed query MUST ride the error channel as a `DbError`.
+
+#### Scenario: The answer of a rated message
+
+- **GIVEN** a thread of many turns, and an assistant message of a middle turn whose reply took two rounds
+- **WHEN** a host calls `loadMessage` with the thread id and the id of that message
+- **THEN** it gives one assistant message with the parts of the two rounds, the same as the transcript read gives it
+
+#### Scenario: A user message by its id
+
+- **GIVEN** a user message whose turn stored the author `u1`
+- **WHEN** a host calls `loadMessage` with its id
+- **THEN** it gives the user message with its text and the author `u1`
+
+#### Scenario: A record before the first turn
+
+- **GIVEN** a report session thread whose seed record has a display message and comes before the first user message
+- **WHEN** a host calls `loadMessage` with the id of the seed message
+- **THEN** it gives the seed message, the same as the transcript read gives it
+
+#### Scenario: An unknown id
+
+- **WHEN** a host calls `loadMessage` with an id that no display message of the thread carries
+- **THEN** it gives `null`
+
+#### Scenario: A message of a different thread
+
+- **GIVEN** a message of thread `t1`
+- **WHEN** a host calls `loadMessage` with thread `t2` and the id of that message
+- **THEN** it gives `null`

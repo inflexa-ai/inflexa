@@ -138,6 +138,23 @@ describe("spawnReportSession child shape", () => {
         expect(read.parentSeq).toBe(anchor);
     });
 
+    it("gives the child the user of the session that spawns it", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+
+        const child = (await spawn.spawnReportSession("p1", BRIEF, undefined, "u1"))._unsafeUnwrap();
+
+        expect(child.userId).toBe("u1");
+        expect((await store.getThread(child.threadId))._unsafeUnwrap()?.userId).toBe("u1");
+    });
+
+    it("leaves the child with no user when the spawn names none", async () => {
+        await seedConversation("p1", ANALYSIS_A, "Parent");
+
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
+
+        expect(child.userId).toBeNull();
+    });
+
     it("lists the child under its parent", async () => {
         await seedConversation("p1", ANALYSIS_A, "Parent");
 

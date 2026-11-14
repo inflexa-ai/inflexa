@@ -39,6 +39,18 @@ describe("toChatFrame", () => {
         expect(ChatEventSchema.parse(frame)).toEqual(expected);
     });
 
+    test("gives the author of a user message-start, and no author key without one", () => {
+        const base: EmitEvent = { type: "message-start", source: topLevel, messageId: "0b9d4f6e-3c1a-4f7e-9a51-2d8c6b7e1f30", role: "user", text: "Hi." };
+        const named = toChatFrame({ ...base, author: "u1" }, fallback);
+        if (named === null) throw new Error("the user message-start gave no frame");
+        expect(named).toMatchObject({ role: "user", author: "u1" });
+        expect(ChatEventSchema.parse(named)).toMatchObject({ author: "u1" });
+        const unnamed = toChatFrame(base, fallback);
+        if (unnamed === null) throw new Error("the user message-start gave no frame");
+        expect(Object.keys(unnamed)).not.toContain("author");
+        expect(Object.keys(ChatEventSchema.parse(unnamed))).not.toContain("author");
+    });
+
     test("gives the frame of an iteration of a sub-agent, with its source only", () => {
         const ev: EmitEvent = { type: "iteration", source: nested, index: 2, final: false };
         expect(toChatFrame(ev, fallback)).toEqual({ type: "iteration", source: nested });
@@ -243,6 +255,16 @@ describe("applyChatFrame", () => {
             { id: USER_ID, role: "user", parts: [{ type: "text", text: "Compare the groups." }] },
             { id: ASSISTANT_ID, role: "assistant", parts: [{ type: "text", text: "Done." }] },
         ]);
+    });
+
+    test("gives the folded user message the author of its message-start", () => {
+        const { messages } = applyMany([], [{ type: "message-start", messageId: USER_ID, role: "user", text: "Hi.", author: "u1", source: SOURCE }]);
+        expect(messages).toEqual([{ id: USER_ID, role: "user", parts: [{ type: "text", text: "Hi." }], author: "u1" }]);
+    });
+
+    test("gives the folded user message no author key when the frame has none", () => {
+        const { messages } = applyMany([], [{ type: "message-start", messageId: USER_ID, role: "user", text: "Hi.", source: SOURCE }]);
+        expect(Object.keys(messages[0] ?? {})).not.toContain("author");
     });
 
     test("keeps a user message that the messages already hold under the id of the message-start", () => {

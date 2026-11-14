@@ -80,7 +80,8 @@ describe("the migration that references the run mandate", () => {
 
     it("adds the column again to a schema that lost it to the released migration", async () => {
         await pool.query("ALTER TABLE cortex_runs DROP COLUMN mandate_id");
-        await pool.query("DELETE FROM cortex_migration WHERE name = '20261112120000_add_the_run_mandate_column_again'");
+        // Kysely refuses a history in which a recorded migration sorts before an unrecorded one, so each later record goes too.
+        await pool.query("DELETE FROM cortex_migration WHERE name >= '20261112120000_add_the_run_mandate_column_again'");
 
         await initCortexState(pool);
 

@@ -170,6 +170,8 @@ export type DagStepState = {
      */
     level: number;
     dependsOn: string[];
+    /** ISO 8601 time at which the parent dispatched the step. Absent for a step that was never dispatched. */
+    startedAt?: string;
     /** Duration in ms (set on completion). */
     durationMs?: number;
     /** Artifact count (set on completion). */

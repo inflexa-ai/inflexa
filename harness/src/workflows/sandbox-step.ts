@@ -442,6 +442,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         workKind: "run",
         waiter: { kind: "step", stepId: input.stepId },
         analysisId: input.analysisId,
+        userId: input.runSession.identity.user,
         emit: safeEmit,
         retryDelaysMs: deps.pauseRetryDelaysMs,
         run: { session: input.runSession, authorizer: deps.runAuthorizer },
@@ -721,6 +722,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                         lastErrorClass: "blocked",
                         finishReason,
                         hitMaxSteps,
+                        usage: stepUsage ?? null,
                     }),
                 );
                 recordStepCompleted({ agentId: input.agentId, status: "failed", durationMs });
@@ -871,6 +873,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                     lastErrorClass: null,
                     finishReason,
                     hitMaxSteps,
+                    usage: stepUsage ?? null,
                 }),
             );
             recordStepCompleted({ agentId: input.agentId, status: "completed", durationMs });

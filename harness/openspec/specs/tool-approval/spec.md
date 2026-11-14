@@ -238,3 +238,47 @@ A `reject` answer and an expired ask MUST give the call an `execution-denied` re
 
 - **WHEN** the user answers `reject` with the feedback "not this file"
 - **THEN** the call result is denied with that feedback, the tool does not run, and no model request follows
+
+### Requirement: One read gives the pending asks of a list of analyses
+
+The ask gateway MUST give `pendingByAnalyses({ analysisIds, userId?, limit })`. The read MUST give the `pending` asks of the listed analyses, oldest first, as `PendingAsk` entries. The `id` breaks a tie in ascending order. A user id MUST narrow the result to the asks raised for that user. An ask with no user MUST NOT match a user id. The read MUST give at most `limit` entries. The limit MUST be clamped to the range 1 to 200, the bounds of `listRecentThreads`.
+
+The read MUST send one SQL statement, whatever the length of the list. An empty list of analysis ids MUST give an empty result and send no query. A failed query MUST throw at the gateway, the same as `pending()`. `pending()` MUST keep its behavior.
+
+#### Scenario: The pending asks of one person
+
+- **GIVEN** a pending ask of `u1` in analysis `a1`, a pending ask of `u2` in `a1`, and a resolved ask of `u1` in `a1`
+- **WHEN** a host calls `pendingByAnalyses` with `[a1]` and the user id `u1`
+- **THEN** it gives the pending ask of `u1` only
+
+#### Scenario: An analysis outside the list
+
+- **GIVEN** a pending ask of `u1` in analysis `a2`
+- **WHEN** a host calls `pendingByAnalyses` with `[a1]` and the user id `u1`
+- **THEN** the result is empty
+
+#### Scenario: One statement serves the list
+
+- **WHEN** a host calls `pendingByAnalyses` for a list of 20 analyses
+- **THEN** it sends one query
+
+### Requirement: One read gives the scope of one ask
+
+The ask gateway MUST give `scopeOf(askId)`. The read MUST give `{ analysisId, userId }` of the ask with that id, in each status. The `userId` MUST be `null` for an ask with no user. An unknown id MUST give `null`. The read MUST send one SQL statement. Thus a host can compare the analysis and the person of an ask with its own scope before it answers the ask.
+
+#### Scenario: The scope of a known ask
+
+- **GIVEN** an ask of `u1` in analysis `a1`
+- **WHEN** a host calls `scopeOf` with the id of the ask
+- **THEN** it gives `{ analysisId: "a1", userId: "u1" }`
+
+#### Scenario: An ask with no user
+
+- **GIVEN** an ask in analysis `a1` whose row has no user
+- **WHEN** a host calls `scopeOf` with its id
+- **THEN** it gives `{ analysisId: "a1", userId: null }`
+
+#### Scenario: An unknown ask
+
+- **WHEN** a host calls `scopeOf` with an id that no row carries
+- **THEN** it gives `null`

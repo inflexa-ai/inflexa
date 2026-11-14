@@ -332,6 +332,7 @@ describe("the label gate", () => {
             workId: RUN_ID,
             workKind: "run",
             waiter: { kind: "step", stepId: "s1" },
+            userId: "u-1",
             cause: { kind: "host", reason: "account_frozen" },
         });
         expect(backend.spawned).toHaveLength(0);

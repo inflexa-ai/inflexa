@@ -192,7 +192,7 @@ export function registerChatTurns(deps: ChatTurnWorkflowDeps): ChatTurns {
             const startedAtMs = request.startedAtMs ?? Date.now();
             let threadType: ThreadType;
             try {
-                const opened = await openThread(deps, request);
+                const opened = await openThread(deps, { ...request, userId: session.identity.user });
                 if (opened.kind === "not_found") return opened;
                 threadType = opened.threadType;
             } catch (cause) {
@@ -202,7 +202,7 @@ export function registerChatTurns(deps: ChatTurnWorkflowDeps): ChatTurns {
             if (agent.isErr()) return { kind: "agent_unresolved", threadType };
 
             const turnId = randomUUID();
-            const claim = await claimThreadForTurn(deps.pool, request.threadId, turnId, stillRuns);
+            const claim = await claimThreadForTurn(deps.pool, request.threadId, turnId, session.identity.user, stillRuns);
             if (claim.isErr()) return { kind: "prepare_failed", cause: claim.error };
             if (claim.value.kind === "no_thread") return { kind: "not_found" };
             if (claim.value.kind === "held") return { kind: "turn_in_progress" };
@@ -350,14 +350,16 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
     const view = await loadHistoryView({ threadId: input.threadId, threadType: input.threadType, history, logger: deps.logger, throughSeq: opening.endSeq });
 
     const userText = userTextOf(opening.userMessage);
+    const author = input.author === undefined ? {} : { author: input.author };
     const recorder = createConversationDisplayRecorder({
         userText,
+        ...author,
         agentId: agent.value.id,
         sink: () => undefined,
         messageIds: { user: stepUuid(`${input.turnId}:user`), assistant: (index) => stepUuid(`${input.turnId}:assistant:${index}`) },
     });
     const writer = createTurnStreamWriter(rootSource, (frame) => recorder.observe(frame));
-    await writer.write({ type: "message-start", messageId: recorder.userMessageId(), role: "user", text: userText, source: rootSource });
+    await writer.write({ type: "message-start", messageId: recorder.userMessageId(), role: "user", text: userText, ...author, source: rootSource });
     await writer.write({ type: "message-start", messageId: recorder.assistantMessageId(), role: "assistant", source: rootSource });
 
     const transport: TurnTransport = {
@@ -390,6 +392,7 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
             waiter: { kind: "turn" },
             analysisId: input.analysisId,
             threadId: input.threadId,
+            userId: input.userId,
             emit: async (part) => {
                 await writer.emit({ type: "data-pause", source: rootSource, data: part });
             },

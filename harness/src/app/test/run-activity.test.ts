@@ -18,6 +18,7 @@ function run(runId: string, status: CortexRunRow["status"], startedAt: string, p
         parts: null,
         mandateId: null,
         planId,
+        userId: null,
     };
 }
 
