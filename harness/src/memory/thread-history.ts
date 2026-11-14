@@ -701,54 +701,32 @@ const PAGE_SQL = `WITH RECURSIVE page_walk(seq, starts) AS (
  * - `hit`: the rows whose display envelope holds the id. The `MATERIALIZED` keyword keeps the planner from folding the
  *   read into an ordered scan of the primary key that would filter each row of the thread. The expression is the one
  *   of the GIN index. The turn starts at the first row, because the rounds of one message share the turn.
- * - `turn_walk`: a walk down from that row to the first turn start at or below it, with the same `LIMIT 1` reads of the
- *   primary key as the page walk. A thread with no start below the row ends the walk at its first row.
- * - `turn_climb`: a walk up to the first turn start above the row.
+ * - `turn_lower`: the first turn start at or below that row, in one backward scan of the primary key that stops at the
+ *   first match. A thread with no start below the row has no lower bound, thus the read starts at its first row.
+ * - `turn_upper`: the first turn start above the row, in one forward scan.
  *
- * A bound that no walk found becomes a `bigint` extreme through `COALESCE`, and the join to the turn records carries the
+ * A recursive walk of one `LIMIT 1` read for each row, as in {@link PAGE_SQL}, finds the same bounds, but each step is a
+ * new descent of the index, about four times the time on a long turn. The page walk needs its steps to count the turns,
+ * and this read counts nothing.
+ *
+ * A bound that no scan found becomes a `bigint` extreme through `COALESCE`, and the join to the turn records carries the
  * bounds, for the reasons that {@link PAGE_SQL} gives.
  */
-const MESSAGE_TURN_SQL = `WITH RECURSIVE hit AS MATERIALIZED (
+const MESSAGE_TURN_SQL = `WITH hit AS MATERIALIZED (
            SELECT messages.seq FROM messages
             WHERE messages.thread_id = $1 AND (messages.display_envelope -> 'messages') @> $2::jsonb
          ),
-         turn_walk(seq, is_start) AS (
-           SELECT first.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages first
-            WHERE first.thread_id = $1 AND first.seq = (SELECT min(hit.seq) FROM hit)
-           UNION ALL
-           SELECT below.seq, below.is_start
-             FROM turn_walk
-            CROSS JOIN LATERAL (
-              SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
-               WHERE messages.thread_id = $1 AND messages.seq < turn_walk.seq
-               ORDER BY messages.seq DESC
-               LIMIT 1
-            ) below
-            WHERE NOT turn_walk.is_start
-         ),
          turn_lower AS (
-           SELECT turn_walk.seq FROM turn_walk WHERE turn_walk.is_start
-         ),
-         turn_climb(seq, is_start) AS (
-           SELECT above.seq, above.is_start FROM (
-             SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
-              WHERE messages.thread_id = $1 AND messages.seq > (SELECT min(hit.seq) FROM hit)
-              ORDER BY messages.seq ASC
-              LIMIT 1
-           ) above
-           UNION ALL
-           SELECT above.seq, above.is_start
-             FROM turn_climb
-            CROSS JOIN LATERAL (
-              SELECT messages.seq, COALESCE(${GENUINE_USER_START_SQL}, false) AS is_start FROM messages
-               WHERE messages.thread_id = $1 AND messages.seq > turn_climb.seq
-               ORDER BY messages.seq ASC
-               LIMIT 1
-            ) above
-            WHERE NOT turn_climb.is_start
+           SELECT messages.seq FROM messages
+            WHERE messages.thread_id = $1 AND messages.seq <= (SELECT min(hit.seq) FROM hit) AND ${GENUINE_USER_START_SQL}
+            ORDER BY messages.seq DESC
+            LIMIT 1
          ),
          turn_upper AS (
-           SELECT turn_climb.seq FROM turn_climb WHERE turn_climb.is_start
+           SELECT messages.seq FROM messages
+            WHERE messages.thread_id = $1 AND messages.seq > (SELECT min(hit.seq) FROM hit) AND ${GENUINE_USER_START_SQL}
+            ORDER BY messages.seq ASC
+            LIMIT 1
          )
          SELECT ${STORED_ROW_COLUMNS}
          ${storedRowFrom(` AND turns.start_seq >= ${TURN_LOWER_BOUND} AND turns.start_seq < ${TURN_UPPER_BOUND}`)}
