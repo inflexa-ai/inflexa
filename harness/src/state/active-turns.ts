@@ -19,13 +19,15 @@ export type TurnClaim = { readonly kind: "claimed" } | { readonly kind: "held"; 
 const CLAIM_ATTEMPTS = 3;
 
 /**
- * Claim the thread for a turn. `stillRuns` decides if the turn that holds the thread runs. A holder that does not
- * run gives way. Each update names the holder that it replaces, thus two opens cannot both take the thread.
+ * Claim the thread for a turn, and record the person of the turn with the claim. `stillRuns` decides if the turn
+ * that holds the thread runs. A holder that does not run gives way, and its person gives way with it. Each update
+ * names the holder that it replaces, thus two opens cannot both take the thread.
  */
 export function claimThreadForTurn(
     pool: Querier,
     threadId: string,
     turnId: string,
+    userId: string | null,
     stillRuns: (turnId: string) => Promise<boolean>,
 ): ResultAsync<TurnClaim, DbError> {
     return tryQuery("activeTurns.claim", async (): Promise<TurnClaim> => {
@@ -37,9 +39,9 @@ export function claimThreadForTurn(
             holder = HolderRowSchema.parse(row).active_turn_id;
             if (holder !== null && holder !== turnId && (await stillRuns(holder))) return { kind: "held", turnId: holder };
             const taken = await pool.query(
-                `UPDATE cortex_analysis_threads SET active_turn_id = $2
+                `UPDATE cortex_analysis_threads SET active_turn_id = $2, active_turn_user_id = $4
                   WHERE thread_id = $1 AND active_turn_id IS NOT DISTINCT FROM $3`,
-                [threadId, turnId, holder],
+                [threadId, turnId, holder, userId],
             );
             if ((taken.rowCount ?? 0) > 0) return { kind: "claimed" };
         }
@@ -73,33 +75,41 @@ export function turnOfAsk(pool: Querier, askId: string): ResultAsync<string | un
     });
 }
 
-const TurnOfThreadRowSchema = z.object({ analysis_id: z.string(), thread_id: z.string(), active_turn_id: z.string() });
+const TurnOfThreadRowSchema = z.object({
+    analysis_id: z.string(),
+    thread_id: z.string(),
+    active_turn_id: z.string(),
+    active_turn_user_id: z.string().nullable(),
+});
 
 /**
- * The turn that holds each live thread of an analysis, or of each analysis when `analysisId` is absent. A claim can
- * outlive its turn, thus a caller checks that the turn runs.
+ * The turn that holds each live thread of an analysis, or of each analysis when `analysisId` is absent, with the
+ * person of the turn. A claim can outlive its turn, thus a caller checks that the turn runs.
  */
 export function queryTurns(
     pool: Querier,
     analysisId?: string,
-): ResultAsync<{ readonly analysisId: string; readonly threadId: string; readonly turnId: string }[], DbError> {
+): ResultAsync<{ readonly analysisId: string; readonly threadId: string; readonly turnId: string; readonly userId: string | null }[], DbError> {
     return tryQuery("activeTurns.list", async () => {
         const { rows } = await pool.query(
-            `SELECT analysis_id, thread_id, active_turn_id FROM cortex_analysis_threads
+            `SELECT analysis_id, thread_id, active_turn_id, active_turn_user_id FROM cortex_analysis_threads
               WHERE ($1::text IS NULL OR analysis_id = $1) AND active_turn_id IS NOT NULL AND deleted_at IS NULL
               ORDER BY thread_id`,
             [analysisId ?? null],
         );
         return rows.map((row) => {
             const parsed = TurnOfThreadRowSchema.parse(row);
-            return { analysisId: parsed.analysis_id, threadId: parsed.thread_id, turnId: parsed.active_turn_id };
+            return { analysisId: parsed.analysis_id, threadId: parsed.thread_id, turnId: parsed.active_turn_id, userId: parsed.active_turn_user_id };
         });
     });
 }
 
-/** Release the thread, when the turn still holds it. A second release changes nothing. */
+/** Release the thread, and clear the person of the turn, when the turn still holds it. A second release changes nothing. */
 export function releaseThreadOfTurn(pool: Querier, threadId: string, turnId: string): ResultAsync<void, DbError> {
     return tryMutation("activeTurns.release", () =>
-        pool.query("UPDATE cortex_analysis_threads SET active_turn_id = NULL WHERE thread_id = $1 AND active_turn_id = $2", [threadId, turnId]),
+        pool.query("UPDATE cortex_analysis_threads SET active_turn_id = NULL, active_turn_user_id = NULL WHERE thread_id = $1 AND active_turn_id = $2", [
+            threadId,
+            turnId,
+        ]),
     ).map(() => undefined);
 }

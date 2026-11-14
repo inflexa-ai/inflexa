@@ -24,6 +24,7 @@ function stubHistory(window: ModelMessage[]): ThreadHistory {
         loadRecent: () => okAsync(window),
         loadAll: () => okAsync([]),
         loadPage: unreachable,
+        loadMessage: unreachable,
         retractLastTurn: unreachable,
         latestSeq: unreachable,
         latestTurnAt: unreachable,

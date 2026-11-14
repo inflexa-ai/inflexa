@@ -971,8 +971,8 @@ function pauseStatements(statements: ReadonlyArray<{ text: string; values: reado
 function expectOnePauseResumed(statements: ReadonlyArray<{ text: string; values: readonly unknown[] }>, reason: string): void {
     const { recorded, cleared } = pauseStatements(statements);
     expect(recorded).toHaveLength(1);
-    const [workflowId, workId, workKind, waiter, analysisId, , state, cause, attempt, , topic] = presentAt(recorded, 0).values;
-    expect([workflowId, workId, workKind, analysisId, state, attempt]).toEqual([CHILD_ID, USAGE_RUN_ID, "run", ANALYSIS_ID, "paused", 0]);
+    const [workflowId, workId, workKind, waiter, analysisId, , userId, state, cause, attempt, , topic] = presentAt(recorded, 0).values;
+    expect([workflowId, workId, workKind, analysisId, userId, state, attempt]).toEqual([CHILD_ID, USAGE_RUN_ID, "run", ANALYSIS_ID, "u-1", "paused", 0]);
     expect(waiter).toBe(JSON.stringify({ kind: "step", stepId: USAGE_STEP_ID }));
     expect(cause).toBe(JSON.stringify({ kind: "host", reason }));
     expect(dbosState.recvTopics).toHaveLength(1);
@@ -1333,5 +1333,60 @@ describe("sandbox-step capped-out empty manifest", () => {
         const emitted = blockedParts(dbosState.emittedParts);
         expect(emitted.length).toBe(1);
         expect(presentAt(emitted, 0).reason).toBe("the input has no batch column");
+    });
+});
+
+describe("sandbox-step usage in the step row", () => {
+    const REASON = "The input has no batch column.";
+
+    /** The values of the terminal write of the step row with the status `status`. */
+    function terminalWrite(statements: ReadonlyArray<{ text: string; values: readonly unknown[] }>, status: string): readonly unknown[] {
+        const writes = statements.filter((q) => STEP_EXECUTIONS_UPDATE.test(q.text) && q.values.includes(status));
+        expect(writes).toHaveLength(1);
+        return presentAt(writes, 0).values;
+    }
+
+    it("writes the usage of the result in the same write as the completed status", async () => {
+        const { pool, statements } = statementPool();
+
+        const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps({ inputTokens: 120, outputTokens: 34 }), pool });
+
+        expect(result.status).toBe("complete");
+        const values = terminalWrite(statements, "completed");
+        expect(values).toContain(JSON.stringify({ inputTokens: 120, outputTokens: 34 }));
+        expect(values).toContain(JSON.stringify(result.usage));
+    });
+
+    it("writes a null usage when the loop reported none", async () => {
+        const { pool, statements } = statementPool();
+
+        await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool });
+
+        const write = statements.find((q) => STEP_EXECUTIONS_UPDATE.test(q.text) && q.values.includes("completed"));
+        const text = write?.text ?? "";
+        const marker = "usage = $";
+        const at = text.indexOf(marker);
+        expect(at).toBeGreaterThanOrEqual(0);
+        expect(write?.values[Number.parseInt(text.slice(at + marker.length), 10) - 1]).toBeNull();
+    });
+
+    it("writes the usage of the result in the same write as the blocked status", async () => {
+        const { pool, statements } = statementPool();
+        const { provider } = scriptedModel([
+            { ...callTools(toolCall("b1", "report_blocker", { reason: REASON })), usage: { inputTokens: 8, outputTokens: 3 } },
+        ]);
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            pool,
+            provider,
+            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool()])),
+        };
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("blocked");
+        const values = terminalWrite(statements, "blocked");
+        expect(values).toContain(REASON);
+        expect(values).toContain(JSON.stringify({ inputTokens: 8, outputTokens: 3 }));
     });
 });

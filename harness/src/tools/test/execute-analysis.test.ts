@@ -213,6 +213,7 @@ function statefulAdHocPool(): { pool: Pool; plans: Map<string, unknown>; runs: M
                 parts: null,
                 mandate_id: null,
                 plan_id: values[5] ?? null,
+                user_id: values[7] ?? null,
             };
             runs.set(runId, row);
             return Promise.resolve({ rows: [{ run_id: runId }], rowCount: 1 });
@@ -534,6 +535,22 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         expect(launchedInput(inputs[0]).synthesisEnabled).toBe(false);
         expect(plans.size).toBe(1);
         expect(emitted).toHaveLength(2);
+    });
+
+    it("records the user of the launching session on the run row", async () => {
+        const { pool, runs } = statefulAdHocPool();
+        const tool = createExecuteAnalysisTool({
+            pool,
+            runAuthorizer: recordingAuthorizer().authorizer,
+            runLauncher: fakeLauncher().launcher,
+            executeAnalysisWorkflow: () => Promise.reject(new Error("launch seam should be used")),
+        });
+
+        const launched = (
+            await tool.execute({ mode: "adhoc", request: "Compare marker expression between these clusters" }, fakeContext("call-person"))
+        )._unsafeUnwrap();
+
+        expect(presentGet(runs, launched.runId, "the launched run").user_id).toBe("user-1");
     });
 
     it("runs the named agent, and treats a deliberate identical re-call with a new tool invocation id as a new run", async () => {
@@ -1147,6 +1164,15 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(launch.started).toBe(true);
             expect(launches).toEqual([{ workflowId: launch.runId }]);
             expect(await runRows()).toEqual([{ run_id: launch.runId, plan_id: PLAN_ID, thread_id: "thread-1", status: "running", error: null }]);
+        });
+
+        it("records the user of the launching session on the run row of a plan", async () => {
+            await seedPlan(validPlan);
+
+            const launch = (await launchPlanRun(deps(), { session: session(), planId: PLAN_ID }))._unsafeUnwrap();
+
+            const { rows } = await pool.query<{ user_id: string | null }>("SELECT user_id FROM cortex_runs WHERE run_id = $1", [launch.runId]);
+            expect(rows[0]?.user_id).toBe("user-1");
         });
 
         it("launches the run of a given id again when its row exists, and reserves no second row", async () => {

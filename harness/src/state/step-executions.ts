@@ -5,6 +5,7 @@
 import type { ResultAsync } from "neverthrow";
 import type { QueryConfig } from "pg";
 
+import type { TokenUsageRollup } from "../contracts/usage.js";
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 import { StepExecutionRowSchema, type StepExecutionRow } from "./schema.js";
@@ -112,6 +113,8 @@ export type UpdateStepExecutionInput = {
     finishReason?: string | null;
     /** True when `stepsUsed === maxSteps`. Stored as 0/1 in SQLite. */
     hitMaxSteps?: boolean | null;
+    /** The token usage of the step's result, stored as JSONB. Null clears it; omitting it leaves the column untouched. */
+    usage?: TokenUsageRollup | null;
 };
 
 /**
@@ -161,6 +164,9 @@ export function updateStepExecution(pool: Querier, runId: string, stepId: string
     }
     if (update.blockedReason !== undefined) {
         push("blocked_reason", update.blockedReason ?? null);
+    }
+    if (update.usage !== undefined) {
+        push("usage", update.usage === null ? null : JSON.stringify(update.usage));
     }
 
     values.push(runId);

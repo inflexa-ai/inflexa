@@ -494,6 +494,51 @@ function sentToolOutputs(message: LanguageModelV4Message): LanguageModelV4ToolRe
     return message.content.flatMap((part) => (part.type === "tool-result" ? [part.output] : []));
 }
 
+describe("the person of the thread that a turn opens", () => {
+    it("gives a thread that the open makes the user of the turn", async () => {
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-person", userInput: "hello", userId: "u1" });
+
+        expect(result.kind).toBe("ok");
+        expect((await createThreadStore(pool).getThread("t-person"))._unsafeUnwrap()?.userId).toBe("u1");
+    });
+
+    it("keeps the person of the thread when a turn of a second person opens on it", async () => {
+        await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-two", userInput: "hello", userId: "u1" });
+
+        const second = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-two", userInput: "and then", userId: "u2" });
+
+        expect(second.kind).toBe("ok");
+        expect((await createThreadStore(pool).getThread("t-two"))._unsafeUnwrap()?.userId).toBe("u1");
+    });
+
+    it("leaves a thread with no person when the open names no user", async () => {
+        await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-anon", userInput: "hello" });
+
+        expect((await createThreadStore(pool).getThread("t-anon"))._unsafeUnwrap()?.userId).toBeNull();
+    });
+
+    it("takes the person of a turn in process from the identity of its session", async () => {
+        const agent: AgentDefinition = {
+            id: "conversation-agent",
+            systemPrompt: "You are the test conversation agent.",
+            model: "claude-test",
+            tools: [],
+            maxIterations: 4,
+        };
+        const resolver: ThreadAgentResolver = { forThread: () => ok(agent) };
+        const model = scriptedModel([reply([text("done")], "stop")]);
+
+        await runInProcessTurn(
+            { pool, agents: resolver, provider: model.provider, usageRecorder: createNoopUsageRecorder() },
+            turnParams("t-in-process", {
+                session: makeSession({ user: "u-session", scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: "t-in-process" } }),
+            }),
+        );
+
+        expect((await createThreadStore(pool).getThread("t-in-process"))._unsafeUnwrap()?.userId).toBe("u-session");
+    });
+});
+
 describe("the run of a chat turn", () => {
     const THREAD = "t-turn";
 

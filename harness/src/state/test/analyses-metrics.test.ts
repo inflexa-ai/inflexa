@@ -3,7 +3,13 @@ import type { Pool } from "pg";
 
 import { countingQuerier } from "../../__tests__/setup/counting-querier.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
-import { queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "../analyses-metrics.js";
+import {
+    queryDataProfileStatusByAnalyses,
+    queryLatestRunsByAnalyses,
+    queryRunProgressByRuns,
+    queryRunsEndedSince,
+    queryRunsInFlightByAnalyses,
+} from "../analyses-metrics.js";
 import { presentAt } from "../../lib/present.js";
 
 async function seedAnalysis(pool: Pool, analysisId: string, dataProfileStatus: string | null = "pending"): Promise<void> {
@@ -32,12 +38,22 @@ async function seedRun(
         planId?: string | null;
         completedAt?: string | null;
         threadId?: string | null;
+        userId?: string | null;
     },
 ): Promise<void> {
     await pool.query({
-        text: `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at, completed_at, plan_id, thread_id)
-               VALUES ($1, $2, 'executeAnalysis', $3, $4, $5, $6, $7)`,
-        values: [run.runId, run.analysisId, run.status ?? "running", run.startedAt, run.completedAt ?? null, run.planId ?? null, run.threadId ?? null],
+        text: `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at, completed_at, plan_id, thread_id, user_id)
+               VALUES ($1, $2, 'executeAnalysis', $3, $4, $5, $6, $7, $8)`,
+        values: [
+            run.runId,
+            run.analysisId,
+            run.status ?? "running",
+            run.startedAt,
+            run.completedAt ?? null,
+            run.planId ?? null,
+            run.threadId ?? null,
+            run.userId ?? null,
+        ],
     });
 }
 
@@ -49,6 +65,15 @@ async function seedSteps(pool: Pool, runId: string, analysisId: string, statuses
             values: [runId, `s${index}`, analysisId, status],
         });
     }
+}
+
+/** Seeds one step row with a raw JSONB `usage`, so a test can store a value that the writer never makes. */
+async function seedStepUsage(pool: Pool, runId: string, analysisId: string, stepId: string, status: string, usageJson: string | null): Promise<void> {
+    await pool.query({
+        text: `INSERT INTO cortex_step_executions (run_id, step_id, analysis_id, wave, agent_id, status, usage)
+               VALUES ($1, $2, $3, 0, 'agent', $4, $5::jsonb)`,
+        values: [runId, stepId, analysisId, status, usageJson],
+    });
 }
 
 describe("the indexes on the runs", () => {
@@ -108,6 +133,7 @@ describe("queryLatestRunsByAnalyses", () => {
                 totalSteps: 0,
                 startedAt: "2026-10-02T10:00:00.000Z",
                 completedAt: "2026-10-02T11:00:00.000Z",
+                usage: null,
             },
         ]);
     });
@@ -252,6 +278,7 @@ describe("queryRunProgressByRuns", () => {
                 totalSteps: 0,
                 startedAt: "2026-10-02T10:00:00.000Z",
                 completedAt: "2026-10-02T11:00:00.000Z",
+                usage: null,
                 threadId: null,
             },
             {
@@ -263,6 +290,7 @@ describe("queryRunProgressByRuns", () => {
                 totalSteps: 0,
                 startedAt: "2026-10-01T10:00:00.000Z",
                 completedAt: null,
+                usage: null,
                 threadId: "named-t1",
             },
         ]);
@@ -319,6 +347,114 @@ describe("queryRunProgressByRuns", () => {
         expect(counted.calls()).toBe(1);
 
         expect((await queryRunProgressByRuns(counted.querier, []))._unsafeUnwrap()).toEqual([]);
+        expect(counted.calls()).toBe(1);
+    });
+});
+
+describe("queryRunsInFlightByAnalyses", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("runs_in_flight_by_analyses"));
+    });
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("gives the running runs of one person with the plan title and the step counts, and not a run of another person or a completed run", async () => {
+        await seedAnalysis(pool, "flight-a1");
+        await seedPlan(pool, "pln-flight001", "flight-a1", { title: " Pathway scan " });
+        await seedRun(pool, {
+            runId: "flight-own",
+            analysisId: "flight-a1",
+            startedAt: "2026-10-01T10:00:00.000Z",
+            userId: "u1",
+            planId: "pln-flight001",
+            threadId: "flight-t1",
+        });
+        await seedSteps(pool, "flight-own", "flight-a1", ["completed", "running", "pending"]);
+        await seedRun(pool, { runId: "flight-other", analysisId: "flight-a1", startedAt: "2026-10-01T11:00:00.000Z", userId: "u2" });
+        await seedRun(pool, {
+            runId: "flight-done",
+            analysisId: "flight-a1",
+            startedAt: "2026-10-01T12:00:00.000Z",
+            userId: "u1",
+            status: "completed",
+            completedAt: "2026-10-01T13:00:00.000Z",
+        });
+        await seedRun(pool, { runId: "flight-nobody", analysisId: "flight-a1", startedAt: "2026-10-01T14:00:00.000Z" });
+
+        const entries = (await queryRunsInFlightByAnalyses(pool, { analysisIds: ["flight-a1"], userId: "u1", limit: 10 }))._unsafeUnwrap();
+
+        expect(entries).toEqual([
+            {
+                analysisId: "flight-a1",
+                runId: "flight-own",
+                status: "running",
+                planTitle: "Pathway scan",
+                doneSteps: 1,
+                totalSteps: 3,
+                startedAt: "2026-10-01T10:00:00.000Z",
+                completedAt: null,
+                usage: null,
+                threadId: "flight-t1",
+            },
+        ]);
+    });
+
+    it("gives the running runs of each listed analysis newest start first, and breaks a tie with the run id, descending", async () => {
+        await seedAnalysis(pool, "order-a1");
+        await seedAnalysis(pool, "order-a2");
+        await seedAnalysis(pool, "order-a3");
+        await seedRun(pool, { runId: "order-r1", analysisId: "order-a1", startedAt: "2026-10-01T10:00:00.000Z" });
+        await seedRun(pool, { runId: "order-r2", analysisId: "order-a2", startedAt: "2026-10-03T10:00:00.000Z" });
+        await seedRun(pool, { runId: "order-r3", analysisId: "order-a1", startedAt: "2026-10-03T10:00:00.000Z" });
+        await seedRun(pool, { runId: "order-outside", analysisId: "order-a3", startedAt: "2026-10-04T10:00:00.000Z" });
+
+        const entries = (await queryRunsInFlightByAnalyses(pool, { analysisIds: ["order-a1", "order-a2"], limit: 10 }))._unsafeUnwrap();
+
+        expect(entries.map((entry) => entry.runId)).toEqual(["order-r3", "order-r2", "order-r1"]);
+    });
+
+    it("bounds the result with the limit and gives the runs with the newest start, and clamps the limit to 1 to 200", async () => {
+        await seedAnalysis(pool, "limit-a");
+        for (const [index, id] of ["limit-r1", "limit-r2", "limit-r3"].entries()) {
+            await seedRun(pool, { runId: id, analysisId: "limit-a", startedAt: `2026-10-0${index + 1}T10:00:00.000Z` });
+        }
+
+        const limited = (await queryRunsInFlightByAnalyses(pool, { analysisIds: ["limit-a"], limit: 2 }))._unsafeUnwrap();
+        const zero = (await queryRunsInFlightByAnalyses(pool, { analysisIds: ["limit-a"], limit: 0 }))._unsafeUnwrap();
+        const negative = (await queryRunsInFlightByAnalyses(pool, { analysisIds: ["limit-a"], limit: -5 }))._unsafeUnwrap();
+        const large = (await queryRunsInFlightByAnalyses(pool, { analysisIds: ["limit-a"], limit: 1000 }))._unsafeUnwrap();
+
+        expect(limited.map((entry) => entry.runId)).toEqual(["limit-r3", "limit-r2"]);
+        expect(zero).toHaveLength(1);
+        expect(negative).toHaveLength(1);
+        expect(large).toHaveLength(3);
+    });
+
+    it("never matches a run with no user to a user id", async () => {
+        await seedAnalysis(pool, "nouser-a");
+        await seedRun(pool, { runId: "nouser-r", analysisId: "nouser-a", startedAt: "2026-10-01T10:00:00.000Z" });
+
+        expect((await queryRunsInFlightByAnalyses(pool, { analysisIds: ["nouser-a"], userId: "u1", limit: 10 }))._unsafeUnwrap()).toEqual([]);
+        expect((await queryRunsInFlightByAnalyses(pool, { analysisIds: ["nouser-a"], limit: 10 }))._unsafeUnwrap()).toHaveLength(1);
+    });
+
+    it("sends one query for a list of 20 analyses, and none for an empty list", async () => {
+        const ids = Array.from({ length: 20 }, (_, index) => `fmany-${index}`);
+        for (const id of ids) {
+            await seedAnalysis(pool, id);
+            await seedRun(pool, { runId: `${id}-r`, analysisId: id, startedAt: "2026-10-01T10:00:00.000Z", userId: "u1" });
+        }
+        const counted = countingQuerier(pool);
+
+        const entries = (await queryRunsInFlightByAnalyses(counted.querier, { analysisIds: ids, userId: "u1", limit: 50 }))._unsafeUnwrap();
+        expect(entries).toHaveLength(20);
+        expect(counted.calls()).toBe(1);
+
+        expect((await queryRunsInFlightByAnalyses(counted.querier, { analysisIds: [], limit: 50 }))._unsafeUnwrap()).toEqual([]);
         expect(counted.calls()).toBe(1);
     });
 });
@@ -428,7 +564,7 @@ describe("queryDataProfileStatusByAnalyses", () => {
 
         const entries = (await queryDataProfileStatusByAnalyses(pool, ["done-a"]))._unsafeUnwrap();
 
-        expect(entries).toEqual([{ analysisId: "done-a", status: "completed", completedAt: "2026-10-05T10:00:00.000Z", profiledFiles: 12 }]);
+        expect(entries).toEqual([{ analysisId: "done-a", status: "completed", startedAt: null, completedAt: "2026-10-05T10:00:00.000Z", profiledFiles: 12 }]);
     });
 
     it("falls back to the coverage total and to the summed kind counts, as the profile view does", async () => {
@@ -455,7 +591,16 @@ describe("queryDataProfileStatusByAnalyses", () => {
 
         const entries = (await queryDataProfileStatusByAnalyses(pool, ["run-a"]))._unsafeUnwrap();
 
-        expect(entries).toEqual([{ analysisId: "run-a", status: "running", completedAt: null, profiledFiles: null }]);
+        expect(entries).toEqual([{ analysisId: "run-a", status: "running", startedAt: null, completedAt: null, profiledFiles: null }]);
+    });
+
+    it("gives the start of the latest profile attempt", async () => {
+        await seedAnalysis(pool, "start-a", "running");
+        await pool.query("UPDATE cortex_analysis_state SET data_profile_started_at = $1 WHERE analysis_id = 'start-a'", ["2026-10-05T09:00:00.000Z"]);
+
+        const entries = (await queryDataProfileStatusByAnalyses(pool, ["start-a"]))._unsafeUnwrap();
+
+        expect(entries.map((entry) => entry.startedAt)).toEqual(["2026-10-05T09:00:00.000Z"]);
     });
 
     it("gives no entry for a cleared row, and none for an analysis with no row", async () => {
@@ -477,5 +622,86 @@ describe("queryDataProfileStatusByAnalyses", () => {
 
         expect((await queryDataProfileStatusByAnalyses(counted.querier, []))._unsafeUnwrap()).toEqual([]);
         expect(counted.calls()).toBe(1);
+    });
+});
+
+describe("the usage of a run in the run summaries", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("run_summary_usage"));
+    });
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("sums each field over the step rows and leaves a field that no row reported absent, in the three reads", async () => {
+        await seedAnalysis(pool, "usage-a");
+        await seedRun(pool, { runId: "usage-r", analysisId: "usage-a", startedAt: "2026-10-01T10:00:00.000Z" });
+        await seedStepUsage(pool, "usage-r", "usage-a", "s0", "completed", JSON.stringify({ inputTokens: 100 }));
+        await seedStepUsage(pool, "usage-r", "usage-a", "s1", "blocked", JSON.stringify({ inputTokens: 50, outputTokens: 20 }));
+        await seedStepUsage(pool, "usage-r", "usage-a", "s2", "running", null);
+
+        const latest = (await queryLatestRunsByAnalyses(pool, ["usage-a"]))._unsafeUnwrap();
+        const progress = (await queryRunProgressByRuns(pool, ["usage-r"]))._unsafeUnwrap();
+        const inFlight = (await queryRunsInFlightByAnalyses(pool, { analysisIds: ["usage-a"], limit: 10 }))._unsafeUnwrap();
+
+        const expected = { inputTokens: 150, outputTokens: 20 };
+        expect(latest.map((entry) => entry.usage)).toEqual([expected]);
+        expect(progress.map((entry) => entry.usage)).toEqual([expected]);
+        expect(inFlight.map((entry) => entry.usage)).toEqual([expected]);
+        expect(Object.keys(latest[0]?.usage ?? {}).sort()).toEqual(["inputTokens", "outputTokens"]);
+    });
+
+    it("sums every field of the rollup", async () => {
+        await seedAnalysis(pool, "all-a");
+        await seedRun(pool, { runId: "all-r", analysisId: "all-a", startedAt: "2026-10-01T10:00:00.000Z" });
+        const rollup = { inputTokens: 1, outputTokens: 2, cacheCreationInputTokens: 3, cacheReadInputTokens: 4, reasoningTokens: 5 };
+        await seedStepUsage(pool, "all-r", "all-a", "s0", "completed", JSON.stringify(rollup));
+        await seedStepUsage(pool, "all-r", "all-a", "s1", "completed", JSON.stringify(rollup));
+
+        const [entry] = (await queryRunProgressByRuns(pool, ["all-r"]))._unsafeUnwrap();
+
+        expect(entry?.usage).toEqual({
+            inputTokens: 2,
+            outputTokens: 4,
+            cacheCreationInputTokens: 6,
+            cacheReadInputTokens: 8,
+            reasoningTokens: 10,
+        });
+    });
+
+    it("gives null, never an all-zero rollup, for a run whose rows reported no usage", async () => {
+        await seedAnalysis(pool, "none-a");
+        await seedRun(pool, { runId: "none-r", analysisId: "none-a", startedAt: "2026-10-01T10:00:00.000Z" });
+        await seedStepUsage(pool, "none-r", "none-a", "s0", "completed", null);
+        await seedStepUsage(pool, "none-r", "none-a", "s1", "completed", "{}");
+        await seedRun(pool, { runId: "empty-r", analysisId: "none-a", startedAt: "2026-10-02T10:00:00.000Z" });
+
+        const entries = (await queryRunProgressByRuns(pool, ["none-r", "empty-r"]))._unsafeUnwrap();
+
+        expect(entries.map((entry) => [entry.runId, entry.usage])).toEqual([
+            ["empty-r", null],
+            ["none-r", null],
+        ]);
+    });
+
+    it("reads a malformed stored usage as not reported and keeps the read of the list", async () => {
+        await seedAnalysis(pool, "bad-a");
+        await seedRun(pool, { runId: "bad-r", analysisId: "bad-a", startedAt: "2026-10-01T10:00:00.000Z" });
+        await seedStepUsage(pool, "bad-r", "bad-a", "s0", "completed", JSON.stringify({ inputTokens: "many", outputTokens: [1], reasoningTokens: null }));
+        await seedStepUsage(pool, "bad-r", "bad-a", "s1", "completed", JSON.stringify("text"));
+        await seedStepUsage(pool, "bad-r", "bad-a", "s2", "completed", JSON.stringify([1, 2]));
+        await seedStepUsage(pool, "bad-r", "bad-a", "s3", "completed", JSON.stringify({ inputTokens: 7 }));
+        await seedRun(pool, { runId: "bad-ok", analysisId: "bad-a", startedAt: "2026-10-02T10:00:00.000Z" });
+        await seedStepUsage(pool, "bad-ok", "bad-a", "s0", "completed", JSON.stringify({ outputTokens: 9 }));
+
+        const entries = (await queryRunProgressByRuns(pool, ["bad-r", "bad-ok"]))._unsafeUnwrap();
+
+        expect(entries.map((entry) => [entry.runId, entry.usage])).toEqual([
+            ["bad-ok", { outputTokens: 9 }],
+            ["bad-r", { inputTokens: 7 }],
+        ]);
     });
 });

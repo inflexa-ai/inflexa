@@ -464,6 +464,131 @@ describe("triggerDataProfile — a refused authorization", () => {
     });
 });
 
+describe("triggerDataProfile: the person of the profile", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_trigger_person");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    async function rawUser(analysisId: string): Promise<string | null> {
+        const res = await pool.query<{ data_profile_user_id: string | null }>({
+            text: "SELECT data_profile_user_id FROM cortex_analysis_state WHERE analysis_id = $1",
+            values: [analysisId],
+        });
+        return res.rows[0]?.data_profile_user_id ?? null;
+    }
+
+    /** The dispatch runs after the trigger returns, thus the test waits until the row shows the value. */
+    async function userAfterDispatch(analysisId: string, expected: string | null): Promise<string | null> {
+        const deadline = Date.now() + 5_000;
+        let user = await rawUser(analysisId);
+        while (user !== expected && Date.now() < deadline) {
+            await sleep(20);
+            user = await rawUser(analysisId);
+        }
+        return user;
+    }
+
+    function authorizerOf(user: string): DataProfileTriggerDeps["runAuthorizer"] {
+        return {
+            authorize: ({ auth, scope, provenance, frame }) => okAsync({ identity: { user }, scope, provenance, runFrame: frame, auth }),
+            revoke: () => okAsync(undefined),
+            revokeByMandateId: () => okAsync(undefined),
+            suspend: () => okAsync(undefined),
+            renew: () => okAsync(undefined),
+        };
+    }
+
+    it("records the identity of the run session on the claimed row before the workflow starts", async () => {
+        await seedAnalysis(pool, "a-person", "pending");
+        await setSeed(pool, "a-person", ["file-aaa"]);
+        let userWhenLaunched: string | null | undefined;
+        const launcher: RunLauncher = {
+            launch: async () => {
+                userWhenLaunched = await rawUser("a-person");
+            },
+        };
+
+        const result = await triggerDataProfile(
+            { pool, runAuthorizer: authorizerOf("u1"), runLauncher: launcher, workflow: async () => {} },
+            { auth: makeLocalAuth(), analysisId: "a-person", stagedInputs: [stagedInput("file-aaa")] },
+        );
+
+        expect(result._unsafeUnwrap()).toBe("started");
+        expect(await userAfterDispatch("a-person", "u1")).toBe("u1");
+        expect(userWhenLaunched).toBe("u1");
+    });
+
+    it("continues the dispatch when the write of the user fails", async () => {
+        const isolated = await withSchema("dp_trigger_person_fails");
+        try {
+            await seedAnalysis(isolated.pool, "a-person-fails", "pending");
+            await setSeed(isolated.pool, "a-person-fails", ["file-aaa"]);
+            // The constraint refuses each write of a user, as a failed store would.
+            await isolated.pool.query("ALTER TABLE cortex_analysis_state ADD CONSTRAINT refuse_the_user CHECK (data_profile_user_id IS NULL)");
+            const launch = { started: false };
+            const launcher: RunLauncher = {
+                launch: () => {
+                    launch.started = true;
+                    return Promise.resolve();
+                },
+            };
+
+            const result = await triggerDataProfile(
+                { pool: isolated.pool, runAuthorizer: authorizerOf("u1"), runLauncher: launcher, workflow: async () => {} },
+                { auth: makeLocalAuth(), analysisId: "a-person-fails", stagedInputs: [stagedInput("file-aaa")] },
+            );
+
+            expect(result._unsafeUnwrap()).toBe("started");
+            const deadline = Date.now() + 5_000;
+            while (!launch.started && Date.now() < deadline) await sleep(20);
+            expect(launch.started).toBe(true);
+            expect(await rawStatus(isolated.pool, "a-person-fails")).toBe("running");
+            const stored = await isolated.pool.query<{ data_profile_user_id: string | null }>(
+                "SELECT data_profile_user_id FROM cortex_analysis_state WHERE analysis_id = 'a-person-fails'",
+            );
+            expect(stored.rows[0]?.data_profile_user_id).toBeNull();
+        } finally {
+            await isolated.drop();
+        }
+    });
+
+    it("leaves a null user when a new claim comes after a completed profile of a person and the authorization refuses", async () => {
+        await seedAnalysis(pool, "a-person-refused", "completed");
+        await setSeed(pool, "a-person-refused", ["file-aaa"]);
+        await pool.query("UPDATE cortex_analysis_state SET data_profile_user_id = 'u1' WHERE analysis_id = 'a-person-refused'");
+        const refusing: DataProfileTriggerDeps = {
+            pool,
+            runAuthorizer: {
+                authorize: () => errAsync({ reason: "no_funds", suspend: false }),
+                revoke: () => okAsync(undefined),
+                revokeByMandateId: () => okAsync(undefined),
+                suspend: () => okAsync(undefined),
+                renew: () => okAsync(undefined),
+            },
+            runLauncher: noEngineLauncher,
+            workflow: async () => {},
+        };
+
+        const result = await triggerDataProfile(refusing, { auth: makeLocalAuth(), analysisId: "a-person-refused", stagedInputs: [stagedInput("file-aaa")] });
+
+        expect(result._unsafeUnwrap()).toBe("restarted");
+        expect(await userAfterDispatch("a-person-refused", null)).toBeNull();
+        const deadline = Date.now() + 5_000;
+        while ((await rawStatus(pool, "a-person-refused")) === "running" && Date.now() < deadline) await sleep(20);
+        expect(await rawStatus(pool, "a-person-refused")).toBe("failed");
+        expect(await rawUser("a-person-refused")).toBeNull();
+    });
+});
+
 // The workflow body builds the completed profile's drift comparand from the staged
 // manifest. A manifest recovered from before `StagedInput.mtimeMs` existed lacks that
 // field; the signature digests it as absent rather than dropping the comparand, so an

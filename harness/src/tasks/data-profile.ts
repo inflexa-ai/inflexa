@@ -81,6 +81,7 @@ import {
     failDataProfile,
     loadDataProfileStatus,
     loadSeedInputFileIds,
+    recordDataProfileUser,
     recordDataProfileWorkflowId,
     tryRerunDataProfile,
     tryStartDataProfile,
@@ -627,6 +628,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             workKind: "profile",
             waiter: { kind: "profile" },
             analysisId,
+            userId: runSession.identity.user,
             emit: (part) => DBOS.writeStream("events", part),
             retryDelaysMs: deps.pauseRetryDelaysMs,
             run: { session: runSession, authorizer: deps.runAuthorizer },
@@ -1059,6 +1061,11 @@ async function dispatchClaimedProfile(
     if (authorized.isErr()) {
         await refuseClaimedProfile(deps, params.analysisId, phase, authorized.error);
         return err({ type: "refused", reason: authorized.error.reason, suspend: authorized.error.kind === "suspended" });
+    }
+    const recorded = await recordDataProfileUser(deps.pool, params.analysisId, authorized.value.identity.user);
+    if (recorded.isErr()) {
+        const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId: params.analysisId });
+        logger.warn("the person of the profile was not recorded", { phase, op: recorded.error.op });
     }
     const started = await ResultAsync.fromPromise(startDataProfileWorkflow(deps, params, authorized.value), (cause) => cause);
     if (started.isErr()) {

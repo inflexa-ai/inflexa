@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
-import { queryDataProfileStatusByAnalyses, queryLatestRunsByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "@inflexa-ai/harness";
+import {
+    queryDataProfileStatusByAnalyses,
+    queryLatestRunsByAnalyses,
+    queryRunProgressByRuns,
+    queryRunsEndedSince,
+    queryRunsInFlightByAnalyses,
+} from "@inflexa-ai/harness";
 import type {
     DataProfileSettlement,
     DataProfileSummary,
@@ -8,6 +14,7 @@ import type {
     LatestRunSummary,
     NotifyDataProfileSettled,
     RunProgressSummary,
+    RunsInFlightInput,
     TerminalRunStatus,
 } from "@inflexa-ai/harness";
 
@@ -27,6 +34,7 @@ describe("the exports of the grouped analysis reads", () => {
         expect(queryDataProfileStatusByAnalyses).toBe(stateBarrel.queryDataProfileStatusByAnalyses);
         expect(queryRunProgressByRuns).toBe(stateBarrel.queryRunProgressByRuns);
         expect(queryRunsEndedSince).toBe(stateBarrel.queryRunsEndedSince);
+        expect(queryRunsInFlightByAnalyses).toBe(stateBarrel.queryRunsInFlightByAnalyses);
     });
 
     it("types the entries and the settle notice from the package root", async () => {
@@ -34,11 +42,14 @@ describe("the exports of the grouped analysis reads", () => {
         const profile: DataProfileSummary | undefined = (await queryDataProfileStatusByAnalyses(unusedQuerier, []))._unsafeUnwrap()[0];
         const settlement: DataProfileSettlement = { analysisId: "a", status: "completed", completedAt: "2026-10-12T00:00:00.000Z" };
         const progress: RunProgressSummary | undefined = (await queryRunProgressByRuns(unusedQuerier, []))._unsafeUnwrap()[0];
+        const inFlightInput: RunsInFlightInput = { analysisIds: [], limit: 1 };
+        const inFlight: RunProgressSummary[] = (await queryRunsInFlightByAnalyses(unusedQuerier, inFlightInput))._unsafeUnwrap();
         const ended: EndedRunSummary | undefined = undefined;
         const terminal: TerminalRunStatus = "canceled";
         const notify: NotifyDataProfileSettled | undefined = undefined;
 
         expect([run, profile, progress, ended, notify]).toEqual([undefined, undefined, undefined, undefined, undefined]);
+        expect(inFlight).toEqual([]);
         expect(terminal).toBe("canceled");
         expect(settlement.status).toBe("completed");
     });

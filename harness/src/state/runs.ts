@@ -38,6 +38,8 @@ export type InsertRunInput = {
     workflowName: string;
     planId?: string | null;
     mandateId?: string | null; // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+    /** The user id of the person who starts the run. Absent gives a null `user_id`. */
+    userId?: string | null;
     /** The start time as an ISO string. Without it, the row gets the clock of the host. */
     startedAt?: string;
 };
@@ -91,8 +93,8 @@ export function insertRun(pool: Querier, input: InsertRunInput): ResultAsync<voi
         await pool.query({
             text: `INSERT INTO cortex_runs
             (run_id, analysis_id, thread_id, workflow_name,
-             status, started_at, plan_id, mandate_id) -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7)`,
+             status, started_at, plan_id, mandate_id, user_id) -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8)`,
             values: [
                 input.runId,
                 input.analysisId,
@@ -101,6 +103,7 @@ export function insertRun(pool: Querier, input: InsertRunInput): ResultAsync<voi
                 now,
                 input.planId ?? null,
                 input.mandateId ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                input.userId ?? null,
             ],
         });
     }).mapErr((e) => {
@@ -122,11 +125,20 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
         const result = await pool.query({
             text: `INSERT INTO cortex_runs
             (run_id, analysis_id, thread_id, workflow_name,
-             status, started_at, plan_id, mandate_id)
-            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7)
+             status, started_at, plan_id, mandate_id, user_id)
+            VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8)
             ON CONFLICT (run_id) DO NOTHING
             RETURNING run_id`,
-            values: [input.runId, input.analysisId, input.threadId ?? null, input.workflowName, now, input.planId ?? null, input.mandateId ?? null],
+            values: [
+                input.runId,
+                input.analysisId,
+                input.threadId ?? null,
+                input.workflowName,
+                now,
+                input.planId ?? null,
+                input.mandateId ?? null,
+                input.userId ?? null,
+            ],
         });
         return (result.rowCount ?? 0) > 0;
     }).andThen((inserted) =>
@@ -134,7 +146,7 @@ export function reserveRunById(pool: Querier, input: InsertRunInput): ResultAsyn
             const result = await pool.query({
                 text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                        status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                       mandate_id, plan_id
+                       mandate_id, plan_id, user_id
                 FROM cortex_runs
                 WHERE run_id = $1`,
                 values: [input.runId],
@@ -165,7 +177,7 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id, user_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
               AND plan_id IS NOT DISTINCT FROM $2
@@ -225,7 +237,7 @@ export function queryActiveRunsByAnalysis(pool: Querier, analysisId: string | un
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id, user_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE ($1::text IS NULL OR analysis_id = $1)
               AND status = 'running'
@@ -336,7 +348,7 @@ export function queryRun(pool: RunRowQuerier, runId: string): ResultAsync<Cortex
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id, user_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE run_id = $1`,
             values: [runId],
@@ -361,7 +373,7 @@ export function queryRunsByAnalysis(
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id, user_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
               ${text}
@@ -447,7 +459,7 @@ export function queryNonTerminalRunsByAnalysis(pool: Querier, analysisId: string
         const rowsResult = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_id, plan_id
+                   mandate_id, plan_id, user_id
             FROM cortex_runs
             WHERE analysis_id = $1
               AND status = 'running'
@@ -481,7 +493,7 @@ export function queryRunsForInspection(
         const rowsResult = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_id, plan_id
+                   mandate_id, plan_id, user_id
             FROM cortex_runs
             WHERE analysis_id = $1
             ORDER BY CASE status
@@ -513,7 +525,7 @@ export function queryRunsByThread(
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
-                   mandate_id, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_id, plan_id, user_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1 AND thread_id = $2
               ${text}
@@ -591,5 +603,6 @@ function mapRunRow(row: Record<string, unknown>): CortexRunRow {
         parts: parsedParts.success ? parsedParts.data : null,
         mandateId: row.mandate_id ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
         planId: row.plan_id ?? null,
+        userId: row.user_id ?? null,
     });
 }

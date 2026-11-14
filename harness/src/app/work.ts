@@ -18,6 +18,7 @@ import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { turnCredentials } from "../loop/turn-credentials.js";
 import { queryTurns } from "../state/active-turns.js";
+import { queryWorkByAnalyses, type WorkByAnalysesInput } from "../state/active-work.js";
 import { queryRunningProfiles } from "../state/data-profile.js";
 import type { Querier } from "../state/db.js";
 import { clearPauses, queryPauses, queryPausesOfWork, type PauseRecord } from "../state/paused-work.js";
@@ -48,6 +49,11 @@ export type Work = {
     /** The analysis of the work, as its own row names it. */
     readonly analysisId: string;
     readonly threadId?: string;
+    /**
+     * The opaque user id of the person of the work, or `null`. It comes from the source row: the claim of a turn, the
+     * run row, or the profile row. A work that only its pause rows name takes the user of its rows.
+     */
+    readonly userId: string | null;
     /** Each waiting workflow of the work. Empty for a work that runs. */
     readonly waiting: readonly PausedWorkflow[];
 };
@@ -63,6 +69,8 @@ export type WorkResume =
 /** `workflows` is the count of waits in `retrying` that the hold reached. A wait in `paused` needs no hold. */
 export type WorkHold = { readonly kind: "held"; readonly workflows: number } | { readonly kind: "not_found" };
 
+export type { WorkByAnalysesInput } from "../state/active-work.js";
+
 /** The durable work of a runtime, as a host uses it. */
 export type WorkSurface = {
     /**
@@ -71,6 +79,17 @@ export type WorkSurface = {
      * A pause row whose workflow ended is not in it, and the list deletes that row.
      */
     list(analysisId?: string): Promise<Work[]>;
+    /**
+     * The active work of a list of analyses, with each waiting workflow of each work, under the rules of `list`. A user
+     * id narrows the result to the work of that person, and a work with no user never matches. At most `limit` items
+     * come back, and the limit clamps to 1 to 200. The items come in this order, with the waits that the status read
+     * confirms: the work that waits, the oldest pause first; the runs that do not wait, the newest start first; the
+     * turns and profiles that do not wait, by work id. The read sends one statement over the app tables, whatever the
+     * length of the list, and then one DBOS status read. The limit applies before the status read, thus a work whose
+     * workflow ended leaves a result with fewer items, and a row of an ended pause can change which work fills the limit.
+     * An empty list gives an empty result and sends no query.
+     */
+    listByAnalyses(input: WorkByAnalysesInput): Promise<Work[]>;
     /**
      * Stop the work, in each state: a turn stops, a run cancels with its children, and a profile fails. Work of a
      * different analysis than the session gives `not_found`.
@@ -107,7 +126,35 @@ const ACTIVE_STATUSES: ReadonlySet<string> = new Set(["PENDING", "ENQUEUED"]);
 /** The provenance of a run cancel that a stop of work makes. */
 const WORK_STOP_PROVENANCE = { agentId: "work-stop", callPath: ["work-stop"] };
 
-function workflowOf(record: PauseRecord): PausedWorkflow {
+/** One item of `listByAnalyses` with the keys of its order. */
+type ListedWork = {
+    readonly item: Work;
+    /** 0 for a work that waits, 1 for a run that does not wait, 2 for the other work. */
+    readonly group: 0 | 1 | 2;
+    /** The ISO 8601 time of the oldest confirmed pause. Set when the group is 0. */
+    readonly waitedSince: string | undefined;
+    readonly startedAt: string | null;
+};
+
+const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
+
+function compareListed(left: ListedWork, right: ListedWork): number {
+    if (left.group !== right.group) return left.group - right.group;
+    switch (left.group) {
+        case 0:
+            return compareText(left.waitedSince ?? "", right.waitedSince ?? "") || compareText(left.item.workId, right.item.workId);
+        case 1:
+            return compareText(right.startedAt ?? "", left.startedAt ?? "") || compareText(right.item.workId, left.item.workId);
+        case 2:
+            return compareText(left.item.workId, right.item.workId);
+        default: {
+            const exhaustive: never = left.group;
+            throw new Error(`unknown group: ${String(exhaustive)}`);
+        }
+    }
+}
+
+function workflowOf(record: Omit<PauseRecord, "runSession">): PausedWorkflow {
     return {
         workflowId: record.workflowId,
         waiter: record.waiter,
@@ -153,21 +200,75 @@ export function createWork(deps: WorkDeps): WorkSurface {
         }
 
         const work = new Map<string, Work>();
-        const add = (workId: string, kind: WorkKind, itemAnalysisId: string, threadId: string | undefined): void => {
+        const add = (workId: string, kind: WorkKind, itemAnalysisId: string, threadId: string | undefined, userId: string | null): void => {
             if (work.has(workId)) return;
-            work.set(workId, { workId, kind, analysisId: itemAnalysisId, threadId, waiting: waitingOf.get(workId) ?? [] });
+            work.set(workId, { workId, kind, analysisId: itemAnalysisId, threadId, userId, waiting: waitingOf.get(workId) ?? [] });
         };
         // A claim can outlive its turn, thus a turn is active while its workflow is. A `running` run is active while
         // its row is, because the run canceler also converges a row whose workflow ended.
-        for (const turn of turns) if (active.has(turn.turnId)) add(turn.turnId, "turn", turn.analysisId, turn.threadId);
-        for (const run of runs) add(run.runId, "run", run.analysisId, run.threadId ?? undefined);
-        for (const profile of profiles) if (active.has(profile.workflowId)) add(profile.workflowId, "profile", profile.analysisId, undefined);
-        for (const record of records) if (active.has(record.workflowId)) add(record.workId, record.workKind, record.analysisId, record.threadId);
+        for (const turn of turns) if (active.has(turn.turnId)) add(turn.turnId, "turn", turn.analysisId, turn.threadId, turn.userId);
+        for (const run of runs) add(run.runId, "run", run.analysisId, run.threadId ?? undefined, run.userId);
+        for (const profile of profiles) {
+            if (active.has(profile.workflowId)) add(profile.workflowId, "profile", profile.analysisId, undefined, profile.userId);
+        }
+        for (const record of records) if (active.has(record.workflowId)) add(record.workId, record.workKind, record.analysisId, record.threadId, record.userId);
         return [...work.values()];
+    }
+
+    async function listByAnalyses(input: WorkByAnalysesInput): Promise<Work[]> {
+        const candidates = unwrapOrThrow(await queryWorkByAnalyses(deps.pool, input));
+        const active = await activeWorkflows(
+            candidates.flatMap((candidate) => [
+                ...candidate.pauses.map((pause) => pause.workflowId),
+                ...(candidate.source === "turn" || candidate.source === "profile" ? [candidate.workId] : []),
+            ]),
+        );
+
+        const ended = candidates.flatMap((candidate) => candidate.pauses.filter((pause) => !active.has(pause.workflowId)).map((pause) => pause.workflowId));
+        if (ended.length > 0) {
+            const cleared = await clearPauses(deps.pool, ended);
+            if (cleared.isErr()) logger.warn("the rows of ended pauses did not clear", { op: cleared.error.op, workflows: ended.length });
+        }
+
+        const entries: ListedWork[] = [];
+        for (const candidate of candidates) {
+            const waiting = candidate.pauses.filter((pause) => active.has(pause.workflowId));
+            const first = waiting[0];
+            const sourceRuns = candidate.source === "run" || ((candidate.source === "turn" || candidate.source === "profile") && active.has(candidate.workId));
+            const order = { waitedSince: first?.pausedAt, startedAt: candidate.startedAt };
+            const group = first !== undefined ? 0 : candidate.source === "run" ? 1 : 2;
+            if (sourceRuns) {
+                const item: Work = {
+                    workId: candidate.workId,
+                    kind: candidate.kind,
+                    analysisId: candidate.analysisId,
+                    threadId: candidate.threadId ?? undefined,
+                    userId: candidate.userId,
+                    waiting: waiting.map(workflowOf),
+                };
+                entries.push({ item, group, ...order });
+                continue;
+            }
+            // A work that only its waiting workflows names takes its attributes from its first waiting row, the rule of `list`.
+            if (first === undefined) continue;
+            const item: Work = {
+                workId: candidate.workId,
+                kind: first.workKind,
+                analysisId: first.analysisId,
+                threadId: first.threadId,
+                userId: first.userId,
+                waiting: waiting.map(workflowOf),
+            };
+            entries.push({ item, group, ...order });
+        }
+        // The statement ordered the candidates by the rows of its pauses, and a row of an ended pause can have moved a
+        // work. The order of the result comes from the waits that the status read confirmed.
+        return entries.sort(compareListed).map((entry) => entry.item);
     }
 
     return {
         list,
+        listByAnalyses,
 
         async stop(session, workId) {
             const work = (await list(session.scope.analysisId)).find((candidate) => candidate.workId === workId);

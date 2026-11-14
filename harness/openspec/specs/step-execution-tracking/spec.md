@@ -34,6 +34,7 @@ The system MUST maintain a `cortex_step_executions` table with these columns:
 - `error` (TEXT, nullable), `attempts` (INTEGER NOT NULL DEFAULT 1), and `last_error_class` (TEXT, nullable)
 - `finish_reason` (TEXT, nullable), `hit_max_steps` (INTEGER NOT NULL DEFAULT 0), and `blocked_reason` (TEXT, nullable)
 - `child_workflow_id` (TEXT, nullable)
+- `usage` (JSONB, nullable), the token usage rollup of the step
 
 Primary key MUST be `(run_id, step_id)`. The table MUST have no `exec_id`
 column and no `sandbox_ref` column. The lease table of the sandbox module
@@ -42,6 +43,8 @@ records the machine of a step (see the sandbox-leases spec).
 Indexes MUST exist on `(analysis_id)` and `(child_workflow_id)`. There MUST be
 no index on `(status) WHERE sandbox_ref IS NOT NULL`, and no composite
 `(status, sandbox_ref)` index.
+
+A versioned migration MUST add `usage`. A row that the migration finds MUST keep a null `usage`, and no backfill runs.
 
 #### Scenario: Step execution starts
 
@@ -52,7 +55,8 @@ no index on `(status) WHERE sandbox_ref IS NOT NULL`, and no composite
 #### Scenario: wave carries topological level only
 
 - **WHEN** a step row is inserted
-- **THEN** `wave` carries the step's topological level (used for UI layout), not a scheduling gate — the parent's dependency-gated scheduler decides start order
+- **THEN** `wave` carries the topological level of the step, for the UI layout
+- **AND** the dependency-gated scheduler of the parent decides the start order, not `wave`
 
 #### Scenario: Vestigial columns removed on startup
 
@@ -328,3 +332,20 @@ pre-existing wedge class `inflexa run` already detects.
 - **WHEN** the run finalizes
 - **THEN** the `synthesis` row is `skipped` (via the terminal sweep), never
   `running`
+
+### Requirement: A step row keeps the usage of its step
+
+The child workflow of a plan step MUST write the usage of its result to the `usage` of its row. The write MUST be part of the terminal write of the row for a `completed` step and for a `blocked` step. That usage is the rollup that the result of the child gives to the parent. A result with no usage MUST write a null `usage`. A child that fails gives no result, thus its row MUST keep a null `usage`. The `synthesis` row MUST keep a null `usage`.
+
+Thus the sum of the `usage` of the rows of a run equals the fold of the results that the parent makes for `data-run-completed`. The write runs inside the existing steps of the child, thus it adds no operation to the body.
+
+#### Scenario: A completed step keeps its usage
+
+- **GIVEN** a step whose agent loop reported 100 input tokens and 30 output tokens
+- **WHEN** the step completes
+- **THEN** its row holds `usage` `{ inputTokens: 100, outputTokens: 30 }`
+
+#### Scenario: A failed step keeps no usage
+
+- **WHEN** the child of a step fails
+- **THEN** its row holds a null `usage`

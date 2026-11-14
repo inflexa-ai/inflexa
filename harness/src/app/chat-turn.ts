@@ -59,6 +59,8 @@ export type PrepareChatTurnParams = {
     readonly analysisId: string;
     readonly threadId: string;
     readonly userInput: string;
+    /** The user id of the person who opens the turn. A thread that the open makes takes it as its person. */
+    readonly userId?: string;
 };
 
 export type PrepareChatTurnResult =
@@ -108,7 +110,7 @@ export async function openThread(
     params: PrepareChatTurnParams,
 ): Promise<{ readonly kind: "ok"; readonly threadType: ThreadType; readonly model: string | null } | { readonly kind: "not_found" }> {
     const { pool } = deps;
-    const { analysisId, threadId, userInput } = params;
+    const { analysisId, threadId, userInput, userId } = params;
     const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
     // An unbound member gives a call that does nothing, thus the emit below needs
     // no test of its own.
@@ -134,6 +136,7 @@ export async function openThread(
                 threadId,
                 analysisId,
                 title: deriveThreadTitle(userInput),
+                userId,
             }),
         );
         if (created.analysisId !== analysisId || created.deletedAt !== null) {
@@ -192,12 +195,8 @@ export type RunChatTurnDeps = PrepareChatTurnDeps & {
  */
 export type ChatTurnSession = Omit<RequestSession, "provenance">;
 
-/** What opens a turn: the thread and the user input. */
-export type OpenChatTurnParams = {
-    readonly analysisId: string;
-    readonly threadId: string;
-    readonly userInput: string;
-};
+/** What opens a turn: the thread, the user input, and the person. */
+export type OpenChatTurnParams = PrepareChatTurnParams;
 
 export type ChatTurnOutcome =
     | { readonly status: "done"; readonly finish: AgentFinish }

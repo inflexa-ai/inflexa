@@ -442,9 +442,16 @@ Each automatic naming path of the harness SHALL use `setAutoTitle`, and each hos
 
 ### Requirement: The store lists the newest threads over each analysis
 
-The thread store MUST give `listRecentThreads`. It takes a limit and an optional thread type. It MUST give the live threads of each analysis, newest-updated first, and `thread_id` breaks a tie in ascending order, the order of `listThreads`. A type MUST narrow the result to that type, and an omitted type MUST narrow nothing. The read MUST give at most `limit` threads. The limit MUST be clamped to the range 1 to 200, the bounds of a page of `listThreads`.
+The thread store MUST give `listRecentThreads`. It takes a limit, an optional thread type, an optional list of analysis ids, and an optional user id. It MUST give the live threads, newest-updated first. The `thread_id` breaks a tie in ascending order, the order of `listThreads`. The read MUST give at most `limit` threads. The limit MUST be clamped to the range 1 to 200, the bounds of a page of `listThreads`.
 
-The read MUST run as one SQL statement. It MUST walk the live threads through the index on the update time, thus it does not sort each thread of each analysis. Each returned `Thread` MUST carry the same fields as a thread of `listThreads`. A failed query MUST ride the error channel as a `DbError`.
+Each filter MUST narrow the result:
+
+- A type MUST narrow the result to that type.
+- A list of analysis ids MUST narrow the result to the threads of those analyses. An empty list MUST give an empty result and send no query.
+- A user id MUST narrow the result to the threads whose `user_id` equals it.
+- An omitted filter MUST narrow nothing. Thus, with no list of analysis ids, the read gives the threads of each analysis.
+
+The read MUST run as one SQL statement, whatever the length of the list of analysis ids. With no user id, it MUST walk the live threads through the index on the update time. Thus it does not sort each thread of each analysis. With a user id, it MUST walk the live threads of that user through an index on the user and the update time. A versioned migration MUST add that index. Each returned `Thread` MUST carry the same fields as a thread of `listThreads`. A failed query MUST ride the error channel as a `DbError`.
 
 #### Scenario: The newest threads over two analyses
 
@@ -464,10 +471,21 @@ The read MUST run as one SQL statement. It MUST walk the live threads through th
 - **WHEN** `listRecentThreads` runs with the `conversation` type
 - **THEN** it gives the conversation thread only
 
+#### Scenario: The recent sessions of one person in a list of analyses
+
+- **GIVEN** analysis A with a thread of `u1` and a newer thread of `u2`, and analysis C with the newest thread of `u1`
+- **WHEN** `listRecentThreads` runs with the analysis ids `[A]` and the user id `u1`
+- **THEN** it gives the thread of `u1` in A only
+
 #### Scenario: One statement serves the read
 
-- **WHEN** `listRecentThreads` runs over threads of 20 analyses
+- **WHEN** `listRecentThreads` runs over threads of 20 analyses, with a list of the 20 analysis ids and a user id
 - **THEN** it sends one query
+
+#### Scenario: The user index exists
+
+- **WHEN** the migrations ran
+- **THEN** an index on `cortex_analysis_threads(user_id, updated_at DESC, thread_id)` for the live rows exists
 
 ### Requirement: The store sets the model of a thread
 
@@ -490,3 +508,35 @@ The thread store MUST give `setModel(threadId, model)`. The operation MUST write
 - **GIVEN** an archived thread
 - **WHEN** a caller sets its model
 - **THEN** the operation returns null, and the row does not change
+
+### Requirement: A thread names the person who opened it
+
+Each row of `cortex_analysis_threads` MUST carry a nullable `user_id`, the opaque user id of the person who opened the session. `CreateThreadInput` MUST take an optional `userId`, and `Thread` MUST give `userId`, typed `string | null`. The insert that makes the row MUST write the value. A second make of an existing row MUST NOT change its `user_id`, and it gives the stored value. The harness MUST NOT read the value for a decision.
+
+A versioned migration MUST add the column. A row that the migration finds MUST keep a null `user_id`, and no backfill runs.
+
+#### Scenario: A thread keeps the user of its first make
+
+- **WHEN** a thread is made with `userId` `u1`
+- **THEN** a read of the thread gives `userId` `u1`
+
+#### Scenario: A second make keeps the first person
+
+- **GIVEN** a thread made with `userId` `u1`
+- **WHEN** a second make names the same thread id with `userId` `u2`
+- **THEN** the store gives the thread with `userId` `u1`, and the row does not change
+
+#### Scenario: A thread with no person
+
+- **WHEN** a thread is made with no `userId`
+- **THEN** a read of the thread gives `userId` `null`
+
+### Requirement: listThreads narrows to one person
+
+`ListThreadsInput` MUST take an optional `userId`. A user id MUST narrow the listing to the threads whose `user_id` equals it. The count and the page MUST use the same narrowed set. An omitted user id MUST narrow nothing. A thread with a null `user_id` MUST NOT match a user id.
+
+#### Scenario: The listing of one person
+
+- **GIVEN** an analysis with two threads of `u1` and one thread of `u2`
+- **WHEN** `listThreads` runs for the analysis with `userId` `u1`
+- **THEN** the page holds the two threads of `u1`, and `total` is 2

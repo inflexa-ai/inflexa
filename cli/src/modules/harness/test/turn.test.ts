@@ -397,6 +397,7 @@ function stagedHistory(turns: ModelMessage[][]): { history: ThreadHistory; retra
                 ),
             ),
         loadPage: () => okAsync({ turns: [], before: null }),
+        loadMessage: () => okAsync(null),
         retractLastTurn: () => {
             retracts++;
             return okAsync({ kind: "retracted", messages: turns[turns.length - 1]?.length ?? 0 });

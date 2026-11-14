@@ -199,7 +199,8 @@ export type ChatErrorEvent = {
 /**
  * The id that the stored display gives a message of the turn. The frames after it belong to that message, up to
  * the next `message-start` of the same role. The user message carries its text, because the turn stores it only
- * with its first round, and a reader of the stream before that round has no other source of it.
+ * with its first round, and a reader of the stream before that round has no other source of it. It carries its
+ * author for the same reason.
  */
 export type MessageStartEvent =
     | {
@@ -207,6 +208,8 @@ export type MessageStartEvent =
           messageId: string;
           role: "user";
           text: string;
+          /** Who sent the message, the value that the turn stores on the user row. Absent when the open of the turn names none. */
+          author?: string;
           source: EventSource;
       }
     | {

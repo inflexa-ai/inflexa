@@ -17,15 +17,19 @@ import {
     markAborted,
     markExpired,
     selectGrant,
+    selectAskScope,
     selectPending,
+    selectPendingByAnalyses,
     sweepExpired as sweepExpiredRows,
     type AnswerOutcome,
     type AskRow,
+    type AskScopeOfRow,
     type AskStatus,
     type PendingAsk,
+    type PendingByAnalysesInput,
 } from "./queries.js";
 
-export type { AnswerOutcome, PendingAsk } from "./queries.js";
+export type { AnswerOutcome, AskScopeOfRow, PendingAsk, PendingByAnalysesInput } from "./queries.js";
 
 /** Construction deps: the harness application pool the ledger lives in. */
 export type AskGatewayDeps = {
@@ -53,6 +57,18 @@ export type AskGateway = {
     abort(id: string): Promise<void>;
     answer(id: string, reply: AskReply): Promise<AnswerOutcome>;
     pending(): Promise<PendingAsk[]>;
+    /**
+     * The pending asks of a list of analyses, oldest first, with the id as the tie break. A user id narrows the result
+     * to the asks raised for that person, and an ask with no user never matches. At most `limit` asks come back, and
+     * the limit clamps to 1 to 200. The read sends one statement, and an empty list sends none.
+     */
+    pendingByAnalyses(input: PendingByAnalysesInput): Promise<PendingAsk[]>;
+    /**
+     * The analysis and the person of the ask with this id, in each status, so that a host can compare them with its
+     * own scope before it answers. `userId` is `null` for an ask with no user, and the result is `null` for an
+     * unknown id.
+     */
+    scopeOf(askId: string): Promise<AskScopeOfRow | null>;
     /** Expire pending asks older than `maxAgeMs` (default {@link DEFAULT_SWEEP_MAX_AGE_MS}). */
     sweepExpired(maxAgeMs?: number): Promise<number>;
 };
@@ -104,12 +120,20 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
         return unwrapOrThrow(await selectPending(pool));
     }
 
+    async function pendingByAnalyses(input: PendingByAnalysesInput): Promise<PendingAsk[]> {
+        return unwrapOrThrow(await selectPendingByAnalyses(pool, input));
+    }
+
+    async function scopeOf(askId: string): Promise<AskScopeOfRow | null> {
+        return unwrapOrThrow(await selectAskScope(pool, askId));
+    }
+
     async function sweepExpired(maxAgeMs: number = DEFAULT_SWEEP_MAX_AGE_MS): Promise<number> {
         const now = Date.now();
         return unwrapOrThrow(await sweepExpiredRows(pool, new Date(now).toISOString(), new Date(now - maxAgeMs).toISOString()));
     }
 
-    return { raise, expire, abort, answer, pending, sweepExpired };
+    return { raise, expire, abort, answer, pending, pendingByAnalyses, scopeOf, sweepExpired };
 }
 
 /** The `data-ask` part of an ask in one status. Each status of one ask reconciles under the same id. */

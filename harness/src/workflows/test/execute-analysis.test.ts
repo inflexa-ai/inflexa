@@ -139,6 +139,10 @@ type FakeDbosState = {
     timeline: string[];
     /** The model of the synthesizer that `scriptSynthesis` gives. Absent, a synthesis request fails the test. */
     synthesizer: ChatProvider | undefined;
+    /** What `DBOS.patch` answers: true for a run that takes the patch, false for a run that replays from before it. */
+    patched: boolean;
+    /** Each operation that the body consumed, in order: the step names, the clock reads, the stream writes, the child starts, and the waits. A patch call is not an operation, a replay answers it from the record. */
+    ops: string[];
 };
 
 let dbosState: FakeDbosState;
@@ -228,6 +232,7 @@ async function mockDbos(): Promise<void> {
         setEvent: dbos.DBOS.setEvent.bind(dbos.DBOS),
         randomUUID: dbos.DBOS.randomUUID.bind(dbos.DBOS),
         isInWorkflow: dbos.DBOS.isInWorkflow.bind(dbos.DBOS),
+        patch: dbos.DBOS.patch.bind(dbos.DBOS),
     };
     originalStepStatus ??= Object.getOwnPropertyDescriptor(dbos.DBOS, "stepStatus");
     originalWorkflowId ??= Object.getOwnPropertyDescriptor(dbos.DBOS, "workflowID");
@@ -242,6 +247,7 @@ async function mockDbos(): Promise<void> {
         dbos.DBOS,
         "runStep",
         mock(async (fn: () => Promise<unknown>, config?: { name?: string; retriesAllowed?: boolean; maxAttempts?: number }) => {
+            dbosState.ops.push(`step:${config?.name ?? "(unnamed)"}`);
             const injectedError = config?.name ? dbosState.throwErrorOnStep.get(config.name) : undefined;
             if (injectedError !== undefined) throw injectedError;
             const injected = config?.name ? dbosState.throwOnStep.get(config.name) : undefined;
@@ -307,6 +313,7 @@ async function mockDbos(): Promise<void> {
         dbos.DBOS,
         "startWorkflow",
         mock((_callable: unknown, opts: { workflowID: string }) => (input: SandboxStepInput) => {
+            dbosState.ops.push(`start:${input.stepId}`);
             dbosState.childInputs.push(input);
             const result = dbosState.childResults.get(input.stepId);
             if (!result) {
@@ -319,6 +326,22 @@ async function mockDbos(): Promise<void> {
     );
 
     await dbosWriteStreamRecorder(dbosState.emittedParts);
+    const recordWrites = dbos.DBOS.writeStream.bind(dbos.DBOS);
+    Reflect.set(
+        dbos.DBOS,
+        "writeStream",
+        mock((name: string, part: unknown) => {
+            const type = parseUnknownRecord(part)?.type;
+            dbosState.ops.push(`write:${typeof type === "string" ? type : "(untyped)"}`);
+            return recordWrites(name, part);
+        }),
+    );
+
+    Reflect.set(
+        dbos.DBOS,
+        "patch",
+        mock(() => Promise.resolve(dbosState.patched)),
+    );
 
     // `DBOS.cancelWorkflow` — record + resolve.
     Reflect.set(
@@ -337,6 +360,7 @@ async function mockDbos(): Promise<void> {
         dbos.DBOS,
         "waitFirst",
         mock((handles: FakeWorkflowHandle[]) => {
+            dbosState.ops.push("waitFirst");
             if (handles.length === 0) return Promise.reject(new Error("waitFirst: empty handles"));
             return Promise.resolve(handles[0]);
         }),
@@ -351,6 +375,7 @@ async function mockDbos(): Promise<void> {
         dbos.DBOS,
         "now",
         mock(() => {
+            dbosState.ops.push("now");
             const t = dbosState.nowMs;
             dbosState.nowMs += FAKE_CLOCK_STEP_MS;
             return Promise.resolve(t);
@@ -393,6 +418,8 @@ beforeEach(async () => {
         setEventError: null,
         timeline: [],
         synthesizer: undefined,
+        patched: true,
+        ops: [],
     };
     await mockDbos();
 });
@@ -817,9 +844,9 @@ describe("executeAnalysis body", () => {
 
         expect(result.status).toBe("completed");
         const dagParts = dagStatesOf(record.emittedParts.filter((p) => p.type === "data-dag-state"));
-        // First snapshot after dispatch: all three running at once.
+        // First snapshot after dispatch: all three running at once, and the synthesis entry still pending.
         const first = presentAt(dagParts, 0);
-        expect(first.steps.map((s) => s.status)).toEqual(["running", "running", "running"]);
+        expect(first.steps.map((s) => s.status)).toEqual(["running", "running", "running", "pending"]);
     });
 
     // ── 10.8 External cancel cascade ───────────────────────────────────
@@ -1097,14 +1124,15 @@ describe("executeAnalysis body", () => {
 
         const { recorded, cleared } = pauseWrites(pool);
         expect(recorded).toHaveLength(1);
-        const [workflowId, workId, workKind, waiter, analysisId, threadId, state, cause, attempt, retryAt, topic] = presentAt(recorded, 0).values ?? [];
-        expect([workflowId, workId, workKind, waiter, analysisId, threadId, state, attempt, retryAt]).toEqual([
+        const [workflowId, workId, workKind, waiter, analysisId, threadId, userId, state, cause, attempt, retryAt, topic] = presentAt(recorded, 0).values ?? [];
+        expect([workflowId, workId, workKind, waiter, analysisId, threadId, userId, state, attempt, retryAt]).toEqual([
             "run-test",
             "run-test",
             "run",
             JSON.stringify({ kind: "run" }),
             "a1",
             null,
+            "u-1",
             "paused",
             0,
             null,
@@ -1440,7 +1468,7 @@ describe("executeAnalysis body", () => {
 
         const { recorded } = pauseWrites(pool);
         expect(recorded).toHaveLength(1);
-        const [workflowId, workId, workKind, waiter, , , state, cause] = presentAt(recorded, 0).values ?? [];
+        const [workflowId, workId, workKind, waiter, , , , state, cause] = presentAt(recorded, 0).values ?? [];
         expect([workflowId, workId, workKind, waiter, state]).toEqual(["run-test", "run-test", "run", JSON.stringify({ kind: "synthesis" }), "paused"]);
         expect(cause).toBe(JSON.stringify({ kind: "host", reason: "payment_required" }));
         expect(dbosState.recvTopics).toHaveLength(1);
@@ -1551,7 +1579,7 @@ describe("executeAnalysis body", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
 
         expect(result.status).toBe("completed");
-        // Clock reads, in body order: startedAtMs, step-A settlement, terminal.
+        // Clock reads, in body order: startedAtMs, the dispatch of step A, step-A settlement, terminal.
         // Every `atMs` is a stub value (far below any real `Date.now()`), and the
         // run duration is the terminal read minus the start read.
         expect(events).toEqual([
@@ -1563,15 +1591,15 @@ describe("executeAnalysis body", () => {
                 stepId: "A",
                 status: "completed",
                 durationMs: 1,
-                atMs: FAKE_CLOCK_BASE_MS + FAKE_CLOCK_STEP_MS,
+                atMs: FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS,
             },
             {
                 type: "run_completed",
                 analysisId: "a1",
                 runId: "run-test",
                 status: "completed",
-                atMs: FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS,
-                durationMs: 2 * FAKE_CLOCK_STEP_MS,
+                atMs: FAKE_CLOCK_BASE_MS + 3 * FAKE_CLOCK_STEP_MS,
+                durationMs: 3 * FAKE_CLOCK_STEP_MS,
             },
         ]);
     });
@@ -1597,15 +1625,15 @@ describe("executeAnalysis body", () => {
                 stepId: "A",
                 status: "failed",
                 durationMs: 1,
-                atMs: FAKE_CLOCK_BASE_MS + FAKE_CLOCK_STEP_MS,
+                atMs: FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS,
             },
             {
                 type: "run_completed",
                 analysisId: "a1",
                 runId: "run-test",
                 status: "failed",
-                atMs: FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS,
-                durationMs: 2 * FAKE_CLOCK_STEP_MS,
+                atMs: FAKE_CLOCK_BASE_MS + 3 * FAKE_CLOCK_STEP_MS,
+                durationMs: 3 * FAKE_CLOCK_STEP_MS,
             },
         ]);
     });
@@ -1746,7 +1774,7 @@ describe("executeAnalysis body", () => {
 
 describe("executeAnalysis run end ownership", () => {
     const completeA = (): Map<string, SandboxStepResult | Error> => completeResults("A");
-    const terminalAtMs = FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS;
+    const terminalAtMs = FAKE_CLOCK_BASE_MS + 3 * FAKE_CLOCK_STEP_MS;
 
     /** Collects each run end into the timeline of the pool, so a test can place it between two queries. */
     function recordRunEnds(pool: FakePool, events: RunProvenanceEvent[]): (event: RunProvenanceEvent) => void {
@@ -1805,7 +1833,7 @@ describe("executeAnalysis run end ownership", () => {
 
         expect(result.status).toBe("completed");
         expect(events).toEqual([
-            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 2 * FAKE_CLOCK_STEP_MS },
+            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 3 * FAKE_CLOCK_STEP_MS },
         ]);
         const timeline = pool.queries.map((q) => collapseWhitespace(q.text));
         const write = timeline.findIndex((text) => text.startsWith(RUN_STATUS_WRITE));
@@ -1841,7 +1869,7 @@ describe("executeAnalysis run end ownership", () => {
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
         expect(order).toEqual(["emit after 1 close and 0 revoke"]);
         expect(events).toEqual([
-            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 2 * FAKE_CLOCK_STEP_MS },
+            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 3 * FAKE_CLOCK_STEP_MS },
         ]);
     });
 
@@ -1855,7 +1883,7 @@ describe("executeAnalysis run end ownership", () => {
 
         expect(result.status).toBe("completed");
         expect(events).toEqual([
-            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 2 * FAKE_CLOCK_STEP_MS },
+            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 3 * FAKE_CLOCK_STEP_MS },
         ]);
         expect(record.chargeCloseCalls).toEqual([]);
         expect(record.mandateRevokeCalls).toEqual([]);
@@ -1873,7 +1901,7 @@ describe("executeAnalysis run end ownership", () => {
 
         expect(result.status).toBe("completed");
         expect(events).toEqual([
-            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 2 * FAKE_CLOCK_STEP_MS },
+            { type: "run_completed", analysisId: "a1", runId: "run-test", status: "completed", atMs: terminalAtMs, durationMs: 3 * FAKE_CLOCK_STEP_MS },
         ]);
         expect(record.chargeCloseCalls).toEqual([]);
         expect(record.mandateRevokeCalls).toEqual([]);
@@ -2536,5 +2564,197 @@ describe("synthesizeFindings run stream", () => {
         } finally {
             await rm(base, { recursive: true, force: true });
         }
+    });
+});
+
+// ── The start of each step and the synthesis in the DAG ──────────────
+
+describe("executeAnalysis DAG detail", () => {
+    const startOf = (steps: number): string => new Date(FAKE_CLOCK_BASE_MS + steps * FAKE_CLOCK_STEP_MS).toISOString();
+
+    /** The `steps` of each dag-state part, in write order, after the part passed the wire schema. */
+    function dagSteps(parts: ReadonlyArray<Record<string, unknown>>) {
+        return parts
+            .filter((p) => p.type === "data-dag-state")
+            .map((part) => {
+                expect(ChatPartSchema.safeParse(part).success).toBe(true);
+                return DagStateSchema.parse(part).steps;
+            });
+    }
+
+    /** The terminal write of the synthesis row: `status`, `completed_at`, then `duration_ms`. */
+    const synthesisStepUpdates = (pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> =>
+        pool.queries.filter((q) => STEP_STATUS_WRITE_PARAM.test(q.text) && (q.values ?? []).includes("synthesis"));
+
+    const entryOf = (snapshot: ReturnType<typeof dagSteps>[number], id: string) => presentFind(snapshot, (step) => step.id === id, `the entry ${id}`);
+
+    it("gives a dispatched step its start in each later snapshot, and a step that waits none", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({ pool, childResults: completeResults("A", "B") });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }], false), deps);
+
+        const snapshots = dagSteps(dbosState.emittedParts);
+        // Clock reads: the run start, then the dispatch of A, then the dispatch of B after A settles.
+        const [afterDispatchA, afterA, afterDispatchB, afterB] = snapshots;
+        expect(entryOf(presentAt(snapshots, 0), "A").startedAt).toBe(startOf(1));
+        expect(entryOf(afterDispatchA ?? [], "B")).not.toHaveProperty("startedAt");
+        expect(entryOf(afterA ?? [], "A")).toMatchObject({ status: "completed", startedAt: startOf(1) });
+        expect(entryOf(afterA ?? [], "B")).not.toHaveProperty("startedAt");
+        expect(entryOf(afterDispatchB ?? [], "B")).toMatchObject({ status: "running", startedAt: startOf(2) });
+        expect(entryOf(afterB ?? [], "A").startedAt).toBe(startOf(1));
+        expect(entryOf(afterB ?? [], "B")).toMatchObject({ status: "completed", startedAt: startOf(2) });
+    });
+
+    it("keeps the start of a step that fails", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
+
+        const last = presentAt(dagSteps(dbosState.emittedParts), 1);
+        expect(entryOf(last, "A")).toMatchObject({ status: "failed", error: "boom", startedAt: startOf(1) });
+    });
+
+    it("follows the synthesis in the entry: pending, running with its start, and completed with its duration", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({ pool, childResults: completeResults("A", "B") });
+        scriptSynthesis({ kind: "produced" });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+
+        const snapshots = dagSteps(dbosState.emittedParts);
+        const entries = snapshots.map((snapshot) => entryOf(snapshot, "synthesis"));
+        expect(entries.map((entry) => entry.status)).toEqual(["pending", "pending", "pending", "pending", "running", "completed"]);
+        expect(presentAt(snapshots, 0).map((step) => step.id)).toEqual(["A", "B", "synthesis"]);
+        expect(presentAt(entries, 0)).toEqual({
+            id: "synthesis",
+            name: "Synthesis",
+            agent: "run-synthesizer",
+            status: "pending",
+            level: 2,
+            dependsOn: ["A", "B"],
+        });
+        const [, , , , running, completed] = entries;
+        const updates = synthesisStepUpdates(pool);
+        const [, , durationMs] = presentAt(updates, 0).values ?? [];
+        expect(running?.startedAt).toEqual(expect.any(String));
+        expect(running).not.toHaveProperty("durationMs");
+        expect(completed).toMatchObject({ startedAt: running?.startedAt, durationMs });
+        expect(durationMs).toBe(5 * FAKE_CLOCK_STEP_MS);
+    });
+
+    it("ends the synthesis entry as skipped for a blocker and as failed with its error for a failure", async () => {
+        const blocked = makeFakePool();
+        const { deps: blockedDeps } = makeDeps({ pool: blocked, childResults: completeResults("A") });
+        scriptSynthesis({ kind: "blocker", reason: "no lookup answers" });
+        await runExecuteAnalysisBody(input([{ id: "A" }]), blockedDeps);
+        const blockedLast = dagSteps(dbosState.emittedParts).at(-1) ?? [];
+        expect(entryOf(blockedLast, "synthesis").status).toBe("skipped");
+        expect(typeof entryOf(blockedLast, "synthesis").durationMs).toBe("number");
+        expect(entryOf(blockedLast, "synthesis")).not.toHaveProperty("error");
+
+        dbosState.emittedParts.length = 0;
+        const failing = makeFakePool();
+        const { deps: failingDeps } = makeDeps({ pool: failing, childResults: completeResults("A") });
+        dbosState.throwOnStep.set("synthesis.read-summaries", "synth boom");
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }]), failingDeps)).rejects.toThrow("synth boom");
+        const failedLast = dagSteps(dbosState.emittedParts).at(-1) ?? [];
+        expect(entryOf(failedLast, "synthesis")).toMatchObject({ status: "failed", error: "synth boom" });
+        expect(typeof entryOf(failedLast, "synthesis").durationMs).toBe("number");
+    });
+
+    it("ends the synthesis entry as skipped when no step completed", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        const snapshots = dagSteps(dbosState.emittedParts);
+        const last = presentAt(snapshots, snapshots.length - 1);
+        expect(entryOf(last, "synthesis")).toEqual({
+            id: "synthesis",
+            name: "Synthesis",
+            agent: "run-synthesizer",
+            status: "skipped",
+            level: 1,
+            dependsOn: ["A"],
+        });
+        expect(entryOf(presentAt(snapshots, snapshots.length - 2), "synthesis").status).toBe("pending");
+    });
+
+    it("gives a run with synthesis disabled no synthesis entry", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({ pool, childResults: completeResults("A") });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }], false), deps);
+
+        for (const snapshot of dagSteps(dbosState.emittedParts)) expect(snapshot.map((step) => step.id)).toEqual(["A"]);
+    });
+
+    describe("a run that started before the patch", () => {
+        it("writes the old snapshots, with no start and no synthesis entry", async () => {
+            dbosState.patched = false;
+            const pool = makeFakePool();
+            const { deps } = makeDeps({ pool, childResults: completeResults("A", "B") });
+            scriptSynthesis({ kind: "produced" });
+
+            await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+
+            const snapshots = dagSteps(dbosState.emittedParts);
+            expect(snapshots).toHaveLength(4);
+            for (const snapshot of snapshots) {
+                expect(snapshot.map((step) => step.id)).toEqual(["A", "B"]);
+                for (const step of snapshot) expect(step).not.toHaveProperty("startedAt");
+            }
+        });
+
+        it("consumes the recorded operations only, and the patch adds exactly the operations of the design", async () => {
+            const operations = async (patched: boolean): Promise<string[]> => {
+                dbosState.patched = patched;
+                dbosState.ops = [];
+                dbosState.emittedParts.length = 0;
+                dbosState.nowMs = FAKE_CLOCK_BASE_MS;
+                const pool = makeFakePool();
+                const { deps } = makeDeps({ pool, childResults: completeResults("A", "B") });
+                scriptSynthesis({ kind: "produced" });
+                await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+                return dbosState.ops;
+            };
+
+            const replayed = await operations(false);
+            const fresh = await operations(true);
+
+            // The recorded sequence of the run: the seed, the clock, the run start, then the dispatch loop.
+            expect(replayed.slice(0, 12)).toEqual([
+                "step:init-run-filesystem",
+                "step:open-running-charge",
+                "step:seed-step-executions",
+                "now",
+                "write:data-run-started",
+                "step:compose-step-seed:A",
+                "start:A",
+                "write:data-dag-state",
+                "waitFirst",
+                "write:data-dag-state",
+                "step:compose-step-seed:B",
+                "start:B",
+            ]);
+            // The patched run adds one clock read for each dispatch and the start and the end snapshot of the synthesis, and nothing else.
+            const added: string[] = [];
+            let matched = 0;
+            for (const op of fresh) {
+                if (op === replayed[matched]) matched += 1;
+                else added.push(op);
+            }
+            expect(matched).toBe(replayed.length);
+            expect(added).toEqual(["now", "now", "write:data-dag-state", "write:data-dag-state"]);
+        });
     });
 });

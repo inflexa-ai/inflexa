@@ -9,6 +9,7 @@ import {
     failDataProfile,
     loadDataProfileStatus,
     queryRunningProfiles,
+    recordDataProfileUser,
     recordDataProfileWorkflowId,
     tryRerunDataProfile,
     tryRetryDataProfile,
@@ -927,15 +928,92 @@ describe("the profiles that run", () => {
 
         // A claimed profile with no workflow id yet, and a completed profile, are not running work.
         expect(all.filter((profile) => profile.analysisId.startsWith("a-"))).toEqual([
-            { analysisId: "a-run-1", workflowId: "wf-1" },
-            { analysisId: "a-run-2", workflowId: "wf-2" },
+            { analysisId: "a-run-1", workflowId: "wf-1", userId: null },
+            { analysisId: "a-run-2", workflowId: "wf-2", userId: null },
         ]);
-        expect(one).toEqual([{ analysisId: "a-run-2", workflowId: "wf-2" }]);
+        expect(one).toEqual([{ analysisId: "a-run-2", workflowId: "wf-2", userId: null }]);
+    });
+
+    it("gives the person that the dispatch recorded for the running profile", async () => {
+        await seedAnalysis(pool, "a-person", "pending");
+        (await tryStartDataProfile(pool, "a-person"))._unsafeUnwrap();
+        (await recordDataProfileWorkflowId(pool, "a-person", "wf-person"))._unsafeUnwrap();
+        (await recordDataProfileUser(pool, "a-person", "u1"))._unsafeUnwrap();
+
+        expect((await queryRunningProfiles(pool, "a-person"))._unsafeUnwrap()).toEqual([{ analysisId: "a-person", workflowId: "wf-person", userId: "u1" }]);
     });
 
     it("gives nothing when no profile runs", async () => {
         await seedAnalysis(pool, "a-idle", "completed");
 
         expect((await queryRunningProfiles(pool, "a-idle"))._unsafeUnwrap()).toEqual([]);
+    });
+});
+
+describe("the person of a profile", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_person");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    /** Read `data_profile_user_id` straight off the row, which `loadDataProfileStatus` does not give. */
+    async function rawUser(analysisId: string): Promise<string | null> {
+        const res = await pool.query<{ data_profile_user_id: string | null }>("SELECT data_profile_user_id FROM cortex_analysis_state WHERE analysis_id = $1", [
+            analysisId,
+        ]);
+        return res.rows[0]?.data_profile_user_id ?? null;
+    }
+
+    it("stamps the user of a claimed running row", async () => {
+        await seedAnalysis(pool, "a-stamp", "pending");
+        (await tryStartDataProfile(pool, "a-stamp"))._unsafeUnwrap();
+
+        expect((await recordDataProfileUser(pool, "a-stamp", "u1"))._unsafeUnwrap()).toBe(true);
+
+        expect(await rawUser("a-stamp")).toBe("u1");
+    });
+
+    it("refuses a row that is not running and leaves its user as it is", async () => {
+        await seedAnalysis(pool, "a-settled", "pending");
+        (await tryStartDataProfile(pool, "a-settled"))._unsafeUnwrap();
+        (await recordDataProfileUser(pool, "a-settled", "u1"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-settled", SAMPLE_RESULT))._unsafeUnwrap();
+
+        expect((await recordDataProfileUser(pool, "a-settled", "u2"))._unsafeUnwrap()).toBe(false);
+
+        expect(await rawUser("a-settled")).toBe("u1");
+    });
+
+    for (const [name, status, claim] of [
+        ["tryStartDataProfile", "pending", tryStartDataProfile],
+        ["tryRetryDataProfile", "failed", tryRetryDataProfile],
+        ["tryRerunDataProfile", "completed", tryRerunDataProfile],
+    ] as const) {
+        it(`${name} sets the user of the earlier attempt to null`, async () => {
+            const analysisId = `a-claim-${name}`;
+            await seedAnalysis(pool, analysisId, status);
+            await pool.query("UPDATE cortex_analysis_state SET data_profile_user_id = 'u-earlier' WHERE analysis_id = $1", [analysisId]);
+
+            expect((await claim(pool, analysisId))._unsafeUnwrap()).toBe(true);
+
+            expect(await rawUser(analysisId)).toBeNull();
+        });
+    }
+
+    it("clearDataProfile sets the user to null", async () => {
+        await seedAnalysis(pool, "a-clear-user", "completed");
+        await pool.query("UPDATE cortex_analysis_state SET data_profile_user_id = 'u1' WHERE analysis_id = 'a-clear-user'");
+
+        expect((await clearDataProfile(pool, "a-clear-user"))._unsafeUnwrap()).toBe(true);
+
+        expect(await rawUser("a-clear-user")).toBeNull();
     });
 });

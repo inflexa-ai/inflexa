@@ -101,10 +101,20 @@ export function toChatFrame(event: EmitEvent | ChatStreamEvent | ChatDataPart, f
         case "text-delta":
             return { type: "text-delta", text: event.text, source: toSource(fallbackSource) };
 
-        case "message-start":
-            return event.role === "user"
-                ? { type: "message-start", messageId: event.messageId, role: "user", text: event.text, source: toSource(event.source) }
-                : { type: "message-start", messageId: event.messageId, role: "assistant", source: toSource(event.source) };
+        case "message-start": {
+            if (event.role === "assistant") {
+                return { type: "message-start", messageId: event.messageId, role: "assistant", source: toSource(event.source) };
+            }
+            const userStart: MessageStartEvent = {
+                type: "message-start",
+                messageId: event.messageId,
+                role: "user",
+                text: event.text,
+                source: toSource(event.source),
+            };
+            if (event.author !== undefined) userStart.author = event.author;
+            return userStart;
+        }
 
         default: {
             const part = flattenDataPart(event);
@@ -177,7 +187,9 @@ export function applyChatFrame(messages: ChatMessage[], frame: ChatFrame, assist
     }
     if (frame.type === "message-start") {
         if (frame.role === "assistant" || messages.some((message) => message.id === frame.messageId)) return { messages, terminal: null };
-        return { messages: [...messages, { id: frame.messageId, role: "user", parts: [{ type: "text", text: frame.text }] }], terminal: null };
+        const user: ChatMessage = { id: frame.messageId, role: "user", parts: [{ type: "text", text: frame.text }] };
+        if (frame.author !== undefined) user.author = frame.author;
+        return { messages: [...messages, user], terminal: null };
     }
     if (frame.type === "iteration") return { messages, terminal: null };
 

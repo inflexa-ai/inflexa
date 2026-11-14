@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { PauseEnd, PauseWaiter } from "../chat-parts.js";
+import type { DagStepState, PauseEnd, PauseWaiter } from "../chat-parts.js";
 import { PART_REGISTRY } from "../part-registry.js";
 import {
     CompactionPartSchema,
@@ -358,5 +358,25 @@ describe("the data-plan-approval part", () => {
 
     test("the registry lists it as a conversation part, not transient and not reconciling", () => {
         expect(PART_REGISTRY["data-plan-approval"]).toEqual({ emitter: "conversation", consumer: "conversation", transient: false, reconciling: false });
+    });
+});
+
+describe("data-dag-state — the start of a step", () => {
+    const step: DagStepState = { id: "A", name: "Align", agent: "analyst", status: "running", level: 0, dependsOn: [] };
+    const part = (extra: Partial<DagStepState>) => ({ type: "data-dag-state" as const, id: "dag-run-1", runId: "run-1", steps: [{ ...step, ...extra }] });
+
+    test("round-trips startedAt through the union schema", () => {
+        const withStart = part({ startedAt: "2026-11-14T10:00:00.000Z" });
+        expect(ChatPartSchema.parse(withStart)).toEqual(withStart);
+    });
+
+    test("accepts a step with no startedAt, the shape of a step that was never dispatched", () => {
+        const parsed = ChatPartSchema.parse(part({}));
+        expect(parsed.type === "data-dag-state" && parsed.steps[0] !== undefined && "startedAt" in parsed.steps[0]).toBe(false);
+    });
+
+    test("rejects a startedAt that is not a string", () => {
+        const malformed = { ...part({}), steps: [{ ...step, startedAt: 1_700_000_000_000 }] };
+        expect(ChatPartSchema.safeParse(malformed).success).toBe(false);
     });
 });

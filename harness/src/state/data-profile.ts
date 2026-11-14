@@ -100,7 +100,7 @@ export function tryStartDataProfile(pool: Querier, analysisId: string): ResultAs
         const result = await pool.query({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1,
-                data_profile_workflow_id = NULL
+                data_profile_workflow_id = NULL, data_profile_user_id = NULL
             WHERE analysis_id = $2 AND (data_profile_status = 'pending' OR data_profile_status IS NULL) AND ${SEEDED}`,
             values: [now, analysisId],
         });
@@ -124,7 +124,7 @@ export function tryRetryDataProfile(pool: Querier, analysisId: string): ResultAs
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1,
                 data_profile_error = NULL, data_profile_completed_at = NULL,
-                data_profile_workflow_id = NULL
+                data_profile_workflow_id = NULL, data_profile_user_id = NULL
             WHERE analysis_id = $2 AND data_profile_status = 'failed' AND ${SEEDED}`,
             values: [now, analysisId],
         });
@@ -149,7 +149,7 @@ export function tryRerunDataProfile(pool: Querier, analysisId: string): ResultAs
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1,
                 data_profile_error = NULL, data_profile_completed_at = NULL,
-                data_profile_workflow_id = NULL
+                data_profile_workflow_id = NULL, data_profile_user_id = NULL
             WHERE analysis_id = $2 AND data_profile_status = 'completed' AND ${SEEDED}`,
             values: [now, analysisId],
         });
@@ -195,6 +195,27 @@ export function recordDataProfileWorkflowId(pool: Querier, analysisId: string, w
             SET data_profile_workflow_id = $1
             WHERE analysis_id = $2 AND data_profile_status = 'running'`,
             values: [workflowId, analysisId],
+        });
+        return (result.rowCount ?? 0) > 0;
+    });
+}
+
+/**
+ * Record the person of a claimed-`running` profile: the `identity.user` of its run session, known only after the
+ * authorization. Each claim sets the column to NULL, and the dispatch writes it before the workflow starts. The
+ * `AND data_profile_status = 'running'` guard keeps a late write from labeling a row that settled. A stale-expiry
+ * claim by a second attempt can still receive the user of the first one, the same residue as
+ * {@link recordDataProfileWorkflowId}, and the person is a label, not a gate.
+ *
+ * `ok(true)` when this call stamped the row; `ok(false)` when the guard refused it, a normal in-band outcome.
+ */
+export function recordDataProfileUser(pool: Querier, analysisId: string, userId: string): ResultAsync<boolean, DbError> {
+    return tryMutation("dataProfile.recordDataProfileUser", async () => {
+        const result = await pool.query({
+            text: `UPDATE cortex_analysis_state
+            SET data_profile_user_id = $1
+            WHERE analysis_id = $2 AND data_profile_status = 'running'`,
+            values: [userId, analysisId],
         });
         return (result.rowCount ?? 0) > 0;
     });
@@ -368,7 +389,7 @@ export function clearDataProfile(pool: Querier, analysisId: string): ResultAsync
             SET data_profile_status = NULL, data_profile_error = NULL,
                 data_profile_started_at = NULL, data_profile_completed_at = NULL,
                 data_profile_result = NULL, data_profile_workflow_id = NULL,
-                seed_input_file_ids = NULL
+                data_profile_user_id = NULL, seed_input_file_ids = NULL
             WHERE analysis_id = $1 AND data_profile_status IS DISTINCT FROM 'running'`,
             values: [analysisId],
         });
@@ -476,12 +497,16 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
 
 /**
  * The data profile that runs in an analysis, or in each analysis when `analysisId` is absent: the row is `running`
- * and it names its workflow. A caller checks that the workflow is active.
+ * and it names its workflow. It gives the person of the profile, `null` until the dispatch records it. A caller
+ * checks that the workflow is active.
  */
-export function queryRunningProfiles(pool: Querier, analysisId?: string): ResultAsync<{ readonly analysisId: string; readonly workflowId: string }[], DbError> {
+export function queryRunningProfiles(
+    pool: Querier,
+    analysisId?: string,
+): ResultAsync<{ readonly analysisId: string; readonly workflowId: string; readonly userId: string | null }[], DbError> {
     return tryQuery("dataProfile.queryRunningProfiles", async () => {
-        const result = await pool.query<{ analysis_id: string; data_profile_workflow_id: string }>({
-            text: `SELECT analysis_id, data_profile_workflow_id
+        const result = await pool.query<{ analysis_id: string; data_profile_workflow_id: string; data_profile_user_id: string | null }>({
+            text: `SELECT analysis_id, data_profile_workflow_id, data_profile_user_id
             FROM cortex_analysis_state
             WHERE ($1::text IS NULL OR analysis_id = $1)
               AND data_profile_status = 'running'
@@ -489,7 +514,7 @@ export function queryRunningProfiles(pool: Querier, analysisId?: string): Result
             ORDER BY analysis_id`,
             values: [analysisId ?? null],
         });
-        return result.rows.map((row) => ({ analysisId: row.analysis_id, workflowId: row.data_profile_workflow_id }));
+        return result.rows.map((row) => ({ analysisId: row.analysis_id, workflowId: row.data_profile_workflow_id, userId: row.data_profile_user_id }));
     });
 }
 

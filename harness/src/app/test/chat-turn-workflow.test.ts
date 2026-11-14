@@ -388,6 +388,31 @@ describe("a chat turn as a workflow", () => {
         expect(partOrderOf(folded.find((message) => message.role === "assistant"))).toEqual(["Let me look.", "tool-call", "Found it."]);
     });
 
+    it("names the author on the user message-start frame and in the fold", async () => {
+        provider = scriptedModel([reply([text("Hi.")])]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const opened = await turns.open(sessionWithSecret(), { analysisId: ANALYSIS, threadId, userInput: "hello", author: "u1" });
+        if (opened.kind !== "started") throw new Error(`the turn did not start: ${opened.kind}`);
+        const frames = await readAll(opened.turnId);
+
+        const userStart = frames.find((frame) => frame.type === "message-start" && frame.role === "user");
+        expect(userStart).toMatchObject({ type: "message-start", role: "user", text: "hello", author: "u1" });
+        const folded = frames.reduce<ChatMessage[]>((messages, frame) => applyChatFrame(messages, frame, "assistant-id").messages, []);
+        expect(folded.find((message) => message.role === "user")?.author).toBe("u1");
+    });
+
+    it("gives the user message-start frame no author key when the open names none", async () => {
+        provider = scriptedModel([reply([text("Hi.")])]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const frames = await readAll(await startTurn(threadId));
+
+        const userStart = frames.find((frame) => frame.type === "message-start" && frame.role === "user");
+        expect(userStart).toBeDefined();
+        expect(Object.keys(userStart ?? {})).not.toContain("author");
+    });
+
     it("keeps the order of the stream when the turn recovers after its tool step", async () => {
         toolRuns = 0;
         parkedWrite = false;
@@ -906,6 +931,44 @@ describe("a chat turn as a workflow", () => {
         }
     });
 
+    it("records the person of the turn on the claim, keeps the person of the thread, and clears the claim at the end", async () => {
+        let hung = false;
+        provider = scriptedModel([hanging(() => (hung = true)), hanging(() => {})]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+        const claimOf = async () =>
+            (
+                await rig.pool.query<{ user_id: string | null; active_turn_id: string | null; active_turn_user_id: string | null }>(
+                    "SELECT user_id, active_turn_id, active_turn_user_id FROM cortex_analysis_threads WHERE thread_id = $1",
+                    [threadId],
+                )
+            ).rows[0];
+
+        const first = await startTurn(threadId);
+        await waitUntil(() => hung);
+        expect(await claimOf()).toEqual({ user_id: "user-1", active_turn_id: first, active_turn_user_id: "user-1" });
+        await turns.stop(first);
+        await DBOS.retrieveWorkflow(first).getResult();
+        expect(await claimOf()).toEqual({ user_id: "user-1", active_turn_id: null, active_turn_user_id: null });
+
+        const second = await turns.open({ ...sessionWithSecret(), identity: { user: "user-2" } }, { analysisId: ANALYSIS, threadId, userInput: "again" });
+        if (second.kind !== "started") throw new Error(`the turn did not start: ${second.kind}`);
+        expect(await claimOf()).toEqual({ user_id: "user-1", active_turn_id: second.turnId, active_turn_user_id: "user-2" });
+        await turns.stop(second.turnId);
+        await DBOS.retrieveWorkflow(second.turnId).getResult();
+    });
+
+    it("writes the user of the turn on the row of a paused turn", async () => {
+        provider = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }]).provider;
+        const threadId = `thread-${rig.nextWorkflowId()}`;
+
+        const turnId = await startTurn(threadId);
+        await pausedWorkOf(turnId);
+
+        expect((await queryPausesOfWork(rig.pool, ANALYSIS, turnId))._unsafeUnwrap().map((row) => row.userId)).toEqual(["user-1"]);
+        await turns.stop(turnId);
+        await DBOS.retrieveWorkflow(turnId).getResult();
+    });
+
     it("refuses a second turn on a thread with a turn that runs, and a stop closes the first turn as aborted", async () => {
         let hung = false;
         provider = scriptedModel([hanging(() => (hung = true))]).provider;
@@ -998,8 +1061,8 @@ describe("the sub-agents of a chat turn workflow", () => {
             waiting: [{ workflowId: childId, state: "paused", cause: { kind: "host", reason: "payment_required" } }],
         });
         const rows = (await queryPausesOfWork(rig.pool, ANALYSIS, turnId))._unsafeUnwrap();
-        expect(rows.map((row) => ({ workflowId: row.workflowId, waiter: row.waiter }))).toEqual([
-            { workflowId: childId, waiter: { kind: "sub-agent", agentId: PAUSING_RESEARCHER } },
+        expect(rows.map((row) => ({ workflowId: row.workflowId, waiter: row.waiter, userId: row.userId }))).toEqual([
+            { workflowId: childId, waiter: { kind: "sub-agent", agentId: PAUSING_RESEARCHER }, userId: "user-1" },
         ]);
         expect(await work.resume(sessionWithSecret(), turnId)).toEqual({ kind: "resumed", workflows: 1 });
 

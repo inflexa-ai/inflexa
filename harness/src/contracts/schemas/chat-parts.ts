@@ -183,6 +183,7 @@ export const DagStepStateSchema = z
         status: StepStatusSchema,
         level: z.number().int().nonnegative(),
         dependsOn: z.array(z.string()),
+        startedAt: z.string().optional(),
         durationMs: z.number().optional(),
         artifactCount: z.number().optional(),
         summary: z.string().optional(),

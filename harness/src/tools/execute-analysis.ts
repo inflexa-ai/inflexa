@@ -439,7 +439,7 @@ type LaunchTailArgs = {
      * Reserves the row of `runId`, or finds the row that a first attempt of the same call reserved. A
      * different run id names the run that holds the slot of the plan.
      */
-    reserve: (frame: { analysisId: string; threadId: string | null }) => Promise<Result<PlanLaunch, LaunchPlanRunRefusal>>;
+    reserve: (frame: { analysisId: string; threadId: string | null; userId: string }) => Promise<Result<PlanLaunch, LaunchPlanRunRefusal>>;
 };
 
 /**
@@ -462,7 +462,7 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
     if (linked.isErr()) return err(linked.error);
     const packageQueries = linked.value;
 
-    const reservation = await args.reserve({ analysisId, threadId });
+    const reservation = await args.reserve({ analysisId, threadId, userId: session.identity.user });
     if (reservation.isErr()) return err(reservation.error);
     // A different run holds the slot of the plan, or the view of the caller is stale: this call starts nothing.
     if (reservation.value.runId !== args.runId) return reservation;
@@ -553,7 +553,7 @@ function lockPlanLaunch(client: TransactionQuerier, planId: string): ResultAsync
  */
 async function reservePlanRun(
     deps: LaunchPlanRunDeps,
-    args: { analysisId: string; threadId: string | null; planId: string; runId: string; newestRunId?: string | null },
+    args: { analysisId: string; threadId: string | null; userId: string; planId: string; runId: string; newestRunId?: string | null },
 ): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> {
     const { runId } = args;
     try {
@@ -573,6 +573,7 @@ async function reservePlanRun(
                                 threadId: args.threadId,
                                 workflowName: "executeAnalysis",
                                 planId: args.planId,
+                                userId: args.userId,
                                 startedAt,
                             }).map((): PlanSlot => ({ type: "reserved" }));
                         },
@@ -600,7 +601,7 @@ async function reservePlanRun(
  */
 async function reserveAdHocRun(
     deps: LaunchPlanRunDeps,
-    args: { analysisId: string; threadId: string | null; planId: string; runId: string },
+    args: { analysisId: string; threadId: string | null; userId: string; planId: string; runId: string },
 ): Promise<Result<PlanLaunch, LaunchPlanRunRefusal>> {
     try {
         const reservation = await reserveRunById(deps.pool, {
@@ -609,6 +610,7 @@ async function reserveAdHocRun(
             threadId: args.threadId,
             workflowName: "executeAnalysis",
             planId: args.planId,
+            userId: args.userId,
         });
         if (reservation.isErr()) return err({ type: "store_failed", cause: reservation.error });
         return ok({ runId: reservation.value.row.runId, started: reservation.value.inserted });

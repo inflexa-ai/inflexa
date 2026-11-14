@@ -42,7 +42,16 @@ const BASELINE = "2026-10-05T00:00:00.000Z";
 /** An ask gateway over a fixed pending set. Only `pending` is read, and `pendingReads` counts its calls. */
 function gatewayOf(pending: () => Promise<PendingAsk[]>): AskGateway {
     const never = (): Promise<never> => Promise.reject(new Error("the routes only read the pending asks"));
-    return { raise: never, expire: never, abort: never, answer: never, pending, sweepExpired: () => Promise.resolve(0) };
+    return {
+        raise: never,
+        expire: never,
+        abort: never,
+        answer: never,
+        pending,
+        pendingByAnalyses: never,
+        scopeOf: never,
+        sweepExpired: () => Promise.resolve(0),
+    };
 }
 
 function readyBoot(gateway: AskGateway): ServerBoot<Handle> {
@@ -83,6 +92,7 @@ function progress(runId: string, analysisId: string, over: Partial<RunProgressSu
         startedAt: "2026-10-06T09:00:00.000Z",
         completedAt: null,
         threadId: "t1",
+        usage: null,
         ...over,
     };
 }
@@ -397,6 +407,7 @@ describe("GET /api/v1/attention", () => {
                         parts: null,
                         mandateId: null,
                         planId: null,
+                        userId: null,
                     }),
             },
         );

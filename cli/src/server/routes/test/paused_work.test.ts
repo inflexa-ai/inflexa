@@ -45,6 +45,7 @@ const CREDENTIAL_TURN: Work = {
     kind: "turn",
     analysisId: A,
     threadId: "thread-1",
+    userId: null,
     waiting: [{ workflowId: "turn-1", state: "paused", cause: { kind: "credential" }, attempt: 0, pausedAt: PAUSED_AT }],
 };
 
@@ -53,6 +54,7 @@ const PAUSED_RUN: Work = {
     workId: "run-1",
     kind: "run",
     analysisId: A,
+    userId: null,
     waiting: [
         { workflowId: "run-1-0", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0, pausedAt: PAUSED_AT },
         { workflowId: "run-1-1", state: "retrying", cause: { kind: "outage" }, attempt: 1, retryAt: "2026-10-27T10:05:00.000Z", pausedAt: PAUSED_AT },
@@ -74,6 +76,7 @@ function fakePausedWork(
             listed.push(analysisId);
             return Promise.resolve(analysisId === undefined ? items : items.filter((work) => work.analysisId === analysisId));
         },
+        listByAnalyses: () => Promise.resolve([]),
         stop: () => Promise.resolve({ kind: "not_found" }),
         resume: (session, workId) => {
             resumed.push({ session, workId });
@@ -132,7 +135,7 @@ function namesOf(rows: readonly string[]): NonNullable<PausedWorkRouteOpts["anal
 
 describe("GET {A}/paused-work", () => {
     test("gives the paused work of the analysis and not the work that runs, and the remedy of a failed turn on an item with the cause `credential`", async () => {
-        const running: Work = { workId: "run-running", kind: "run", analysisId: A, waiting: [] };
+        const running: Work = { workId: "run-running", kind: "run", analysisId: A, userId: null, waiting: [] };
         const paused = fakePausedWork([CREDENTIAL_TURN, running, PAUSED_RUN, { ...PAUSED_RUN, workId: "run-elsewhere", analysisId: "analysis-2" }]);
         const response = await appWith(readyBoot(paused)).request("");
 
@@ -163,6 +166,7 @@ describe("GET {A}/paused-work", () => {
             workId: "run-1",
             kind: "run",
             analysisId: A,
+            userId: null,
             waiting: [
                 {
                     workflowId: "run-1-s1",
@@ -200,6 +204,7 @@ describe("GET {A}/paused-work", () => {
     test("a failed list gives 500 `internal_error`", async () => {
         const failing: WorkSurface = {
             list: () => Promise.reject(new Error("relation cortex_paused_work does not exist")),
+            listByAnalyses: () => Promise.resolve([]),
             stop: () => Promise.resolve({ kind: "not_found" }),
             resume: () => Promise.resolve({ kind: "not_found" }),
             hold: () => Promise.resolve({ kind: "not_found" }),
@@ -215,6 +220,7 @@ describe("GET /api/v1/paused-work", () => {
         workId: "run-2",
         kind: "run",
         analysisId: "analysis-2",
+        userId: null,
         waiting: [
             {
                 workflowId: "run-2-s1",
@@ -228,7 +234,7 @@ describe("GET /api/v1/paused-work", () => {
     };
 
     test("gives the paused work of two analyses from one list with no id, each item with its analysis id", async () => {
-        const running: Work = { workId: "run-running", kind: "run", analysisId: A, waiting: [] };
+        const running: Work = { workId: "run-running", kind: "run", analysisId: A, userId: null, waiting: [] };
         const paused = fakePausedWork([CREDENTIAL_TURN, running, STEP_RUN]);
         const response = await collectionWith(readyBoot(paused), { analysisNames: namesOf([A, "analysis-2"]) }).request();
 
@@ -244,7 +250,7 @@ describe("GET /api/v1/paused-work", () => {
     });
 
     test("a server with no paused work gives an empty page, also when a run runs, and reads no SQLite row", async () => {
-        const running: Work = { workId: "run-running", kind: "run", analysisId: A, waiting: [] };
+        const running: Work = { workId: "run-running", kind: "run", analysisId: A, userId: null, waiting: [] };
         const names: string[][] = [];
         const response = await collectionWith(readyBoot(fakePausedWork([running])), {
             analysisNames: (ids) => {
@@ -298,6 +304,7 @@ describe("GET /api/v1/paused-work", () => {
     test("a failed list gives 500 `internal_error`", async () => {
         const failing: WorkSurface = {
             list: () => Promise.reject(new Error("relation cortex_paused_work does not exist")),
+            listByAnalyses: () => Promise.resolve([]),
             stop: () => Promise.resolve({ kind: "not_found" }),
             resume: () => Promise.resolve({ kind: "not_found" }),
             hold: () => Promise.resolve({ kind: "not_found" }),
@@ -336,6 +343,7 @@ describe("POST {A}/paused-work/:workId/resume", () => {
     test("a renewal that the host refuses gives 403 `forbidden` with its reason", async () => {
         const refusing: WorkSurface = {
             list: () => Promise.resolve([PAUSED_RUN]),
+            listByAnalyses: () => Promise.resolve([]),
             stop: () => Promise.resolve({ kind: "not_found" }),
             resume: () => Promise.resolve({ kind: "refused", reason: "only the subject can renew" }),
             hold: () => Promise.resolve({ kind: "not_found" }),

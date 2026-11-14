@@ -156,6 +156,7 @@ function runRow(overrides: Partial<CortexRunRow> & Pick<CortexRunRow, "runId" | 
         parts: null,
         mandateId: null,
         planId: null,
+        userId: null,
         ...overrides,
     };
 }

@@ -617,3 +617,56 @@ parent MUST start the halt cascade only on these paths:
 - **GIVEN** a child that sent a typed suspension message and then canceled itself
 - **WHEN** `getResult` of that child throws `DBOSWorkflowCancelledError`
 - **THEN** the parent identifies the settlement as a suspension, and it starts the halt cascade
+
+### Requirement: The DAG snapshot gives the start of each step and the synthesis
+
+`DagStepState` MUST give an optional `startedAt`, an ISO 8601 time. The parent MUST read a checkpointed clock when it dispatches a step. Each later `data-dag-state` snapshot MUST carry that time for the step. A step that was never dispatched MUST have no `startedAt`. A replay MUST give the same `startedAt`.
+
+A run whose input enables synthesis MUST have one more entry in `steps` of each snapshot, after the plan steps. The entry MUST have these values:
+
+- `id`: `synthesis`, the reserved step id of the synthesis ledger row
+- `name`: `Synthesis`
+- `agent`: `run-synthesizer`
+- `level`: the wave of the synthesis ledger row
+- `dependsOn`: the id of each plan step
+- `status`: `pending` while the scheduler runs
+
+The parent MUST write one snapshot when the synthesis starts, with the entry `running` and its `startedAt`. It MUST write one snapshot when the synthesis ends, with `durationMs`. The end status MUST come from the synthesis outcome:
+
+- `produced` gives `completed`.
+- `skipped_no_summaries` and `skipped_blocker` give `skipped`.
+- `failed` gives `failed`, with the `error` of the outcome.
+
+When the synthesis does not run, because no step completed, the parent MUST write one snapshot with the entry `skipped`. A run whose input disables synthesis MUST have no synthesis entry.
+
+The new clock reads and the new snapshot writes are operations of the body. Thus they MUST go behind one `DBOS.patch`. A run that started before the patch MUST replay its recorded operations. Its snapshots then carry no `startedAt` and no synthesis entry.
+
+#### Scenario: A dispatched step carries its start
+
+- **GIVEN** a run whose step A is dispatched
+- **WHEN** the parent writes the next snapshot
+- **THEN** the entry of A has a `startedAt`, and a step that waits for A has none
+
+#### Scenario: The synthesis entry follows the synthesis
+
+- **GIVEN** a run with synthesis enabled, whose steps complete
+- **WHEN** the synthesis starts and then produces its result
+- **THEN** a snapshot holds the `synthesis` entry as `running` with a `startedAt`
+- **AND** a later snapshot holds it as `completed` with a `durationMs`
+
+#### Scenario: A run with no completed step skips the synthesis
+
+- **GIVEN** a run with synthesis enabled, whose one step fails
+- **WHEN** the scheduler ends
+- **THEN** the last snapshot holds the `synthesis` entry as `skipped`
+
+#### Scenario: An ad hoc run has no synthesis entry
+
+- **WHEN** a run whose input disables synthesis writes a snapshot
+- **THEN** the snapshot holds no `synthesis` entry
+
+#### Scenario: A run from before the patch replays
+
+- **GIVEN** a run that started before the patch, and that the host recovers after the upgrade
+- **WHEN** the body replays
+- **THEN** the replay meets its recorded operations, and the run continues with no `startedAt` and no synthesis entry

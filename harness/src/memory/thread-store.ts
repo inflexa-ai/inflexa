@@ -107,6 +107,8 @@ export type Thread = {
     readonly deletedAt: Date | null;
     /** The id of the model that the thread runs on. `null`: the model of the host. */
     readonly model: string | null;
+    /** The user id of the person who opened the session. `null`: a row that no person opened, or that predates the column. */
+    readonly userId: string | null;
 };
 
 export type CreateThreadInput = {
@@ -133,6 +135,8 @@ export type CreateThreadInput = {
      * thus a second create with the same id gives the thread with one turn.
      */
     readonly firstTurn?: ConversationTurn;
+    /** The user id of the person who opens the session. A create that finds the row keeps the stored value. */
+    readonly userId?: string | null;
 };
 
 /**
@@ -199,6 +203,8 @@ export type ListThreadsInput = {
     readonly type?: ThreadType;
     /** Narrow to one thread's direct children, exact match. Same polarity as `type`: omitting it narrows nothing. */
     readonly parentThreadId?: string;
+    /** Narrow to the threads that one person opened, exact match. It narrows the count and the page alike. Omitting it narrows nothing. */
+    readonly userId?: string;
 };
 
 export type ListRecentThreadsInput = {
@@ -206,6 +212,10 @@ export type ListRecentThreadsInput = {
     readonly limit: number;
     /** Narrow to one kind of session, exact match. Omitting it narrows nothing. */
     readonly type?: ThreadType;
+    /** Narrow to the threads of these analyses. An empty list gives an empty result and sends no query. Omitting it narrows nothing. */
+    readonly analysisIds?: readonly string[];
+    /** Narrow to the threads that one person opened, exact match. Omitting it narrows nothing. */
+    readonly userId?: string;
 };
 
 export type ThreadPage = {
@@ -324,6 +334,7 @@ type ThreadRow = {
     readonly updated_at: Date;
     readonly deleted_at: Date | null;
     readonly model: string | null;
+    readonly user_id: string | null;
 };
 
 /**
@@ -333,7 +344,7 @@ type ThreadRow = {
  * a `Thread`, not as a failure.
  */
 const THREAD_COLUMNS =
-    "thread_id, analysis_id, title, thread_type, parent_thread_id, parent_seq::text AS parent_seq, created_at, updated_at, deleted_at, model";
+    "thread_id, analysis_id, title, thread_type, parent_thread_id, parent_seq::text AS parent_seq, created_at, updated_at, deleted_at, model, user_id";
 
 /**
  * The named thread plus every descendant reachable through `parent_thread_id`,
@@ -366,6 +377,7 @@ function toThread(row: ThreadRow): Thread {
         updatedAt: row.updated_at,
         deletedAt: row.deleted_at,
         model: row.model,
+        userId: row.user_id,
     };
 }
 
@@ -425,11 +437,19 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
     function insertRow(querier: Querier, input: CreateThreadInput): ResultAsync<{ thread: Thread; inserted: boolean }, DbError> {
         return tryMutation("thread-store.createThread.insert", () =>
             querier.query<ThreadRow>(
-                `INSERT INTO cortex_analysis_threads (thread_id, analysis_id, title, thread_type, parent_thread_id, parent_seq)
-         VALUES ($1, $2, $3, $4, $5, $6)
+                `INSERT INTO cortex_analysis_threads (thread_id, analysis_id, title, thread_type, parent_thread_id, parent_seq, user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (thread_id) DO NOTHING
          RETURNING ${THREAD_COLUMNS}`,
-                [input.threadId, input.analysisId, input.title ?? null, input.type ?? "conversation", input.parentThreadId ?? null, input.parentSeq ?? null],
+                [
+                    input.threadId,
+                    input.analysisId,
+                    input.title ?? null,
+                    input.type ?? "conversation",
+                    input.parentThreadId ?? null,
+                    input.parentSeq ?? null,
+                    input.userId ?? null,
+                ],
             ),
         ).andThen(({ rows }) => {
             if (rows[0]) return okAsync<{ thread: Thread; inserted: boolean }, DbError>({ thread: toThread(rows[0]), inserted: true });
@@ -720,6 +740,10 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
             scopeValues.push(input.parentThreadId);
             predicates.push(`parent_thread_id = $${scopeValues.length}`);
         }
+        if (input.userId !== undefined) {
+            scopeValues.push(input.userId);
+            predicates.push(`user_id = $${scopeValues.length}`);
+        }
         const scope = predicates.join(" AND ");
         // The page's two extra placeholders sit past the scope's, so a filter
         // added to the scope shifts them rather than colliding with them.
@@ -755,18 +779,26 @@ export function createThreadStore(pool: ThreadStorePool): ThreadStore {
     }
 
     function listRecentThreads(input: ListRecentThreadsInput): ResultAsync<Thread[], DbError> {
-        const limit = Math.min(Math.max(input.limit, 1), MAX_PER_PAGE);
-        const values: unknown[] = [limit];
-        let typePredicate = "";
+        if (input.analysisIds?.length === 0) return okAsync([]);
+        const values: unknown[] = [Math.min(Math.max(input.limit, 1), MAX_PER_PAGE)];
+        const predicates = ["deleted_at IS NULL"];
         if (input.type !== undefined) {
             values.push(input.type);
-            typePredicate = " AND thread_type = $2";
+            predicates.push(`thread_type = $${values.length}`);
+        }
+        if (input.analysisIds !== undefined) {
+            values.push(input.analysisIds);
+            predicates.push(`analysis_id = ANY($${values.length}::text[])`);
+        }
+        if (input.userId !== undefined) {
+            values.push(input.userId);
+            predicates.push(`user_id = $${values.length}`);
         }
         return tryQuery("thread-store.listRecentThreads", () =>
             pool.query<ThreadRow>(
                 `SELECT ${THREAD_COLUMNS}
          FROM cortex_analysis_threads
-         WHERE deleted_at IS NULL${typePredicate}
+         WHERE ${predicates.join(" AND ")}
          ORDER BY updated_at DESC, thread_id
          LIMIT $1`,
                 values,

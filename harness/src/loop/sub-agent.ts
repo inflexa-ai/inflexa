@@ -80,6 +80,8 @@ export type SubAgentWork = {
     readonly workKind: WorkKind;
     readonly analysisId: string;
     readonly threadId?: string;
+    /** The user id of the person of the work: the `identity.user` of the child, which is the user of the turn or of the run session. */
+    readonly userId: string;
     /** The run session of a child of a run, whose credential the pause suspends and the resume renews. */
     readonly runSession?: RunSession;
 };
@@ -90,12 +92,12 @@ export type SubAgentPauses = (work: SubAgentWork, waiter: PauseWaiter, emit: (pa
 /** The work of a child, from its input. A data profile runs under one constant frame and starts no child, thus it gives none. */
 function workOf(input: SubAgentInput<unknown>): SubAgentWork | undefined {
     const { analysisId, threadId } = input.scope;
-    if (input.rootTurnId !== undefined) return { workId: input.rootTurnId, workKind: "turn", analysisId, threadId };
+    if (input.rootTurnId !== undefined) return { workId: input.rootTurnId, workKind: "turn", analysisId, threadId, userId: input.identity.user };
     const runFrame = input.runFrame;
     if (runFrame === undefined || runFrame.runId === DATA_PROFILE_RUN_LITERAL) return undefined;
     const runSession =
         input.auth === undefined ? undefined : { identity: input.identity, scope: input.scope, provenance: input.provenance, runFrame, auth: input.auth };
-    return { workId: runFrame.runId, workKind: "run", analysisId, runSession };
+    return { workId: runFrame.runId, workKind: "run", analysisId, userId: input.identity.user, runSession };
 }
 
 /**

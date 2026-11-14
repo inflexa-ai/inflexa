@@ -1465,6 +1465,7 @@ describe("the palette command that resumes paused work", () => {
         workId: "run-1",
         kind: "run",
         analysisId: "A",
+        userId: null,
         waiting: [
             { workflowId: "run-1-0", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0, pausedAt: "2026-10-27T10:00:00.000Z" },
         ],

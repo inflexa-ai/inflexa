@@ -231,6 +231,7 @@ describe("inspectRun (dependency-bearing factory)", () => {
             waiter: null,
             analysis_id: "analysis-001",
             thread_id: null,
+            user_id: null,
             state: "paused",
             cause: { kind: "host", reason: "payment_required" },
             attempt: 0,

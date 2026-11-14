@@ -1325,6 +1325,7 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
             workId: "wf-p",
             kind: "profile",
             analysisId: "A",
+            userId: null,
             waiting: [
                 { workflowId: "wf-p", state: "paused", cause: { kind: "host", reason: "payment_required" }, attempt: 0, pausedAt: "2026-10-27T10:00:00.000Z" },
             ],

@@ -316,7 +316,9 @@ describe("the pause of a run", () => {
         const analysisId = `a-${runId}`;
         (await upsertAnalysis(rig.pool, analysisId, null))._unsafeUnwrap();
         (await insertRun(rig.pool, { runId, analysisId, workflowName: "executeAnalysis" }))._unsafeUnwrap();
-        expect(await createWork({ pool: rig.pool, ...WORK_DEPS }).list(analysisId)).toEqual([{ workId: runId, kind: "run", analysisId, waiting: [] }]);
+        expect(await createWork({ pool: rig.pool, ...WORK_DEPS }).list(analysisId)).toEqual([
+            { workId: runId, kind: "run", analysisId, userId: null, waiting: [] },
+        ]);
     });
 
     it("a stop of a paused run cancels it, and the run leaves the active work", async () => {

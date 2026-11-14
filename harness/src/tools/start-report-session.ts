@@ -282,7 +282,7 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
                 }
             }
 
-            const spawned = await spawn.spawnReportSession(parentThreadId, brief, childThreadId);
+            const spawned = await spawn.spawnReportSession(parentThreadId, brief, childThreadId, ctx.session.identity.user);
             if (spawned.isOk()) {
                 const child = spawned.value;
                 // The part rides the started arm only. The existing-session arm

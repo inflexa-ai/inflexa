@@ -126,6 +126,56 @@ describe("runs: synthesis outcome", () => {
     });
 });
 
+describe("runs: the person of a run", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        ({ pool, drop } = await withSchema("runs_person"));
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("writes the user of an inserted run, and gives it on each read of the run", async () => {
+        (await insertRun(pool, { runId: "run-u1", analysisId: "analysis-person", workflowName: "executeAnalysis", userId: "u1" }))._unsafeUnwrap();
+
+        expect((await queryRun(pool, "run-u1"))._unsafeUnwrap()?.userId).toBe("u1");
+        expect((await queryRunsByAnalysis(pool, "analysis-person"))._unsafeUnwrap().map((row) => row.userId)).toEqual(["u1"]);
+        expect((await queryActiveRunsByAnalysis(pool, "analysis-person"))._unsafeUnwrap().map((row) => row.userId)).toEqual(["u1"]);
+        expect((await queryNonTerminalRunsByAnalysis(pool, "analysis-person"))._unsafeUnwrap().runs.map((row) => row.userId)).toEqual(["u1"]);
+        expect((await queryRunsForInspection(pool, "analysis-person"))._unsafeUnwrap().runs.map((row) => row.userId)).toEqual(["u1"]);
+    });
+
+    it("gives a null user for a run that no person is named for", async () => {
+        (await insertRun(pool, { runId: "run-nobody", analysisId: "analysis-nobody", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+
+        expect((await queryRun(pool, "run-nobody"))._unsafeUnwrap()?.userId).toBeNull();
+    });
+
+    it("writes the user of a reserved run, and keeps the first user when the reservation is found again", async () => {
+        const first = (
+            await reserveRunById(pool, { runId: "run-reserved", analysisId: "analysis-person", workflowName: "executeAnalysis", userId: "u1" })
+        )._unsafeUnwrap();
+        const again = (
+            await reserveRunById(pool, { runId: "run-reserved", analysisId: "analysis-person", workflowName: "executeAnalysis", userId: "u2" })
+        )._unsafeUnwrap();
+
+        expect(first.inserted).toBe(true);
+        expect(first.row.userId).toBe("u1");
+        expect(again.inserted).toBe(false);
+        expect(again.row.userId).toBe("u1");
+    });
+
+    it("gives null for a run row that exists before the user column has a value", async () => {
+        (await insertRun(pool, { runId: "run-old", analysisId: "analysis-old", workflowName: "executeAnalysis" }))._unsafeUnwrap();
+        await pool.query("UPDATE cortex_runs SET user_id = NULL WHERE run_id = 'run-old'");
+
+        expect((await queryActiveRun(pool, "analysis-old", null))._unsafeUnwrap()?.userId).toBeNull();
+    });
+});
+
 describe("runs: conversation and inspection projections", () => {
     let pool: Pool;
     let drop: () => Promise<void>;

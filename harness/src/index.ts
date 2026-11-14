@@ -261,7 +261,7 @@ export type {
 // `CoreRuntime.chatTurns`, and expires the orphans of a dead process with the
 // boot-time `sweepExpired`.
 export { createAskGateway } from "./tools/approval/gateway.js";
-export type { AskGateway, AskGatewayDeps, AskScope, AnswerOutcome, PendingAsk } from "./tools/approval/gateway.js";
+export type { AskGateway, AskGatewayDeps, AskScope, AskScopeOfRow, AnswerOutcome, PendingAsk, PendingByAnalysesInput } from "./tools/approval/gateway.js";
 export type { AskRequest, AskReply } from "./tools/approval/contract.js";
 
 // Agent loop. No embedder drives the loop: a host runs a chat turn, and the
@@ -331,7 +331,7 @@ export type { SuspendOn } from "./providers/errors.js";
 // resumes or holds paused work with `CoreRuntime.work`, and it reads the
 // `data-pause` part of each waiting workflow in the stream of the work.
 export { DEFAULT_PAUSE_RETRY_DELAYS_MS } from "./workflows/pause.js";
-export type { PausedWorkflow, Work, WorkHold, WorkResume, WorkStop, WorkSurface } from "./app/work.js";
+export type { PausedWorkflow, Work, WorkByAnalysesInput, WorkHold, WorkResume, WorkStop, WorkSurface } from "./app/work.js";
 export { DATA_PROFILE_STOPPED } from "./tasks/data-profile.js";
 // Conversation turn + thread memory. A host opens a chat turn with the `open`
 // of `CoreRuntime.chatTurns`, which starts the workflow of the turn, and reads
@@ -593,8 +593,14 @@ export type {
 } from "./contracts/data-profile.js";
 export type { DataProfileStatus } from "./state/data-profile.js";
 // The grouped reads that summarize a page of analyses: one statement for the whole list.
-export { queryLatestRunsByAnalyses, queryDataProfileStatusByAnalyses, queryRunProgressByRuns, queryRunsEndedSince } from "./state/analyses-metrics.js";
-export type { DataProfileSummary, EndedRunSummary, LatestRunSummary, RunProgressSummary } from "./state/analyses-metrics.js";
+export {
+    queryLatestRunsByAnalyses,
+    queryDataProfileStatusByAnalyses,
+    queryRunProgressByRuns,
+    queryRunsEndedSince,
+    queryRunsInFlightByAnalyses,
+} from "./state/analyses-metrics.js";
+export type { DataProfileSummary, EndedRunSummary, LatestRunSummary, RunProgressSummary, RunsInFlightInput } from "./state/analyses-metrics.js";
 
 // The artifact ledger reads of one analysis: one page with an exact total, the origin of each path of a list, and the step-output count of each run of a list, each list in one statement.
 export { queryArtifactPage, queryArtifactOrigins, countArtifactsByRuns } from "./state/artifacts.js";

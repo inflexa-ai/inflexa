@@ -23,46 +23,61 @@ written by the workflow.
 
 ### Requirement: cortex_runs table schema
 
-The system SHALL maintain a `cortex_runs` table with: `run_id` (TEXT, PRIMARY
+The system MUST maintain a `cortex_runs` table with: `run_id` (TEXT, PRIMARY
 KEY — equal to the DBOS workflowID, a bare UUID), `analysis_id` (TEXT, NOT NULL),
 `thread_id` (TEXT, nullable), `workflow_name` (TEXT, NOT NULL), `status` (TEXT,
 NOT NULL), `started_at` (TEXT, NOT NULL), `completed_at` (TEXT, nullable),
 `error` (TEXT, nullable), `parts` (JSONB, nullable — vestigial), `mandate_id`
 (TEXT, nullable — the reference to the run credential, with no expiry, because the run does not depend on a clock),
-and `plan_id` (TEXT,
+`plan_id` (TEXT,
 nullable — planned-run dedup and internal-plan reference, FK to
-`cortex_plans`). There MUST be no `attempt_count` column. It was the resume counter of the parent workflow, for an
+`cortex_plans`), and `user_id` (TEXT, nullable — the user id of the person who started the run). There MUST be no `attempt_count` column. It was the resume counter of the parent workflow, for an
 `executeAnalysis` entry point that resumes a run after a suspension. That entry point does not exist.
 
-Indexes SHALL exist on `(analysis_id)` and `(thread_id)`. A partial-unique index
-`idx_cortex_runs_active_plan` SHALL exist on `(analysis_id, plan_id) WHERE status
-= 'running'`. The table SHALL NOT have a
-`workflow_id` column (`run_id` IS the workflowID), SHALL NOT have a
-`mandate_token` column, and SHALL have NO `mandate_jti`, `mandate_expires_at`, `plan`, `plan_version`,
-`current_wave`, or `suspension` columns — those are dropped or renamed by a migration. A database that has
+The reservation of a run MUST write `user_id` from the `identity.user` of the session that launches the run. A reservation that finds the row of a first attempt MUST keep its stored `user_id`. The harness MUST NOT read the value for a decision. A versioned migration MUST add the column, and a row that the migration finds MUST keep a null `user_id`.
+
+Indexes MUST exist on `(analysis_id)` and `(thread_id)`. A partial-unique index
+`idx_cortex_runs_active_plan` MUST exist on `(analysis_id, plan_id) WHERE status
+= 'running'`. The table MUST NOT have a
+`workflow_id` column, because `run_id` is the workflowID. It MUST NOT have a
+`mandate_token` column. It MUST have no `mandate_jti`, `mandate_expires_at`, `plan`, `plan_version`,
+`current_wave`, or `suspension` column. A migration drops or renames these columns. A database that has
 `mandate_jti` keeps its values under `mandate_id`.
 
 #### Scenario: Run created at workflow launch time
 
 - **WHEN** `execute_analysis` reserves the row after mode-specific validation
 - **THEN** a row is inserted with the bare-UUID `run_id`, `analysis_id`, `thread_id`, `plan_id`, `workflow_name = "executeAnalysis"`, `status = "running"`, and `started_at`
+- **AND** the row holds the `user_id` of the session that launches the run
 - **AND** `parts`, `completed_at`, `error` are NULL
 - **AND** no `workflow_id` column write is attempted
+
+#### Scenario: An ad hoc run records its person
+
+- **GIVEN** a session whose `identity.user` is `u1`
+- **WHEN** that session launches an ad hoc run
+- **THEN** the run row holds `user_id` `u1`
+
+#### Scenario: A run row from before the migration has no person
+
+- **GIVEN** a run row that exists before the migration adds `user_id`
+- **WHEN** the migration runs and the row is read
+- **THEN** its `userId` is `null`
 
 #### Scenario: Vestigial and dropped columns removed on startup
 
 - **WHEN** the state module initialises
-- **THEN** `workflow_id`, `mandate_token`, `mandate_expires_at`, `plan`, `plan_version`, `current_wave`, and `suspension` SHALL be dropped from `cortex_runs` if present, idempotently
-- **AND** `mandate_jti` SHALL become `mandate_id` with its values, or SHALL be dropped when `mandate_id` already stands
+- **THEN** `workflow_id`, `mandate_token`, `mandate_expires_at`, `plan`, `plan_version`, `current_wave`, and `suspension` MUST be dropped from `cortex_runs` if present, idempotently
+- **AND** `mandate_jti` MUST become `mandate_id` with its values, or MUST be dropped when `mandate_id` already stands
 
 ### Requirement: CortexRunRow schema
 
-The `CortexRunRow` Zod schema SHALL define: `runId`, `analysisId`, `threadId`
+The `CortexRunRow` Zod schema MUST define: `runId`, `analysisId`, `threadId`
 (nullable), `workflowName`, `status` (enum: `"running"`, `"completed"`,
 `"partial"`, `"failed"`, `"canceled"`),
 `startedAt`, `completedAt` (nullable), `error` (nullable), `parts` (array of any,
-nullable), `mandateId` (nullable), and `planId`
-(nullable). The schema SHALL NOT contain a `workflowId`, `mandateToken`, or
+nullable), `mandateId` (nullable), `planId`
+(nullable), and `userId` (nullable). Each read of the state module that gives a `CortexRunRow` MUST fill `userId` from the row. The schema MUST NOT contain a `workflowId`, `mandateToken`, or
 `attemptCount` field.
 
 #### Scenario: Run status values
@@ -74,6 +89,12 @@ nullable), `mandateId` (nullable), and `planId`
 
 - **WHEN** a `CortexRunRow` is parsed
 - **THEN** the result has no `workflowId` field, and callers read `row.runId` instead
+
+#### Scenario: Each run read gives the person
+
+- **GIVEN** a run row with `user_id` `u1`
+- **WHEN** a host reads the row through `queryRun`, `queryRunsByAnalysis`, or `queryActiveRunsByAnalysis`
+- **THEN** the row has `userId` `u1`
 
 ### Requirement: There is no boot-time orphan sweep
 
