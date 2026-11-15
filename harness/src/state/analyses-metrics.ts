@@ -233,8 +233,7 @@ export type RunsInFlightInput = {
 /**
  * The `running` runs of a list of analyses, in one statement, newest start first, with `run_id` breaking a tie in
  * descending order. Each entry is the progress entry of `queryRunProgressByRuns`, over the same column and join
- * text. A user id narrows the result to the runs whose `user_id` equals it. The statement walks
- * `idx_cortex_runs_analysis_started` for each analysis.
+ * text. A user id narrows the result to the runs whose `user_id` equals it.
  */
 export function queryRunsInFlightByAnalyses(pool: Querier, input: RunsInFlightInput): ResultAsync<RunProgressSummary[], DbError> {
     if (input.analysisIds.length === 0) return okAsync([]);
