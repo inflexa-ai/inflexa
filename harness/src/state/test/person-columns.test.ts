@@ -41,6 +41,27 @@ async function indexDefinition(name: string): Promise<string | undefined> {
     return rows[0]?.indexdef;
 }
 
+async function primaryKeyColumns(table: string): Promise<string[]> {
+    const { rows } = await pool.query<{ attname: string }>(
+        `SELECT a.attname FROM pg_index i
+           JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+          WHERE i.indisprimary AND i.indrelid = (quote_ident(current_schema()) || '.' || quote_ident($1))::regclass
+          ORDER BY array_position(i.indkey::int2[], a.attnum)`,
+        [table],
+    );
+    return rows.map((row) => row.attname);
+}
+
+const STORED_DISPLAY_ENVELOPE = JSON.stringify({ messages: [{ id: "m1", role: "user", parts: [] }] });
+
+async function storeMessageWithDisplayEnvelope(): Promise<void> {
+    await pool.query(
+        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens)
+         VALUES ('t1', 0, '{"role":"user","content":"hi"}'::json, $1::jsonb, 1)`,
+        [STORED_DISPLAY_ENVELOPE],
+    );
+}
+
 beforeEach(async () => {
     ({ pool, drop } = await withSchema("person-columns"));
 });
@@ -57,12 +78,22 @@ describe("the person columns", () => {
         }
     });
 
-    it("make the index of the threads of one person and the index of the message ids", async () => {
+    it("make the index of the threads of one person", async () => {
         expect(await indexDefinition("idx_cortex_analysis_threads_user")).toContain("(user_id, updated_at DESC, thread_id) WHERE (deleted_at IS NULL)");
-        const messageIds = await indexDefinition("idx_messages_display_message_ids");
-        expect(messageIds).toContain("USING gin");
-        expect(messageIds).toContain("display_envelope -> 'messages'::text");
-        expect(messageIds).toContain("jsonb_path_ops");
+    });
+
+    it("make the message-id tables, their key and their index, and no index on messages for the ids", async () => {
+        expect(await primaryKeyColumns("cortex_message_ids")).toEqual(["thread_id", "message_id"]);
+        expect(await indexDefinition("idx_cortex_message_ids_seq")).toContain("(thread_id, seq)");
+        expect(await primaryKeyColumns("cortex_message_id_backfill")).toEqual(["id"]);
+
+        const state = await pool.query("SELECT id, after_thread_id, after_seq, completed_at FROM cortex_message_id_backfill");
+        expect(state.rows).toEqual([{ id: true, after_thread_id: null, after_seq: null, completed_at: null }]);
+
+        const indexes = await pool.query<{ indexdef: string }>(
+            "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'messages'",
+        );
+        for (const row of indexes.rows) expect(row.indexdef).not.toContain("display_envelope");
     });
 
     it("are added to a database that predates them, and an existing row reads null", async () => {
@@ -85,7 +116,8 @@ describe("the person columns", () => {
         );
 
         await pool.query("DROP INDEX idx_cortex_analysis_threads_user");
-        await pool.query("DROP INDEX idx_messages_display_message_ids");
+        await pool.query("DROP TABLE cortex_message_ids, cortex_message_id_backfill");
+        await storeMessageWithDisplayEnvelope();
         for (const spec of COLUMNS) await pool.query(`ALTER TABLE ${spec.table} DROP COLUMN ${spec.column}`);
         for (const spec of COLUMNS) expect(await columnOf(spec)).toBeUndefined();
 
@@ -94,7 +126,13 @@ describe("the person columns", () => {
 
         for (const spec of COLUMNS) expect((await columnOf(spec))?.data_type).toBe(spec.dataType);
         expect(await indexDefinition("idx_cortex_analysis_threads_user")).toBeDefined();
-        expect(await indexDefinition("idx_messages_display_message_ids")).toBeDefined();
+        expect(await indexDefinition("idx_cortex_message_ids_seq")).toBeDefined();
+        const recorded = await pool.query("SELECT 1 FROM cortex_message_ids");
+        expect(recorded.rowCount).toBe(0);
+        const stored = await pool.query("SELECT 1 FROM messages WHERE thread_id = 't1'");
+        expect(stored.rowCount).toBe(1);
+        const backfill = await pool.query("SELECT after_thread_id, completed_at FROM cortex_message_id_backfill");
+        expect(backfill.rows).toEqual([{ after_thread_id: null, completed_at: null }]);
 
         const run = await pool.query<{ user_id: string | null }>("SELECT user_id FROM cortex_runs WHERE run_id = 'r1'");
         expect(run.rows[0]?.user_id).toBeNull();

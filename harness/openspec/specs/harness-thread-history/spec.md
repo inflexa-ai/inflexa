@@ -133,7 +133,7 @@ The two reads MUST be distinct from `loadRecent` (which gives the view of the lo
 
 ### Requirement: The tail turn can be retracted
 
-`retractLastTurn(threadId)` MUST remove the most recent turn of the thread in one transaction. It removes each row from the last genuine-user-start `seq` onward, and each turn record whose `start_seq` is at or past that `seq`.
+`retractLastTurn(threadId)` MUST remove the most recent turn of the thread in one transaction. It removes each row from the last genuine-user-start `seq` onward, and each turn record whose `start_seq` is at or past that `seq`. It also removes each recorded message id whose `seq` is at or past that `seq`.
 
 The retract obeys the append-only rule of the stored conversation. When the last turn goes, each earlier prefix stays byte-identical. Thus each earlier thinking block and each cache entry stays valid. The rule is: a later request never sees a changed earlier record. Only the last turn can go.
 
@@ -141,7 +141,7 @@ A thread whose rows hold no genuine user start MUST NOT change. The operation de
 
 The operation MUST take the per-thread lock of `appendTurn` and `writeTurn`. Thus it removes a whole group, and never a part of a group that a write still makes. A host MUST NOT retract a turn whose status is `open`, because a later round of that turn would land after the cut.
 
-The success value MUST give the count of the rows that the operation removed. A retract of an empty thread is the normal outcome `empty-thread`, not an error. The error channel MUST carry database faults only. The store MUST NOT remove a turn other than the tail, and it MUST NOT remove one message.
+The success value MUST give the count of the `messages` rows that the operation removed. A retract of an empty thread is the normal outcome `empty-thread`, not an error. The error channel MUST carry database faults only. The store MUST NOT remove a turn other than the tail, and it MUST NOT remove one message.
 
 #### Scenario: Retract restores the pre-append thread
 
@@ -166,6 +166,12 @@ The success value MUST give the count of the rows that the operation removed. A 
 - **GIVEN** a closed chat turn at the tail of a thread
 - **WHEN** `retractLastTurn` is called
 - **THEN** no row and no turn record of that turn remains
+
+#### Scenario: A retract removes the message ids of the turn
+
+- **GIVEN** a thread with two closed chat turns, each with a user message and an assistant message
+- **WHEN** `retractLastTurn` removes the second turn
+- **THEN** no recorded message id of the second turn remains, and each recorded message id of the first turn stays
 
 #### Scenario: The earlier turns stay byte-identical
 
@@ -710,7 +716,11 @@ The transcript replay gives each stored envelope in order. Thus a reload shows a
 
 `ThreadHistory` MUST give `loadMessage(threadId, messageId)`. The read MUST give the `ChatMessage` with that id in the thread, or `null` when no stored display message of the thread has that id. The message MUST equal the message with that id in the transcript replay of the whole thread. Thus the rounds of an assistant message are merged, and the turn record is folded, the same as in the transcript read.
 
-The work of the read MUST NOT grow with the length of the thread. An index on the message ids of the display envelopes MUST find the rows that hold the id. The read MUST then select only the rows of the turn of the message. The turn starts at the genuine user start at or before the first such row. When no user start comes before that row, the turn starts at the first row of the thread. The turn ends before the next genuine user start. A versioned migration MUST add the index, with no change of a row. A failed query MUST ride the error channel as a `DbError`.
+Except for the fallback below, the work of the read MUST NOT grow with the length of the thread. The read MUST find the row of the message through the primary key of the recorded message ids. The read MUST then select only the rows of the turn of that row. The turn starts at the genuine user start at or before that row. When no user start comes before that row, the turn starts at the first row of the thread. The turn ends before the next genuine user start.
+
+Until the backfill of the message ids is complete, an id that the table does not hold can be the id of an older row. For such an id, the read MUST read the display envelopes of the thread through the primary key of `messages`. It MUST stop at the first row that holds the id. The work of this fallback grows with the thread. After the backfill is complete, the read MUST give `null` for an id that the table does not hold. It then MUST read no row of `messages`.
+
+A failed query MUST ride the error channel as a `DbError`.
 
 #### Scenario: The answer of a rated message
 
@@ -740,3 +750,108 @@ The work of the read MUST NOT grow with the length of the thread. An index on th
 - **GIVEN** a message of thread `t1`
 - **WHEN** a host calls `loadMessage` with thread `t2` and the id of that message
 - **THEN** it gives `null`
+
+#### Scenario: An older message before the backfill is complete
+
+- **GIVEN** a stored row whose display message has no recorded id, and a backfill that is not complete
+- **WHEN** a host calls `loadMessage` with the id of that message
+- **THEN** it gives the message, the same as the transcript read gives it
+
+#### Scenario: A miss after the backfill is complete
+
+- **GIVEN** a complete backfill, and a stored row whose display message has no recorded id
+- **WHEN** a host calls `loadMessage` with the id of that message
+- **THEN** it gives `null`
+
+#### Scenario: The plan of a recorded id stays in the turn
+
+- **GIVEN** a thread of many turns whose middle turn holds a recorded message id
+- **WHEN** the read plans its statement for that id
+- **THEN** the plan reads the recorded id through its primary key, and it reads `messages` only through the primary key `(thread_id, seq)`
+
+### Requirement: The write of a group records the ids of its display messages
+
+A write of a group with a display envelope MUST record the id of each display message of the envelope. It records them in the transaction of the group. The table `cortex_message_ids` holds the records. Each record holds the thread, the message id, and the `seq` of the first row of the group. The primary key MUST be `(thread_id, message_id)`, and an index MUST cover `(thread_id, seq)` for the delete of a tail retraction.
+
+A later group can hold an id that the thread records already, because the rounds of one assistant message are separate groups. Such a write MUST NOT change the record. Thus the record keeps the first group that holds the id. The rounds of one message are groups of one turn, and no genuine user start comes between them. Thus each row that holds the id gives the same turn.
+
+An element of the envelope with no id records nothing. A failed record write MUST roll back the whole group, the same as a failed row write.
+
+The versioned migration that makes `cortex_message_ids` MUST make the table empty, and it MUST change no row of `messages`. It MUST NOT build an index on `messages`. The build of an index holds a lock that stops each write of `messages` until the build ends.
+
+#### Scenario: A turn records the ids of its messages
+
+- **GIVEN** a chat turn with a user message and an assistant message
+- **WHEN** the turn is written
+- **THEN** the thread records the id of the user message with the `seq` of the opening row
+- **AND** it records the id of the assistant message with the `seq` of the first row of its first round
+
+#### Scenario: A second round keeps the first record
+
+- **GIVEN** an assistant message whose reply took two rounds
+- **WHEN** the second round is written
+- **THEN** the record of the message id keeps the `seq` of the first round
+
+#### Scenario: A failed write records no id
+
+- **WHEN** the write of a group fails after it started
+- **THEN** the transaction rolls back the rows and the records of the message ids of the group
+
+#### Scenario: The migration makes an empty table
+
+- **GIVEN** a database with stored messages
+- **WHEN** the migration runs
+- **THEN** `cortex_message_ids` exists with no record, and no index on `messages` exists for the message ids
+
+### Requirement: A backfill records the message ids of older rows
+
+The harness MUST export `backfillMessageIds(pool, options?)`. It records the message ids of the rows that a version before the table stored. A host decides when it runs. The cli runs it in its pre-launch hook, and Cortex runs it as an operator job.
+
+The backfill MUST read `messages` in the order of `(thread_id, seq)`, with a keyset cursor, in batches of at most `batchSize` rows. The default `batchSize` is 1,000. Each batch is one transaction. It records the ids of the display envelopes of the batch, with no change of an existing record. It stores the key of the last row of the batch as the cursor.
+
+Thus a stop between two batches loses no committed batch, and a later call continues after the stored cursor. When a batch reads fewer rows than `batchSize`, the batch also stores the completion time. A call after the completion reads the stored state and records nothing.
+
+Each batch MUST lock the stored state of the backfill. Thus two concurrent calls never read the same batch. The backfill MUST only read `messages`, and it MUST NOT lock a row of `messages`.
+
+Until the backfill is complete, each delete of `messages` rows MUST first wait for a batch that runs. This includes the tail retraction, `purgeThread`, and `purgeAnalysis`. A batch MUST NOT start while such a delete runs. Thus a batch never records a row that a delete removed. After the completion, a delete waits for no batch.
+
+The success value MUST give the count of the `messages` rows that the call read, and the count of the ids that it recorded. A failed query MUST ride the error channel as a `DbError`. The stored cursor then stays at the last committed batch.
+
+A row that a writer of an earlier version stores behind the cursor gets no record. Thus a host MUST run the backfill only after each writer of its database records the ids. The table `cortex_message_id_backfill` holds the stored state: the cursor and the completion time. The migration makes its one row, with no cursor and no completion time.
+
+#### Scenario: A backfill records each older id
+
+- **GIVEN** older rows of two threads, with display envelopes and no records, and a `batchSize` smaller than the count of the rows
+- **WHEN** `backfillMessageIds` runs
+- **THEN** each display message id of the two threads has a record with the `seq` of its first row
+- **AND** the stored state holds the completion time
+
+#### Scenario: A backfill continues after its cursor
+
+- **GIVEN** older rows of two threads with no records, and a stored cursor at the last row of the first thread
+- **WHEN** `backfillMessageIds` runs
+- **THEN** it records the ids of the second thread, and it reads no row of the first thread
+
+#### Scenario: A complete backfill records nothing
+
+- **GIVEN** a backfill that stored its completion time
+- **WHEN** `backfillMessageIds` runs again
+- **THEN** it reads no row of `messages`, and it records no id
+
+#### Scenario: A record of a later round stays
+
+- **GIVEN** a turn whose older first round holds a message id with no record, and whose later round recorded the same id
+- **WHEN** `backfillMessageIds` runs
+- **THEN** the record keeps the `seq` of the later round, and `loadMessage` gives the same message as the transcript read
+
+#### Scenario: A delete waits for a batch that runs
+
+- **GIVEN** a batch of the backfill that read a row of the tail turn of a thread, and did not commit
+- **WHEN** `retractLastTurn` runs on that thread, and the batch then commits a record of that row
+- **THEN** the retract completes after the batch, and no record of the retracted turn remains
+
+#### Scenario: An empty database completes at once
+
+- **GIVEN** a database with no `messages` row
+- **WHEN** `backfillMessageIds` runs
+- **THEN** it stores the completion time, and it reports no row read and no id recorded

@@ -20,6 +20,7 @@ import {
     type AgentSession,
     type AiSdkProviderConfig,
     type AskGateway,
+    backfillMessageIds,
     type ChatProvider,
     type ConversationAssemblyDeps,
     type CoreRuntime,
@@ -441,6 +442,12 @@ export type BootSeams = {
      * {@link AskGateway.sweepExpired} query.
      */
     readonly sweepAsks: (gateway: AskGateway) => Promise<number>;
+    /**
+     * Record the message ids of the history rows that an earlier release wrote, run inside `bootHarness`'s
+     * `beforeLaunch` hook after state init has created the tables. A seam, like {@link BootSeams.sweepAsks},
+     * purely so the offline boot test drives `beforeLaunch` with no live ledger. Real: {@link backfillMessageIds}.
+     */
+    readonly backfillMessageIds: typeof backfillMessageIds;
     /** Register the stale-notification sweep scheduled workflow. */
     readonly registerNotificationSweep: (deps: RegisterNotificationSweepDeps) => void;
     readonly probeEmbedding: typeof probeEmbeddingProvider;
@@ -458,6 +465,7 @@ const realSeams: BootSeams = {
     boot: bootHarness,
     sweepEphemeral: sweepEphemeralWorkflows,
     sweepAsks: (gateway) => gateway.sweepExpired(),
+    backfillMessageIds,
     registerNotificationSweep,
     probeEmbedding: probeEmbeddingProvider,
 };
@@ -1317,11 +1325,15 @@ async function bootHarnessRuntimeOnce(
         //   2. Expire asks orphaned by a prior process. State init (which `bootHarness`
         //      runs before this hook) has created the ledger, so a crash-abandoned
         //      pending row is marked expired before any new turn can pend one.
-        //   3. Install the live-switch controller. Its run-bus subscription must be
+        //   3. Record the message ids of the history rows that an earlier release wrote. No turn of
+        //      this process writes before launch, and the instance lock keeps a second process away.
+        //      A failure only logs: the read of a message falls back to the envelopes of its thread,
+        //      and the next boot continues from the stored cursor.
+        //   4. Install the live-switch controller. Its run-bus subscription must be
         //      attached when launch-time recovery re-emits `run_started` for
         //      reclaimed runs, or the gauge would miss them and let a switch land
         //      mid-recovery.
-        //   4. Register the sandbox-hygiene crons (reaper tears down orphaned
+        //   5. Register the sandbox-hygiene crons (reaper tears down orphaned
         //      containers, sweep clears stale notification rows) — the embedder's
         //      duty, acting only on rows/containers the harness created.
         // Every pool read uses `composition.pool` (typed `Pool`), not the
@@ -1329,6 +1341,15 @@ async function bootHarnessRuntimeOnce(
         const beforeLaunch = async (): Promise<void> => {
             await seams.sweepEphemeral({ pool: composition.pool, logger, executorId: "local" });
             await seams.sweepAsks(sweepGateway);
+            const backfill = await seams.backfillMessageIds(composition.pool);
+            if (backfill.isErr()) {
+                const { type, op, cause } = backfill.error;
+                logger.warn("the message id backfill failed; the boot continues and a message read falls back to the thread envelopes", {
+                    type,
+                    op,
+                    ...logger.errorFields(cause),
+                });
+            }
             installAgentSwitch({
                 swappable: {
                     conversation: conversationProvider,

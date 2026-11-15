@@ -582,6 +582,32 @@ describe("createAnalysisPurge", () => {
         expect(await countMessages(threadIds)).toBe(0);
     });
 
+    it("removes the recorded message ids of the threads of the analysis, and keeps those of a second analysis and of a thread with no row", async () => {
+        const doomed = await seedAnalysis(`purge-ids-${run}`, { vectorIndex: false });
+        const bystander = await seedAnalysis(`purge-ids-survivor-${run}`, { vectorIndex: false });
+        const orphanThreadId = `purge-ids-orphan-${run}`;
+        const threadIds = [...doomed.threadIds, ...bystander.threadIds, orphanThreadId];
+        for (const threadId of threadIds) {
+            await rig.pool.query({
+                text: `INSERT INTO cortex_message_ids (thread_id, message_id, seq) VALUES ($1, $2, 1), ($1, $3, 2)`,
+                values: [threadId, `user-${threadId}`, `assistant-${threadId}`],
+            });
+        }
+        const recordedCount = async (ids: readonly string[]): Promise<number> => {
+            const { rows } = await rig.pool.query<{ n: number }>({
+                text: `SELECT COUNT(*)::int AS n FROM cortex_message_ids WHERE thread_id = ANY($1)`,
+                values: [[...ids]],
+            });
+            return rows[0]?.n ?? 0;
+        };
+
+        (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
+
+        expect(await recordedCount(doomed.threadIds)).toBe(0);
+        expect(await recordedCount(bystander.threadIds)).toBe(4);
+        expect(await recordedCount([orphanThreadId])).toBe(2);
+    });
+
     it("removes the turn records of a conversation thread and of its child thread", async () => {
         const doomed = await seedAnalysis(`purge-turns-${run}`, { vectorIndex: false });
         const child = `turns-child-${run}`;

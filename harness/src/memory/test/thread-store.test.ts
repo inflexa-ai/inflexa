@@ -1144,6 +1144,11 @@ describe("purgeThread across a subtree", () => {
         (await createToolOutputStore(pool).put(threadId === undefined ? output : { ...output, threadId }))._unsafeUnwrap();
     }
 
+    async function messageIdCount(threadId: string): Promise<number> {
+        const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_message_ids WHERE thread_id = $1", [threadId]);
+        return Number(presentAt(rows, 0).count);
+    }
+
     async function keptCount(ref: string): Promise<number> {
         const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_tool_outputs WHERE ref = $1", [ref]);
         return Number(presentAt(rows, 0).count);
@@ -1185,6 +1190,35 @@ describe("purgeThread across a subtree", () => {
             expect(await turnRecordCount(threadId)).toBe(0);
         }
         expect(await turnRecordCount("unrelated")).toBe(1);
+    });
+
+    it("takes the recorded message ids of every generation, leaving an unrelated thread whole", async () => {
+        await seedGenerations();
+        const history = createThreadHistory(pool);
+        for (const threadId of [...GENERATIONS, "unrelated"]) {
+            (
+                await history.appendTurn(threadId, {
+                    modelMessages: [
+                        { role: "user", content: [{ type: "text", text: "hi" }] },
+                        { role: "assistant", content: [{ type: "text", text: "hello" }] },
+                    ],
+                    displayMessages: [
+                        { id: `user-${threadId}`, role: "user", parts: [{ type: "text", text: "hi", state: "done" }] },
+                        { id: `assistant-${threadId}`, role: "assistant", parts: [{ type: "text", text: "hello", state: "done" }] },
+                    ],
+                })
+            )._unsafeUnwrap();
+        }
+        const recordedCount = async (threadId: string): Promise<number> => {
+            const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_message_ids WHERE thread_id = $1", [threadId]);
+            return Number(presentAt(rows, 0).count);
+        };
+        for (const threadId of [...GENERATIONS, "unrelated"]) expect(await recordedCount(threadId)).toBe(2);
+
+        (await store.purgeThread("root"))._unsafeUnwrap();
+
+        for (const threadId of GENERATIONS) expect(await recordedCount(threadId)).toBe(0);
+        expect(await recordedCount("unrelated")).toBe(2);
     });
 
     it("takes only the named descendant's own subtree", async () => {
@@ -1243,7 +1277,20 @@ describe("purgeThread across a subtree", () => {
 
     it("leaves every generation whole when the subtree delete fails partway", async () => {
         await seedGenerations();
-        await appendTurnsToEveryThread();
+        for (const threadId of [...GENERATIONS, "unrelated"]) {
+            (
+                await createThreadHistory(pool).appendTurn(threadId, {
+                    modelMessages: [
+                        { role: "user", content: [{ type: "text", text: "hi" }] },
+                        { role: "assistant", content: [{ type: "text", text: "hello" }] },
+                    ],
+                    displayMessages: [
+                        { id: `user-${threadId}`, role: "user", parts: [{ type: "text", text: "hi", state: "done" }] },
+                        { id: `assistant-${threadId}`, role: "assistant", parts: [{ type: "text", text: "hello", state: "done" }] },
+                    ],
+                })
+            )._unsafeUnwrap();
+        }
         for (const threadId of GENERATIONS) await keepText(`to_${threadId}`, threadId);
 
         // The messages statement sweeps the whole subtree before the rows statement
@@ -1260,6 +1307,7 @@ describe("purgeThread across a subtree", () => {
             expect(await threadRowCount(threadId)).toBe(1);
             expect(await messageCount(threadId)).toBe(2);
             expect(await keptCount(`to_${threadId}`)).toBe(1);
+            expect(await messageIdCount(threadId)).toBe(2);
         }
     });
 });
