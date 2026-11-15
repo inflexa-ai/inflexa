@@ -556,6 +556,9 @@ export { DATA_PROFILE_RUN_LITERAL } from "./contracts/data-profile.js";
 // the analysis-state seed (the trigger's CAS transitions the row this creates
 // — without it every trigger reports "failed"), and run-state observation.
 export { initCortexState } from "./state/init.js";
+// The host decides when the backfill of the message ids runs, and it runs it only after each writer of the
+// database records the ids: a row that an earlier version writes behind the cursor gets no record.
+export { backfillMessageIds, type MessageIdBackfillOptions, type MessageIdBackfillOutcome } from "./memory/message-ids.js";
 export { upsertAnalysis } from "./state/analyses.js";
 // `reconcileOrphanedDataProfile` heals a ledger row stuck at `running` with no
 // backing workflow (a host that died between the ledger CAS and the DBOS

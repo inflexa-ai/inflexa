@@ -281,9 +281,9 @@ The asymmetry is deliberate. A symmetric cascade would restore a child that a us
 
 ### Requirement: Hard delete reclaims the whole subtree
 
-`purgeThread` MUST remove the named thread and each descendant that `parent_thread_id` reaches, at any depth. It MUST also remove the `messages` rows, the turn records, and the kept tool outputs of each thread in that set. It does this in the one transaction that it opens.
+`purgeThread` MUST remove the named thread and each descendant that `parent_thread_id` reaches, at any depth. It MUST also remove the `messages` rows, the recorded message ids, the turn records, and the kept tool outputs of each thread in that set. It does this in the one transaction that it opens.
 
-The deletes of the messages, of the turn records, and of the kept tool outputs MUST cover the depth that the database cascade covers. The cascade removes the descendant thread rows recursively. The messages, the turn records, and the kept tool outputs have no foreign key to a thread row. Thus a shallower delete leaves the rows of a deeper thread with nothing that names them.
+Each of these deletes MUST cover the depth that the database cascade covers. The cascade removes the descendant thread rows recursively. The messages, the recorded message ids, the turn records, and the kept tool outputs have no foreign key to a thread row. Thus a shallower delete leaves the rows of a deeper thread with nothing that names them.
 
 The purge reaches a kept tool output by its `thread_id` (refer to the postgres-storage-backend capability). The delete MUST use the subtree walk of the other deletes, before the delete of the thread rows. A kept text of a run names no thread, thus a thread purge does not reach it.
 
@@ -304,6 +304,12 @@ The store MUST give the ids alone. It holds a Postgres pool and no filesystem se
 - **GIVEN** a thread with a child, and that child with a child of its own, each with messages
 - **WHEN** `purgeThread` runs on the top thread
 - **THEN** no `messages` row remains for any of the three threads
+
+#### Scenario: Purging removes the recorded message ids of the subtree
+
+- **GIVEN** a conversation thread with a child thread, and each thread with a written chat turn
+- **WHEN** `purgeThread` runs on the conversation thread
+- **THEN** no `cortex_message_ids` row remains for either thread
 
 #### Scenario: Purging removes the turn records
 
@@ -328,7 +334,7 @@ The store MUST give the ids alone. It holds a Postgres pool and no filesystem se
 
 - **GIVEN** a subtree whose delete fails partway
 - **WHEN** the failure occurs
-- **THEN** each thread row, each message, each turn record, and each kept tool output of the subtree remains
+- **THEN** each thread row, each message, each recorded message id, each turn record, and each kept tool output of the subtree remains
 
 #### Scenario: The purge names every thread that it erased
 

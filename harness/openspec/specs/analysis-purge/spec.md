@@ -46,11 +46,12 @@ The harness SHALL expose `purgeAnalysis(analysisId)` as a host-agnostic operatio
 
 - the analysis rows of `cortex_analysis_state`, `cortex_artifacts`, `cortex_runs`, `cortex_step_executions`, `cortex_plans`, `cortex_report_versions`, `cortex_analysis_threads`, `cortex_working_memory`, `cortex_asks`, `cortex_ask_grants`, `cortex_tool_outputs`, and `cortex_sandbox_leases`
 - the `messages` rows of each thread of the analysis
+- the `cortex_message_ids` rows of each thread of the analysis
 - the `cortex_thread_turns` rows of each thread of the analysis
 - the dynamic pgvector table with the shared `searchIndexName(analysisId)` name
 - the DBOS workflow footprint of the analysis, which includes the lease workflows of its sandboxes
 
-The purge reaches the turn records through the thread rows, the same as the messages. Thus it MUST delete them before it deletes the thread rows, for the reason that the delete order of the messages gives.
+The purge reaches the recorded message ids and the turn records through the thread rows, the same as the messages. Thus it MUST delete them before it deletes the thread rows, for the reason that the delete order of the messages gives.
 
 The purge reaches the kept tool outputs by their own `analysis_id`, with no join through the thread rows. Thus it removes the kept texts of each thread and of each run of the analysis.
 
@@ -73,6 +74,13 @@ Coverage of the workflow footprint is normative, and it is not optional. The DBO
 - **GIVEN** an analysis with some threads, each with messages
 - **WHEN** `purgeAnalysis` completes successfully
 - **THEN** no `messages` row remains for any of those threads
+
+#### Scenario: Recorded message ids are reached through the threads of the analysis
+
+- **GIVEN** an analysis with a conversation thread and a child thread, each with a written chat turn
+- **AND** a second analysis with a written chat turn
+- **WHEN** `purgeAnalysis` completes successfully for the first analysis
+- **THEN** no `cortex_message_ids` row remains for either thread of the first analysis, and the rows of the second analysis stay
 
 #### Scenario: Turn records are reached through the threads of the analysis
 

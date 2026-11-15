@@ -42,6 +42,7 @@ import type { WorkflowPurger } from "../execution/workflow-purger.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { tryMutation, tryQuery, withTransaction, type DbError, type TransactionQuerier } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
+import { waitForMessageIdBackfill } from "../memory/message-ids.js";
 import { searchIndexName } from "../workspace/search-config.js";
 import { isSqlIdentifier } from "./vector-store.js";
 
@@ -205,13 +206,25 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
             // second — reversed, the messages become unattributable and unreachable
             // by any later reclamation. No `deleted_at` filter on either: an archived
             // thread is still the analysis's, and a purge takes it too.
-            deleteRows(
-                client,
-                "purgeAnalysis.messages",
-                `DELETE FROM messages
+            waitForMessageIdBackfill(client, "purgeAnalysis.cortexRows")
+                .andThen(() =>
+                    deleteRows(
+                        client,
+                        "purgeAnalysis.messages",
+                        `DELETE FROM messages
                  WHERE thread_id IN (SELECT thread_id FROM cortex_analysis_threads WHERE analysis_id = $1)`,
-                analysisId,
-            )
+                        analysisId,
+                    ),
+                )
+                .andThen((messages) =>
+                    deleteRows(
+                        client,
+                        "purgeAnalysis.messageIds",
+                        `DELETE FROM cortex_message_ids
+                 WHERE thread_id IN (SELECT thread_id FROM cortex_analysis_threads WHERE analysis_id = $1)`,
+                        analysisId,
+                    ).map(() => messages),
+                )
                 .andThen((messages) =>
                     deleteRows(
                         client,

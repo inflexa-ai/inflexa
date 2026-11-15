@@ -4,6 +4,7 @@ import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import type { ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
+import { z } from "zod";
 
 import type { TokenUsageRollup } from "../../contracts/usage.js";
 import type { DbError } from "../../lib/db-result.js";
@@ -1766,6 +1767,37 @@ describe("loadPage", () => {
     });
 });
 
+/** The fields of an `EXPLAIN (ANALYZE, FORMAT JSON)` node that the plan test reads. */
+type PlanNode = {
+    "Node Type": string;
+    "Relation Name"?: string | undefined;
+    "Index Name"?: string | undefined;
+    Filter?: string | undefined;
+    "Actual Loops": number;
+    "Actual Rows": number;
+    "Rows Removed by Filter"?: number | undefined;
+    Plans?: PlanNode[] | undefined;
+};
+
+const PlanNodeSchema: z.ZodType<PlanNode> = z.lazy(() =>
+    z.object({
+        "Node Type": z.string(),
+        "Relation Name": z.string().optional(),
+        "Index Name": z.string().optional(),
+        Filter: z.string().optional(),
+        "Actual Loops": z.number(),
+        "Actual Rows": z.number(),
+        "Rows Removed by Filter": z.number().optional(),
+        Plans: z.array(PlanNodeSchema).optional(),
+    }),
+);
+
+const ExplainOutputSchema = z.array(z.object({ Plan: PlanNodeSchema }));
+
+function planNodes(node: PlanNode): PlanNode[] {
+    return [node, ...(node.Plans ?? []).flatMap(planNodes)];
+}
+
 describe("loadMessage", () => {
     const ROLLUP: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
 
@@ -1853,9 +1885,31 @@ describe("loadMessage", () => {
         expect((await history.loadMessage("some-other-thread", "assistant-2"))._unsafeUnwrap()).toMatchObject({ id: "assistant-2" });
     });
 
-    it("sends one statement, and the planner reaches the rows through the GIN index on the message ids", async () => {
+    it("gives an older message that has no record before the backfill is complete, as the transcript gives it", async () => {
+        for (let n = 1; n <= 4; n++) await writeTurn(THREAD, n);
+        await pool.query("DELETE FROM cortex_message_ids WHERE thread_id = $1", [THREAD]);
+
+        const expected = (await transcriptOf(THREAD)).find((message) => message.id === "assistant-3");
+        expect(expected?.parts.length).toBeGreaterThan(1);
+        expect((await history.loadMessage(THREAD, "assistant-3"))._unsafeUnwrap()).toEqual(expected ?? null);
+        expect((await history.loadMessage(THREAD, "user-3"))._unsafeUnwrap()).toMatchObject({ id: "user-3", author: "u3" });
+    });
+
+    it("gives null for a message that has no record after the backfill is complete", async () => {
+        for (let n = 1; n <= 4; n++) await writeTurn(THREAD, n);
+        await pool.query("DELETE FROM cortex_message_ids WHERE thread_id = $1 AND message_id = 'assistant-3'", [THREAD]);
+        expect((await history.loadMessage(THREAD, "assistant-3"))._unsafeUnwrap()).not.toBeNull();
+
+        await pool.query("UPDATE cortex_message_id_backfill SET completed_at = now()");
+
+        expect((await history.loadMessage(THREAD, "assistant-3"))._unsafeUnwrap()).toBeNull();
+        expect((await history.loadMessage(THREAD, "user-3"))._unsafeUnwrap()).toMatchObject({ id: "user-3" });
+    });
+
+    it("sends one statement, and the plan of a recorded id stays in the turn", async () => {
         for (let n = 1; n <= 40; n++) await writeTurn(THREAD, n);
         await pool.query("ANALYZE messages");
+        await pool.query("ANALYZE cortex_message_ids");
         const statements: { text: string; values: unknown[] }[] = [];
         const capturing = createThreadHistory({
             query: (...args) => {
@@ -1871,15 +1925,160 @@ describe("loadMessage", () => {
         expect(message).toMatchObject({ id: "assistant-20" });
         expect(statements).toHaveLength(1);
         const statement = presentAt(statements, 0);
+
+        // The turn of assistant-20 is the rows from user-20 up to, and not including, user-21.
+        const { rows: bounds } = await pool.query<{ rows_in_turn: string }>(
+            `SELECT (SELECT seq FROM cortex_message_ids WHERE thread_id = $1 AND message_id = 'user-21')
+                  - (SELECT seq FROM cortex_message_ids WHERE thread_id = $1 AND message_id = 'user-20') AS rows_in_turn`,
+            [THREAD],
+        );
+        const rowsInTurn = Number(presentAt(bounds, 0).rows_in_turn);
+        const { rows: all } = await pool.query<{ total: number }>("SELECT count(*)::int AS total FROM messages WHERE thread_id = $1", [THREAD]);
+        expect(presentAt(all, 0).total).toBeGreaterThan(rowsInTurn * 20);
+
+        // EXPLAIN ANALYZE runs a read-only statement; the rollback leaves nothing behind.
         const client = await pool.connect();
+        let plans: PlanNode[];
         try {
             await client.query("BEGIN");
+            // A thread this small is cheap to read through a bitmap or a sequential scan. A long thread is not, and the
+            // statement then picks the backward and the forward index scan of the turn bounds that this test pins.
             await client.query("SET LOCAL enable_seqscan = off");
-            const plan = await client.query<{ "QUERY PLAN": string }>(`EXPLAIN ${statement.text}`, statement.values);
+            await client.query("SET LOCAL enable_bitmapscan = off");
+            const plan = await client.query<{ "QUERY PLAN": unknown }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${statement.text}`, statement.values);
             await client.query("ROLLBACK");
-            expect(plan.rows.map((row) => row["QUERY PLAN"]).join("\n")).toContain("idx_messages_display_message_ids");
+            plans = ExplainOutputSchema.parse(presentAt(plan.rows, 0)["QUERY PLAN"]).map((entry) => entry.Plan);
         } finally {
             client.release();
         }
+        const nodes = plans.flatMap(planNodes);
+
+        expect(nodes.some((node) => node["Index Name"] === "cortex_message_ids_pkey" && node["Actual Loops"] > 0)).toBe(true);
+
+        // The scan of the fallback is the scan of `messages` that filters on the display envelope. It never executes.
+        const fallbackScans = nodes.filter((node) => node["Relation Name"] === "messages" && node.Filter?.includes("display_envelope"));
+        expect(fallbackScans.length).toBeGreaterThan(0);
+        for (const scan of fallbackScans) expect(scan["Actual Loops"]).toBe(0);
+
+        // Each node that executes on `messages` reads at most the rows of the turn and the next start.
+        const executedScans = nodes.filter((node) => node["Relation Name"] === "messages" && node["Actual Loops"] > 0);
+        expect(executedScans.length).toBeGreaterThan(0);
+        for (const scan of executedScans) {
+            expect(scan["Node Type"]).not.toBe("Seq Scan");
+            const examined = (scan["Actual Rows"] + (scan["Rows Removed by Filter"] ?? 0)) * scan["Actual Loops"];
+            expect(examined).toBeLessThanOrEqual(rowsInTurn + 1);
+        }
+    });
+});
+
+// --- recorded message ids ---------------------------------------------------
+
+describe("the recorded message ids", () => {
+    function displayed(id: string, role: "user" | "assistant", text: string): ConversationUIMessage {
+        return { id, role, parts: [{ type: "text", text, state: "done" }] };
+    }
+
+    async function appendDisplayedTurn(threadId: string, n: number): Promise<void> {
+        (
+            await history.appendTurn(threadId, {
+                modelMessages: [userText(`ask ${n}`), assistantText(`answer ${n}`)],
+                displayMessages: [displayed(`user-${n}`, "user", `ask ${n}`), displayed(`assistant-${n}`, "assistant", `answer ${n}`)],
+            })
+        )._unsafeUnwrap();
+    }
+
+    async function recordedIds(threadId: string): Promise<{ message_id: string; seq: string }[]> {
+        const { rows } = await pool.query<{ message_id: string; seq: string }>(
+            "SELECT message_id, seq::text AS seq FROM cortex_message_ids WHERE thread_id = $1 ORDER BY message_id",
+            [threadId],
+        );
+        return rows;
+    }
+
+    it("records the id of each message of a turn at the seq of the row that holds it", async () => {
+        (
+            await history.writeTurn(THREAD, {
+                opening: { modelMessages: [userText("ask")], displayMessages: [displayed("user-1", "user", "ask")] },
+                rounds: [
+                    {
+                        modelMessages: [assistantToolUse("call-1", "run_pca", { k: 2 }), userToolResult("call-1", "done")],
+                        displayMessages: [displayed("assistant-1", "assistant", "first")],
+                    },
+                ],
+            })
+        )._unsafeUnwrap();
+
+        expect(await recordedIds(THREAD)).toEqual([
+            { message_id: "assistant-1", seq: "1" },
+            { message_id: "user-1", seq: "0" },
+        ]);
+    });
+
+    it("keeps the record of the first round when a second round holds the same message id", async () => {
+        (
+            await history.writeTurn(THREAD, {
+                opening: { modelMessages: [userText("ask")], displayMessages: [displayed("user-1", "user", "ask")] },
+                rounds: [
+                    {
+                        modelMessages: [assistantToolUse("call-1", "run_pca", { k: 2 }), userToolResult("call-1", "done")],
+                        displayMessages: [displayed("assistant-1", "assistant", "first")],
+                    },
+                    { modelMessages: [assistantText("answer")], displayMessages: [displayed("assistant-1", "assistant", "second")] },
+                ],
+            })
+        )._unsafeUnwrap();
+
+        expect(await recordedIds(THREAD)).toEqual([
+            { message_id: "assistant-1", seq: "1" },
+            { message_id: "user-1", seq: "0" },
+        ]);
+    });
+
+    it("records an id that the envelope repeats one time", async () => {
+        (
+            await history.appendTurn(THREAD, {
+                modelMessages: [userText("ask"), assistantText("answer")],
+                displayMessages: [displayed("same", "user", "ask"), displayed("same", "assistant", "answer")],
+            })
+        )._unsafeUnwrap();
+
+        expect(await recordedIds(THREAD)).toEqual([{ message_id: "same", seq: "0" }]);
+    });
+
+    it("records nothing for a group with no display envelope", async () => {
+        (await append(THREAD, labeledTurn("a")))._unsafeUnwrap();
+
+        expect(await recordedIds(THREAD)).toEqual([]);
+    });
+
+    it("records no id, and leaves no row, when the write of a record fails", async () => {
+        await pool.query(
+            `CREATE FUNCTION boom_record() RETURNS trigger AS $$ BEGIN
+               RAISE EXCEPTION 'simulated record failure';
+             END; $$ LANGUAGE plpgsql`,
+        );
+        await pool.query("CREATE TRIGGER boom_record_trg BEFORE INSERT ON cortex_message_ids FOR EACH ROW EXECUTE FUNCTION boom_record()");
+
+        const written = await history.appendTurn(THREAD, {
+            modelMessages: [userText("ask"), assistantText("answer")],
+            displayMessages: [displayed("user-1", "user", "ask"), displayed("assistant-1", "assistant", "answer")],
+        });
+
+        expect(written.isErr()).toBe(true);
+        expect(await recordedIds(THREAD)).toEqual([]);
+        const { rows } = await pool.query("SELECT 1 FROM messages WHERE thread_id = $1", [THREAD]);
+        expect(rows).toHaveLength(0);
+    });
+
+    it("are removed with the rows of the retracted turn, and the earlier turn keeps its records", async () => {
+        await appendDisplayedTurn(THREAD, 1);
+        await appendDisplayedTurn(THREAD, 2);
+        await appendDisplayedTurn("some-other-thread", 2);
+        const earlier = (await recordedIds(THREAD)).filter((record) => record.message_id.endsWith("-1"));
+
+        expect((await history.retractLastTurn(THREAD))._unsafeUnwrap()).toEqual({ kind: "retracted", messages: 2 });
+
+        expect(await recordedIds(THREAD)).toEqual(earlier);
+        expect(await recordedIds("some-other-thread")).toHaveLength(2);
     });
 });

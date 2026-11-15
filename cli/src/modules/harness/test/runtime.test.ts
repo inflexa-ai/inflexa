@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
+import { z } from "zod";
 import { ok, okAsync, err, errAsync } from "neverthrow";
 import {
     createAskGateway,
@@ -25,6 +26,7 @@ import { ContainerRuntimeError, runtimes } from "../../../lib/container.ts";
 import { env } from "../../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../../lib/credential.ts";
 import { instanceLockPath } from "../../../lib/lock.ts";
+import { addLogStream, flushLogs } from "../../../lib/log.ts";
 import { claimStoreFlight, deleteStoreFlight } from "../../../db/primary_mutation.ts";
 import { fakeFetch, respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
@@ -41,6 +43,13 @@ import { agentProviderInner } from "../agent_switch.ts";
 import type { AgentEffort, AgentName, ResolvedHarnessConfig, ResolvedModelConnection } from "../config.ts";
 import { present } from "../../../lib/present.ts";
 import { awaitOk } from "../../../test_support/result.ts";
+
+const backfillLogRecordSchema = z.looseObject({
+    msg: z.string().optional(),
+    module: z.string().optional(),
+    type: z.string().optional(),
+    op: z.string().optional(),
+});
 
 /** A direct connection to a stubbed OpenAI-compatible endpoint — used by the direct-mode boot tests. */
 function directConnection(overrides: Partial<Extract<ResolvedModelConnection, { mode: "direct" }>> = {}): ResolvedModelConnection {
@@ -245,6 +254,11 @@ function recordingSeams(calls: string[]): BootSeams {
         // The ask-expiry sweep is a seam for the same reason `sweepEphemeral` is:
         // it lets `beforeLaunch` run offline with no live ask ledger to query.
         sweepAsks: recorded(calls, "sweepAsks", () => 0),
+        // The backfill reads the live history tables, thus the offline boot stands in for it.
+        backfillMessageIds: () => {
+            calls.push("backfillMessageIds");
+            return okAsync({ rows: 0, ids: 0 });
+        },
         registerNotificationSweep: () => {
             calls.push("registerNotificationSweep");
         },
@@ -292,6 +306,7 @@ describe("bootHarnessRuntime", () => {
             "boot",
             "sweepEphemeral",
             "sweepAsks",
+            "backfillMessageIds",
             "registerNotificationSweep",
         ]);
         // No `models.agents` and a single `harness.model` (claude-test-model): all roles resolve to it.
@@ -354,6 +369,39 @@ describe("bootHarnessRuntime", () => {
         expect(calls.indexOf("registerNotificationSweep")).toBeGreaterThan(calls.indexOf("boot"));
     });
 
+    test("a failed message id backfill logs a warning and the boot completes", async () => {
+        const calls: string[] = [];
+        const records: { msg?: string; module?: string; type?: string; op?: string }[] = [];
+        let open = true;
+        addLogStream({
+            write(chunk: string): void {
+                if (!open) return;
+                // The logger writes one JSON object per record, and the test reads only the fields of the backfill warning.
+                const record = JSON.parseWith(chunk, backfillLogRecordSchema);
+                if (record?.msg?.includes("message id backfill") === true) records.push(record);
+            },
+        });
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            backfillMessageIds: () => {
+                calls.push("backfillMessageIds");
+                return errAsync({ type: "mutation_failed", op: "backfill-message-ids", cause: new Error("connection reset") });
+            },
+        };
+        try {
+            const result = await bootHarnessRuntime({ seams, config: testConfig() });
+            await flushLogs();
+
+            expect(result.isOk()).toBe(true);
+            expect(calls.indexOf("backfillMessageIds")).toBeGreaterThan(calls.indexOf("sweepAsks"));
+            expect(calls.indexOf("registerNotificationSweep")).toBeGreaterThan(calls.indexOf("backfillMessageIds"));
+            expect(records).toHaveLength(1);
+            expect(records[0]).toMatchObject({ module: "harness", type: "mutation_failed", op: "backfill-message-ids" });
+        } finally {
+            open = false;
+        }
+    });
+
     test("a failed prereq fires no workflow or scheduled registration", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
@@ -365,7 +413,7 @@ describe("bootHarnessRuntime", () => {
         expect(result.isErr()).toBe(true);
         // A failed prereq short-circuits before the harness boot is even entered, so
         // neither `bootHarness` nor anything its `beforeLaunch` hook drives runs.
-        for (const name of ["boot", "sweepEphemeral", "registerNotificationSweep"]) {
+        for (const name of ["boot", "sweepEphemeral", "backfillMessageIds", "registerNotificationSweep"]) {
             expect(calls).not.toContain(name);
         }
     });

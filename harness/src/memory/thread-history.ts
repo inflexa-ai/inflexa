@@ -35,6 +35,7 @@ import { presentFirst } from "../lib/present.js";
 import type { Querier } from "../state/db.js";
 import { hasReportedUsage } from "../loop/metrics.js";
 import { countTokens } from "./count-tokens.js";
+import { recordMessageIds, waitForMessageIdBackfill } from "./message-ids.js";
 import { storedMessagesToChat } from "./conversation-display-replay.js";
 import { conversationView, groupTurns, isGenuineUserStart } from "./conversation-view.js";
 import {
@@ -297,10 +298,14 @@ export type ThreadHistory = {
      * has that id. The message equals the message with that id in the transcript replay of the whole
      * thread: the rounds of an assistant message are merged, and the turn record is folded.
      *
-     * An index on the message ids of the display envelopes finds the rows that hold the id. The read
-     * then selects only the rows of the turn of the message, thus its work grows with that turn and
-     * not with the thread. A record before the first turn start belongs to a turn that starts at the
-     * first row of the thread.
+     * The recorded message ids (`cortex_message_ids`) find the row that holds the id through a primary
+     * key. The read then selects only the rows of the turn of the message, thus its work grows with that
+     * turn and not with the thread. A record before the first turn start belongs to a turn that starts
+     * at the first row of the thread.
+     *
+     * Until the backfill of the message ids is complete, an id with no record falls back to a scan of
+     * the display envelopes of the thread, which grows with the thread. After the completion, an id with
+     * no record gives `null` and the read touches no row of `messages`.
      */
     loadMessage(threadId: string, messageId: string): ResultAsync<ChatMessage | null, DbError>;
     /**
@@ -457,7 +462,7 @@ function insertGroup(client: TransactionQuerier, threadId: string, startSeq: num
     // prior so the first `err` short-circuits — and `withTransaction`
     // re-throws it to force ROLLBACK (a returned `err` that does not
     // reach `withTransaction` would COMMIT silently).
-    return messages.reduce(
+    const inserted = messages.reduce(
         (chain, message, i) =>
             chain.andThen(() =>
                 tryMutation(`${op}.insert`, () =>
@@ -486,6 +491,10 @@ function insertGroup(client: TransactionQuerier, threadId: string, startSeq: num
             ),
         okVoid(),
     );
+    // The ids ride the same transaction as the rows, after the rows of the group: a failed record write rolls the group back.
+    return displayEnvelope === null || messages.length === 0
+        ? inserted
+        : inserted.andThen(() => recordMessageIds(client, threadId, startSeq, displayEnvelope, op));
 }
 
 /** Move `cortex_analysis_threads.updated_at` forward inside the write transaction. */
@@ -696,11 +705,16 @@ const PAGE_SQL = `WITH RECURSIVE page_walk(seq, starts) AS (
          ORDER BY messages.seq ASC`;
 
 /**
- * The statement of the turn of one message (`$1` thread, `$2` the `jsonb` array that holds an object of the message id).
+ * The statement of the turn of one message (`$1` thread, `$2` the message id as text, `$3` the `jsonb` array that holds
+ * an object of the message id).
  *
- * - `hit`: the rows whose display envelope holds the id. The `MATERIALIZED` keyword keeps the planner from folding the
- *   read into an ordered scan of the primary key that would filter each row of the thread. The expression is the one
- *   of the GIN index. The turn starts at the first row, because the rounds of one message share the turn.
+ * - `hit`: the `seq` of the first row that holds the id. The recorded id is one read of the primary key of
+ *   `cortex_message_ids`. The second branch is the fallback for an older row that has no record. Two conditions that do
+ *   not depend on the outer row gate it: no record of the id, and a backfill that is not complete. Postgres runs each
+ *   one time as an init plan, so a recorded id or a complete backfill never starts the scan of `messages`. The fallback
+ *   walks the primary key forward for the thread and stops at the first match, so its work grows with the thread. The
+ *   `MATERIALIZED` keyword keeps the planner from folding the read into the later scans. The turn starts at the first
+ *   row, because the rounds of one message share the turn.
  * - `turn_lower`: the first turn start at or below that row, in one backward scan of the primary key that stops at the
  *   first match. A thread with no start below the row has no lower bound, thus the read starts at its first row.
  * - `turn_upper`: the first turn start above the row, in one forward scan.
@@ -713,8 +727,16 @@ const PAGE_SQL = `WITH RECURSIVE page_walk(seq, starts) AS (
  * bounds, for the reasons that {@link PAGE_SQL} gives.
  */
 const MESSAGE_TURN_SQL = `WITH hit AS MATERIALIZED (
-           SELECT messages.seq FROM messages
-            WHERE messages.thread_id = $1 AND (messages.display_envelope -> 'messages') @> $2::jsonb
+           SELECT cortex_message_ids.seq FROM cortex_message_ids
+            WHERE cortex_message_ids.thread_id = $1 AND cortex_message_ids.message_id = $2::text
+           UNION ALL
+           (SELECT messages.seq FROM messages
+             WHERE NOT EXISTS (SELECT 1 FROM cortex_message_ids WHERE thread_id = $1 AND message_id = $2::text)
+               AND NOT EXISTS (SELECT 1 FROM cortex_message_id_backfill WHERE completed_at IS NOT NULL)
+               AND messages.thread_id = $1
+               AND (messages.display_envelope -> 'messages') @> $3::jsonb
+             ORDER BY messages.seq ASC
+             LIMIT 1)
          ),
          turn_lower AS (
            SELECT messages.seq FROM messages
@@ -929,7 +951,7 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
     }
 
     async function readMessage(threadId: string, messageId: string): Promise<ChatMessage | null> {
-        const { rows } = await pool.query<StoredRow>(MESSAGE_TURN_SQL, [threadId, JSON.stringify([{ id: messageId }])]);
+        const { rows } = await pool.query<StoredRow>(MESSAGE_TURN_SQL, [threadId, messageId, JSON.stringify([{ id: messageId }])]);
         const messages = storedMessagesToChat(await Promise.all(rows.map((row) => toStoredMessage(threadId, row))));
         return messages.find((message) => message.id === messageId) ?? null;
     }
@@ -946,6 +968,7 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
             // turn still being written. Serialized on this lock it always sees a whole
             // turn or none of one. Released automatically at COMMIT/ROLLBACK.
             tryQuery("thread-history.retractLastTurn.lock", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [threadId]))
+                .andThen(() => waitForMessageIdBackfill(client, "thread-history.retractLastTurn"))
                 .andThen(() =>
                     // Locate the tail turn's opening row and, in the same read, learn
                     // whether the thread has any rows at all. The boundary is the greatest
@@ -985,7 +1008,14 @@ export function createThreadHistory(pool: ThreadHistoryPool, logger?: Logger): T
                     ).andThen((res) =>
                         tryMutation("thread-history.retractLastTurn.deleteTurnRecords", () =>
                             client.query("DELETE FROM cortex_thread_turns WHERE thread_id = $1 AND start_seq >= $2::bigint", [threadId, boundary]),
-                        ).map<RetractOutcome>(() => ({ kind: "retracted", messages: res.rowCount ?? 0 })),
+                        )
+                            // A message id never spans two turns, so the records of the tail turn are the records at or past the cut.
+                            .andThen(() =>
+                                tryMutation("thread-history.retractLastTurn.deleteMessageIds", () =>
+                                    client.query("DELETE FROM cortex_message_ids WHERE thread_id = $1 AND seq >= $2::bigint", [threadId, boundary]),
+                                ),
+                            )
+                            .map<RetractOutcome>(() => ({ kind: "retracted", messages: res.rowCount ?? 0 })),
                     );
                 }),
         );
