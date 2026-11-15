@@ -163,6 +163,22 @@ describe("triggerAnalysisRun — dedup pre-check", () => {
 });
 
 describe("triggerAnalysisRun — reservation", () => {
+    test("the reserved row names the local user", async () => {
+        const inserted: Parameters<RunTriggerSeams["insertRun"]>[0][] = [];
+        const base = makeSeams().seams;
+        const seams: RunTriggerSeams = {
+            ...base,
+            insertRun: (input) => {
+                inserted.push(input);
+                return base.insertRun(input);
+            },
+        };
+
+        (await triggerAnalysisRun(seams, PARAMS))._unsafeUnwrap();
+
+        expect(inserted.map((input) => input.userId)).toEqual(["local"]);
+    });
+
     test("a partial-unique collision resolves to the winner's run", async () => {
         const { seams, rec } = makeSeams({
             activeRuns: [null, runRow({ runId: "run-winner", status: "running" })],

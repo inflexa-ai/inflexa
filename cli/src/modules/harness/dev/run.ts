@@ -210,7 +210,7 @@ export async function triggerAnalysisRun(
     // `running` run with no workflow row (`reconcileOrphanedRuns`), which frees the slot.
     const runId = seams.newRunId();
     try {
-        const inserted = await seams.insertRun({ runId, analysisId, threadId: null, workflowName: "executeAnalysis", planId });
+        const inserted = await seams.insertRun({ runId, analysisId, threadId: null, workflowName: "executeAnalysis", planId, userId: "local" });
         if (inserted.isErr()) return err({ type: "reserve_failed", cause: inserted.error });
     } catch (cause) {
         if (isDedupCollision(cause)) {
