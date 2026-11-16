@@ -72,3 +72,8 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
