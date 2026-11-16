@@ -118,7 +118,7 @@ export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
 const CONVERSATION_MAX_ITERATIONS = 200;
 
 /** Compaction budgets, in the input tokens of a request. */
-const CONVERSATION_COMPACTION: CompactionRules = { turnStartBudget: 150_000, budget: 200_000 };
+const CONVERSATION_COMPACTION: CompactionRules = { turnStartBudget: 200_000, budget: 200_000 };
 
 /**
  * The shared dependencies the composition root explodes apart. The environment

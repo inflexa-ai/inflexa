@@ -14,20 +14,25 @@ import { continueLoop, runLoop, type LoopOptions } from "../run-loop.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../types.js";
 
 describe("rulesForContextWindow", () => {
-    const rules = { turnStartBudget: 150_000, budget: 200_000 };
+    const rules = { turnStartBudget: 200_000, budget: 200_000 };
 
-    it("keeps the declared rules when the window is absent or 80% of it is at least the budget", () => {
+    it("keeps the declared rules when the window is absent", () => {
         expect(rulesForContextWindow(rules, undefined)).toBe(rules);
-        expect(rulesForContextWindow(rules, 1_000_000)).toBe(rules);
-        expect(rulesForContextWindow(rules, 250_000)).toBe(rules);
     });
 
-    it("caps the budget at 80% of a smaller window, and keeps the ratio of the turn-start budget", () => {
-        expect(rulesForContextWindow(rules, 40_960)).toEqual({ budget: 32_768, turnStartBudget: 24_576 });
+    it("compacts during a turn at 90% of a known window, above or below the declared budget", () => {
+        expect(rulesForContextWindow(rules, 1_000_000).budget).toBe(900_000);
+        expect(rulesForContextWindow(rules, 200_000).budget).toBe(180_000);
     });
 
-    it("caps a budget with no turn-start budget", () => {
-        expect(rulesForContextWindow({ budget: 250_000 }, 128_000)).toEqual({ budget: 102_400 });
+    it("keeps the declared turn-start budget when it fits in 75% of the window, and caps it there when it does not", () => {
+        expect(rulesForContextWindow(rules, 1_000_000).turnStartBudget).toBe(200_000);
+        expect(rulesForContextWindow(rules, 200_000).turnStartBudget).toBe(150_000);
+        expect(rulesForContextWindow(rules, 40_960)).toEqual({ budget: 36_864, turnStartBudget: 30_720 });
+    });
+
+    it("gives no turn-start budget to rules with none", () => {
+        expect(rulesForContextWindow({ budget: 250_000 }, 128_000)).toEqual({ budget: 115_200, turnStartBudget: undefined });
     });
 });
 

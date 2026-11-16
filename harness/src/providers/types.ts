@@ -32,8 +32,8 @@ export type ProviderCapabilities = {
     readonly imageToolResults?: boolean;
     /**
      * The context window of the model in tokens, when the host knows it. A chat
-     * thread then compacts at 80% of the window at the latest. Absent means "at
-     * least the compaction budget of the agent", thus the budget stays as declared.
+     * thread then compacts during a turn at 90% of the window, and before a turn at
+     * 75% of the window at the latest. Absent: the budgets stay as the agent declares them.
      */
     readonly contextWindow?: number;
 };
