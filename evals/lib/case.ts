@@ -9,6 +9,8 @@
 import type { PoolInventorySection } from "@inflexa-ai/harness/config/environment-stores.js";
 import type { KnowledgeClient } from "@inflexa-ai/harness/tools/knowledge/client.js";
 import type { StepSummary } from "@inflexa-ai/harness/schemas/step-summary.js";
+import { inferArtifactType } from "@inflexa-ai/harness/schemas/artifact-manifest.js";
+import { RUN_TEMPLATE_TOOL_ID } from "@inflexa-ai/harness/tools/knowledge/run-template.js";
 import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
@@ -29,8 +31,10 @@ export type TrialCall = {
     readonly refused: boolean;
     /** The call ran, and its result is ok. Absent for a nested call of a script. */
     readonly ok?: boolean;
-    /** The ok value of a terminal `submit_` call, or of a call of a script, which a grader reads. Absent for each other call. */
+    /** The ok value of a terminal `submit_` call, of a `run_template` call, or of a call of a script, which a grader reads. Absent for each other call. */
     readonly value?: unknown;
+    /** The call record of an ok `submit_` call: what the host keeps, for example the stored plan. Absent for each other call. */
+    readonly record?: unknown;
     /** Why a call that ran gave no ok result: the error text, the denial, the refusal, or an input that did not parse. */
     readonly error?: string;
 };
@@ -189,7 +193,11 @@ export function trialOf(
                 refused: call.refused,
                 ok,
                 error: ok ? undefined : callError(call),
-                value: ok && call.toolName.startsWith("submit_") && call.output?.outcome === "ok" ? call.output.value : undefined,
+                value:
+                    ok && (call.toolName.startsWith("submit_") || call.toolName === RUN_TEMPLATE_TOOL_ID) && call.output?.outcome === "ok"
+                        ? call.output.value
+                        : undefined,
+                record: ok && call.toolName.startsWith("submit_") && call.output?.outcome === "ok" ? call.output.record : undefined,
             };
             const script = call.toolName === "run_script" && call.output?.outcome === "ok" ? ScriptCallsSchema.safeParse(call.output.value) : undefined;
             const started = call.toolName === "run_script" ? extra.scriptCalls?.get(call.toolCallId) : undefined;
@@ -581,26 +589,64 @@ export function noCallUnder(tools: readonly string[], prefix: string): Grader {
     };
 }
 
-/** The working directory holds `path` at the end of the trial. */
-export function hasFile(path: string): Grader {
-    return (trial) =>
-        trial.files?.[path] !== undefined
-            ? { pass: true, detail: `wrote ${path}` }
-            : { pass: false, detail: `no ${path} (files: ${Object.keys(trial.files ?? {}).join(", ") || "none"})` };
+/** The scripts of the working directory, by the extension of the file name, in any directory that the agent made. */
+export function scriptsOf(trial: Trial): [string, string][] {
+    return Object.entries(trial.files ?? {}).filter(([path]) => inferArtifactType(path) === "script");
 }
 
-/** The working directory holds a file under `dir` whose text matches `pattern`, or any file under it with no pattern. */
-export function wroteUnder(dir: string, pattern?: RegExp): Grader {
+/** The working directory holds a script whose text matches `pattern`, or any script with no pattern. */
+export function wroteScript(pattern?: RegExp): Grader {
     return (trial) => {
-        const hit = Object.entries(trial.files ?? {}).find(([path, text]) => path.startsWith(dir) && (pattern === undefined || pattern.test(text)));
+        const scripts = scriptsOf(trial);
+        const hit = scripts.find(([, text]) => pattern === undefined || pattern.test(text));
         return hit === undefined
             ? {
                   pass: false,
-                  detail: `no file under ${dir}${pattern === undefined ? "" : ` that matches ${String(pattern)}`} (files: ${Object.keys(trial.files ?? {}).join(", ") || "none"})`,
+                  detail: `no script${pattern === undefined ? "" : ` that matches ${String(pattern)}`} (scripts: ${scripts.map(([path]) => path).join(", ") || "none"})`,
               }
             : { pass: true, detail: `wrote ${hit[0]}` };
     };
 }
+
+/** The working directory holds a file that is not a script and whose text matches `pattern`. */
+export function wroteResult(pattern: RegExp): Grader {
+    return (trial) => {
+        const hit = Object.entries(trial.files ?? {}).find(([path, text]) => inferArtifactType(path) !== "script" && pattern.test(text));
+        return hit === undefined
+            ? { pass: false, detail: `no result file that matches ${String(pattern)} (files: ${Object.keys(trial.files ?? {}).join(", ") || "none"})` }
+            : { pass: true, detail: `wrote ${hit[0]}` };
+    };
+}
+
+/** The working directory holds a file with the name `name`, in any directory. */
+export function hasFileNamed(name: string): Grader {
+    return (trial) => {
+        const hit = Object.keys(trial.files ?? {}).find((path) => path === name || path.endsWith(`/${name}`));
+        return hit === undefined
+            ? { pass: false, detail: `no ${name} (files: ${Object.keys(trial.files ?? {}).join(", ") || "none"})` }
+            : { pass: true, detail: `wrote ${hit}` };
+    };
+}
+
+const TemplateRanSchema = z.looseObject({ status: z.literal("ran"), exitCode: z.number().nullable(), script_path: z.string() });
+
+/** The `run_template` calls that rendered and ran the script, in order, with the exit code of each run. */
+export function templateRuns(trial: Trial): { readonly at: number; readonly exitCode: number | null; readonly scriptPath: string }[] {
+    return trial.calls.flatMap((call, at) => {
+        if (call.tool !== RUN_TEMPLATE_TOOL_ID) return [];
+        const ran = TemplateRanSchema.safeParse(call.value);
+        return ran.success ? [{ at, exitCode: ran.data.exitCode, scriptPath: ran.data.script_path }] : [];
+    });
+}
+
+/** A `run_template` call rendered the template and its run ended with exit code 0. */
+export const ranTemplate: Grader = (trial) => {
+    const runs = templateRuns(trial);
+    const good = runs.find((run) => run.exitCode === 0);
+    return good === undefined
+        ? { pass: false, detail: `no run_template run with exit code 0 (runs: ${runs.map((run) => String(run.exitCode)).join(", ") || "none"})` }
+        : { pass: true, detail: `ran ${good.scriptPath} with exit code 0` };
+};
 
 /** No file of the working directory has a text that matches `pattern`. */
 export function noFileMatches(pattern: RegExp): Grader {

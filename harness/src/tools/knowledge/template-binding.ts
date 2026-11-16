@@ -80,6 +80,14 @@ function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
     return false;
 }
 
+/** What binds the render to the plan step beside the settings: its id, its claims, the release the plan pinned, and its departures. */
+export type StepGroundingRef = {
+    readonly stepId: string;
+    readonly claims: readonly string[];
+    readonly snapshot?: string;
+    readonly departures: readonly GroundingDeparture[];
+};
+
 /**
  * Project the served contract for the seed, and intersect the plan settings
  * with its slots by name. Each setting lands in exactly one place:
@@ -102,15 +110,12 @@ function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
  * nothing: the render refuses the plan version, and the settings then ride
  * as unbound lines under the caveat the section renders.
  */
-/** What binds the render to the plan step beside the settings: its id, its claims, the release the plan pinned, and its departures. */
-type StepGroundingRef = {
-    readonly stepId: string;
-    readonly claims: readonly string[];
-    readonly snapshot?: string;
-    readonly departures: readonly GroundingDeparture[];
-};
-
-function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
+export function bindTemplateContract(
+    ref: string,
+    contract: TemplateContract,
+    settings: readonly GroundingSetting[],
+    grounding: StepGroundingRef,
+): TemplateSeedPart {
     const refVersion = versionOfRef(ref);
     const versionMatches = refVersion === undefined || refVersion === contract.version;
     const adaptable = contract.parameters.filter((slot) => slot.adaptable);

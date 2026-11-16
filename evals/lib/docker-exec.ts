@@ -80,8 +80,8 @@ export async function openRealSandbox(paths: RealSandboxPaths): Promise<RealSand
         { libs: true, refs: true, toolchainSource: "image", cache: cachePath !== undefined },
     );
     const env: Record<string, string> = { ...plan.env, HOME: "/tmp" };
-    // The host makes the subdirectories of the step before the sandbox starts, as `precreateStepTree` of the harness.
-    for (const sub of plan.stepSubdirs) mkdirSync(join(paths.hostWorkingDir, sub), { recursive: true });
+    // The host makes the working directory of the step before the sandbox starts, as `createSandbox` of the harness.
+    mkdirSync(paths.hostWorkingDir, { recursive: true });
     const name = `inflexa-eval-${farmId.slice(5, 17)}`;
     let started: Promise<void> | undefined;
     const start = (): Promise<void> => {

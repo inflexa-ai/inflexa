@@ -3,7 +3,9 @@ import { describe, expect, test } from "bun:test";
 import { callTools, reply, scriptedModel, text, toolCall } from "@inflexa-ai/harness/testing.js";
 
 import { evalAgents } from "../lib/agent.js";
-import { blockerSays, hasFile, type EvalCase } from "../lib/case.js";
+import type { TemplateContract, TemplateSource } from "@inflexa-ai/harness/tools/knowledge/client.js";
+
+import { blockerSays, hasFileNamed, never, ranTemplate, type EvalCase } from "../lib/case.js";
 import { runTrial } from "../lib/run.js";
 import { workingDirOf, type SandboxSetup } from "../lib/sandbox.js";
 
@@ -33,7 +35,7 @@ describe("a sandbox trial", () => {
             reply([text("unreachable")]),
         ]);
 
-        const result = await runTrial(sandboxCase(hasFile("output/echo.txt")), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
+        const result = await runTrial(sandboxCase(hasFileNamed("echo.txt")), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
 
         expect(result).toMatchObject({ kind: "graded", pass: true, files: ["output/echo.txt", "scripts/de.py"], unscripted: ["samtools view x.bam"] });
         expect(model.calls).toHaveLength(6);
@@ -60,7 +62,7 @@ describe("a sandbox trial", () => {
             reply([text("done")]),
         ]);
 
-        const result = await runTrial(sandboxCase(hasFile("output/echo.txt")), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
+        const result = await runTrial(sandboxCase(hasFileNamed("echo.txt")), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
 
         expect(result).toMatchObject({ kind: "graded", pass: true });
         expect("unscripted" in result ? result.unscripted : undefined).toBeUndefined();
@@ -68,6 +70,54 @@ describe("a sandbox trial", () => {
     });
 
     test("the working directory of a step is under the run of the trial", () => {
-        expect(workingDirOf(SETUP)).toBe("/analysis-001/runs/run-001/T1S1");
+        expect(workingDirOf(SETUP)).toBe("/analysis-001/runs/run-001/T1S1/work");
+    });
+
+    test("a template step renders its template through the source of the setup and runs the script through the rules", async () => {
+        const contract: TemplateContract = {
+            id: "tpl-echo",
+            version: "1.0.0",
+            label: "Echo",
+            method: "M-0001",
+            language: "python",
+            parameters: [{ name: "counts_path", type: "string", description: "The counts", adaptable: true, local: true, required: true }],
+            outputs: [],
+        };
+        const source: Partial<TemplateSource> = {
+            contract: () => Promise.resolve(contract),
+            render: () =>
+                Promise.resolve({
+                    ok: true as const,
+                    snapshot: { date: "2026-10-01", digest: "sha256:unit" },
+                    template: { id: "tpl-echo", version: "1.0.0", label: "Echo", method: { id: "M-0001", label: "Echo" }, language: "python" },
+                    script: "import pandas\nCOUNTS = {{counts_path}}\n",
+                    slots: [{ name: "counts_path", source: "local", adaptable: true, lines: [] }],
+                    local_slots: ["counts_path"],
+                    environment: { match: "exact" },
+                    syntax: { status: "ok" },
+                    outputs: [],
+                }),
+        };
+        const template = { step: { ref: "tpl-echo@1.0.0" }, source };
+        const model = scriptedModel([
+            callTools(toolCall("c0", "acquire_sandbox", { cpu: 2, memoryGb: 8 })),
+            callTools(toolCall("c1", "run_template", { slots: { counts_path: "/analysis-001/data/inputs/f-counts/counts.tsv" } })),
+            reply([text("Done.")]),
+        ]);
+        const templateCase: EvalCase = { ...sandboxCase(ranTemplate), sandbox: { ...SETUP, template } };
+
+        const result = await runTrial(templateCase, { agents, provider: model.provider, trialTimeoutMs: 10_000 });
+
+        expect(JSON.stringify(model.calls[0]?.tools ?? [])).toContain("run_template");
+        expect(result).toMatchObject({ kind: "graded", pass: true, detail: "ran /analysis-001/runs/run-001/T1S1/work/tpl-echo.py with exit code 0" });
+    });
+
+    test("an open step declares no run_template", async () => {
+        const model = scriptedModel([reply([text("Done.")])]);
+
+        const result = await runTrial(sandboxCase(never(["run_template"])), { agents, provider: model.provider, trialTimeoutMs: 10_000 });
+
+        expect(JSON.stringify(model.calls[0]?.tools ?? [])).not.toContain("run_template");
+        expect(result).toMatchObject({ kind: "graded", pass: true });
     });
 });

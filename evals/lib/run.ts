@@ -42,6 +42,7 @@ import {
 import { synthesizerSeedOf } from "@inflexa-ai/harness/execution/run-synthesis.js";
 import { generateStepSummary } from "@inflexa-ai/harness/execution/step-summary.js";
 import { generateFileMetadata } from "@inflexa-ai/harness/execution/artifact-metadata.js";
+import { STEP_WORK_DIR } from "@inflexa-ai/harness/workspace/paths.js";
 import { openSandboxTrial, type ExecMode, type SandboxTrial } from "./sandbox.js";
 import { trialOf, type EvalCase, type Grade, type RunningRun, type TrialAsk, type TrialCall } from "./case.js";
 
@@ -137,6 +138,7 @@ function runningRow(run: RunningRun): CortexRunRow {
         parts: null,
         mandateId: null,
         planId: run.planId ?? null,
+        userId: null,
     };
 }
 
@@ -300,8 +302,8 @@ export async function runTrial(
         const summaryRecords: string[] = [];
         const summaryLogger = recordingLogger(summaryRecords);
         const summaryWanted = sandbox !== undefined && evalCase.summary !== undefined && evalCase.summary !== false;
-        const artifacts =
-            sandbox === undefined ? [] : Object.entries(sandbox.files()).filter(([path]) => path.startsWith("output/") || path.startsWith("figures/"));
+        // The step workflow registers each file of the working directory.
+        const artifacts = sandbox === undefined ? [] : Object.entries(sandbox.files());
         const summarySession = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_ID } });
         const summarySignal = AbortSignal.timeout(Math.max(evalCase.timeoutMs ?? 0, options.trialTimeoutMs));
         // The step workflow asks for the file metadata first, and the summary continues after that exchange.
@@ -314,7 +316,7 @@ export async function runTrial(
                       cell: sandbox.fileMetadata,
                       transcript: result.messages,
                       artifacts: artifacts.map(([path, text]) => ({
-                          dbPath: `runs/run-001/${evalCase.sandbox?.stepId ?? "step"}/${path}`,
+                          dbPath: `runs/run-001/${evalCase.sandbox?.stepId ?? "step"}/${STEP_WORK_DIR}/${path}`,
                           displayPath: path,
                           sizeBytes: Buffer.byteLength(text),
                       })),

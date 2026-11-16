@@ -322,7 +322,7 @@ function scriptedTool(tool: Tool, script: ToolScript | undefined): Tool {
 
 /**
  * The tools of a sandbox agent that stay real in a trial. They read and write the tree of the trial, the lock of its
- * farm, and the skills of the repository, and a lease, an exec, and a knowledge template reach only the scripted clients
+ * farm, and the skills of the repository, and a lease, an exec, and a template run reach only the scripted clients
  * of the case. Each other tool reads a database or the network, thus it is scripted.
  */
 const SANDBOX_REAL_TOOLS = new Set([
@@ -340,7 +340,7 @@ const SANDBOX_REAL_TOOLS = new Set([
     "skill_search",
     "skill_read",
     "report_blocker",
-    "knowledge_template",
+    "run_template",
     "read_tool_output",
     "submit_file_metadata",
     "scan_inputs",

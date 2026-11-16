@@ -22,7 +22,9 @@ import { leaseOverClient } from "@inflexa-ai/harness/sandbox/__fixtures__/leases
 import { FARM_LOCK_FILE } from "@inflexa-ai/harness/sandbox/farm.js";
 import { createFileMetadataCell, type FileMetadataCell } from "@inflexa-ai/harness/tools/sandbox/submit-file-metadata.js";
 import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.js";
-import type { KnowledgeClient } from "@inflexa-ai/harness/tools/knowledge/client.js";
+import type { TemplateSource } from "@inflexa-ai/harness/tools/knowledge/client.js";
+import type { StepTemplate } from "@inflexa-ai/harness/tools/knowledge/run-template.js";
+import { STEP_WORK_DIR } from "@inflexa-ai/harness/workspace/paths.js";
 import type { ExecRequest, ExecResult, PackageRequestOutcome } from "@inflexa-ai/harness/sandbox/types.js";
 import { DATA_PROFILE_RUN_LITERAL } from "@inflexa-ai/harness/contracts/data-profile.js";
 import { buildSetMenu } from "@inflexa-ai/harness/input-scan/menu.js";
@@ -84,8 +86,8 @@ export type SandboxSetup = {
     readonly exec?: readonly ExecRule[];
     /** The files of the reference store, by path under `/mnt/refs`. A command reads them there. */
     readonly refs?: Readonly<Record<string, string>>;
-    /** The knowledge service of the step. Present: the agent holds `knowledge_template`. An operation it omits refuses. */
-    readonly knowledge?: Partial<KnowledgeClient>;
+    /** The template of a template step, and the source that serves it. Present: the agent holds `run_template`. An operation that the source omits refuses. */
+    readonly template?: { readonly step: StepTemplate; readonly source: Partial<TemplateSource> };
     /**
      * A Python program that writes the binary inputs of a real trial under the working directory of the program,
      * which is the analysis root. A scripted trial reads the stub text of `files` in their place.
@@ -106,7 +108,7 @@ export const PROFILER_ID = "data-profiler";
 
 /** The analysis-relative working directory of a setup: the step directory of the run, or the scratch of the profiler. */
 function workingPathOf(setup: Pick<SandboxSetup, "agentId" | "stepId">): string {
-    return setup.agentId === PROFILER_ID ? `runs/${DATA_PROFILE_RUN_LITERAL}/profile` : `runs/${RUN_ID}/${setup.stepId}`;
+    return setup.agentId === PROFILER_ID ? `runs/${DATA_PROFILE_RUN_LITERAL}/profile` : `runs/${RUN_ID}/${setup.stepId}/${STEP_WORK_DIR}`;
 }
 
 /** The in-sandbox working directory of a setup. */
@@ -366,10 +368,8 @@ function unconnectedPool(): ReturnType<typeof createPool> {
     return createPool({ host: "eval.invalid", port: "5432", database: "eval", user: "eval", password: "eval", sslMode: "disable" });
 }
 
-/** A knowledge service whose every operation refuses, as a step agent never calls the operations of the planner. */
-const REFUSING_KNOWLEDGE: KnowledgeClient = {
-    recommend: () => Promise.reject(new Error("a step agent does not call recommend")),
-    check: () => Promise.reject(new Error("a step agent does not call check")),
+/** A template source whose every operation refuses. */
+const REFUSING_SOURCE: TemplateSource = {
     render: () => Promise.reject(new Error("the case scripts no render")),
     contract: () => Promise.reject(new Error("the case scripts no contract")),
 };
@@ -538,7 +538,7 @@ export async function openSandboxTrial(
                 throw new Error("an eval embeds nothing");
             },
         },
-        ...(setup.knowledge === undefined ? {} : { knowledge: { ...REFUSING_KNOWLEDGE, ...setup.knowledge } }),
+        templateSource: setup.template === undefined ? undefined : { ...REFUSING_SOURCE, ...setup.template.source },
         // A step reports a blocker and declares its metadata tool. The profiler does neither (`profilerSandboxAgentDeps`).
         reportsBlocker: !profiler,
         fileMetadata: profiler ? undefined : createFileMetadataCell(),
@@ -553,6 +553,7 @@ export async function openSandboxTrial(
             workspaceRoot: root,
             analysisId: ANALYSIS_ID,
             allowedWritePrefix: workingDir,
+            template: setup.template?.step,
         },
     };
     const built = createSandboxAgents(deps)[setup.agentId];

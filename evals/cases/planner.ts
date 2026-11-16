@@ -591,12 +591,15 @@ type GroundedStep = z.infer<typeof GroundedStepSchema>;
 
 const AcceptedPlanSchema = z.object({ plan: z.object({ steps: z.array(GroundedStepSchema) }) });
 
-/** The plan of the last `submit_plan` that the host accepted meets `check`. Its whole input is the text that `text` reads. */
+/**
+ * The plan that the host stored from the last accepted `submit_plan` meets `check`. The host fills the grounding of a
+ * skeleton step, thus the stored plan, and not the input, holds it. The whole input is the text that `text` reads.
+ */
 function acceptedPlan(describe: string, check: (steps: readonly GroundedStep[], text: string) => boolean): (trial: Trial) => Grade {
     return (trial) => {
         const accepted = trial.calls.findLast((call) => call.tool === "submit_plan" && parseUnknownRecord(call.value)?.accepted === true);
         if (accepted === undefined) return { pass: false, detail: "no accepted submit_plan" };
-        const parsed = AcceptedPlanSchema.safeParse(accepted.input);
+        const parsed = AcceptedPlanSchema.safeParse(accepted.record);
         if (!parsed.success) return { pass: false, detail: "the accepted submit_plan holds no plan with steps" };
         const grounding = parsed.data.plan.steps.map((step) => `${step.id}:${step.grounding?.status ?? "-"}:${step.grounding?.template ?? "-"}`).join(", ");
         return check(parsed.data.plan.steps, JSON.stringify(accepted.input))
