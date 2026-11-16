@@ -1,4 +1,5 @@
-import type { AgentSession, RunSession } from "@inflexa-ai/harness";
+import type { AgentSession, RunSession, ToolContext } from "@inflexa-ai/harness";
+import { createCallLock } from "@inflexa-ai/harness/loop/call-lock.js";
 
 import type { Workspace } from "../tui/contexts/workspace.ts";
 import { asStr256 } from "../lib/types.ts";
@@ -67,4 +68,9 @@ export function buildRunSession(overrides: Partial<RunSession> = {}): RunSession
         auth: {},
         ...overrides,
     };
+}
+
+/** A `ToolContext` for a tool test, over the session that the tool reads. */
+export function buildToolContext(session: AgentSession = buildAgentSession()): ToolContext {
+    return { session, invocationId: "test-tool-call", signal: new AbortController().signal, callLock: createCallLock(), emit: () => {} };
 }

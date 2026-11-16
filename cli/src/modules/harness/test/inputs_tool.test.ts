@@ -14,22 +14,15 @@ import { err } from "neverthrow";
 
 import { insertAnalysisInput } from "../../../db/primary_mutation.ts";
 import { listAnalysisInputs } from "../../../db/primary_query.ts";
-import { buildAgentSession } from "../../../test_support/builders.ts";
+import { buildAgentSession, buildToolContext } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { createAnalysis, removeInput } from "../../analysis/analysis.ts";
 import { createManageInputsTool } from "../inputs_tool.ts";
 import { awaitOk } from "../../../test_support/result.ts";
-import { createCallLock } from "@inflexa-ai/harness/loop/call-lock.js";
 
 /** A minimal `ToolContext` carrying the analysis scope the tool reads. */
 function ctxFor(analysisId: string): ToolContext {
-    return {
-        session: buildAgentSession({ scope: { kind: "analysis", analysisId } }),
-        invocationId: "test-tool-call",
-        signal: new AbortController().signal,
-        callLock: createCallLock(),
-        emit: () => {},
-    };
+    return buildToolContext(buildAgentSession({ scope: { kind: "analysis", analysisId } }));
 }
 
 /** The decision of a user that approves each request, and keeps the requests. */
