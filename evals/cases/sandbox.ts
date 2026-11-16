@@ -16,6 +16,7 @@ import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.
 import type { PackageRequestOutcome } from "@inflexa-ai/harness/sandbox/types.js";
 
 import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
+import { z } from "zod";
 
 import { REAL_TOOL, type ToolScript } from "../lib/agent.js";
 import {
@@ -548,6 +549,169 @@ function templateOf(source: Partial<TemplateSource>): NonNullable<SandboxSetup["
     return { step: { ref: TEMPLATE_REF, binding: DE_SEED.binding }, source };
 }
 
+/** The contract of a preranked GSEA template. Its rank file is a list, not the DE table, thus the step prepares it. */
+const GSEA_TEMPLATE: TemplateContract = {
+    id: "tpl-gseapy-prerank",
+    version: "1.0.0",
+    label: "GSEApy preranked GSEA of a ranked gene list",
+    method: "M-0040",
+    language: "python",
+    parameters: [
+        localSlot("ranks_path", "string", "The absolute path of the rank file: a gene symbol and a score on each line, tab-separated, with no header"),
+        localSlot("gmt_path", "string", "The absolute path of the GMT file of the gene sets"),
+        { name: "min_size", type: "integer", description: "The smallest gene set that the test keeps", adaptable: true, default: 15 },
+    ],
+    inputs: [
+        { name: "ranks", path: "{{ranks_path}}" },
+        { name: "gene_sets", path: "{{gmt_path}}" },
+    ],
+    outputs: [{ name: "results", path: "gsea_results.csv", description: "Each gene set with its NES and FDR" }],
+};
+
+const GSEA_TEMPLATE_SCRIPT = [
+    '"""GSEApy preranked GSEA of a ranked gene list (template tpl-gseapy-prerank@1.0.0)."""',
+    "import pandas as pd",
+    "import gseapy as gp",
+    "",
+    'ranks = pd.read_csv({{ranks_path}}, sep="\\t", header=None, index_col=0).iloc[:, 0]',
+    "# [adaptable: min_size]",
+    "res = gp.prerank(rnk=ranks, gene_sets={{gmt_path}}, min_size=15, max_size=500, permutation_num=1000, seed=0, outdir=None)",
+    'res.res2d.to_csv("gsea_results.csv", index=False)',
+].join("\n");
+
+const GSEA_REF = "tpl-gseapy-prerank@1.0.0";
+
+/** A template source that serves the GSEA template. */
+const GSEA_SOURCE: Partial<TemplateSource> = {
+    contract: () => Promise.resolve(GSEA_TEMPLATE),
+    render: () =>
+        Promise.resolve({
+            ok: true as const,
+            snapshot: KNOWLEDGE_SNAPSHOT,
+            template: {
+                id: GSEA_TEMPLATE.id,
+                version: GSEA_TEMPLATE.version,
+                label: GSEA_TEMPLATE.label,
+                method: { id: "M-0040", label: "Preranked GSEA" },
+                language: "python",
+            },
+            script: GSEA_TEMPLATE_SCRIPT,
+            slots: [
+                { name: "ranks_path", source: "local", adaptable: true, lines: [] },
+                { name: "gmt_path", source: "local", adaptable: true, lines: [] },
+                { name: "min_size", value: 15, source: "default", adaptable: true, lines: [7] },
+            ],
+            local_slots: ["ranks_path", "gmt_path"],
+            environment: { match: "exact" },
+            syntax: { status: "ok" },
+            outputs: GSEA_TEMPLATE.outputs,
+        }),
+};
+
+const GSEA_GROUNDING: NonNullable<AnalysisStep["grounding"]> = {
+    status: "grounded",
+    snapshot: KNOWLEDGE_SNAPSHOT.digest,
+    claims: ["R-0060@e7d0"],
+    template: GSEA_REF,
+    reason: "A ranked list over all tested genes: preranked GSEA (R-0060).",
+};
+
+const GSEA_SEED = bindTemplateContract(GSEA_REF, GSEA_TEMPLATE, [], {
+    stepId: "T1S2",
+    claims: GSEA_GROUNDING.claims,
+    snapshot: GSEA_GROUNDING.snapshot,
+    departures: [],
+});
+
+/** The contract of the leave-one-out refits of the DE fit. Its model slots must match the fit that it checks. */
+const SENSITIVITY_TEMPLATE: TemplateContract = {
+    ...DE_TEMPLATE,
+    id: "tpl-pydeseq2-sensitivity",
+    label: "Leave-one-out refits of the PyDESeq2 Wald test",
+    method: "M-0041",
+    outputs: [{ name: "stability", path: "loo_stability.csv", description: "For each gene, the share of the refits that keep it significant" }],
+};
+
+const SENSITIVITY_REF = "tpl-pydeseq2-sensitivity@1.0.0";
+
+const SENSITIVITY_SOURCE: Partial<TemplateSource> = {
+    contract: () => Promise.resolve(SENSITIVITY_TEMPLATE),
+    render: () =>
+        Promise.resolve({
+            ...deRender(),
+            template: {
+                id: SENSITIVITY_TEMPLATE.id,
+                version: SENSITIVITY_TEMPLATE.version,
+                label: SENSITIVITY_TEMPLATE.label,
+                method: { id: "M-0041", label: "Leave-one-out refits" },
+                language: "python",
+            },
+            script: DE_TEMPLATE_SCRIPT.replace(DE_TEMPLATE.id, SENSITIVITY_TEMPLATE.id).replace("output/de_results.csv", "loo_stability.csv"),
+            outputs: SENSITIVITY_TEMPLATE.outputs,
+        }),
+};
+
+/** The script of the upstream fit, as `run_template` rendered it with the local slots of that step. */
+const UPSTREAM_FIT_SCRIPT = DE_TEMPLATE_SCRIPT.replaceAll("{{counts_path}}", '"/analysis-001/data/inputs/f-counts/counts.tsv"')
+    .replaceAll("{{samples_path}}", '"/analysis-001/data/inputs/f-meta/samples.csv"')
+    .replaceAll("{{design}}", '"~ group"')
+    .replaceAll("{{group_column}}", '"group"')
+    .replaceAll("{{test_level}}", '"treated"')
+    .replaceAll("{{reference_level}}", '"control"');
+
+/** The upstream DE step ran the two-group template: its rendered script, its table, and its summary. */
+function upstreamFitFiles(): Readonly<Record<string, string>> {
+    return { ...deFiles("T1S1"), "runs/run-001/T1S1/work/tpl-pydeseq2-two-group.py": UPSTREAM_FIT_SCRIPT };
+}
+
+function upstreamFitHandoff(): UpstreamHandoff {
+    const handoff = deHandoff("T1S1");
+    return {
+        ...handoff,
+        summaryMarkdown: `# Differential expression\n\nThe template tpl-pydeseq2-two-group@1.0.0 ran the PyDESeq2 Wald test, treated against control. ${RESPONDING} of ${GENE_COUNT} genes at adjusted p < 0.05. The table \`de_results.csv\` holds gene_id, symbol, baseMean, log2FoldChange, and padj.\n`,
+        artifacts: [...handoff.artifacts, `${handoff.workDir}/tpl-pydeseq2-two-group.py`],
+    };
+}
+
+const SENSITIVITY_GROUNDING: NonNullable<AnalysisStep["grounding"]> = {
+    status: "grounded",
+    snapshot: KNOWLEDGE_SNAPSHOT.digest,
+    claims: ["R-0070@e7d0"],
+    template: SENSITIVITY_REF,
+    reason: "Three replicates in each group: a leave-one-out refit shows if one sample drives the result (R-0070).",
+};
+
+const SENSITIVITY_SEED = bindTemplateContract(SENSITIVITY_REF, SENSITIVITY_TEMPLATE, [], {
+    stepId: "T1S2",
+    claims: SENSITIVITY_GROUNDING.claims,
+    snapshot: SENSITIVITY_GROUNDING.snapshot,
+    departures: [],
+});
+
+/** A sensitivity template step that refits the model of the upstream DE step. */
+const SENSITIVITY_STEP: StepSpec = {
+    stepId: "T1S2",
+    agent: "analyst",
+    name: "Leave-one-out sensitivity",
+    question: "Does the treated-against-control result of T1S1 hold when each sample is left out, with the same model as T1S1?",
+    acceptance: ["A table of the stability of each gene across the refits"],
+    profile: BULK_PROFILE,
+    upstream: [upstreamFitHandoff()],
+    kind: "template",
+    grounding: SENSITIVITY_GROUNDING,
+    template: SENSITIVITY_SEED.briefing.template,
+};
+
+/** A run of the sensitivity script leaves its table. */
+function sensitivityRun(stdout: string): ExecRule {
+    return ({ line, read, cwd }) => {
+        const script = SCRIPT_WORD.exec(line)?.[0];
+        const text = script === undefined ? undefined : (read(script) ?? read(`${cwd}/${script}`));
+        if (text === undefined || !text.includes(SENSITIVITY_TEMPLATE.id)) return undefined;
+        return { exitCode: 0, stdout, writes: { "loo_stability.csv": "gene_id,share_significant\nENSG00000010000,1.0\n" } };
+    };
+}
+
 /** A path of a call or a result relative to the working directory of the DE step, as the files of a trial name it. */
 function inWorkDir(path: string): string {
     const prefix = `${workingDirOf({ agentId: DE_STEP.agent, stepId: DE_STEP.stepId })}/`;
@@ -657,6 +821,16 @@ const ENRICH_STEP: StepSpec = {
     upstream: [deHandoff("T1S1")],
 };
 
+/** An enrichment template step over the DE table of the upstream step. */
+const GSEA_STEP: StepSpec = {
+    ...ENRICH_STEP,
+    question: "Which hallmark pathways shift with the treatment across the whole ranked gene list?",
+    acceptance: ["A table of hallmark sets with NES and FDR"],
+    kind: "template",
+    grounding: GSEA_GROUNDING,
+    template: GSEA_SEED.briefing.template,
+};
+
 const ENRICH_LOCK: readonly LockedPackage[] = [...PYTHON_BASE, { name: "gseapy", version: "1.1.4", track: "python" }];
 
 /** The step does not reach the network: no data fetcher of a library, no URL, no download command. */
@@ -736,6 +910,97 @@ const DEDUP_WRITES: ExecRule = ({ argv, read, cwd }) => {
     if (!absolute.startsWith(`${workDir}/`)) return undefined;
     return { exitCode: 0, stdout: `${GENE_COUNT}`, writes: { [absolute.slice(workDir.length + 1)]: `${COUNTS}\n` } };
 };
+
+/** The input of the `run_template` call of a run, as the model sent it. */
+const RunTemplateInputSchema = z.object({
+    slots: z.record(z.string(), z.unknown()).catch({}),
+    overrides: z.array(z.object({ slot: z.string(), reason: z.string() })).catch([]),
+});
+
+/** The input of each `run_template` call whose run ended with exit code 0. */
+function goodRunInputs(trial: Trial): z.infer<typeof RunTemplateInputSchema>[] {
+    return templateRuns(trial)
+        .filter((run) => run.exitCode === 0)
+        .map((run) => RunTemplateInputSchema.parse(trial.calls[run.at]?.input ?? {}));
+}
+
+/** A run of the template with exit code 0 sent `slot` = `value`, and named the slot in its overrides. */
+function overridesSlot(slot: string, value: number): EvalCase["grade"] {
+    return (trial) => {
+        const inputs = goodRunInputs(trial);
+        const hit = inputs.find((input) => input.slots[slot] === value && input.overrides.some((entry) => entry.slot === slot));
+        return hit === undefined
+            ? {
+                  pass: false,
+                  detail: `no good run with ${slot} = ${value} and an override (runs: ${inputs.map((input) => JSON.stringify(input.slots[slot])).join(", ") || "none"})`,
+              }
+            : { pass: true, detail: `ran with ${slot} = ${value} and the override "${hit.overrides.find((entry) => entry.slot === slot)?.reason ?? ""}"` };
+    };
+}
+
+/** A design formula with no space, thus `~ group` and `~group` read the same. */
+function formulaOf(value: unknown): string {
+    return String(value).replaceAll(" ", "");
+}
+
+/** A run of the template with exit code 0 sent the model of the upstream fit: its design, its group column, and its levels. */
+const keepsUpstreamModel: EvalCase["grade"] = (trial) => {
+    const inputs = goodRunInputs(trial);
+    const hit = inputs.find(
+        (input) =>
+            formulaOf(input.slots["design"]) === "~group" &&
+            input.slots["group_column"] === "group" &&
+            input.slots["reference_level"] === "control" &&
+            input.slots["test_level"] === "treated",
+    );
+    return hit === undefined
+        ? {
+              pass: false,
+              detail: `no good run with the model of the upstream fit (designs: ${inputs.map((input) => JSON.stringify(input.slots["design"])).join(", ") || "none"})`,
+          }
+        : { pass: true, detail: "ran with the design ~ group of the upstream fit" };
+};
+
+/**
+ * A Python command that reads the DE table of the upstream step and writes a table leaves a rank file at the path that
+ * it names: one gene symbol and one score on each line, with no header, as a ranked list is. The scripted sandbox runs
+ * no code, thus without this rule no input that the step prepares exists.
+ */
+const RANKS_WRITES: ExecRule = ({ argv, read, cwd }) => {
+    if (!["python", "python3"].includes(argv[0] ?? "")) return undefined;
+    const code = argv[1] === "-c" ? argv.slice(2).join(" ") : (read(argv[1] ?? "") ?? "");
+    if (!code.includes("de_results")) return undefined;
+    const target = (/to_csv\(\s*["']([^"']+)["']/.exec(code) ?? /open\(\s*["']([^"']+)["']\s*,\s*["']w/.exec(code))?.[1];
+    if (target === undefined) return undefined;
+    const workDir = workingDirOf({ agentId: ENRICH_STEP.agent, stepId: ENRICH_STEP.stepId });
+    const absolute = target.startsWith("/") ? target : `${cwd}/${target}`;
+    if (!absolute.startsWith(`${workDir}/`)) return undefined;
+    const ranks = Array.from({ length: GENE_COUNT }, (_, i) => `${symbolOf(i, "human")}\t${(10 - i * 0.01).toFixed(3)}`).join("\n");
+    return { exitCode: 0, stdout: `${GENE_COUNT} genes ranked`, writes: { [absolute.slice(workDir.length + 1)]: `${ranks}\n` } };
+};
+
+/** The GSEA template reads a rank file with no header and two columns, and the GMT of its slot. */
+function gseaTemplateRun(stdout: string): ExecRule {
+    return ({ line, read, cwd }) => {
+        const script = SCRIPT_WORD.exec(line)?.[0];
+        const text = script === undefined ? undefined : (read(script) ?? read(`${cwd}/${script}`));
+        if (text === undefined || !text.includes(GSEA_TEMPLATE.id)) return undefined;
+        const ranksPath = /read_csv\(\s*["']([^"']+)["']/.exec(text)?.[1];
+        const ranks = ranksPath === undefined ? undefined : read(ranksPath);
+        if (ranks === undefined) return { exitCode: 1, stderr: `FileNotFoundError: [Errno 2] No such file or directory: '${ranksPath ?? ""}'` };
+        const rows = ranks.split("\n").filter((row) => row.length > 0);
+        const bad = rows.find((row) => row.split("\t").length !== 2 || Number.isNaN(Number(row.split("\t")[1])));
+        if (bad !== undefined)
+            return {
+                exitCode: 1,
+                stderr: `ValueError: the rank file must hold a gene and a numeric score on each line, with no header; got: ${bad.slice(0, 80)}`,
+            };
+        const gmtPath = /gene_sets=\s*["']([^"']+)["']/.exec(text)?.[1];
+        if (gmtPath === undefined || !gmtPath.endsWith(".gmt"))
+            return { exitCode: 1, stderr: `ValueError: gene_sets must be the path of a GMT file, got ${gmtPath ?? "none"}` };
+        return { exitCode: 0, stdout, writes: { "gsea_results.csv": "Term,NES,FDR q-val\nHALLMARK_INTERFERON_ALPHA_RESPONSE,2.41,0.001\n" } };
+    };
+}
 
 /** A probe of the duplicate ids gets the answer that a real run gives: one id, on two identical rows. */
 const DUPLICATE_PROBE: ExecRule = ({ line, read, cwd }) => {
@@ -1053,6 +1318,109 @@ const stepCases: readonly EvalCase[] = [
         maxSteps: 14,
         timeoutMs: 600_000,
         grade: all(blocksWithNoRun, noOwnDeScript),
+    }),
+    sandboxCase({
+        id: "step-template-prepares-inputs",
+        set: "dev",
+        source: "template step prompt: prepare the inputs that the template reads; a template that fits after a reshape of the inputs is no blocker",
+        step: GSEA_STEP,
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: ENRICH_LOCK,
+            template: { step: { ref: GSEA_REF, binding: GSEA_SEED.binding }, source: GSEA_SOURCE },
+            exec: [gseaTemplateRun("12 hallmark sets at FDR < 0.25"), RANKS_WRITES],
+        },
+        maxSteps: 16,
+        timeoutMs: 600_000,
+        grade: all(ranTemplate, keepsRenderedScript, never(["report_blocker"])),
+    }),
+    sandboxCase({
+        id: "step-template-prepares-inputs-held-out",
+        set: "held-out",
+        source: "paraphrase of step-template-prepares-inputs",
+        step: {
+            ...GSEA_STEP,
+            name: "Pathway shift",
+            question: "Test the full ranked list of the treatment response for hallmark programs that move up or down.",
+        },
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: ENRICH_LOCK,
+            template: { step: { ref: GSEA_REF, binding: GSEA_SEED.binding }, source: GSEA_SOURCE },
+            exec: [gseaTemplateRun("9 hallmark sets at FDR < 0.25"), RANKS_WRITES],
+        },
+        maxSteps: 16,
+        timeoutMs: 600_000,
+        grade: all(ranTemplate, keepsRenderedScript, never(["report_blocker"])),
+    }),
+    sandboxCase({
+        id: "step-template-keeps-upstream-model",
+        set: "dev",
+        source: "design decision of #898: a second fit reads the model of the upstream step, as each step inspects an upstream step; no slot is carried",
+        step: SENSITIVITY_STEP,
+        setup: {
+            files: { ...BULK_FILES, ...upstreamFitFiles() },
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            template: { step: { ref: SENSITIVITY_REF, binding: SENSITIVITY_SEED.binding }, source: SENSITIVITY_SOURCE },
+            exec: [sensitivityRun("2000 genes refit 6 times")],
+        },
+        maxSteps: 16,
+        timeoutMs: 600_000,
+        grade: all(keepsUpstreamModel, keepsRenderedScript),
+    }),
+    sandboxCase({
+        id: "step-template-keeps-upstream-model-held-out",
+        set: "held-out",
+        source: "paraphrase of step-template-keeps-upstream-model",
+        step: {
+            ...SENSITIVITY_STEP,
+            name: "Robustness of the contrast",
+            question: "Refit the DE model of T1S1 once without each sample, and report how stable each gene's significance stays.",
+        },
+        setup: {
+            files: { ...BULK_FILES, ...upstreamFitFiles() },
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            template: { step: { ref: SENSITIVITY_REF, binding: SENSITIVITY_SEED.binding }, source: SENSITIVITY_SOURCE },
+            exec: [sensitivityRun("2000 genes refit 6 times")],
+        },
+        maxSteps: 16,
+        timeoutMs: 600_000,
+        grade: all(keepsUpstreamModel, keepsRenderedScript),
+    }),
+    sandboxCase({
+        id: "step-template-overrides-bound-slot",
+        set: "dev",
+        source: "run_template description: to change a bound value, send the new value and an overrides entry with the reason; the user sets the threshold",
+        step: { ...TEMPLATE_STEP, memoryConstraints: ["This is an exploratory screen: call a gene significant at FDR below 0.1, not 0.05."] },
+        setup: {
+            files: BULK_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            template: templateOf(RENDERING_SOURCE),
+            exec: [templateRunOnCounts("530 genes at padj < 0.1")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: all(overridesSlot("alpha", 0.1), keepsRenderedScript, noOwnDeScript),
+    }),
+    sandboxCase({
+        id: "step-template-overrides-bound-slot-held-out",
+        set: "held-out",
+        source: "paraphrase of step-template-overrides-bound-slot",
+        step: {
+            ...TEMPLATE_STEP,
+            name: "Expression contrast",
+            question: "Find the genes whose expression differs between the treated and the control cultures.",
+            memoryConstraints: ["Keep genes with q < 0.1; a 5% FDR is too strict for this pilot."],
+        },
+        setup: {
+            files: BULK_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            template: templateOf(RENDERING_SOURCE),
+            exec: [templateRunOnCounts("530 genes at padj < 0.1")],
+        },
+        maxSteps: 14,
+        timeoutMs: 600_000,
+        grade: all(overridesSlot("alpha", 0.1), keepsRenderedScript, noOwnDeScript),
     }),
     sandboxCase({
         id: "step-enrichment-offline-ora",
