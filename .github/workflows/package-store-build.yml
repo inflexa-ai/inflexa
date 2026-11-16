@@ -180,7 +180,7 @@ jobs:
       - name: Log in to GHCR
         # The ORAS push and the ORAS manifest resolve both read the docker
         # credential store, so this one login authenticates ORAS as well.
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
