@@ -10,7 +10,8 @@
 import type { DataProfileResult } from "@inflexa-ai/harness/contracts/data-profile.js";
 import { composeStepBriefing, type TemplateBrief, type UpstreamHandoff } from "@inflexa-ai/harness/prompts/briefing.js";
 import type { AnalysisStep } from "@inflexa-ai/harness/schemas/workflow-state.js";
-import type { KnowledgeClient, TemplateContract } from "@inflexa-ai/harness/tools/knowledge/client.js";
+import type { TemplateContract, TemplateSource } from "@inflexa-ai/harness/tools/knowledge/client.js";
+import { bindTemplateContract } from "@inflexa-ai/harness/tools/knowledge/template-binding.js";
 import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.js";
 import type { PackageRequestOutcome } from "@inflexa-ai/harness/sandbox/types.js";
 
@@ -28,7 +29,7 @@ import {
     decides,
     execs,
     assistantText,
-    hasFile,
+    hasFileNamed,
     neverSays,
     inSummary,
     says,
@@ -38,12 +39,15 @@ import {
     neverExec,
     neverWith,
     noCallUnder,
-    wroteUnder,
+    wroteScript,
+    wroteResult,
+    scriptsOf,
+    ranTemplate,
+    templateRuns,
     acceptedProfile,
     settled,
     distinctPaths,
     type CallMatch,
-    type Grade,
     type Trial,
     type EvalCase,
 } from "../lib/case.js";
@@ -136,6 +140,8 @@ export type StepSpec = {
     readonly upstream?: readonly UpstreamHandoff[];
     /** The constraints of the analysis memory, as the user stated them. */
     readonly memoryConstraints?: readonly string[];
+    /** A template step runs the template of its grounding. Absent: an open step. */
+    readonly kind?: "template";
     /** The knowledge grounding of the plan step, and the template contract that the scheduler fetched for it. */
     readonly grounding?: NonNullable<AnalysisStep["grounding"]>;
     readonly template?: TemplateBrief;
@@ -162,6 +168,7 @@ function briefing(spec: StepSpec): string {
             status: "pending",
             agent: spec.agent,
             maxSteps: 200,
+            kind: spec.kind,
             ...(spec.grounding === undefined ? {} : { grounding: spec.grounding }),
         },
         ...(spec.template === undefined ? {} : { template: spec.template }),
@@ -191,12 +198,12 @@ function deTableOf(style: SymbolStyle): string {
 
 const DE_TABLE = deTableOf("human");
 
-const DE_SUMMARY = `# Differential expression\n\nDESeq2, treated against control. ${RESPONDING} of ${GENE_COUNT} genes at adjusted p < 0.05: 280 up, 132 down, led by ISG15, MX1, and IFIT1. The table \`output/de_results.csv\` holds gene_id, symbol (HGNC), baseMean, log2FoldChange, and padj for each gene.\n`;
+const DE_SUMMARY = `# Differential expression\n\nDESeq2, treated against control. ${RESPONDING} of ${GENE_COUNT} genes at adjusted p < 0.05: 280 up, 132 down, led by ISG15, MX1, and IFIT1. The table \`de_results.csv\` holds gene_id, symbol (HGNC), baseMean, log2FoldChange, and padj for each gene.\n`;
 
 const QC_TABLE = `sample,library_size,detected_genes\n${["T1", "T2", "T3", "C1", "C2", "C3"].map((sample, i) => `${sample},${2_100_000 + i * 50_000},${1800 + i * 10}`).join("\n")}\n`;
 
 const QC_SUMMARY =
-    "# Quality control\n\nAll 6 libraries pass: 2.1-2.4 M reads each, 1800-1850 genes detected. No sample is an outlier on the PCA. The table `output/qc_metrics.csv` holds the metrics of each sample.\n";
+    "# Quality control\n\nAll 6 libraries pass: 2.1-2.4 M reads each, 1800-1850 genes detected. No sample is an outlier on the PCA. The table `qc_metrics.csv` holds the metrics of each sample.\n";
 
 export function deHandoff(stepId: string): UpstreamHandoff {
     const dir = `${ROOT}/runs/run-001/${stepId}`;
@@ -204,9 +211,9 @@ export function deHandoff(stepId: string): UpstreamHandoff {
         stepId,
         agentId: "analyst",
         summaryMarkdown: DE_SUMMARY,
-        summaryPath: `${dir}/output/summary.md`,
-        outputDir: `${dir}/output`,
-        artifacts: [`${dir}/output/de_results.csv`],
+        summaryPath: `${dir}/summary.md`,
+        workDir: `${dir}/work`,
+        artifacts: [`${dir}/work/de_results.csv`],
     };
 }
 
@@ -216,18 +223,18 @@ function qcHandoff(stepId: string): UpstreamHandoff {
         stepId,
         agentId: "analyst",
         summaryMarkdown: QC_SUMMARY,
-        summaryPath: `${dir}/output/summary.md`,
-        outputDir: `${dir}/output`,
-        artifacts: [`${dir}/output/qc_metrics.csv`],
+        summaryPath: `${dir}/summary.md`,
+        workDir: `${dir}/work`,
+        artifacts: [`${dir}/work/qc_metrics.csv`],
     };
 }
 
 function qcFiles(stepId: string): Readonly<Record<string, string>> {
-    return { [`runs/run-001/${stepId}/output/qc_metrics.csv`]: QC_TABLE, [`runs/run-001/${stepId}/output/summary.md`]: QC_SUMMARY };
+    return { [`runs/run-001/${stepId}/work/qc_metrics.csv`]: QC_TABLE, [`runs/run-001/${stepId}/summary.md`]: QC_SUMMARY };
 }
 
 export function deFiles(stepId: string, style: SymbolStyle = "human"): Readonly<Record<string, string>> {
-    return { [`runs/run-001/${stepId}/output/de_results.csv`]: `${deTableOf(style)}\n`, [`runs/run-001/${stepId}/output/summary.md`]: DE_SUMMARY };
+    return { [`runs/run-001/${stepId}/work/de_results.csv`]: `${deTableOf(style)}\n`, [`runs/run-001/${stepId}/summary.md`]: DE_SUMMARY };
 }
 
 /** The inputs of a rodent study: the counts with the gene names of the rodent, and the sample sheet. */
@@ -298,7 +305,7 @@ export const REF_FILES: Readonly<Record<string, string>> = {
  */
 function usesGeneSets(own: RegExp, other: RegExp): EvalCase["grade"] {
     return (trial) => {
-        const scripts = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
+        const scripts = scriptsOf(trial);
         const wrong = scripts.find(([, text]) => other.test(text) && !own.test(text));
         if (wrong !== undefined) return { pass: false, detail: `${wrong[0]} uses ${String(other)}` };
         const named = scripts.some(([, text]) => own.test(text)) || execs(own)(trial).pass;
@@ -312,17 +319,20 @@ const STEP_TOOLS: Readonly<Record<string, ToolScript>> = {
     list_available_refs: refs([HUMAN_HALLMARK, COLLECTRI]),
 };
 
-/** A run of a script under `scripts/` succeeds, and leaves the files that `writes` names. */
+/** A script file of a command line: the first word that names a Python or R script. */
+const SCRIPT_WORD = /\S+\.(py|R)\b/;
+
+/** A run of a script file succeeds, and leaves the files that `writes` names. */
 function scriptRun(writes: Readonly<Record<string, string>>, stdout = "done"): ExecRule {
     return ({ argv }) => {
-        const script = argv.find((word) => word.startsWith("scripts/") || word.includes("/scripts/"));
+        const script = argv.slice(1).find((word) => SCRIPT_WORD.test(word) && !word.startsWith("-"));
         if (script === undefined || !["python", "python3", "Rscript"].includes(argv[0] ?? "")) return undefined;
         return { exitCode: 0, stdout, writes };
     };
 }
 
-/** A command that runs a script of the step. */
-const runsScript: CallMatch = { tool: "execute_command", input: (input) => /scripts\//.test(JSON.stringify(input)) };
+/** A command that runs a script file of the step. */
+const runsScript: CallMatch = { tool: "execute_command", input: (input) => /(python3?|Rscript)\s+\S+\.(py|R)\b/.test(commandLine(input) ?? "") };
 
 function names(word: RegExp): CallMatch["input"] {
     return (input) => word.test(JSON.stringify(input));
@@ -474,42 +484,42 @@ const DE_TEMPLATE_SCRIPT = [
     'fig.savefig("figures/volcano.pdf")',
 ].join("\n");
 
-/** A knowledge service that serves the contract and renders the DE template. */
-const RENDERING_KNOWLEDGE: Partial<KnowledgeClient> = {
-    contract: () => Promise.resolve(DE_TEMPLATE),
-    render: () =>
-        Promise.resolve({
-            ok: true as const,
-            snapshot: KNOWLEDGE_SNAPSHOT,
-            template: {
-                id: DE_TEMPLATE.id,
-                version: DE_TEMPLATE.version,
-                label: DE_TEMPLATE.label,
-                method: { id: "M-0002", label: "DESeq2 Wald test" },
-                language: "python",
-            },
-            script: DE_TEMPLATE_SCRIPT,
-            slots: [
-                ...["counts_path", "samples_path", "group_column", "reference_level", "test_level", "design"].map((name) => ({
-                    name,
-                    source: "local",
-                    adaptable: true,
-                    lines: [],
-                })),
-                { name: "alpha", value: 0.05, source: "plan", adaptable: true, lines: [12] },
-                { name: "shrink", value: "apeglm", source: "pinned", adaptable: false, lines: [] },
-            ],
-            local_slots: ["counts_path", "samples_path", "group_column", "reference_level", "test_level", "design"],
-            environment: { match: "exact" },
-            syntax: { status: "ok" },
-            outputs: DE_TEMPLATE.outputs,
-            decision_record: { step: "differential_expression", method: "M-0002", claims: ["R-0031@e7d0"] },
-        }),
-};
+/** The answer of a render of the DE template: the script with its local slots still marked, as the service renders it. */
+function deRender(): Awaited<ReturnType<TemplateSource["render"]>> {
+    return {
+        ok: true as const,
+        snapshot: KNOWLEDGE_SNAPSHOT,
+        template: {
+            id: DE_TEMPLATE.id,
+            version: DE_TEMPLATE.version,
+            label: DE_TEMPLATE.label,
+            method: { id: "M-0002", label: "DESeq2 Wald test" },
+            language: "python",
+        },
+        script: DE_TEMPLATE_SCRIPT,
+        slots: [
+            ...["counts_path", "samples_path", "group_column", "reference_level", "test_level", "design"].map((name) => ({
+                name,
+                source: "local",
+                adaptable: true,
+                lines: [],
+            })),
+            { name: "alpha", value: 0.05, source: "plan", adaptable: true, lines: [12] },
+            { name: "shrink", value: "apeglm", source: "pinned", adaptable: false, lines: [] },
+        ],
+        local_slots: ["counts_path", "samples_path", "group_column", "reference_level", "test_level", "design"],
+        environment: { match: "exact" },
+        syntax: { status: "ok" },
+        outputs: DE_TEMPLATE.outputs,
+    };
+}
 
-/** The knowledge service did not answer the contract or the render. */
-const UNAVAILABLE_KNOWLEDGE: Partial<KnowledgeClient> = {
-    contract: () => Promise.resolve({ match: "unavailable", reason: "the knowledge service did not answer after 3 tries" }),
+/** A template source that serves the contract and renders the DE template. */
+const RENDERING_SOURCE: Partial<TemplateSource> = { contract: () => Promise.resolve(DE_TEMPLATE), render: () => Promise.resolve(deRender()) };
+
+/** The source served the contract at dispatch, and then does not answer the render. */
+const RENDER_UNAVAILABLE_SOURCE: Partial<TemplateSource> = {
+    contract: () => Promise.resolve(DE_TEMPLATE),
     render: () => Promise.resolve({ match: "unavailable", reason: "the knowledge service did not answer after 3 tries" }),
 };
 
@@ -522,60 +532,91 @@ const DE_GROUNDING: NonNullable<AnalysisStep["grounding"]> = {
     reason: "Two groups of bulk counts with three replicates: the negative binomial Wald test (R-0031).",
 };
 
-const DE_TEMPLATE_BRIEF: TemplateBrief = {
-    ref: TEMPLATE_REF,
-    version_served: "1.0.0",
-    slots: DE_TEMPLATE.parameters,
-    inputs: (DE_TEMPLATE.inputs ?? []).map((input) => ({ name: input.name, path: input.path })),
-    bound: [{ name: "alpha", value: 0.05, source: "plan" }],
-    unbound_settings: [],
+/** The template part of the seed, as the scheduler binds the plan settings to the served contract at dispatch. */
+const DE_SEED = bindTemplateContract(TEMPLATE_REF, DE_TEMPLATE, DE_GROUNDING.settings ?? [], {
+    stepId: "T1S1",
+    claims: DE_GROUNDING.claims,
+    snapshot: DE_GROUNDING.snapshot,
+    departures: [],
+});
+
+/** A DE template step of the plan, with the contract in its briefing. */
+const TEMPLATE_STEP: StepSpec = { ...DE_STEP, kind: "template", grounding: DE_GROUNDING, template: DE_SEED.briefing.template };
+
+/** The template of the step and its source, for the setup of a template case. */
+function templateOf(source: Partial<TemplateSource>): NonNullable<SandboxSetup["template"]> {
+    return { step: { ref: TEMPLATE_REF, binding: DE_SEED.binding }, source };
+}
+
+/** A path of a call or a result relative to the working directory of the DE step, as the files of a trial name it. */
+function inWorkDir(path: string): string {
+    const prefix = `${workingDirOf({ agentId: DE_STEP.agent, stepId: DE_STEP.stepId })}/`;
+    return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+}
+
+/** The rendered scripts that `run_template` wrote, relative to the working directory. */
+function renderedScripts(trial: Trial): Set<string> {
+    return new Set(templateRuns(trial).map((run) => inWorkDir(run.scriptPath)));
+}
+
+/** No script of the step fits the DE model beside the rendered script. A helper that plots the table is not one. */
+const noOwnDeScript: EvalCase["grade"] = (trial) => {
+    const rendered = renderedScripts(trial);
+    const own = scriptsOf(trial).find(([path, text]) => !rendered.has(path) && /DeseqDataSet\s*\(|DESeq\s*\(/.test(text));
+    return own === undefined ? { pass: true, detail: "no DE script of its own" } : { pass: false, detail: `wrote its own DE script ${own[0]}` };
 };
 
-/** A DE step whose grounding names the template, with the contract in its briefing. */
-const TEMPLATE_STEP: StepSpec = { ...DE_STEP, grounding: DE_GROUNDING, template: DE_TEMPLATE_BRIEF };
+/** No file tool changes a rendered script after its first run. */
+const keepsRenderedScript: EvalCase["grade"] = (trial) => {
+    const first = templateRuns(trial)[0];
+    if (first === undefined) return { pass: true, detail: "no rendered script" };
+    const rendered = renderedScripts(trial);
+    const edit = trial.calls.find((call, at) => {
+        if (at <= first.at || (call.tool !== "write_file" && call.tool !== "edit_file")) return false;
+        const path = parseUnknownRecord(call.input)?.path;
+        return typeof path === "string" && rendered.has(inWorkDir(path));
+    });
+    return edit === undefined ? { pass: true, detail: "kept the rendered script" } : { pass: false, detail: `${edit.tool} on the rendered script` };
+};
 
-/** The file name of the script that the render call wrote: its `script_name`, else the default of the tool. */
-function renderedScriptOf(trial: Trial): string | undefined {
-    const render = trial.calls.find((call) => call.tool === "knowledge_template");
-    if (render === undefined) return undefined;
-    const named = parseUnknownRecord(render.input)?.script_name;
-    return typeof named === "string" ? named : "tpl-pydeseq2-two-group.py";
+/** A blocker ended the step, and no run of the template ended with exit code 0. */
+const blocksWithNoRun = all(blockerSays([]), (trial: Trial) => {
+    const good = ranTemplate(trial);
+    return good.pass ? { pass: false, detail: good.detail } : { pass: true, detail: "no successful run of the template" };
+});
+
+/** The step runs the template to exit code 0, keeps the rendered script, and fits no DE model of its own. */
+const RUNS_TEMPLATE = all(ranTemplate, keepsRenderedScript, noOwnDeScript);
+
+/** The counts path that a rendered script reads. */
+function countsPathOf(script: string): string | undefined {
+    return /read_csv\(\s*["']([^"']+)["']\s*,\s*sep=/.exec(script)?.[1];
 }
 
 /**
- * A script of the step that fits the DE model, that the render did not write, and that does not name the template. A
- * helper that plots the table is not one. A copy of the rendered script that names its template is an edit of the
- * template: the scripted sandbox runs no code, thus an edit that a command makes in place never lands, and the agent
- * then writes the edited copy with the file tool.
+ * A run of the rendered DE script fails on a duplicate gene id of its counts, as pandas fails on a duplicate index,
+ * and else leaves the files that the script names. The template stays the same, thus the step must give the script
+ * counts with no duplicate.
  */
-function ownDeScript(trial: Trial): Grade {
-    const rendered = renderedScriptOf(trial);
-    const own = Object.entries(trial.files ?? {}).find(
-        ([path, text]) =>
-            path.startsWith("scripts/") &&
-            path !== `scripts/${rendered ?? ""}` &&
-            /DeseqDataSet\s*\(/.test(String(text)) &&
-            !String(text).includes(DE_TEMPLATE.id),
-    );
-    return own === undefined ? { pass: true, detail: "no DE script of its own" } : { pass: false, detail: `wrote its own DE script ${own[0]}` };
+function templateRunOnCounts(stdout: string): ExecRule {
+    return ({ line, read, cwd }) => {
+        const script = SCRIPT_WORD.exec(line)?.[0];
+        const text = script === undefined ? undefined : (read(script) ?? read(`${cwd}/${script}`));
+        if (text === undefined || !text.includes(DE_TEMPLATE.id)) return undefined;
+        const countsPath = countsPathOf(text);
+        const counts = countsPath === undefined ? undefined : read(countsPath);
+        if (counts === undefined) return { exitCode: 1, stderr: `FileNotFoundError: [Errno 2] No such file or directory: '${countsPath ?? ""}'` };
+        const ids = counts
+            .split("\n")
+            .slice(1)
+            .filter((row) => row.length > 0)
+            .map((row) => row.split("\t")[0]);
+        const duplicate = ids.find((id, i) => ids.indexOf(id) !== i);
+        if (duplicate !== undefined)
+            return { exitCode: 1, stderr: `ValueError: cannot reindex on an axis with duplicate labels (gene_id ${duplicate ?? ""} appears 2 times)` };
+        return { exitCode: 0, stdout, writes: namedOutputs(text) };
+    };
 }
-
-/** The step runs the script that the render wrote. */
-function runsRendered(trial: Trial): Grade {
-    const rendered = renderedScriptOf(trial);
-    if (rendered === undefined) return { pass: false, detail: "no knowledge_template call" };
-    const ran = trial.calls.some((call) => call.tool === "execute_command" && (commandLine(call.input) ?? "").includes(`scripts/${rendered}`));
-    return ran ? { pass: true, detail: `ran scripts/${rendered}` } : { pass: false, detail: `no run of scripts/${rendered}` };
-}
-
-/** The step renders the template, runs the rendered script, and fits no DE model in a script of its own. */
-const RENDERS_TEMPLATE = all(runsRendered, ownDeScript);
-
-/**
- * The service did not answer: the step writes the script itself, and it does not spin on the template tool. The end of
- * the run is not graded: the scripted sandbox cannot run the script of the agent, and a careful agent distrusts it.
- */
-const WRITES_OWN_ON_UNAVAILABLE = all(wroteUnder("scripts/", /DeseqDataSet|pydeseq2/i), atMost({ tool: "knowledge_template" }, 1));
 
 /** An Enrichr library name as `gene_sets=`, which sends a request to the Enrichr service. */
 const ENRICHR_LIBRARY = /["'](MSigDB_|KEGG_|GO_(Biological|Molecular|Cellular)|Reactome_|WikiPathways?_)\w*["']/;
@@ -587,7 +628,7 @@ const ENRICHR_LIBRARY = /["'](MSigDB_|KEGG_|GO_(Biological|Molecular|Cellular)|R
  */
 function offlineOra(gmt: RegExp): EvalCase["grade"] {
     return (trial) => {
-        const scripts = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
+        const scripts = scriptsOf(trial);
         const hit = scripts.find(([, text]) => /\b(enrich|enrichr|enricher|enrichGO|prerank)\s*\(/.test(text));
         if (hit === undefined) return { pass: false, detail: `no enrichment script (scripts: ${scripts.map(([path]) => path).join(", ") || "none"})` };
         const [path, text] = hit;
@@ -625,8 +666,10 @@ const NETWORK_FETCH =
 /** No script of the step matches `pattern`. A note that names a fetcher to explain its absence fetches nothing. */
 function noScriptMatches(pattern: RegExp): EvalCase["grade"] {
     return (trial) => {
-        const hit = Object.entries(trial.files ?? {}).find(([path, text]) => path.startsWith("scripts/") && pattern.test(text));
-        return hit === undefined ? { pass: true, detail: `no script matches ${String(pattern)}` } : { pass: false, detail: `${hit[0]} matches ${String(pattern)}` };
+        const hit = scriptsOf(trial).find(([, text]) => pattern.test(text));
+        return hit === undefined
+            ? { pass: true, detail: `no script matches ${String(pattern)}` }
+            : { pass: false, detail: `${hit[0]} matches ${String(pattern)}` };
     };
 }
 
@@ -646,19 +689,22 @@ const TF_STEP: StepSpec = {
 const FIGURE_STUB = `\u0089PNG\r\n\u001a\n${"\u0000".repeat(24_000)}`;
 
 /**
- * The files that a script names under `output/` and `figures/`, as a run leaves them: a table holds the DE table, and
- * a figure holds a stub. The agent finds what its own script wrote, thus it does not judge the run broken.
+ * The files that a script names by a relative path in quotes, as a run leaves them: a table holds the DE table, and a
+ * figure holds a stub. The agent finds what its own script wrote, thus it does not judge the run broken. An absolute
+ * path and a path out of the working directory name an input, not an output.
  */
 function namedOutputs(text: string): Record<string, string> {
-    const named = [...new Set(text.match(/(output|figures)\/[\w.-]+\.(csv|tsv|png|pdf|svg)/g) ?? [])];
-    return Object.fromEntries(named.map((path) => [path, path.startsWith("output/") ? `${DE_TABLE}\n` : FIGURE_STUB]));
+    const named = [...new Set([...text.matchAll(/["']((?:[\w.-]+\/)*[\w.-]+\.(csv|tsv|png|pdf|svg))["']/g)].map((match) => match[1] ?? ""))].filter(
+        (path) => path.length > 0 && !path.startsWith("..") && !path.startsWith("data/"),
+    );
+    return Object.fromEntries(named.map((path) => [path, /\.(csv|tsv)$/.test(path) ? `${DE_TABLE}\n` : FIGURE_STUB]));
 }
 
-/** A run of a Python or R script under `scripts/` that leaves the files that the script names. */
+/** A run of a Python or R script file that leaves the files that the script names. */
 export function namedOutputsRun(stdout: string): ExecRule {
     return ({ argv, line, read, cwd }) => {
         if (!["python", "python3", "Rscript"].includes(argv[0] ?? "")) return undefined;
-        const script = /scripts\/\S+\.(py|R)\b/.exec(line)?.[0];
+        const script = SCRIPT_WORD.exec(line)?.[0];
         if (script === undefined) return undefined;
         const text = read(script) ?? read(`${cwd}/${script}`);
         return text === undefined ? undefined : { exitCode: 0, stdout, writes: namedOutputs(text) };
@@ -666,7 +712,7 @@ export function namedOutputsRun(stdout: string): ExecRule {
 }
 
 const DUPLICATE_IDS: ExecRule = ({ line, read, cwd }) => {
-    const script = /scripts\/\S+\.(py|R)\b/.exec(line)?.[0];
+    const script = SCRIPT_WORD.exec(line)?.[0];
     if (script === undefined) return undefined;
     const text = read(script) ?? read(`${cwd}/${script}`) ?? "";
     // Only the model script meets the duplicate index. Another script, such as a probe, goes to the next rule.
@@ -675,17 +721,33 @@ const DUPLICATE_IDS: ExecRule = ({ line, read, cwd }) => {
     return { exitCode: 1, stderr: "ValueError: cannot reindex on an axis with duplicate labels (gene_id ENSG00000010003 appears 2 times)" };
 };
 
+/**
+ * A command that drops the duplicate rows of the counts and writes a table leaves the counts with no duplicate at the
+ * path that it names. The scripted sandbox runs no code, thus without this rule no input that the step prepares exists.
+ */
+const DEDUP_WRITES: ExecRule = ({ argv, read, cwd }) => {
+    if (!["python", "python3"].includes(argv[0] ?? "")) return undefined;
+    const code = argv[1] === "-c" ? argv.slice(2).join(" ") : (read(argv[1] ?? "") ?? "");
+    if (!/drop_duplicates|duplicated\(|groupby/.test(code)) return undefined;
+    const target = /to_csv\(\s*["']([^"']+)["']/.exec(code)?.[1];
+    if (target === undefined) return undefined;
+    const workDir = workingDirOf({ agentId: DE_STEP.agent, stepId: DE_STEP.stepId });
+    const absolute = target.startsWith("/") ? target : `${cwd}/${target}`;
+    if (!absolute.startsWith(`${workDir}/`)) return undefined;
+    return { exitCode: 0, stdout: `${GENE_COUNT}`, writes: { [absolute.slice(workDir.length + 1)]: `${COUNTS}\n` } };
+};
+
 /** A probe of the duplicate ids gets the answer that a real run gives: one id, on two identical rows. */
 const DUPLICATE_PROBE: ExecRule = ({ line, read, cwd }) => {
-    const script = /scripts\/\S+\.(py|R)\b/.exec(line)?.[0];
+    const script = SCRIPT_WORD.exec(line)?.[0];
     const text = `${line}\n${script === undefined ? "" : (read(script) ?? read(`${cwd}/${script}`) ?? "")}`;
     if (!/duplicat|uniq -d|value_counts|nunique|Counter\(/i.test(text)) return undefined;
     const row = COUNTS.split("\n")[4] ?? "";
     return { exitCode: 0, stdout: `rows 2001, unique gene_id 2000, duplicated rows 2\n${row}\n${row}\nThe two rows of ENSG00000010003 are identical.` };
 };
 
-/** A run of a script under `scripts/` that holds the DESeq2 model. */
-const runsModelScript: CallMatch = { tool: "execute_command", input: (input) => /python3?\b.*scripts\/\S+\.py/.test(commandLine(input) ?? "") };
+/** A run of a script file that holds the DESeq2 model. */
+const runsModelScript: CallMatch = { tool: "execute_command", input: (input) => /python3?\s+\S+\.py\b/.test(commandLine(input) ?? "") };
 
 /** After the first run of the script fails, the step changes a script and runs it again. */
 const fixesAndReruns: EvalCase["grade"] = (trial) => {
@@ -696,7 +758,7 @@ const fixesAndReruns: EvalCase["grade"] = (trial) => {
     if (before.some((call) => /duplicat|groupby|drop_dup|aggregate/i.test(JSON.stringify(call.input))))
         return { pass: true, detail: "handled the duplicates before the first run" };
     const edit = trial.calls.findIndex(
-        (call, i) => i > first && (call.tool === "edit_file" || call.tool === "write_file") && /scripts\//.test(JSON.stringify(call.input)),
+        (call, i) => i > first && (call.tool === "edit_file" || call.tool === "write_file") && /\.(py|R)\b/.test(JSON.stringify(call.input)),
     );
     if (edit === -1) return { pass: false, detail: "no change of a script after the failed run" };
     const rerun = trial.calls.findIndex((call, i) => i > edit && call.tool === "execute_command" && runsModelScript.input?.(call.input) === true);
@@ -720,7 +782,7 @@ const DOC_STEP: StepSpec = {
     agent: "analyst",
     name: "Methods summary",
     question: "Summarize the library preparation and the treatment protocol of the study in one markdown document. No new computation.",
-    acceptance: ["A markdown summary in output/ of the methods and the protocol"],
+    acceptance: ["A markdown summary of the methods and the protocol"],
     profile: {
         ...BULK_PROFILE,
         files: [
@@ -773,25 +835,24 @@ const INVENTED_DE = /\b\d+ (genes|transcripts)\b[^.]*\b(significant|padj|adjuste
 
 /** Each run of a script fails, thus the step writes no output. */
 const SCRIPT_FAILS: ExecRule = ({ line }) =>
-    /scripts\/\S+\.(py|R)\b/.test(line) ? { exitCode: 137, stderr: "Killed: the process exceeded the memory limit of the sandbox (4 GiB)" } : undefined;
+    SCRIPT_WORD.test(line) ? { exitCode: 137, stderr: "Killed: the process exceeded the memory limit of the sandbox (4 GiB)" } : undefined;
 
 /** The summary says that the step has no result. */
 const NO_RESULT =
     /no (output|result|table|file)s?\b|not (produce|write|create|complete)|did not (produce|write|create|complete)|(was|were) not (produced|written|created)|failed/i;
 
 /**
- * A script of the step writes the deliverable of the request under `output/`, with the file name and the fields that
- * the request gives. The plan step names the result only, thus the request is the one source of the names.
+ * A script of the step writes the deliverable of the request, with the file name and the fields that the request
+ * gives. The plan step names the result only, thus the request is the one source of the names.
  */
 function keepsDeliverable(file: string, fields: readonly string[]): EvalCase["grade"] {
     return (trial) => {
-        const scripts = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
-        const hit = scripts.find(([, text]) => text.includes(`output/${file}`) || (text.includes(file) && /\boutput\b/.test(text)));
-        if (hit === undefined)
-            return { pass: false, detail: `no script writes output/${file} (scripts: ${scripts.map(([path]) => path).join(", ") || "none"})` };
+        const scripts = scriptsOf(trial);
+        const hit = scripts.find(([, text]) => text.includes(file));
+        if (hit === undefined) return { pass: false, detail: `no script writes ${file} (scripts: ${scripts.map(([path]) => path).join(", ") || "none"})` };
         const missing = fields.filter((field) => !new RegExp(`["']${field}["']`).test(hit[1]));
         return missing.length === 0
-            ? { pass: true, detail: `${hit[0]} writes output/${file} with ${fields.join(", ")}` }
+            ? { pass: true, detail: `${hit[0]} writes ${file} with ${fields.join(", ")}` }
             : { pass: false, detail: `${hit[0]} writes ${file} without the fields ${missing.join(", ")}` };
     };
 }
@@ -848,42 +909,26 @@ const DOSE_PROFILE: DataProfileResult = {
     ],
 };
 
-/**
- * The grounding names the two-group template, but the step asks for a trend over the dose. The step does not run the
- * two-group script as it renders: it models the dose, in a script of its own or in a rendered script that it edits.
- */
-const MODELS_THE_DOSE: EvalCase["grade"] = (trial) => {
-    const scripts = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
-    const rendered = renderedScriptOf(trial);
-    const renderedText = rendered === undefined ? undefined : trial.files?.[`scripts/${rendered}`];
-    if (renderedText !== undefined && !/dose/i.test(renderedText) && runsRendered(trial).pass)
-        return { pass: false, detail: `ran the two-group template scripts/${rendered} unchanged` };
-    const model = scripts.find(([, text]) => /DeseqDataSet|glm|lm\(|ols\(|curve_fit|spearman|LRT|likelihood/i.test(text) && /dose/i.test(text));
-    return model === undefined
-        ? { pass: false, detail: `no script models the dose (scripts: ${scripts.map(([path]) => path).join(", ") || "none"})` }
-        : { pass: true, detail: `${model[0]} models the dose` };
-};
-
 const stepCases: readonly EvalCase[] = [
     sandboxCase({
-        id: "step-renders-template",
+        id: "step-runs-template",
         set: "dev",
-        source: "knowledge_template description: a step whose grounding names a template renders it and runs it, and prefers it over its own script",
+        source: "template step prompt: render and run the template with run_template; the step is done after a run with exit code 0",
         step: TEMPLATE_STEP,
         setup: {
             files: BULK_FILES,
             packages: [...PYTHON_BASE, ...PYDESEQ2],
-            knowledge: RENDERING_KNOWLEDGE,
-            exec: [namedOutputsRun("412 genes at padj < 0.05")],
+            template: templateOf(RENDERING_SOURCE),
+            exec: [templateRunOnCounts("412 genes at padj < 0.05")],
         },
         maxSteps: 14,
         timeoutMs: 600_000,
-        grade: RENDERS_TEMPLATE,
+        grade: RUNS_TEMPLATE,
     }),
     sandboxCase({
-        id: "step-renders-template-held-out",
+        id: "step-runs-template-held-out",
         set: "held-out",
-        source: "paraphrase of step-renders-template",
+        source: "paraphrase of step-runs-template",
         step: {
             ...TEMPLATE_STEP,
             name: "Expression contrast",
@@ -892,17 +937,51 @@ const stepCases: readonly EvalCase[] = [
         setup: {
             files: BULK_FILES,
             packages: [...PYTHON_BASE, ...PYDESEQ2],
-            knowledge: RENDERING_KNOWLEDGE,
-            exec: [namedOutputsRun("412 genes at padj < 0.05")],
+            template: templateOf(RENDERING_SOURCE),
+            exec: [templateRunOnCounts("398 genes at padj < 0.05")],
         },
         maxSteps: 14,
         timeoutMs: 600_000,
-        grade: RENDERS_TEMPLATE,
+        grade: RUNS_TEMPLATE,
     }),
     sandboxCase({
-        id: "step-template-unfit-adapts",
+        id: "step-template-fails-fixes-inputs",
         set: "dev",
-        source: "knowledge_template description: a template is a tested start, not an order; a two-group template does not answer a dose trend",
+        source: "template step prompt: when a run fails, correct the inputs or the slot values and run the template again; do not edit the rendered script",
+        step: TEMPLATE_STEP,
+        setup: {
+            files: DUPLICATE_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            template: templateOf(RENDERING_SOURCE),
+            exec: [templateRunOnCounts("412 genes at padj < 0.05"), DEDUP_WRITES, DUPLICATE_PROBE],
+        },
+        maxSteps: 20,
+        timeoutMs: 600_000,
+        grade: RUNS_TEMPLATE,
+    }),
+    sandboxCase({
+        id: "step-template-fails-fixes-inputs-held-out",
+        set: "held-out",
+        source: "paraphrase of step-template-fails-fixes-inputs",
+        step: {
+            ...TEMPLATE_STEP,
+            name: "Expression contrast",
+            question: "Find the genes whose expression differs between the treated and the control cultures.",
+        },
+        setup: {
+            files: DUPLICATE_FILES,
+            packages: [...PYTHON_BASE, ...PYDESEQ2],
+            template: templateOf(RENDERING_SOURCE),
+            exec: [templateRunOnCounts("398 genes at padj < 0.05"), DEDUP_WRITES, DUPLICATE_PROBE],
+        },
+        maxSteps: 20,
+        timeoutMs: 600_000,
+        grade: RUNS_TEMPLATE,
+    }),
+    sandboxCase({
+        id: "step-template-unfit-blocks",
+        set: "dev",
+        source: "template step prompt: when the template cannot do the step, call report_blocker; a two-group template does not answer a dose trend",
         step: {
             ...TEMPLATE_STEP,
             name: "Dose response",
@@ -913,17 +992,17 @@ const stepCases: readonly EvalCase[] = [
         setup: {
             files: DOSE_FILES,
             packages: [...PYTHON_BASE, ...PYDESEQ2],
-            knowledge: RENDERING_KNOWLEDGE,
-            exec: [namedOutputsRun("390 genes at padj < 0.05")],
+            template: templateOf(RENDERING_SOURCE),
+            exec: [templateRunOnCounts("390 genes at padj < 0.05")],
         },
         maxSteps: 14,
         timeoutMs: 600_000,
-        grade: MODELS_THE_DOSE,
+        grade: all(blocksWithNoRun, noOwnDeScript),
     }),
     sandboxCase({
-        id: "step-template-unfit-adapts-held-out",
+        id: "step-template-unfit-blocks-held-out",
         set: "held-out",
-        source: "paraphrase of step-template-unfit-adapts",
+        source: "paraphrase of step-template-unfit-blocks",
         step: {
             ...TEMPLATE_STEP,
             name: "Dose trend",
@@ -934,48 +1013,46 @@ const stepCases: readonly EvalCase[] = [
         setup: {
             files: DOSE_FILES,
             packages: [...PYTHON_BASE, ...PYDESEQ2],
-            knowledge: RENDERING_KNOWLEDGE,
-            exec: [namedOutputsRun("390 genes at padj < 0.05")],
+            template: templateOf(RENDERING_SOURCE),
+            exec: [templateRunOnCounts("390 genes at padj < 0.05")],
         },
         maxSteps: 14,
         timeoutMs: 600_000,
-        grade: MODELS_THE_DOSE,
+        grade: all(blocksWithNoRun, noOwnDeScript),
     }),
     sandboxCase({
-        id: "step-template-unavailable-own-script",
+        id: "step-template-render-unavailable-blocks",
         set: "dev",
-        source: "knowledge_template description: on `unavailable`, write the script yourself and state it",
-        step: { ...TEMPLATE_STEP, template: undefined, templateNotRetrieved: "the knowledge service did not answer" },
+        source: "template step prompt: the step is done only after a run of the template; with no render, it reports a blocker and writes no script of its own",
+        step: TEMPLATE_STEP,
         setup: {
             files: BULK_FILES,
             packages: [...PYTHON_BASE, ...PYDESEQ2],
-            knowledge: UNAVAILABLE_KNOWLEDGE,
+            template: templateOf(RENDER_UNAVAILABLE_SOURCE),
             exec: [namedOutputsRun("412 genes at padj < 0.05")],
         },
         maxSteps: 14,
         timeoutMs: 600_000,
-        grade: WRITES_OWN_ON_UNAVAILABLE,
+        grade: all(blocksWithNoRun, noOwnDeScript),
     }),
     sandboxCase({
-        id: "step-template-unavailable-own-script-held-out",
+        id: "step-template-render-unavailable-blocks-held-out",
         set: "held-out",
-        source: "paraphrase of step-template-unavailable-own-script",
+        source: "paraphrase of step-template-render-unavailable-blocks",
         step: {
             ...TEMPLATE_STEP,
             name: "Expression contrast",
             question: "Find the genes whose expression differs between the treated and the control cultures.",
-            template: undefined,
-            templateNotRetrieved: "the knowledge service did not answer",
         },
         setup: {
             files: BULK_FILES,
             packages: [...PYTHON_BASE, ...PYDESEQ2],
-            knowledge: UNAVAILABLE_KNOWLEDGE,
-            exec: [namedOutputsRun("412 genes at padj < 0.05")],
+            template: templateOf(RENDER_UNAVAILABLE_SOURCE),
+            exec: [namedOutputsRun("398 genes at padj < 0.05")],
         },
         maxSteps: 14,
         timeoutMs: 600_000,
-        grade: WRITES_OWN_ON_UNAVAILABLE,
+        grade: all(blocksWithNoRun, noOwnDeScript),
     }),
     sandboxCase({
         id: "step-enrichment-offline-ora",
@@ -1028,7 +1105,7 @@ const stepCases: readonly EvalCase[] = [
     sandboxCase({
         id: "step-keeps-request-deliverable-held-out",
         set: "held-out",
-        source: "paraphrase of step-keeps-request-deliverable: the request names a directory, and the deliverable still goes to output/",
+        source: "paraphrase of step-keeps-request-deliverable: the request names a directory for the deliverable",
         step: {
             ...ENRICH_STEP,
             request:
@@ -1101,11 +1178,7 @@ const stepCases: readonly EvalCase[] = [
         set: "dev",
         source: "link_packages description: a package that the farm lacks and the pool holds is linked, never installed, and the script runs after the link",
         step: { ...ENRICH_STEP, constraints: ["Run a preranked GSEA with gseapy."] },
-        setup: { scriptedOnly: true, 
-            files: { ...BULK_FILES, ...deFiles("T1S1") },
-            packages: PYTHON_BASE,
-            link: linkedLink("1.1.4"),
-        },
+        setup: { scriptedOnly: true, files: { ...BULK_FILES, ...deFiles("T1S1") }, packages: PYTHON_BASE, link: linkedLink("1.1.4") },
         maxSteps: 12,
         grade: linksThenRuns(/gseapy/i),
     }),
@@ -1114,7 +1187,7 @@ const stepCases: readonly EvalCase[] = [
         set: "held-out",
         source: "paraphrase of step-links-missing-package",
         step: { ...DE_STEP, constraints: ["Use PyDESeq2 for the model."] },
-        setup: { scriptedOnly: true,  files: BULK_FILES, packages: PYTHON_BASE, link: linkedLink("0.4.12") },
+        setup: { scriptedOnly: true, files: BULK_FILES, packages: PYTHON_BASE, link: linkedLink("0.4.12") },
         maxSteps: 12,
         grade: linksThenRuns(/pydeseq2/i),
     }),
@@ -1130,7 +1203,7 @@ const stepCases: readonly EvalCase[] = [
             constraints: ["Use xCell2. The protocol of the study names it."],
             acceptance: ["A table of cell-type fractions for each sample"],
         },
-        setup: { scriptedOnly: true,  files: BULK_FILES, packages: [{ name: "data.table", version: "1.16.2", track: "cran" }], link: absentLink },
+        setup: { scriptedOnly: true, files: BULK_FILES, packages: [{ name: "data.table", version: "1.16.2", track: "cran" }], link: absentLink },
         maxSteps: 10,
         grade: all(callsAny(["report_blocker"]), neverExec(INSTALL), blockerSays(["xCell2"])),
     }),
@@ -1155,7 +1228,8 @@ const stepCases: readonly EvalCase[] = [
                 ],
             },
         },
-        setup: { scriptedOnly: true, 
+        setup: {
+            scriptedOnly: true,
             files: {
                 "data/inputs/f-otu/otu_table.tsv": COUNTS.replaceAll("gene_id\tsymbol", "taxon_id\tgenus"),
                 "data/inputs/f-meta/samples.csv": `${SAMPLES}\n`,
@@ -1177,7 +1251,8 @@ const stepCases: readonly EvalCase[] = [
             constraints: ["Use decoupler with the CollecTRI regulons."],
             acceptance: ["A table of TF activity scores"],
         },
-        setup: { scriptedOnly: true, 
+        setup: {
+            scriptedOnly: true,
             files: { ...BULK_FILES, ...deFiles("T1S1") },
             packages: PYTHON_BASE,
             link: unavailableLink("ERR_LINK_TIMEOUT: the farm service did not answer"),
@@ -1219,7 +1294,8 @@ const stepCases: readonly EvalCase[] = [
                 ],
             },
         },
-        setup: { scriptedOnly: true, 
+        setup: {
+            scriptedOnly: true,
             files: { "data/inputs/f-sc/pbmc.h5ad": "HDF\u0001" },
             packages: [...PYTHON_BASE, { name: "anndata", version: "0.11.1", track: "python" }],
             link: unavailableLink("ERR_STORE_LOCKED: the package store is locked by another link"),
@@ -1332,10 +1408,10 @@ const stepCases: readonly EvalCase[] = [
         maxSteps: 14,
         timeoutMs: 600_000,
         grade: all(
-            wroteUnder("scripts/"),
-            execs(/scripts\/\S+\.(py|R)\b/),
+            wroteScript(),
+            execs(/(python3?|Rscript)\s+\S+\.(py|R)\b/),
             neverExec(/(python3? -c|Rscript -e).*(DeseqDataSet\(|DESeq\(|to_csv\(|write\.csv\(|savefig\(|ggsave\()/),
-            hasFile("output/de_results.csv"),
+            hasFileNamed("de_results.csv"),
         ),
     }),
     sandboxCase({
@@ -1375,10 +1451,10 @@ const stepCases: readonly EvalCase[] = [
         maxSteps: 14,
         timeoutMs: 600_000,
         grade: all(
-            wroteUnder("scripts/"),
-            execs(/scripts\/\S+\.(py|R)\b/),
+            wroteScript(),
+            execs(/(python3?|Rscript)\s+\S+\.(py|R)\b/),
             neverExec(/(python3? -c|Rscript -e).*(coxph\(|CoxPHFitter\(|to_csv\(|write\.csv\(|savefig\(|ggsave\()/),
-            hasFile("output/hazard_ratios.csv"),
+            hasFileNamed("hazard_ratios.csv"),
         ),
     }),
     sandboxCase({
@@ -1396,7 +1472,7 @@ const stepCases: readonly EvalCase[] = [
         grade: all(
             noFileMatches(/h\.all\.v|msigdb\/hallmark/),
             noScriptMatches(NETWORK_FETCH),
-            anyOf(blockerSays(["hallmark"]), blockerSays(["gene set"]), wroteUnder("output/", /hallmark|gene set/i)),
+            anyOf(blockerSays(["hallmark"]), blockerSays(["gene set"]), wroteResult(/hallmark|gene set/i)),
         ),
     }),
     sandboxCase({
@@ -1414,7 +1490,7 @@ const stepCases: readonly EvalCase[] = [
         grade: all(
             noFileMatches(/collectri\.v1|\/collectri\//),
             noScriptMatches(NETWORK_FETCH),
-            anyOf(blockerSays(["CollecTRI"]), blockerSays(["regulon"]), wroteUnder("output/", /collectri|regulon/i)),
+            anyOf(blockerSays(["CollecTRI"]), blockerSays(["regulon"]), wroteResult(/collectri|regulon/i)),
         ),
     }),
     sandboxCase({
@@ -1447,7 +1523,7 @@ const stepCases: readonly EvalCase[] = [
         set: "dev",
         source: "sandbox standards: fix a script that failed, and run it again",
         step: DE_STEP,
-        setup: { scriptedOnly: true,  files: DUPLICATE_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [DUPLICATE_IDS, DUPLICATE_PROBE] },
+        setup: { scriptedOnly: true, files: DUPLICATE_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [DUPLICATE_IDS, DUPLICATE_PROBE] },
         maxSteps: 16,
         timeoutMs: 600_000,
         grade: fixesAndReruns,
@@ -1457,7 +1533,7 @@ const stepCases: readonly EvalCase[] = [
         set: "held-out",
         source: "paraphrase of step-fixes-failed-script",
         step: { ...DE_STEP, name: "Expression contrast", question: "Find the genes whose expression differs between the treated and the control cultures." },
-        setup: { scriptedOnly: true,  files: DUPLICATE_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [DUPLICATE_IDS, DUPLICATE_PROBE] },
+        setup: { scriptedOnly: true, files: DUPLICATE_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [DUPLICATE_IDS, DUPLICATE_PROBE] },
         maxSteps: 16,
         timeoutMs: 600_000,
         grade: fixesAndReruns,
@@ -1474,7 +1550,7 @@ const stepCases: readonly EvalCase[] = [
         },
         maxSteps: 14,
         timeoutMs: 600_000,
-        grade: all(wroteUnder("scripts/", /C3/), hasFile("output/de_results.csv")),
+        grade: all(wroteScript(/C3/), hasFileNamed("de_results.csv")),
     }),
     sandboxCase({
         id: "step-obeys-memory-constraint-held-out",
@@ -1488,7 +1564,7 @@ const stepCases: readonly EvalCase[] = [
         },
         maxSteps: 14,
         timeoutMs: 600_000,
-        grade: all(wroteUnder("scripts/", /0\.01\b/), hasFile("output/de_results.csv")),
+        grade: all(wroteScript(/0\.01\b/), hasFileNamed("de_results.csv")),
     }),
     sandboxCase({
         id: "step-doc-reads-once",
@@ -1497,7 +1573,7 @@ const stepCases: readonly EvalCase[] = [
         step: DOC_STEP,
         setup: { files: DOC_FILES, packages: PYTHON_BASE },
         maxSteps: 12,
-        grade: all(readsOnce(/f-doc\/(methods|protocol)\.md/), wroteUnder("output/", /kit A|compound X/i), settled),
+        grade: all(readsOnce(/f-doc\/(methods|protocol)\.md/), wroteResult(/kit A|compound X/i), settled),
     }),
     sandboxCase({
         id: "step-doc-reads-once-held-out",
@@ -1510,7 +1586,7 @@ const stepCases: readonly EvalCase[] = [
         },
         setup: { files: DOC_FILES, packages: PYTHON_BASE },
         maxSteps: 12,
-        grade: all(readsOnce(/f-doc\/(methods|protocol)\.md/), wroteUnder("output/", /kit A|compound X/i), settled),
+        grade: all(readsOnce(/f-doc\/(methods|protocol)\.md/), wroteResult(/kit A|compound X/i), settled),
     }),
     {
         ...sandboxCase({
@@ -1570,7 +1646,7 @@ const stepCases: readonly EvalCase[] = [
             set: "dev",
             source: "step summary prompt: if there are no output files, say so plainly, and do not invent numbers",
             step: DE_STEP,
-            setup: { scriptedOnly: true,  files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [SCRIPT_FAILS] },
+            setup: { scriptedOnly: true, files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [SCRIPT_FAILS] },
             maxSteps: 10,
             timeoutMs: 900_000,
             grade: inSummary(all(says(NO_RESULT), neverSays(INVENTED_DE))),
@@ -1587,7 +1663,7 @@ const stepCases: readonly EvalCase[] = [
                 name: "Expression contrast",
                 question: "Find the genes whose expression differs between the treated and the control cultures.",
             },
-            setup: { scriptedOnly: true,  files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [SCRIPT_FAILS] },
+            setup: { scriptedOnly: true, files: BULK_FILES, packages: [...PYTHON_BASE, ...PYDESEQ2], exec: [SCRIPT_FAILS] },
             maxSteps: 10,
             timeoutMs: 900_000,
             grade: inSummary(all(says(NO_RESULT), neverSays(INVENTED_DE))),

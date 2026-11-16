@@ -38,7 +38,7 @@ export function withSandboxAgent(evalCase: EvalCase, replacement: Replacement, t
     };
 }
 
-/** The tool ids of `replacement` over the setup of a case. The setup decides some tools, for example `knowledge_template`. */
+/** The tool ids of `replacement` over the setup of a case. The setup decides some tools, for example `run_template`. */
 async function toolIdsOf(evalCase: EvalCase, replacement: Replacement): Promise<Set<string>> {
     if (evalCase.sandbox === undefined) return new Set();
     const trial = await openSandboxTrial(

@@ -9,7 +9,7 @@
 import type { DataProfileResult } from "@inflexa-ai/harness/contracts/data-profile.js";
 import type { UpstreamHandoff } from "@inflexa-ai/harness/prompts/briefing.js";
 
-import { all, anyOf, says, type EvalCase, type Grade, type Trial } from "../lib/case.js";
+import { all, anyOf, says, scriptsOf, type EvalCase, type Grade, type Trial } from "../lib/case.js";
 import { ANALYSIS_ID, type ExecRule, type LockedPackage, type SandboxSetup } from "../lib/sandbox.js";
 import {
     PYDESEQ2,
@@ -88,11 +88,6 @@ const ENRICH_LOCK: readonly LockedPackage[] = [...PYTHON_BASE, ...PY(["gseapy", 
 const MODEL_LOCK: readonly LockedPackage[] = [...PYTHON_BASE, ...PY(["scikit-learn", "statsmodels", "lifelines", "scikit-survival", "xgboost"])];
 
 const GENETICS_LOCK: readonly LockedPackage[] = [...PYTHON_BASE, ...PY(["cyvcf2", "pyranges", "pyliftover", "statsmodels"])];
-
-/** The working-directory scripts of a trial. */
-function scriptsOf(trial: Trial): (readonly [string, string])[] {
-    return Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
-}
 
 function scriptNames(trial: Trial): string {
     return (
@@ -667,9 +662,9 @@ function modelHandoff(stepId: string, table: string, summary: string): UpstreamH
         stepId,
         agentId: "analyst",
         summaryMarkdown: summary,
-        summaryPath: `${dir}/output/summary.md`,
-        outputDir: `${dir}/output`,
-        artifacts: [`${dir}/output/${table}`],
+        summaryPath: `${dir}/summary.md`,
+        workDir: `${dir}/work`,
+        artifacts: [`${dir}/work/${table}`],
     };
 }
 
@@ -1034,18 +1029,18 @@ function dmpHandoff(stepId: string, assay: string): UpstreamHandoff {
     return {
         stepId,
         agentId: "analyst",
-        summaryMarkdown: `# Differential methylation\n\nDSS on the CpG sites of the ${assay} data, after a coverage filter of 10 reads. The sites at FDR < 0.05 are in \`output/dmp_results.csv\`, with site_id, gene, delta_methylation, pvalue, and adjusted_pvalue. \`output/tested_cpgs_per_gene.csv\` gives the number of CpGs tested in each of the ${GENE_SYMBOLS.length} genes with coverage.\n`,
-        summaryPath: `${dir}/output/summary.md`,
-        outputDir: `${dir}/output`,
-        artifacts: [`${dir}/output/dmp_results.csv`, `${dir}/output/tested_cpgs_per_gene.csv`],
+        summaryMarkdown: `# Differential methylation\n\nDSS on the CpG sites of the ${assay} data, after a coverage filter of 10 reads. The sites at FDR < 0.05 are in \`dmp_results.csv\`, with site_id, gene, delta_methylation, pvalue, and adjusted_pvalue. \`tested_cpgs_per_gene.csv\` gives the number of CpGs tested in each of the ${GENE_SYMBOLS.length} genes with coverage.\n`,
+        summaryPath: `${dir}/summary.md`,
+        workDir: `${dir}/work`,
+        artifacts: [`${dir}/work/dmp_results.csv`, `${dir}/work/tested_cpgs_per_gene.csv`],
     };
 }
 
 function dmpFiles(stepId: string): Readonly<Record<string, string>> {
     return {
-        [`runs/run-001/${stepId}/output/dmp_results.csv`]: DMP_TABLE,
-        [`runs/run-001/${stepId}/output/tested_cpgs_per_gene.csv`]: TESTED_PER_GENE,
-        [`runs/run-001/${stepId}/output/summary.md`]: "# Differential methylation\n",
+        [`runs/run-001/${stepId}/work/dmp_results.csv`]: DMP_TABLE,
+        [`runs/run-001/${stepId}/work/tested_cpgs_per_gene.csv`]: TESTED_PER_GENE,
+        [`runs/run-001/${stepId}/summary.md`]: "# Differential methylation\n",
     };
 }
 
@@ -1745,7 +1740,7 @@ export const domainCases: readonly EvalCase[] = [
                 modelHandoff(
                     "T1S1",
                     "response_genes.csv",
-                    "# Response genes\n\nlimma of the responders against the non-responders on all 80 biopsies. 25 genes at adjusted p < 0.05, in `output/response_genes.csv`.\n",
+                    "# Response genes\n\nlimma of the responders against the non-responders on all 80 biopsies. 25 genes at adjusted p < 0.05, in `response_genes.csv`.\n",
                 ),
             ],
             goal: "Predict the response to therapy.",
@@ -1754,8 +1749,8 @@ export const domainCases: readonly EvalCase[] = [
             files: {
                 "data/inputs/f-expr/expression.csv": EXPRESSION,
                 "data/inputs/f-meta/response.csv": RESPONSE,
-                "runs/run-001/T1S1/output/response_genes.csv": DE_LIST,
-                "runs/run-001/T1S1/output/summary.md": "# Response genes\n",
+                "runs/run-001/T1S1/work/response_genes.csv": DE_LIST,
+                "runs/run-001/T1S1/summary.md": "# Response genes\n",
             },
             packages: MODEL_LOCK,
             result: "cross-validated AUC 0.71 (95 % CI 0.60-0.81)",
@@ -1797,7 +1792,7 @@ export const domainCases: readonly EvalCase[] = [
                 modelHandoff(
                     "T1S1",
                     "marker_genes.csv",
-                    "# Marker genes\n\nDESeq2 of relapse against no relapse on all 80 patients. 25 marker genes at adjusted p < 0.05, in `output/marker_genes.csv`.\n",
+                    "# Marker genes\n\nDESeq2 of relapse against no relapse on all 80 patients. 25 marker genes at adjusted p < 0.05, in `marker_genes.csv`.\n",
                 ),
             ],
             goal: "Predict relapse.",
@@ -1806,8 +1801,8 @@ export const domainCases: readonly EvalCase[] = [
             files: {
                 "data/inputs/f-expr/expression.csv": EXPRESSION,
                 "data/inputs/f-meta/outcome.csv": RESPONSE,
-                "runs/run-001/T1S1/output/marker_genes.csv": DE_LIST,
-                "runs/run-001/T1S1/output/summary.md": "# Marker genes\n",
+                "runs/run-001/T1S1/work/marker_genes.csv": DE_LIST,
+                "runs/run-001/T1S1/summary.md": "# Marker genes\n",
             },
             packages: MODEL_LOCK,
             result: "cross-validated AUC 0.69 (95 % CI 0.57-0.80)",

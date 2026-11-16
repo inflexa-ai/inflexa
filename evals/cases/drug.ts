@@ -6,7 +6,7 @@
 import type { DataProfileResult } from "@inflexa-ai/harness/contracts/data-profile.js";
 
 import type { ToolScript } from "../lib/agent.js";
-import { all, anyOf, neverSays, says, type EvalCase, type Grade, type Trial } from "../lib/case.js";
+import { all, anyOf, neverSays, says, scriptsOf, type EvalCase, type Grade, type Trial } from "../lib/case.js";
 import type { LockedPackage } from "../lib/sandbox.js";
 import { PYTHON_BASE, sandboxCase, type StepSpec } from "./sandbox.js";
 
@@ -121,8 +121,8 @@ const NO_RECORDS: ToolScript = { ok: { results: [], note: "No record matches the
  */
 function drugsWithRecords(targets: Readonly<Record<string, string>>, drugs: readonly Drug[], memory: readonly string[]): EvalCase["grade"] {
     return (trial: Trial): Grade => {
-        const outputs = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("output/") && /\.(csv|tsv|md|json)$/.test(path));
-        if (outputs.length === 0) return { pass: false, detail: "no deliverable in output/" };
+        const outputs = Object.entries(trial.files ?? {}).filter(([path]) => /\.(csv|tsv|md|json)$/.test(path));
+        if (outputs.length === 0) return { pass: false, detail: "no deliverable" };
         const text = outputs.map(([, body]) => body).join("\n");
         const ids = new Set(text.match(/CHEMBL\d+/g) ?? []);
         const known = new Set([...drugs.map((drug) => drug.id), ...Object.values(targets)]);
@@ -232,7 +232,7 @@ function subjectIsUnit(idColumn: string): EvalCase["grade"] {
         `groupby\\(\\s*\\[?["']${idColumn}["']|groups\\s*=\\s*\\w*\\[?["']?${idColumn}|\\(1\\s*\\|\\s*${idColumn}\\)|random\\s*=\\s*~[^\\n]*${idColumn}|nlme|nlmixr|saemix|for\\s+\\w+\\s*,?\\s*\\w*\\s+in\\s+[^\\n]*${idColumn}|split\\([^)]*${idColumn}|by\\s*=\\s*["']?${idColumn}`,
     );
     return (trial) => {
-        const scripts = Object.entries(trial.files ?? {}).filter(([path]) => path.startsWith("scripts/"));
+        const scripts = scriptsOf(trial);
         const pk = scripts.find(([, text]) => /conc|auc|clearance|half/i.test(text));
         if (pk === undefined) return { pass: false, detail: `no PK script (scripts: ${scripts.map(([p]) => p).join(", ") || "none"})` };
         return grouped.test(pk[1])
