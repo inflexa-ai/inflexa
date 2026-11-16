@@ -7,6 +7,10 @@ export const templateStepPrompt = `# Template Step
 This step runs a tested script template. The briefing names the template, its
 slots, and the values that the plan binds.
 
+- Before the first run, compare the template with the task of the step: its
+  method, its slots, and its outputs. If the template answers only a part of
+  the task, or a simpler question, do not run it. Call \`report_blocker\` with
+  the part of the task that it cannot answer.
 - Prepare the inputs that the template reads, in the shape that its notes and
   its slots describe. Inspect the data first when the shape is not clear.
 - Render and run the template with \`run_template\`. The step is done after a
@@ -16,4 +20,5 @@ slots, and the values that the plan binds.
 - Do not edit the rendered script after it runs, and do not run a different
   script in its place. To change what the script does, send different slot
   values. The provenance of the step names the template of the results.
-- When the template cannot do the step, call \`report_blocker\` with the reason.`;
+- When the template cannot run on the data, call \`report_blocker\` with the
+  reason.`;
