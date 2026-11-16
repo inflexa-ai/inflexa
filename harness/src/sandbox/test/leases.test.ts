@@ -365,7 +365,8 @@ describe("the label gate", () => {
 
         expect(await run.result).toEqual({ kind: "refused", reason: "no_quota" });
         expect(backend.spawned).toHaveLength(0);
-        expect(await leaseOf(run.caseId)).toBeUndefined();
+        // The lease sends the refusal before it releases its row, thus the release lands after the reply.
+        await until(async () => ((await leaseOf(run.caseId)) === undefined ? true : undefined), "the release of the refused lease");
         expect(run.parts).toEqual([]);
     }, 60_000);
 });
