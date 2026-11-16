@@ -904,3 +904,47 @@ describe("computeLineage — a script run", () => {
         expect(walk.nodes.find((node) => node.qn === scriptQn)).toMatchObject({ kind: "activity", activity: "script" });
     });
 });
+
+describe("the render of a template on a call activity", () => {
+    const render = {
+        template: "tpl-qc-eda@1.4.0",
+        label: "QC",
+        method: { id: "M-0001", label: "VST and PCA" },
+        settings: [{ name: "alpha", value: 0.05, source: "plan" }],
+        overrides: [{ slot: "alpha", reason: "an exploratory screen" }],
+        environmentMatch: "exact",
+    };
+    const renderCall: ProvCallRef = { invocationId: "call-render", tool: "run_template" };
+
+    function renderedModel(template: ProvCallRef["template"]): LineageModel {
+        const doc = provModel.freshDocument({ analysisId: "a1" });
+        applyProvEvent(provModel, doc, {
+            type: "file_written",
+            analysisId: "a1",
+            actor: system,
+            model,
+            file: fileRefOf({ path: "runs/run-001/step-de/work/qc.R", hash: "sha256:render" }, "file_tool"),
+            generation: "call",
+            call: { ...renderCall, template },
+            step: stepRef,
+        });
+        return modelFrom(doc);
+    }
+
+    const callQn = `inflexa:call-${defaultProvDigest(`${stepRef.runId}|${stepRef.stepId}|${renderCall.invocationId}`)}`;
+
+    test("gives the template, the settings, and the overrides of the render, with no snapshot for a source that has none", () => {
+        const node = nodeOf(renderedModel(render), callQn);
+
+        expect(node).toMatchObject({ kind: "activity", activity: "file_tool", tool: "run_template", template: render });
+        expect(node).not.toHaveProperty(["template", "snapshot"]);
+    });
+
+    test("keeps the snapshot of a source that has releases", () => {
+        expect(nodeOf(renderedModel({ ...render, snapshot: "sha256:71ac" }), callQn)).toHaveProperty(["template", "snapshot"], "sha256:71ac");
+    });
+
+    test("gives no template on a call that rendered nothing", () => {
+        expect(nodeOf(renderedModel(undefined), callQn)).not.toHaveProperty("template");
+    });
+});

@@ -172,6 +172,7 @@ function appOver(
                 countArtifacts: () => errAsync({ type: "query_failed", op: "test", cause: "unused" }),
                 countSteps: () => errAsync({ type: "query_failed", op: "test", cause: "unused" }),
                 readSynthesis: () => Promise.resolve(null),
+                readMethods: () => Promise.resolve(ok([])),
                 listSteps: () => errAsync({ type: "query_failed", op: "test", cause: "unused" }),
                 loadPlan: () => okAsync(null),
                 loadPlanRecord: () => okAsync(null),

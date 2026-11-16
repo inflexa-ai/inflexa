@@ -43,6 +43,7 @@ import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import type { RunSynthesisPart } from "@inflexa-ai/harness/contracts/index.js";
 import { CONVERSATION_AGENT_ID } from "@inflexa-ai/harness/agents/conversation-agent.js";
 import { queryRunsByThread } from "@inflexa-ai/harness/state/runs.js";
+import { readRunMethods } from "@inflexa-ai/harness/execution/run-methods.js";
 
 import { describeBusyReason, type BusyReason } from "../../api/analyses.ts";
 import type { PageQuery } from "../../api/common.ts";
@@ -66,6 +67,7 @@ import type {
     RunStatus,
     RunStepSummary,
     RunSummary,
+    RunMethodsView,
     RunSynthesisView,
     SandboxReadiness,
     TerminalRunStatus,
@@ -141,6 +143,8 @@ export type RunRoutesOpts<R extends PoolRuntime = HarnessRuntime> = {
     /** Each run of the analysis that is not terminal and that the text `q` selects. The set is bounded by the live concurrency, not by the history. */
     readonly listActiveRuns: (pool: Querier, analysisId: string, filter: { q?: string }) => ResultAsync<CortexRunRow[], DbError>;
     readonly getRun: (pool: Querier, runId: string) => ResultAsync<CortexRunRow | null, DbError>;
+    /** The methods of the steps of one run, or of the steps of `stepIds`. */
+    readonly readMethods: typeof readRunMethods;
     /** The step-output count of each run of the list, in one read. A run with no step output has no entry. */
     readonly countArtifacts: (pool: Querier, analysisId: string, runIds: readonly string[]) => ResultAsync<RunArtifactCount[], DbError>;
     /** The step counts of each run of the list, in one read. A run with no step has no entry. */
@@ -200,6 +204,7 @@ export const DEFAULT_RUN_ROUTES_OPTS = {
     countArtifacts: countArtifactsByRuns,
     countSteps: countStepsByRuns,
     readSynthesis: readSynthesisOf,
+    readMethods: readRunMethods,
     listSteps: queryStepsByRun,
     loadPlan: (pool, planId, analysisId) => loadPlan(pool, planId, { analysisId }),
     loadPlanRecord: (pool, planId, analysisId) => loadPlanRecord(pool, planId, { analysisId }),
@@ -349,6 +354,20 @@ export function runRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts: RunR
             getLogger("server").warn({ analysisId, runId }, "the run recorded a produced synthesis, but its record could not be read");
         }
         return c.json<RunSynthesisView>({ status, reason, synthesis });
+    });
+
+    routes.get("/run/:runId/methods", runtimeGate, async (c) => {
+        const analysisId = analysisParam(c);
+        const runId = c.req.param("runId");
+        const pool = c.get("runtime").pool;
+        const row = await opts.getRun(pool, runId);
+        if (row.isErr()) return internalError(c, row.error, "read the run");
+        if (row.value === null || row.value.analysisId !== analysisId) return runNotFound(c, runId);
+
+        const stepIds = c.req.queries("stepId");
+        const read = await opts.readMethods({ pool, analysisId, runId, planId: row.value.planId, stepIds });
+        if (read.isErr()) return internalError(c, read.error, "read the methods of the run");
+        return c.json<RunMethodsView>({ steps: read.value.map(({ stepId, methods }) => ({ stepId, methods })) });
     });
 
     routes.get("/run/:runId/stream", runtimeGate, async (c) => {

@@ -2459,6 +2459,7 @@ A route MUST read the pending asks one time and the live turns one time for each
 - `role`, `input`, `step_output`, or `step_summary`
 - `runId` and `stepId`, or `null`
 - `createdAt`, the time of the first registration of the path
+- `template`: the template that rendered the file, or `null`. It holds the template reference, the label, the method, the snapshot digest when the template source has releases, and the environment match. Only a script that `run_template` wrote has one. A template can come from any template source.
 
 The server MUST locate the workspace folder one time for each request, not one time for each item. The search MUST NOT make a folder, and it MUST NOT record an anchor sighting. It can repair the stored path of a moved anchor, as each workspace lookup does. A workspace folder that the server cannot locate MUST NOT fail the request. A failed read of the database MUST give 500 `internal_error`.
 
@@ -2692,6 +2693,25 @@ A run of a different analysis, and an id that names no run, MUST get 404 `not_fo
 
 - **WHEN** a client reads the synthesis of a run of analysis `a2` under analysis `a1`
 - **THEN** the server answers 404 `not_found`
+
+### Requirement: The server gives the methods of the steps of a run
+
+`GET {A}/run/:runId/methods` MUST give `{ steps }`. Each entry holds a `stepId` and the `methods` of that step. The host builds the methods on read, from the grounding of the plan step, the claim views that the plan keeps, and the templates that the step rendered. A template can come from any template source. The query value `stepId` MUST select the steps, and it can repeat. With no `stepId`, the server MUST give each step of the plan of the run. A step with no grounding and no rendered template MUST be absent.
+
+The methods MUST hold only the facts that the plan card and the report already show: the grounding status, the snapshot digest, the claim ids with their titles and strengths, the sources, the departures, the license, and the rendered templates. They MUST NOT hold the statement of a claim, the body of a template, or a path on the host.
+
+A run of a different analysis, and an id that names no run, MUST get 404 `not_found`. The route needs the harness runtime, thus it MUST answer 503 `unavailable` before the phase is `ready`. A failed read of the run row, the plan, or the artifact ledger MUST give 500 `internal_error`.
+
+#### Scenario: The methods of one step
+
+- **GIVEN** run `r1` of plan `pln-0000000a`, whose step `T1S1` is grounded and rendered a template
+- **WHEN** a client sends `GET /api/v1/analyses/a1/run/r1/methods?stepId=T1S1`
+- **THEN** the server answers with the methods of `T1S1`: its claims, its sources, and its template
+
+#### Scenario: A run of a different analysis
+
+- **WHEN** a client reads the methods of a run of analysis `a2` under analysis `a1`
+- **THEN** the server answers 404 `not_found`, and it reads no methods
 
 ### Requirement: A run read gives the plan of the run
 

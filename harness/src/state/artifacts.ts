@@ -295,6 +295,8 @@ export type ArtifactPageEntry = {
     runId: string | null;
     stepId: string | null;
     createdAt: string;
+    /** The template that rendered the file: a script that `run_template` wrote. `null` for every other file. */
+    template: ArtifactTemplate | null;
 };
 
 /** The count of the selected rows that have one extension. */
@@ -360,8 +362,9 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
             source_run: string | null;
             source_step: string | null;
             created_at: string;
+            template: unknown;
         }>({
-            text: `SELECT path, size, file_type, role, source_run, source_step, created_at
+            text: `SELECT path, size, file_type, role, source_run, source_step, created_at, template
           FROM cortex_artifacts
           WHERE ${where}
           ORDER BY ${order}
@@ -377,6 +380,8 @@ export function queryArtifactPage(pool: Querier, analysisId: string, query: Arti
                 runId: r.source_run ?? null,
                 stepId: r.source_step ?? null,
                 createdAt: r.created_at,
+                // A row that no schema of a template admits is a file with no template, as `queryStepTemplateArtifacts` reads it.
+                template: ArtifactTemplateSchema.safeParse(r.template).data ?? null,
             })),
             total: extensionCounts.reduce((sum, e) => sum + e.count, 0),
             extensionCounts,

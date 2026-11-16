@@ -6,6 +6,7 @@ import {
     type LineageModel,
     type LineageNode,
     type LineageWalk as KernelWalk,
+    type ProvTemplateRender,
 } from "@inflexa-ai/prov-kernel";
 
 import { ASCII_DIGITS, ASCII_LOWERCASE, ASCII_UPPERCASE } from "../../lib/text.ts";
@@ -88,6 +89,8 @@ export type LineageActivity = {
     unresolvedScript?: string;
     runId?: string;
     stepId?: string;
+    /** The render of a template, from any template source — present on the `file_tool` call that wrote a rendered script. */
+    template?: ProvTemplateRender;
     files: LineageFile[];
 };
 
@@ -160,6 +163,7 @@ function activityMeta(node: LineageActivityNode | undefined, qn: string): Omit<L
         unresolvedScript: node.unresolvedScript,
         runId: node.runId,
         stepId: node.stepId,
+        template: node.template,
     };
 }
 

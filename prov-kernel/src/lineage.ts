@@ -17,7 +17,9 @@ import {
     type ProvRecord,
 } from "@inflexa-ai/tsprov";
 import { PROV_UNIFY_OPTIONS } from "./document.js";
-import type { ProvFileKey } from "./types.js";
+import { z } from "zod";
+
+import type { ProvFileKey, ProvTemplateRender } from "./types.js";
 
 // The read side of the dialect: one interpretation of a stored PROV-JSON document, shared by every
 // consumer. `deriveLineageModel` turns the exact stored bytes into a typed, presentation-free
@@ -75,6 +77,8 @@ export type LineageActivityNode = {
     invocationId?: string;
     unresolvedScript?: string;
     planSummary?: string;
+    /** The render of a template, from any template source — present on the call activity that wrote a rendered script. */
+    template?: ProvTemplateRender;
 };
 
 export type LineageAgentKind = "system" | "user" | "model";
@@ -271,6 +275,7 @@ function toActivityNode(record: ProvActivity): LineageActivityNode {
     const invocationId = attrString(record, "invocationId");
     const unresolvedScript = attrString(record, "unresolvedScript");
     const planSummary = attrString(record, "planSummary");
+    const template = templateOf(record);
     const node: LineageActivityNode = { kind: "activity", qn, activity, label };
     if (actionType !== undefined) node.actionType = actionType;
     if (startTime !== undefined) node.startTime = startTime;
@@ -286,7 +291,46 @@ function toActivityNode(record: ProvActivity): LineageActivityNode {
     if (invocationId !== undefined) node.invocationId = invocationId;
     if (unresolvedScript !== undefined) node.unresolvedScript = unresolvedScript;
     if (planSummary !== undefined) node.planSummary = planSummary;
+    if (template !== undefined) node.template = template;
     return node;
+}
+
+const TemplateSettingsSchema = z.array(
+    z.object({ name: z.string(), value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).optional(), source: z.string() }),
+);
+const TemplateOverridesSchema = z.array(z.object({ slot: z.string(), reason: z.string() }));
+
+/** A JSON attribute that `schema` admits, else `undefined`: a document of an older or a foreign writer degrades to no value. */
+function attrJson<T>(record: ProvRecord, name: string, schema: z.ZodType<T>): T | undefined {
+    const text = attrString(record, name);
+    if (text === undefined) return undefined;
+    try {
+        return schema.safeParse(JSON.parse(text)).data;
+    } catch {
+        return undefined;
+    }
+}
+
+/** The render facts of a call activity that wrote a rendered script, or `undefined` for each other activity. */
+function templateOf(record: ProvRecord): ProvTemplateRender | undefined {
+    const template = attrString(record, "template");
+    const label = attrString(record, "templateLabel");
+    const methodId = attrString(record, "method");
+    const methodLabel = attrString(record, "methodLabel");
+    const environmentMatch = attrString(record, "environmentMatch");
+    if (template === undefined || label === undefined || methodId === undefined || methodLabel === undefined || environmentMatch === undefined)
+        return undefined;
+    const render: ProvTemplateRender = {
+        template,
+        label,
+        method: { id: methodId, label: methodLabel },
+        settings: attrJson(record, "templateSettings", TemplateSettingsSchema) ?? [],
+        overrides: attrJson(record, "templateOverrides", TemplateOverridesSchema) ?? [],
+        environmentMatch,
+    };
+    const snapshot = attrString(record, "snapshot");
+    if (snapshot !== undefined) render.snapshot = snapshot;
+    return render;
 }
 
 function agentKindOf(record: ProvAgent): LineageAgentKind {

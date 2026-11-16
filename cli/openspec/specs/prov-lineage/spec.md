@@ -174,6 +174,14 @@ direction. When several entities resolve from one reference, the JSON SHALL be o
 merged graph whose `roots` lists every resolved entity, and a node SHALL be marked
 `truncated` only when NO expansion of it was recorded anywhere in the walk.
 
+A file-tool node of the JSON graph MUST carry `template` when its call rendered a template: the template reference, the label, the method, the settings, the overrides, the environment match, and the snapshot digest when the template source has releases. A template can come from any template source.
+
+#### Scenario: A rendered script names its template
+
+- **GIVEN** a script that `run_template` rendered from `tpl-qc-eda@1.4.0`
+- **WHEN** the lineage of the script is rendered as `json`
+- **THEN** the file-tool node of the call carries `template` with `tpl-qc-eda@1.4.0`, its settings, and its overrides
+
 #### Scenario: JSON is a flat, direction-independent graph
 
 - **WHEN** the same file's lineage is rendered as `json` backward and forward

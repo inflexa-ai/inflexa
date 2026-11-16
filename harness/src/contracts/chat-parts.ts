@@ -69,6 +69,8 @@ export type PlanStep = {
     agent: string;
     question: string;
     depends_on: string[];
+    /** A template step runs the template of its grounding; an open step does not, also when its grounding names one. Absent on a card stored before the field. */
+    kind?: "open" | "template";
     /** Absent on a step that the planner made with no knowledge service. */
     grounding?: PlanStepGrounding;
     maxSteps: number;
