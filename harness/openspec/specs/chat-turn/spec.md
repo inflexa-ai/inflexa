@@ -308,10 +308,16 @@ The chat turn MUST give the root loop a compaction policy when the agent of the 
 
 The agents of a chat thread declare these rules:
 
-- The conversation agent has a turn-start budget of 150,000 tokens, and a budget of 200,000 tokens during a turn.
+- The conversation agent has a turn-start budget of 200,000 tokens, and a budget of 200,000 tokens during a turn.
 - The report session agent has no turn-start budget, and a budget of 250,000 tokens during a turn. A report session is one long turn that holds page captures.
 
 The budgets apply to the input tokens that the provider reports for a request.
+
+When the provider gives the context window of the model, the window sets the budgets:
+
+- The budget during a turn is 90% of the window. A compaction during a turn stops the work of the turn, thus it is a fail-safe.
+- The turn-start budget is the declared turn-start budget, but not more than 75% of the window.
+- When the provider gives no window, the declared budgets apply.
 
 The chat turn MUST add the mechanism of the policy to the rules:
 
