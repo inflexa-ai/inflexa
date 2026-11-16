@@ -117,6 +117,27 @@ describe("planPartOf", () => {
         expect(planPartOf(recordOf({ plan }))?.steps?.[0]?.grounding).toEqual(grounding);
     });
 
+    it("names the kind of each step: a template step, and an open step also when its grounding names a template", () => {
+        const grounding = { status: "grounded", snapshot: "sha256:71ac", claims: ["R-0001@e7d0"], template: "tpl-qc-eda@1.4.0", reason: "QC per R-0001@e7d0" };
+        const document = planDocument();
+        const [first] = document.steps;
+        if (first === undefined) throw new Error("the plan document has no step");
+        const plan = {
+            ...document,
+            steps: [
+                { ...first, id: "T1S1", kind: "template", grounding },
+                { ...first, id: "T1S2", grounding },
+                { ...first, id: "T1S3" },
+            ],
+        };
+
+        expect(planPartOf(recordOf({ plan }))?.steps?.map((step) => [step.id, step.kind])).toEqual([
+            ["T1S1", "template"],
+            ["T1S2", "open"],
+            ["T1S3", "open"],
+        ]);
+    });
+
     it("gives null for a document that does not parse", () => {
         expect(planPartOf(recordOf({ plan: { steps: "no" } }))).toBeNull();
     });

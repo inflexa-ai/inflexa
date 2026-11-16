@@ -247,6 +247,7 @@ describe("GET {A}/artifacts", () => {
         runId: "r1",
         stepId: "s1",
         createdAt: "2026-10-01T00:00:00.000Z",
+        template: null,
     } as const;
 
     /** The routes over a read that records its queries and gives `page`. */
@@ -409,6 +410,18 @@ describe("GET {A}/artifacts", () => {
         expect(response.status).toBe(200);
         expect(reads).toHaveLength(1);
         expect(reads[0]?.query).not.toHaveProperty("extensions");
+    });
+
+    test("a rendered script carries the template that rendered it", async () => {
+        const template = { template: "tpl-qc-eda@1.4.0", label: "QC", method: { id: "M-0001", label: "VST and PCA" }, environmentMatch: "exact" };
+        const script = { ...entry, path: "runs/r1/s1/work/qc.R", fileType: "script", template };
+        const { app: routes } = listing({ entries: [script], total: 1, extensionCounts: [{ extension: "r", count: 1 }] });
+
+        const list = z
+            .looseObject({ artifacts: z.array(z.looseObject({ template: z.json() })) })
+            .parse(await jsonBody(routes.request("/api/v1/analyses/a1/artifacts")));
+
+        expect(list.artifacts.map((artifact) => artifact.template)).toEqual([template]);
     });
 
     test("`extensionCounts` of the read rides the response, with the `null` entry last, and it does not depend on the page", async () => {

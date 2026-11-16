@@ -9,6 +9,7 @@ import type {
     RunSynthesisPart,
 } from "@inflexa-ai/harness/contracts/index.js";
 import type { CancelRunResult as HarnessCancelRunResult } from "@inflexa-ai/harness/execution/run-canceler.js";
+import type { StepMethods } from "@inflexa-ai/harness/execution/step-methods.js";
 import type {
     RunStatus as HarnessRunStatus,
     StepExecutionStatus as HarnessStepExecutionStatus,
@@ -299,4 +300,13 @@ export type RunSynthesisView = {
     status: SynthesisStatus | null;
     reason: string | null;
     synthesis: RunSynthesisPart | null;
+};
+
+/**
+ * The body of `GET {A}/run/:runId/methods`: the methods of each step of the run that has methods, in plan order. The
+ * host builds them from the grounding of the plan step and the templates that the step rendered, from any template
+ * source. A step with no grounding and no rendered template is absent.
+ */
+export type RunMethodsView = {
+    steps: { stepId: string; methods: StepMethods }[];
 };

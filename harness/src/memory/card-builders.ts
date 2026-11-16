@@ -23,7 +23,7 @@ import { tryQuery, type DbError } from "../lib/db-result.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { PlanClaimView, PlanPart } from "../contracts/chat-parts.js";
 import { PlanPartSchema } from "../contracts/schemas/chat-parts.js";
-import { AnalysisPlanSchema, type ClaimView } from "../schemas/workflow-state.js";
+import { AnalysisPlanSchema, isTemplateStep, type ClaimView } from "../schemas/workflow-state.js";
 import { loadPlan, loadPlanRecord, type PlanRecord, type PlanRowQuerier } from "../state/index.js";
 import { parseStructureUrl } from "../contracts/structure-source.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
@@ -79,7 +79,7 @@ export function planCardOf(record: Pick<PlanRecord, "planId" | "plan" | "parentP
         id,
         planId: record.planId,
         title: heading,
-        steps: parsed.data.steps,
+        steps: parsed.data.steps.map((step) => ({ ...step, kind: isTemplateStep(step) ? ("template" as const) : ("open" as const) })),
         analytical_narrative: parsed.data.analytical_narrative,
         omicsType: parsed.data.omicsType,
         omicsSubtype: parsed.data.omicsSubtype,

@@ -1,3 +1,6 @@
+// Type-only: erased at compile time, thus a client that imports this file loads no kernel code.
+import type { ProvTemplateRender } from "@inflexa-ai/prov-kernel";
+
 /** The format of a provenance export: the signed PROV-JSON bytes, or a PROV-N rendering of them. */
 export type ProvExportFormat = "prov-json" | "prov-n";
 
@@ -28,7 +31,8 @@ export type LineageFormat = "tree" | "json" | "dot" | "mermaid";
 export type LineageJsonNode =
     | { kind: "file"; path: string | null; hash: string | null; source: string | null; truncated?: true }
     | { kind: "command"; command?: string; exitCode?: number; unresolvedScript?: string; runId?: string; stepId?: string }
-    | { kind: "file_tool"; tool?: string; runId?: string; stepId?: string }
+    /** `template` is the render of a template, from any template source, on the call that wrote a rendered script. */
+    | { kind: "file_tool"; tool?: string; runId?: string; stepId?: string; template?: ProvTemplateRender }
     | { kind: "step" | "activity"; runId?: string; stepId?: string };
 
 /** The flat JSON graph: direction-independent nodes + edges in PROV semantics, plus the walk's roots. */

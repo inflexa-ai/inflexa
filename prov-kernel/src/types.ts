@@ -268,8 +268,8 @@ export type ProvTemplateRender = {
     template: string;
     label: string;
     method: { id: string; label: string };
-    /** The snapshot digest of the release that served the render. */
-    snapshot: string;
+    /** The snapshot digest of the release that served the render. Absent for a template source with no releases. */
+    snapshot?: string;
     /** Each setting that the script reads, with its value and where the value came from. */
     settings: { name: string; value?: string | number | boolean | string[]; source: string }[];
     /** Each plan value that the agent changed, with the reason. */

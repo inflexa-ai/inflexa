@@ -16,12 +16,13 @@ type SeedRow = {
     createdAt?: string;
     size?: number;
     unrecoverableAt?: string | null;
+    template?: unknown;
 };
 
 async function seed(pool: Pool, row: SeedRow): Promise<void> {
     await pool.query({
-        text: `INSERT INTO cortex_artifacts (analysis_id, path, hash, size, role, source_step, source_run, file_type, created_at, unrecoverable_at)
-               VALUES ($1, $2, 'h', $3, $4, $5, $6, $7, $8, $9)`,
+        text: `INSERT INTO cortex_artifacts (analysis_id, path, hash, size, role, source_step, source_run, file_type, created_at, unrecoverable_at, template)
+               VALUES ($1, $2, 'h', $3, $4, $5, $6, $7, $8, $9, $10)`,
         values: [
             row.analysisId,
             row.path,
@@ -32,6 +33,7 @@ async function seed(pool: Pool, row: SeedRow): Promise<void> {
             row.fileType ?? null,
             row.createdAt ?? "2026-10-01T00:00:00.000Z",
             row.unrecoverableAt ?? null,
+            row.template === undefined ? null : JSON.stringify(row.template),
         ],
     });
 }
@@ -67,6 +69,7 @@ describe("queryArtifactPage", () => {
                 runId: "r1",
                 stepId: "s1",
                 createdAt: "2026-10-01T00:00:00.000Z",
+                template: null,
             },
             {
                 path: "runs/r2/s3/figures/volcano_up.png",
@@ -76,7 +79,24 @@ describe("queryArtifactPage", () => {
                 runId: "r2",
                 stepId: "s3",
                 createdAt: "2026-10-01T00:00:00.000Z",
+                template: null,
             },
+        ]);
+    });
+
+    it("gives the template of a rendered script, with no snapshot for a source that has none, and null for each other file", async () => {
+        const analysisId = "template-a1";
+        const rendered = { template: "tpl-qc-eda@1.4.0", label: "QC", method: { id: "M-0001", label: "VST and PCA" }, environmentMatch: "exact" };
+        await seed(pool, { analysisId, path: "runs/r1/s1/work/qc.R", runId: "r1", stepId: "s1", template: rendered });
+        await seed(pool, { analysisId, path: "runs/r1/s1/work/pca.csv", runId: "r1", stepId: "s1" });
+        await seed(pool, { analysisId, path: "runs/r1/s1/work/odd.R", runId: "r1", stepId: "s1", template: { template: 3 } });
+
+        const page = (await queryArtifactPage(pool, analysisId, PATH_SORT))._unsafeUnwrap();
+
+        expect(page.entries.map((entry) => [entry.path, entry.template])).toEqual([
+            ["runs/r1/s1/work/odd.R", null],
+            ["runs/r1/s1/work/pca.csv", null],
+            ["runs/r1/s1/work/qc.R", rendered],
         ]);
     });
 

@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { errAsync, okAsync, type ResultAsync } from "neverthrow";
+import { errAsync, ok, okAsync, type ResultAsync } from "neverthrow";
 import { z } from "zod";
 import {
     createRunEventStream,
@@ -110,6 +110,7 @@ const UNEXPECTED: RunRoutesOpts<Runtime> = {
     countArtifacts: failing("countArtifacts"),
     countSteps: failing("countSteps"),
     readSynthesis: failing("readSynthesis"),
+    readMethods: failing("readMethods"),
     listSteps: failing("listSteps"),
     loadPlan: failing("loadPlan"),
     loadPlanRecord: failing("loadPlanRecord"),
@@ -924,6 +925,42 @@ describe("GET {A}/plans", () => {
         expect(response.status).toBe(503);
         expect(await jsonBody(response)).toMatchObject({ error: "unavailable", details: { phase: "starting" } });
         expect(reads).toEqual([]);
+    });
+});
+
+describe("GET {A}/run/:runId/methods", () => {
+    const methods = {
+        grounding: "grounded" as const,
+        templates: [{ id: "tpl-qc-eda", version: "1.4.0", label: "QC", method: { id: "M-0001", label: "VST and PCA" }, script: "work/qc.R" }],
+        claims: [{ id: "R-0028@d560", title: "Use the QL F-test", strength: "consensus" }],
+        sources: [{ doi: "10.1093/bioinformatics/btw014", title: "edgeR QL", year: 2016 }],
+    };
+
+    test("gives the methods of each step, and sends the plan of the run and the selected steps to the read", async () => {
+        const analysisId = seedAnalysis();
+        const reads: unknown[] = [];
+        const app = appWith({
+            getRun: () => okAsync(runRow({ runId: "r1", analysisId, planId: "pln-0000000a" })),
+            readMethods: ({ pool: _pool, ...args }) => {
+                reads.push(args);
+                return Promise.resolve(ok([{ stepId: "T1S1", methods, sources: methods.sources }]));
+            },
+        });
+
+        const response = await app.request(`/api/v1/analyses/${analysisId}/run/r1/methods?stepId=T1S1&stepId=T1S2`);
+
+        expect(response.status).toBe(200);
+        expect(await jsonBody(response)).toEqual({ steps: [{ stepId: "T1S1", methods }] });
+        expect(reads).toEqual([{ analysisId, runId: "r1", planId: "pln-0000000a", stepIds: ["T1S1", "T1S2"] }]);
+    });
+
+    test("404 `not_found` for a run of a different analysis, with no read of the methods", async () => {
+        const app = appWith({ getRun: () => okAsync(runRow({ runId: "r1", analysisId: "a2" })), readMethods: failing("readMethods") });
+
+        const response = await app.request(`/api/v1/analyses/${seedAnalysis()}/run/r1/methods`);
+
+        expect(response.status).toBe(404);
+        expect(await jsonBody(response)).toMatchObject({ error: "not_found" });
     });
 });
 

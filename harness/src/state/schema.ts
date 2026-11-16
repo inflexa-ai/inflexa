@@ -31,8 +31,8 @@ export const ArtifactTemplateSchema = z.object({
     template: z.string(),
     label: z.string(),
     method: z.object({ id: z.string(), label: z.string() }),
-    /** The snapshot digest of the release that served the render. */
-    snapshot: z.string(),
+    /** The snapshot digest of the release that served the render. Absent for a template source with no releases. */
+    snapshot: z.string().optional(),
     environmentMatch: z.string(),
 });
 export type ArtifactTemplate = z.infer<typeof ArtifactTemplateSchema>;

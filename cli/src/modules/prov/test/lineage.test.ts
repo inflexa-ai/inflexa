@@ -1004,3 +1004,28 @@ describe("legacy and current file-tool shapes in one document", () => {
         expect(current.tree).toContain("write_file (file tool)");
     });
 });
+
+describe("the render of a template in the JSON lineage", () => {
+    test("the file-tool call that wrote a rendered script carries the render facts, with no snapshot for a source that has none", () => {
+        const render = {
+            template: "tpl-qc-eda@1.4.0",
+            label: "QC",
+            method: { id: "M-0001", label: "VST and PCA" },
+            settings: [{ name: "alpha", value: 0.05, source: "plan" }],
+            overrides: [],
+            environmentMatch: "exact",
+        };
+        const renderCall: ProvCallRef = { invocationId: "call-render", tool: "run_template", template: render };
+        const renderedKey = { path: "runs/run-001/step-de/work/qc.R", hash: "hashQc0001" };
+        const doc = freshDocument(analysis);
+        appendFileWritten(doc, "a1", system, model, fileRefOf(renderedKey, "file_tool"), stepRef, "call", renderCall);
+        const renderQn = `inflexa:call-${cliProvDigest(`${stepRef.runId}|${stepRef.stepId}|${renderCall.invocationId}`)}`;
+
+        const { json } = lineageOf(lineageModelOf(ProvDocument.deserialize(doc.unified(PROV_UNIFY_OPTIONS).serialize("json"), "json")), renderedKey.path, {
+            forward: false,
+        });
+
+        expect(json.nodes[renderQn]).toMatchObject({ kind: "file_tool", tool: "run_template", template: render });
+        expect(json.nodes[renderQn]).not.toHaveProperty(["template", "snapshot"]);
+    });
+});

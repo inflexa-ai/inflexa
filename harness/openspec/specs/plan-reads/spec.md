@@ -250,6 +250,16 @@ The `data-plan` part MUST have the optional field `claims`. It holds the view of
 - **WHEN** the plan card builder builds the `data-plan` part
 - **THEN** the grounding of the step in the part holds the setting and the departure
 
+### Requirement: The data-plan card names the kind of each step
+
+Each step of the `data-plan` part MUST have the optional field `kind`, `template` or `open`. The plan card builder MUST set it on each step. A step is a template step only when the stored step has the kind `template`. A step that names a template in its grounding with no such kind is an open step. A card that the store kept before the field has no `kind`, and the part schema MUST accept it.
+
+#### Scenario: A template step and an open step with a template
+
+- **GIVEN** a stored plan whose step `T1S1` has the kind `template`, and whose step `T1S2` names a template with no kind
+- **WHEN** the plan card builder builds the `data-plan` part
+- **THEN** `T1S1` has the kind `template`, and `T1S2` has the kind `open`
+
 ### Requirement: read_plan gives the text of a stored plan to the model
 
 The conversation agent MUST hold a `read_plan` tool that reads a stored plan of the analysis of the session by its plan id. The input MUST be `{ planId, stepId? }`. The tool MUST show nothing to the user, because `show_plan` shows the card of a stored plan.

@@ -26,6 +26,7 @@ export const PlanStepSchema = z.object({
     agent: z.string(),
     question: z.string(),
     depends_on: z.array(z.string()),
+    kind: z.enum(["open", "template"]).optional(),
     grounding: z
         .object({
             status: z.string(),

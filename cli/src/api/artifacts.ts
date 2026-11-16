@@ -1,5 +1,5 @@
 // Type-only: erased at compile time, thus a client that imports this file loads no harness code.
-import type { ArtifactRole } from "@inflexa-ai/harness/state/schema.js";
+import type { ArtifactRole, ArtifactTemplate } from "@inflexa-ai/harness/state/schema.js";
 
 import type { OpenTarget } from "../types/session.ts";
 import type { ListEnvelope } from "./common.ts";
@@ -67,6 +67,8 @@ export type ArtifactEntry = {
     stepId: string | null;
     /** ISO 8601. The time of the first registration of the path. */
     createdAt: string;
+    /** The template that rendered the file, from any template source: a script that `run_template` wrote. `null` for every other file. */
+    template: ArtifactTemplate | null;
 };
 
 /** The count of the selected rows that share one extension. */

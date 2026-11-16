@@ -166,16 +166,17 @@ export function createProvDocumentModel(options: ProvDocumentModelOptions = {}):
  */
 function templateAttributes(render: ProvTemplateRender | undefined): Record<string, string> {
     if (render === undefined) return {};
-    return {
+    const attributes: Record<string, string> = {
         "inflexa:template": render.template,
         "inflexa:templateLabel": render.label,
         "inflexa:method": render.method.id,
         "inflexa:methodLabel": render.method.label,
-        "inflexa:snapshot": render.snapshot,
         "inflexa:templateSettings": JSON.stringify(render.settings),
         "inflexa:templateOverrides": JSON.stringify(render.overrides),
         "inflexa:environmentMatch": render.environmentMatch,
     };
+    if (render.snapshot !== undefined) attributes["inflexa:snapshot"] = render.snapshot;
+    return attributes;
 }
 
 /** Replace every character a PROV qualified-name localpart disallows, so any string can seed an identifier. */
