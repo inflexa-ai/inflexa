@@ -75,7 +75,7 @@ The CLI reads `agents/` when the harness reads the catalog. A file is a draft wh
 - the id equals a built-in id or the id of another file
 - a reference does not resolve (a connector, an MCP server or a skill)
 
-A draft stays on disk and keeps its gaps. `GET /api/v1/agents` returns each draft with its gaps. `agents()` of the catalog leaves out each draft. A draft never stops the boot.
+A draft stays on disk and keeps its gaps. `GET /api/v1/catalog/agents` returns each draft with its gaps. `agents()` of the catalog leaves out each draft. A draft never stops the boot.
 
 ### D4. Import
 
@@ -106,24 +106,25 @@ The CLI builds the `SkillStore` over two roots: the built-in skills and `~/.conf
 
 | Command | Route | Agent policy |
 |---|---|---|
-| `agent ls`, `agent show <id>` | `GET /api/v1/agents`, `GET /api/v1/agents/:id` | auto |
-| `agent clone <id> <new-id>` | `POST /api/v1/agents/:id/clone` | approval |
-| `agent import <file>` | `POST /api/v1/agents/import` | approval |
-| `agent enable`, `agent disable` | `PATCH /api/v1/agents/:id` | approval |
-| `agent attach`, `agent detach` | `PATCH /api/v1/agents/:id` | approval |
-| `agent rm <id>` | `DELETE /api/v1/agents/:id` | approval |
+| `agent ls`, `agent show <id>` | `GET /api/v1/catalog/agents`, `GET /api/v1/catalog/agents/:id` | auto |
+| `agent clone <id> <new-id>` | `POST /api/v1/catalog/agents/:id/clone` | auto |
+| `agent import <file>` | `POST /api/v1/catalog/agents/import` | auto |
+| `agent enable`, `agent disable` | `PATCH /api/v1/catalog/agents/:id` | auto |
+| `agent attach`, `agent detach` | `PATCH /api/v1/catalog/agents/:id` | auto |
+| `agent rm <id>` | `DELETE /api/v1/catalog/agents/:id` | approval |
 | `skill ls`, `skill find <dir>` | `GET /api/v1/skills` | auto |
-| `skill import <dir>` | `POST /api/v1/skills/import` | approval |
+| `skill import <dir>` | `POST /api/v1/skills/import` | auto |
 | `connector ls` | `GET /api/v1/connectors` | auto |
-| `connector set <id>` | `PATCH /api/v1/connectors/:id` | approval |
+| `connector set <id>` | `PATCH /api/v1/connectors/:id` | auto, `--endpoint` asks for the exact command |
 | `mcp ls` | `GET /api/v1/mcp` | auto |
-| `mcp add` | `POST /api/v1/mcp` | blocked |
+| `mcp add` | `POST /api/v1/mcp` | approval for the exact command |
 | `mcp auth`, `mcp logout` | `POST /api/v1/mcp/:name/auth`, `DELETE /api/v1/mcp/:name/auth` | blocked |
-| `mcp enable`, `mcp disable`, `mcp rm` | `PATCH`, `DELETE /api/v1/mcp/:name` | approval |
+| `mcp enable`, `mcp disable` | `PATCH /api/v1/mcp/:name` | auto |
+| `mcp rm` | `DELETE /api/v1/mcp/:name` | approval |
 | `credential ls` | `GET /api/v1/credentials` | auto |
-| `credential set <name>` | `PUT /api/v1/credentials/:name` | approval |
+| `credential set <name>` | `PUT /api/v1/credentials/:name` | auto, `--command` asks for the exact command |
 
-`mcp add` is blocked for the chat agent, because it makes the host run a command that the agent wrote. `mcp auth` is blocked because the sign-in needs a person at a browser. The self-configuration change revisits each policy.
+The policy follows the risk of a command, because a prompt for each change makes users stop reading prompts. A change to the state of Inflexa can be undone, thus it runs with no prompt. Text that the agent reads can hold instructions, thus a command that runs a host command or sends a secret to a new place asks, and an "always" covers only that exact command. A deletion of the work of the user asks. `mcp auth` and `mcp logout` stay blocked, because the sign-in needs a person at a browser.
 
 `agent clone` copies a built-in prompt and its resolved attachments into a new file. The clone has no link to the built-in agent. A user can clone only an executor.
 

@@ -17,6 +17,8 @@ import { signIn } from "../../test_support/browser_session.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { errorBody, jsonBody } from "../../test_support/response_body.ts";
 import { idleLifecycle, startTestServer, type TestServer } from "../../test_support/server.ts";
+import { z } from "zod";
+
 import { buildApp } from "../app.ts";
 import type { ServerBoot } from "../boot.ts";
 import type { ServerLifecycle } from "../lifecycle.ts";
@@ -74,6 +76,21 @@ describe("the credential check", () => {
         const response = await app.request("/api/v1/nothing", { headers: AUTH });
         expect(response.status).toBe(404);
         expect(await response.json()).toMatchObject({ error: "not_found" });
+    });
+});
+
+describe("the agent routes", () => {
+    const { boot } = fakeBoot(STARTING);
+    const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
+
+    test("`/api/v1/agents` gives the models of the roles, and `/api/v1/catalog/agents` gives the agents of the catalog", async () => {
+        const roles = z.object({ agents: z.array(z.looseObject({ role: z.string() })) }).parse(await (await app.request("/api/v1/agents", { headers: AUTH })).json());
+        const catalog = z
+            .object({ agents: z.array(z.looseObject({ id: z.string(), kind: z.string() })) })
+            .parse(await (await app.request("/api/v1/catalog/agents", { headers: AUTH })).json());
+
+        expect(roles.agents.map((agent) => agent.role)).toContain("conversation");
+        expect(catalog.agents.map((agent) => `${agent.kind}:${agent.id}`)).toContain("builtin:analyst");
     });
 });
 

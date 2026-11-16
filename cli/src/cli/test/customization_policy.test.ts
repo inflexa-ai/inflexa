@@ -33,12 +33,30 @@ function blockedMessage(result: RunInflexaResult): string {
 }
 
 describe("run_inflexa — the customization commands", () => {
-    test("`mcp add` is refused with the reason that it makes the host run a command", async () => {
-        const { asked, spawned, result } = await run(["mcp", "add", "lims", "--", "lims-mcp"]);
+    test("`mcp add` asks, and its approval grants only the exact command, because the host runs what the entry names", async () => {
+        const { asked, spawned } = await run(["mcp", "add", "lims", "--", "lims-mcp"]);
 
-        expect(asked).toEqual([]);
-        expect(spawned).toEqual([]);
-        expect(blockedMessage(result)).toContain("makes the host run a command");
+        expect(asked.length).toBe(1);
+        expect(asked[0]?.command).toBe("inflexa mcp add lims -- lims-mcp");
+        expect(asked[0]?.grantKey).toBeUndefined();
+        expect(spawned.length).toBe(1);
+    });
+
+    test("`credential set --env` runs with no prompt, and `--command` asks for the exact command", async () => {
+        const fromEnv = await run(["credential", "set", "ncbi-key", "--env", "NCBI_API_KEY"]);
+        const fromCommand = await run(["credential", "set", "ncbi-key", "--command", "op read op://lab/ncbi"]);
+
+        expect(fromEnv.asked).toEqual([]);
+        expect(fromEnv.spawned.length).toBe(1);
+        expect(fromCommand.asked.map((request) => request.grantKey)).toEqual([undefined]);
+    });
+
+    test("`connector set` turns a connector on with no prompt, and a new endpoint asks for the exact command", async () => {
+        const enable = await run(["connector", "set", "pubmed", "--enable"]);
+        const endpoint = await run(["connector", "set", "pubmed", "--endpoint", "https://mirror.example"]);
+
+        expect(enable.asked).toEqual([]);
+        expect(endpoint.asked.map((request) => request.grantKey)).toEqual([undefined]);
     });
 
     test.each([["auth"], ["logout"]])("`mcp %s` is refused with the reason that it needs a person at a browser", async (verb) => {
@@ -49,12 +67,17 @@ describe("run_inflexa — the customization commands", () => {
         expect(blockedMessage(result)).toContain("a person at a browser");
     });
 
-    test("`agent attach` asks the user before it runs", async () => {
+    test("`agent attach` runs with no prompt, because it changes only the state of Inflexa", async () => {
         const { asked, spawned } = await run(["agent", "attach", "analyst", "skill", "lab-protocols"]);
 
-        expect(asked.length).toBe(1);
-        expect(asked[0]?.command).toBe("inflexa agent attach analyst skill lab-protocols");
+        expect(asked).toEqual([]);
         expect(spawned.length).toBe(1);
+    });
+
+    test("`agent rm` asks, and an approval can cover each later removal", async () => {
+        const { asked } = await run(["agent", "rm", "lipid-analyst"]);
+
+        expect(asked.map((request) => request.grantKey)).toEqual(["inflexa agent rm"]);
     });
 
     test("`agent ls --json` runs with no prompt", async () => {

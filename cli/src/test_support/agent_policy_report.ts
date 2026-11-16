@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 
-import { getAgentPolicy, getCommandKind, isTransferPolicy } from "../cli/agent_policy.ts";
+import { getAgentPolicy, getCommandKind, isExactGrantPolicy, isTransferPolicy } from "../cli/agent_policy.ts";
 import { buildProgram } from "../cli/index.ts";
 
 /**
@@ -20,6 +20,8 @@ export type PolicyRow = {
     readonly safeFlags: readonly string[] | null;
     /** Whether the policy marks a transfer — the command the tool runs with no deadline of its own. */
     readonly transfer: boolean;
+    /** Whether an approval of the policy grants only the exact argv. */
+    readonly exactGrant: boolean;
     /** Every declared option's canonical attributeName on this command. */
     readonly declaredOptions: readonly string[];
     /** The declared command kind, or `null` when unstamped — the second failure the exhaustiveness test hunts. */
@@ -53,6 +55,7 @@ function walk(command: Command, path: readonly string[], rows: PolicyRow[]): voi
             kind: policy?.kind ?? null,
             safeFlags: policy?.kind === "auto" ? [...policy.safeFlags] : null,
             transfer: isTransferPolicy(policy),
+            exactGrant: isExactGrantPolicy(policy),
             declaredOptions: command.options.map((option) => option.attributeName()),
             commandKind: kind === undefined ? null : typeof kind === "string" ? kind : kind.kind,
             machineFlags: kind !== undefined && typeof kind !== "string" ? [...kind.machineFlags] : null,

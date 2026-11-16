@@ -22,34 +22,34 @@ import type {
 } from "../api/customization.ts";
 import { DEFAULT_CLIENT_OPTS, request, type ClientError, type ClientOpts } from "./api.ts";
 
-/** `GET /api/v1/agents`: each built-in agent, each custom agent, and each draft, with the gaps. */
+/** `GET /api/v1/catalog/agents`: each built-in agent, each custom agent, and each draft, with the gaps. */
 export function fetchAgents(opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentList, ClientError> {
-    return request<AgentList>("GET", "/api/v1/agents", {}, opts);
+    return request<AgentList>("GET", "/api/v1/catalog/agents", {}, opts);
 }
 
-/** `GET /api/v1/agents/:id`: one agent with its prompt. 404 `not_found` for an unknown id. */
+/** `GET /api/v1/catalog/agents/:id`: one agent with its prompt. 404 `not_found` for an unknown id. */
 export function fetchAgent(id: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
-    return request<AgentDetail>("GET", `/api/v1/agents/${encodeURIComponent(id)}`, {}, opts);
+    return request<AgentDetail>("GET", `/api/v1/catalog/agents/${encodeURIComponent(id)}`, {}, opts);
 }
 
-/** `POST /api/v1/agents/:id/clone`: copy a built-in executor into a new agent file. 409 `conflict` for a taken id. */
+/** `POST /api/v1/catalog/agents/:id/clone`: copy a built-in executor into a new agent file. 409 `conflict` for a taken id. */
 export function cloneAgent(id: string, newId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
-    return request<AgentDetail>("POST", `/api/v1/agents/${encodeURIComponent(id)}/clone`, { body: { newId } }, opts);
+    return request<AgentDetail>("POST", `/api/v1/catalog/agents/${encodeURIComponent(id)}/clone`, { body: { newId } }, opts);
 }
 
-/** `POST /api/v1/agents/import`: convert the agent file of another harness. `path` is absolute. */
+/** `POST /api/v1/catalog/agents/import`: convert the agent file of another harness. `path` is absolute. */
 export function importAgent(path: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
-    return request<AgentDetail>("POST", "/api/v1/agents/import", { body: { path } }, opts);
+    return request<AgentDetail>("POST", "/api/v1/catalog/agents/import", { body: { path } }, opts);
 }
 
-/** `PATCH /api/v1/agents/:id`: turn an agent on or off, or attach or detach a connector, an MCP server, or a skill. */
+/** `PATCH /api/v1/catalog/agents/:id`: turn an agent on or off, or attach or detach a connector, an MCP server, or a skill. */
 export function patchAgent(id: string, body: PatchAgentRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
-    return request<AgentDetail>("PATCH", `/api/v1/agents/${encodeURIComponent(id)}`, { body }, opts);
+    return request<AgentDetail>("PATCH", `/api/v1/catalog/agents/${encodeURIComponent(id)}`, { body }, opts);
 }
 
-/** `DELETE /api/v1/agents/:id`: delete a custom agent file. 403 `forbidden` for a built-in agent. */
+/** `DELETE /api/v1/catalog/agents/:id`: delete a custom agent file. 403 `forbidden` for a built-in agent. */
 export function deleteAgent(id: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<DeleteAgentResponse, ClientError> {
-    return request<DeleteAgentResponse>("DELETE", `/api/v1/agents/${encodeURIComponent(id)}`, {}, opts);
+    return request<DeleteAgentResponse>("DELETE", `/api/v1/catalog/agents/${encodeURIComponent(id)}`, {}, opts);
 }
 
 /** `GET /api/v1/skills`: the built-in and the custom skills, and each skill directory that the store leaves out. */
