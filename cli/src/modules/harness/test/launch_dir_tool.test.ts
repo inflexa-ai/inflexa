@@ -7,22 +7,15 @@ import { join } from "node:path";
 import type { ToolContext } from "@inflexa-ai/harness";
 
 import { str256 } from "../../../lib/types.ts";
-import { buildAgentSession } from "../../../test_support/builders.ts";
+import { buildAgentSession, buildToolContext } from "../../../test_support/builders.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { listAnalysisInputs } from "../../../db/primary_query.ts";
 import { addInputs, createAnalysis } from "../../analysis/analysis.ts";
 import { createLaunchDirTool } from "../launch_dir_tool.ts";
 import { awaitOk } from "../../../test_support/result.ts";
-import { createCallLock } from "@inflexa-ai/harness/loop/call-lock.js";
 
 function ctxFor(analysisId: string): ToolContext {
-    return {
-        session: buildAgentSession({ scope: { kind: "analysis", analysisId } }),
-        invocationId: "test-tool-call",
-        signal: new AbortController().signal,
-        callLock: createCallLock(),
-        emit: () => {},
-    };
+    return buildToolContext(buildAgentSession({ scope: { kind: "analysis", analysisId } }));
 }
 
 describe("list_launch_dir tool", () => {
@@ -76,14 +69,7 @@ describe("list_launch_dir tool", () => {
         const session = buildAgentSession();
         // The harness `Scope` has the analysis kind only, thus the other kind is forced at runtime.
         Object.assign(session, { scope: { kind: "target-assessment", targetAssessmentId: "ta1", billingContextId: "b1" } });
-        const ctx: ToolContext = {
-            session,
-            invocationId: "test-tool-call",
-            signal: new AbortController().signal,
-            callLock: createCallLock(),
-            emit: () => {},
-        };
-        const result = (await tool.execute({}, ctx))._unsafeUnwrap();
+        const result = (await tool.execute({}, buildToolContext(session)))._unsafeUnwrap();
         expect(result.status).toBe("no_analysis");
     });
 

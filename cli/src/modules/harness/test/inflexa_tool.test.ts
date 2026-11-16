@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import type { AgentPolicy } from "../../../cli/agent_policy.ts";
 import { reportAgentPolicies } from "../../../test_support/agent_policy_report.ts";
-import { buildAgentSession } from "../../../test_support/builders.ts";
+import { buildAgentSession, buildToolContext } from "../../../test_support/builders.ts";
 import {
     createRunInflexaTool,
     decideAction,
@@ -23,7 +23,6 @@ import { runAfter } from "../../../lib/timer.ts";
 import { withoutPrefix } from "../../../lib/text.ts";
 import { countOccurrences } from "../../../test_support/text_shapes.ts";
 import { awaitOk } from "../../../test_support/result.ts";
-import { createCallLock } from "@inflexa-ai/harness/loop/call-lock.js";
 
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
 const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
@@ -66,13 +65,7 @@ function makeCtx(analysisId: string | null = "an-test"): ToolContext {
     // The harness `Scope` has the analysis kind only, but the tool branches on any other kind, thus the
     // value is forced at runtime for the case that the test names.
     if (analysisId === null) Object.assign(session, { scope: { kind: "target-assessment" } });
-    return {
-        session,
-        invocationId: "test-tool-call",
-        signal: new AbortController().signal,
-        callLock: createCallLock(),
-        emit: () => {},
-    };
+    return buildToolContext(session);
 }
 
 /**
