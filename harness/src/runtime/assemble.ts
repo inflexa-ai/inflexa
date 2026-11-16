@@ -29,7 +29,6 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import { registerSubAgent, type SubAgentPauses, type SubAgentRegistrar } from "../loop/sub-agent.js";
 import { workPause } from "../workflows/pause.js";
-import type { AgentDefinition } from "../loop/types.js";
 import { hasBrowserUrl, type ChromeConfig } from "../lib/chrome.js";
 import { createStaticEyes, type AcquireEyes } from "../lib/eyes.js";
 import type { DomainError } from "../lib/result.js";
@@ -55,8 +54,13 @@ import type { ProvenanceSeam } from "../provenance/seam.js";
 import type { SyncSessionFile } from "../workspace/session-files.js";
 import { createAskGateway, type AskGateway } from "../tools/approval/gateway.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
-import type { BioToolKeys } from "../tools/bio/keys.js";
-import { createSynthesisLookupTools } from "../tools/research/synthesis-lookups.js";
+import { builtinAgent } from "../catalog/builtins.js";
+import { equipAttachments, type AgentEquipment, type CatalogServices } from "../catalog/equip.js";
+import { agentOfRole, resolveCatalog } from "../catalog/resolve.js";
+import type { AgentCatalog } from "../catalog/types.js";
+import type { TurnAgent } from "../agents/turn-agent.js";
+import { createMcpConnections } from "../mcp/connections.js";
+import type { WebSearchEngine } from "../tools/research/web-search.js";
 
 /** Registered child sandbox-step callable the parent's child dispatch closes over. */
 export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -78,15 +82,11 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * the same memory that the conversation agent writes.
  */
 export type CoreWorkflowDeps = {
-    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "runAuthorizer" | "leases">;
-    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<
-        ExecuteAnalysisDeps,
-        "usageRecorder" | "synthesisLookups" | "toolOutputStore" | "workingMemory" | "workspaceFs"
-    > & {
-        /** API keys for the bio/chem tools of the lookups of the synthesis. */
-        readonly bioKeys: BioToolKeys;
-    };
-    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore" | "leases">;
+    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "services" | "toolOutputStore" | "runAuthorizer" | "leases">;
+    readonly buildExecuteAnalysis: (
+        sandboxStep: SandboxStepCallable,
+    ) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "synthesisEquipment" | "toolOutputStore" | "workingMemory" | "workspaceFs">;
+    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore" | "leases" | "services">;
 };
 
 /** The sandboxes of the runtime. The assembly builds the one sandbox module over the client. */
@@ -124,15 +124,11 @@ export type RegisteredWorkflows = {
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,
-    | "executeAnalysisWorkflow"
-    | "usageRecorder"
-    | "citationResolver"
-    | "anchorReportSession"
-    | "eyes"
-    | "toolOutputStore"
-    | "registerSubAgent"
-    | "syncSessionFile"
->;
+    "executeAnalysisWorkflow" | "usageRecorder" | "services" | "anchorReportSession" | "eyes" | "toolOutputStore" | "registerSubAgent" | "syncSessionFile"
+> & {
+    /** The web-search engine of the host. The `web-search` connector uses it when its settings name no endpoint. */
+    readonly webSearch?: WebSearchEngine;
+};
 
 /**
  * What binds one reference resolver: the analysis whose pinned artifacts it reads, and the identity and the
@@ -152,6 +148,11 @@ export type ReportResolverScope = {
 export type MakeReportReferenceResolver = (scope: ReportResolverScope) => Promise<ReferenceResolver>;
 
 export type CoreRuntimeDeps = {
+    /**
+     * The agent catalog of the host: the agents, the skills, the connector settings, the MCP servers, and the
+     * credentials. The harness reads it when it uses it, thus a change reaches the next plan, run, or turn.
+     */
+    readonly catalog: AgentCatalog;
     readonly conversation: ConversationAssemblyDeps;
     readonly workflows: CoreWorkflowDeps;
     readonly sandbox: CoreSandboxDeps;
@@ -285,7 +286,7 @@ const _assertDomainError: _AssertDomainError = true;
  * unregistered one refuses on the error channel.
  */
 export type ThreadAgentResolver = {
-    forThread(type: ThreadType): Result<AgentDefinition, UnregisteredThreadType>;
+    forThread(type: ThreadType): Result<TurnAgent, UnregisteredThreadType>;
 };
 
 /**
@@ -299,7 +300,7 @@ export type ThreadAgentResolver = {
  * captures (an embedder's delegating provider handles, closure-wired tools)
  * stay valid across every turn.
  */
-export function createThreadAgentResolver(registry: Partial<Record<ThreadType, AgentDefinition>>): ThreadAgentResolver {
+export function createThreadAgentResolver(registry: Partial<Record<ThreadType, TurnAgent>>): ThreadAgentResolver {
     return {
         forThread: (type) => {
             const agent = registry[type];
@@ -347,6 +348,8 @@ export type CoreRuntime = {
     readonly work: WorkSurface;
     /** The run canceler of `work`. It also ends the sandbox leases of the canceled workflows at once. */
     readonly runCanceler: RunCanceler;
+    /** Close the connection of each MCP server. The shutdown of the boot calls it. */
+    readonly closeMcpConnections: () => Promise<void>;
     /**
      * Approve a stored plan by its id and start its run with no model call. It runs over the deps that
      * reach the `execute_analysis` tool of the conversation agent, thus the approval and the tool launch
@@ -376,11 +379,7 @@ export function resolveCompositionEyes(seam: AcquireEyes | undefined, chrome: Ch
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const { conversation, workflows: wf } = deps;
     const usageRecorder = deps.usageRecorder ?? createNoopUsageRecorder();
-    const citationResolver = createCitationResolver({
-        ...deps.citationResolverConfig,
-        ncbiApiKey: deps.citationResolverConfig?.ncbiApiKey ?? conversation.bioKeys.ncbi,
-        semanticScholarApiKey: deps.citationResolverConfig?.semanticScholarApiKey ?? conversation.bioKeys.semanticScholar,
-    });
+    const citationResolver = createCitationResolver({ ...deps.citationResolverConfig });
 
     // A bundled host embeds the worker entry of `run_script`, and each decode worker starts from the same entry.
     const workerBudget = configureHostWorkers({ memoryMib: deps.hostWorkerMemoryMib, entry: conversation.scriptRuntime?.workerUrl });
@@ -394,6 +393,13 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     }
 
     const toolOutputStore = createToolOutputStore(conversation.pool);
+    // One view of the catalog for each agent of the runtime: the same connectors, credentials, and MCP servers.
+    const mcp = createMcpConnections({ logger: conversation.logger });
+    const services: CatalogServices = {
+        catalog: deps.catalog,
+        connectorBase: { citationResolver, toolOutputStore, webSearch: conversation.webSearch, logger: conversation.logger },
+        mcp,
+    };
     const pauseRetryDelaysMs = deps.pauseRetryDelaysMs;
     // Each child of a sub-agent pauses with the work of its caller, thus a resume of the turn or of the run ends its wait.
     const subAgentPauses: SubAgentPauses = ({ runSession, ...work }, waiter, emit) =>
@@ -424,17 +430,20 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const sandboxStep = registerSandboxStep({
         ...wf.sandboxStep,
         leases,
-        citationResolver,
+        services,
         usageRecorder,
         toolOutputStore,
         pauseRetryDelaysMs,
         runAuthorizer: conversation.runAuthorizer,
     });
-    const { bioKeys: synthesisBioKeys, ...executeAnalysisDeps } = wf.buildExecuteAnalysis(sandboxStep);
-    const synthesisLookups = createSynthesisLookupTools({ bioKeys: synthesisBioKeys, citationResolver, logger: executeAnalysisDeps.logger });
+    const executeAnalysisDeps = wf.buildExecuteAnalysis(sandboxStep);
+    const synthesisEquipment = async (): Promise<AgentEquipment> => {
+        const resolved = await resolveCatalog(deps.catalog);
+        return equipAttachments(services, resolved, agentOfRole(resolved, "synthesizer")?.attachments ?? builtinAgent("synthesizer").defaults);
+    };
     const executeAnalysis = registerExecuteAnalysis({
         ...executeAnalysisDeps,
-        synthesisLookups,
+        synthesisEquipment,
         scriptRuntime: conversation.scriptRuntime,
         workspaceFs: conversation.workspaceFs,
         usageRecorder,
@@ -442,7 +451,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         workingMemory: createWorkingMemory(conversation.pool),
         pauseRetryDelaysMs,
     });
-    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, leases, usageRecorder, toolOutputStore, pauseRetryDelaysMs });
+    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, leases, services, usageRecorder, toolOutputStore, pauseRetryDelaysMs });
 
     // The session runtime binds the per-session state to the thread behind the
     // tool boundary, thus one instance serves every report thread. It comes before
@@ -466,7 +475,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         anchorReportSession: reportSession.ensureSessionState.bind(reportSession),
         usageRecorder,
         toolOutputStore,
-        citationResolver,
+        services,
         eyes,
         // The start tool passes it to the spawn, which emits the creation of a
         // report session. The same seam reaches the report agent below.
@@ -521,6 +530,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         logger: conversation.logger,
         toolOutputStore,
         scriptRuntime: conversation.scriptRuntime,
+        services,
     });
 
     // The single registration point for every typed agent. A future thread type's
@@ -530,7 +540,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     // so a dropped registration fails tsc, and it does not surface only as a
     // resolution refusal. The `Partial` over the rest keeps the compiler honest
     // about a type that has no agent yet.
-    const agents: Record<"conversation" | "report", AgentDefinition> & Partial<Record<ThreadType, AgentDefinition>> = {
+    const agents: Record<"conversation" | "report", TurnAgent> & Partial<Record<ThreadType, TurnAgent>> = {
         conversation: conversationAgent,
         report: reportAgent,
     };
@@ -561,6 +571,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     return {
         agents: agentResolver,
         runCanceler,
+        closeMcpConnections: () => mcp.close(),
         askGateway,
         chatTurns,
         work: createWork({
@@ -593,6 +604,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             approvePlan(
                 {
                     pool: conversation.pool,
+                    services,
                     executeAnalysisWorkflow: executeAnalysis,
                     runAuthorizer: conversation.runAuthorizer,
                     runLauncher: conversation.runLauncher,

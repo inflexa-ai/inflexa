@@ -6,7 +6,6 @@
 import { z } from "zod";
 import { AnalysisStepSchema, AnalysisPlanSchema, GroundingDepartureSchema } from "./workflow-state.js";
 import type { AnalysisPlan } from "./workflow-state.js";
-import { PLANNABLE_AGENT_IDS as plannableAgentIds } from "../agents/sandbox-catalog.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
 
 // ── Slim planner schemas (no execution-time fields) ──────────────────
@@ -22,7 +21,7 @@ export const PlanStepSchema = AnalysisStepSchema.omit({
 })
     .required({ agent: true, packages: true })
     .extend({
-        agent: z.enum(plannableAgentIds).describe("Sandbox agent ID, routed by the step's primary data object. Must be one of the available agents."),
+        agent: z.string().min(1).describe("The id of one agent of the Available Agents list, the agent whose work covers the step."),
     });
 
 export type PlanStep = z.infer<typeof PlanStepSchema>;

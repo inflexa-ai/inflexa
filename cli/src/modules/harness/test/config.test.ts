@@ -808,3 +808,14 @@ describe("resolveKnowledgeConfig", () => {
         expect(readConfig().telemetry).toBe(false);
     });
 });
+
+describe("resolveHarnessConfig — an old config with bioKeys", () => {
+    test("resolves with no config error, and the keys do not reach the resolved config", () => {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, harness: { sandboxImage: "img:1", bioKeys: { drugbank: "secret" } } }));
+        const resolved = resolveHarnessConfig();
+        expect(resolved.configError).toBeUndefined();
+        expect(resolved.sandboxImage).toBe("img:1");
+        expect(JSON.stringify(resolved)).not.toContain("secret");
+    });
+});

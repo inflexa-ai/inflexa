@@ -43,12 +43,14 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
-import type { CitationResolver } from "../citations/types.js";
+import { buildStepAgent, stepAgentIdentity, type SandboxAgentDeps } from "../agents/sandbox/index.js";
+import type { CatalogServices } from "../catalog/equip.js";
+import type { AgentIdentity } from "../catalog/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { maskExcept } from "../loop/call-policy.js";
 import { runLoop, runWithSalvage, withRunScript, type LoopStep } from "../loop/run-loop.js";
-import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import { withoutToolValues } from "../loop/tool-value.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import {
@@ -67,7 +69,7 @@ import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { FileMetadataEntry } from "../execution/artifact-metadata.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
-import type { SandboxLeases, BoundLease } from "../sandbox/leases.js";
+import type { SandboxLeases } from "../sandbox/leases.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { STEP_SUMMARY_FILE, STEP_WORK_DIR, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactRegistry } from "../execution/artifact-registry.js";
@@ -98,6 +100,12 @@ export type SandboxStepInput = {
     readonly runId: string;
     readonly stepId: string;
     readonly agentId: string;
+    /**
+     * The identity of the agent of the step, from the catalog when the run started. The step keeps its prompt, and
+     * it takes its tools from the catalog of the moment. Optional because this is durable input: a step started
+     * before identities existed recovers without it and runs on the agent of the catalog.
+     */
+    readonly agent?: AgentIdentity;
     /**
      * Step ids this step declared as dependencies. Load-bearing for lineage:
      * classification admits a same-run sibling edge only on declaration, so a
@@ -214,35 +222,10 @@ export type PostStepArtifacts = {
 // ── Dep injection ─────────────────────────────────────────────────────
 
 /**
- * Per-step coordinates the workflow body computes once and threads to the
- * deps factory. The parent supplies the durable inputs; the body supplies the
- * lease of the step.
+ * The parts of the step agent deps that do not change from step to step. The body adds the lease, the coordinates,
+ * the lineage collector, and the output cells of the step.
  */
-export type SandboxAgentBuildContext = {
-    readonly input: SandboxStepInput;
-    readonly session: RunSession;
-    /** The lease of the step. The agent tools acquire, release, and run commands through it. */
-    readonly lease: BoundLease;
-    readonly stepWritePrefix: string;
-    /**
-     * Step-scoped lineage collector. The body owns one per step and threads
-     * it both here (so `execute_command` feeds each exec's provenance frame)
-     * and into `PostStepContext` (so registration reads the resulting
-     * input/script edges). Same instance on both paths.
-     */
-    readonly lineageCollector: ProvenanceCollector;
-    /** The step agent declares `report_blocker`, and the body selects the blocker from the recorded calls. */
-    readonly reportsBlocker: true;
-    /**
-     * Cell for the file-metadata continuation. `submit_file_metadata` is
-     * declared up front for prefix stability but masked until then.
-     */
-    readonly fileMetadata: FileMetadataCell;
-    /** Shared host-side citation resolver for allowlisted sandbox agents. */
-    readonly citationResolver: CitationResolver;
-    /** Give it to `SandboxAgentDeps.toolOutputStore`: each loop of the step keeps its texts in it. */
-    readonly toolOutputStore?: ToolOutputStore;
-};
+export type StepAgentDeps = Omit<SandboxAgentDeps, "step" | "lineageCollector" | "reportsBlocker" | "fileMetadata" | "toolOutputStore">;
 
 /**
  * Inversion of control: the parent supplies the live agent, the parent's
@@ -267,8 +250,6 @@ export type SandboxStepDeps = {
     readonly usageRecorder?: UsageRecorder;
     /** The store of the task, of the two post-step continuations, and of the read tool of the step agent. */
     readonly toolOutputStore?: ToolOutputStore;
-    /** Shared resolver threaded from `assembleCoreRuntime`. */
-    readonly citationResolver: CitationResolver;
     /** Drives the agent loop and the post-step follow-up requests. */
     readonly provider: ChatProvider;
     /** Write-side embedder for the post-step vector index. */
@@ -294,12 +275,10 @@ export type SandboxStepDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** No longer read by the step body, kept for the same reason as `workspaceFs`. */
     readonly model: string;
-    /**
-     * Build the agent definition for this step. The parent resolves the
-     * agent from the catalog, wires its workspace tools, and returns the
-     * configured `AgentDefinition` that `runLoop` will drive.
-     */
-    buildAgent(ctx: SandboxAgentBuildContext): Promise<AgentDefinition>;
+    /** The agent catalog: the step agent takes its tools from it when the step builds the agent. */
+    readonly services: CatalogServices;
+    /** The deps of the step agent that do not change from step to step. */
+    readonly agentDeps: StepAgentDeps;
     /**
      * Resolve the absolute directory of this step. The agent writes its work
      * directory under it, and the workspace mutate tools confine each write to
@@ -419,6 +398,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // and child_workflow_id (cortex_step_executions.child_workflow_id).
     await DBOS.runStep(
         async () => {
+            const identity = await stepAgentIdentity(deps.services, input.agentId, input.agent);
             unwrapOrThrow(
                 await insertStepExecution(deps.pool, {
                     runId: input.runId,
@@ -427,6 +407,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                     wave: input.level,
                     agentId: input.agentId,
                     childWorkflowId,
+                    agentName: identity?.name ?? null,
+                    promptHash: identity?.promptHash ?? null,
                 }),
             );
         },
@@ -483,20 +465,25 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     // (3) runLoop — the harness loop, each call a durable step.
     const fileMetadata = createFileMetadataCell();
-    const agent = await deps.buildAgent({
-        input,
-        session,
-        lease,
-        stepWritePrefix: writePrefix,
-        lineageCollector,
-        reportsBlocker: true,
-        fileMetadata,
-        citationResolver: deps.citationResolver,
-        toolOutputStore: deps.toolOutputStore,
-    });
-    if (deps.toolOutputStore !== undefined && !agent.tools.some((tool) => tool.id === READ_TOOL_OUTPUT_TOOL_ID)) {
-        logger.warn("the step agent declares no read_tool_output, thus its loops keep no text of a cut tool result");
-    }
+    const agent = await buildStepAgent(
+        deps.services,
+        {
+            ...deps.agentDeps,
+            lineageCollector,
+            reportsBlocker: true,
+            fileMetadata,
+            toolOutputStore: deps.toolOutputStore,
+            step: {
+                lease,
+                workspaceRoot: await deps.resolveWorkspaceRoot(input.analysisId),
+                analysisId: input.analysisId,
+                allowedWritePrefix: writePrefix,
+                template: input.template,
+            },
+        },
+        input.agentId,
+        input.agent,
+    );
 
     const declared = withRunScript(agent).tools;
 

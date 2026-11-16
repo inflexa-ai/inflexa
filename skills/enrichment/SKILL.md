@@ -1,8 +1,9 @@
 ---
 name: enrichment
 description: Read before you do gene set enrichment, over-representation, per-sample pathway scores, or TF activity scores. It gives the method for a ranked list, an unranked list, or genes of CpG sites, which gene set collections are available, the background and identifier traps, and how to report redundant GO terms.
-version: 1.0.0
-tags: [enrichment, gsea, ora, pathway, go, functional-annotation, gseapy, decoupler]
+metadata:
+  version: 1.0.0
+  tags: [enrichment, gsea, ora, pathway, go, functional-annotation, gseapy, decoupler]
 ---
 
 # Enrichment & Functional Annotation

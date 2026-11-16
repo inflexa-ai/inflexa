@@ -8,6 +8,10 @@
  * request, then an `extraction-failed` envelope, so the frontend never renders raw prose.
  */
 
+import { builtinAgent } from "../../catalog/builtins.js";
+import { equipAttachments, type AgentEquipment, type CatalogServices } from "../../catalog/equip.js";
+import { agentOfRole, resolveCatalog } from "../../catalog/resolve.js";
+import { createSkillTools } from "../sandbox/skills.js";
 import { errorMessageOf } from "../../lib/thrown.js";
 import { textOf } from "../../lib/unknown-text.js";
 import { ok } from "neverthrow";
@@ -37,14 +41,6 @@ import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool } from "../define-tool.js";
 import { createReadToolOutputTool } from "../read-tool-output.js";
 import { blockerOf, createReportBlockerToolFor, REPORT_BLOCKER_TOOL_ID } from "../sandbox/report-blocker.js";
-
-// Cross-domain search tools the analogical-reasoner uses.
-import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
-import { searchArxivTool } from "./search-arxiv.js";
-import { createSearchGithubReposTool } from "./search-github-repos.js";
-
-// Biology literature — reused for analogies that land back in biology.
-import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "analogical-reasoner";
@@ -220,8 +216,8 @@ export type GenerateAnalogyReportDeps = {
     readonly provider: ChatProvider;
     /** Model id — provenance / metric label; the provider owns the wire model. */
     readonly model: string;
-    /** API keys for the bio/chem + GitHub data sources the reasoner searches. */
-    readonly bioKeys: BioToolKeys;
+    /** The agent catalog: the reasoner takes its search connectors, skills, and MCP servers from it at each call. */
+    readonly services: CatalogServices;
     /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
     /** The store of the child loop and of its read tool. */
@@ -234,11 +230,14 @@ export type GenerateAnalogyReportDeps = {
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
 /** The analogical reasoner: its searches run in a script, and it records its report and a blocker directly. */
-export function analogyAgentOf(deps: Pick<GenerateAnalogyReportDeps, "bioKeys" | "model" | "toolOutputStore" | "scriptRuntime">): AgentDefinition {
-    const ncbi = createNcbiTools(deps.bioKeys);
+export function analogyAgentOf(
+    deps: Pick<GenerateAnalogyReportDeps, "model" | "toolOutputStore" | "scriptRuntime">,
+    equipment: AgentEquipment,
+): AgentDefinition {
+    const prompt = equipment.skillIndex === undefined ? analogicalReasonerPrompt : `${analogicalReasonerPrompt}\n\n${equipment.skillIndex}`;
     return {
         id: AGENT_ID,
-        systemPrompt: composeSystemPrompt(analogicalReasonerPrompt),
+        systemPrompt: composeSystemPrompt(prompt),
         model: deps.model,
         // The order and the definitions of the tools stay fixed across calls so the cache-keyed prefix holds.
         tools: [
@@ -246,13 +245,10 @@ export function analogyAgentOf(deps: Pick<GenerateAnalogyReportDeps, "bioKeys" |
             createRecordProblemTool(),
             createRecordAnalogyTool(),
             createAnalogyBlockerTool(),
+            ...Object.values(createSkillTools({ store: equipment.skillStore, skills: equipment.skills })),
+            ...equipment.mcp.direct,
         ],
-        scriptTools: [
-            createSearchSemanticScholarTool({ apiKey: deps.bioKeys.semanticScholar }),
-            searchArxivTool,
-            createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
-            ncbi.pubmed,
-        ],
+        scriptTools: [...equipment.connectorTools, ...equipment.mcp.script],
         scriptRuntime: deps.scriptRuntime,
         maxIterations: RESEARCH_MAX_ITERATIONS,
     };
@@ -263,7 +259,9 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
 
     const research = registerSubAgent<GenerateAnalogyReportInput, AnalogicalReasonerOutput>(AGENT_ID, async ({ payload: input, ctx, loop }) => {
         const childSession = forSubAgent(ctx.session, AGENT_ID);
-        const agent = analogyAgentOf(deps);
+        const resolved = await resolveCatalog(deps.services.catalog);
+        const attachments = agentOfRole(resolved, "analogy")?.attachments ?? builtinAgent("analogy").defaults;
+        const agent = analogyAgentOf(deps, await equipAttachments(deps.services, resolved, attachments));
 
         let steps: readonly LoopStep[];
         try {

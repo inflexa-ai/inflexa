@@ -12,6 +12,7 @@ import type { Querier } from "../../state/db.js";
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
 import type { AuthorizeRunInput, RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import { storedMessagesToChat } from "../../memory/conversation-display-replay.js";
@@ -100,6 +101,7 @@ function depsOf(d: ReturnType<typeof doubles>, over: Partial<ApprovePlanDeps> = 
         runAuthorizer: d.runAuthorizer,
         runLauncher: d.runLauncher,
         provenance: d.provenance,
+        services: { catalog: createInMemoryCatalog(), connectorBase: {} },
         ...over,
     };
 }

@@ -166,3 +166,6 @@ export function scriptedModel(
     });
     return { provider, calls };
 }
+
+export { startMcpOAuthFixture } from "./mcp/oauth-fixture.js";
+export type { McpOAuthFixture, McpOAuthFixtureOpts } from "./mcp/oauth-fixture.js";

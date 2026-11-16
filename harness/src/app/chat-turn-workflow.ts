@@ -14,6 +14,7 @@
  * stream of the workflow. A host reads them with `read`.
  */
 
+import type { TurnAgent } from "../agents/turn-agent.js";
 import { randomUUID } from "node:crypto";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
@@ -25,7 +26,6 @@ import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { ChatErrorEvent, ChatFrame, EventSource, FinishEvent } from "../contracts/chat-events.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import type { AgentDefinition } from "../loop/types.js";
 import { createConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
 import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
@@ -108,7 +108,7 @@ export type OpenChatTurnRequest = {
 };
 
 export type ChatTurnStart =
-    | { readonly kind: "started"; readonly turnId: string; readonly agent: AgentDefinition }
+    | { readonly kind: "started"; readonly turnId: string; readonly agent: TurnAgent }
     | ChatTurnRefusal
     | { readonly kind: "turn_in_progress" };
 
@@ -322,8 +322,11 @@ function workflowApproval(
 }
 
 async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput, signal: AbortSignal): Promise<ChatTurnEnd> {
-    const agent = deps.agents.forThread(input.threadType);
-    if (agent.isErr()) throw new Error(`No agent is registered for the thread type "${input.threadType}".`);
+    const turnAgent = deps.agents.forThread(input.threadType);
+    if (turnAgent.isErr()) throw new Error(`No agent is registered for the thread type "${input.threadType}".`);
+    // The tools of the turn come from the catalog of the moment. A recovery builds them again from the catalog of
+    // its own moment, thus it uses the tools that are available then.
+    const agent = { value: await turnAgent.value.forTurn() };
     const rootSource: EventSource = { agentId: agent.value.id, callPath: [agent.value.id] };
     const history = createThreadHistory(deps.pool, deps.logger);
 

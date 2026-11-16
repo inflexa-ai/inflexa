@@ -533,6 +533,8 @@ function approvalRefusal(c: Context, planId: string, refusal: ApprovePlanRefusal
                 collisions: refusal.collisions,
                 unavailable: refusal.unavailable,
             });
+        case "agent_unavailable":
+            return conflict(`Plan ${planId} names an agent that is not available.`, { reason: "agent_unavailable", steps: refusal.steps });
         case "not_authorized":
             return conflict(
                 `The run was not authorized: ${refusal.reason}`,

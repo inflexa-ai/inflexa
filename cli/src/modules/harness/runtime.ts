@@ -93,6 +93,9 @@ import quickjsWasm from "@inflexa-ai/harness/tools/script/quickjs.wasm" with { t
 import type { ScriptRuntime } from "@inflexa-ai/harness/tools/script/run-script.js";
 import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch, type AgentSelection } from "./agent_switch.ts";
 import { messageOf } from "../../lib/cause.ts";
+import { createFileCatalog } from "../customization/catalog.ts";
+import { createCredentialReader } from "../customization/credentials.ts";
+import { createMcpOAuthProvider, createMcpTokenStore } from "../customization/mcp_tokens.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -843,6 +846,7 @@ async function bootHarnessRuntimeOnce(
     if (cfg.skillsDir === null || !existsSync(cfg.skillsDir)) {
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
     }
+    const builtinSkillsDir = cfg.skillsDir;
     const embedderResult = seams.resolveEmbedding();
     if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
     const embedding = embedderResult.value;
@@ -1178,7 +1182,6 @@ async function bootHarnessRuntimeOnce(
             modelProvider: connection.provider,
             // The stable delegating sandbox emitters the run-engine bundles inject.
             sandboxEmitters: emitters,
-            skillsDir: cfg.skillsDir,
             refStorePath: env.refsDir,
             farmLockFile,
             imagePackagesFile,
@@ -1188,7 +1191,6 @@ async function bootHarnessRuntimeOnce(
             // acquires nothing: this call runs in the harness host process, and an
             // acquisition is a host action behind its own approval.
             extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
-            bioKeys: cfg.bioKeys,
             knowledge,
             scriptRuntime: codemodeRuntime(),
         };
@@ -1215,9 +1217,7 @@ async function bootHarnessRuntimeOnce(
                 resolveWorkspaceRoot,
                 model: sandboxModel,
                 runAuthorizer,
-                bioKeys: cfg.bioKeys,
                 embedding,
-                skillsDir: cfg.skillsDir,
                 refStorePath: env.refsDir,
                 farmLockFile,
                 imagePackagesFile,
@@ -1252,14 +1252,12 @@ async function bootHarnessRuntimeOnce(
             resolveWorkspaceRoot,
             runAuthorizer,
             runLauncher,
-            bioKeys: cfg.bioKeys,
             // The planner of `generate_plan` gains the two knowledge tools when the client is bound.
             knowledge,
             // The web-search engine over the SearXNG service the CLI's compose stack runs, so
             // `web_search` attaches. The URL is a derived stack constant the CLI owns — no
             // config field and no environment variable, the same rule as the proxy endpoint.
             webSearch: createSearxngEngine({ baseUrl: env.searxngBaseUrl }),
-            skillsDir: cfg.skillsDir,
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.
             refStorePath: env.refsDir,
@@ -1384,6 +1382,15 @@ async function bootHarnessRuntimeOnce(
             // The page-asset lookup rides on `core` for the same reason: one supply point for the whole
             // runtime. It is present in a release build only, where the extract above staged the bytes.
             core: {
+                // The agent catalog of the user: the agent files, the built-in and the custom skills, and the
+                // `agents`, `mcp`, `connectors`, and `credentials` blocks of the config, read again at each use.
+                catalog: createFileCatalog({
+                    builtinSkillsDir,
+                    userSkillsDir: env.userSkillsDir,
+                    agentsDir: env.agentsDir,
+                    credentials: createCredentialReader(),
+                    mcpAuth: (server, url) => createMcpOAuthProvider({ server, url, store: createMcpTokenStore() }),
+                }),
                 conversation,
                 workflows,
                 // The one backend client of the runtime. The harness builds its sandbox module over it: the leases,
@@ -1408,7 +1415,6 @@ async function bootHarnessRuntimeOnce(
                 credentialFor: () => makeLocalAuth(),
             },
             pool: composition.pool,
-            skillsDir: cfg.skillsDir,
             dbos: {
                 dbHost: conn.host,
                 dbPort: String(conn.port),

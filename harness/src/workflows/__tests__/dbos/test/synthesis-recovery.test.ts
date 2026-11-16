@@ -20,6 +20,7 @@ import { z } from "zod";
 import { recoverAtCrashPoint } from "../../../../__tests__/setup/dbos-crash.js";
 import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
+import { equipmentOf } from "../../../../catalog/memory.js";
 import type { RunSession } from "../../../../auth/types.js";
 import { createWorkingMemory } from "../../../../memory/working-memory.js";
 import type { EmbeddingProvider } from "../../../../providers/types.js";
@@ -128,7 +129,7 @@ function deps(): ExecuteAnalysisDeps {
         workspaceFs: makeFakeWorkspaceFs(),
         workingMemory: createWorkingMemory(rig.pool),
         synthesisModel: "test-model",
-        synthesisLookups: [pubmed],
+        synthesisEquipment: () => Promise.resolve(equipmentOf({ connectorTools: [pubmed] })),
         runCharge: { open: () => okAsync(undefined), close: () => okAsync(undefined) },
         runAuthorizer: {
             authorize() {

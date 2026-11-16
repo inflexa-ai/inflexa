@@ -23,17 +23,6 @@ import { SANDBOX_IMAGE } from "../libs/images.ts";
  */
 const harnessConfigSchema = z.object({
     model: z.string().optional(),
-    bioKeys: z
-        .object({
-            drugbank: z.string().optional(),
-            disgenet: z.string().optional(),
-            epaCcte: z.string().optional(),
-            ncbi: z.string().optional(),
-            github: z.string().optional(),
-            semanticScholar: z.string().optional(),
-            amass: z.string().optional(),
-        })
-        .optional(),
     sandboxImage: z.string().optional(),
     resourceLimits: z
         .object({
@@ -61,16 +50,6 @@ const harnessConfigSchema = z.object({
 export type ResolvedHarnessConfig = {
     /** Chat model id; `null` means resolve the default from the proxy's `/models` at boot. */
     readonly model: string | null;
-    /** Absent keys pass as empty strings — the affected tools surface auth errors per-call. */
-    readonly bioKeys: {
-        readonly drugbank: string;
-        readonly disgenet: string;
-        readonly epaCcte: string;
-        readonly ncbi?: string;
-        readonly github?: string;
-        readonly semanticScholar?: string;
-        readonly amass?: string;
-    };
     readonly sandboxImage: string;
     /**
      * The harness's `ResourcePolicy`, resolved from `harness.resourceLimits`:
@@ -160,15 +139,6 @@ function defaultsWith(
     const resourcePolicy = resolvePolicy(cfg);
     return {
         model: cfg?.model ?? null,
-        bioKeys: {
-            drugbank: cfg?.bioKeys?.drugbank ?? "",
-            disgenet: cfg?.bioKeys?.disgenet ?? "",
-            epaCcte: cfg?.bioKeys?.epaCcte ?? "",
-            ncbi: cfg?.bioKeys?.ncbi,
-            github: cfg?.bioKeys?.github,
-            semanticScholar: cfg?.bioKeys?.semanticScholar,
-            amass: cfg?.bioKeys?.amass,
-        },
         sandboxImage: cfg?.sandboxImage ?? SANDBOX_IMAGE,
         resourcePolicy,
         skillsDir:

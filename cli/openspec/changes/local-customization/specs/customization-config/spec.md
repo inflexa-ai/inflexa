@@ -15,7 +15,12 @@ The customization config holds the changes to the built-in agents, the MCP serve
 
 ### Requirement: An MCP server entry describes how to reach the server
 
-`config.json` MUST hold each MCP server as `mcp.<name>`. An entry MUST hold `type` (`stdio` or `http`), `approval` (`always` or `never`), `scriptable` and `enabled`. A `stdio` entry MUST hold `command`, `args` and `env`. An `http` entry MUST hold `url` and `headers`, and can hold `auth: "oauth"`. A server name MUST obey `^[a-z0-9][a-z0-9-]{0,31}$`.
+`config.json` MUST hold each MCP server as `mcp.<name>`. An entry MUST hold `type` (`stdio` or `http`), `approval` (`always` or `never`), `scriptable` and `enabled`. The default of `approval` MUST be `never`. A `stdio` entry MUST hold `command`, `args` and `env`. An `http` entry MUST hold `url` and `headers`, and can hold `auth: "oauth"`. A server name MUST obey `^[a-z0-9][a-z0-9-]{0,31}$`.
+
+#### Scenario: A new server needs no approval
+
+- **WHEN** the user adds a server with no `--approval` option
+- **THEN** the entry holds `approval: "never"`
 
 #### Scenario: A server name with a dot
 

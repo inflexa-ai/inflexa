@@ -10,6 +10,7 @@ import {
     createCitationResolver,
     createNoopUsageRecorder,
     createSandboxClient,
+    fixedTurnAgent,
     makeLocalAuth,
     PAGE_ASSETS,
     type ChatTurns,
@@ -80,7 +81,6 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
     mkdirSync(skillsDir, { recursive: true });
     return {
         model: "claude-test-model",
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         sandboxImage: "ghcr.io/inflexa-ai/sandbox-base:latest",
         resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
         skillsDir,
@@ -137,10 +137,10 @@ function recordingSeams(calls: string[]): BootSeams {
             // asserts the deps arrived shaped correctly, runs the embedder's
             // pre-launch hook, and returns the registered callables + a no-op shutdown.
             const { workflows, conversation } = deps.core;
-            // The sandbox-step child carries the catalog-backed builder and the
-            // bus-adapter artifact registry (its `register`/`sync` translate a step's
+            // The sandbox-step child carries the static agent deps that the harness builds each step agent
+            // over, and the bus-adapter artifact registry (its `register`/`sync` translate a step's
             // artifacts into `prov.*` events).
-            expect(workflows.sandboxStep.buildAgent).toBeInstanceOf(Function);
+            expect(workflows.sandboxStep.agentDeps.model).toBe(workflows.sandboxStep.model);
             expect(typeof workflows.sandboxStep.artifactRegistry.register).toBe("function");
             expect(typeof workflows.sandboxStep.artifactRegistry.sync).toBe("function");
             // The parent builder receives the registered child callable and wires the
@@ -157,12 +157,9 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.dataProfile.resolveWorkspaceRoot).toBeInstanceOf(Function);
             expect(workflows.dataProfile.resolveWorkspaceRoot).toBe(workflows.sandboxStep.resolveWorkspaceRoot);
             expect(workflows.dataProfile.resolveWorkspaceRoot).toBe(conversation.resolveWorkspaceRoot);
-            expect(workflows.dataProfile.skillsDir).toBe(skillsDir);
             expect(workflows.dataProfile.embedding.dimensions).toBe(1536);
             expect(typeof workflows.dataProfile.embedding.embed).toBe("function");
-            // The conversation bundle carries the local realizations: the configured
-            // skills tree, and the shared launcher.
-            expect(conversation.skillsDir).toBe(skillsDir);
+            // The conversation bundle carries the shared launcher.
             expect(typeof conversation.runLauncher.launch).toBe("function");
             // The Logger seam reaches every conversation tool that takes one — `generate_plan`
             // above all, which drives a whole sub-agent loop and writes no ledger row, so its
@@ -173,17 +170,17 @@ function recordingSeams(calls: string[]): BootSeams {
             // assertion is what makes the omission fail loudly instead.
             expect(conversation.logger).toBeDefined();
             expect(typeof conversation.logger?.named).toBe("function");
-            // The embedder hands the harness its skills root and its own no-op
-            // telemetry (the CLI owns OTel); the boot handle owns skills validation,
-            // state init, the connection budget, assemble, and launch itself.
-            expect(deps.skillsDir).toBe(skillsDir);
+            // The embedder hands the harness its agent catalog and its own no-op
+            // telemetry (the CLI owns OTel); the boot handle owns state init, the
+            // connection budget, assemble, and launch itself.
+            expect(typeof deps.core.catalog.agents).toBe("function");
             expect(deps.initTelemetry).toBeInstanceOf(Function);
             // Run the embedder's pre-launch hook so its sweep → agent-switch install →
             // crons execute in order, exactly as the real `bootHarness` runs it after
             // registration and before launch.
             await deps.beforeLaunch?.();
             const agents: ThreadAgentResolver = {
-                forThread: () => ok({ id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 }),
+                forThread: () => ok(fixedTurnAgent({ id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 })),
             };
             // The gateway and the chat turns stand in the way `assembleCoreRuntime` builds them: one gateway,
             // shared by the turn, and the recorder and the conversation provider of `core`. The real
@@ -246,6 +243,8 @@ function recordingSeams(calls: string[]): BootSeams {
                     citationResolver: createCitationResolver(),
                     // The offline boot approves no plan, thus the stand-in refuses every thread.
                     approvePlan: () => errAsync({ type: "thread_not_found" }),
+                    // The offline boot opens no MCP connection, thus there is nothing to close.
+                    closeMcpConnections: () => Promise.resolve(),
                 },
                 shutdown: async () => {},
             };

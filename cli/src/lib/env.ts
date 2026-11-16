@@ -383,6 +383,8 @@ export const env = Object.freeze({
     dataDir: join(dataDir(), "inflexa"),
     dbPath: join(dataDir(), "inflexa", "agent.db"),
     logDir: join(dataDir(), "inflexa", "logs"),
+    /** The OAuth tokens of the MCP servers when the macOS Keychain is not available: a `0600` file, keyed by endpoint. */
+    mcpTokensPath: join(dataDir(), "inflexa", "mcp-tokens.json"),
     /**
      * Public reference-data store. Deliberate setup/download actions create this path; passive
      * runtime composition only checks whether it exists before offering it to the harness.
@@ -486,6 +488,10 @@ export const env = Object.freeze({
     configPath: join(configDir(), "inflexa", "config.json"),
     authPath: join(configDir(), "inflexa", "auth.json"),
     provKeyPath: join(configDir(), "inflexa", "prov_key.json"),
+    /** The custom agents of the user: one `<id>.md` file for each agent. A release never writes here. */
+    agentsDir: join(configDir(), "inflexa", "agents"),
+    /** The custom skills of the user: one directory with a `SKILL.md` for each skill. A release never writes here. */
+    userSkillsDir: join(configDir(), "inflexa", "skills"),
     logLevel: process.env[logLevelVar],
     otelEndpoint: process.env[otelEndpointVar],
     /**
@@ -672,6 +678,7 @@ export const envDoc: Readonly<
 > = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "anchors, analyses, projects, and their input refs (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "one file per local day, 7-day retention", baseVar: dataVar },
+    mcpTokensPath: { kind: "path", label: "MCP sign-ins", description: "MCP OAuth tokens when the macOS Keychain is not available (mode 0600)", baseVar: dataVar },
     refsDir: {
         kind: "path",
         label: "references",
@@ -752,6 +759,8 @@ export const envDoc: Readonly<
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
     authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inflexa auth login`", baseVar: configVar },
     provKeyPath: { kind: "path", label: "provenance key", description: "Ed25519 keypair for signing provenance chain hashes", baseVar: configVar },
+    agentsDir: { kind: "path", label: "agents", description: "custom agents, one `<id>.md` file each", baseVar: configVar },
+    userSkillsDir: { kind: "path", label: "skills", description: "custom skills, one directory with a SKILL.md each", baseVar: configVar },
     logLevel: { kind: "var", name: logLevelVar, description: "log verbosity: trace|debug|info|warn|error|fatal (default: info)" },
     otelEndpoint: { kind: "var", name: otelEndpointVar, description: "OTLP endpoint for log export; requires telemetry enabled via `inflexa config`" },
 });

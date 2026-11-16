@@ -1,8 +1,9 @@
 ---
 name: pkpd-clinical-response
 description: Read before you classify tumor response, do NCA or population PK, model exposure-response or dose-response, or track PD markers. It tells which population PK method fits the sample design, the traps of each method, and when you can call a biomarker predictive.
-version: 1.1.0
-tags: [pharmacokinetics, pharmacodynamics, PK/PD, exposure-response, RECIST, iRECIST, dose-response, clinical-response, pd-biomarker, hysteresis, NCA, population-pk, lifelines, survival-analysis]
+metadata:
+  version: 1.1.0
+  tags: [pharmacokinetics, pharmacodynamics, PK/PD, exposure-response, RECIST, iRECIST, dose-response, clinical-response, pd-biomarker, hysteresis, NCA, population-pk, lifelines, survival-analysis]
 ---
 
 # PK/PD & Clinical Response

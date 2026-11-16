@@ -32,7 +32,7 @@ import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.
 import { createWork } from "../../../../app/work.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
 import type { RunChargeOutcome } from "../../../../billing/run-charge.js";
-import { unusedCitationResolver } from "../../../../citations/__fixtures__/resolver.js";
+import { createInMemoryCatalog, equipmentOf } from "../../../../catalog/memory.js";
 import type { ArtifactRegistry } from "../../../../execution/artifact-registry.js";
 import { createRunCanceler } from "../../../../execution/run-canceler.js";
 import type { GateFailure } from "../../../../lib/hooks.js";
@@ -45,8 +45,6 @@ import type { AnalysisStep } from "../../../../schemas/workflow-state.js";
 import { insertRun, queryRun, queryStepsByRun, upsertAnalysis } from "../../../../state/index.js";
 import { queryPausesOfWork, type PauseRecord } from "../../../../state/paused-work.js";
 import { reply, scriptedModel, text, type ScriptStep } from "../../../../testing.js";
-import { createSynthesisLookupTools } from "../../../../tools/research/synthesis-lookups.js";
-import { createSubmitFileMetadataTool } from "../../../../tools/sandbox/submit-file-metadata.js";
 import { runExecuteAnalysisBody, type ExecuteAnalysisDeps, type ExecuteAnalysisResult } from "../../../execute-analysis.js";
 import { runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../../../sandbox-step.js";
 
@@ -109,7 +107,6 @@ function stepDeps(current: RunCase, stepId: string): SandboxStepDeps {
     const script = current.scripts.get(stepId);
     if (script === undefined) throw new Error(`no script for the step ${stepId}`);
     return {
-        citationResolver: unusedCitationResolver,
         pool: rig.pool,
         runAuthorizer: createLocalRunAuthorizer(),
         provider: script.provider,
@@ -119,14 +116,8 @@ function stepDeps(current: RunCase, stepId: string): SandboxStepDeps {
         workspaceFs: makeFakeWorkspaceFs(),
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         model: "test-step-model",
-        buildAgent: ({ fileMetadata }) =>
-            Promise.resolve({
-                id: AGENT_ID,
-                systemPrompt: "you are a test step agent",
-                model: "test-step-model",
-                tools: [createSubmitFileMetadataTool(fileMetadata)],
-                maxIterations: 4,
-            }),
+        services: { catalog: createInMemoryCatalog(), connectorBase: {} },
+        agentDeps: { provider: script.provider, pool: rig.pool, toolchainSource: "store", workspaceFs: makeFakeWorkspaceFs(), model: "test-step-model" },
         resolveStepDir: (input) => Promise.resolve(join(workspaceRoot, "runs", input.runId, input.stepId)),
     };
 }
@@ -150,7 +141,7 @@ function parentDeps(current: RunCase): ExecuteAnalysisDeps {
         workspaceFs: makeFakeWorkspaceFs(),
         workingMemory: createWorkingMemory(rig.pool),
         synthesisModel: "test-model",
-        synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
+        synthesisEquipment: () => Promise.resolve(equipmentOf()),
         runCharge: current.runCharge,
         runAuthorizer: {
             authorize() {

@@ -35,7 +35,11 @@ import { ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
-import { formatAgentCatalog } from "../../agents/sandbox-catalog.js";
+import { formatAgentCatalog, plannerCatalogOf, type PlannerAgentMeta } from "../../agents/sandbox-catalog.js";
+import { builtinAgent } from "../../catalog/builtins.js";
+import { attachesKnowledge, equipAttachments, type AgentEquipment, type CatalogServices } from "../../catalog/equip.js";
+import { agentOfRole, resolveCatalog } from "../../catalog/resolve.js";
+import { createSkillTools } from "../sandbox/skills.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { DEFAULT_SALVAGE_REQUESTS, runWithSalvage, type LoopStep, type SalvagedResult } from "../../loop/run-loop.js";
 import type { SubAgentRegistrar } from "../../loop/sub-agent.js";
@@ -55,13 +59,7 @@ import { formatQuery, parseQuery, type PackageQuery, type QueryResolution } from
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { blockerOf, createReportBlockerToolFor } from "../sandbox/report-blocker.js";
 import { terminalTextSchema } from "../terminal-text.js";
-import { searchGeoDatasetsTool } from "../bio/search-geo-datasets.js";
-import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 import { createKnowledgeTools, type KnowledgeClient, type KnowledgeRecommendAnswer, type SkeletonStep } from "../knowledge/index.js";
-import { queryDocsTool, resolveLibraryIdTool } from "./context7-docs.js";
-import { searchArxivTool } from "./search-arxiv.js";
-import { createSearchGithubReposTool } from "./search-github-repos.js";
-import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../../config/resource-limits.js";
@@ -237,9 +235,22 @@ function traceOf(steps: readonly LoopStep[]): PlannerTrace {
 
 // ── Prompt / catalog ────────────────────────────────────────────────
 
-/** The planner system prompt is deterministic for the process: the catalog is fixed at load. */
-export function plannerInstructions(): string {
-    return plannerPrompt(formatAgentCatalog());
+/** The planner system prompt: the catalog of the enabled executors when the plan is made. */
+export function plannerInstructions(catalog: readonly PlannerAgentMeta[]): string {
+    return plannerPrompt(formatAgentCatalog(catalog));
+}
+
+/** What the planner of one invocation reads from the agent catalog: the executors it can assign, and its own equipment. */
+export type PlannerSetup = {
+    readonly catalog: readonly PlannerAgentMeta[];
+    readonly equipment: AgentEquipment;
+};
+
+/** The planner setup from the catalog now. A new executor, connector, or skill reaches the next plan. */
+export async function plannerSetupOf(services: CatalogServices): Promise<PlannerSetup> {
+    const resolved = await resolveCatalog(services.catalog);
+    const attachments = agentOfRole(resolved, "planner")?.attachments ?? builtinAgent("planner").defaults;
+    return { catalog: plannerCatalogOf(resolved), equipment: await equipAttachments(services, resolved, attachments) };
 }
 
 // ── Shared types ────────────────────────────────────────────────────
@@ -808,7 +819,7 @@ function repairDepartureRules(grounding: Record<string, unknown>, step: string, 
  * Full validation: Zod schema + semantic checks. The plan is valid only if
  * BOTH pass.
  */
-function fullyValidate(candidate: unknown): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
+function fullyValidate(candidate: unknown, executorIds: ReadonlySet<string>): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
     // The permissive arg schema of the planner tools accepts a string, thus the
     // loop-boundary repair never sees a plan that a model sent as a JSON-encoded
     // string. A small model does this on a large nested schema. Decode it here,
@@ -834,14 +845,30 @@ function fullyValidate(candidate: unknown): { valid: true; plan: PlannerPlan } |
         omicsSubtype: parsed.data.omicsSubtype,
     });
 
-    if (!semantic.valid) {
+    const unknownAgents: ValidationIssue[] = parsed.data.steps.flatMap((step, index) =>
+        executorIds.has(step.agent)
+            ? []
+            : [
+                  {
+                      path: `plan.steps[${index}].agent`,
+                      code: "semantic" as const,
+                      message: `"${step.agent}" is not an available agent. Use one id of: ${[...executorIds].join(", ")}.`,
+                  },
+              ],
+    );
+    if (!semantic.valid || unknownAgents.length > 0) {
         return {
             valid: false,
-            issues: semantic.errors.map((msg) => ({
-                path: "plan",
-                code: "semantic" as const,
-                message: msg,
-            })),
+            issues: [
+                ...(semantic.valid
+                    ? []
+                    : semantic.errors.map((msg) => ({
+                          path: "plan",
+                          code: "semantic" as const,
+                          message: msg,
+                      }))),
+                ...unknownAgents,
+            ],
         };
     }
 
@@ -861,16 +888,19 @@ type InnerTools = {
 };
 
 /** The planner agent over its search tools and its terminal tools. */
-export function plannerAgentOf(deps: GeneratePlanDeps, searchTools: readonly Tool[], terminal: readonly Tool[]): AgentDefinition {
+export function plannerAgentOf(deps: GeneratePlanDeps, setup: PlannerSetup, searchTools: readonly Tool[], terminal: readonly Tool[]): AgentDefinition {
     const readTools = deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : [];
+    const { equipment } = setup;
+    const instructions = [plannerInstructions(setup.catalog), ...(equipment.skillIndex === undefined ? [] : [equipment.skillIndex])].join("\n\n");
+    const skillTools = Object.values(createSkillTools({ store: equipment.skillStore, skills: equipment.skills }));
     return {
         id: PLANNER_AGENT_ID,
-        systemPrompt: composeSystemPrompt(plannerInstructions()),
+        systemPrompt: composeSystemPrompt(instructions),
         model: deps.conversation.model,
         // The search tools come first, and the terminal tools come last. The order is the order of the prompt, and it
         // is stable across every invocation, thus the cached request prefix holds.
-        tools: [...searchTools, ...createReadSurfaceTools(deps.workspace), ...readTools, ...terminal],
-        scriptTools: createReadScriptTools(deps.workspace),
+        tools: [...searchTools, ...createReadSurfaceTools(deps.workspace), ...readTools, ...skillTools, ...terminal],
+        scriptTools: [...createReadScriptTools(deps.workspace), ...equipment.mcp.script],
         scriptRuntime: deps.scriptRuntime,
         maxIterations: PLANNER_MAX_ITERATIONS,
     };
@@ -884,6 +914,7 @@ export function plannerAgentOf(deps: GeneratePlanDeps, searchTools: readonly Too
 export function plannerOfInvocation(
     deps: GeneratePlanDeps,
     logger: Logger,
+    setup: PlannerSetup,
 ): {
     readonly agent: AgentDefinition;
     readonly searchTools: readonly Tool[];
@@ -897,19 +928,23 @@ export function plannerOfInvocation(
         census ??= readInventorySections(deps, analysisId).then((read) => (read.kind === "sections" ? censusResolver(read.sections) : undefined));
         return census;
     };
-    const { terminal } = buildInnerTools(logger, memory, readPackages);
-    const searchTools = buildPlannerSearchTools(deps, {
+    const { terminal } = buildInnerTools(logger, memory, executorIdsOf(setup), readPackages);
+    const searchTools = buildPlannerSearchTools(deps, setup.equipment, {
         onRecommend: (answer) => rememberAnswer(memory, answer),
         onCheck: () => {
             memory.checked = true;
         },
     });
-    return { agent: plannerAgentOf(deps, searchTools, terminal), searchTools, terminal, claimViews: (plan) => claimViewsOf(plan, memory) };
+    return { agent: plannerAgentOf(deps, setup, searchTools, terminal), searchTools, terminal, claimViews: (plan) => claimViewsOf(plan, memory) };
+}
+
+function executorIdsOf(setup: Pick<PlannerSetup, "catalog">): ReadonlySet<string> {
+    return new Set(setup.catalog.map((agent) => agent.id));
 }
 
 /** The terminal tools of a planner with no knowledge answer, for a consumer that runs the planner outside this tool. */
-export function plannerTerminalTools(logger: Logger): Tool[] {
-    return buildInnerTools(logger, { steps: new Map(), claims: new Set(), views: new Map() }).terminal;
+export function plannerTerminalTools(logger: Logger, setup: Pick<PlannerSetup, "catalog">): Tool[] {
+    return buildInnerTools(logger, { steps: new Map(), claims: new Set(), views: new Map() }, executorIdsOf(setup)).terminal;
 }
 
 /**
@@ -951,7 +986,12 @@ function packageIssues(plan: PlannerPlan, resolve: PackageResolver): ValidationI
     return issues;
 }
 
-function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?: (analysisId: string) => Promise<PackageResolver | undefined>): InnerTools {
+function buildInnerTools(
+    logger: Logger,
+    memory: RecommendMemory,
+    executorIds: ReadonlySet<string>,
+    readPackages?: (analysisId: string) => Promise<PackageResolver | undefined>,
+): InnerTools {
     const submitPlanTool = defineTool({
         id: SUBMIT_PLAN_TOOL_ID,
         description:
@@ -985,7 +1025,7 @@ function buildInnerTools(logger: Logger, memory: RecommendMemory, readPackages?:
                 logger.warn("submit_plan refused a plan that no knowledge_check reviewed");
                 return Promise.resolve(ok({ accepted: false as const, issues: [UNCHECKED_ISSUE] }));
             }
-            const result = fullyValidate(candidate);
+            const result = fullyValidate(candidate, executorIds);
             // An unknown claim rejects a plan that the schema accepts, beside the
             // schema issues when the schema rejects it, thus one attempt shows both.
             if (!result.valid || unknown.length > 0) {
@@ -1293,8 +1333,8 @@ export type GeneratePlanDeps = EnvironmentStorePaths & {
     readonly usageRecorder?: UsageRecorder;
     /** The store of the planner loop and of its read tool. */
     readonly toolOutputStore?: ToolOutputStore;
-    /** API keys for the search tools the planner uses to ground a plan. */
-    readonly bioKeys: BioToolKeys;
+    /** The agent catalog: the executors that a plan can assign, and the attachments of the planner. */
+    readonly services: CatalogServices;
     /** The read-only workspace: the file tools, the search, the data profile, and the script reads of a PDF and a table. */
     readonly workspace: ReadSurfaceDeps & { readonly resolveWorkspaceRoot: ResolveWorkspaceRoot };
     /** Where the VM of `run_script` comes from, for the script reads. See `ScriptRuntime`. */
@@ -1322,25 +1362,13 @@ export type GeneratePlanDeps = EnvironmentStorePaths & {
  */
 export function buildPlannerSearchTools(
     deps: GeneratePlanDeps,
+    equipment: AgentEquipment,
     hooks: { readonly onRecommend?: (answer: KnowledgeRecommendAnswer) => void; readonly onCheck?: () => void } = {},
 ): Tool[] {
-    const bioKeys = deps.bioKeys;
-    const ncbi = createNcbiTools(bioKeys);
     return [
-        // Comparable public studies — the design, the platform, and the sample
-        // count that a plan for the same assay must answer to.
-        searchGeoDatasetsTool,
-        // Prior methods, in three corpora that do not overlap: the biomedical
-        // literature, the statistics and machine-learning preprints, and the
-        // cross-field index that ranks a method paper best.
-        ncbi.pubmed,
-        searchArxivTool,
-        createSearchSemanticScholarTool({ apiKey: bioKeys.semanticScholar }),
-        // The same approach as running code — a pipeline that someone published.
-        createSearchGithubReposTool({ githubToken: bioKeys.github }),
-        // The API of a staged package, so a step names a function that exists.
-        resolveLibraryIdTool,
-        queryDocsTool,
+        // The attached connectors: by default the comparable public studies (GEO), the prior methods in three
+        // corpora that do not overlap, the published pipelines, and the API of a staged package.
+        ...equipment.connectorTools,
         // The environment itself. The seed already carries a rendered census of
         // both stores. These two tools are for the narrow second look: one
         // collection of the reference store, or one batch of the package names
@@ -1355,16 +1383,19 @@ export function buildPlannerSearchTools(
         }),
         // The knowledge plane: one cited procedure per situation, the full view of
         // a claim on demand, and one check of the draft. They attach only when the
-        // embedder binds a client.
-        ...createKnowledgeTools({
-            client: deps.knowledge,
-            farmLockFile: deps.farmLockFile,
-            imagePackagesFile: deps.imagePackagesFile,
-            refStorePath: deps.refStorePath,
-            readPoolInventory: deps.readPoolInventory,
-            onRecommend: hooks.onRecommend,
-            onCheck: hooks.onCheck,
-        }),
+        // planner attaches the connector and the embedder binds a client.
+        ...(attachesKnowledge(equipment)
+            ? createKnowledgeTools({
+                  client: deps.knowledge,
+                  farmLockFile: deps.farmLockFile,
+                  imagePackagesFile: deps.imagePackagesFile,
+                  refStorePath: deps.refStorePath,
+                  readPoolInventory: deps.readPoolInventory,
+                  onRecommend: hooks.onRecommend,
+                  onCheck: hooks.onCheck,
+              })
+            : []),
+        ...equipment.mcp.direct,
     ];
 }
 
@@ -1602,7 +1633,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
         // dep, thus the tool must stay constructible from an empty bag. The tool
         // definitions are identical across invocations, thus the request prefix
         // that the cache keys on does not move.
-        const { agent: planner, searchTools, terminal, claimViews } = plannerOfInvocation(deps, logger);
+        const { agent: planner, searchTools, terminal, claimViews } = plannerOfInvocation(deps, logger, await plannerSetupOf(deps.services));
 
         // Merge the outer abort signal with a wall-clock timeout — either
         // cancels the planner promptly.

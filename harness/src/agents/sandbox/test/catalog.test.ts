@@ -3,57 +3,68 @@ import { describe, expect, it } from "bun:test";
 import { sandboxAnalysisStepStandardsPrompt, sandboxOrientCorePrompt } from "../../../prompts/sandbox-standards.js";
 import { analystPrompt } from "../../../prompts/sandbox/analyst.js";
 import { dataProfilerPrompt } from "../../../prompts/sandbox/data-profiler.js";
+import { BUILTIN_AGENTS, builtinAgent } from "../../../catalog/builtins.js";
+import type { CatalogServices } from "../../../catalog/equip.js";
+import { createInMemoryCatalog, createInMemorySkillStore } from "../../../catalog/memory.js";
+import { agentIdentityOf, resolveCatalog } from "../../../catalog/resolve.js";
+import { buildConnectorTools } from "../../../connectors/build.js";
+import type { AgentDefinition } from "../../../loop/types.js";
 
 import { makeFakeSandboxAgentDeps } from "../__fixtures__/deps.js";
-import { createSandboxAgents, SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS, SANDBOX_AGENT_META } from "../index.js";
+import { buildProfilerAgent, buildStepAgent, SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "../index.js";
 import { presentGet } from "../../../lib/present.js";
 
-describe("createSandboxAgents", () => {
-    const deps = makeFakeSandboxAgentDeps();
-    const agents = createSandboxAgents(deps);
+const SANDBOX_AGENT_IDS = ["analyst", "drug-analyst", "data-profiler"] as const;
 
-    it("returns one AgentDefinition per registered meta entry (key parity)", () => {
-        expect(Object.keys(agents).sort()).toEqual(Object.keys(SANDBOX_AGENT_META).sort());
+// A table, a paper, or a compressed file of the analysis reads on the host, thus each agent reads them in a script.
+const READ_SCRIPT_TOOLS = ["read_table", "read_pdf", "list_archive"];
+
+const skills = createInMemorySkillStore(
+    [...new Set(BUILTIN_AGENTS.flatMap((agent) => agent.defaults.skills))].map((name) => ({ name, description: `The ${name} skill.` })),
+);
+const services: CatalogServices = { catalog: createInMemoryCatalog({ skills }), connectorBase: {} };
+const deps = makeFakeSandboxAgentDeps();
+
+const agents: Record<string, AgentDefinition> = {
+    analyst: await buildStepAgent(services, deps, "analyst", undefined),
+    "drug-analyst": await buildStepAgent(services, deps, "drug-analyst", undefined),
+    "data-profiler": await buildProfilerAgent(services, deps),
+};
+
+describe("the sandbox agents of the catalog", () => {
+    it("builds each built-in executor and the profiler under its own id", () => {
+        for (const id of SANDBOX_AGENT_IDS) expect(presentGet(agents, id).id).toBe(id);
     });
 
-    it("every AgentDefinition.tools is meta.tools plus the always-on set", () => {
-        // Always-on read surface every sandbox agent gets regardless of meta.
-        const ALWAYS_ON_READ = ["execute_command", "read_file", "list_files", "file_stat", "grep"];
-        // `inspect_data_profile` is always-on too, and deliberately absent from the
-        // `SandboxToolName` allowlist: no file carries the data profile (the profiler's
-        // scratch tree is deleted on completion), so every agent must be able to pull it
-        // rather than re-derive the dataset's facts from the raw bytes.
-        const ALWAYS_ON_PROFILE = ["inspect_data_profile"];
-        // The two lease tools: the agent holds its sandbox through them, whatever its meta declares.
-        const ALWAYS_ON_LEASE = ["acquire_sandbox", "release_sandbox"];
-        // A table, a paper, or a compressed file of the analysis reads on the host, thus each agent reads them in a script.
-        const ALWAYS_ON_SCRIPT = ["read_table", "read_pdf", "list_archive"];
-        for (const [id, def] of Object.entries(agents)) {
-            const meta = presentGet(SANDBOX_AGENT_META, id);
-            const all = [...def.tools, ...(def.scriptTools ?? [])];
-            const toolIds = new Set(all.map((t) => t.id));
+    it("every AgentDefinition is the role tools plus the tools of its connectors", async () => {
+        const resolved = await resolveCatalog(services.catalog);
+        // The workspace, lease, profile, skill, and environment tools: each sandbox agent gets them whatever it attaches.
+        const ROLE_TOOLS = [
+            "acquire_sandbox",
+            "release_sandbox",
+            "execute_command",
+            "write_file",
+            "edit_file",
+            "read_file",
+            "list_files",
+            "file_stat",
+            "grep",
+            "inspect_data_profile",
+            "skill_search",
+            "skill_read",
+            "list_available_packages",
+            "list_available_refs",
+        ];
+        for (const id of SANDBOX_AGENT_IDS) {
+            const def = presentGet(agents, id);
+            const connectorIds = presentGet(Object.fromEntries(resolved.agents), id).attachments.connectors;
+            const connectorTools = (await buildConnectorTools(services.catalog, resolved, connectorIds, services.connectorBase)).map((tool) => tool.id);
 
-            for (const required of [...ALWAYS_ON_READ, ...ALWAYS_ON_PROFILE, ...ALWAYS_ON_LEASE, ...ALWAYS_ON_SCRIPT]) {
-                expect(toolIds.has(required), `${id} should have ${required}`).toBe(true);
-            }
-
-            expect(toolIds.has("write_file"), `${id} write_file`).toBe(true);
-            expect(toolIds.has("edit_file"), `${id} edit_file`).toBe(true);
-
-            // The fixture deps wire no blocker / embedding / skillsDir and no template step, so the
-            // resolved surface is exactly the always-on tools + meta.tools.
-            const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + ALWAYS_ON_LEASE.length + ALWAYS_ON_SCRIPT.length + 2;
-            const declared = new Set(meta.tools);
-            const expected = alwaysOnCount + declared.size;
-            expect(toolIds.has("run_template"), `${id} run_template on an open step`).toBe(false);
-            expect(all.length, `${id} tool count`).toBe(expected);
+            // The fixture deps wire no blocker, embedding, store, seam, or template step, thus the
+            // direct surface is exactly the role tools, with no run_template.
+            expect(new Set(def.tools.map((t) => t.id)), id).toEqual(new Set([...ROLE_TOOLS, ...(id === "data-profiler" ? ["scan_inputs"] : [])]));
             // The lookups of outside sources run in a script, and the environment of the step stays direct.
-            for (const tool of def.scriptTools ?? []) {
-                expect(
-                    ["list_available_packages", "list_available_refs", "scan_inputs", "execute_command"].includes(tool.id),
-                    `${id} ${tool.id} in a script`,
-                ).toBe(false);
-            }
+            expect(new Set((def.scriptTools ?? []).map((t) => t.id)), id).toEqual(new Set([...connectorTools, ...READ_SCRIPT_TOOLS]));
         }
     });
 
@@ -118,12 +129,12 @@ describe("createSandboxAgents", () => {
         }
     });
 
-    it("appendAnalysisStepStandards=false agents omit the analysis-step layer", () => {
+    it("the profiler omits the analysis-step layer", () => {
         const dataProfiler = presentGet(agents, "data-profiler");
         expect(dataProfiler.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(false);
     });
 
-    it("standard agents include the analysis-step layer", () => {
+    it("an executor includes the analysis-step layer", () => {
         const analyst = presentGet(agents, "analyst");
         expect(analyst.systemPrompt.includes(sandboxAnalysisStepStandardsPrompt.trim())).toBe(true);
     });
@@ -148,15 +159,43 @@ describe("createSandboxAgents", () => {
     });
 
     it("every agent takes the shared default cap — no per-agent override", () => {
-        for (const [id, meta] of Object.entries(SANDBOX_AGENT_META)) {
-            expect(meta.defaultMaxSteps, id).toBeUndefined();
+        for (const id of SANDBOX_AGENT_IDS) {
+            expect(builtinAgent(id).defaultMaxSteps, id).toBeUndefined();
         }
         for (const [id, def] of Object.entries(agents)) {
             expect(def.maxIterations, id).toBe(SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS);
         }
     });
 
-    it("non-plannable agents flagged in meta carry plannable=false", () => {
-        expect(presentGet(SANDBOX_AGENT_META, "data-profiler").plannable).toBe(false);
+    it("a step on the profiler runs on the analyst, because the profiler is not an executor", async () => {
+        expect(builtinAgent("data-profiler").role).toBe("profiler");
+        const def = await buildStepAgent(services, deps, "data-profiler", undefined);
+        expect(def.id).toBe("analyst");
+        expect(def.tools.map((t) => t.id)).not.toContain("scan_inputs");
+    });
+});
+
+describe("buildStepAgent with the identity of the workflow input", () => {
+    it("keeps the prompt of the identity, and takes the tools from the catalog of the moment", async () => {
+        const resolved = await resolveCatalog(services.catalog);
+        const identity = {
+            ...agentIdentityOf(presentGet(Object.fromEntries(resolved.agents), "analyst")),
+            prompt: "# Kept prompt\n\nThe prompt of the start.",
+        };
+
+        const def = await buildStepAgent(services, deps, "analyst", identity);
+
+        expect(def.systemPrompt).toContain("# Kept prompt");
+        expect(def.systemPrompt).not.toContain(analystPrompt.trim());
+        expect((def.scriptTools ?? []).map((t) => t.id)).toEqual((presentGet(agents, "analyst").scriptTools ?? []).map((t) => t.id));
+    });
+
+    it("runs an agent that the catalog no longer holds with no attachments", async () => {
+        const identity = { id: "lipid-analyst", name: "Lipid analyst", role: "executor" as const, prompt: "You analyze lipids.", promptHash: "x" };
+
+        const def = await buildStepAgent(services, deps, "lipid-analyst", identity);
+
+        expect(def.id).toBe("lipid-analyst");
+        expect(new Set((def.scriptTools ?? []).map((t) => t.id))).toEqual(new Set(READ_SCRIPT_TOOLS));
     });
 });

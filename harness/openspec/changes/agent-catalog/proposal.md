@@ -7,7 +7,7 @@ The harness fixes its agents, skills and tool sets at build time. `SANDBOX_AGENT
 ## What Changes
 
 - Add `AgentCatalog`, a required boot dependency. The host supplies the agent entries, the skills, the MCP servers, the connector settings and the credentials. The harness reads the catalog when a plan is made and when a run starts.
-- Add the agent types: `AgentEntry` (a built-in agent with its changes, or a custom agent with its definition), `AgentDefinition`, `AgentAttachments`, and the roles. The harness owns the types. It does not parse an agent file.
+- Add the agent types: `AgentEntry` (a built-in agent with its changes, or a custom agent with its definition), `CustomAgent`, `AgentAttachments`, and the roles. The harness owns the types. It does not parse an agent file.
 - Ship each built-in agent as a definition in code: `inflexa`, `planner`, `analyst`, `drug-analyst`, `data-profiler`, `synthesizer`, `analogy` and `reporter`. A host can add or remove the attachments of each one, but it cannot change a prompt. A host can turn off only `drug-analyst` and `analogy`.
 - Write the identity of each agent (id, name, role, prompt, prompt hash) into the workflow input. A recovery keeps the prompt and uses the tools that are available at the time of the recovery.
 - Build the planner catalog and the two `agent` fields (plan and ad hoc) from the enabled executors of the catalog. The planner prompt names no agent.

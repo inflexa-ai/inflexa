@@ -36,32 +36,37 @@ import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } 
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../../workflows/execute-analysis.js";
 import { assembleCoreRuntime, createThreadAgentResolver, resolveCompositionEyes, type CoreRuntime, type CoreRuntimeDeps } from "../assemble.js";
 import type { AgentDefinition } from "../../loop/types.js";
+import { fixedTurnAgent, type TurnAgent } from "../../agents/turn-agent.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
+import type { CatalogServices } from "../../catalog/equip.js";
 import type { ThreadStore, ThreadType } from "../../memory/thread-store.js";
 
-// A bare `AgentDefinition` stands in for the assembled conversation agent: the
+const SERVICES: CatalogServices = { catalog: createInMemoryCatalog(), connectorBase: {} };
+
+// A fixed turn agent over a bare `AgentDefinition` stands in for the assembled conversation agent: the
 // resolver only ever hands back the object the registry holds, so its internals
 // never matter to resolution.
-const conversationAgent: AgentDefinition = {
+const conversationAgent: TurnAgent = fixedTurnAgent({
     id: "conversation",
     systemPrompt: "",
     model: "test/model",
     tools: [],
     maxIterations: 1,
-};
+});
 
-// A bare `AgentDefinition` stands in for the assembled report agent, the same way
+// A fixed turn agent stands in for the assembled report agent, the same way
 // `conversationAgent` stands in for the conversation agent.
-const reportAgent: AgentDefinition = {
+const reportAgent: TurnAgent = fixedTurnAgent({
     id: "report-session",
     systemPrompt: "",
     model: "test/model",
     tools: [],
     maxIterations: 1,
-};
+});
 
 // A registry that holds `conversation` and omits `report`. It exercises the
 // refusal path: a resolver built over a registry with no entry for a type refuses.
-function registry(): Partial<Record<ThreadType, AgentDefinition>> {
+function registry(): Partial<Record<ThreadType, TurnAgent>> {
     return { conversation: conversationAgent };
 }
 
@@ -250,7 +255,7 @@ const OutcomeArmSchema = z.looseObject({ outcome: z.string() });
  * construction. Thus an empty stub stands for each of them, and no case reaches the gap between a stub and
  * its interface.
  */
-function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, root: string): AgentDefinition {
+function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, root: string): Promise<AgentDefinition> {
     return createReportSessionAgent({
         model: "test/model",
         pool: new Pool(),
@@ -263,7 +268,8 @@ function reportAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, ro
         threads: refuseThreadTitles(),
         chrome,
         eyes,
-    });
+        services: SERVICES,
+    }).forTurn();
 }
 
 /** Look at the page of one thread through the eyes tool of a built agent. */
@@ -288,7 +294,7 @@ describe("the eyes of the composition", () => {
         const root = await makeEyesRoot(threadId);
         const chrome: ChromeConfig = {};
 
-        const result = await look(reportAgentOver(resolveCompositionEyes(undefined, chrome), chrome, root), threadId);
+        const result = await look(await reportAgentOver(resolveCompositionEyes(undefined, chrome), chrome, root), threadId);
 
         // The page exists and the row holds a rendered hash, thus the absent browser is the one condition
         // that stops the look.
@@ -305,7 +311,7 @@ describe("the eyes of the composition", () => {
             return Promise.resolve(fakeBrowser("STATICPNG"));
         });
 
-        const result = await look(reportAgentOver(resolveCompositionEyes(undefined, chrome), chrome, root), threadId);
+        const result = await look(await reportAgentOver(resolveCompositionEyes(undefined, chrome), chrome, root), threadId);
 
         expect(result.outcome).toBe("examined");
         // The static realization gives the configured endpoint, thus the look reaches that browser.
@@ -336,7 +342,7 @@ describe("the eyes of the composition", () => {
             return Promise.resolve(fakeBrowser("SEAMPNG"));
         });
 
-        const result = await look(reportAgentOver(resolveCompositionEyes(seam, chrome), chrome, root), threadId);
+        const result = await look(await reportAgentOver(resolveCompositionEyes(seam, chrome), chrome, root), threadId);
 
         expect(result.outcome).toBe("examined");
         // The seam answered the look, thus the configured endpoint reached no connection at all.
@@ -373,7 +379,7 @@ const START_BRIEF = {
  * eyes. Each of the four is real here. No factory of the roster reads one of the other deps at construction,
  * thus an empty stub stands for each of them.
  */
-function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, pool: Pool): AgentDefinition {
+function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConfig, pool: Pool): Promise<AgentDefinition> {
     const reportRuntime = createReportSessionRuntime({ pool });
     return createConversationAgent({
         provider: unusedChatProvider(),
@@ -394,12 +400,10 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         runAuthorizer: createLocalRunAuthorizer(),
         runLauncher: refuseRunLauncher(),
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        skillsDir: "/skills",
+        services: { catalog: createInMemoryCatalog(), connectorBase: { citationResolver: unusedCitationResolver } },
         chrome,
-        citationResolver: unusedCitationResolver,
         eyes,
-    });
+    }).forTurn();
 }
 
 /**
@@ -456,7 +460,7 @@ describe("the eyes of the start tool", () => {
         const chrome: ChromeConfig = {};
         const seam: AcquireEyes = () => Promise.resolve({ browserUrl: START_ENDPOINT, release: () => Promise.resolve() });
 
-        const result = await startSession(conversationAgentOver(resolveCompositionEyes(seam, chrome), chrome, pool), START_ANALYSIS_ID, parentThreadId);
+        const result = await startSession(await conversationAgentOver(resolveCompositionEyes(seam, chrome), chrome, pool), START_ANALYSIS_ID, parentThreadId);
 
         // A composition with no route refuses here, thus the started arm says that the seam reached the tool.
         expect(result.outcome).toBe("started");
@@ -505,8 +509,8 @@ describe("one resolved answer", () => {
 
         // The one resolution. Each consumer below reads this value, thus a second resolution never runs.
         const eyes = resolveCompositionEyes(seam, chrome);
-        const looked = await look(reportAgentOver(eyes, chrome, root), lookThreadId);
-        const started = await startSession(conversationAgentOver(eyes, chrome, pool), BOTH_ANALYSIS_ID, parentThreadId);
+        const looked = await look(await reportAgentOver(eyes, chrome, root), lookThreadId);
+        const started = await startSession(await conversationAgentOver(eyes, chrome, pool), BOTH_ANALYSIS_ID, parentThreadId);
 
         expect(looked.outcome).toBe("examined");
         // The look reached the endpoint of the resolved seam, thus the agent read that answer.
@@ -523,6 +527,7 @@ describe("the tool output store of the composition", () => {
             conversation: conversationDeps(),
             workflows: constructionWorkflows(),
             sandbox: constructionSandbox(),
+            catalog: createInMemoryCatalog(),
         };
     }
 
@@ -535,12 +540,8 @@ describe("the tool output store of the composition", () => {
             const runtime = assembleCoreRuntime(coreDeps());
 
             for (const type of ["conversation", "report"] as const) {
-                expect(
-                    runtime.agents
-                        .forThread(type)
-                        ._unsafeUnwrap()
-                        .tools.map((tool) => tool.id),
-                ).toContain("read_tool_output");
+                const agent = await runtime.agents.forThread(type)._unsafeUnwrap().forTurn();
+                expect(agent.tools.map((tool) => tool.id)).toContain("read_tool_output");
             }
         } finally {
             Reflect.set(dbos.DBOS, "registerWorkflow", register);
@@ -554,6 +555,7 @@ describe("the chat turns of the composition", () => {
             conversation: conversationDeps(),
             workflows: constructionWorkflows(),
             sandbox: constructionSandbox(),
+            catalog: createInMemoryCatalog(),
         };
     }
 
@@ -661,12 +663,11 @@ describe("the approval of the composition", () => {
                 resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
                 runAuthorizer,
                 runLauncher,
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-                skillsDir: "/skills",
                 chrome: {},
             },
             workflows: constructionWorkflows(),
             sandbox: constructionSandbox(),
+            catalog: createInMemoryCatalog(),
         };
         const dbos = await import("@dbos-inc/dbos-sdk");
         const register = dbos.DBOS.registerWorkflow.bind(dbos.DBOS);

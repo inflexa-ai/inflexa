@@ -12,8 +12,7 @@ import { dirname, join, relative } from "node:path";
 
 import { okAsync } from "neverthrow";
 
-import { createSandboxAgents, type SandboxAgentDeps } from "@inflexa-ai/harness/agents/sandbox/index.js";
-import { unusedCitationResolver } from "@inflexa-ai/harness/citations/__fixtures__/resolver.js";
+import { buildProfilerAgent, buildStepAgent, type SandboxAgentDeps } from "@inflexa-ai/harness/agents/sandbox/index.js";
 import { createPool } from "@inflexa-ai/harness/lib/storage.js";
 import type { ToolOutputStore } from "@inflexa-ai/harness/loop/tool-output.js";
 import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
@@ -34,6 +33,7 @@ import { makeSession } from "@inflexa-ai/harness/providers/__fixtures__/session.
 import { composeProfilerSeed, createSubmitProfileTool } from "@inflexa-ai/harness/tasks/data-profile.js";
 import { createWorkspaceFilesystem } from "@inflexa-ai/harness/workspace/filesystem.js";
 
+import { evalServices } from "./agent.js";
 import { generateInputs, openRealSandbox, type RealSandbox } from "./docker-exec.js";
 
 export const ANALYSIS_ID = "analysis-001";
@@ -514,7 +514,6 @@ export async function openSandboxTrial(
         toolchainSource: "image",
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: () => Promise.resolve(root) }),
         model: "eval",
-        skillsDir: join(REPO, "skills"),
         farmLockFile: real?.farmLockFile ?? lockFile,
         imagePackagesFile: real?.imagePackagesFile ?? join(dir, "env", "image-packages.json"),
         // The reference store of the trial. A case that scripts `list_available_refs` never reads it.
@@ -529,8 +528,6 @@ export async function openSandboxTrial(
                         return outcome;
                     }),
                 )),
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        citationResolver: unusedCitationResolver,
         // The CLI binds an embedding provider, thus the agent declares `workspace_search`. A case scripts its answer.
         embedding: {
             dimensions: 1536,
@@ -556,9 +553,7 @@ export async function openSandboxTrial(
             template: setup.template?.step,
         },
     };
-    const built = createSandboxAgents(deps)[setup.agentId];
-    if (built === undefined) throw new Error(`no sandbox agent ${setup.agentId}`);
-    let agent = built;
+    let agent = profiler ? await buildProfilerAgent(evalServices(), deps) : await buildStepAgent(evalServices(), deps, setup.agentId, undefined);
     let seed: string | undefined;
     if (profiler) {
         // The profile body scans the inputs on the host before the agent starts, and it composes the seed from the
@@ -577,7 +572,7 @@ export async function openSandboxTrial(
             menu,
             absorb: { kind: "none" },
         });
-        agent = { ...built, tools: [...built.tools, createSubmitProfileTool(detected, menu)] };
+        agent = { ...agent, tools: [...agent.tools, createSubmitProfileTool(detected, menu)] };
     }
     return {
         agent,

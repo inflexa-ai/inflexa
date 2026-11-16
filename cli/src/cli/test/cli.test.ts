@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { env } from "../../lib/env.ts";
+import { buildProgram } from "../index.ts";
 import { runCli, runCliAsync } from "../../test_support/cli.ts";
 import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
@@ -43,6 +44,34 @@ describe("inflexa help & usage (e2e)", () => {
         // The retired `sessions` command must not come back by accident — the whole point of the
         // single-homed thread store is that there is no second session surface.
         expect(result.stdout).not.toContain("sessions");
+    });
+
+    test("--help lists the commands under group headings, with no Paths table", () => {
+        const result = runCli(["--help"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Analyses:");
+        expect(result.stdout).toContain("Agents:");
+        expect(result.stdout).not.toContain("Paths:");
+    });
+
+    test("each top-level command has a help group", () => {
+        const ungrouped = buildProgram()
+            .commands.filter((command) => command.helpGroup() === "")
+            .map((command) => command.name());
+        expect(ungrouped).toEqual([]);
+    });
+
+    test("help env prints the Paths and Environment tables", () => {
+        const result = runCli(["help", "env"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Paths:");
+        expect(result.stdout).toContain("Environment:");
+    });
+
+    test("help <command> prints the help of that command", () => {
+        const result = runCli(["help", "refs"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Usage: inflexa refs");
     });
 
     test("refs path prints the exact public path without creating it", async () => {

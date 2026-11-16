@@ -1,8 +1,9 @@
 ---
 name: single-cell
 description: Read before you do QC, integration, clusters, cell type labels, malignant cell calls, condition DE, trajectory, or TF activity on scRNA-seq, snRNA-seq, or mass cytometry data. It gives the method for each case and the traps, for example per-cell tests between conditions.
-version: 1.1.0
-tags: [scrna-seq, snrna-seq, single-cell, scanpy, anndata, cytof, mass-cytometry, catalyst, flowsom]
+metadata:
+  version: 1.1.0
+  tags: [scrna-seq, snrna-seq, single-cell, scanpy, anndata, cytof, mass-cytometry, catalyst, flowsom]
 ---
 
 # Single-Cell Analysis

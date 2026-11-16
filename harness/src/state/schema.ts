@@ -124,6 +124,10 @@ export const StepExecutionRowSchema = z.object({
     blockedReason: z.string().nullable().default(null),
     /** DBOS child workflow id (`"${parentWorkflowId}-${N}"`); null on pre-DBOS rows. */
     childWorkflowId: z.string().nullable().default(null),
+    /** The name of the agent of the step when the run started; null on a row from before the agent catalog. */
+    agentName: z.string().nullable().default(null),
+    /** The SHA-256 hash of the prompt that the step ran on; null on a row from before the agent catalog. */
+    promptHash: z.string().nullable().default(null),
 });
 export type StepExecutionRow = z.infer<typeof StepExecutionRowSchema>;
 

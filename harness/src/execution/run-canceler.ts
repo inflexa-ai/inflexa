@@ -257,6 +257,8 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                         atMs,
                     };
                     if (durationMs !== undefined) event.durationMs = durationMs;
+                    if (step.agentName !== null && step.promptHash !== null)
+                        event.agent = { agentId: step.agentId, name: step.agentName, promptHash: step.promptHash };
                     emitGuarded(event, session);
                 }
                 emitGuarded(

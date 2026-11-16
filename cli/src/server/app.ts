@@ -4,6 +4,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 
 import { getLogger } from "../lib/log.ts";
+import { createCustomizationService, defaultCustomizationOpts } from "../modules/customization/service.ts";
 import type { ServerBoot } from "./boot.ts";
 import { createBrowserSessionStore, SIGN_IN_AGAIN_MESSAGE, SIGN_IN_PATH, sessionCookieName, type BrowserSessionStore } from "./browser_session.ts";
 import { apiError, listenerPort, type ServerEnv } from "./http.ts";
@@ -16,6 +17,7 @@ import { artifactRoutes } from "./routes/artifacts.ts";
 import { attentionRoutes, DEFAULT_ATTENTION_ROUTE_OPTS } from "./routes/attention.ts";
 import { browserSessionRoutes } from "./routes/browser_session.ts";
 import { conversationRoutes, DEFAULT_CONVERSATION_ROUTE_OPTS } from "./routes/conversation.ts";
+import { customizationRoutes } from "./routes/customization.ts";
 import { fsRoutes } from "./routes/fs.ts";
 import { guiRoutes } from "./routes/gui.ts";
 import { machineRoutes } from "./routes/machine.ts";
@@ -62,6 +64,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/projects", projectRoutes());
     app.route("/api/v1", machineRoutes());
     app.route("/api/v1", storeRoutes());
+    app.route("/api/v1", customizationRoutes(createCustomizationService(defaultCustomizationOpts())));
     app.route("/api/v1/anchors", anchorRoutes(deps.boot, DEFAULT_ANCHOR_ROUTE_OPTS));
     app.route("/api/v1/analyses", analysisCollectionRoutes(deps.boot, DEFAULT_ANALYSIS_LIST_OPTS));
     app.route("/api/v1/attention", attentionRoutes(deps.boot, DEFAULT_ATTENTION_ROUTE_OPTS));

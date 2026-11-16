@@ -22,6 +22,7 @@ import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import { createWork } from "../../app/work.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
 import type { RunSession } from "../../auth/types.js";
 import type { ChatProvider } from "../../providers/types.js";
 import { runAuthorizerOf, workspaceOf } from "./__fixtures__/profile-deps.js";
@@ -123,9 +124,8 @@ function depsFor(provider: ChatProvider, revoked: string[]): DataProfileDeps {
         ...workspaceOf(root),
         model: "test-model",
         runAuthorizer: runAuthorizerOf(revoked),
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        services: { catalog: createInMemoryCatalog(), connectorBase: {} },
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [1, 0, 0])) },
-        skillsDir: root,
     };
 }
 

@@ -1,4 +1,4 @@
-import { Command, Option, type ParseOptionsResult } from "commander";
+import { Command, Help, Option, type ParseOptionsResult } from "commander";
 
 import pkg from "../../package.json";
 import { CATALOG_TRANSFER_FLAG, CLIENT_START_FLAG, IMAGE_TRANSFER_FLAG, SERVE_DETACHED_CHILD_FLAG, STORE_FLUSH_FLAG } from "../lib/child_flags.ts";
@@ -12,11 +12,9 @@ import type { AnalysisView } from "../api/analyses.ts";
 import { registerAction, terminalUiRegisterOpts } from "./agent_policy.ts";
 
 /**
- * The Paths/Environment tables appended to the root `--help`. Built from `envDoc`
+ * The Paths/Environment tables that `inflexa help env` prints. Built from `envDoc`
  * — the single source of truth for documented paths/vars — so adding an entry
- * there surfaces it here automatically. Attached only to the root command (via
- * `addHelpText("after")`, not `"afterAll"`), so focused subcommand help such as
- * `inflexa setup --help` stays uncluttered.
+ * there surfaces it here automatically.
  */
 function renderEnvHelp(): string {
     const pathRows: string[][] = [];
@@ -140,6 +138,16 @@ function joinOwnVersionValues(root: Command, argv: readonly string[]): string[] 
  * `devCommandsEnabled()`, so each instance reflects the channel in force when it
  * was built.
  */
+/** The groups of the root help, in the order of the help, with the top-level commands of each. A test fails for a command in no group. */
+const HELP_GROUPS: readonly (readonly [heading: string, commands: readonly string[]])[] = [
+    ["Analyses:", ["new", "ls", "resume", "open", "status", "usage", "inputs", "profile", "run", "chat", "analysis", "project"]],
+    ["Agents:", ["agent", "skill", "connector", "credential", "mcp"]],
+    ["Data:", ["geo", "refs"]],
+    ["Provenance:", ["prov", "repair", "relocate", "prune"]],
+    ["Server:", ["gui", "serve", "server", "up", "down"]],
+    ["Setup:", ["config", "setup", "auth", "upgrade", "sandbox", "store", "sbom", "help"]],
+];
+
 export function buildProgram(): Command {
     const cli = new RootCommand();
 
@@ -630,6 +638,322 @@ export function buildProgram(): Command {
         const { projectLs } = await import("../client/commands/projects.ts");
         await projectLs();
     });
+
+    // The customization commands. Each one is a client of the routes under `/api/v1` (client/commands/customization.ts).
+    // A read is `auto`, and its one option, `--json`, only shapes the output. A change is `approval`.
+    const agent = cli.command("agent").description("Manage the agents: the built-in agents, your custom agents, and the drafts");
+
+    registerAction(
+        agent.command("ls").description("List the agents, with the gaps of each draft").option("--json", "Print the list as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (options: { json?: boolean }) => {
+            const { agentLs } = await import("../client/commands/customization.ts");
+            await agentLs(options);
+        },
+    );
+
+    registerAction(
+        agent
+            .command("show")
+            .description("Show one agent: its attachments, your changes, and its gaps")
+            .argument("<id>", "The agent to show")
+            .option("--json", "Print the agent as JSON, with its prompt"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (id: string, options: { json?: boolean }) => {
+            const { agentShow } = await import("../client/commands/customization.ts");
+            await agentShow(id, options);
+        },
+    );
+
+    registerAction(
+        agent
+            .command("clone")
+            .description("Copy a built-in executor into a new agent file that you can edit")
+            .argument("<id>", "The built-in executor to copy")
+            .argument("<new-id>", "The id of the new agent: lowercase letters, digits, and hyphens"),
+        "instance",
+        { kind: "approval" },
+        async (id: string, newId: string) => {
+            const { agentClone } = await import("../client/commands/customization.ts");
+            await agentClone(id, newId);
+        },
+    );
+
+    registerAction(
+        agent
+            .command("import")
+            .description("Convert the agent file of another harness into an agent file of Inflexa")
+            .argument("<file>", "The agent file to convert"),
+        "instance",
+        { kind: "approval" },
+        async (file: string) => {
+            const { agentImport } = await import("../client/commands/customization.ts");
+            await agentImport(file);
+        },
+    );
+
+    registerAction(
+        agent.command("enable").description("Turn an agent on").argument("<id>", "The agent to turn on"),
+        "instance",
+        { kind: "approval" },
+        async (id: string) => {
+            const { agentSetEnabled } = await import("../client/commands/customization.ts");
+            await agentSetEnabled(id, true);
+        },
+    );
+
+    registerAction(
+        agent.command("disable").description("Turn an agent off").argument("<id>", "The agent to turn off"),
+        "instance",
+        { kind: "approval" },
+        async (id: string) => {
+            const { agentSetEnabled } = await import("../client/commands/customization.ts");
+            await agentSetEnabled(id, false);
+        },
+    );
+
+    registerAction(
+        agent
+            .command("attach")
+            .description("Attach a connector, an MCP server, or a skill to an agent")
+            .argument("<id>", "The agent")
+            .argument("<kind>", "connector, mcp, or skill")
+            .argument("<name>", "The connector id, the MCP server name, or the skill name"),
+        "instance",
+        { kind: "approval" },
+        async (id: string, kind: string, name: string) => {
+            const { agentAttach } = await import("../client/commands/customization.ts");
+            await agentAttach(id, kind, name, true);
+        },
+    );
+
+    registerAction(
+        agent
+            .command("detach")
+            .description("Detach a connector, an MCP server, or a skill from an agent")
+            .argument("<id>", "The agent")
+            .argument("<kind>", "connector, mcp, or skill")
+            .argument("<name>", "The connector id, the MCP server name, or the skill name"),
+        "instance",
+        { kind: "approval" },
+        async (id: string, kind: string, name: string) => {
+            const { agentAttach } = await import("../client/commands/customization.ts");
+            await agentAttach(id, kind, name, false);
+        },
+    );
+
+    registerAction(
+        agent.command("rm").description("Delete a custom agent file").argument("<id>", "The custom agent to delete"),
+        "instance",
+        { kind: "approval" },
+        async (id: string) => {
+            const { agentRm } = await import("../client/commands/customization.ts");
+            await agentRm(id);
+        },
+    );
+
+    const skill = cli.command("skill").description("Manage the skills: the built-in skills and your custom skills");
+
+    registerAction(
+        skill.command("ls").description("List the built-in and the custom skills, with each problem").option("--json", "Print the list as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (options: { json?: boolean }) => {
+            const { skillLs } = await import("../client/commands/customization.ts");
+            await skillLs(options);
+        },
+    );
+
+    registerAction(
+        skill
+            .command("find")
+            .description("List the skills in a directory that you name")
+            .argument("<dir>", "The directory to read")
+            .option("--json", "Print the list as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (dir: string, options: { json?: boolean }) => {
+            const { skillFind } = await import("../client/commands/customization.ts");
+            await skillFind(dir, options);
+        },
+    );
+
+    registerAction(
+        skill.command("import").description("Copy a skill directory into your custom skills").argument("<dir>", "The skill directory, with its SKILL.md"),
+        "instance",
+        { kind: "approval" },
+        async (dir: string) => {
+            const { skillImport } = await import("../client/commands/customization.ts");
+            await skillImport(dir);
+        },
+    );
+
+    const connector = cli.command("connector").description("Manage the connectors: the outside services that agents query");
+
+    registerAction(
+        connector.command("ls").description("List the connectors, their settings, and the state of each credential").option("--json", "Print the list as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (options: { json?: boolean }) => {
+            const { connectorLs } = await import("../client/commands/customization.ts");
+            await connectorLs(options);
+        },
+    );
+
+    registerAction(
+        connector
+            .command("set")
+            .description("Change the settings of a connector")
+            .argument("<id>", "The connector")
+            .option("--enable", "Turn the connector on")
+            .option("--disable", "Turn the connector off")
+            .option("--endpoint <url>", "Point the connector at a different instance (an empty value restores the default)")
+            .option("--credential <slot=name...>", "Name the credential of a slot (an empty name restores the default)"),
+        "instance",
+        { kind: "approval" },
+        async (id: string, options: { enable?: boolean; disable?: boolean; endpoint?: string; credential?: string[] }) => {
+            const { connectorSet } = await import("../client/commands/customization.ts");
+            await connectorSet(id, options);
+        },
+    );
+
+    const credential = cli.command("credential").description("Manage the credentials: where the value of each secret comes from");
+
+    registerAction(
+        credential
+            .command("ls")
+            .description("List the credentials and whether each gives a value (never the value)")
+            .option("--json", "Print the list as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (options: { json?: boolean }) => {
+            const { credentialLs } = await import("../client/commands/customization.ts");
+            await credentialLs(options);
+        },
+    );
+
+    registerAction(
+        credential
+            .command("set")
+            .description("Declare an environment variable or a helper command as the source of a credential")
+            .argument("<name>", "The credential name")
+            .option("--env <var>", "Read the value from this environment variable")
+            .option("--command <command>", "Read the value from the output of this command")
+            .option("--format <format>", "The output format of the command: raw or exec-credential")
+            .option("--ttl-ms <ms>", "How long a value of the command stays valid"),
+        "instance",
+        { kind: "approval" },
+        async (name: string, options: { env?: string; command?: string; format?: string; ttlMs?: string }) => {
+            const { credentialSet } = await import("../client/commands/customization.ts");
+            await credentialSet(name, options);
+        },
+    );
+
+    const mcp = cli.command("mcp").description("Manage the MCP servers that agents can use");
+
+    registerAction(
+        mcp.command("ls").description("List the MCP servers, with each problem and the sign-in state").option("--json", "Print the list as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (options: { json?: boolean }) => {
+            const { mcpLs } = await import("../client/commands/customization.ts");
+            await mcpLs(options);
+        },
+    );
+
+    // `blocked`: the entry makes the host run a command, or send requests to a URL, that the caller wrote.
+    registerAction(
+        mcp
+            .command("add")
+            .description("Add an MCP server: a local command after `--`, or an HTTP server with --url")
+            .argument("<name>", "The server name: lowercase letters, digits, and hyphens")
+            .argument("[command...]", "The command of a local server and its arguments")
+            .option("--url <url>", "The URL of an HTTP server")
+            .option("--header <key=value...>", "A header of an HTTP server; a secret is a ${cred:<name>} reference")
+            .option("--oauth", "The HTTP server signs in with OAuth (`inflexa mcp auth`)")
+            .option("--env <key=value...>", "A variable of a local server; a secret is a ${cred:<name>} reference")
+            .option("--approval <mode>", "never (the default) or always (ask before each call; only the chat agent and the reporter can attach the server)")
+            .option("--scriptable", "Also give the tools to scripts (needs --approval never)")
+            .option("--disabled", "Add the server turned off"),
+        "instance",
+        {
+            kind: "blocked",
+            reason:
+                "`inflexa mcp add` makes the host run a command, or reach a server, that the entry names. " +
+                "It is not available to you — tell the user to run it themselves.",
+        },
+        async (
+            name: string,
+            command: string[],
+            options: { url?: string; header?: string[]; oauth?: boolean; env?: string[]; approval?: string; scriptable?: boolean; disabled?: boolean },
+        ) => {
+            const { mcpAdd } = await import("../client/commands/customization.ts");
+            await mcpAdd(name, command, options);
+        },
+    );
+
+    registerAction(
+        mcp.command("enable").description("Turn an MCP server on").argument("<name>", "The server"),
+        "instance",
+        { kind: "approval" },
+        async (name: string) => {
+            const { mcpSetEnabled } = await import("../client/commands/customization.ts");
+            await mcpSetEnabled(name, true);
+        },
+    );
+
+    registerAction(
+        mcp.command("disable").description("Turn an MCP server off").argument("<name>", "The server"),
+        "instance",
+        { kind: "approval" },
+        async (name: string) => {
+            const { mcpSetEnabled } = await import("../client/commands/customization.ts");
+            await mcpSetEnabled(name, false);
+        },
+    );
+
+    registerAction(
+        mcp.command("rm").description("Remove an MCP server, with its tokens").argument("<name>", "The server"),
+        "instance",
+        { kind: "approval" },
+        async (name: string) => {
+            const { mcpRm } = await import("../client/commands/customization.ts");
+            await mcpRm(name);
+        },
+    );
+
+    // `blocked`: the sign-in and the sign-out are the acts of a person at a browser.
+    registerAction(
+        mcp.command("auth").description("Sign in to an MCP server in the browser").argument("<name>", "The server"),
+        "instance",
+        {
+            kind: "blocked",
+            reason:
+                "`inflexa mcp auth` needs a person at a browser to sign in to the server. " +
+                "It is not available to you — tell the user to run it themselves.",
+        },
+        async (name: string) => {
+            const { mcpAuth } = await import("../client/commands/customization.ts");
+            await mcpAuth(name);
+        },
+    );
+
+    registerAction(
+        mcp.command("logout").description("Delete the stored tokens of an MCP server").argument("<name>", "The server"),
+        "instance",
+        {
+            kind: "blocked",
+            reason:
+                "`inflexa mcp logout` ends a sign-in that needs a person at a browser to make again. " +
+                "It is not available to you — tell the user to run it themselves.",
+        },
+        async (name: string) => {
+            const { mcpLogout } = await import("../client/commands/customization.ts");
+            await mcpLogout(name);
+        },
+    );
 
     const prov = cli.command("prov").description("Provenance — the recorded history of an analysis's inputs and actions");
 
@@ -1262,7 +1586,38 @@ export function buildProgram(): Command {
         },
     );
 
-    cli.addHelpText("after", renderEnvHelp);
+    // The default action of the root turns off the implicit help command of commander. This command takes its place,
+    // and it adds the `env` topic.
+    registerAction(
+        cli
+            .command("help")
+            .description("Show the help of a command, or `inflexa help env` for the paths and the environment variables")
+            .argument("[topic]", "A command name, or env"),
+        "standalone",
+        { kind: "auto", safeFlags: [] },
+        (topic: string | undefined) => {
+            if (topic === "env") {
+                process.stdout.write(`${renderEnvHelp().trimStart()}\n`);
+                return Promise.resolve();
+            }
+            const command = topic === undefined ? cli : cli.commands.find((candidate) => candidate.name() === topic);
+            if (command === undefined) cli.error(`error: unknown help topic '${topic ?? ""}'`);
+            else command.help();
+            return Promise.resolve();
+        },
+    );
+
+    for (const [heading, names] of HELP_GROUPS) {
+        for (const command of cli.commands) if (names.includes(command.name())) command.helpGroup(heading);
+    }
+    // Commander prints the groups in the order of their first command. The root help puts them in the order of HELP_GROUPS.
+    const headings = HELP_GROUPS.map(([heading]) => heading);
+    cli.configureHelp({
+        groupItems<T extends Command | Option>(unsortedItems: T[], visibleItems: T[], getGroup: (item: T) => string): Map<string, T[]> {
+            const groups = new Help().groupItems(unsortedItems, visibleItems, getGroup);
+            return new Map([...groups].toSorted(([a], [b]) => headings.indexOf(a) - headings.indexOf(b)));
+        },
+    });
 
     return cli;
 }

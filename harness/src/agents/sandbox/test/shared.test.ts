@@ -13,11 +13,15 @@ import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecRequest } from "../../../sandbox/types.js";
 import { makeToolContext } from "../../../tools/__fixtures__/tool-context.js";
 import { createFileMetadataCell } from "../../../tools/sandbox/submit-file-metadata.js";
+import { createPubMedTool } from "../../../tools/bio/pubmed.js";
+import { searchGeneTool } from "../../../tools/bio/search-gene.js";
+import { equipAttachments } from "../../../catalog/equip.js";
+import { createInMemoryCatalog, createInMemorySkillStore, equipmentOf } from "../../../catalog/memory.js";
+import { resolveCatalog } from "../../../catalog/resolve.js";
 
 import { makeFakeSandboxAgentDeps, makeFakeSandboxClient } from "../__fixtures__/deps.js";
 import { leaseOverClient } from "../../../sandbox/__fixtures__/leases.js";
-import { BASE_SANDBOX_TOOLS, createSandboxAgent } from "../shared.js";
-import type { AgentMeta } from "../types.js";
+import { createSandboxAgent, type SandboxAgentSpec } from "../shared.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "../types.js";
 import type { CitationResolver } from "../../../citations/types.js";
 import { presentFind, presentLast } from "../../../lib/present.js";
@@ -27,21 +31,24 @@ import { feedExecFrame } from "../../../provenance/exec-frame.js";
 import { readToolCallRecord } from "../../../tools/define-tool.js";
 import { createWorkspaceFilesystem } from "../../../workspace/filesystem.js";
 
-const meta: AgentMeta = {
+const body = "# Test Agent\n\nDo testy things.";
+
+const spec: SandboxAgentSpec = {
     id: "test-agent",
-    description: "Does testy things.",
-    skills: [],
-    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene"],
+    role: "executor",
+    prompt: body,
+    equipment: equipmentOf({ connectorTools: [createPubMedTool({}), searchGeneTool] }),
 };
 
-const body = "# Test Agent\n\nDo testy things.";
+const bare: SandboxAgentSpec = { ...spec, equipment: equipmentOf() };
 
 const ORIENT_CORE_MARKER = "# Sandbox Environment";
 const ANALYSIS_STEP_MARKER = "# Sandbox Analysis-Step Conventions";
+const READ_SCRIPT_TOOLS = ["read_table", "list_archive", "read_pdf"];
 
 describe("createSandboxAgent", () => {
     it("returns an AgentDefinition with id, model, composed prompt, tools, maxIterations", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
 
         expect(def.id).toBe("test-agent");
         expect(def.model).toBe("claude-opus-4-7");
@@ -70,16 +77,14 @@ describe("createSandboxAgent", () => {
                 analysisId: "analysis-001",
                 allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-001/step-001",
             }),
-            meta,
-            body,
+            spec,
         );
         const stepTwo = createSandboxAgent(
             makeFakeSandboxAgentDeps({
                 analysisId: "analysis-999",
                 allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-777/qc-and-normalize",
             }),
-            meta,
-            body,
+            spec,
         );
 
         expect(stepTwo.systemPrompt).toBe(stepOne.systemPrompt);
@@ -90,8 +95,7 @@ describe("createSandboxAgent", () => {
             makeFakeSandboxAgentDeps({
                 analysisId: "analysis-001",
             }),
-            meta,
-            body,
+            spec,
         );
 
         // No placeholder survives (there are none left to substitute) …
@@ -102,33 +106,47 @@ describe("createSandboxAgent", () => {
         }
     });
 
-    it("resolves meta.tools to exactly the declared bio/research tools + workspace surface", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+    it("gives the connector tools of the equipment as script tools, beside the role tools", () => {
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
 
-        const toolIds = [...def.tools, ...(def.scriptTools ?? [])].map((t) => t.id);
-        // Workspace surface is always wired (5 tools: execute_command, write_file,
-        // edit_file, read-file, grep).
+        const toolIds = def.tools.map((t) => t.id);
         expect(toolIds).toContain("execute_command");
         expect(toolIds).toContain("write_file");
         expect(toolIds).toContain("edit_file");
         expect(toolIds).toContain("read_file");
         expect(toolIds).toContain("grep");
-        // BASE_SANDBOX_TOOLS: listAvailablePackages, listAvailableRefs, resolveLibraryId, queryDocs.
         expect(toolIds).toContain("list_available_packages");
         expect(toolIds).toContain("list_available_refs");
-        expect(toolIds).toContain("resolve_library_id");
-        expect(toolIds).toContain("query_docs");
         // A step runs inside its own run, and the run inspection gives step
         // paths only for a finished run, thus a sandbox agent has no use for it.
         expect(toolIds).not.toContain("inspect_run");
-        // Plus the two declared bio tools.
-        expect(toolIds).toContain("pubmed");
-        expect(toolIds).toContain("search_gene");
-        // Nothing else from bio.
-        expect(toolIds).not.toContain("chembl");
-        expect(toolIds).not.toContain("search_faers");
-        expect(toolIds).not.toContain("comptox");
-        expect(toolIds).not.toContain("search_regulatory_approvals");
+        // Only the profiler scans the inputs.
+        expect(toolIds).not.toContain("scan_inputs");
+        // The connector tools of the equipment, then the read tools of a script, and nothing else.
+        expect((def.scriptTools ?? []).map((t) => t.id).sort()).toEqual(["pubmed", "search_gene", ...READ_SCRIPT_TOOLS].sort());
+    });
+
+    it("gives scan_inputs to the profiler role only", () => {
+        const profiler = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...bare, role: "profiler" });
+        const executor = createSandboxAgent(makeFakeSandboxAgentDeps(), bare);
+
+        expect(profiler.tools.map((t) => t.id)).toContain("scan_inputs");
+        expect(executor.tools.map((t) => t.id)).not.toContain("scan_inputs");
+    });
+
+    it("gives the skill tools to an agent with no skills, and the skill index only to an agent with skills", () => {
+        const none = createSandboxAgent(makeFakeSandboxAgentDeps(), bare);
+        const withSkill = createSandboxAgent(makeFakeSandboxAgentDeps(), {
+            ...bare,
+            equipment: equipmentOf({ skills: [{ name: "enrichment", description: "Functional enrichment with GSEA and ORA" }] }),
+        });
+
+        for (const def of [none, withSkill]) {
+            expect(def.tools.map((t) => t.id)).toContain("skill_search");
+            expect(def.tools.map((t) => t.id)).toContain("skill_read");
+        }
+        expect(none.systemPrompt).not.toContain("## Your Skills");
+        expect(withSkill.systemPrompt).toContain("- `enrichment`: Functional enrichment with GSEA and ORA");
     });
 
     // Reference discovery reads the store the host already has on disk, so it needs no
@@ -147,7 +165,7 @@ describe("createSandboxAgent", () => {
         const root = await mkdtemp(join(tmpdir(), "shared-refs-"));
         const base = makeFakeSandboxAgentDeps();
         const lease = leaseOverClient(sandboxClient, { sandboxId: "sb-test", host: "127.0.0.1", port: 8765, backend: "docker" });
-        const def = createSandboxAgent({ ...base, step: { ...base.step, lease }, refStorePath: root }, meta, body);
+        const def = createSandboxAgent({ ...base, step: { ...base.step, lease }, refStorePath: root }, spec);
         const tool = presentFind(def.tools, (candidate) => candidate.id === "list_available_refs");
 
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
@@ -155,22 +173,16 @@ describe("createSandboxAgent", () => {
         expect(submits).toHaveLength(0);
     });
 
-    it("wires inspect_data_profile as always-on substrate — no meta declares it", () => {
+    it("wires inspect_data_profile as always-on substrate — no attachment gives it", () => {
         // The profile is the only record of what the input dataset IS, and no file
-        // carries it, so it is not in the `SandboxToolName` allowlist at all: every
-        // sandbox agent gets it regardless of what its meta names.
-        const bare = { ...meta, tools: [] as const };
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), bare, body);
+        // carries it, so every sandbox agent gets it whatever it attaches.
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), bare);
 
         expect(def.tools.map((t) => t.id)).toContain("inspect_data_profile");
     });
 
     it("wires the two lease tools as always-on substrate, also under readOnly", () => {
-        const bare = { ...meta, tools: [] as const };
-        for (const def of [
-            createSandboxAgent(makeFakeSandboxAgentDeps(), bare, body),
-            createSandboxAgent(makeFakeSandboxAgentDeps(), bare, body, { readOnly: true }),
-        ]) {
+        for (const def of [createSandboxAgent(makeFakeSandboxAgentDeps(), bare), createSandboxAgent(makeFakeSandboxAgentDeps(), bare, { readOnly: true })]) {
             const ids = def.tools.map((t) => t.id);
             expect(ids).toContain("acquire_sandbox");
             expect(ids).toContain("release_sandbox");
@@ -178,13 +190,13 @@ describe("createSandboxAgent", () => {
     });
 
     it("readOnly keeps inspect_data_profile — reading the profile is not a mutation", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body, { readOnly: true });
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec, { readOnly: true });
 
         expect(def.tools.map((t) => t.id)).toContain("inspect_data_profile");
     });
 
     it("readOnly drops write_file/edit_file but keeps execute_command + read tools", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body, {
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec, {
             readOnly: true,
         });
 
@@ -201,14 +213,14 @@ describe("createSandboxAgent", () => {
     });
 
     it("default (writable) sandbox agent has write_file + edit_file", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
         const toolIds = [...def.tools, ...(def.scriptTools ?? [])].map((t) => t.id);
         expect(toolIds).toContain("write_file");
         expect(toolIds).toContain("edit_file");
     });
 
     it("appendAnalysisStepStandards=false drops the analysis-step layer", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body, {
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec, {
             appendAnalysisStepStandards: false,
         });
 
@@ -217,22 +229,11 @@ describe("createSandboxAgent", () => {
     });
 
     it("per-agent defaultMaxSteps overrides the default cap", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...meta, defaultMaxSteps: 35 }, body);
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...spec, defaultMaxSteps: 35 });
         expect(def.maxIterations).toBe(35);
     });
 
-    it("unknown SandboxToolName throws at composition time, not at first call", () => {
-        expect(() =>
-            createSandboxAgent(
-                makeFakeSandboxAgentDeps(),
-                // @ts-expect-error — unknown name is the whole point of the test.
-                { ...meta, tools: [...BASE_SANDBOX_TOOLS, "thisToolDoesNotExist"] },
-                body,
-            ),
-        ).toThrow('unknown SandboxToolName "thisToolDoesNotExist"');
-    });
-
-    it("resolves the citation tool only when the shared resolver dependency is supplied", () => {
+    it("the citations connector gives the citation tool only when the shared resolver is supplied", async () => {
         const citationResolver = {
             resolveOne: () => {
                 return Promise.reject(new Error("not executed in this roster test"));
@@ -241,34 +242,54 @@ describe("createSandboxAgent", () => {
                 return Promise.reject(new Error("not executed in this roster test"));
             },
         } satisfies CitationResolver;
-        const citationMeta = { ...meta, tools: [...BASE_SANDBOX_TOOLS, "resolve_citation"] as const };
+        const catalog = createInMemoryCatalog();
+        const resolved = await resolveCatalog(catalog);
+        const attachments = { connectors: ["citations"], mcp: [], skills: [] };
+        const scriptIdsOf = async (resolver: CitationResolver | undefined): Promise<string[]> => {
+            const equipment = await equipAttachments({ catalog, connectorBase: { citationResolver: resolver } }, resolved, attachments);
+            return (createSandboxAgent(makeFakeSandboxAgentDeps(), { ...spec, equipment }).scriptTools ?? []).map((tool) => tool.id);
+        };
 
-        expect(() => createSandboxAgent({ ...makeFakeSandboxAgentDeps(), citationResolver: undefined }, citationMeta, body)).toThrow(
-            "requires a CitationResolver",
-        );
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), citationResolver }, citationMeta, body);
-        expect((def.scriptTools ?? []).map((tool) => tool.id)).toContain("resolve_citation");
+        expect(await scriptIdsOf(undefined)).not.toContain("resolve_citation");
+        expect(await scriptIdsOf(citationResolver)).toContain("resolve_citation");
     });
 
-    it("declaring the same tool twice does not duplicate it in the resolved list", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...meta, tools: [...BASE_SANDBOX_TOOLS, "pubmed", "pubmed"] }, body);
+    it("attaching the same connector twice does not duplicate its tool", async () => {
+        const catalog = createInMemoryCatalog();
+        const equipment = await equipAttachments({ catalog, connectorBase: {} }, await resolveCatalog(catalog), {
+            connectors: ["pubmed", "pubmed"],
+            mcp: [],
+            skills: [],
+        });
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...spec, equipment });
         const matches = (def.scriptTools ?? []).filter((t) => t.id === "pubmed");
         expect(matches).toHaveLength(1);
+    });
+});
+
+describe("createSandboxAgent — the skill store of the equipment", () => {
+    it("skill_read reads the SKILL.md of an attached skill from the store when no path is named", async () => {
+        const store = createInMemorySkillStore([{ name: "enrichment", description: "GSEA", files: { "SKILL.md": "# Enrichment\n" } }]);
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...bare, equipment: { ...equipmentOf(), skills: ["enrichment"], skillStore: store } });
+        const tool = presentFind(def.tools, (t) => t.id === "skill_read");
+
+        const result = (await tool.execute({ skill: "enrichment" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result).toEqual({ status: "ok", skill: "enrichment", path: "SKILL.md", content: "# Enrichment\n" });
     });
 });
 
 describe("createSandboxAgent — the farm-extension seam", () => {
     const extendAnalysisFarm = () => okAsync([]);
 
-    it("a bound seam adds link_packages to the always-on substrate, and no meta names it", () => {
-        const bare = { ...meta, tools: [] as const };
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, bare, body);
+    it("a bound seam adds link_packages to the always-on substrate, and no attachment gives it", () => {
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, bare);
 
         expect(def.tools.map((t) => t.id)).toContain("link_packages");
     });
 
     it("with no farm extension bound, the agent gets no link tool, and the composition does not throw", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
 
         expect(def.tools.map((t) => t.id)).not.toContain("link_packages");
     });
@@ -276,7 +297,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
     it("the description names the failed-import trigger, and the result explains each outcome", () => {
         // A false absence sends the agent to report a package that the pool
         // holds, thus `unavailable` must never read as a reason for a missing report.
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, spec);
         const description = presentFind(def.tools, (tool) => tool.id === "link_packages").description;
 
         expect(description).toContain("so an import that failed works without a restart");
@@ -287,7 +308,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         // The spec scenario of the same name: the prefixed form is the remedy
         // of a two-track collision, thus a description that calls every
         // collision terminal contradicts the grammar the tool reads.
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, spec);
         const description = presentFind(def.tools, (tool) => tool.id === "link_packages").description;
 
         expect(description).toContain("`collision`");
@@ -297,8 +318,8 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         const closedWorld = "only what this tool reports is importable";
         const descriptionOf = (def: ReturnType<typeof createSandboxAgent>): string =>
             presentFind(def.tools, (tool) => tool.id === "list_available_packages").description;
-        const bound = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, meta, body);
-        const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const bound = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), extendAnalysisFarm }, spec);
+        const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
 
         expect(descriptionOf(unbound)).toContain(closedWorld);
         expect(descriptionOf(bound)).not.toContain(closedWorld);
@@ -308,15 +329,13 @@ describe("createSandboxAgent — the farm-extension seam", () => {
     it("a bound farm extension changes the tools and not the system prompt, which stays byte-stable across steps", () => {
         const boundOne = createSandboxAgent(
             { ...makeFakeSandboxAgentDeps({ allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-001/s1" }), extendAnalysisFarm },
-            meta,
-            body,
+            spec,
         );
         const boundTwo = createSandboxAgent(
             { ...makeFakeSandboxAgentDeps({ allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-001/s2" }), extendAnalysisFarm },
-            meta,
-            body,
+            spec,
         );
-        const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const unbound = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
 
         expect(boundTwo.systemPrompt).toBe(boundOne.systemPrompt);
         expect(boundOne.systemPrompt).toBe(unbound.systemPrompt);
@@ -328,8 +347,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
                 ...makeFakeSandboxAgentDeps(),
                 extendAnalysisFarm: () => errAsync({ reason: "the dependency graph is unreadable", suspend: false }),
             },
-            meta,
-            body,
+            spec,
         );
         const tool = presentFind(def.tools, (t) => t.id === "link_packages");
 
@@ -357,8 +375,7 @@ describe("createSandboxAgent — the farm-extension seam", () => {
                     ]);
                 },
             },
-            meta,
-            body,
+            spec,
         );
         const tool = presentFind(def.tools, (t) => t.id === "link_packages");
 
@@ -379,8 +396,8 @@ describe("createSandboxAgent — the file-metadata output tool", () => {
     it("a file-metadata cell adds submit_file_metadata as the last tool, after report_blocker", () => {
         const deps = { ...makeFakeSandboxAgentDeps(), reportsBlocker: true };
 
-        const withCell = createSandboxAgent({ ...deps, fileMetadata: createFileMetadataCell() }, meta, body);
-        const withoutCell = createSandboxAgent(deps, meta, body);
+        const withCell = createSandboxAgent({ ...deps, fileMetadata: createFileMetadataCell() }, spec);
+        const withoutCell = createSandboxAgent(deps, spec);
 
         const ids = withCell.tools.map((t) => t.id);
         expect(ids.at(-1)).toBe("submit_file_metadata");
@@ -389,20 +406,20 @@ describe("createSandboxAgent — the file-metadata output tool", () => {
     });
 
     it("an agent with no cell, such as the data profiler, has no submit_file_metadata", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
 
         expect(def.tools.map((t) => t.id)).not.toContain("submit_file_metadata");
     });
 
     it("the system prompt is byte-identical with and without the cell", () => {
-        const withCell = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), fileMetadata: createFileMetadataCell() }, meta, body);
-        const withoutCell = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const withCell = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), fileMetadata: createFileMetadataCell() }, spec);
+        const withoutCell = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
 
         expect(withCell.systemPrompt).toBe(withoutCell.systemPrompt);
     });
 
     it("the output tool refuses a call before the cell knows the files of the step", async () => {
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), fileMetadata: createFileMetadataCell() }, meta, body);
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), fileMetadata: createFileMetadataCell() }, spec);
         const tool = presentLast(def.tools);
 
         const result = await tool.execute({ files: [{ path: "output/a.csv", description: "d", dataType: "table", format: "csv" }] }, makeToolContext().ctx);
@@ -420,7 +437,7 @@ describe("createSandboxAgent — the toolchain keying of the orient core", () =>
 
         // The fixture client declares "store", the value the factory gives an
         // embedder that declares nothing.
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
         expect(def.systemPrompt).toContain(sandboxOrientCorePrompt.trim());
     });
 
@@ -435,7 +452,7 @@ describe("createSandboxAgent — the toolchain keying of the orient core", () =>
         // The bag carries the toolchain of the sandbox module, which is the value of the client, thus the text and
         // the environment cannot disagree.
         const deps = makeFakeSandboxAgentDeps();
-        const def = createSandboxAgent({ ...deps, toolchainSource: "image" }, meta, body);
+        const def = createSandboxAgent({ ...deps, toolchainSource: "image" }, spec);
         expect(def.systemPrompt).toContain("An acquisition of a new package is a host action");
         expect(def.systemPrompt).not.toContain(sandboxOrientCorePrompt.trim());
     });
@@ -450,8 +467,8 @@ describe("createSandboxAgent — the read tool of a kept text", () => {
     }
 
     it("a store adds read_tool_output directly after the workspace tools", () => {
-        const withStore = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), toolOutputStore: store }, meta, body);
-        const withoutStore = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+        const withStore = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), toolOutputStore: store }, spec);
+        const withoutStore = createSandboxAgent(makeFakeSandboxAgentDeps(), spec);
 
         const ids = withStore.tools.map((t) => t.id);
         expect(ids.indexOf("read_tool_output")).toBe(lastWorkspaceIndex(ids) + 1);
@@ -459,7 +476,7 @@ describe("createSandboxAgent — the read tool of a kept text", () => {
     });
 
     it("a read-only agent with a store keeps read_tool_output", () => {
-        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), toolOutputStore: store }, meta, body, { readOnly: true });
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), toolOutputStore: store }, spec, { readOnly: true });
 
         const ids = def.tools.map((t) => t.id);
         expect(ids).not.toContain("write_file");
@@ -467,7 +484,7 @@ describe("createSandboxAgent — the read tool of a kept text", () => {
     });
 
     it("the same deps with no store give no read_tool_output", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body, { readOnly: true });
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), spec, { readOnly: true });
 
         expect(def.tools.map((t) => t.id)).not.toContain("read_tool_output");
     });
@@ -506,8 +523,7 @@ describe("createSandboxAgent — the lineage of the workspace reads", () => {
                 lineageCollector: collector,
                 step: { ...base.step, workspaceRoot: root },
             },
-            meta,
-            body,
+            spec,
         );
         return { def, collector };
     }
@@ -590,8 +606,7 @@ describe("createSandboxAgent — the lineage of the workspace reads", () => {
                 workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot: () => Promise.resolve(root) }),
                 step: { ...base.step, workspaceRoot: root },
             },
-            meta,
-            body,
+            spec,
         );
 
         const result = await call(def, "read_file", { path: "/analysis-001/data/inputs/f1/counts.csv" });

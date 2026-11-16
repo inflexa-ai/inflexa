@@ -11,23 +11,23 @@
  *      to a no-op so a library host never acquires process-wide telemetry (or a
  *      console banner) it did not ask for. An embedder that wants harness OTel
  *      passes `initOtel` / `shutdownOtel` here.
- *   2. `validateAgentSkills(skillsDir, ...)` — pure fs stat, zero external deps.
- *      A `meta.skills` typo or a `skillsDir` / image drift dies in milliseconds,
- *      before any Postgres or DBOS cost is paid (agent-skill-assignment).
- *   3. `initCortexState(pool, logger)` — applies the pending schema migrations.
+ *   2. `initCortexState(pool, logger)` — applies the pending schema migrations.
  *      App tables must exist before launch; recovery queries them on the first step.
- *   4. `assertConnectionBudget(...)` — needs the live pool; gates launch so a
+ *   3. `assertConnectionBudget(...)` — needs the live pool; gates launch so a
  *      misconfigured pool fails loudly at boot, not under load.
- *   5. `assembleCoreRuntime(core)` — registers the durable-workflow cohort and
+ *   4. `assembleCoreRuntime(core)` — registers the durable-workflow cohort and
  *      builds the conversation agent (register-before-launch invariant).
- *   6. `beforeLaunch()` — embedder hook for host-specific pre-launch work that
+ *   5. `beforeLaunch()` — embedder hook for host-specific pre-launch work that
  *      must attach before DBOS launch re-emits events (scheduled sweeps, an
  *      legacy-workflow reap, an agent-switch install). Runs after registration
  *      so it may close over the registered callables.
- *   7. `launchDbos(...)` — the last registration-dependent step.
- *   8. `reconcileOrphanedRuns(pool)` — fails each `running` run whose workflow never started. It runs
+ *   6. `launchDbos(...)` — the last registration-dependent step.
+ *   7. `reconcileOrphanedRuns(pool)` — fails each `running` run whose workflow never started. It runs
  *      after launch, thus a workflow that recovery re-queued counts as started. A failure is logged and does
  *      not stop the boot, because the repair only frees the slot of a plan.
+ *
+ * No step reads the agent catalog or checks a skill: a defect of the built-in content fails a CI test, and the
+ * content of a host never stops the boot. The citation resolver reads its two keys from the catalog one time here.
  *
  * No step reads or rewrites stored conversation display. A boot that validated
  * every `messages` row is what let a single retired part key fail startup for a
@@ -43,8 +43,6 @@ import type { Pool } from "pg";
 
 import type { Querier } from "../state/db.js";
 import type { Logger } from "../lib/logger.js";
-import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
-import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
 import { reconcileOrphanedRuns } from "../state/runs.js";
 import { assembleCoreRuntime, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
@@ -56,16 +54,11 @@ import { runShutdownSequence } from "./shutdown.js";
 const noop = (): void => {};
 const noopAsync = (): Promise<void> => Promise.resolve();
 
-/** Every agent whose declared packs must resolve before the first run. */
-const SKILL_DECLARING_AGENTS = SANDBOX_AGENT_META;
-
 export type BootHarnessDeps = {
     /** Everything `assembleCoreRuntime` needs (workflow + conversation deps, resource policy). */
     readonly core: CoreRuntimeDeps;
     /** The ledger pool — used for state init, the connection-budget guard, and closed on shutdown. */
     readonly pool: Querier & Pick<Pool, "connect" | "end" | "options">;
-    /** Skills root; validated against the harness-owned agent catalog before launch. */
-    readonly skillsDir: string;
     /** DBOS launch config (carries the stable `executorId`). */
     readonly dbos: DbosConfig;
     /** Connection-budget guard config. */
@@ -97,15 +90,22 @@ export type BootedHarness = {
 };
 
 export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness> {
-    const { core, pool, skillsDir, logger } = deps;
+    const { pool, logger } = deps;
 
     (deps.initTelemetry ?? noop)();
-
-    validateAgentSkills(skillsDir, SKILL_DECLARING_AGENTS);
 
     await initCortexState(pool, logger);
     await assertConnectionBudget({ pool, logger, config: deps.connectionBudget });
 
+    // The citation resolver is one shared service with its own pacing and cache, thus it takes its keys one time.
+    const core: CoreRuntimeDeps = {
+        ...deps.core,
+        citationResolverConfig: {
+            ...deps.core.citationResolverConfig,
+            ncbiApiKey: deps.core.citationResolverConfig?.ncbiApiKey ?? (await deps.core.catalog.credential("ncbi")),
+            semanticScholarApiKey: deps.core.citationResolverConfig?.semanticScholarApiKey ?? (await deps.core.catalog.credential("semantic-scholar")),
+        },
+    };
     const runtime = assembleCoreRuntime(core);
 
     await deps.beforeLaunch?.();
@@ -129,7 +129,10 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
             markDraining,
             closeHttpServer: deps.closeHttpServer ?? noopAsync,
             shutdownDbos: () => shutdownDbos({ logger }),
-            closePool: () => pool.end(),
+            closePool: async () => {
+                await runtime.closeMcpConnections();
+                await pool.end();
+            },
             flushLogger: deps.flushLogger ?? noopAsync,
             shutdownOtel: deps.shutdownTelemetry ?? noopAsync,
             exit: deps.exit ?? noop,

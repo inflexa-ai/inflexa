@@ -1,37 +1,60 @@
 import { describe, expect, it } from "bun:test";
 
-import { SANDBOX_AGENT_META } from "../sandbox/index.js";
-import { KNOWN_AGENT_IDS, PLANNABLE_AGENT_CATALOG, PLANNABLE_AGENT_IDS, formatAgentCatalog } from "../sandbox-catalog.js";
+import { builtinAgent } from "../../catalog/builtins.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
+import { resolveCatalog } from "../../catalog/resolve.js";
+import type { AgentCatalog } from "../../catalog/types.js";
+import { formatAgentCatalog, plannerCatalogOf } from "../sandbox-catalog.js";
 
-/**
- * Shape assertions against the harness sandbox catalog. With the catalog
- * derived from `SANDBOX_AGENT_META`, drift between two sources of truth
- * is no longer possible — these tests pin the projection itself.
- */
-describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
-    it("plans on the analyst and the drug analyst, and never on the profiler", () => {
-        expect([...PLANNABLE_AGENT_IDS].sort()).toEqual(["analyst", "drug-analyst"]);
-        expect([...KNOWN_AGENT_IDS].sort()).toEqual(["analyst", "data-profiler", "drug-analyst"]);
+async function plannerCatalog(catalog: AgentCatalog = createInMemoryCatalog()) {
+    return plannerCatalogOf(await resolveCatalog(catalog));
+}
+
+/** Shape assertions against the planner catalog, which the resolved agent catalog derives. */
+describe("plannerCatalogOf", () => {
+    it("plans on the analyst and the drug analyst, and never on the profiler", async () => {
+        expect((await plannerCatalog()).map((meta) => meta.id).sort()).toEqual(["analyst", "drug-analyst"]);
     });
 
-    it("KNOWN_AGENT_IDS covers every meta entry", () => {
-        expect([...KNOWN_AGENT_IDS].sort()).toEqual(Object.keys(SANDBOX_AGENT_META).sort());
+    it("lists each enabled executor: a custom executor joins, and a disabled built-in leaves", async () => {
+        const catalog = createInMemoryCatalog({
+            agents: [
+                { kind: "builtin", id: "drug-analyst", enabled: false, add: {}, remove: {} },
+                {
+                    kind: "custom",
+                    enabled: true,
+                    definition: {
+                        id: "lipid-analyst",
+                        name: "Lipid analyst",
+                        role: "executor",
+                        description: "Lipidomics.",
+                        prompt: "You analyze lipids.",
+                        connectors: ["pubmed"],
+                        mcp: [],
+                        skills: [],
+                    },
+                },
+            ],
+        });
+
+        const planned = await plannerCatalog(catalog);
+        expect(planned.map((meta) => meta.id)).toEqual(["analyst", "lipid-analyst"]);
+        expect(planned.at(-1)).toEqual({ id: "lipid-analyst", description: "Lipidomics.", liveSources: ["PubMed"] });
     });
 
-    it("formatAgentCatalog renders one line per plannable agent with its description", () => {
-        const rendered = formatAgentCatalog();
-        expect(rendered.split("\n")).toHaveLength(PLANNABLE_AGENT_CATALOG.length);
-        for (const meta of PLANNABLE_AGENT_CATALOG) {
+    it("formatAgentCatalog renders one line per plannable agent with its description", async () => {
+        const catalog = await plannerCatalog();
+        const rendered = formatAgentCatalog(catalog);
+        expect(rendered.split("\n")).toHaveLength(catalog.length);
+        for (const meta of catalog) {
             expect(rendered).toContain(`- **${meta.id}**: ${meta.description}`);
         }
         expect(formatAgentCatalog([{ id: "a", description: "Does a.", liveSources: [] }])).toBe("- **a**: Does a.");
     });
 
-    it("names the databases that an agent queries at run time, thus the planner asks no staged copy of them", () => {
-        const lineOf = (id: string) =>
-            formatAgentCatalog()
-                .split("\n")
-                .find((line) => line.startsWith(`- **${id}**`));
+    it("names the databases that an agent queries at run time, thus the planner asks no staged copy of them", async () => {
+        const rendered = formatAgentCatalog(await plannerCatalog());
+        const lineOf = (id: string) => rendered.split("\n").find((line) => line.startsWith(`- **${id}**`));
 
         expect(lineOf("drug-analyst")).toContain("ChEMBL");
         expect(lineOf("drug-analyst")).toContain("DGIdb, DrugBank, and PharmGKB");
@@ -40,20 +63,11 @@ describe("sandbox-catalog (derived from SANDBOX_AGENT_META)", () => {
         expect(lineOf("analyst")).toContain("HumanBase tissue networks");
     });
 
-    it("keeps the drug, safety, and trial lookups off the analyst", () => {
-        const analystTools = new Set(SANDBOX_AGENT_META.analyst?.tools);
-        for (const tool of [
-            "chembl",
-            "pubchem",
-            "opentargets",
-            "searchFaers",
-            "searchClinicalTrials",
-            "searchRegulatoryApprovals",
-            "targetSafety",
-            "comptox",
-        ] as const) {
-            expect(analystTools.has(tool), tool).toBe(false);
-            expect(SANDBOX_AGENT_META["drug-analyst"]?.tools, tool).toContain(tool);
+    it("keeps the drug, safety, and trial connectors off the analyst", () => {
+        const analyst = new Set(builtinAgent("analyst").defaults.connectors);
+        for (const connector of ["chembl", "pubchem", "opentargets", "faers", "clinical-trials", "regulatory-approvals", "target-safety", "comptox"]) {
+            expect(analyst.has(connector), connector).toBe(false);
+            expect(builtinAgent("drug-analyst").defaults.connectors, connector).toContain(connector);
         }
     });
 });

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { okAsync } from "neverthrow";
 import {
+    fixedTurnAgent,
     syntheticUserMessage,
-    type AgentDefinition,
     type ChatFrame,
     type ChatTurnEnd,
     type ChatTurns,
@@ -26,7 +26,7 @@ const TURN_ID = "turn-1";
 const USER_INPUT = "hello";
 const userMessage: ModelMessage = { role: "user", content: USER_INPUT };
 const assistantMessage: ModelMessage = { role: "assistant", content: "the answer" };
-const conversationAgent: AgentDefinition = { id: "conv", systemPrompt: "", model: "m", tools: [], maxIterations: 1 };
+const conversationAgent = fixedTurnAgent({ id: "conv", systemPrompt: "", model: "m", tools: [], maxIterations: 1 });
 const session = buildChatSession(ANALYSIS_ID, THREAD_ID);
 const ROOT = { agentId: "conv", callPath: ["conv"] };
 

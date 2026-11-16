@@ -15,6 +15,7 @@ import { errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { forSubAgent, type AgentSession } from "../../auth/types.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
 import type { LlmUsageRecord, UsageRecorder } from "../../billing/usage-recorder.js";
 import { presentFirst } from "../../lib/present.js";
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
@@ -443,13 +444,13 @@ describe("runLoop usage — sub-agent runs", () => {
         // The tests above drive a stand-in tool written here, which proves the loop
         // honours what a tool passes down but not that any shipped factory passes
         // it. `createGenerateAnalogyReportTool` is the lightest real one — a provider,
-        // a model label, and empty API keys — so it is what pins the wiring the
+        // a model label, and an empty catalog — so it is what pins the wiring the
         // factories actually carry: the recorder from its deps, `ctx.turnUsage`,
         // and `ctx.invocationId`.
         const { recorder, records } = recordingRecorder();
         const childProvider = scriptedModel([reply([text("evidence report")], "stop", usage(100, 20))]).provider;
         const reasoner = createGenerateAnalogyReportTool(
-            { provider: childProvider, model: "claude-test", bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, usageRecorder: recorder },
+            { provider: childProvider, model: "claude-test", services: { catalog: createInMemoryCatalog(), connectorBase: {} }, usageRecorder: recorder },
             inProcessSubAgent,
         );
         const parent = scriptedModel([

@@ -5,6 +5,7 @@
  * a host the same surface over this turn.
  */
 
+import { fixedTurnAgent } from "../agents/turn-agent.js";
 import { randomUUID } from "node:crypto";
 
 import type { ChatFrame } from "../contracts/chat-events.js";
@@ -62,8 +63,9 @@ export async function openInProcessTurn(deps: RunChatTurnDeps, params: OpenChatT
         return { kind: "prepare_failed", cause };
     }
     if (prepared.kind === "not_found") return prepared;
-    const agent = deps.agents.forThread(prepared.threadType);
-    if (agent.isErr()) return { kind: "agent_unresolved", threadType: prepared.threadType };
+    const turnAgent = deps.agents.forThread(prepared.threadType);
+    if (turnAgent.isErr()) return { kind: "agent_unresolved", threadType: prepared.threadType };
+    const agent = { value: await turnAgent.value.forTurn() };
     const ready = prepared;
     return {
         kind: "ready",
@@ -180,7 +182,7 @@ export function inProcessChatTurns(deps: RunChatTurnDeps): ChatTurns {
                 .catch(() => null)
                 .finally(() => log.close());
             turns.set(turnId, { log, controller, end });
-            return { kind: "started", turnId, agent: opened.agent };
+            return { kind: "started", turnId, agent: fixedTurnAgent(opened.agent) };
         },
         read(turnId) {
             const turn = turns.get(turnId);

@@ -9,7 +9,7 @@ import { blockerSays, hasFileNamed, never, ranTemplate, type EvalCase } from "..
 import { runTrial } from "../lib/run.js";
 import { workingDirOf, type SandboxSetup } from "../lib/sandbox.js";
 
-const agents = evalAgents();
+const agents = await evalAgents();
 
 const SETUP: SandboxSetup = {
     agentId: "analyst",

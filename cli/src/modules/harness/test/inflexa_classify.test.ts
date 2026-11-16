@@ -95,14 +95,11 @@ describe("classifyInflexaArgv — malformed", () => {
         expect(result.kind).toBe("malformed");
     });
 
-    // `inflexa help <cmd>` is NOT introspection for this program: the root carries a
-    // default `.action()`, which disables commander's implicit `help` command (its
-    // `_getHelpCommand` gate requires `!actionHandler`). So `help` is an excess
-    // operand on the root action → commander.excessArguments. The real `inflexa help
-    // refs` binary errors the same way; the classifier faithfully reports malformed.
-    test("`help <command>` is malformed, since the root's default action disables the implicit help command", async () => {
+    // The root carries a default `.action()`, which disables commander's implicit `help` command. The registered
+    // `help [topic]` command takes its place, thus `help <command>` is an action of its own.
+    test("`help <command>` is the registered help command", async () => {
         const result = await classifyInflexaArgv(["help", "refs"]);
-        expect(result.kind).toBe("malformed");
+        expect(result).toMatchObject({ kind: "action", grantKey: "inflexa help", policy: { kind: "auto" } });
     });
 });
 

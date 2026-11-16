@@ -69,7 +69,9 @@ import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { errorMessageOf } from "../lib/thrown.js";
 import { textOf } from "../lib/unknown-text.js";
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
-import { resolveStepAgentId } from "../agents/sandbox-catalog.js";
+import { DEFAULT_EXECUTOR_ID } from "../catalog/builtins.js";
+import type { AgentIdentity } from "../catalog/types.js";
+import type { AgentEquipment } from "../catalog/equip.js";
 import { isWorkflowCancellation } from "../runtime/dbos.js";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { mkdir } from "node:fs/promises";
@@ -118,7 +120,6 @@ import { resolveTemplateContract } from "../tools/knowledge/template-binding.js"
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import { withoutToolValues } from "../loop/tool-value.js";
-import type { Tool } from "../tools/define-tool.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
 import {
@@ -176,8 +177,14 @@ export type ExecuteAnalysisInput = {
      * field existed: the seed then renders the claim ids only.
      */
     readonly claims?: readonly ClaimView[];
-    /** Per-step agent id (sandbox catalog entry). */
+    /** Per-step agent id: an executor of the agent catalog. */
     readonly agentByStepId: Readonly<Record<string, string>>;
+    /**
+     * The identity of each agent of the run, from the catalog when the run started. A recovery keeps the prompt of
+     * the identity. Absent for a run that started before identities existed: its steps take the agent of the
+     * catalog.
+     */
+    readonly agents?: Readonly<Record<string, AgentIdentity>>;
     /**
      * Replay-stable run-level synthesis decision. Absent preserves the legacy
      * behavior for workflows persisted before this field existed.
@@ -278,8 +285,8 @@ export type ExecuteAnalysisDeps = {
     readonly workspaceFs: WorkspaceFilesystem;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
-    /** The lookup tools of the synthesis (`createSynthesisLookupTools`). */
-    readonly synthesisLookups: readonly Tool[];
+    /** What the synthesizer of one run gets from the agent catalog, read when the synthesis starts. */
+    readonly synthesisEquipment: () => Promise<AgentEquipment>;
     /** Where the VM of `run_script` comes from, for the lookups of the synthesizer. */
     readonly scriptRuntime?: ScriptRuntime;
     /** Run-level billing-bracket seam (managed: external bracket; OSS: no-op). */
@@ -565,7 +572,8 @@ export function buildChildInput(args: {
         analysisId: input.analysisId,
         runId,
         stepId,
-        agentId: resolveStepAgentId(input.agentByStepId[stepId] ?? ""),
+        agentId: input.agentByStepId[stepId] ?? DEFAULT_EXECUTOR_ID,
+        agent: input.agents?.[input.agentByStepId[stepId] ?? DEFAULT_EXECUTOR_ID],
         // Carried into the child because lineage classification admits a same-run
         // sibling edge only when the sibling was declared here — the scheduler's
         // ordering guarantee attaches to this list and nothing else. Read from the
@@ -831,7 +839,7 @@ export function synthesizeFindings(args: {
             resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
             workspaceFs: deps.workspaceFs,
             synthesisModel: deps.synthesisModel,
-            synthesisLookups: deps.synthesisLookups,
+            synthesisEquipment: deps.synthesisEquipment,
             scriptRuntime: deps.scriptRuntime,
             usageRecorder: deps.usageRecorder,
             toolOutputStore: deps.toolOutputStore,
@@ -967,7 +975,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 stepId: step.id,
                 analysisId: input.analysisId,
                 wave: levels.get(step.id) ?? 0,
-                agentId: resolveStepAgentId(input.agentByStepId[step.id] ?? ""),
+                agentId: input.agentByStepId[step.id] ?? DEFAULT_EXECUTOR_ID,
             }));
             const synthesisRow = {
                 runId,
@@ -1453,6 +1461,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         // timestamp replay-stable. Never-dispatched steps reach no settlement, so
         // they emit nothing by design.
         const settledAtMs = await DBOS.now();
+        const stepAgent = input.agents?.[input.agentByStepId[settled.stepId] ?? DEFAULT_EXECUTOR_ID];
         emitProvenanceGuarded(
             deps,
             {
@@ -1462,6 +1471,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 stepId: settled.stepId,
                 status: stepStatus,
                 durationMs: stepDurationMs,
+                agent: stepAgent === undefined ? undefined : { agentId: stepAgent.id, name: stepAgent.name, promptHash: stepAgent.promptHash },
                 atMs: settledAtMs,
             },
             input.runSession,

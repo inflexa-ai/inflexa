@@ -1365,7 +1365,7 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
     const config = readConfig();
     // `config.harness` is deliberately `unknown` in lib/config.ts (the harness
     // module owns its validation) — spread it as a plain record so the fields
-    // this prompt does not manage (model, bioKeys, per-step overrides, …)
+    // this prompt does not manage (model, per-step overrides, …)
     // survive the rewrite.
     const harness = recordOrEmpty(config.harness);
     const resourceLimits = recordOrEmpty(harness.resourceLimits);

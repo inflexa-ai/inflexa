@@ -2,11 +2,7 @@ import { join } from "node:path";
 import type { ScriptRuntime } from "@inflexa-ai/harness/tools/script/run-script.js";
 import {
     createNoopRunCharge,
-    createSandboxAgents,
-    resolveStepAgentId,
     runStepDir,
-    SANDBOX_AGENT_META,
-    type AgentDefinition,
     type ChatProvider,
     type CoreWorkflowDeps,
     type EmbeddingProvider,
@@ -17,14 +13,11 @@ import {
     type Pool,
     type ResolveWorkspaceRoot,
     type RunAuthorizer,
-    type SandboxAgentBuildContext,
-    type SandboxAgentDeps,
     type SandboxClient,
     type SandboxStepInput,
     type WorkspaceFilesystem,
 } from "@inflexa-ai/harness";
 
-import type { ResolvedHarnessConfig } from "./config.ts";
 import { provenanceSeam, type SwappableSandboxEmitters } from "./prov_bridge.ts";
 import { emitRunObservation } from "./run_bridge.ts";
 
@@ -95,8 +88,6 @@ export type RunEngineComposition = {
      * the swap lands no matter when a consumer reads its deps fields.
      */
     readonly sandboxEmitters: SwappableSandboxEmitters;
-    /** Absolute skills tree path — enables the sandbox agents' skill tools. */
-    readonly skillsDir: string;
     /**
      * Absolute reference-store path — the same bytes sandboxes mount at `/mnt/refs`.
      * Passed unconditionally: the store may be populated mid-session by a reference
@@ -124,8 +115,6 @@ export type RunEngineComposition = {
      * link through ONE seam against one store root.
      */
     readonly extendAnalysisFarm: ExtendAnalysisFarm;
-    /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
-    readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
     /**
      * The knowledge plane client, when the `knowledge` config block names an endpoint and the
      * environment holds the key. Absent, no template step can run its template and the
@@ -137,73 +126,11 @@ export type RunEngineComposition = {
 };
 
 /**
- * Resolve the step's agent from the harness sandbox catalog, wiring its deps
- * from the composition-level backends plus this step's per-call context. The
- * two are threaded exactly as the harness's own data-profile agent construction
- * does (`tasks/data-profile.ts:207-235`): composition backends on the flat
- * fields, per-step coordinates under `step`.
- *
- * An agent id absent from the catalog rejects. `throw` is correct here despite
- * the cli's neverthrow-first default: `buildAgent` runs inside the harness
- * workflow body where a rejection IS the step's failure channel (the seam
- * returns `Promise<AgentDefinition>`, not a `Result`), and `validatePlan` already rejects
- * unknown agent ids upstream — so this is defense-in-depth on a path the plan
- * gate makes unreachable, and the message names the id and the known catalog ids
- * for the operator who somehow reaches it.
- */
-async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContext): Promise<AgentDefinition> {
-    const deps: SandboxAgentDeps = {
-        provider: comp.sandbox.provider,
-        pool: comp.pool,
-        toolchainSource: comp.sandboxClient.toolchainSource,
-        workspaceFs: comp.workspaceFs,
-        embedding: comp.embedding,
-        lineageCollector: ctx.lineageCollector,
-        model: comp.sandbox.model,
-        skillsDir: comp.skillsDir,
-        refStorePath: comp.refStorePath,
-        farmLockFile: comp.farmLockFile,
-        imagePackagesFile: comp.imagePackagesFile,
-        extendAnalysisFarm: comp.extendAnalysisFarm,
-        bioKeys: comp.bioKeys,
-        citationResolver: ctx.citationResolver,
-        templateSource: comp.knowledge,
-        scriptRuntime: comp.scriptRuntime,
-        reportsBlocker: ctx.reportsBlocker,
-        fileMetadata: ctx.fileMetadata,
-        toolOutputStore: ctx.toolOutputStore,
-        step: {
-            lease: ctx.lease,
-            workspaceRoot: await comp.resolveWorkspaceRoot(ctx.input.analysisId),
-            analysisId: ctx.input.analysisId,
-            allowedWritePrefix: ctx.stepWritePrefix,
-            template: ctx.input.template,
-        },
-    };
-
-    // TODO(perf): `createSandboxAgents` builds the whole catalog (prompt composition
-    // + per-tool `z.toJSONSchema()` wiring) and we keep one, per step and again on
-    // every workflow replay. The cost is in-memory CPU with no I/O against a
-    // multi-minute sandboxed step, so it is acceptable today; the real fix is a
-    // harness-side per-id selector since the deps are per-`ctx` and cannot be
-    // hoisted to boot. Tracked in https://github.com/inflexa-ai/inf-cli/issues/30.
-    // A recovered run can carry an agent id that the roster no longer holds; the
-    // harness resolves it to the default step agent.
-    const agentId = resolveStepAgentId(ctx.input.agentId);
-    const agent = createSandboxAgents(deps)[agentId];
-    if (agent === undefined) {
-        const known = Object.keys(SANDBOX_AGENT_META).join(", ");
-        throw new Error(`unknown sandbox agent id "${agentId}" — known catalog ids: ${known}`);
-    }
-    return agent;
-}
-
-/**
  * Assemble the {@link SandboxStepDeps} the child workflow registers with. The
  * composition's stable delegating artifact registry ({@link
- * RunEngineComposition.sandboxEmitters}) and the catalog-backed `buildAgent` are
- * the only run-specific realizations; everything else is a straight pass-through
- * of the shared backends. `resolveStepDir` follows the harness's own path
+ * RunEngineComposition.sandboxEmitters}) is the only run-specific realization;
+ * everything else is a straight pass-through of the shared backends. The harness
+ * builds each step agent from the agent catalog and from `agentDeps`. `resolveStepDir` follows the harness's own path
  * convention (`workspace/paths.ts`) resolved to an ABSOLUTE path under the
  * analysis's workspace root.
  *
@@ -232,7 +159,21 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDe
         workspaceFs: comp.workspaceFs,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         model: comp.sandbox.model,
-        buildAgent: (ctx) => buildStepAgent(comp, ctx),
+        agentDeps: {
+            provider: comp.sandbox.provider,
+            pool: comp.pool,
+            logger: comp.logger,
+            toolchainSource: comp.sandboxClient.toolchainSource,
+            workspaceFs: comp.workspaceFs,
+            embedding: comp.embedding,
+            model: comp.sandbox.model,
+            refStorePath: comp.refStorePath,
+            farmLockFile: comp.farmLockFile,
+            imagePackagesFile: comp.imagePackagesFile,
+            extendAnalysisFarm: comp.extendAnalysisFarm,
+            templateSource: comp.knowledge,
+            scriptRuntime: comp.scriptRuntime,
+        },
         resolveStepDir: async (input: SandboxStepInput) => join(await comp.resolveWorkspaceRoot(input.analysisId), runStepDir(input.runId, input.stepId)),
     };
 }
@@ -272,7 +213,6 @@ export function buildExecuteAnalysisDeps(
         sandboxStepCallable,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         synthesisModel: comp.sandbox.model,
-        bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
         ...templateSourceOption,

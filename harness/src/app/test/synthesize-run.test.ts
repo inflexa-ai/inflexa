@@ -11,7 +11,7 @@
 import { Pool } from "pg";
 
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
-import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
+import { equipmentOf } from "../../catalog/memory.js";
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,14 +31,11 @@ import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.j
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import type { RunSession } from "../../auth/types.js";
 import type { EmitFn } from "../../loop/types.js";
-import type { BioToolKeys } from "../../tools/bio/keys.js";
 import { synthesizeRun, type SynthesizeRunDeps, type SynthesisProgressExtra } from "../synthesize-run.js";
-import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 
 const ANALYSIS_ID = "analysis-001";
 const RUN_ID = "run-001";
 const STEP_ID = "T1S1";
-const BIO_KEYS: BioToolKeys = { drugbank: "", disgenet: "", epaCcte: "" };
 
 function makeRunSession(): RunSession {
     return {
@@ -174,7 +171,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
             workspaceFs: makeFakeWorkspaceFs(),
             synthesisModel: "claude-test",
-            synthesisLookups: createSynthesisLookupTools({ bioKeys: BIO_KEYS, citationResolver: unusedCitationResolver }),
+            synthesisEquipment: () => Promise.resolve(equipmentOf()),
         },
         get embedderCalls() {
             return embedderCalls;

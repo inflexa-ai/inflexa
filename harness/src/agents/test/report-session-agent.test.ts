@@ -17,6 +17,8 @@ import type { ReportSessionStateStore } from "../../state/report-session-state.j
 import type { ReportVersionStore } from "../../state/report-versions.js";
 import type { ReportSessionStateGateway } from "../../tools/report-authoring/authoring-tools.js";
 import { makeFakeWorkspaceFs } from "../sandbox/__fixtures__/deps.js";
+import { createInMemoryCatalog, createInMemorySkillStore } from "../../catalog/memory.js";
+import type { AgentCatalog } from "../../catalog/types.js";
 
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice for
@@ -66,7 +68,7 @@ const refuseDerivations: Pick<ReportSessionStateStore, "appendDerivation"> = {
     },
 };
 
-function buildAgent(toolOutputStore?: ToolOutputStore) {
+function buildAgent(toolOutputStore?: ToolOutputStore, catalog: AgentCatalog = createInMemoryCatalog()) {
     return createReportSessionAgent({
         model: "anthropic/claude-opus-4-8",
         pool: new Pool(),
@@ -79,7 +81,8 @@ function buildAgent(toolOutputStore?: ToolOutputStore) {
         chrome: {},
         derivations: refuseDerivations,
         toolOutputStore,
-    });
+        services: { catalog, connectorBase: {} },
+    }).forTurn();
 }
 
 // The read surface toward the analysis. The roster roams the tree read-only.
@@ -93,14 +96,17 @@ const COMPOSITION_SURFACE = ["finish_draft", "list_pinned_artifacts", "preview_r
 // The edits of the draft run in a script, thus a script builds a section in one call.
 const DRAFT_EDITS = ["add_block", "change_block", "remove_block", "move_block", "set_title", "read_outline", "read_block"] as const;
 
+// The skill tools of the reporter. They read only the attached skills, thus they change no analysis.
+const SKILL_TOOLS = ["skill_search", "skill_read"] as const;
+
 // A tool that starts a run or writes an analysis has no place on this roster. Its
 // absence is the whole guarantee — no runtime guard blocks these; the roster omits
 // them.
 const FORBIDDEN = ["generate_plan", "execute_analysis", "write_file", "edit_file", "execute_command", "update_working_memory"] as const;
 
 describe("createReportSessionAgent", () => {
-    test("assembles the report AgentDefinition with the report-session id", () => {
-        const agent = buildAgent();
+    test("assembles the report AgentDefinition with the report-session id", async () => {
+        const agent = await buildAgent();
         expect(agent.id).toBe(REPORT_SESSION_AGENT_ID);
         expect(agent.id).toBe("report-session");
         expect(agent.model).toBe("anthropic/claude-opus-4-8");
@@ -110,7 +116,7 @@ describe("createReportSessionAgent", () => {
     });
 
     test("asks for one tool call for each reply on each request of the conversation", async () => {
-        const agent = buildAgent();
+        const agent = await buildAgent();
         const { provider, calls } = scriptedModel([reply([text("done")])], { capabilities: { toolCalling: true } });
 
         await runLoop(agent, [{ role: "user", content: "Write the report." }], makeSession(), {
@@ -122,15 +128,15 @@ describe("createReportSessionAgent", () => {
         expect(calls[0]?.providerOptions).toMatchObject({ anthropic: { disableParallelToolUse: true }, openai: { parallelToolCalls: false } });
     });
 
-    test("holds the analysis read surface", () => {
-        const ids = new Set(buildAgent().tools.map((tool) => tool.id));
+    test("holds the analysis read surface", async () => {
+        const ids = new Set((await buildAgent()).tools.map((tool) => tool.id));
         for (const expected of READ_SURFACE) {
             expect(ids.has(expected)).toBe(true);
         }
     });
 
-    test("holds the composition tools, and the edits of the draft as script tools", () => {
-        const agent = buildAgent();
+    test("holds the composition tools, and the edits of the draft as script tools", async () => {
+        const agent = await buildAgent();
         const ids = new Set(agent.tools.map((tool) => tool.id));
         for (const expected of COMPOSITION_SURFACE) {
             expect(ids.has(expected)).toBe(true);
@@ -142,47 +148,62 @@ describe("createReportSessionAgent", () => {
         }
     });
 
-    test("holds no run starter and no mutate tool", () => {
-        const ids = new Set(buildAgent().tools.map((tool) => tool.id));
+    test("holds no run starter and no mutate tool", async () => {
+        const ids = new Set((await buildAgent()).tools.map((tool) => tool.id));
         for (const forbidden of FORBIDDEN) {
             expect(ids.has(forbidden)).toBe(false);
         }
     });
 
-    test("holds exactly the read surface and the composition surface, and no more", () => {
-        const ids = buildAgent().tools.map((tool) => tool.id);
+    test("holds exactly the read surface, the composition surface, and the skill tools, and no more", async () => {
+        const ids = (await buildAgent()).tools.map((tool) => tool.id);
         // The roster is the whole guarantee — assert the exact set, so a later
         // wiring that adds a run starter or a mutate tool fails here.
-        expect(new Set(ids)).toEqual(new Set([...READ_SURFACE, ...COMPOSITION_SURFACE]));
+        expect(new Set(ids)).toEqual(new Set([...READ_SURFACE, ...COMPOSITION_SURFACE, ...SKILL_TOOLS]));
     });
 
-    test("a script derives a small table from the pinned evidence, and builds a chart file and a PDF", () => {
-        const agent = buildAgent();
+    test("each turn adds the connectors and the skill index that the catalog attaches to the reporter", async () => {
+        const catalog = createInMemoryCatalog({
+            skills: createInMemorySkillStore([{ name: "report-style", description: "The house style of a report." }]),
+            agents: [{ kind: "builtin", id: "reporter", enabled: true, add: { connectors: ["pubmed"], skills: ["report-style"] }, remove: {} }],
+        });
+
+        const plain = await buildAgent();
+        const attached = await buildAgent(undefined, catalog);
+
+        expect(attached.scriptTools?.map((tool) => tool.id)).toEqual([...(plain.scriptTools ?? []).map((tool) => tool.id), "pubmed"]);
+        expect(attached.tools.map((tool) => tool.id)).toEqual(plain.tools.map((tool) => tool.id));
+        expect(plain.systemPrompt).not.toContain("## Your Skills");
+        expect(attached.systemPrompt).toContain("- `report-style`: The house style of a report.");
+    });
+
+    test("a script derives a small table from the pinned evidence, and builds a chart file and a PDF", async () => {
+        const agent = await buildAgent();
 
         expect(agent.scriptTools?.map((tool) => tool.id)).toEqual([...DRAFT_EDITS, "read_table", "write_derived", "read_pdf", "render_chart", "export_pdf"]);
         expect(agent.scriptScratch).toBeDefined();
     });
 
-    test("a tool output store adds read_tool_output after grep, and no store leaves it out", () => {
+    test("a tool output store adds read_tool_output after grep, and no store leaves it out", async () => {
         const store: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
 
-        const withStore = buildAgent(store).tools.map((tool) => tool.id);
-        const withoutStore = buildAgent().tools.map((tool) => tool.id);
+        const withStore = (await buildAgent(store)).tools.map((tool) => tool.id);
+        const withoutStore = (await buildAgent()).tools.map((tool) => tool.id);
 
         expect(withStore[withStore.indexOf("grep") + 1]).toBe("read_tool_output");
         expect(withoutStore).not.toContain("read_tool_output");
         expect(withStore.filter((id) => id !== "read_tool_output")).toEqual(withoutStore);
     });
 
-    test("tool ids are unique", () => {
-        const agent = buildAgent();
+    test("tool ids are unique", async () => {
+        const agent = await buildAgent();
         // createRegistry throws on a duplicate id.
         const registry = createRegistry(agent.tools);
         expect(Object.keys(registry.definitions())).toHaveLength(agent.tools.length);
     });
 
-    test("the system prompt composes SOUL with the identity and the conversational layers", () => {
-        const { systemPrompt } = buildAgent();
+    test("the system prompt composes SOUL with the identity and the conversational layers", async () => {
+        const { systemPrompt } = await buildAgent();
         expect(systemPrompt).toContain("# SOUL — Execution Core");
         expect(systemPrompt).toContain("# SOUL — Identity");
         expect(systemPrompt).toContain("# SOUL — Conversational Style");
@@ -444,8 +465,8 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("name the reason to the user");
     });
 
-    test("the definition carries no per-session value in the prompt", () => {
-        const { systemPrompt } = buildAgent();
+    test("the definition carries no per-session value in the prompt", async () => {
+        const { systemPrompt } = await buildAgent();
         // A per-session value (a thread id, an analysis id, a resolved path) breaks
         // the cacheable prefix. The report layer names only tools and rules.
         expect(systemPrompt).not.toContain("/sessions");

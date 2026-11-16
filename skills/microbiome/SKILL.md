@@ -1,8 +1,9 @@
 ---
 name: microbiome
 description: Read before you analyze amplicon or shotgun microbiome data (ASVs, taxonomy, diversity, differential abundance). The data is compositional, thus usual tests and RNA-seq methods give false results. It gives the correct method for each design and the rules for rarefaction and zeros.
-version: 1.0.0
-tags: [microbiome, 16s, its, shotgun, metagenomics, compositional, ancombc, aldex2]
+metadata:
+  version: 1.0.0
+  tags: [microbiome, 16s, its, shotgun, metagenomics, compositional, ancombc, aldex2]
 ---
 
 # Microbiome Analysis

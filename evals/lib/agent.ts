@@ -22,14 +22,20 @@ import { createNoopLogger } from "@inflexa-ai/harness/lib/console-logger.js";
 import { analogyAgentOf } from "@inflexa-ai/harness/tools/research/generate-analogy-report.js";
 import { synthesizerAgentOf } from "@inflexa-ai/harness/execution/run-synthesis.js";
 import type { StepSummary } from "@inflexa-ai/harness/schemas/step-summary.js";
-import { createSynthesisLookupTools } from "@inflexa-ai/harness/tools/research/synthesis-lookups.js";
 import {
     buildPlannerSearchTools,
     plannerAgentOf,
     plannerOfInvocation,
+    plannerSetupOf,
     plannerTerminalTools,
     type GeneratePlanDeps,
 } from "@inflexa-ai/harness/tools/research/generate-plan.js";
+import { builtinAgent } from "@inflexa-ai/harness/catalog/builtins.js";
+import { equipAttachments, type AgentEquipment, type CatalogServices } from "@inflexa-ai/harness/catalog/equip.js";
+import { createInMemoryCatalog } from "@inflexa-ai/harness/catalog/memory.js";
+import { resolveCatalog } from "@inflexa-ai/harness/catalog/resolve.js";
+import { createDirectorySkillStore } from "@inflexa-ai/harness/catalog/skill-files.js";
+import type { BuiltinAgentId } from "@inflexa-ai/harness/catalog/types.js";
 import { makeFakeWorkspaceFs } from "@inflexa-ai/harness/agents/sandbox/__fixtures__/deps.js";
 import { createLocalRunAuthorizer } from "@inflexa-ai/harness/auth/local-run-authorizer.js";
 import { unusedCitationResolver } from "@inflexa-ai/harness/citations/__fixtures__/resolver.js";
@@ -110,8 +116,28 @@ function unconnectedPool(): ReturnType<typeof createPool> {
     return createPool({ host: "eval.invalid", port: "5432", database: "eval", user: "eval", password: "eval", sslMode: "disable" });
 }
 
+/** The repository root: the built-in skills are in its `skills/` tree. */
+const REPO_ROOT = join(import.meta.dir, "..", "..");
+
+/**
+ * The agent catalog of an eval: the built-in agents with the release defaults, the built-in skills of the repository,
+ * and no credential. A connector tool is scripted by its case, thus no lookup reaches the network.
+ */
+export function evalServices(): CatalogServices {
+    return {
+        catalog: createInMemoryCatalog({ skills: createDirectorySkillStore([join(REPO_ROOT, "skills")]) }),
+        connectorBase: { citationResolver: unusedCitationResolver, toolOutputStore: unusedToolOutputStore, webSearch: unusedWebSearch },
+    };
+}
+
+/** The equipment of one built-in agent with its release defaults. */
+async function builtinEquipment(id: BuiltinAgentId): Promise<AgentEquipment> {
+    const services = evalServices();
+    return equipAttachments(services, await resolveCatalog(services.catalog), builtinAgent(id).defaults);
+}
+
 /** The conversation agent as the CLI composes it. */
-export function conversationAgent(): AgentDefinition {
+export function conversationAgent(): Promise<AgentDefinition> {
     return createConversationAgent({
         provider: unusedChatProvider(),
         registerSubAgent: inProcessSubAgent,
@@ -124,14 +150,11 @@ export function conversationAgent(): AgentDefinition {
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/eval", id)),
         runAuthorizer: createLocalRunAuthorizer(),
         runLauncher: unusedRunLauncher,
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        skillsDir: "/eval/skills",
         chrome: {},
-        citationResolver: unusedCitationResolver,
+        services: evalServices(),
         toolOutputStore: unusedToolOutputStore,
-        webSearch: unusedWebSearch,
         hostTools: cliHostTools(),
-    });
+    }).forTurn();
 }
 
 /**
@@ -198,18 +221,19 @@ export const evalKnowledgeClient: KnowledgeClient = {
 };
 
 /** The planner that `generate_plan` runs, with the terminal tools of a run with no knowledge answer. */
-export function plannerAgent(): AgentDefinition {
+export async function plannerAgent(): Promise<AgentDefinition> {
     const deps: GeneratePlanDeps = {
         conversation: { provider: unusedChatProvider(), model: "eval" },
         pool: unconnectedPool(),
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        services: evalServices(),
         refStorePath: "/eval/refs",
         farmLockFile: "/eval/farm.lock",
         imagePackagesFile: "/eval/image-packages.json",
         toolOutputStore: unusedToolOutputStore,
         workspace: evalWorkspace(),
     };
-    return plannerAgentOf(deps, buildPlannerSearchTools(deps), plannerTerminalTools(createNoopLogger()));
+    const setup = await plannerSetupOf(deps.services);
+    return plannerAgentOf(deps, setup, buildPlannerSearchTools(deps, setup.equipment), plannerTerminalTools(createNoopLogger(), setup));
 }
 
 /**
@@ -217,12 +241,13 @@ export function plannerAgent(): AgentDefinition {
  * census of `pool`, and with `knowledge` it holds the knowledge tools over that client. The
  * memory of the call lives in the tools, thus a trial builds its own.
  */
-export function plannerTrialAgent(pool: readonly PoolInventorySection[], knowledge: KnowledgeClient | undefined): AgentDefinition {
+export async function plannerTrialAgent(pool: readonly PoolInventorySection[], knowledge: KnowledgeClient | undefined): Promise<AgentDefinition> {
+    const services = evalServices();
     return plannerOfInvocation(
         {
             conversation: { provider: unusedChatProvider(), model: "eval" },
             pool: unconnectedPool(),
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            services,
             refStorePath: "/eval/refs",
             farmLockFile: "/eval/farm.lock",
             imagePackagesFile: "/eval/image-packages.json",
@@ -232,11 +257,12 @@ export function plannerTrialAgent(pool: readonly PoolInventorySection[], knowled
             ...(knowledge === undefined ? {} : { knowledge }),
         },
         createNoopLogger(),
+        await plannerSetupOf(services),
     ).agent;
 }
 
 /** The report agent of a report session. Each tool is scripted, thus no dependency below is reached. */
-export function reportAgent(): AgentDefinition {
+export function reportAgent(): Promise<AgentDefinition> {
     const unused = (): never => refuse();
     return createReportSessionAgent({
         model: "eval",
@@ -250,12 +276,13 @@ export function reportAgent(): AgentDefinition {
         chrome: {},
         derivations: { appendDerivation: unused },
         toolOutputStore: unusedToolOutputStore,
-    });
+        services: evalServices(),
+    }).forTurn();
 }
 
 /** The analogical reasoner that `generate_analogy_report` runs. */
-export function analogyAgent(): AgentDefinition {
-    return analogyAgentOf({ model: "eval", bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, toolOutputStore: unusedToolOutputStore });
+export async function analogyAgent(): Promise<AgentDefinition> {
+    return analogyAgentOf({ model: "eval", toolOutputStore: unusedToolOutputStore }, await builtinEquipment("analogy"));
 }
 
 /** The read-only workspace of the planner and the synthesizer. Each read tool is scripted, thus nothing below is reached. */
@@ -269,10 +296,10 @@ function evalWorkspace() {
 }
 
 /** The synthesizer of a run with these step summaries. Its submit tool checks the step ids of the summaries. */
-export function synthesisAgent(summaries: readonly StepSummary[]): AgentDefinition {
+export async function synthesisAgent(summaries: readonly StepSummary[]): Promise<AgentDefinition> {
     return synthesizerAgentOf({
         model: "eval",
-        synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
+        equipment: await builtinEquipment("synthesizer"),
         summaries,
         toolOutputStore: unusedToolOutputStore,
         workspace: evalWorkspace(),
@@ -280,13 +307,13 @@ export function synthesisAgent(summaries: readonly StepSummary[]): AgentDefiniti
 }
 
 /** The agent of each kind. */
-export function evalAgents(): Readonly<Record<StaticAgentKind, AgentDefinition>> {
+export async function evalAgents(): Promise<Readonly<Record<StaticAgentKind, AgentDefinition>>> {
     return {
-        conversation: conversationAgent(),
-        planner: plannerAgent(),
-        "planner-knowledge": plannerTrialAgent([], evalKnowledgeClient),
-        report: reportAgent(),
-        analogy: analogyAgent(),
+        conversation: await conversationAgent(),
+        planner: await plannerAgent(),
+        "planner-knowledge": await plannerTrialAgent([], evalKnowledgeClient),
+        report: await reportAgent(),
+        analogy: await analogyAgent(),
     };
 }
 

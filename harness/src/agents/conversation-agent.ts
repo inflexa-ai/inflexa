@@ -44,38 +44,16 @@ import { createEditIntentStore } from "../state/edit-intents.js";
 import { conversationPrompt } from "../prompts/conversation.js";
 import { composeSystemPrompt } from "./system-prompt.js";
 
-// Bio-lookup leaf tools (pure — no dependencies).
-import {
-    searchGeneTool,
-    searchProteinTool,
-    resolveGeneIdsTool,
-    lookupAnnotationTool,
-    searchInteractionsTool,
-    humanbaseTool,
-    getVariantFrequenciesTool,
-    alphafoldPredictionTool,
-    getProteinDomainsTool,
-    chemblTool,
-    pubchemTool,
-    openTargetsTool,
-    searchFaersTool,
-    searchClinicalTrialsTool,
-    searchGeoDatasetsTool,
-    genePreclinicalProfileTool,
-    targetSafetyTool,
-} from "../tools/bio/index.js";
-import { createAmassTools, createNcbiTools, createChemDbTools, type BioToolKeys } from "../tools/bio/keys.js";
 import type { KnowledgeClient } from "../tools/knowledge/index.js";
+import { plannerCatalogOf } from "./sandbox-catalog.js";
+import { builtinAgent } from "../catalog/builtins.js";
+import { equipAttachments, type CatalogServices } from "../catalog/equip.js";
+import { agentOfRole, resolveCatalog } from "../catalog/resolve.js";
+import { createSkillTools } from "../tools/sandbox/skills.js";
+import type { TurnAgent } from "./turn-agent.js";
 
 // Dependency-bearing tool factories.
-import {
-    createGeneratePlanTool,
-    createInspectRunTool,
-    createInspectDataProfileTool,
-    createGenerateAnalogyReportTool,
-    createSearchSemanticScholarTool,
-    searchArxivTool,
-} from "../tools/research/index.js";
+import { createGeneratePlanTool, createInspectRunTool, createInspectDataProfileTool, createGenerateAnalogyReportTool } from "../tools/research/index.js";
 import {
     createEditFileTool,
     createFileStatTool,
@@ -103,10 +81,6 @@ import { createStartReportSessionTool } from "../tools/start-report-session.js";
 import type { Logger } from "../lib/logger.js";
 import type { CompactionRules } from "../loop/compaction.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
-import type { CitationResolver } from "../citations/types.js";
-import { createResolveCitationTool } from "../tools/research/resolve-citation.js";
-import { createWebFetchTool } from "../tools/research/web-fetch.js";
-import { createWebSearchTool, type WebSearchEngine } from "../tools/research/web-search.js";
 import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { createScriptFileTools } from "../tools/script/file-tools.js";
 import { createScriptScratch } from "../tools/script/scratch.js";
@@ -138,10 +112,11 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
     readonly usageRecorder?: UsageRecorder;
     /** Adds `read_tool_output`, and each loop-driving tool gives the same store to its sub-agent. */
     readonly toolOutputStore?: ToolOutputStore;
-    /** The web-search engine the embedder injected; set, `web_search` attaches, absent it does not. `web_fetch` attaches either way. */
-    readonly webSearch?: WebSearchEngine;
-    /** Shared host-side bibliographic verification service. */
-    readonly citationResolver: CitationResolver;
+    /**
+     * The agent catalog. Each turn reads it: the connectors, the skills, and the MCP servers of the agent, the
+     * executors of `execute_analysis`, and whether the analogy reasoner is on.
+     */
+    readonly services: CatalogServices;
     /** The LLM seam every loop-driving tool runs its sub-agent on. */
     readonly provider: ChatProvider;
     /**
@@ -184,16 +159,12 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
      * workflows through it so the durability engine stays out of the tools.
      */
     readonly runLauncher: RunLauncher;
-    /** API keys for the external bio/chem data sources. */
-    readonly bioKeys: BioToolKeys;
     /**
      * The knowledge service client, for the planner that `generate_plan` drives.
      * Absent, the planner attaches no knowledge tool. The conversation agent
      * itself gets `knowledge_recommend` through `hostTools`, from the embedder.
      */
     readonly knowledge?: KnowledgeClient;
-    /** Skills root. No tool of the roster reads it. */
-    readonly skillsDir: string;
     /** Headless-Chrome config for report snapshot/preview rendering. */
     readonly chrome: ChromeConfig;
     /**
@@ -234,8 +205,15 @@ export type ConversationAgentDeps = EnvironmentStorePaths & {
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
 };
 
-/** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
-export function createConversationAgent(deps: ConversationAgentDeps): AgentDefinition {
+/**
+ * The conversation agent. The sub-agent workflows of its tools register one time, when the agent is made. Each turn
+ * builds the `AgentDefinition` of the turn from the catalog of the moment, thus a change of the catalog reaches the
+ * next turn, and the tools stay the same for the whole turn.
+ */
+export type ConversationAgent = TurnAgent;
+
+/** Make the conversation agent with every tool fully dep-bound. */
+export function createConversationAgent(deps: ConversationAgentDeps): ConversationAgent {
     const {
         provider,
         pool,
@@ -245,7 +223,6 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         executeAnalysisWorkflow,
         runAuthorizer,
         runLauncher,
-        bioKeys,
         chrome,
         hostTools,
         refStorePath,
@@ -254,13 +231,9 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         readPoolInventory,
         usageRecorder,
         toolOutputStore,
-        citationResolver,
-        webSearch,
+        services,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
-    const ncbi = createNcbiTools(bioKeys);
-    const chemDb = createChemDbTools(bioKeys, { logger: deps.logger });
-    const amass = createAmassTools(bioKeys);
     // The write path of this agent: coordinates resolve per call from the
     // session's analysis scope, the write prefix is the analysis root, and
     // every successful write emits a `write-file` provenance session event.
@@ -284,176 +257,144 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
     // that the user names, and its content never passes through the reply of the model.
     const writeFileTool = createWriteFileTool({ mutator });
 
-    // The lookups and the light work on tables run in a script (`run_script`). Each tool asks no approval.
-    const scriptTools: Tool[] = [
-        // Tables of the workspace in, derived files and chart files out.
-        ...createScriptFileTools({ workspaceFs, resolveWorkspaceRoot: deps.resolveWorkspaceRoot, scratch: scriptScratch }),
-        writeFileTool,
-        // Identifier resolution — the ENSG most other bio tools key off, and the
-        // UniProt accession that the structure tools take.
-        searchGeneTool,
-        searchProteinTool,
-        // The mapping across the symbol, Entrez, Ensembl and UniProt spaces — the Entrez ID that humanbase takes.
-        resolveGeneIdsTool,
-        // Functional annotation (GO / KEGG / Reactome behind one vocabulary) and
-        // STRING networks + gene-set enrichment.
-        lookupAnnotationTool,
-        searchInteractionsTool,
-        // GIANT tissue- and process-specific functional networks (network / relevant / contexts behind one action).
-        humanbaseTool,
-        // Structural biology — the whole-chain confidence of a predicted 3-D
-        // model, and the URLs of its coordinate and per-residue files.
-        alphafoldPredictionTool,
-        // InterPro — the families, domains, repeats, and sites of a protein, with their residue ranges.
-        getProteinDomainsTool,
-        // Literature (search / details / fulltext behind one action).
-        ncbi.pubmed,
-        // Verification of one caller-supplied citation (distinct from discovery).
-        createResolveCitationTool(citationResolver),
-        // Literature outside PubMed. A question about a method, a model or a
-        // preprint has no MEDLINE record, thus PubMed alone cannot answer it.
-        createSearchSemanticScholarTool({ apiKey: bioKeys.semanticScholar }),
-        searchArxivTool,
-        // The web step of research — the injected web-search engine (the CLI runs
-        // SearXNG and binds its realization), then the guarded page fetch that
-        // reads what the search found.
-        ...(webSearch ? [createWebSearchTool({ engine: webSearch })] : []),
-        createWebFetchTool({ toolOutputStore }),
-        // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
-        chemblTool,
-        // PubChem (compound / crossrefs / assays behind one action).
-        pubchemTool,
-        // Target assessment: the integrated scored view, then the underlying records.
-        openTargetsTool,
-        // Genetic evidence — GWAS Catalog + DisGeNET + ClinVar behind one `sources`.
-        chemDb.geneDiseaseEvidence,
-        // Population allele frequencies of short variants (gnomAD), the filter of rare-variant interpretation.
-        getVariantFrequenciesTool,
-        // Drug↔gene interactions — DGIdb + DrugBank + PharmGKB behind one `sources`.
-        chemDb.drugGeneInteractions,
-        searchFaersTool,
-        searchClinicalTrialsTool,
-        // FDA and EMA authorizations with their label text, and patents (Amass; keyed).
-        amass.regulatoryApprovals,
-        amass.patents,
-        searchGeoDatasetsTool,
-        // Preclinical — baseline expression + mouse knockout in one call.
-        genePreclinicalProfileTool,
-        // Target-level safety — the curated panel + Open Targets liabilities.
-        targetSafetyTool,
-        // EPA CompTox (toxcast / hazard / chemical / exposure behind one dataset).
-        chemDb.comptox,
-    ];
-
-    const tools: Tool[] = [
-        // What reference data this install actually holds. The conversation agent is
-        // where provisioning is decided — an embedder may give it a way to install more,
-        // and a host that does asks the user to approve the download. Deciding that
-        // blind is how a user gets asked to download something already installed, or
-        // told nothing is missing when it is; this is the only tool that can tell.
-        createListAvailableRefsTool({ refStorePath }),
-        // What the STORE holds, pool-scope where the embedder binds the reader:
-        // the ask flow of this agent marks the packages the pool does not hold,
-        // and the farm of a new analysis is empty — a farm view here would read
-        // every pool package as absent. The farm-lock fallback keeps a host
-        // with no pool reader on the old answer.
-        createListAvailablePackagesTool({
+    // Each sub-agent registers its workflow here, one time, before DBOS launches.
+    const generatePlanTool = createGeneratePlanTool(
+        {
+            conversation: { provider, model },
+            pool,
+            usageRecorder,
+            toolOutputStore,
+            services,
+            workspace: { workspaceFs, pool, embedding, resolveWorkspaceRoot: deps.resolveWorkspaceRoot },
+            scriptRuntime: deps.scriptRuntime,
+            knowledge: deps.knowledge,
+            refStorePath,
             farmLockFile,
             imagePackagesFile,
             readPoolInventory,
-        }),
-        // Execution.
-        createInspectRunTool(pool),
-        // The dataset's own record. No file backs it — the DB row is the only copy.
-        createInspectDataProfileTool(pool),
-        createGeneratePlanTool(
-            {
-                conversation: { provider, model },
-                pool,
-                usageRecorder,
-                toolOutputStore,
-                bioKeys,
-                workspace: { workspaceFs, pool, embedding, resolveWorkspaceRoot: deps.resolveWorkspaceRoot },
-                scriptRuntime: deps.scriptRuntime,
-                knowledge: deps.knowledge,
-                refStorePath,
+            logger: deps.logger,
+        },
+        deps.registerSubAgent,
+    );
+    const generateAnalogyReportTool = createGenerateAnalogyReportTool(
+        {
+            provider,
+            model,
+            services,
+            usageRecorder,
+            toolOutputStore,
+            logger: deps.logger,
+            scriptRuntime: deps.scriptRuntime,
+        },
+        deps.registerSubAgent,
+    );
+    const executeAnalysisDeps = {
+        pool,
+        services,
+        executeAnalysisWorkflow,
+        runAuthorizer,
+        runLauncher,
+        farmLockFile,
+        imagePackagesFile,
+        readPoolInventory,
+        extendAnalysisFarm: deps.extendAnalysisFarm,
+        logger: deps.logger,
+    };
+
+    const forTurn = async (): Promise<AgentDefinition> => {
+        const resolved = await resolveCatalog(services.catalog);
+        const attachments = agentOfRole(resolved, "chat")?.attachments ?? builtinAgent("inflexa").defaults;
+        const equipment = await equipAttachments(services, resolved, attachments);
+        const analogyOn = agentOfRole(resolved, "analogy") !== undefined;
+
+        // The lookups and the light work on tables run in a script (`run_script`). Each tool asks no approval.
+        const scriptTools: Tool[] = [
+            // Tables of the workspace in, derived files and chart files out.
+            ...createScriptFileTools({ workspaceFs, resolveWorkspaceRoot: deps.resolveWorkspaceRoot, scratch: scriptScratch }),
+            writeFileTool,
+            // The attached connectors: by default the identifier, annotation, network, structure, literature, web,
+            // compound, target, variant, safety, trial, and dataset lookups.
+            ...equipment.connectorTools,
+            ...equipment.mcp.script,
+        ];
+
+        const tools: Tool[] = [
+            // What reference data this install actually holds. The conversation agent is
+            // where provisioning is decided — an embedder may give it a way to install more,
+            // and a host that does asks the user to approve the download. Deciding that
+            // blind is how a user gets asked to download something already installed, or
+            // told nothing is missing when it is; this is the only tool that can tell.
+            createListAvailableRefsTool({ refStorePath }),
+            // What the STORE holds, pool-scope where the embedder binds the reader:
+            // the ask flow of this agent marks the packages the pool does not hold,
+            // and the farm of a new analysis is empty — a farm view here would read
+            // every pool package as absent. The farm-lock fallback keeps a host
+            // with no pool reader on the old answer.
+            createListAvailablePackagesTool({
                 farmLockFile,
                 imagePackagesFile,
                 readPoolInventory,
+            }),
+            // Execution.
+            createInspectRunTool(pool),
+            // The dataset's own record. No file backs it — the DB row is the only copy.
+            createInspectDataProfileTool(pool),
+            generatePlanTool,
+            createExecuteAnalysisTool(executeAnalysisDeps, plannerCatalogOf(resolved)),
+            // The one report path. The tool starts a report thread as a child of the
+            // conversation, and the user composes the report there with the Report
+            // Builder.
+            createStartReportSessionTool({
+                pool,
+                chrome,
+                anchorSession: deps.anchorReportSession,
+                eyes: deps.eyes,
+                provenance: deps.provenance,
                 logger: deps.logger,
-            },
-            deps.registerSubAgent,
-        ),
-        createExecuteAnalysisTool({
-            pool,
-            executeAnalysisWorkflow,
-            runAuthorizer,
-            runLauncher,
-            farmLockFile,
-            imagePackagesFile,
-            readPoolInventory,
-            extendAnalysisFarm: deps.extendAnalysisFarm,
-            logger: deps.logger,
-        }),
-        // The one report path. The tool starts a report thread as a child of the
-        // conversation, and the user composes the report there with the Report
-        // Builder.
-        createStartReportSessionTool({
-            pool,
-            chrome,
-            anchorSession: deps.anchorReportSession,
-            eyes: deps.eyes,
-            provenance: deps.provenance,
-            logger: deps.logger,
-        }),
-        // Display.
-        showUserTool,
-        createShowPlanTool(pool),
-        createReadPlanTool(pool),
-        showFileTool,
-        // Cross-domain analogy generation (sub-agent as a loop-driving tool).
-        createGenerateAnalogyReportTool(
-            {
-                provider,
-                model,
-                bioKeys,
-                usageRecorder,
-                toolOutputStore,
-                logger: deps.logger,
-                scriptRuntime: deps.scriptRuntime,
-            },
-            deps.registerSubAgent,
-        ),
-        // Workspace semantic search + raw read/grep over the read seam.
-        createWorkspaceSearchTool(pool, embedding),
-        createReadFileTool(workspaceFs),
-        createListFilesTool(workspaceFs),
-        createFileStatTool(workspaceFs),
-        createGrepTool(workspaceFs),
-        ...(toolOutputStore ? [createReadToolOutputTool(toolOutputStore)] : []),
-        // Workspace write pair over the session-scoped mutate seam. The working
-        // directory of this agent is the analysis root, so a write lands
-        // anywhere inside its own analysis tree; `..`, a foreign analysis, and
-        // a symlink escape stay refused. No sandbox is involved — the mutator
-        // writes host-side, exactly as it does for a sandbox agent.
-        writeFileTool,
-        createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, intents: createEditIntentStore(pool) }),
-        // Working memory.
-        createUpdateWorkingMemoryTool(workingMemory, pool),
-        // Host-contributed tools ride the same context and dispatch path as the
-        // built-ins; appended last so the built-in roster order stays fixed.
-        ...(hostTools ?? []),
-    ];
+            }),
+            // Display.
+            showUserTool,
+            createShowPlanTool(pool),
+            createReadPlanTool(pool),
+            showFileTool,
+            // Cross-domain analogy generation (sub-agent as a loop-driving tool), when the user keeps it on.
+            ...(analogyOn ? [generateAnalogyReportTool] : []),
+            // Workspace semantic search + raw read/grep over the read seam.
+            createWorkspaceSearchTool(pool, embedding),
+            createReadFileTool(workspaceFs),
+            createListFilesTool(workspaceFs),
+            createFileStatTool(workspaceFs),
+            createGrepTool(workspaceFs),
+            ...(toolOutputStore ? [createReadToolOutputTool(toolOutputStore)] : []),
+            // Workspace write pair over the session-scoped mutate seam. The working
+            // directory of this agent is the analysis root, so a write lands
+            // anywhere inside its own analysis tree; `..`, a foreign analysis, and
+            // a symlink escape stay refused. No sandbox is involved — the mutator
+            // writes host-side, exactly as it does for a sandbox agent.
+            writeFileTool,
+            createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, intents: createEditIntentStore(pool) }),
+            // Working memory.
+            createUpdateWorkingMemoryTool(workingMemory, pool),
+            ...Object.values(createSkillTools({ store: equipment.skillStore, skills: equipment.skills })),
+            ...equipment.mcp.direct,
+            // Host-contributed tools ride the same context and dispatch path as the
+            // built-ins; appended last so the built-in roster order stays fixed.
+            ...(hostTools ?? []),
+        ];
 
-    return {
-        id: CONVERSATION_AGENT_ID,
-        systemPrompt: composeSystemPrompt(conversationPrompt, { identity: true, conversational: true }),
-        model,
-        tools,
-        scriptTools,
-        scriptRuntime: deps.scriptRuntime,
-        scriptScratch,
-        maxIterations: CONVERSATION_MAX_ITERATIONS,
-        compaction: CONVERSATION_COMPACTION,
+        const prompt = equipment.skillIndex === undefined ? conversationPrompt : `${conversationPrompt}\n\n${equipment.skillIndex}`;
+        return {
+            id: CONVERSATION_AGENT_ID,
+            systemPrompt: composeSystemPrompt(prompt, { identity: true, conversational: true }),
+            model,
+            tools,
+            scriptTools,
+            scriptRuntime: deps.scriptRuntime,
+            scriptScratch,
+            maxIterations: CONVERSATION_MAX_ITERATIONS,
+            compaction: CONVERSATION_COMPACTION,
+        };
     };
+
+    return { id: CONVERSATION_AGENT_ID, forTurn };
 }

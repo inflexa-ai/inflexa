@@ -29,7 +29,7 @@ skill name MUST be a skill id of the `SkillStore`.
 
 - **WHEN** the `data-profiler` agent is defined
 - **THEN** its skills list is `[]`
-- **AND** its agent definition is wired with no skill tools
+- **AND** each call of its skill tools returns the `no_skills` data variant
 
 #### Scenario: A user attaches a skill to a built-in agent
 
@@ -50,8 +50,8 @@ data-format detection) is available in each analysis run.
 
 ### Requirement: Skill pack inventory
 
-The `skills/` tree MUST contain 20 packs: 19 agent-specific packs and the
-shared `omics-general` pack.
+The `skills/` tree MUST contain the agent-specific packs, the `mdv-preparation`
+pack, and the shared `omics-general` pack.
 
 The `report-html`, `report-pdf`, and `report-pptx` packs are REMOVED: no agent
 declares them. The report path renders in-process in `src/report-render/`, and

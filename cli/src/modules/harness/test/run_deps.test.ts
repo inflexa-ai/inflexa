@@ -12,7 +12,6 @@ import {
     type ChatProvider,
     type ExecuteAnalysisDeps,
     type KnowledgeClient,
-    type SandboxAgentBuildContext,
     type SandboxStepInput,
 } from "@inflexa-ai/harness";
 
@@ -62,12 +61,10 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         // The REAL swappable holder stamped with the boot name — the same stable handles boot injects, so
         // `comp.sandboxEmitters.swap(...)` drives the exact live-switch path the snapshot-safety tests need.
         sandboxEmitters: createSwappableSandboxEmitters(`${modelProvider}/${sandboxModel}`),
-        skillsDir: "/tmp/skills",
         refStorePath: "/tmp/refs",
         farmLockFile: (analysisId) => `/tmp/store/farms/${analysisId}/inflexa.lock`,
         imagePackagesFile: "/tmp/store/image-packages.json",
         extendAnalysisFarm: () => okAsync([]),
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
 }
 
@@ -92,22 +89,6 @@ function stepInput(agentId: string): SandboxStepInput {
         level: 0,
         prompt: "test prompt",
         runSession: { ...buildRunSession(), runFrame: { runId: "run-1", stepId: "step-1" } },
-    };
-}
-
-// `buildAgent` reads the lease, the collector, the file-metadata cell, and the tool output store only to hand them to the
-// agent factory, which stores them. Each stand-in refuses a call, thus a read of one fails the test.
-function fakeBuildContext(agentId: string, stepWritePrefix: string): SandboxAgentBuildContext {
-    return {
-        input: stepInput(agentId),
-        session: runSession,
-        lease: { acquire: () => refuse("lease.acquire"), release: () => refuse("lease.release"), exec: () => refuse("lease.exec") },
-        stepWritePrefix,
-        lineageCollector: fakeCollector(),
-        reportsBlocker: true,
-        fileMetadata: { knownPaths: null, described: new Set(), expect: () => refuse("fileMetadata.expect"), fold: () => refuse("fileMetadata.fold") },
-        citationResolver: { resolveOne: () => refuse("citationResolver.resolveOne"), resolveMany: () => refuse("citationResolver.resolveMany") },
-        toolOutputStore: { put: () => refuse("toolOutputStore.put"), get: () => refuse("toolOutputStore.get") },
     };
 }
 
@@ -299,41 +280,14 @@ describe("buildSandboxStepDeps", () => {
         expect(stepDir).toBe("/tmp/sessions/an-1/runs/run-1/step-1");
     });
 
-    test("buildAgent returns the catalog definition for a known agent id, wired with the step write prefix", async () => {
-        const comp = testComposition();
+    test("agentDeps carries the sandbox provider, the model, and the store paths of the composition", () => {
+        const comp = testComposition({ sandbox: "sandbox-model" });
         const deps = buildSandboxStepDeps(comp);
-        const writePrefix = "/tmp/sessions/an-1/runs/run-1/step-1";
 
-        const agent = await deps.buildAgent(fakeBuildContext("analyst", writePrefix));
-
-        // The returned definition is the catalog's own entry for that id.
-        expect(agent.id).toBe("analyst");
-        expect(Array.isArray(agent.tools)).toBe(true);
-        expect(agent.tools.at(-1)?.id).toBe("submit_file_metadata");
-    });
-
-    test("buildAgent gives the tool output store of the step to the agent, thus it declares read_tool_output", async () => {
-        const deps = buildSandboxStepDeps(testComposition());
-
-        const agent = await deps.buildAgent(fakeBuildContext("analyst", "/tmp/sessions/an-1/runs/run-1/step-1"));
-
-        expect(agent.tools.map((tool) => tool.id)).toContain("read_tool_output");
-    });
-
-    test("buildAgent passes the blocker flag of the step to the agent, thus it declares report_blocker", async () => {
-        const deps = buildSandboxStepDeps(testComposition());
-
-        const agent = await deps.buildAgent(fakeBuildContext("analyst", "/tmp/sessions/an-1/runs/run-1/step-1"));
-
-        expect(agent.tools.map((tool) => tool.id)).toContain("report_blocker");
-    });
-
-    test("buildAgent runs a step whose agent id the roster no longer holds on the analyst", async () => {
-        const deps = buildSandboxStepDeps(testComposition());
-
-        const agent = await deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
-
-        expect(agent.id).toBe("analyst");
+        expect(deps.agentDeps.provider).toBe(comp.sandbox.provider);
+        expect(deps.agentDeps.model).toBe("sandbox-model");
+        expect(deps.agentDeps.refStorePath).toBe("/tmp/refs");
+        expect(deps.agentDeps.imagePackagesFile).toBe("/tmp/store/image-packages.json");
     });
 });
 

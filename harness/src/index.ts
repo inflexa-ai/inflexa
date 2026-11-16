@@ -71,18 +71,42 @@ export type { ApprovePlanDeps, ApprovePlanInput, ApprovePlanRefusal, PlanApprova
 // names it, thus an embedder cannot type that dep without this name.
 export type { EnsureSessionStateResult } from "./app/report-session-runtime.js";
 // The harness-owned boot sequence: ordered boot steps around `assembleCoreRuntime`
-// (skill validation → state init → connection budget → assemble → launch) + a
+// (state init → connection budget → assemble → launch) + a
 // `shutdown` handle the embedder wires to its process signals.
 export { bootHarness } from "./runtime/boot.js";
 export type { BootHarnessDeps, BootedHarness } from "./runtime/boot.js";
 
 export { createConversationAgent } from "./agents/conversation-agent.js";
-export type { ConversationAgentDeps } from "./agents/conversation-agent.js";
-// The API-key slice for the external bio/chem sources, threaded from the
-// composition root. It types `ConversationAgentDeps.bioKeys` and the same field
-// on the workflow deps, so an embedder that cannot name it cannot write the
-// dependency object the line above already asks it for.
-export type { BioToolKeys } from "./tools/bio/keys.js";
+export type { ConversationAgent, ConversationAgentDeps } from "./agents/conversation-agent.js";
+export { fixedTurnAgent } from "./agents/turn-agent.js";
+export type { TurnAgent } from "./agents/turn-agent.js";
+
+// The agent catalog: the agents, the skills, the connectors, the MCP servers, and the credentials that a host gives
+// the harness. The harness owns the types, and a host fills them from its files or its database.
+export type {
+    AgentAttachments,
+    AgentCatalog,
+    AgentEntry,
+    AgentIdentity,
+    AgentRole,
+    BuiltinAgentId,
+    ConnectorSettings,
+    CustomAgent,
+    McpServerConfig,
+    McpTransportConfig,
+    SkillInfo,
+    SkillStore,
+} from "./catalog/types.js";
+export { BUILTIN_AGENTS, BUILTIN_AGENT_IDS, DEFAULT_EXECUTOR_ID } from "./catalog/builtins.js";
+export type { BuiltinAgent } from "./catalog/builtins.js";
+export { resolveCatalog, executorsOf, agentOfRole, agentIdentityOf, canAnswerApproval, promptHash } from "./catalog/resolve.js";
+export type { CatalogGap, CatalogGapReason, ResolvedAgent, ResolvedCatalog } from "./catalog/resolve.js";
+export { createInMemoryCatalog, createInMemorySkillStore } from "./catalog/memory.js";
+export type { InMemoryCatalogContent, InMemorySkill } from "./catalog/memory.js";
+export { createDirectorySkillStore, parseSkillFrontmatter, scanSkillRoots } from "./catalog/skill-files.js";
+export type { ScannedSkill, SkillFrontmatterProblem, SkillRootProblem } from "./catalog/skill-files.js";
+export { CONNECTOR_IDS, describeConnectors } from "./connectors/registry.js";
+export type { CredentialSlot } from "./connectors/registry.js";
 
 // Seam: run authorization.
 export { createLocalRunAuthorizer } from "./auth/local-run-authorizer.js";
@@ -757,7 +781,7 @@ export type {
     StepRuntimeStatus,
 } from "./workflows/execute-analysis.js";
 export { registerSandboxStep } from "./workflows/sandbox-step.js";
-export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgentBuildContext } from "./workflows/sandbox-step.js";
+export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, StepAgentDeps } from "./workflows/sandbox-step.js";
 
 // Run-event read seam — the fine-grained durable channel beside `observeRun`.
 // The two are a deliberate pair, not a duplication: `observeRun` is the coarse,
@@ -771,12 +795,24 @@ export { createRunEventStream } from "./execution/run-event-stream.js";
 export type { RunEventStream, RunEventStreamDeps, RunEventRunRead, RunEventSubscribeOptions, RunEventPartHandler } from "./execution/run-event-stream.js";
 export { pipeFoldedRunEvents } from "./execution/run-event-parts.js";
 
-// Sandbox-agent catalog. `buildAgent` maps a `SandboxAgentBuildContext` onto
-// `SandboxAgentDeps`, then selects the per-step agent by id from this record;
-// `SANDBOX_AGENT_META` is the planner-facing meta the same ids key.
-export { createSandboxAgents, SANDBOX_AGENT_META } from "./agents/sandbox/index.js";
-export { resolveStepAgentId } from "./agents/sandbox-catalog.js";
-export type { SandboxAgentDeps, SandboxStepCoords, AgentMeta } from "./agents/sandbox/index.js";
+// The sandbox agents. The step body builds each step agent from the catalog; an embedder that runs a sandbox agent
+// outside a run builds it with the same functions.
+export { buildProfilerAgent, buildStepAgent, createSandboxAgent } from "./agents/sandbox/index.js";
+export type { SandboxAgentDeps, SandboxAgentSpec, SandboxStepCoords } from "./agents/sandbox/index.js";
+export type { AgentEquipment, CatalogServices, McpAgentTools, McpToolSource } from "./catalog/equip.js";
+// The OAuth sign-in of an MCP server. The host stores the tokens and opens the browser; the harness runs the protocol.
+export { revokeMcpSignIn, signInToMcpServer } from "./mcp/oauth.js";
+export type {
+    McpAuthorizationCallback,
+    McpOAuthClientInformation,
+    McpOAuthClientMetadata,
+    McpOAuthContext,
+    McpOAuthDiscoveryState,
+    McpOAuthProvider,
+    McpOAuthTokens,
+    McpRevokeResult,
+    McpSignInResult,
+} from "./mcp/oauth.js";
 
 // Plan schema and structural validation — the gates a plan passes before it can
 // trigger a run. `PlanStep` is the minimal `{ id, depends_on }` element type that
