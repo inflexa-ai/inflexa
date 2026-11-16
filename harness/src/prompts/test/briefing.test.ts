@@ -7,11 +7,12 @@ import { parseUnknownRecord } from "../../lib/unknown-containers.js";
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS } from "../../app/data-profile-orientation.js";
 import type { DataProfileResult } from "../../state/data-profile.js";
 import { AnalysisStepSchema } from "../../schemas/workflow-state.js";
-import type { AnalysisStep } from "../../schemas/workflow-state.js";
+import type { AnalysisStep, ClaimView } from "../../schemas/workflow-state.js";
 import { WORKING_MEMORY_LIMITS } from "../../memory/working-memory.js";
 import { contractAnswer } from "../../tools/knowledge/__fixtures__/fake-client.js";
 import {
     ANALYSIS_MEMORY_HEADING,
+    CLAIM_TITLE_MAX_CHARS,
     MAX_LISTED_UPSTREAM_DEPS,
     MAX_TEMPLATE_SLOTS,
     MAX_UPSTREAM_ARTIFACTS,
@@ -19,6 +20,7 @@ import {
     REQUEST_CHARS,
     STEP_NON_TASK_FIELDS,
     STEP_TASK_FIELDS,
+    TEMPLATE_NOTES_MAX_CHARS,
     TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS,
     UPSTREAM_SUMMARY_MAX_CHARS,
     composeStepBriefing,
@@ -47,6 +49,7 @@ function fullyPopulatedStep(): AnalysisStep {
         constraints: ["SENTINEL_CONSTRAINT_A", "SENTINEL_CONSTRAINT_B"],
         acceptance_criteria: ["SENTINEL_ACCEPTANCE"],
         caveats: ["SENTINEL_CAVEAT"],
+        kind: "template",
         grounding: {
             status: "grounded",
             snapshot: "sha256:SENTINEL_SNAPSHOT",
@@ -67,9 +70,9 @@ function handoff(overrides: Partial<UpstreamHandoff> = {}): UpstreamHandoff {
         stepId: "T1S1",
         agentId: "analyst",
         summaryMarkdown: "UPSTREAM_GIST",
-        summaryPath: "/an-1/runs/run-1/T1S1/output/summary.md",
-        outputDir: "/an-1/runs/run-1/T1S1/output",
-        artifacts: ["/an-1/runs/run-1/T1S1/output/de.csv"],
+        summaryPath: "/an-1/runs/run-1/T1S1/summary.md",
+        workDir: "/an-1/runs/run-1/T1S1/work",
+        artifacts: ["/an-1/runs/run-1/T1S1/work/de.csv"],
         ...overrides,
     };
 }
@@ -100,9 +103,15 @@ function brief(overrides: Partial<TemplateBrief> = {}): TemplateBrief {
         slots: contract.parameters,
         inputs: contract.inputs ?? [],
         bound: [{ name: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" }],
-        unbound_settings: ["`alpha` = 0.05 (differential_expression): pinned by the template at the same value"],
+        done_by_script: [],
+        unbound_settings: ['`inference` = "none" (enrichment): no slot of the template carries it'],
         ...overrides,
     };
+}
+
+/** The view of one claim as the plan keeps it. */
+function claimView(id: string, overrides: Partial<ClaimView> = {}): ClaimView {
+    return { id, snapshot: "sha256:SENTINEL_SNAPSHOT", statement: "SENTINEL_STATEMENT", strength: "consensus", evidence: [], ...overrides };
 }
 
 /** The names of the adaptable slots of the fake contract. */
@@ -166,7 +175,7 @@ describe("renderRequest", () => {
         const rendered = renderRequest(request);
         expect(rendered).toStartWith("## The request of the analysis");
         expect(rendered).toContain(request);
-        expect(rendered).toContain("`output/`");
+        expect(rendered).toContain("It goes into your working directory");
     });
 
     it("renders nothing for an absent or blank request", () => {
@@ -201,6 +210,17 @@ describe("renderTemplateContract", () => {
         expect(rendered).not.toContain("- `alpha` (");
     });
 
+    it("renders the settings that the script does in a block of their own, and no block when there is none", () => {
+        const line = '`adjustment` = "BH" (multiple_testing; rule:R-0003)';
+        const rendered = renderTemplateContract(brief({ done_by_script: [line] }));
+        expect(rendered).toContain(
+            `Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):\n- ${line}`,
+        );
+        // The block comes before the unbound settings: the agent reads what needs no act first.
+        expect(rendered.indexOf("Done by the script")).toBeLessThan(rendered.indexOf("Unbound settings"));
+        expect(renderTemplateContract(brief())).not.toContain("Done by the script");
+    });
+
     it("renders the permitted values, the pattern, the sourced default, and the required state", () => {
         const rendered = renderTemplateContract(brief({ bound: [], unbound_settings: [] }));
         // The enum of lfc_shrink, as JSON values.
@@ -229,7 +249,7 @@ describe("renderTemplateContract", () => {
     it("names the unbound settings", () => {
         const rendered = renderTemplateContract(brief());
         expect(rendered).toContain("Unbound settings");
-        expect(rendered).toContain("`alpha` = 0.05 (differential_expression): pinned by the template at the same value");
+        expect(rendered).toContain('`inference` = "none" (enrichment): no slot of the template carries it');
     });
 
     it("collapses the bound and unbound lists when they are empty", () => {
@@ -241,6 +261,21 @@ describe("renderTemplateContract", () => {
 
     it("renders nothing when no contract was retrieved", () => {
         expect(renderTemplateContract(undefined)).toBe("");
+    });
+
+    it("renders the notes of the template whole, with the column the script renames", () => {
+        const notes =
+            "The input follows the import state. A count matrix whose first column is the gene identifier. " +
+            "The condition column is renamed to `condition` inside the script, thus the design formula names `condition`.";
+        const rendered = renderTemplateContract(brief({ notes }));
+        expect(rendered).toContain(`Notes of the template (the input requirements of the script):\n${notes}`);
+    });
+
+    it("renders no notes block when the template gives none, and clamps a runaway note", () => {
+        expect(renderTemplateContract(brief())).not.toContain("Notes of the template");
+        const rendered = renderTemplateContract(brief({ notes: "n".repeat(TEMPLATE_NOTES_MAX_CHARS * 2) }));
+        expect(rendered).toContain("n…");
+        expect(rendered).not.toContain("n".repeat(TEMPLATE_NOTES_MAX_CHARS));
     });
 
     it("states a served version that differs from the plan as a caveat", () => {
@@ -328,9 +363,9 @@ describe("renderUpstream", () => {
         expect(rendered).toContain("T1S1");
         expect(rendered).toContain("analyst");
         expect(rendered).toContain("UPSTREAM_GIST");
-        expect(rendered).toContain("/an-1/runs/run-1/T1S1/output/summary.md");
-        expect(rendered).toContain("/an-1/runs/run-1/T1S1/output");
-        expect(rendered).toContain("/an-1/runs/run-1/T1S1/output/de.csv");
+        expect(rendered).toContain("/an-1/runs/run-1/T1S1/summary.md");
+        expect(rendered).toContain("/an-1/runs/run-1/T1S1/work");
+        expect(rendered).toContain("/an-1/runs/run-1/T1S1/work/de.csv");
     });
 
     it("renders nothing for a step with no completed dependencies", () => {
@@ -345,15 +380,15 @@ describe("renderUpstream", () => {
         if (rendered.charAt(excerptEnd) === "…") excerptEnd++;
         const excerptLength = excerptStart < 0 ? 0 : excerptEnd - excerptStart;
         expect(excerptLength).toBeLessThanOrEqual(UPSTREAM_SUMMARY_MAX_CHARS);
-        expect(rendered).toContain("/an-1/runs/run-1/T1S1/output/summary.md");
+        expect(rendered).toContain("/an-1/runs/run-1/T1S1/summary.md");
     });
 
     function dependency(i: number): UpstreamHandoff {
         return handoff({
             stepId: `T1S${i}`,
             summaryMarkdown: `GIST_${i}`,
-            summaryPath: `/an-1/runs/run-1/T1S${i}/output/summary.md`,
-            outputDir: `/an-1/runs/run-1/T1S${i}/output`,
+            summaryPath: `/an-1/runs/run-1/T1S${i}/summary.md`,
+            workDir: `/an-1/runs/run-1/T1S${i}/work`,
         });
     }
 
@@ -363,8 +398,8 @@ describe("renderUpstream", () => {
         for (let i = 0; i < MAX_UPSTREAM_DEPS; i++) expect(rendered).toContain(`GIST_${i}`);
         for (let i = MAX_UPSTREAM_DEPS; i < MAX_UPSTREAM_DEPS + 3; i++) {
             expect(rendered).not.toContain(`GIST_${i}`);
-            expect(rendered).toContain(`/an-1/runs/run-1/T1S${i}/output/summary.md`);
-            expect(rendered).toContain(`/an-1/runs/run-1/T1S${i}/output\``);
+            expect(rendered).toContain(`/an-1/runs/run-1/T1S${i}/summary.md`);
+            expect(rendered).toContain(`/an-1/runs/run-1/T1S${i}/work\``);
         }
         expect(rendered).not.toContain("more completed");
         expect(rendered).not.toContain("inspect_run");
@@ -373,11 +408,11 @@ describe("renderUpstream", () => {
     it("counts the dependencies past the listed ones, and says where their summaries are", () => {
         const total = MAX_UPSTREAM_DEPS + MAX_LISTED_UPSTREAM_DEPS + 2;
         const rendered = renderUpstream(Array.from({ length: total }, (_, i) => dependency(i)));
-        expect(rendered).toContain(`/an-1/runs/run-1/T1S${total - 3}/output/summary.md`);
-        expect(rendered).not.toContain(`/an-1/runs/run-1/T1S${total - 2}/output/summary.md`);
+        expect(rendered).toContain(`/an-1/runs/run-1/T1S${total - 3}/summary.md`);
+        expect(rendered).not.toContain(`/an-1/runs/run-1/T1S${total - 2}/summary.md`);
         expect(rendered).toContain("+2 more completed dependencies, not listed");
-        expect(rendered).toContain("beside your working directory");
-        expect(rendered).toContain("`output/summary.md`");
+        expect(rendered).toContain("a sibling of the directory of this step");
+        expect(rendered).toContain("`summary.md`");
     });
 
     it("lists at most MAX_UPSTREAM_ARTIFACTS artifacts per dependency and counts the rest", () => {
@@ -391,7 +426,7 @@ describe("renderUpstream", () => {
     it("still renders a dependency's paths when its summary is empty", () => {
         const rendered = renderUpstream([handoff({ summaryMarkdown: "" })]);
         expect(rendered).toContain("T1S1");
-        expect(rendered).toContain("/an-1/runs/run-1/T1S1/output");
+        expect(rendered).toContain("/an-1/runs/run-1/T1S1/work");
     });
 });
 
@@ -464,7 +499,7 @@ describe("composeStepBriefing", () => {
         });
         expect(seed).toContain("T1S1");
         expect(seed).toContain("UPSTREAM_GIST");
-        expect(seed).toContain("/an-1/runs/run-1/T1S1/output");
+        expect(seed).toContain("/an-1/runs/run-1/T1S1/work");
     });
 
     it("gives an independent step no upstream section at all", () => {
@@ -550,7 +585,7 @@ describe("composeStepBriefing", () => {
         expect(seed).not.toContain("\n\n\n");
     });
 
-    it("says the contract was not retrieved, with the reason, when the grounding names a template and the seed carries none", () => {
+    it("says the contract was not retrieved, with the reason, when a template step carries none", () => {
         const seed = composeStepBriefing({
             step: fullyPopulatedStep(),
             workspace: WORKSPACE,
@@ -585,6 +620,42 @@ describe("composeStepBriefing", () => {
         expect(seed).toContain("- Settings (the vetted values of the procedure; another value is permitted when your summary states the reason):");
         expect(seed).toContain("  - differential_expression: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)");
         expect(seed).not.toContain("Constraints");
+    });
+
+    it("renders each claim with its strength and its title when the plan kept its view", () => {
+        const seed = composeStepBriefing({
+            step: fullyPopulatedStep(),
+            workspace: WORKSPACE,
+            profile: null,
+            upstream: [],
+            memory: emptyStepMemory(),
+            claims: [claimView("SENTINEL_CLAIM", { title: "Use TMM for a library-composition bias" })],
+        });
+        expect(seed).toContain(
+            "- Claims (the rules of the knowledge service that this step obeys):\n  - SENTINEL_CLAIM (consensus): Use TMM for a library-composition bias",
+        );
+    });
+
+    it("renders the statement of a claim with no title, clamped, and the id alone of a claim with no view", () => {
+        const step = fullyPopulatedStep();
+        const grounding = step.grounding;
+        if (grounding === undefined) throw new Error("the populated step holds no grounding");
+        const seed = composeStepBriefing({
+            step: { ...step, grounding: { ...grounding, claims: ["SENTINEL_CLAIM", "R-0002@e7d0"] } },
+            workspace: WORKSPACE,
+            profile: null,
+            upstream: [],
+            memory: emptyStepMemory(),
+            claims: [claimView("SENTINEL_CLAIM", { statement: `S${"s".repeat(CLAIM_TITLE_MAX_CHARS * 2)}` })],
+        });
+        expect(seed).toContain("  - SENTINEL_CLAIM (consensus): Ss");
+        expect(seed).not.toContain("s".repeat(CLAIM_TITLE_MAX_CHARS));
+        expect(seed).toContain("\n  - R-0002@e7d0\n");
+    });
+
+    it("keeps the one line of claim ids when the plan kept no view", () => {
+        const seed = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], memory: emptyStepMemory() });
+        expect(seed).toContain("- Claims: SENTINEL_CLAIM\n");
     });
 
     it("leaves the settings to the template contract when the seed carries one", () => {

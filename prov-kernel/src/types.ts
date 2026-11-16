@@ -254,6 +254,28 @@ export type ProvCallRef = {
     tool: string;
     /** The thread of the session that wrote the file. Absent when the host scoped no thread. */
     threadId?: string;
+    /** The render that the call wrote, when the file is a script that a template rendered. */
+    template?: ProvTemplateRender;
+};
+
+/**
+ * The facts of one template render: the template, the release that served it, and each setting that the script
+ * reads with its source. The call activity that wrote the rendered script carries them, thus the script version that
+ * the render wrote names its template, and a later edit of the script is a separate version.
+ */
+export type ProvTemplateRender = {
+    /** The template id with its version, for example `tpl-deseq2-two-group@1.0.0`. */
+    template: string;
+    label: string;
+    method: { id: string; label: string };
+    /** The snapshot digest of the release that served the render. */
+    snapshot: string;
+    /** Each setting that the script reads, with its value and where the value came from. */
+    settings: { name: string; value?: string | number | boolean | string[]; source: string }[];
+    /** Each plan value that the agent changed, with the reason. */
+    overrides: { slot: string; reason: string }[];
+    /** How the installed packages matched the pins of the template. */
+    environmentMatch: string;
 };
 
 /**

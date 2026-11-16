@@ -100,7 +100,7 @@ spec). The spec carries no label.
 
 - **GIVEN** a `SpawnSession` for the analysis `an-1`, the run `run-1`, and the step `step-a`
 - **WHEN** `createSandbox(session, spec, identity)` is called
-- **THEN** the container mounts the step directory read-write at `/an-1/runs/run-1/step-a`
+- **THEN** the container mounts the work directory of the step read-write at `/an-1/runs/run-1/step-a/work`
 
 #### Scenario: Container yields no mapped port
 
@@ -225,7 +225,7 @@ session base. Each mount's read-only flag is set explicitly in the bind
 string.
 
 `buildMountPlan` MUST return only the paths both backends share — container
-paths, step subdirs, and env. The K8s `subPath` strings MUST come from
+paths and env. The K8s `subPath` strings MUST come from
 `buildSessionSubPaths(coords, workspaceSubPath)`, because they are a property
 of how one backend addresses a volume, not of the container contract.
 
@@ -251,7 +251,7 @@ container (podman machine's virtiofs and native Linux binds present the
 embedder user's real uid and modes; Docker Desktop's file-sharing layer masks
 the mismatch, which is why default modes suffice there and the field stays
 unset). When set, the client SHALL `chmod` the pre-created step write tree —
-the step directory and each of its `STEP_SUBDIRS` — world-writable after
+the work directory of the step, or the declared write tail — world-writable after
 creating it, so the uid-1000 sandbox workload can write through such mounts.
 The field names the fact, not the remediation: how the client compensates is
 harness-owned and MAY change without changing the config surface. The mode
@@ -266,7 +266,7 @@ or re-moded.
 
 - **GIVEN** `engineBindOwnership: "host-preserved"`
 - **WHEN** `createSandbox` pre-creates the step tree
-- **THEN** the step directory and its subdirectories are world-writable
+- **THEN** the work directory of the step is world-writable
 - **AND** a workload write from uid 1000 through the read-write bind succeeds
 
 #### Scenario: Replayed pre-creation still applies the mode
@@ -411,7 +411,7 @@ harness-sandbox-exec spec owns the decision and its reason.
 
 The K8s backend addresses the session volume by `subPath`, so it SHALL be able to express a resolved workspace root as a path relative to the volume's root. `K8sClientConfig` SHALL therefore carry the `resolveWorkspaceRoot` seam and `sessionPvcRoot` — the absolute mountpoint of `sessionPvc` on the harness process's own filesystem. Whenever `sessionPvc` is configured, `sessionPvcRoot` SHALL be configured too.
 
-The pod's read-only tree mount SHALL use `subPath = relative(sessionPvcRoot, resolveWorkspaceRoot(analysisId))`, and its read-write step mount SHALL use that path joined with `runs/{runId}/{stepId}`. Because `createSandbox` pre-creates the step tree under `resolveWorkspaceRoot(analysisId)` on the same volume, the directory the harness writes and the directory the pod mounts are then the same one by construction rather than by convention. The backend SHALL NOT derive the `subPath` from `analysisId` alone: that silently mounts a different directory for any embedder whose roots are not laid out as `{pvcRoot}/{analysisId}`.
+The pod's read-only tree mount SHALL use `subPath = relative(sessionPvcRoot, resolveWorkspaceRoot(analysisId))`, and its read-write step mount SHALL use that path joined with `runs/{runId}/{stepId}/work`. Because `createSandbox` pre-creates the step tree under `resolveWorkspaceRoot(analysisId)` on the same volume, the directory the harness writes and the directory the pod mounts are then the same one by construction rather than by convention. The backend SHALL NOT derive the `subPath` from `analysisId` alone: that silently mounts a different directory for any embedder whose roots are not laid out as `{pvcRoot}/{analysisId}`.
 
 A resolved root that does not live under `sessionPvcRoot` cannot be addressed as a `subPath` at all. The backend SHALL fail loudly in that case — `createSandbox` runs inside a DBOS workflow body, where a throw is the durable failure signal — rather than mounting a same-named sibling.
 

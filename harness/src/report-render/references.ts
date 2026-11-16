@@ -19,11 +19,11 @@
  * prefixed `idKind:id` text. Thus one map holds both.
  */
 
-import { serializeReference, type CitationReference, type Reference } from "../contracts/report-reference.js";
+import { citationKey, serializeReference, type CitationReference, type Reference } from "../contracts/report-reference.js";
 
-/** The citation key of one citation reference, in the prefixed `idKind:id` form. */
+/** The citation key of one citation reference, in the prefixed `idKind:id` form. A DOI key is in lower case. */
 export function citationKeyOf(reference: CitationReference): string {
-    return `${reference.idKind}:${reference.id}`;
+    return citationKey(reference.idKind, reference.id);
 }
 
 /** One source of a derivation: the pinned path that the script read, and the content hash of those bytes. */

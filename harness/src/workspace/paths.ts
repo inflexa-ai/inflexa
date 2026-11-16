@@ -145,7 +145,16 @@ export function resolveForWrite(args: {
 }
 
 /**
- * Derive the canonical writable-prefix absolute path for a sandbox step.
+ * The directory under a step directory that the agent of the step writes, and the one writable mount of its
+ * sandbox. The agent gives it the structure of the work. The host writes the summary of the step beside it.
+ */
+export const STEP_WORK_DIR = "work";
+
+/** The file of the summary of a step, in the step directory beside {@link STEP_WORK_DIR}. */
+export const STEP_SUMMARY_FILE = "summary.md";
+
+/**
+ * Derive the canonical writable-prefix absolute path for a sandbox step: the work directory of the step.
  * Single source of truth — the agent does NOT supply this; it is computed
  * from the workspace root + run/step coordinates the workflow owns.
  */
@@ -155,7 +164,16 @@ export function stepWritePrefix(args: { readonly workspaceRoot: string; readonly
     // source) so a crafted `..`/`/` segment cannot widen or escape the mount.
     assertSafeId(args.runId, "runId");
     assertSafeId(args.stepId, "stepId");
-    return resolvePath(args.workspaceRoot, "runs", args.runId, args.stepId);
+    return resolvePath(args.workspaceRoot, "runs", args.runId, args.stepId, STEP_WORK_DIR);
+}
+
+/**
+ * The workspace-relative paths of the summary of a step: where the host writes it, and where a step that ran
+ * before the work directory existed holds it. A reader takes the first one that exists.
+ */
+export function stepSummaryPaths(runId: string, stepId: string): readonly [current: string, legacy: string] {
+    const stepDir = runStepDir(runId, stepId);
+    return [`${stepDir}/${STEP_SUMMARY_FILE}`, `${stepDir}/output/${STEP_SUMMARY_FILE}`];
 }
 
 /**
@@ -385,34 +403,18 @@ export function runStepDir(runId: string, stepId: string): string {
     return `runs/${runId}/${stepId}`;
 }
 
-/** Step subdirectory for a specific artifact type. */
-export type StepSubdirType = "scripts" | "output" | "figures" | "logs" | "notebooks";
-
-export function stepSubdir(stepBase: string, type: StepSubdirType): string {
-    return `${stepBase}/${type}`;
-}
-
 /** Report output directory, workspace-root-relative. */
 export function reportDir(reportId: string): string {
     assertSafeId(reportId, "reportId");
     return `reports/${reportId}`;
 }
 
-/** All standard subdirectory types for a step. */
-export const STEP_SUBDIRS: readonly StepSubdirType[] = ["scripts", "output", "figures", "logs", "notebooks"] as const;
-
 /**
  * Reserved id of the run-phase synthesis row in `cortex_step_executions` — the
  * ledger row `executeAnalysis` writes for run-level synthesis so progress
- * readers see the phase. Reserved here beside {@link STEP_SUBDIRS} because the
- * reservation is a layout fact as much as a ledger one: a plan step with this
+ * readers see the phase. The reservation is a layout fact as much as a ledger one: a plan step with this
  * id would collide with the row's primary key AND put its step directory
  * `runs/{runId}/synthesis/` beside the run-level `runs/{runId}/synthesis.json`.
  * Plan validation rejects it (see validate-plan).
  */
 export const SYNTHESIS_STEP_ID = "synthesis";
-
-/** Get all subdirectory paths for a step. */
-export function allStepSubdirs(stepBase: string): string[] {
-    return STEP_SUBDIRS.map((type) => stepSubdir(stepBase, type));
-}

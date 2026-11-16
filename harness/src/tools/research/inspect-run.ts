@@ -14,12 +14,12 @@ import { z } from "zod";
 
 import { scopeResource } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { queryRun, queryRunsForInspection, queryStepsByRun } from "../../state/index.js";
+import { queryRun, queryRunsForInspection, queryStepsByRun, queryStepSummaryPaths } from "../../state/index.js";
 import type { PauseRecord } from "../../state/paused-work.js";
 import { queryPausesOfWork } from "../../state/paused-work.js";
 import type { PauseCause } from "../../contracts/chat-parts.js";
 import type { CortexRunRow, StepExecutionRow } from "../../state/schema.js";
-import { SYNTHESIS_STEP_ID } from "../../workspace/paths.js";
+import { SYNTHESIS_STEP_ID, stepSummaryPaths } from "../../workspace/paths.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -108,7 +108,17 @@ function formatRun(r: CortexRunRow, verbose: boolean, exposePaths = isTerminal(r
     return run;
 }
 
-function formatSteps(runId: string, stepRows: StepExecutionRow[], verbose: boolean, exposePaths: boolean): FormattedStep[] {
+/**
+ * The steps of a run. `summaryPaths` holds the registered summary of each step; a step with no registered summary
+ * ran before the summary role existed, and it holds its summary at the path of that time.
+ */
+function formatSteps(
+    runId: string,
+    stepRows: StepExecutionRow[],
+    verbose: boolean,
+    exposePaths: boolean,
+    summaryPaths: ReadonlyMap<string, string>,
+): FormattedStep[] {
     return stepRows.map((s) => {
         const step: { -readonly [K in keyof FormattedStep]: FormattedStep[K] } = {
             stepId: s.stepId,
@@ -117,7 +127,7 @@ function formatSteps(runId: string, stepRows: StepExecutionRow[], verbose: boole
             status: s.status,
         };
         if (exposePaths && s.status !== "pending" && s.status !== "skipped" && s.stepId !== SYNTHESIS_STEP_ID) {
-            step.summaryPath = `runs/${runId}/${s.stepId}/output/summary.md`;
+            step.summaryPath = summaryPaths.get(s.stepId) ?? stepSummaryPaths(runId, s.stepId)[1];
         }
         if (verbose) {
             step.durationMs = s.durationMs;
@@ -258,7 +268,8 @@ export function createInspectRunTool(pool: InspectRunQuerier, clock: InspectRunC
 
             const terminal = isTerminal(run.status);
             const stepRows = unwrapOrThrow(await queryStepsByRun(pool, input.runId));
-            const steps = formatSteps(input.runId, stepRows, verbose, terminal);
+            const summaryPaths = terminal ? unwrapOrThrow(await queryStepSummaryPaths(pool, resourceId, input.runId)) : new Map<string, string>();
+            const steps = formatSteps(input.runId, stepRows, verbose, terminal, summaryPaths);
             const wait = waitSeconds === undefined ? {} : { wait: { requestedSeconds: waitSeconds, cutoffReached } };
 
             if (run.status === "running" && pauses.length > 0) {

@@ -56,7 +56,12 @@ describe("activityForTool", () => {
     };
     const tools = [
         createWriteFileTool({ mutator: notDrivenMutator }),
-        createEditFileTool({ mutator: notDrivenMutator, workspaceFilesystem: makeFakeWorkspaceFs(), workingDir: "/a/runs/r1/s1", intents: notDrivenIntents }),
+        createEditFileTool({
+            mutator: notDrivenMutator,
+            workspaceFilesystem: makeFakeWorkspaceFs(),
+            workingDir: "/a/runs/r1/s1",
+            intents: notDrivenIntents,
+        }),
         // Deliberately NOT a real tool id. The fallback needs a hookless tool to exercise, and
         // borrowing a shipped name would assert that tool is hookless — a claim that goes stale the
         // moment it gains one, while the test keeps passing on the fabricated stand-in.

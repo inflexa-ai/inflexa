@@ -164,8 +164,15 @@ metadata/summary. Specific to the run engine:
   lineage collector, blocker holder, function-id/deadline accessors) into the
   catalog's agent deps; an agent id absent from the catalog SHALL fail the step with
   the known-id list.
-- The step write prefix SHALL resolve to the harness's `runs/{runId}/{stepId}` path
-  convention under the analysis's workspace tree.
+- The step directory (`resolveStepDir`) SHALL resolve to the harness's
+  `runs/{runId}/{stepId}` path convention under the analysis's workspace tree. The
+  harness derives the write prefix of the agent from it, as the work directory
+  `runs/{runId}/{stepId}/work`.
+- The agent builder SHALL give the step agent the knowledge client as its template
+  source, and the template of the step from the durable step input. Without a
+  knowledge client, the agent of a template step has no `run_template`.
+- The execute-analysis deps SHALL carry the knowledge client as the template source
+  of the seed composition.
 - The artifact registry SHALL be the provenance bus adapter (see
   `prov-harness-bridge`): registration emits `prov.file_written` /
   `prov.input_used` bus events feeding the analysis's signed tsprov document, and
@@ -239,7 +246,7 @@ candidate agent ids, or selection decisions.
 
 ### Requirement: The CLI realizes the workspace-root resolver
 
-The system SHALL wire the harness's `resolveWorkspaceRoot` seam with a realization that maps an analysis id to `join(anchorPath, ".inflexa", "analyses", slug)` by reading the analysis row (slug, anchorId) and resolving the anchor's live path from the database — durable state, so a DBOS-recovered workflow on a fresh process resolves correctly. Every dep bundle that previously carried `sessionsBasePath` (sandbox client, workspace filesystem, composition, data-profile, and conversation deps in `src/modules/harness/runtime.ts`) SHALL receive this realization; no global base path remains in the wiring. The seam is `ResolveWorkspaceRoot = (resourceId: string) => Promise<string>`, and the realization SHALL derive the root off the event loop. Resolution failure for a live workflow SHALL surface per the harness seam contract (a rejected promise across DBOS step boundaries → the step fails durably). The `resolveWritePrefix` and `buildAgent` realizations of the sandbox-step deps SHALL await the seam, and give `Promise<string>` and `Promise<AgentDefinition>`.
+The system SHALL wire the harness's `resolveWorkspaceRoot` seam with a realization that maps an analysis id to `join(anchorPath, ".inflexa", "analyses", slug)` by reading the analysis row (slug, anchorId) and resolving the anchor's live path from the database — durable state, so a DBOS-recovered workflow on a fresh process resolves correctly. Every dep bundle that previously carried `sessionsBasePath` (sandbox client, workspace filesystem, composition, data-profile, and conversation deps in `src/modules/harness/runtime.ts`) SHALL receive this realization; no global base path remains in the wiring. The seam is `ResolveWorkspaceRoot = (resourceId: string) => Promise<string>`, and the realization SHALL derive the root off the event loop. Resolution failure for a live workflow SHALL surface per the harness seam contract (a rejected promise across DBOS step boundaries → the step fails durably). The `resolveStepDir` and `buildAgent` realizations of the sandbox-step deps SHALL await the seam, and give `Promise<string>` and `Promise<AgentDefinition>`.
 
 The realization is injective among live rows by the `UNIQUE (anchor_id, slug)` constraint. That constraint alone does NOT make it injective across a deletion, because deleting a row frees its slug: injectivity across deletion is upheld by the delete flow retiring the workspace tree out of `analyses/` before the slug can be re-issued (see analysis-service).
 

@@ -107,26 +107,30 @@ import { flattenDataPart } from "../contracts/chat-frame.js";
 import type { PauseWaiter, RunCompletedPart, SynthesisPhase } from "../contracts/chat-parts.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
-import {
-    MAX_UPSTREAM_ARTIFACTS,
-    composeStepBriefing,
-    emptyStepMemory,
-    type StepBriefing,
-    type TemplateBoundSetting,
-    type UpstreamHandoff,
-} from "../prompts/briefing.js";
+import { claimViewsOfGrounding } from "../execution/step-methods.js";
+import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, emptyStepMemory, type StepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
-import type { AnalysisStep, GroundingSetting } from "../schemas/workflow-state.js";
+import { isTemplateStep, type AnalysisStep, type ClaimView } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
-import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, TemplateContract, TemplateParameter } from "../tools/knowledge/client.js";
-import type { TemplateBinding, TemplateBindingValue } from "../tools/knowledge/template.js";
+import type { TemplateSource } from "../tools/knowledge/client.js";
+import type { StepTemplate } from "../tools/knowledge/run-template.js";
+import { resolveTemplateContract } from "../tools/knowledge/template-binding.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import { withoutToolValues } from "../loop/tool-value.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
-import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import {
+    SYNTHESIS_STEP_ID,
+    runDir,
+    runStepDir,
+    STEP_WORK_DIR,
+    stepSummaryPaths,
+    stepWritePrefix,
+    toSandboxPath,
+    type ResolveWorkspaceRoot,
+} from "../workspace/paths.js";
 import { isChatDataPart, synthesisEmission } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
@@ -166,6 +170,12 @@ export type ExecuteAnalysisInput = {
     readonly planStepById: Readonly<Record<string, AnalysisStep>>;
     /** The request that the plan answers, which the seed of each step renders. Absent when the plan stores none. */
     readonly request?: string;
+    /**
+     * The view of each claim that a step of the plan cites, as the plan saved it. The seed of a step renders
+     * the title of each of its claims. Absent on a plan with no claim view, and on a run started before the
+     * field existed: the seed then renders the claim ids only.
+     */
+    readonly claims?: readonly ClaimView[];
     /** Per-step agent id (sandbox catalog entry). */
     readonly agentByStepId: Readonly<Record<string, string>>;
     /**
@@ -288,13 +298,12 @@ export type ExecuteAnalysisDeps = {
      */
     readonly workingMemory: WorkingMemoryStore;
     /**
-     * The knowledge client of the composition, when the embedder binds one.
-     * The seed composition reads the contract of the template a grounded step
-     * renders through it, and binds the plan settings to that contract.
-     * Absent, the seed says the contract was not retrieved, and the step agent
-     * learns the slots from the render answers alone.
+     * Where the templates come from, when the embedder binds a source. The seed
+     * composition reads the contract of the template of a template step through
+     * it, and binds the plan settings to that contract. Absent, the seed says the
+     * contract was not retrieved.
      */
-    readonly knowledge?: KnowledgeClient;
+    readonly templateSource?: TemplateSource;
 
     /**
      * The provenance seam of the composition. The body reads its run emit member,
@@ -545,9 +554,9 @@ export function buildChildInput(args: {
     level: number;
     runId: string;
     prompt: string;
-    templateBinding?: TemplateBinding;
+    template?: StepTemplate;
 }): Omit<SandboxStepInput, "runSession"> {
-    const { input, stepId, level, runId, prompt, templateBinding } = args;
+    const { input, stepId, level, runId, prompt, template } = args;
     const planStep = input.planStepById[stepId];
     if (!planStep) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from planStepById — every step must carry its plan data`);
@@ -567,7 +576,7 @@ export function buildChildInput(args: {
         dependsOn: planStep.depends_on,
         // Composed beside the seed, thus the same checkpoint carries both and a
         // replay hands the child the binding its briefing describes.
-        templateBinding,
+        template,
         level,
         prompt,
     };
@@ -594,14 +603,14 @@ export function buildChildInput(args: {
  * recovered run. Never call it unwrapped from the workflow body.
  */
 export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<StepSeed> {
-    const { briefing, templateBinding } = await gatherStepPackage(args);
-    return { prompt: composeStepBriefing(briefing), templateBinding };
+    const { briefing, template } = await gatherStepPackage(args);
+    return { prompt: composeStepBriefing(briefing), template };
 }
 
-/** What `gatherStepPackage` gives: the data of the seed, and the binding of the plan settings when one holds. */
+/** What `gatherStepPackage` gives: the data of the seed, and the template of a template step with the binding of its plan settings. */
 export type StepPackage = {
     readonly briefing: StepBriefing;
-    readonly templateBinding?: TemplateBinding;
+    readonly template?: StepTemplate;
 };
 
 /**
@@ -609,15 +618,15 @@ export type StepPackage = {
  * from. All reads live here, so `composeStepBriefing` stays a pure renderer.
  *
  * Everything read is durable state: written by an already-settled child
- * (`output/summary.md`, `cortex_artifacts`), by the profiler
+ * (`summary.md`, `cortex_artifacts`), by the profiler
  * (`cortex_analysis_state`), or by the conversation agent
  * (`cortex_working_memory`). The working memory is the one read that can
  * change while the run is live — it is read per dispatch, not once per run,
  * so an edit during a run reaches each later step, and two steps of one run
  * can carry different copies.
  *
- * The contract of the template a grounded step renders is read here too, from
- * the knowledge client, and the plan settings are bound to it.
+ * The contract of the template of a template step is read here too, from the
+ * template source, and the plan settings are bound to it.
  *
  * A read failure throws (house rules): a swallowed error would be frozen into
  * the checkpointed seed and served to every replay of this step.
@@ -664,7 +673,9 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
         pool: deps.pool,
     });
 
-    const contract = await resolveTemplateContract(step, deps.knowledge);
+    // Only a template step runs a template, thus only its seed carries the contract.
+    const ref = step.grounding?.template;
+    const contract = isTemplateStep(step) ? await resolveTemplateContract(step, deps.templateSource) : { briefing: {} };
 
     return {
         briefing: {
@@ -674,188 +685,32 @@ export async function gatherStepPackage(args: { input: ExecuteAnalysisInput; ste
             upstream,
             memory: { goal: memory.goal, constraints: memory.constraints },
             request: input.request,
+            claims: claimViewsOfStep(step, input.claims ?? []),
             ...contract.briefing,
         },
-        templateBinding: contract.binding,
+        template: isTemplateStep(step) && ref !== undefined ? { ref, binding: contract.binding } : undefined,
     };
 }
 
 /**
- * What `composeStepSeed` checkpoints: the seed, and the binding of the plan
- * settings to the template of the step when the contract was retrieved and
- * its served version is the version the plan names. JSON-serialisable, as a
- * durable step result must be.
+ * The views of the claims that the grounding of a step cites, in the order of the grounding. A view
+ * matches on the claim id and on the snapshot digest of the grounding, because a claim id names a claim
+ * of one release only. A claim with no view is absent here, and the briefing renders its id alone.
+ */
+function claimViewsOfStep(step: AnalysisStep, views: readonly ClaimView[]): readonly ClaimView[] {
+    return claimViewsOfGrounding(step.grounding, views);
+}
+
+/**
+ * What `composeStepSeed` checkpoints: the seed, and the template of a template
+ * step with the binding of its plan settings when the contract was retrieved
+ * and its served version is the version the plan names. JSON-serialisable, as
+ * a durable step result must be.
  */
 export type StepSeed = {
     readonly prompt: string;
-    readonly templateBinding?: TemplateBinding;
+    readonly template?: StepTemplate;
 };
-
-/** The template part of a seed: the brief or the reason for its absence, and the binding when one holds. */
-type TemplateSeedPart = {
-    readonly briefing: Pick<StepBriefing, "template" | "templateNotRetrieved">;
-    readonly binding?: TemplateBinding;
-};
-
-/** A served contract carries no `match`; the two refusals do. */
-function isTemplateContract(answer: TemplateContract | KnowledgeUnavailable | KnowledgeRejected): answer is TemplateContract {
-    return !("match" in answer);
-}
-
-/**
- * Fetch the contract of the template a step grounds on, and bind the plan
- * settings to it. A step without a template has no template part. A step
- * with one and no way to read it (no client, no answer, or an unknown
- * template) gets the reason, thus the seed reports the absence rather than
- * hiding it, and no binding.
- */
-async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClient | undefined): Promise<TemplateSeedPart> {
-    const ref = step.grounding?.template;
-    if (!ref) return { briefing: {} };
-    if (!client) return { briefing: { templateNotRetrieved: "no knowledge client is bound" } };
-
-    const answer = await client.contract(ref);
-    if (!isTemplateContract(answer)) {
-        const reason =
-            answer.match === "unavailable"
-                ? `the knowledge service did not answer: ${answer.reason}`
-                : `the knowledge service refused the lookup: ${answer.message}`;
-        return { briefing: { templateNotRetrieved: reason } };
-    }
-    return bindTemplateContract(ref, answer, step.grounding?.settings ?? [], {
-        stepId: step.id,
-        claims: step.grounding?.claims ?? [],
-        snapshot: step.grounding?.snapshot && step.grounding.snapshot !== "none" ? step.grounding.snapshot : undefined,
-    });
-}
-
-/** The version of a template reference (`tpl-x@1.0.0` gives `1.0.0`), or `undefined` when the reference has none. */
-function versionOfRef(ref: string): string | undefined {
-    const at = ref.indexOf("@");
-    return at < 0 ? undefined : ref.slice(at + 1);
-}
-
-/** Two setting values agree when their JSON agrees: the values are scalars or lists of strings. */
-function sameSettingValue(a: unknown, b: unknown): boolean {
-    return JSON.stringify(a) === JSON.stringify(b);
-}
-
-/**
- * Whether a plan value is a value of the slot, and not a policy word. A
- * procedure parameter and a template slot share a name, but not always a
- * value domain: `min_samples = smallest_group_size` names a rule the agent
- * applies, and the slot takes the resulting integer. Only a member of the
- * enum of the slot, a number for a number slot, or a boolean for a boolean
- * slot binds. A free-text slot never binds, because the host cannot tell a
- * policy word from a value there.
- */
-function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
-    if (slot.enum) return typeof value === "string" && slot.enum.includes(value);
-    if (slot.type === "integer" || slot.type === "number") return typeof value === "number";
-    if (slot.type === "boolean") return typeof value === "boolean";
-    return false;
-}
-
-/**
- * Project the served contract for the seed, and intersect the plan settings
- * with its slots by name. Each setting lands in exactly one place:
- *
- * - a setting that names an adaptable slot is bound (the first value wins
- *   when two procedure steps set the same slot; a later different value is
- *   reported, not bound)
- * - a setting that names a pinned slot cannot be sent: a different value is
- *   a pinned conflict the agent must know about, an equal value is satisfied
- * - a setting that names no slot stays a plan setting the agent applies itself
- *
- * A served version that differs from the version the plan names binds
- * nothing: the render refuses the plan version, and the settings then ride
- * as unbound lines under the caveat the section renders.
- */
-/** What binds the render to the plan step beside the settings: its id, its claims, and the release the plan pinned. */
-type StepGroundingRef = {
-    readonly stepId: string;
-    readonly claims: readonly string[];
-    readonly snapshot?: string;
-};
-
-function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
-    const refVersion = versionOfRef(ref);
-    const versionMatches = refVersion === undefined || refVersion === contract.version;
-    const adaptable = contract.parameters.filter((slot) => slot.adaptable);
-    const adaptableNames = new Set(adaptable.map((slot) => slot.name));
-    const pinnedByName = new Map(contract.parameters.filter((slot) => !slot.adaptable).map((slot) => [slot.name, slot]));
-
-    const bound: TemplateBoundSetting[] = [];
-    const unbound: string[] = [];
-    const slots: Record<string, TemplateBindingValue> = {};
-    const sources: Record<string, string> = {};
-
-    for (const setting of settings) {
-        const shown = `\`${setting.name}\` = ${JSON.stringify(setting.value)} (${setting.step})`;
-        if (!versionMatches) {
-            unbound.push(`${shown}: not bound, because the served version differs from the plan`);
-            continue;
-        }
-        if (adaptableNames.has(setting.name)) {
-            const slot = adaptable.find((candidate) => candidate.name === setting.name);
-            if (slot && !fitsSlot(slot, setting.value)) {
-                unbound.push(`${shown}: a policy of the plan, not a value of the \`${setting.name}\` slot (${slot.type}); state the value it gives`);
-                continue;
-            }
-            const prior = slots[setting.name];
-            if (prior !== undefined) {
-                if (!sameSettingValue(prior, setting.value)) unbound.push(`${shown}: differs from the bound value ${JSON.stringify(prior)} of the same slot`);
-                continue;
-            }
-            slots[setting.name] = setting.value;
-            if (setting.source) sources[setting.name] = setting.source;
-            bound.push({ name: setting.name, value: setting.value, source: setting.source ?? "plan" });
-            continue;
-        }
-        const pinned = pinnedByName.get(setting.name);
-        if (pinned) {
-            const pinnedValue = pinned.default === undefined ? "a fixed value" : JSON.stringify(pinned.default);
-            unbound.push(
-                sameSettingValue(pinned.default, setting.value)
-                    ? `${shown}: pinned by the template at the same value`
-                    : `${shown}: the template pins \`${setting.name}\` at ${pinnedValue}, and the plan value cannot be sent`,
-            );
-            continue;
-        }
-        unbound.push(`${shown}: no slot of the template carries it`);
-    }
-
-    return {
-        briefing: {
-            template: {
-                ref,
-                version_served: contract.version,
-                slots: adaptable,
-                inputs: (contract.inputs ?? []).map((input) => ({
-                    name: input.name,
-                    path: input.path,
-                    description: input.description,
-                })),
-                bound,
-                unbound_settings: unbound,
-            },
-        },
-        binding: versionMatches
-            ? {
-                  template: ref,
-                  slots,
-                  sources,
-                  step: grounding.stepId,
-                  claims: grounding.claims,
-                  snapshot: grounding.snapshot,
-                  // The local slots of the contract, thus the tool binds a path or a column name on the machine
-                  // without a second read of the contract.
-                  local: contract.parameters.filter((slot) => slot.local === true),
-                  adaptable: adaptable.map((slot) => slot.name),
-              }
-            : undefined,
-    };
-}
 
 /**
  * Gather what each completed dependency produced. Dependency order is the
@@ -886,14 +741,17 @@ async function collectUpstreamHandoffs(args: {
 
     const handoffs: UpstreamHandoff[] = [];
     for (const summary of summaries) {
-        const outputDir = stepSubdir(runStepDir(runId, summary.stepId), "output");
+        const stepDir = runStepDir(runId, summary.stepId);
+        // A dependency that ran before the work directory existed wrote its files and its summary in the step directory.
+        const [current] = stepSummaryPaths(runId, summary.stepId);
+        const workDir = summary.path === current ? `${stepDir}/${STEP_WORK_DIR}` : stepDir;
         const artifacts = unwrapOrThrow(await queryStepArtifactPaths(pool, analysisId, runId, summary.stepId, MAX_UPSTREAM_ARTIFACTS));
         handoffs.push({
             stepId: summary.stepId,
             agentId: summary.agentId,
             summaryMarkdown: summary.markdown,
-            summaryPath: `/${analysisId}/${outputDir}/summary.md`,
-            outputDir: `/${analysisId}/${outputDir}`,
+            summaryPath: `/${analysisId}/${summary.path}`,
+            workDir: `/${analysisId}/${workDir}`,
             artifacts: artifacts.map((a) => `/${analysisId}/${a.path}`),
         });
     }
@@ -1478,7 +1336,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 { name: seedStepName },
             );
             // A run recovered from a checkpoint written when this step returned the
-            // bare seed string replays that string: it carries no binding.
+            // bare seed string replays that string: it carries no template.
             const seed: StepSeed = typeof checkpointed === "string" ? { prompt: checkpointed } : checkpointed;
             const baseChildInput = buildChildInput({
                 input,
@@ -1486,7 +1344,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 level: levels.get(stepId) ?? 0,
                 runId,
                 prompt: seed.prompt,
-                templateBinding: seed.templateBinding,
+                template: seed.template,
             });
             const childInput: SandboxStepInput = {
                 ...baseChildInput,

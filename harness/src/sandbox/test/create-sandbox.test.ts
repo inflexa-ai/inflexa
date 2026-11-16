@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,7 +18,7 @@ import { keyedSandboxIdentity } from "../identity.js";
 import * as k8sClient from "../k8s-client.js";
 import { SandboxFailure as BarrelSandboxFailure } from "@inflexa-ai/harness";
 import { createNoopLogger } from "../../lib/console-logger.js";
-import { STEP_SUBDIRS, type MountPlanCoords } from "../mount-plan.js";
+import type { MountPlanCoords } from "../mount-plan.js";
 import { describeSandboxError, keepSuspendingRefusal, SandboxFailure, type SandboxError } from "../sandbox-error.js";
 import type { FarmSource, SandboxLabels, SandboxSpec } from "../types.js";
 import type { RunSession, SpawnSession } from "../../auth/types.js";
@@ -59,35 +59,31 @@ describe("precreateStepTree — step-tree access mode", () => {
     };
     const deps = (stepTreeAccess?: "world-writable") => ({ resolveWorkspaceRoot: () => Promise.resolve(root), stepTreeAccess });
     const stepDir = () => join(root, "runs", "run-1", "step-a");
+    const workDir = () => join(stepDir(), "work");
     /** POSIX permission bits, with the file-type bits masked off. */
     const modeOf = async (p: string): Promise<number> => (await stat(p)).mode & 0o777;
 
-    test("world-writable: a fresh step tree ends world-writable across the dir and its subdirs", async () => {
+    test("world-writable: a fresh work directory ends world-writable, and it holds no subdirectory", async () => {
         await precreateStepTree(deps("world-writable"), meta);
 
-        expect(await modeOf(stepDir())).toBe(0o777);
-        for (const sub of STEP_SUBDIRS) {
-            expect(await modeOf(join(stepDir(), sub))).toBe(0o777);
-        }
-        // The loosening is scoped to the step tree — its ancestors keep default modes.
+        expect(await modeOf(workDir())).toBe(0o777);
+        expect(await readdir(workDir())).toEqual([]);
+        // The loosening is scoped to the work directory — the step directory, where the host writes the summary, keeps its default mode.
+        expect(await modeOf(stepDir())).not.toBe(0o777);
         expect(await modeOf(join(root, "runs"))).not.toBe(0o777);
     });
 
-    test("world-writable: a pre-existing step tree left with default modes is re-moded on replay", async () => {
-        // A prior attempt: the dirs already stand with a non-world-writable mode.
-        await mkdir(stepDir(), { recursive: true, mode: 0o700 });
-        await Promise.all(STEP_SUBDIRS.map((sub) => mkdir(join(stepDir(), sub), { recursive: true, mode: 0o700 })));
-        expect(await modeOf(stepDir())).not.toBe(0o777);
+    test("world-writable: a pre-existing work directory left with a default mode is re-moded on replay", async () => {
+        // A prior attempt: the directory already stands with a non-world-writable mode.
+        await mkdir(workDir(), { recursive: true, mode: 0o700 });
+        expect(await modeOf(workDir())).not.toBe(0o777);
 
         await precreateStepTree(deps("world-writable"), meta);
 
-        expect(await modeOf(stepDir())).toBe(0o777);
-        for (const sub of STEP_SUBDIRS) {
-            expect(await modeOf(join(stepDir(), sub))).toBe(0o777);
-        }
+        expect(await modeOf(workDir())).toBe(0o777);
     });
 
-    test("unset: step-tree modes match a plain mkdir — no world-write loosening", async () => {
+    test("unset: the work directory mode matches a plain mkdir — no world-write loosening", async () => {
         await precreateStepTree(deps(undefined), meta);
 
         // Control for this process's umask: what a bare recursive mkdir yields.
@@ -95,10 +91,7 @@ describe("precreateStepTree — step-tree access mode", () => {
         await mkdir(control, { recursive: true });
         const defaultMode = await modeOf(control);
 
-        expect(await modeOf(stepDir())).toBe(defaultMode);
-        for (const sub of STEP_SUBDIRS) {
-            expect(await modeOf(join(stepDir(), sub))).toBe(defaultMode);
-        }
+        expect(await modeOf(workDir())).toBe(defaultMode);
     });
 
     test("read-only meta pre-creates nothing to re-mode", async () => {
@@ -116,10 +109,7 @@ describe("precreateStepTree — step-tree access mode", () => {
         await precreateStepTree(deps(undefined), { ...meta, writableTail: TAIL });
 
         expect((await stat(tailDir())).isDirectory()).toBe(true);
-        // A declared tail is one directory, thus no artifact subdirectory lands under it.
-        for (const sub of STEP_SUBDIRS) {
-            await expect(stat(join(tailDir(), sub))).rejects.toThrow();
-        }
+        expect(await readdir(tailDir())).toEqual([]);
         // The step tree of the coordinates is never made, because the tail took its place.
         await expect(stat(stepDir())).rejects.toThrow();
     });

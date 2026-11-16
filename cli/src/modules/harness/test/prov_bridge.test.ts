@@ -147,6 +147,46 @@ describe("createBusArtifactRegistry — register", () => {
         expect(result.registered).toEqual([{ path: file.file.path, externalId: fileQName(file.file) }]);
     });
 
+    test("an edited rendered script emits its render as an earlier version with the template facts, and a run of the render reads that version", async () => {
+        const registry = createBusArtifactRegistry(modelId);
+        const template = {
+            template: "tpl-qc-eda@1.4.0",
+            label: "QC",
+            method: { id: "M-0001", label: "VST and PCA" },
+            snapshot: "sha256:71ac",
+            settings: [{ name: "alpha", value: 0.05, source: "plan" }],
+            overrides: [],
+            environmentMatch: "exact",
+        };
+        const render: FakeProducer = { type: "file_tool", tool: "run_template", invocationId: "call-1", template };
+        const edit: FakeProducer = { type: "file_tool", tool: "edit_file", invocationId: "call-2" };
+        const run: FakeProducer = { type: "command", command: "Rscript", exitCode: 0, timestamp: "t" };
+        const scriptRead = { path: "/an-1/runs/run-001/de-analysis/work/qc.R", hash: "sha256:render", source: "artifacts" as const };
+        const input: ArtifactRegistrationInput = {
+            resourceId: "an-1",
+            runId: "run-001",
+            stepId: "de-analysis",
+            artifacts: [entry("work/qc.R", "sha256:edited", 12), entry("work/pca.csv", "sha256:pca", 20)],
+            collector: fakeCollector(
+                [
+                    { outputPath: "work/qc.R", producer: edit },
+                    { outputPath: "work/pca.csv", producer: run, inputs: [scriptRead] },
+                ],
+                [],
+                [{ outputPath: "work/qc.R", producer: render, outputHash: "sha256:render", outputSize: 10 }],
+            ),
+        };
+
+        (await registry.register(input, noSession))._unsafeUnwrap();
+
+        const versions = fileEvents().filter((event) => event.file.path === "runs/run-001/de-analysis/work/qc.R");
+        expect(versions.map((event) => [event.file.hash, event.call])).toEqual([
+            ["sha256:render", { invocationId: "call-1", tool: "run_template", template }],
+            ["sha256:edited", { invocationId: "call-2", tool: "edit_file" }],
+        ]);
+        expect(present(commandEvents()[0]).command.inputs).toEqual([{ path: "runs/run-001/de-analysis/work/qc.R", hash: "sha256:render", source: "step" }]);
+    });
+
     test("a leaf entry (no collector record) emits no command event and keeps step generation", async () => {
         const registry = createBusArtifactRegistry(modelId);
         const input: ArtifactRegistrationInput = {

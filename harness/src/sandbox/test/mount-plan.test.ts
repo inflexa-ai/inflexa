@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { buildMountPlan, buildSessionSubPaths, sandboxWriteTail, STEP_SUBDIRS } from "../mount-plan.js";
+import { buildMountPlan, buildSessionSubPaths, sandboxWriteTail } from "../mount-plan.js";
 
 const RECORD_TAIL = ".sandbox/exec-records/0123456789abcdef";
 const COORDS = { analysisId: "an-1", runId: "run-1", stepId: "step-a", recordTail: RECORD_TAIL };
@@ -18,7 +18,7 @@ describe("buildMountPlan", () => {
     test("computes container paths from coordinates", () => {
         const plan = buildMountPlan(COORDS, { libs: true, refs: true });
         expect(plan.readonlyTreePath).toBe("/an-1");
-        expect(plan.writableStepPath).toBe("/an-1/runs/run-1/step-a");
+        expect(plan.writableStepPath).toBe("/an-1/runs/run-1/step-a/work");
         expect(plan.libsPath).toBe("/mnt/libs");
         expect(plan.refsPath).toBe("/mnt/refs");
     });
@@ -26,7 +26,6 @@ describe("buildMountPlan", () => {
     test("read-only omits the writable step mount and pins WorkingDir to the RO tree", () => {
         const plan = buildMountPlan({ ...COORDS, readOnly: true }, { libs: true, refs: true });
         expect(plan.writableStepPath).toBeUndefined();
-        expect(plan.stepSubdirs).toEqual([]);
         // WorkingDir falls back to the read-only tree root.
         expect(plan.workingDir).toBe("/an-1");
         // The RO tree mount, lib/ref stores, and provenance env are unaffected.
@@ -38,14 +37,8 @@ describe("buildMountPlan", () => {
 
     test("writable mode sets WorkingDir to the writable step path", () => {
         const plan = buildMountPlan(COORDS, { libs: false, refs: false });
-        expect(plan.workingDir).toBe("/an-1/runs/run-1/step-a");
-        expect(plan.writableStepPath).toBe("/an-1/runs/run-1/step-a");
-    });
-
-    test("step subdir list is the five artifact dirs", () => {
-        const plan = buildMountPlan(COORDS, { libs: false, refs: false });
-        expect(plan.stepSubdirs).toEqual(STEP_SUBDIRS);
-        expect([...plan.stepSubdirs]).toEqual(["output", "scripts", "figures", "logs", "notebooks"]);
+        expect(plan.workingDir).toBe("/an-1/runs/run-1/step-a/work");
+        expect(plan.writableStepPath).toBe("/an-1/runs/run-1/step-a/work");
     });
 
     test("PROVENANCE_WATCH_DIRS is always set to the RO tree", () => {
@@ -129,7 +122,7 @@ describe("buildSessionSubPaths", () => {
     test("carries no leading slash and nests the step tail under the workspace subPath", () => {
         const subPaths = buildSessionSubPaths(COORDS, "an-1");
         expect(subPaths.ro).toBe("an-1");
-        expect(subPaths.rw).toBe("an-1/runs/run-1/step-a");
+        expect(subPaths.rw).toBe("an-1/runs/run-1/step-a/work");
         // The RW subPath matches the container RW mount path sans leading slash — the two
         // sides of the same directory.
         expect(`/${String(subPaths.rw)}`).toBe(buildMountPlan(COORDS, { libs: false, refs: false }).writableStepPath ?? "");
@@ -140,7 +133,7 @@ describe("buildSessionSubPaths", () => {
         // follows wherever the embedder actually put the root.
         const subPaths = buildSessionSubPaths(COORDS, "tenants/acme/projects/rna/an-1");
         expect(subPaths.ro).toBe("tenants/acme/projects/rna/an-1");
-        expect(subPaths.rw).toBe("tenants/acme/projects/rna/an-1/runs/run-1/step-a");
+        expect(subPaths.rw).toBe("tenants/acme/projects/rna/an-1/runs/run-1/step-a/work");
     });
 
     test("read-only omits the writable subPath", () => {
@@ -200,8 +193,6 @@ describe("the declared write tail", () => {
         expect(plan.writableStepPath).toBe(`/an-1/${TAIL}`);
         // The working directory is the write mount, thus a script writes beside where it stands.
         expect(plan.workingDir).toBe(`/an-1/${TAIL}`);
-        // A declared tail is one directory, thus the host pre-creates no artifact subdirectory under it.
-        expect(plan.stepSubdirs).toEqual([]);
         // The read-only tree and the two stores are untouched by the tail.
         expect(plan.readonlyTreePath).toBe("/an-1");
         expect(plan.libsPath).toBe("/mnt/libs");
@@ -258,28 +249,27 @@ describe("the declared write tail", () => {
         const stepPlan = buildMountPlan(COORDS, { libs: true, refs: true });
         expect(stepPlan).toEqual({
             readonlyTreePath: "/an-1",
-            writableStepPath: "/an-1/runs/run-1/step-a",
-            workingDir: "/an-1/runs/run-1/step-a",
+            writableStepPath: "/an-1/runs/run-1/step-a/work",
+            workingDir: "/an-1/runs/run-1/step-a/work",
             libsPath: "/mnt/libs",
             farmPath: "/mnt/libs/current",
             cachePath: undefined,
             refsPath: "/mnt/refs",
             recordsPath: "/mnt/exec-records",
             recordTail: RECORD_TAIL,
-            stepSubdirs: STEP_SUBDIRS,
             env: stepPlan.env,
         });
-        expect(buildSessionSubPaths(COORDS, "an-1")).toEqual({ ro: "an-1", rw: "an-1/runs/run-1/step-a", records: `an-1/${RECORD_TAIL}` });
+        expect(buildSessionSubPaths(COORDS, "an-1")).toEqual({ ro: "an-1", rw: "an-1/runs/run-1/step-a/work", records: `an-1/${RECORD_TAIL}` });
     });
 });
 
 describe("sandboxWriteTail", () => {
-    test("gives the step tail with its five subdirectories when no tail is declared", () => {
-        expect(sandboxWriteTail(COORDS)).toEqual({ tail: "runs/run-1/step-a", subdirs: STEP_SUBDIRS });
+    test("gives the work directory of the step when no tail is declared", () => {
+        expect(sandboxWriteTail(COORDS)).toEqual({ tail: "runs/run-1/step-a/work" });
     });
 
-    test("gives the declared tail with no subdirectory", () => {
-        expect(sandboxWriteTail({ ...COORDS, writableTail: TAIL })).toEqual({ tail: TAIL, subdirs: [] });
+    test("gives the declared tail", () => {
+        expect(sandboxWriteTail({ ...COORDS, writableTail: TAIL })).toEqual({ tail: TAIL });
     });
 
     test("gives nothing for a read-only sandbox", () => {

@@ -61,11 +61,11 @@ Resolution failures SHALL be signalled by a rejection of the returned promise. A
 
 ### Requirement: Container-side paths are independent of the resolved root
 
-Sandbox containers SHALL continue to mount the analysis tree at `/{resourceId}` (read-only) with the step's writable root nested at `/{resourceId}/runs/{runId}/{stepId}` (read-write), regardless of where the resolver placed the tree on the host. Host↔container path mapping SHALL be `containerPath = "/" + resourceId + "/" + relative(workspaceRoot, hostPath)` and its inverse — the shared formula in `workspace/paths.ts` (`toSandboxPath` and the resolve direction).
+Sandbox containers SHALL continue to mount the analysis tree at `/{resourceId}` (read-only) with the step's writable root nested at `/{resourceId}/runs/{runId}/{stepId}/work` (read-write), regardless of where the resolver placed the tree on the host. Host↔container path mapping SHALL be `containerPath = "/" + resourceId + "/" + relative(workspaceRoot, hostPath)` and its inverse — the shared formula in `workspace/paths.ts` (`toSandboxPath` and the resolve direction).
 
 #### Scenario: Host location does not leak into the container
 
 - **GIVEN** resource `A` whose root resolves to `/home/u/proj/.inflexa/analyses/slug-a`
 - **WHEN** a sandbox for step `s1` of run `r1` is created
-- **THEN** the container sees `/A` (RO) and `/A/runs/r1/s1` (RW), and a file written to `/A/runs/r1/s1/output/x.csv` lands at `/home/u/proj/.inflexa/analyses/slug-a/runs/r1/s1/output/x.csv` on the host
+- **THEN** the container sees `/A` (RO) and `/A/runs/r1/s1/work` (RW), and a file written to `/A/runs/r1/s1/work/x.csv` lands at `/home/u/proj/.inflexa/analyses/slug-a/runs/r1/s1/work/x.csv` on the host
 

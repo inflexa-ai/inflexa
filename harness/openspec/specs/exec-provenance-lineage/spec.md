@@ -79,15 +79,15 @@ indistinguishable from a command that touched no files.
 
 #### Scenario: Command reading an input and writing an output produces a lineage edge
 
-- **GIVEN** an `execute_command` whose argv is `["python3", "scripts/tmm.py"]`, whose cwd is `/{rid}/runs/{run}/{step}`, and whose `ExecResult.provenance` reads `/{rid}/data/inputs/Lab/counts.csv` and writes `/{rid}/runs/{run}/{step}/output/tmm.csv`
+- **GIVEN** an `execute_command` whose argv is `["python3", "scripts/tmm.py"]`, whose cwd is `/{rid}/runs/{run}/{step}/work`, and whose `ExecResult.provenance` reads `/{rid}/data/inputs/Lab/counts.csv` and writes `/{rid}/runs/{run}/{step}/work/output/tmm.csv`
 - **WHEN** the tool feeds the frame via `feedExecFrame`
-- **THEN** `getRecords()` contains a record for `output/tmm.csv` with `producer.type: "command"`, `scriptPath: "runs/{run}/{step}/scripts/tmm.py"`, and an input with `source: "data"` for `data/inputs/Lab/counts.csv`
+- **THEN** `getRecords()` contains a record for `work/output/tmm.csv` with `producer.type: "command"`, `scriptPath: "runs/{run}/{step}/work/scripts/tmm.py"`, and an input with `source: "data"` for `data/inputs/Lab/counts.csv`
 
 #### Scenario: The script path is relative to the analysis root
 
-- **GIVEN** an `execute_command` whose argv is `["Rscript", "../scripts/qc.R"]` and whose cwd is `/{rid}/runs/{run}/{step}/output`
+- **GIVEN** an `execute_command` whose argv is `["Rscript", "../scripts/qc.R"]` and whose cwd is `/{rid}/runs/{run}/{step}/work/output`
 - **WHEN** the loop folds the call record
-- **THEN** the record of each output carries `scriptPath: "runs/{run}/{step}/scripts/qc.R"`
+- **THEN** the record of each output carries `scriptPath: "runs/{run}/{step}/work/scripts/qc.R"`
 
 #### Scenario: No script gives a null script path
 
@@ -216,9 +216,9 @@ applies to both feeds.
 
 #### Scenario: An agent write_file is attributed to the file tool
 
-- **GIVEN** a sandbox step whose agent writes `output/summary.md` with `write_file`
+- **GIVEN** a sandbox step whose agent writes `notes.md` in its work directory with `write_file`
 - **WHEN** the step's artifacts register
-- **THEN** the registration input's collector holds a file-tool record for `output/summary.md` with producer `{ type: "file_tool", tool: "write_file", invocationId: <the tool-call id> }`, a non-empty `sha256:<hex>` hash, and `inputs: []`
+- **THEN** the registration input's collector holds a file-tool record for `work/notes.md` with producer `{ type: "file_tool", tool: "write_file", invocationId: <the tool-call id> }`, a non-empty `sha256:<hex>` hash, and `inputs: []`
 - **AND** the record attributes the output to its file tool, not to a leaf/command fallback
 
 #### Scenario: edit_file records under its own tool name
@@ -247,6 +247,24 @@ applies to both feeds.
 
 - **WHEN** the mutate seam writes the bytes with the host filesystem
 - **THEN** no exec frame exists for the write, no `feedExecFrame` call occurs, and the in-process file-tool record is the sole attestation
+
+### Requirement: The collector keeps each superseded version of a step file
+
+A later write of a step file replaces the record of that path. When the replaced record has a known hash, the collector MUST keep it as a superseded version, in the order of the writes. A command write has no hash until the reconcile, thus the kept versions are the versions that a file tool wrote. `getSupersededRecords` MUST give the kept versions. A read of a step file by a command MUST carry the hash of the latest version that a tool wrote at that path before the command, when that version has a known hash. A read of a path with no such version MUST stay as it is.
+
+The file-tool record of a script that `run_template` wrote MUST carry the facts of the render in its producer: the template with its version, the label, the method, the snapshot digest, the settings with their sources, the overrides, and the environment match.
+
+#### Scenario: A rendered script that the agent edits after a run
+
+- **GIVEN** a `run_template` call that wrote `work/tpl-x.R` and ran it, and a later `edit_file` of `work/tpl-x.R`
+- **WHEN** registration reads the collector
+- **THEN** `getSupersededRecords()` holds the record of the render with its hash and the facts of the render
+- **AND** the read of `work/tpl-x.R` by the run carries the hash of the rendered version
+
+#### Scenario: A read of a file with no known version
+
+- **WHEN** a command reads a step file that no tool wrote
+- **THEN** the read carries no hash from the collector
 
 ### Requirement: The workspace read tools of a step record their reads
 

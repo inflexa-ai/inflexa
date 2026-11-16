@@ -237,6 +237,49 @@ describe("applyProvEvent", () => {
     });
 });
 
+describe("a rendered template script", () => {
+    test("the call activity of the write carries the facts of the render", () => {
+        const doc = serialize(makeModel(), [
+            {
+                type: "file_written",
+                analysisId: "a1",
+                actor,
+                model: "anthropic/test-model",
+                generation: "call",
+                step: { runId: "r1", stepId: "s1" },
+                file: { path: "runs/r1/s1/work/qc.R", hash: "sha256:fff", size: 7, producer: "file_tool" },
+                call: {
+                    invocationId: "call-1",
+                    tool: "run_template",
+                    template: {
+                        template: "tpl-qc-eda@1.4.0",
+                        label: "QC",
+                        method: { id: "M-0001", label: "VST and PCA" },
+                        snapshot: "sha256:71ac",
+                        settings: [{ name: "alpha", value: 0.05, source: "plan" }],
+                        overrides: [{ slot: "alpha", reason: "a small cohort" }],
+                        environmentMatch: "exact",
+                    },
+                },
+            },
+        ]);
+
+        expect(Object.values(doc.activity ?? {})).toContainEqual(
+            expect.objectContaining({
+                "prov:type": "inflexa:FileToolWrite",
+                "inflexa:template": "tpl-qc-eda@1.4.0",
+                "inflexa:templateLabel": "QC",
+                "inflexa:method": "M-0001",
+                "inflexa:methodLabel": "VST and PCA",
+                "inflexa:snapshot": "sha256:71ac",
+                "inflexa:templateSettings": '[{"name":"alpha","value":0.05,"source":"plan"}]',
+                "inflexa:templateOverrides": '[{"slot":"alpha","reason":"a small cohort"}]',
+                "inflexa:environmentMatch": "exact",
+            }),
+        );
+    });
+});
+
 describe("the plan approval", () => {
     const person: ProvActor = { kind: "user", id: "u-42" };
     const approved: ProvEvent = {

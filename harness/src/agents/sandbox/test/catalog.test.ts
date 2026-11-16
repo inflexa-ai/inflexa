@@ -6,7 +6,6 @@ import { dataProfilerPrompt } from "../../../prompts/sandbox/data-profiler.js";
 
 import { makeFakeSandboxAgentDeps } from "../__fixtures__/deps.js";
 import { createSandboxAgents, SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS, SANDBOX_AGENT_META } from "../index.js";
-import { BASE_SANDBOX_TOOLS } from "../shared.js";
 import { presentGet } from "../../../lib/present.js";
 
 describe("createSandboxAgents", () => {
@@ -15,13 +14,6 @@ describe("createSandboxAgents", () => {
 
     it("returns one AgentDefinition per registered meta entry (key parity)", () => {
         expect(Object.keys(agents).sort()).toEqual(Object.keys(SANDBOX_AGENT_META).sort());
-    });
-
-    it("every agent lists the knowledge template through the base list, because the template follows the step, not the specialist", () => {
-        expect(BASE_SANDBOX_TOOLS).toContain("knowledgeTemplate");
-        for (const [id, meta] of Object.entries(SANDBOX_AGENT_META)) {
-            expect(meta.tools.includes("knowledgeTemplate"), `${id} lists knowledgeTemplate`).toBe(true);
-        }
     });
 
     it("every AgentDefinition.tools is meta.tools plus the always-on set", () => {
@@ -48,15 +40,12 @@ describe("createSandboxAgents", () => {
             expect(toolIds.has("write_file"), `${id} write_file`).toBe(true);
             expect(toolIds.has("edit_file"), `${id} edit_file`).toBe(true);
 
-            // The fixture deps wire no blocker / embedding / skillsDir, so the
-            // resolved surface is exactly the always-on tools + meta.tools. The
-            // knowledge template is the one allowlist member that resolves to
-            // nothing without a knowledge client, thus it does not count here.
+            // The fixture deps wire no blocker / embedding / skillsDir and no template step, so the
+            // resolved surface is exactly the always-on tools + meta.tools.
             const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + ALWAYS_ON_LEASE.length + ALWAYS_ON_SCRIPT.length + 2;
             const declared = new Set(meta.tools);
-            declared.delete("knowledgeTemplate");
             const expected = alwaysOnCount + declared.size;
-            expect(toolIds.has("knowledge_template"), `${id} knowledge_template without a client`).toBe(false);
+            expect(toolIds.has("run_template"), `${id} run_template on an open step`).toBe(false);
             expect(all.length, `${id} tool count`).toBe(expected);
             // The lookups of outside sources run in a script, and the environment of the step stays direct.
             for (const tool of def.scriptTools ?? []) {

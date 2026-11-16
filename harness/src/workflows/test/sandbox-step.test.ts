@@ -57,7 +57,16 @@ import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { createExecuteCommandTool } from "../../tools/workspace/execute-command.js";
 import { createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
-import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "../sandbox-step.js";
+import {
+    CAPPED_OUT_EMPTY_REASON,
+    TEMPLATE_NOT_RUN_REASON,
+    TEMPLATE_SOURCE_ABSENT_REASON,
+    createLineageCollector,
+    runSandboxStepBody,
+    type SandboxStepDeps,
+    type SandboxStepInput,
+} from "../sandbox-step.js";
+import { RUN_TEMPLATE_TOOL_ID } from "../../tools/knowledge/run-template.js";
 import { RESUME_MESSAGE } from "../pause.js";
 import { presentAt, presentLast } from "../../lib/present.js";
 
@@ -336,7 +345,7 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         model: STEP_MODEL_ID,
         buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata)),
-        resolveWritePrefix: (stepInput) => Promise.resolve(join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId)),
+        resolveStepDir: (stepInput) => Promise.resolve(join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId)),
     };
 }
 
@@ -613,6 +622,57 @@ describe("sandbox-step post-step continuations", () => {
         });
         expect(summaryRequest.prompt[6]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "described" }] });
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "gene counts" })]);
+    });
+
+    /** A `run_template` stand-in whose runs end with `exitCode`. */
+    function runTemplateTool(exitCode: number): Tool {
+        return defineTool({
+            id: RUN_TEMPLATE_TOOL_ID,
+            description: "test stand-in",
+            inputSchema: z.object({}),
+            view: "none",
+            describeCall: () => "tpl-test",
+            execute: () => Promise.resolve(ok({ status: "ran", exitCode })),
+        });
+    }
+
+    const TEMPLATE_STEP = { template: { ref: "tpl-deseq2-two-group@1.0.0" } };
+
+    it("blocks a template step whose agent has no run_template, and runs no loop", async () => {
+        const { provider, calls } = scriptedModel([]);
+
+        const result = await runSandboxStepBody({ ...usageStepInput(), ...TEMPLATE_STEP }, { ...usageStepDeps(undefined), provider });
+
+        expect(result).toMatchObject({ status: "blocked", error: TEMPLATE_SOURCE_ABSENT_REASON });
+        expect(calls).toHaveLength(0);
+    });
+
+    it("asks a template step for the run once, and blocks it when no run of the template ends with exit code 0", async () => {
+        const { provider, calls } = scriptedModel([reply([text("done")]), reply([text("still done")])]);
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            provider,
+            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [runTemplateTool(1)])),
+        };
+
+        const result = await runSandboxStepBody({ ...usageStepInput(), ...TEMPLATE_STEP }, deps);
+
+        expect(result).toMatchObject({ status: "blocked", error: TEMPLATE_NOT_RUN_REASON });
+        expect(calls).toHaveLength(2);
+        expect(JSON.stringify(presentAt(calls, 1).prompt)).toContain("no run of the template ended with exit code 0");
+    });
+
+    it("completes a template step after a run of the template that ends with exit code 0", async () => {
+        const { provider } = scriptedModel([callTools(toolCall("r1", RUN_TEMPLATE_TOOL_ID, {})), reply([text("done")]), reply([text("## Summary")])]);
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            provider,
+            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [runTemplateTool(0)])),
+        };
+
+        const result = await runSandboxStepBody({ ...usageStepInput(), ...TEMPLATE_STEP }, deps);
+
+        expect(result.status).toBe("complete");
     });
 
     it("reads a cached metadata array of an earlier version as entries, and the summary continues the transcript directly", async () => {

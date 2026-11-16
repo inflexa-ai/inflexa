@@ -220,6 +220,8 @@ export type Tool<Input = unknown, Output = unknown> = {
     readonly ownStep?: boolean;
     /** See {@link ToolDefinition.concurrent}. */
     readonly concurrent?: boolean;
+    /** See {@link ToolDefinition.resultCap}. Absent when the tool takes the cap of the loop. */
+    readonly resultCap?: number;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
@@ -347,6 +349,13 @@ export type ToolDefinition<Schema extends z.ZodType<z.output<Schema>>, Output, O
      * a script runs inside the one step of the script, thus `withRunScript` refuses such a tool as a script tool.
      */
     readonly ownStep?: boolean;
+    /**
+     * The longest result text, in UTF-16 code units, that the model reads whole. A longer text comes back as an
+     * excerpt. Give it only when the model must read the whole of a result that is longer than `TOOL_RESULT_CAP`,
+     * because each character of a result stays in each later request of the conversation. Absent, the tool takes
+     * `TOOL_RESULT_CAP`.
+     */
+    readonly resultCap?: number;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 };
 
@@ -399,6 +408,7 @@ export function defineTool<Schema extends z.ZodType<z.output<Schema>>, Output ex
     if (def.view !== "none") packaged.view = def.view;
     if (def.ownStep === true) packaged = { ...packaged, ownStep: true };
     if (def.concurrent === true) packaged = { ...packaged, concurrent: true };
+    if (def.resultCap !== undefined) packaged = { ...packaged, resultCap: def.resultCap };
     if (def.startsWorkflow === true) return { ...packaged, startsWorkflow: true };
     return packaged;
 }

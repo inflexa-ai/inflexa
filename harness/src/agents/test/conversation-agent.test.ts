@@ -161,6 +161,7 @@ describe("createConversationAgent", () => {
             "start_report_session",
             "show_user",
             "show_plan",
+            "read_plan",
             "show_file",
         ]) {
             expect(ids.has(expected)).toBe(true);

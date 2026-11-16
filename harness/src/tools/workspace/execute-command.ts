@@ -17,12 +17,6 @@
  * `sandbox-provenance-tracking`), and artifact registration reconciles them.
  * The frame of each exec rides the call record, and the fold feeds it to the
  * lineage collector of the step.
- *
- * A script the command names that carries a decision record is compared
- * with the digest the record expects before it runs. A difference is a
- * change that no file tool recorded, and the record gets it with the digest
- * of the bytes that run, thus the record connects the cited decision to the
- * code that ran.
  */
 
 import { posix as posixPath } from "node:path";
@@ -35,11 +29,8 @@ import type { BoundLease } from "../../sandbox/leases.js";
 import type { ProvenanceFrame } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame, stripMountPrefix } from "../../provenance/exec-frame.js";
-import { reconcileScriptRecord } from "./decision-record.js";
-import type { WorkspaceMutator, WriteRecord } from "./mutator.js";
 import { EXEC_STREAM_BYTE_CAP, boundExecResult, type BoundedExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
-import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { collapseWhitespace } from "../../lib/text.js";
 import type { Logger } from "../../lib/logger.js";
@@ -106,14 +97,12 @@ type ExecCallRecord = {
     readonly exitCode: number | null;
     readonly durationMs: number | null;
     provenance?: ProvenanceFrame;
-    /** The decision-record writes of the script check before the exec, for the mutator. */
-    recordWrites?: readonly WriteRecord[];
 };
 
 type ExecuteCommandResult = { readonly status: "ok"; readonly note?: string } & BoundedExecResult;
 
 /** What the agent must know about a result that is not a plain exit: a timeout, a dropped end of a stream, or an ended sandbox. */
-function execNote(result: BoundedExecResult): string | undefined {
+export function execNote(result: BoundedExecResult): string | undefined {
     const notes: string[] = [];
     if (result.syntheticFailure !== undefined) {
         notes.push(
@@ -125,7 +114,7 @@ function execNote(result: BoundedExecResult): string | undefined {
     }
     if (result.timedOut) notes.push("The timeout stopped the command.");
     if (result.stdoutTruncated || result.stderrTruncated) {
-        notes.push(`A stream passed the cap of ${EXEC_STREAM_BYTE_CAP / (1024 * 1024)} MiB, and its end was dropped. Write long output to a file in logs/.`);
+        notes.push(`A stream passed the cap of ${EXEC_STREAM_BYTE_CAP / (1024 * 1024)} MiB, and its end was dropped. Write long output to a log file.`);
     }
     return notes.length === 0 ? undefined : notes.join(" ");
 }
@@ -150,13 +139,6 @@ export type ExecuteCommandDeps = {
     readonly lineageCollector?: ProvenanceCollector;
     /** Analysis resource mount root (`/{resourceId}`) — strips frame paths to relative. */
     readonly mountRoot?: string;
-    /**
-     * The workspace filesystem and the mutator of the step, for the record check of a
-     * script the command runs. Both absent (a read-only agent), no record is
-     * read or written.
-     */
-    readonly workspaceFilesystem?: WorkspaceFilesystem;
-    readonly mutator?: WorkspaceMutator;
 };
 
 export function createExecuteCommandTool(
@@ -172,7 +154,7 @@ export function createExecuteCommandTool(
             "A command runs only on the sandbox that `acquire_sandbox` granted, thus acquire it before the first command. " +
             "Use it for scripts, CLI tools, and shell pipes; read and write files with the file tools, which need no sandbox. " +
             "A failed command is data, not an error: read `exitCode`. stdout and stderr are not a deliverable, thus a result that " +
-            "you only print is lost. Write a script, and persist its outputs to output/.",
+            "you only print is lost. Write a script, and persist its outputs as files in your working directory.",
         inputSchema: ExecuteCommandInputSchema,
         view: "none",
         // The script is what a reader recognises, and it survives a long
@@ -206,23 +188,6 @@ export function createExecuteCommandTool(
             const command = argvOf(input);
             const effectiveCwd = cwd === undefined ? defaultCwd : cwd.startsWith("/") ? cwd : posixPath.join(defaultCwd, cwd);
 
-            // Each script the argv names, as the sandbox resolves it. A relative token resolves against the cwd of the
-            // command, which is a `/{analysisId}/...` path, thus the workspace filesystem resolves it the same way.
-            const recordWrites: WriteRecord[] = [];
-            if (deps.workspaceFilesystem && deps.mutator) {
-                for (const token of command.filter((arg) => SCRIPT_EXTENSIONS.some((extension) => arg.endsWith(extension)))) {
-                    const noted = await reconcileScriptRecord({
-                        filesystem: deps.workspaceFilesystem,
-                        mutator: deps.mutator,
-                        session: ctx.session,
-                        invocationId: ctx.invocationId,
-                        toolName: "execute_command",
-                        scriptPath: token.startsWith("/") ? token : posixPath.join(effectiveCwd, token),
-                    });
-                    if (noted.status === "noted") recordWrites.push(noted.write);
-                }
-            }
-
             const ran = await runSandboxExec({
                 lease,
                 command,
@@ -237,21 +202,19 @@ export function createExecuteCommandTool(
             const execResult = boundExecResult(result);
             const note = execNote(execResult);
             const bounded: ExecuteCommandResult = note === undefined ? { status: "ok", ...execResult } : { status: "ok", ...execResult, note };
-            if ((!lineageCollector || !mountRoot) && recordWrites.length === 0) return ok(bounded);
+            if (!lineageCollector || !mountRoot) return ok(bounded);
             const record: ExecCallRecord = {
                 command,
                 exitCode: result.exitCode,
                 durationMs: result.durationMs,
             };
             if (result.provenance) record.provenance = result.provenance;
-            const scriptPath = mountRoot === undefined ? undefined : analysisScriptPath(command, effectiveCwd, mountRoot);
+            const scriptPath = analysisScriptPath(command, effectiveCwd, mountRoot);
             if (scriptPath !== undefined) record.scriptPath = scriptPath;
-            if (recordWrites.length > 0) record.recordWrites = recordWrites;
             return ok(withToolCallRecord(bounded, record));
         },
         // Best-effort: a collector failure must never fail the exec.
         foldCallRecord: (record) => {
-            for (const write of record.recordWrites ?? []) deps.mutator?.recordWrite(write);
             if (!lineageCollector || !mountRoot) return;
             try {
                 feedExecFrame({

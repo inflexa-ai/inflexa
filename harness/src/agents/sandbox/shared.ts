@@ -87,33 +87,20 @@ import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import type { Logger } from "../../lib/logger.js";
 import type { CitationResolver } from "../../citations/types.js";
 import { createResolveCitationTool } from "../../tools/research/resolve-citation.js";
-import { createKnowledgeTemplateTool, type KnowledgeClient, type TemplateBinding } from "../../tools/knowledge/index.js";
-import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
+import { createRunTemplateTool, type StepTemplate, type TemplateSource } from "../../tools/knowledge/index.js";
+import { templateStepPrompt } from "../../prompts/sandbox/template-step.js";
 import { createReadScriptTools } from "../../tools/script/file-tools.js";
 import { searchArxivTool } from "../../tools/research/search-arxiv.js";
 import { createSearchSemanticScholarTool } from "../../tools/research/search-semantic-scholar.js";
 import type { ScriptRuntime } from "../../tools/script/run-script.js";
 
 /**
- * Tools every sandbox agent receives — sandbox-environment introspection,
- * library docs, and the knowledge template. Spread into each
- * agent's `meta.tools` so planner-facing metadata and the resolved tool record
- * stay in sync. Keep minimal — only tools every agent genuinely needs.
- *
- * The knowledge template is here, not on a specialist, because the template
- * follows the step: the planner binds a template to a step from the
- * recommendation and routes that step to whichever specialist owns its data
- * object. The tool acts only on the template the step grounding names, thus
- * a step without a template costs nothing, and it attaches only when the
- * embedder binds a knowledge client (see the registry below).
+ * Tools every sandbox agent receives — sandbox-environment introspection and
+ * library docs. Spread into each agent's `meta.tools` so planner-facing
+ * metadata and the resolved tool record stay in sync. Keep minimal — only
+ * tools every agent genuinely needs.
  */
-export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = [
-    "listAvailablePackages",
-    "listAvailableRefs",
-    "resolveLibraryId",
-    "queryDocs",
-    "knowledgeTemplate",
-];
+export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = ["listAvailablePackages", "listAvailableRefs", "resolveLibraryId", "queryDocs"];
 
 /** Per-step coordinates the composition root threads through every mutate tool. */
 export type SandboxStepCoords = {
@@ -124,12 +111,8 @@ export type SandboxStepCoords = {
     readonly analysisId: string;
     /** Absolute writable artifact directory for this step (e.g. stepWritePrefix(...)). */
     readonly allowedWritePrefix: string;
-    /**
-     * The plan settings bound to the template of this step, from the durable
-     * step input. Reaches `knowledge_template` alone. Absent when the step
-     * grounds on no template, or when the host bound nothing.
-     */
-    readonly templateBinding?: TemplateBinding;
+    /** The template of a template step, from the durable step input. Absent for an open step. */
+    readonly template?: StepTemplate;
 };
 
 /** The shared dependency graph every sandbox agent draws from. */
@@ -181,12 +164,10 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
     /**
-     * The knowledge service client. Bound, an agent that declares
-     * `knowledgeTemplate` gets the tool, over the same mutator as `write_file`.
-     * Absent, the declaration resolves to nothing, which is the default state
-     * of the open-source host and never an error.
+     * Where the templates come from. The agent of a template step gets `run_template` over it, and the agent of an
+     * open step never does. Absent, a template step has no way to run its template.
      */
-    readonly knowledge?: KnowledgeClient;
+    readonly templateSource?: TemplateSource;
     /** Where the VM of `run_script` comes from, for the lookups of the agent. */
     readonly scriptRuntime?: ScriptRuntime;
 };
@@ -195,7 +176,7 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
  * The tools of the allowlist that stay direct: the environment of the step. Each other tool of the allowlist is a
  * lookup of an outside source, and it runs in `run_script`.
  */
-const DIRECT_ALLOWLIST_TOOLS: ReadonlySet<string> = new Set(["list_available_packages", "list_available_refs", "scan_inputs", "knowledge_template"]);
+const DIRECT_ALLOWLIST_TOOLS: ReadonlySet<string> = new Set(["list_available_packages", "list_available_refs", "scan_inputs"]);
 
 /** Per-agent override for the prompt composition and tool surface. */
 export type SandboxAgentPromptOptions = {
@@ -215,7 +196,7 @@ export type SandboxAgentPromptOptions = {
  * read/mutate tools and `inspect_data_profile` are added by `createSandboxAgent`
  * regardless of meta — they are the always-on substrate, not in the allowlist.
  */
-function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[], mutator: WorkspaceMutator | undefined): Tool[] {
+function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[]): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
     const chemDb = createChemDbTools(deps.bioKeys, { logger: deps.logger });
     const amass = createAmassTools(deps.bioKeys);
@@ -263,16 +244,6 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         searchRegulatoryApprovals: amass.regulatoryApprovals,
         targetSafety: targetSafetyTool,
         comptox: chemDb.comptox,
-        knowledgeTemplate:
-            deps.knowledge && mutator
-                ? createKnowledgeTemplateTool({
-                      client: deps.knowledge,
-                      mutator,
-                      farmLockFile: deps.farmLockFile,
-                      imagePackagesFile: deps.imagePackagesFile,
-                      binding: deps.step.templateBinding,
-                  })
-                : undefined,
     };
 
     const seen = new Set<SandboxToolName>();
@@ -281,11 +252,6 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         if (seen.has(name)) continue;
         seen.add(name);
         const tool = registry[name];
-        // The knowledge template is the one optional member of the allowlist: every
-        // agent lists it through BASE_SANDBOX_TOOLS, and it attaches only when the
-        // embedder binds a client and the agent can write. Absence is a normal
-        // state, not a wiring fault.
-        if (name === "knowledgeTemplate" && !tool) continue;
         if (!tool) {
             throw new Error(`createSandboxAgent: unknown SandboxToolName "${name}" — ` + `agent meta references a tool with no harness implementation.`);
         }
@@ -297,11 +263,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
 /** Build the workspace mutate + read tools every sandbox agent receives. In
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
  *  and the read tools stay. */
-function buildWorkspaceTools(
-    deps: SandboxAgentDeps,
-    readOnly: boolean,
-    readLineage: WorkspaceReadLineage | undefined,
-): { tools: Tool[]; mutator: WorkspaceMutator | undefined } {
+function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean, readLineage: WorkspaceReadLineage | undefined): Tool[] {
     const { step, workspaceFs, pool, embedding, lineageCollector } = deps;
 
     // The agent's writable working directory: relative paths resolve here, and
@@ -326,26 +288,44 @@ function buildWorkspaceTools(
               createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir, intents: createEditIntentStore(pool) }),
           ]
         : [];
+    // Only the agent of a template step runs a template, over the same mutator and lease as its other tools.
+    const runTemplate =
+        mutator && step.template && deps.templateSource
+            ? [
+                  createRunTemplateTool({
+                      source: deps.templateSource,
+                      template: step.template.ref,
+                      binding: step.template.binding,
+                      mutator,
+                      lease: step.lease,
+                      workingDir: sandboxWorkingDir,
+                      lineageCollector,
+                      mountRoot: `/${step.analysisId}`,
+                      farmLockFile: deps.farmLockFile,
+                      imagePackagesFile: deps.imagePackagesFile,
+                      logger: deps.logger,
+                  }),
+              ]
+            : [];
 
-    const tools = [
+    return [
         createAcquireSandboxTool(step.lease),
         createReleaseSandboxTool(step.lease),
         createExecuteCommandTool({
+            logger: deps.logger,
             lease: step.lease,
             defaultCwd: sandboxWorkingDir,
             lineageCollector,
             mountRoot: `/${step.analysisId}`,
-            workspaceFilesystem: workspaceFs,
-            mutator,
         }),
         ...mutateTools,
+        ...runTemplate,
         createReadFileTool(workspaceFs, hostWorkingDir, readLineage),
         createListFilesTool(workspaceFs, hostWorkingDir),
         createFileStatTool(workspaceFs, hostWorkingDir),
         createGrepTool(workspaceFs, hostWorkingDir, readLineage),
         ...(embedding ? [createWorkspaceSearchTool(pool, embedding)] : []),
     ];
-    return { tools, mutator };
 }
 
 /**
@@ -357,10 +337,10 @@ function buildWorkspaceTools(
  * against the closed allowlist; the workspace surface is always wired
  * regardless of meta.
  *
- * The composed `systemPrompt` is a **pure function of the agent type** — nothing
- * from `deps.step` reaches it, so two steps of one run, and two runs of one
- * analysis, send a byte-identical prefix that the provider's prompt
- * cache can actually reuse. Keep it that way: a single interpolated id or path
+ * The composed `systemPrompt` is a **pure function of the agent type and the
+ * kind of the step** — only the presence of `deps.step.template` reaches it, so
+ * two steps of one kind, and two runs of one analysis, send a byte-identical
+ * prefix that the provider's prompt cache can actually reuse. Keep it that way: a single interpolated id or path
  * makes every step's prefix unique again, and each step pays a full cache write
  * and reads nothing back. Per-step values belong in the step's briefing (its
  * first user message — see `prompts/briefing.ts`), which names the working
@@ -374,7 +354,11 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
     // The client is the one declaration: the environment it provisions and the
     // text that describes it come from the same value, thus a bag cannot
     // describe a toolchain the sandbox does not have.
-    const sandboxLayer = [sandboxOrientCorePromptFor(deps.toolchainSource), ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : [])];
+    const sandboxLayer = [
+        sandboxOrientCorePromptFor(deps.toolchainSource),
+        ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : []),
+        ...(deps.step.template ? [templateStepPrompt] : []),
+    ];
     const index = deps.skillsDir === undefined ? undefined : skillIndex(deps.skillsDir, meta.skills);
     const agentBody = [body, ...(index === undefined ? [] : [index]), ...sandboxLayer].map((s) => s.trim()).join("\n\n");
 
@@ -391,10 +375,10 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
               logger: deps.logger,
           })
         : undefined;
-    const workspace = buildWorkspaceTools(deps, opts.readOnly ?? false, readLineage);
-    const allowlisted = resolveSandboxTools(deps, meta.tools, workspace.mutator);
+    const workspaceTools = buildWorkspaceTools(deps, opts.readOnly ?? false, readLineage);
+    const allowlisted = resolveSandboxTools(deps, meta.tools);
     const tools: Tool[] = [
-        ...workspace.tools,
+        ...workspaceTools,
         ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
         // Always-on, not in the `meta.tools` allowlist: the data profile is the only
         // record of what the analysis's input dataset IS, and no file carries it (the

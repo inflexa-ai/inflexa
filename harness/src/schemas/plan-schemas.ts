@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { AnalysisStepSchema, AnalysisPlanSchema } from "./workflow-state.js";
+import { AnalysisStepSchema, AnalysisPlanSchema, GroundingDepartureSchema } from "./workflow-state.js";
 import type { AnalysisPlan } from "./workflow-state.js";
 import { PLANNABLE_AGENT_IDS as plannableAgentIds } from "../agents/sandbox-catalog.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
@@ -29,7 +29,7 @@ export type PlanStep = z.infer<typeof PlanStepSchema>;
 
 /** Plan schema for planner output — uses PlanStepSchema for steps and requires
  *  a concise title (optional on the persistence schema for historical plans). */
-export const PlannerPlanSchema = AnalysisPlanSchema.omit({ request: true }).extend({
+export const PlannerPlanSchema = AnalysisPlanSchema.omit({ request: true, claims: true }).extend({
     title: z
         .string()
         .min(1)
@@ -58,14 +58,55 @@ export function hydratePlanSteps(plannerPlan: PlannerPlan): AnalysisPlan {
 
 // ── Planning agent structured output ─────────────────────────────────
 
+/** The title of one claim that the plan cites, for the conversation agent: the full view stays with the stored plan. */
+export const PlanClaimTitleSchema = z.object({
+    id: z.string(),
+    title: z.string().optional(),
+    strength: z.string(),
+});
+export type PlanClaimTitle = z.infer<typeof PlanClaimTitleSchema>;
+
 /** Schema for the planning agent's structured output. */
 export const PlanningAgentOutputSchema = z.object({
     event: z.enum(["plan_complete", "clarification_needed", "error"]),
     planId: z.string().optional(),
     plan: PlannerPlanSchema.optional(),
+    claims: z.array(PlanClaimTitleSchema).optional(),
     question: z.string().optional(),
     questionContext: z.string().optional(),
     error: z.string().optional(),
 });
 
 export type PlanningAgentOutput = z.infer<typeof PlanningAgentOutputSchema>;
+
+/** One step of a plan in the outline that the conversation agent reads: no context, criteria, packages, or settings. */
+export const PlanStepOutlineSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    kind: AnalysisStepSchema.shape.kind,
+    agent: z.string().optional(),
+    question: z.string(),
+    depends_on: z.array(z.string()),
+    grounding: z
+        .object({
+            status: z.string(),
+            template: z.string().optional(),
+            /** The claim ids of the step. */
+            claims: z.array(z.string()),
+            departures: z.array(GroundingDepartureSchema).optional(),
+        })
+        .optional(),
+});
+export type PlanStepOutline = z.infer<typeof PlanStepOutlineSchema>;
+
+/** A plan in the outline that the conversation agent reads. The plan card shows the whole plan to the user. */
+export const PlanOutlineSchema = z.object({
+    title: z.string().optional(),
+    analytical_narrative: z.string(),
+    steps: z.array(PlanStepOutlineSchema),
+});
+export type PlanOutline = z.infer<typeof PlanOutlineSchema>;
+
+/** The result of `generate_plan` that the model reads: the outline of an accepted plan in place of the plan. */
+export const GeneratePlanOutputSchema = PlanningAgentOutputSchema.extend({ plan: PlanOutlineSchema.optional() });
+export type GeneratePlanOutput = z.infer<typeof GeneratePlanOutputSchema>;

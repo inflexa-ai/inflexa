@@ -64,7 +64,7 @@ describe("upsertArtifacts chunking", () => {
             expect(q.values.length).toBeLessThanOrEqual(WIRE_PARAM_LIMIT);
         }
         // Every row survives, in order, across the chunk boundary.
-        const paths = captured.flatMap((q) => q.values.filter((_, idx) => idx % 10 === 1));
+        const paths = captured.flatMap((q) => q.values.filter((_, idx) => idx % 11 === 1));
         expect(paths).toHaveLength(7_000);
         expect(paths[0]).toBe("data/inputs/local/f0.csv");
         expect(paths[6_999]).toBe("data/inputs/local/f6999.csv");

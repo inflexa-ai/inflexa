@@ -4,18 +4,19 @@
  */
 
 import type { ResultAsync } from "neverthrow";
+import type { QueryConfig } from "pg";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import { presentAt } from "../lib/present.js";
 import type { Querier } from "./db.js";
-import { ArtifactRole, ArtifactRowSchema, type ArtifactRow } from "./schema.js";
+import { ArtifactRole, ArtifactRowSchema, ArtifactTemplateSchema, type ArtifactRow, type ArtifactTemplate } from "./schema.js";
 
 export type RegisterArtifactInput = {
     resourceId: string;
     path: string;
     hash: string;
     size: number;
-    role: "input" | "step_output";
+    role: ArtifactRole;
     sourceStep?: string | null;
     sourceRun?: string | null;
     fileType?: string | null;
@@ -25,6 +26,8 @@ export type RegisterArtifactInput = {
      * `step_output` rows (their `file_id` is assigned after upload-sync).
      */
     fileId?: string | null;
+    /** The template that rendered the file: set on the row of a script that `run_template` wrote. */
+    template?: ArtifactTemplate | null;
 };
 
 export function upsertArtifact(pool: Querier, entry: RegisterArtifactInput): ResultAsync<void, DbError> {
@@ -32,8 +35,8 @@ export function upsertArtifact(pool: Querier, entry: RegisterArtifactInput): Res
     return tryMutation("artifacts.upsertArtifact", async () => {
         await pool.query({
             text: `INSERT INTO cortex_artifacts
-          (analysis_id, path, hash, size, role, source_step, source_run, file_type, file_id, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          (analysis_id, path, hash, size, role, source_step, source_run, file_type, file_id, template, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
           ON CONFLICT (analysis_id, path) DO UPDATE SET
             hash = EXCLUDED.hash,
             size = EXCLUDED.size,
@@ -41,7 +44,8 @@ export function upsertArtifact(pool: Querier, entry: RegisterArtifactInput): Res
             source_step = EXCLUDED.source_step,
             source_run = EXCLUDED.source_run,
             file_type = COALESCE(EXCLUDED.file_type, cortex_artifacts.file_type),
-            file_id = COALESCE(EXCLUDED.file_id, cortex_artifacts.file_id)`,
+            file_id = COALESCE(EXCLUDED.file_id, cortex_artifacts.file_id),
+            template = EXCLUDED.template`,
             values: [
                 entry.resourceId,
                 entry.path,
@@ -52,13 +56,14 @@ export function upsertArtifact(pool: Querier, entry: RegisterArtifactInput): Res
                 entry.sourceRun ?? null,
                 entry.fileType ?? null,
                 entry.fileId ?? null,
+                entry.template ? JSON.stringify(entry.template) : null,
                 now,
             ],
         });
     });
 }
 
-const COLS_PER_ROW = 10;
+const COLS_PER_ROW = 11;
 
 /**
  * Rows per INSERT statement. The Postgres extended protocol carries the Bind
@@ -89,7 +94,7 @@ export function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[])
                     const base = i * COLS_PER_ROW;
                     return (
                         `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, ` +
-                        `$${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`
+                        `$${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`
                     );
                 })
                 .join(", ");
@@ -103,11 +108,12 @@ export function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[])
                 e.sourceRun ?? null,
                 e.fileType ?? null,
                 e.fileId ?? null,
+                e.template ? JSON.stringify(e.template) : null,
                 now,
             ]);
             await pool.query({
                 text: `INSERT INTO cortex_artifacts
-          (analysis_id, path, hash, size, role, source_step, source_run, file_type, file_id, created_at)
+          (analysis_id, path, hash, size, role, source_step, source_run, file_type, file_id, template, created_at)
           VALUES ${placeholders}
           ON CONFLICT (analysis_id, path) DO UPDATE SET
             hash = EXCLUDED.hash,
@@ -116,7 +122,8 @@ export function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[])
             source_step = EXCLUDED.source_step,
             source_run = EXCLUDED.source_run,
             file_type = COALESCE(EXCLUDED.file_type, cortex_artifacts.file_type),
-            file_id = COALESCE(EXCLUDED.file_id, cortex_artifacts.file_id)`,
+            file_id = COALESCE(EXCLUDED.file_id, cortex_artifacts.file_id),
+            template = EXCLUDED.template`,
                 values,
             });
         }
@@ -167,7 +174,7 @@ export function queryUnsyncedStepArtifacts(pool: Querier, resourceId: string, ru
           FROM cortex_artifacts
           WHERE analysis_id = $1 AND source_run = $2 AND source_step = $3
             AND artifact_id IS NOT NULL AND file_id IS NULL
-            AND role = 'step_output'
+            AND role IN ('step_output', 'step_summary')
           ORDER BY created_at`,
             values: [resourceId, runId, stepId],
         });
@@ -475,5 +482,48 @@ function mapArtifactRow(row: Record<string, unknown>): ArtifactRow {
         createdAt: row.created_at,
         unrecoverableAt: row.unrecoverable_at ?? null,
         fileType: row.file_type ?? null,
+        template: row.template ?? null,
+    });
+}
+
+/** A querier with untyped rows: the pool of a tool that reads its rows by name. */
+type RowQuerier = { query(queryTextOrConfig: string | QueryConfig, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
+
+/** The registered summary of each step of a run, by step id. A step that ran before the summary role existed has no entry. */
+export function queryStepSummaryPaths(pool: RowQuerier, resourceId: string, runId: string): ResultAsync<Map<string, string>, DbError> {
+    return tryQuery("artifacts.queryStepSummaryPaths", async () => {
+        const result = await pool.query({
+            text: `SELECT source_step, path
+          FROM cortex_artifacts
+          WHERE analysis_id = $1 AND source_run = $2 AND role = 'step_summary'`,
+            values: [resourceId, runId],
+        });
+        return new Map(
+            result.rows.flatMap((row) => (typeof row.source_step === "string" && typeof row.path === "string" ? [[row.source_step, row.path] as const] : [])),
+        );
+    });
+}
+
+/** One script of a step that a template rendered, with the template. */
+export type StepTemplateArtifact = {
+    /** Workspace-root-relative path of the script. */
+    readonly path: string;
+    readonly template: ArtifactTemplate;
+};
+
+/** The scripts of a step that `run_template` wrote, in path order. A row whose template does not parse is left out. */
+export function queryStepTemplateArtifacts(pool: Querier, resourceId: string, runId: string, stepId: string): ResultAsync<StepTemplateArtifact[], DbError> {
+    return tryQuery("artifacts.queryStepTemplateArtifacts", async () => {
+        const result = await pool.query<{ path: string; template: unknown }>({
+            text: `SELECT path, template
+          FROM cortex_artifacts
+          WHERE analysis_id = $1 AND source_run = $2 AND source_step = $3 AND template IS NOT NULL
+          ORDER BY path`,
+            values: [resourceId, runId, stepId],
+        });
+        return result.rows.flatMap((row) => {
+            const template = ArtifactTemplateSchema.safeParse(row.template);
+            return template.success ? [{ path: row.path, template: template.data }] : [];
+        });
     });
 }

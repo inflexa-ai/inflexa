@@ -28,7 +28,7 @@ import { searchIndexName } from "../../workspace/search-config.js";
 import type { ArtifactRegistry } from "../artifact-registry.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import type { FileMetadataEntry } from "../artifact-metadata.js";
-import { vectorIndexStepOutputs, type PostStepPipelineDeps } from "../post-step-pipeline.js";
+import { generateStepFileMetadata, vectorIndexStepOutputs, type PostStepPipelineDeps } from "../post-step-pipeline.js";
 import type { PostStepArtifacts, PostStepContext, SandboxStepInput } from "../../workflows/sandbox-step.js";
 import { presentAt } from "../../lib/present.js";
 
@@ -73,7 +73,7 @@ function makePostCtx(analysisId: string): PostStepContext {
         transcript: [],
         agent: { id: AGENT_ID, systemPrompt: "unused", model: "test-model", tools: [], maxIterations: 1 },
         fileMetadata: createFileMetadataCell(),
-        writePrefix: "/unused",
+        stepDir: "/unused",
         lineageCollector: new ProvenanceCollector({ stepId: STEP_ID, runId: RUN_ID }),
     };
 }
@@ -182,7 +182,7 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
         const ids = rows.map((r) => r.id);
         expect(ids).toContain(vectorId(analysisId, "output/a.csv"));
         expect(ids).toContain(vectorId(analysisId, "output/c.csv"));
-        expect(ids).toContain(vectorId(analysisId, "output/summary.md"));
+        expect(ids).toContain(vectorId(analysisId, "summary.md"));
         expect(ids).not.toContain(vectorId(analysisId, "output/poison.csv"));
         expect(ids).toHaveLength(3);
         // File-addressed entries carry the workspace path in metadata — the marker
@@ -211,7 +211,7 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
         const ids = (await readIndex(pool, analysisId)).map((r) => r.id);
         expect(ids).toContain(vectorId(analysisId, "output/a.csv"));
         expect(ids).toContain(vectorId(analysisId, "output/b.csv"));
-        expect(ids).not.toContain(vectorId(analysisId, "output/summary.md"));
+        expect(ids).not.toContain(vectorId(analysisId, "summary.md"));
         expect(ids).toHaveLength(2);
     });
 
@@ -280,5 +280,21 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
         expect(summaryWarn).toBeDefined();
         expect(summaryWarn?.fields.indexed).toBe(2);
         expect(summaryWarn?.fields.failed).toBe(1);
+    });
+});
+
+describe("generateStepFileMetadata", () => {
+    it("names each file by its path in the working directory of the agent, and keys it by its path in the workspace", async () => {
+        const analysisId = uniqueAnalysisId();
+        const deps = makeDeps(
+            new Pool(),
+            embeddingRejecting(() => false),
+            createCapturingLogger(),
+        );
+
+        const { entries } = await generateStepFileMetadata(deps, makePostCtx(analysisId), [manifestEntry("work/de/table.csv")]);
+
+        expect(entries.map((entry) => entry.dbPath)).toEqual([`runs/${RUN_ID}/${STEP_ID}/work/de/table.csv`]);
+        expect(presentAt(entries, 0).description.startsWith("de/table.csv — ")).toBe(true);
     });
 });

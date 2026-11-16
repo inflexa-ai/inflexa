@@ -101,7 +101,9 @@ export function artifactRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts:
         const roleValue = filterValue(c.req.query("role"));
         const role = roleValue === undefined ? undefined : ArtifactRole.safeParse(roleValue);
         if (role !== undefined && !role.success) {
-            return apiError(c, "validation_error", "`role` must be `input` or `step_output`.", { fieldErrors: { role: ["must be input or step_output"] } });
+            return apiError(c, "validation_error", "`role` must be `input`, `step_output`, or `step_summary`.", {
+                fieldErrors: { role: ["must be input, step_output, or step_summary"] },
+            });
         }
         const runId = filterValue(c.req.query("runId"));
         const stepId = filterValue(c.req.query("stepId"));

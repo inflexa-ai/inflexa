@@ -56,6 +56,12 @@ Each \`pmid\` that you cite must be in a lookup result of this run, also a
 result that a script read and did not print.
 \`submit_synthesis\` refuses each other PMID.
 
+When the input lists method sources, put the method, the setting, or the rule
+that the synthesis names in \`methodReferences\`, with the source that supports
+it. Cite each source by its key as the method sources of its step list it. A
+method source needs no lookup, and \`submit_synthesis\` refuses a key that the
+step does not list.
+
 ## Writing the Synthesis
 
 The \`submit_synthesis\` arg schema defines every field, its enum values,

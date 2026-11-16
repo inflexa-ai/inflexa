@@ -15,6 +15,25 @@ import type { PlanCardStepView } from "../../types/session.ts";
 // the top so a wide terminal keeps full names.
 const DAG_NAME_WIDTHS = [24, 18, 14, 10, 8] as const;
 
+/**
+ * The one-line grounding summary of a plan: the count of the grounded steps, the count of the flagged
+ * steps, and the knowledge release when the steps name one. Null when no step has a grounding, thus a
+ * plan that the planner made with no knowledge service shows no line. The step dialog shows the detail.
+ */
+export function planGroundingLine(steps: readonly PlanCardStepView[]): string | null {
+    const groundings = steps.flatMap((step) => (step.grounding === undefined ? [] : [step.grounding]));
+    if (groundings.length === 0) return null;
+    const grounded = groundings.filter((grounding) => grounding.status === "grounded").length;
+    const flagged = groundings.filter((grounding) => grounding.status === "flagged").length;
+    const releases = [...new Set(groundings.map((grounding) => grounding.snapshot).filter((snapshot) => snapshot !== "none"))];
+    let line = `grounding: ${grounded} of ${steps.length} steps grounded`;
+    if (flagged > 0) line += ` ${GLYPHS.middot} ${flagged} flagged`;
+    const [release, ...more] = releases;
+    if (release !== undefined && more.length === 0) line += ` ${GLYPHS.middot} knowledge release ${release}`;
+    else if (more.length > 0) line += ` ${GLYPHS.middot} ${releases.length} knowledge releases`;
+    return line;
+}
+
 /** Props for {@link PlanCardBlock}. */
 export type PlanCardBlockProps = {
     /** The stored plan's id — shown beside the title (and as the heading when the title is empty). */
@@ -59,6 +78,7 @@ export function PlanCardBlock(props: PlanCardBlockProps): JSX.Element {
         return null;
     });
     const graphHeight = (): number => (graph()?.split("\n").length ?? 0) + 1;
+    const grounding = createMemo((): string | null => planGroundingLine(props.steps));
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>
@@ -94,6 +114,13 @@ export function PlanCardBlock(props: PlanCardBlockProps): JSX.Element {
                                 {value()}
                             </text>
                         </ScrollPane>
+                    )}
+                </Show>
+                <Show when={grounding()}>
+                    {(line: Accessor<string>) => (
+                        <text>
+                            <Fg role="fgMuted">{line()}</Fg>
+                        </text>
                     )}
                 </Show>
             </box>

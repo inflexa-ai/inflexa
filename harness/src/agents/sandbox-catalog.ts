@@ -56,7 +56,6 @@ const LIVE_SOURCES: Record<SandboxToolName, string | null> = {
     searchRegulatoryApprovals: "FDA and EMA approvals",
     targetSafety: "a curated target safety panel",
     comptox: "EPA CompTox",
-    knowledgeTemplate: null,
 };
 
 /** The sandbox agents the planner may assign to analysis-plan steps. */

@@ -88,17 +88,27 @@ the formatted run, so a consumer can distinguish "synthesis produced" from
 `inspect_run` SHALL include the run-phase `synthesis` row in a run's step list
 (so a consumer sees the phase and its status) but SHALL NOT emit a per-step
 `summaryPath` for it: the synthesis phase is not a sandbox step and writes no
-`runs/{runId}/synthesis/output/summary.md`. Its product is the run-level
+step summary. Its product is the run-level
 `synthesis.json`, which `inspect_run` already surfaces as the run's
 `synthesisPath` (gated on the produced outcome). Emitting a per-step path for
 the synthesis row would point a consumer at a file that never exists — the same
 stale-path failure the `synthesisPath` gating exists to prevent.
 
+The `summaryPath` of a DAG step SHALL be the path of the `step_summary` row
+that the step registered. A step with no such row ran before the summary role
+existed, and its `summaryPath` SHALL be `runs/{runId}/{stepId}/output/summary.md`.
+
 #### Scenario: The synthesis step row carries no summaryPath
 
 - **GIVEN** a run whose `synthesis` row is `completed` alongside a completed DAG step
 - **WHEN** `inspect_run` formats the run's steps
-- **THEN** the DAG step carries `summaryPath = runs/{runId}/{stepId}/output/summary.md`, the `synthesis` row carries no `summaryPath`, and the run's `synthesisPath` is `runs/{runId}/synthesis.json`
+- **THEN** the DAG step carries `summaryPath = runs/{runId}/{stepId}/summary.md`, the `synthesis` row carries no `summaryPath`, and the run's `synthesisPath` is `runs/{runId}/synthesis.json`
+
+#### Scenario: A step of an earlier version
+
+- **GIVEN** a terminal run whose completed step registered no `step_summary` row
+- **WHEN** `inspect_run` formats the run's steps
+- **THEN** the step carries `summaryPath = runs/{runId}/{stepId}/output/summary.md`
 
 ### Requirement: A read gives the synthesis record of a run as the flat part
 

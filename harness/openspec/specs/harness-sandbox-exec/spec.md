@@ -106,7 +106,7 @@ its DBOS step throws the error through `unwrapOrThrow`.
 
 - **GIVEN** a `SpawnSession` for the analysis `an-1`, the run `run-1`, and the step `step-a`
 - **WHEN** a caller runs `createSandbox(session, spec, identity)`
-- **THEN** the sandbox holds the step directory of `an-1`, `run-1`, and `step-a` as its writable mount
+- **THEN** the sandbox holds the work directory of the step `step-a` of `an-1` and `run-1` as its writable mount
 - **AND** the sandbox records `spec.ownerWorkflowId` as its owner workflow
 
 #### Scenario: A session with no step id does not compile

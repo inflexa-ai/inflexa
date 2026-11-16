@@ -62,10 +62,7 @@ export type SandboxToolName =
     | "searchRegulatoryApprovals"
     // Safety / toxicology.
     | "targetSafety"
-    | "comptox"
-    // The knowledge plane: render a tested script template into the step workspace.
-    // Resolves to nothing when the embedder binds no knowledge client.
-    | "knowledgeTemplate";
+    | "comptox";
 
 /** Planner-facing metadata + tool allowlist for one sandbox agent. */
 export type AgentMeta = {

@@ -185,11 +185,17 @@ analysis-relative canonical path), `hash` (TEXT, NOT NULL — SHA-256), `size`
 null for inputs), `source_run` (TEXT, nullable — null for inputs), `artifact_id`
 (TEXT, nullable — provenance entity id set after registration), `file_id` (TEXT,
 nullable — object-store id set after upload sync), `created_at` (TEXT, NOT NULL),
-`unrecoverable_at` (TEXT, nullable), `file_type` (TEXT, nullable). The primary
+`unrecoverable_at` (TEXT, nullable), `file_type` (TEXT, nullable), `template`
+(JSONB, nullable — the template that rendered the file). The primary
 key SHALL be `(analysis_id, path)`. Indexes SHALL exist on `(analysis_id,
 source_run)` and `(analysis_id, artifact_id)`.
 
-The `role` column SHALL accept only `'input'` or `'step_output'`. `size` is
+The `role` column SHALL accept only `'input'`, `'step_output'`, or
+`'step_summary'`. A `step_summary` row is the summary that the host writes for a
+step. The `template` column of a script that `run_template` wrote SHALL hold
+the template with its version, the label, the method, the snapshot digest, and
+the environment match, from the provenance record of the write. Each other row
+holds no template. `size` is
 BIGINT so files larger than 2 GB do not overflow on INSERT. There SHALL be no
 `legacy_artifact_id` column or `idx_cortex_artifacts_legacy` index — they do not
 exist in the current schema.
@@ -232,4 +238,10 @@ exist in the current schema.
 - **WHEN** `queryUnsyncedStepArtifacts(pool, resourceId, runId, stepId)` is
   called
 - **THEN** it SHALL return that step's rows where `artifact_id IS NOT NULL AND
-  file_id IS NULL AND role = 'step_output'`, ordered by `created_at`
+  file_id IS NULL AND role IN ('step_output', 'step_summary')`, ordered by `created_at`
+
+#### Scenario: A rendered script records its template
+
+- **WHEN** a step registers a script that `run_template` wrote
+- **THEN** the row of the script holds the template, the label, the method, the snapshot digest, and the environment match
+- **AND** each other row of the step holds no template

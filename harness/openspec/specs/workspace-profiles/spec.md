@@ -65,13 +65,13 @@ When the workflow indexes a step's `summary.md`, the embedding SHALL be computed
 
 #### Scenario: Embedding text is the markdown body
 
-- **WHEN** the workflow reads `output/summary.md` and indexes it
+- **WHEN** the workflow indexes the `summary.md` of a step
 - **THEN** the text passed to the embedder is the full markdown file contents
 
 #### Scenario: Metadata captures provenance
 
 - **WHEN** the summary vector is upserted
-- **THEN** `metadata` includes `{ text: <markdown>, type: "summary", stepId, runId, agentId, path: "runs/{runId}/{stepId}/output/summary.md" }`
+- **THEN** `metadata` includes `{ text: <markdown>, type: "summary", stepId, runId, agentId, path: "runs/{runId}/{stepId}/summary.md" }`
 
 ### Requirement: Sandbox factory selects backend
 

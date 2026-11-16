@@ -29,7 +29,7 @@ export type LocalSlotIssue = {
     readonly permitted?: readonly string[];
 };
 
-/** One bound slot as the decision record keeps it: the value, its source, and the lines that carried its marker. */
+/** One bound slot: the value, its source, and the lines that carried its marker. */
 export type BoundLocalSlot = {
     readonly name: string;
     readonly value: LocalSlotValue;

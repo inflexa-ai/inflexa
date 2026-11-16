@@ -213,6 +213,29 @@ describe("createHttpKnowledgeClient", () => {
         expect(answer.match).toBe("unavailable");
     });
 
+    it("classifies a service that takes the connection and never answers as unavailable, for each operation", async () => {
+        // A refused connection fails fast. A service that hangs is the case that can stop a run, thus each
+        // operation must come back at the timeout.
+        const silent = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+        try {
+            const hung = createHttpKnowledgeClient({ baseUrl: `http://127.0.0.1:${String(silent.port)}`, apiKey: "k", maxRetries: 0, timeoutMs: 200 });
+            const answers = await Promise.all([
+                hung.recommend(SITUATION),
+                hung.check(SITUATION, [{ step_type: "differential_expression", method: "DESeq2" }]),
+                hung.render("tpl-x", {}),
+                hung.contract("tpl-x"),
+            ]);
+            expect(answers.map((answer) => ("match" in answer ? answer.match : "answered"))).toEqual([
+                "unavailable",
+                "unavailable",
+                "unavailable",
+                "unavailable",
+            ]);
+        } finally {
+            await silent.stop(true);
+        }
+    });
+
     it("gets the contract by the template id with the bearer key and parses every slot", async () => {
         served.length = 0;
         const answer = await client().contract("tpl-deseq2-two-group@1.0.0");

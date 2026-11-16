@@ -40,7 +40,7 @@ export function constructionSandboxStepDeps(): CoreWorkflowDeps["sandboxStep"] {
         resolveWorkspaceRoot: () => Promise.resolve("/tmp/sessions/analysis-001"),
         model: "test/model",
         buildAgent: () => refuse("buildAgent"),
-        resolveWritePrefix: () => refuse("resolveWritePrefix"),
+        resolveStepDir: () => refuse("resolveStepDir"),
     };
 }
 

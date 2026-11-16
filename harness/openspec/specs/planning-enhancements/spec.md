@@ -96,7 +96,11 @@ without any other context.
 #### Scenario: Successful plan
 
 - **WHEN** the planner submits a valid plan
-- **THEN** the output is `{ event: "plan_complete", planId, plan }`
+- **THEN** the output is `{ event: "plan_complete", planId, plan, claims? }`
+- **AND** the `plan` of the output is the outline of the plan that `read_plan` gives with no step id
+- **AND** the `plan` of the output has no `grounding.settings` on a step, because the stored plan and the plan card hold them
+- **AND** `claims` gives the id, the title, and the strength of each claim view that the stored plan keeps
+- **AND** `claims` is absent when the plan keeps no view
 
 #### Scenario: Clarification needed
 
@@ -384,9 +388,9 @@ The planner output schema MUST accept an optional `grounding` object on each ste
 - **WHEN** the plan is persisted and loaded
 - **THEN** each step carries its grounding unchanged
 
-### Requirement: The planner submits through tools that do not end its run
+### Requirement: The planner submits through terminal tools, and an accepted plan ends its run
 
-The planner MUST declare its search tools first and the terminal tools `submit_plan`, `request_clarification`, and `report_blocker` last. `submit_plan` checks a candidate and gives back the accepted plan or the structured issues. A candidate that arrives as a JSON-encoded string MUST be decoded before the check. No terminal tool ends the run, and no terminal tool writes to the database.
+The planner MUST declare its search tools first and the terminal tools `submit_plan`, `request_clarification`, and `report_blocker` last. `submit_plan` checks a candidate. It gives back `{ accepted: true, steps }` with the count of the steps, or the structured issues. The call record of an accepted submission MUST hold the plan, and the model does not read it. A candidate that arrives as a JSON-encoded string MUST be decoded before the check. A request that ends with an accepted plan MUST end the run, and the salvage request too. No other terminal tool ends the run, and no terminal tool writes to the database.
 
 #### Scenario: A refused candidate gets its issues
 
@@ -396,17 +400,22 @@ The planner MUST declare its search tools first and the terminal tools `submit_p
 #### Scenario: A plan that arrives as a JSON-encoded string
 
 - **WHEN** the planner submits a valid plan as a JSON-encoded string
-- **THEN** the call decodes it and gives back the accepted plan
+- **THEN** the call decodes it and accepts the plan
+
+#### Scenario: An accepted plan ends the run
+
+- **WHEN** the planner submits a valid plan
+- **THEN** the run sends no more requests, and the call record holds the plan
 
 #### Scenario: The knowledge tools ride with the search tools
 
 - **GIVEN** a `GeneratePlanDeps` with a knowledge client
 - **WHEN** the planner tools are built
-- **THEN** the list holds `knowledge_recommend` and `knowledge_check` before the terminal tools
+- **THEN** the list holds `knowledge_recommend`, `knowledge_claims`, and `knowledge_check` before the terminal tools
 
 ### Requirement: The tool persists the selected plan after the run
 
-After the run, `generate_plan` MUST select the outcome: the last accepted plan, else the last clarification, else the first blocker. It MUST persist an accepted plan once, under an id that a rerun gives again. The host MUST fill the snapshot and the template of each step from the knowledge answer of the run. The model does not copy them.
+After the run, `generate_plan` MUST select the outcome: the last accepted plan, else the last clarification, else the first blocker. It MUST persist an accepted plan once, under an id that a rerun gives again. The host MUST stamp the snapshot of each grounded step from the knowledge answer of the run. It MUST also fill an absent template and absent settings of a skeleton step (see the knowledge-plane-tools spec). The model does not copy them.
 
 #### Scenario: A rerun persists no second plan
 
@@ -417,7 +426,7 @@ After the run, `generate_plan` MUST select the outcome: the last accepted plan, 
 
 - **GIVEN** a run whose `knowledge_recommend` answer named a snapshot and a template
 - **WHEN** the plan persists
-- **THEN** each grounded step carries that snapshot and that template, whatever the candidate held
+- **THEN** each grounded step carries that snapshot, whatever the candidate held, and a skeleton step that held no template carries that template
 
 ### Requirement: The planner run is capped, with one salvage request
 
@@ -432,6 +441,8 @@ The planner run MUST have a step cap that `PLANNER_MAX_ITERATIONS` owns. When th
 
 When the planner of `generate_plan` ends with an accepted plan, the tool MUST emit one `data-plan` part for that plan, with the provenance of the caller. It MUST build the card from the result of the planner, with no read of the plan store, thus a replay gives the same card under the same id. Any other outcome MUST emit no plan card.
 
+The result of the planner MUST also give the full views of the claims of an accepted plan. The card MUST carry these views, thus the live card equals the card of the stored plan. The tool MUST remove the views from the result before the model gets it, because `claims` of `plan_complete` gives their titles. A result that an older version checkpointed has no views, and its card then has no `claims`.
+
 #### Scenario: A completed plan shows its card
 
 - **WHEN** `generate_plan` ends with `plan_complete` for the plan `pln-1a2b3c4d`
@@ -442,6 +453,13 @@ When the planner of `generate_plan` ends with an accepted plan, the tool MUST em
 
 - **WHEN** the planner reports a blocker
 - **THEN** `generate_plan` emits no `data-plan` part
+
+#### Scenario: The live card carries the claim views
+
+- **GIVEN** a planner that submits a plan whose step cites `R-0001@e7d0`
+- **WHEN** `generate_plan` ends with `plan_complete`
+- **THEN** the `data-plan` part holds the view of `R-0001@e7d0`, equal to the view of the card of the stored plan
+- **AND** the result that the model gets has no `claimViews` key
 
 ### Requirement: show_plan shows an earlier plan again
 

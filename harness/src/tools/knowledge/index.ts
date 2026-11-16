@@ -1,26 +1,32 @@
 /**
- * Knowledge barrel — the three tools of the knowledge plane and the client
+ * Knowledge barrel — the tools of the knowledge plane and the client
  * interface they share.
  *
- * `createKnowledgeTools` gives the two planner tools when a client is bound,
+ * `createKnowledgeTools` gives the three planner tools when a client is bound,
  * and nothing when it is not. Absence is the default state of the open-source
  * host, and it is a normal condition: no tool attaches, no description enters
  * the context, and the planner works from the prose skills as it does today.
- * The template tool binds per step, because it needs the mutator of the step.
+ * `run_template` binds per step, because it needs the mutator and the lease of
+ * the step, and only a template step gets it.
  */
 
 import { createHash } from "node:crypto";
 
+import { err } from "neverthrow";
+
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
+import type { BoundLease } from "../../sandbox/leases.js";
 import type { Tool } from "../define-tool.js";
 import type { WorkspaceMutator } from "../workspace/mutator.js";
 import type { KnowledgeClient } from "./client.js";
 import { createKnowledgeCheckTool } from "./check.js";
+import { createClaimShelf, createKnowledgeClaimsTool } from "./claims.js";
 import { createSnapshotPin } from "./pin.js";
 import { createKnowledgeRecommendTool, type KnowledgeRecommendDeps } from "./recommend.js";
-import { createKnowledgeTemplateTool } from "./template.js";
+import { createRunTemplateTool } from "./run-template.js";
 
 export * from "./client.js";
+export * from "./claims.js";
 export * from "./environment.js";
 export * from "./local-slots.js";
 export * from "./pin.js";
@@ -28,7 +34,7 @@ export * from "./skeleton.js";
 export * from "./check.js";
 export * from "./recommend.js";
 export * from "./situation.js";
-export * from "./template.js";
+export * from "./run-template.js";
 
 export type KnowledgeToolsDeps = {
     readonly client?: KnowledgeClient;
@@ -38,6 +44,8 @@ export type KnowledgeToolsDeps = {
     readonly imagePackagesFile?: string;
     /** Host path of the reference store, for the same join. */
     readonly refStorePath?: string;
+    /** The pool-scope inventory of the package store, for the same join: what a launch can link into the farm. */
+    readonly readPoolInventory?: EnvironmentStorePaths["readPoolInventory"];
     /** Receives each recommend answer the planner sees; see `KnowledgeRecommendDeps.onAnswer`. */
     readonly onRecommend?: KnowledgeRecommendDeps["onAnswer"];
     /** Called for each answer of `knowledge_check`; see `KnowledgeCheckDeps.onCheck`. */
@@ -45,13 +53,17 @@ export type KnowledgeToolsDeps = {
 };
 
 /**
- * The planner tools: `knowledge_recommend` and `knowledge_check`, or an empty
- * list with no client. The two share one pin: the first recommend answer
- * fixes the release of the plan, and each later call carries it.
+ * The planner tools: `knowledge_recommend`, `knowledge_claims`, and
+ * `knowledge_check`, or an empty list with no client. The recommend tool and
+ * the check share one pin: the first recommend answer fixes the release of
+ * the plan, and each later call carries it. The recommend tool and the claims
+ * tool share one shelf for the invocation: each answer keeps its claim views
+ * there, and the claims tool reads them.
  */
 export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
     if (!deps.client) return [];
     const pin = createSnapshotPin();
+    const shelf = createClaimShelf();
     return [
         createKnowledgeRecommendTool({
             client: deps.client,
@@ -59,8 +71,11 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
             farmLockFile: deps.farmLockFile,
             imagePackagesFile: deps.imagePackagesFile,
             refStorePath: deps.refStorePath,
+            readPoolInventory: deps.readPoolInventory,
             onAnswer: deps.onRecommend,
+            shelf,
         }),
+        createKnowledgeClaimsTool({ shelf }),
         createKnowledgeCheckTool({ client: deps.client, pin, onCheck: deps.onCheck }),
     ];
 }
@@ -79,8 +94,15 @@ const NO_MUTATOR: WorkspaceMutator = {
     recordWrite: () => undefined,
 };
 
+/** A lease that holds no sandbox: the definition of the template tool does not depend on it. */
+const NO_LEASE: BoundLease = {
+    acquire: () => Promise.resolve({ kind: "failed", detail: "no sandbox" }),
+    release: () => Promise.resolve(),
+    exec: () => Promise.resolve(err({ kind: "no_lease" })),
+};
+
 /**
- * The digest of the three tool definitions as this host registers them: the
+ * The digest of the tool definitions as this host registers them: the
  * id, the description, and the input schema of each, in id order. The
  * snapshot of the service pins its wire contract under its own tool
  * definition hash; this one names what the model saw, and a run records it,
@@ -88,7 +110,11 @@ const NO_MUTATOR: WorkspaceMutator = {
  * not a silent one.
  */
 export function knowledgeToolDefinitionHash(): string {
-    const tools = [...createKnowledgeTools({ client: NO_CLIENT }), createKnowledgeTemplateTool({ client: NO_CLIENT, mutator: NO_MUTATOR })];
+    const tools = [
+        ...createKnowledgeTools({ client: NO_CLIENT }),
+        createRunTemplateTool({ source: NO_CLIENT, template: "tpl-none", mutator: NO_MUTATOR, lease: NO_LEASE, workingDir: "/" }),
+    ];
     const definitions = tools.map((tool) => ({ id: tool.id, description: tool.description, schema: tool.jsonSchema })).sort((a, b) => (a.id < b.id ? -1 : 1));
     return `sha256:${createHash("sha256").update(JSON.stringify(definitions), "utf8").digest("hex")}`;
 }
+export * from "./template-binding.js";

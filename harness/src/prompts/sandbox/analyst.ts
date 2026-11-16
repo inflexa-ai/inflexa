@@ -35,8 +35,8 @@ skills hold the methods and the tools of each domain.
   implementation. Call R through rpy2 for one call, and write a native R script
   when most of the work is in R.
 - Write one short, direct script for the work of the step: the parameters and
-  the random seed at the top, then the load, the method, and the writes to
-  \`output/\`. The script must run again from a clean working directory with
+  the random seed at the top, then the load, the method, and the writes of
+  its results. The script must run again from a clean working directory with
   the same result.
 - Make a figure when it shows a finding of the step, or when the step asks for
   one.

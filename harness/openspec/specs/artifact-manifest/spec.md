@@ -7,9 +7,9 @@ pipeline: how a step's produced files are discovered, content-attested, written
 to the ledger, and registered through the injected `ArtifactRegistry` seam.
 
 A step's manifest is a **disk walk**, not a projection of provenance records.
-After the sandbox agent loop finishes, `walkStepArtifacts` walks the step's
-writable directory (`runs/{runId}/{stepId}/...`), hashes every file from disk,
-and infers each file's type from its subdirectory. The step-scoped
+After the sandbox agent loop finishes, `walkStepArtifacts` walks the step
+directory (`runs/{runId}/{stepId}/...`), hashes every file from disk,
+and infers each file's type from its extension. The step-scoped
 `ProvenanceCollector` is a *separate* concern — it carries the runtime
 input/script lineage edges (which inputs each command read), consumed only by
 the `ArtifactRegistry` call, never by the manifest. Disk is the source of truth
@@ -67,46 +67,50 @@ vector index is the sole source of truth for descriptions and discovery.
 
 ## Requirements
 
-### Requirement: The step manifest is a disk walk of the writable step directory
+### Requirement: The step manifest is a disk walk of the step directory
 
 The per-step artifact manifest SHALL be produced by `walkStepArtifacts`, which
-recursively walks the step's writable directory (`writePrefix`,
-`runs/{runId}/{stepId}/...`), and for each regular file emits an
-`ArtifactManifestEntry` of `{ stepId, runId, path, size, type, hash }` where
-`path` is relative to `writePrefix`, `hash` is the SHA-256 computed from disk via
-`computeSha256File`, and `type` is inferred from the path subdirectory by
-`inferArtifactType` (`output` | `figure` | `script` | `log` | `notebook`). The
-walk SHALL skip directories in `IGNORED_DIRS`. The manifest SHALL NOT be built
-from `ProvenanceCollector.getRecords()` — the collector holds lineage edges, not
-the manifest.
+recursively walks the step directory (`stepDir`, `runs/{runId}/{stepId}/...`).
+The step directory holds the work directory of the agent, `work/`. For each
+regular file the walk emits an `ArtifactManifestEntry` of
+`{ stepId, runId, path, size, type, hash }` where `path` is relative to
+`stepDir`, `hash` is the SHA-256 computed from disk via `computeSha256File`, and
+`type` is inferred from the file extension by `inferArtifactType` (`output` |
+`figure` | `script` | `log` | `notebook`). The walk SHALL skip directories in
+`IGNORED_DIRS`, and it SHALL skip the `summary.md` of the host at the root of
+the step directory. The manifest SHALL NOT be built from
+`ProvenanceCollector.getRecords()` — the collector holds lineage edges, not the
+manifest.
 
-`inferArtifactType` SHALL read a folder segment `figures`, `scripts`, `logs`, or
-`notebooks` at the start of the path or after a `/`. Thus a relative path and a
-rooted path give the same type. A path with none of these folder segments gives
-`output`. A segment that only starts with a folder name, for example
-`figures_raw`, is not that folder.
+`inferArtifactType` SHALL read the extension of the file name, with no regard to
+case. A folder name SHALL NOT give a type, because the agent gives its work
+directory its own structure. An image or a PDF extension gives `figure`. A
+`.py`, `.r`, `.sh`, `.js`, `.ts`, or `.jl` extension gives `script`. An
+`.ipynb`, `.rmd`, or `.qmd` extension gives `notebook`. A `.log` extension gives
+`log`. Each other file, and a file with no extension, gives `output`.
 
 #### Scenario: Step produces agent-written and command-produced files
 
-- **GIVEN** a step wrote `scripts/analysis.py` via `write_file` and then ran it, producing `output/results.csv`, `figures/volcano.png`, and `logs/run.log`
-- **WHEN** `walkStepArtifacts` walks the step's writable directory
-- **THEN** all four files appear in the manifest, each with a SHA-256 hash computed from disk and the type inferred from its subdirectory
+- **GIVEN** a step wrote `work/analysis.py` via `write_file` and then ran it, producing `work/results.csv`, `work/plots/volcano.png`, and `work/run.log`
+- **WHEN** `walkStepArtifacts` walks the step directory
+- **THEN** all four files appear in the manifest, each with a SHA-256 hash computed from disk and the type inferred from its extension
 - **AND** no provenance-collector record is consulted to build the manifest
 
-#### Scenario: A top-level folder of the step gives its type
+#### Scenario: The extension gives the type
 
-- **WHEN** `inferArtifactType` reads `figures/volcano.png`, `scripts/a.py`, `logs/run.log`, and `notebooks/n.ipynb`
+- **WHEN** `inferArtifactType` reads `volcano.PNG`, `a.py`, `run.log`, and `n.ipynb`
 - **THEN** the types are `figure`, `script`, `log`, and `notebook`
 
-#### Scenario: A nested folder gives its type
+#### Scenario: A folder name gives no type
 
-- **WHEN** `inferArtifactType` reads `output/figures/volcano.png` and `/a1/runs/r1/s1/figures/volcano.png`
-- **THEN** each type is `figure`
-
-#### Scenario: A file outside the typed folders is output
-
-- **WHEN** `inferArtifactType` reads `output/results.csv`, `summary.md`, and `figures_raw/x.png`
+- **WHEN** `inferArtifactType` reads `figures/results.csv` and `scripts/notes`
 - **THEN** each type is `output`
+
+#### Scenario: The summary of the host is not walked
+
+- **GIVEN** a step directory that holds `summary.md` beside `work/`
+- **WHEN** `walkStepArtifacts` walks the step directory
+- **THEN** the manifest holds no entry for `summary.md`
 
 #### Scenario: Ignored directories are not walked
 
@@ -118,19 +122,20 @@ rooted path give the same type. A path with none of these folder segments gives
 The `cortex_artifacts` table SHALL be the local ledger for file registration and
 provenance tracking. Each row SHALL carry: `analysis_id` (TEXT, NOT NULL),
 `path` (TEXT, NOT NULL — analysis-relative canonical path), `hash` (TEXT, NOT
-NULL), `size` (BIGINT, NOT NULL), `role` (TEXT, NOT NULL — one of `'input'` or
-`'step_output'`), `source_step` (TEXT, nullable), `source_run` (TEXT, nullable),
+NULL), `size` (BIGINT, NOT NULL), `role` (TEXT, NOT NULL — one of `'input'`,
+`'step_output'`, or `'step_summary'`), `source_step` (TEXT, nullable), `source_run` (TEXT, nullable),
 `artifact_id` (TEXT, nullable — external artifact ID, set only when the registry
 returns one), `file_id` (TEXT, nullable — external file ID, set only when an
 adapter syncs bytes), `file_type` (TEXT, nullable), `unrecoverable_at` (TEXT,
-nullable), and `created_at` (TEXT, NOT NULL). The primary key is `(analysis_id,
+nullable), `template` (JSONB, nullable — the template of a script that
+`run_template` wrote), and `created_at` (TEXT, NOT NULL). The primary key is `(analysis_id,
 path)`. The table SHALL NOT store file descriptions or metadata — the vector
 index owns those.
 
 #### Scenario: Artifact registered with canonical path
 
-- **WHEN** a step produces `output/results.csv` in the sandbox
-- **THEN** the artifact is registered with `path = 'runs/{runId}/{stepId}/output/results.csv'`
+- **WHEN** a step produces `results.csv` in its work directory in the sandbox
+- **THEN** the artifact is registered with `path = 'runs/{runId}/{stepId}/work/results.csv'`
 - **AND** `hash` contains the SHA-256 content hash and `role = 'step_output'`
 
 ### Requirement: The manifest is reconciled against disk before registration
@@ -237,8 +242,10 @@ and no drop SHALL ever register a hashless lineage edge.
 
 `registerStepArtifacts(db, registry, input, session)` SHALL: (1) build the
 `cortex_artifacts` rows from the reconciled manifest — `role = 'step_output'`,
-`path` prefixed `runs/{runId}/{stepId}/`, `file_type` from the entry's inferred
-type — and upsert them; (2) call the injected `ArtifactRegistry.register(input,
+or `role = 'step_summary'` for the `summary.md` of the host, `path` prefixed
+`runs/{runId}/{stepId}/`, `file_type` from the entry's inferred type, and
+`template` from the provenance record of a script that `run_template` wrote —
+and upsert them; (2) call the injected `ArtifactRegistry.register(input,
 session)`; (3) write each returned external id back via `updateArtifactId` for
 paths the local upsert owns. If `register` gives `ok`, `registerStepArtifacts` MUST return
 `{ localCount, externalRegistered, externalFailed, failureDetails }` as an `ok` value. When the artifacts array is
@@ -415,7 +422,7 @@ only signal that degradation occurred.
 
 `upsertArtifact` and `upsertArtifacts` SHALL use a Postgres `INSERT ... ON
 CONFLICT (analysis_id, path) DO UPDATE` that updates `hash`, `size`, `role`,
-`source_step`, `source_run`, and `COALESCE`s `file_type` and `file_id`.
+`source_step`, `source_run`, and `template`, and `COALESCE`s `file_type` and `file_id`.
 `upsertArtifacts` SHALL write every entry in a single round-trip via a multi-row
 `INSERT ... VALUES (...), (...), ...`. Re-execution of a step SHALL update the
 existing row rather than fail on the duplicate key.
@@ -432,13 +439,13 @@ external registration by `updateArtifactId`) and `file_id` (set when an adapter
 reports an external file identity, applied in batch by `updateFileIds`). A
 registry realization with no external system (the OSS noop) MAY leave both null
 because the bytes already live in the local workspace tree. `queryUnsyncedStepArtifacts(pool, resourceId, runId,
-stepId)` SHALL return step-output rows where `artifact_id IS NOT NULL AND file_id
-IS NULL`, ordered by `created_at`.
+stepId)` SHALL return the `step_output` and `step_summary` rows of the step where
+`artifact_id IS NOT NULL AND file_id IS NULL`, ordered by `created_at`.
 
 #### Scenario: Query step artifacts awaiting byte sync
 
 - **WHEN** `queryUnsyncedStepArtifacts(pool, resourceId, runId, stepId)` is called
-- **THEN** it returns rows with `artifact_id IS NOT NULL AND file_id IS NULL AND role = 'step_output'`, ordered by `created_at`
+- **THEN** it returns rows with `artifact_id IS NOT NULL AND file_id IS NULL AND role IN ('step_output', 'step_summary')`, ordered by `created_at`
 
 #### Scenario: External sync lifecycle
 
@@ -500,7 +507,7 @@ The read MUST give each ledger row of the analysis that the filters select. This
 - `path`, the workspace-relative path of the row
 - `size`, in bytes, as a number
 - `fileType`, the `file_type` of the row, or `null`
-- `role`, `input` or `step_output`
+- `role`, `input`, `step_output`, or `step_summary`
 - `runId` and `stepId`, the `source_run` and the `source_step` of the row, or `null`
 - `createdAt`, as the ledger stores it
 
@@ -519,7 +526,7 @@ The filters MUST combine with AND. A filter that is absent MUST select each row:
 - `fileType` selects the rows whose `file_type` is equal to the value.
 - `q` selects the rows whose path holds the value, with no regard to case. Each character of `q` MUST match only itself, thus `%` and `_` are not wildcards.
 - `path` selects the row whose path is equal to the value. Case is significant.
-- `role` is `input` or `step_output`. It selects the rows whose `role` is equal to the value.
+- `role` is `input`, `step_output`, or `step_summary`. It selects the rows whose `role` is equal to the value.
 - `extensions` is a list of extensions in lower case. It selects the rows whose path has an extension that is in the list. A row with no extension never matches. An empty list MUST select each row.
 
 `extensionCounts` MUST give one entry `{ extension, count }` for each extension that a selected row has. It MUST give one entry with `extension` `null` for the selected rows that have no extension. It MUST give no entry with a count of 0. The entries MUST be in the order of the extension, and the `null` entry MUST come last. The sum of the counts MUST be equal to `total`. The entries do not depend on the sort, the limit, or the offset.

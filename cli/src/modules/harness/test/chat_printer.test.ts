@@ -52,6 +52,145 @@ describe("subAgentActivityLabel", () => {
 });
 
 describe("readPlanCard", () => {
+    test("joins each claim of a grounded step to its view by the id and the snapshot, and dedupes the sources", () => {
+        const source = { doi: "10.1093/bioinformatics/btw014", title: "edgeR QL", year: 2016 };
+        const card = readPlanCard({
+            type: "data-plan",
+            id: "pres-1",
+            planId: "pln-abc12345",
+            steps: [
+                {
+                    id: "T1S2",
+                    name: "Fit",
+                    agent: "bulk",
+                    question: "q",
+                    depends_on: [],
+                    maxSteps: 30,
+                    grounding: {
+                        status: "grounded",
+                        snapshot: "sha256:71ac",
+                        claims: ["R-0028@d560", "R-0031@e7d0", "R-0099@0000", "R-0040@e7d0"],
+                        template: "tpl-edger-ql@1.8.0",
+                        settings: [
+                            { step: "differential_expression", name: "fdr", value: 0.05, source: "doi:10.1093/bioinformatics/btw014" },
+                            { step: "differential_expression", name: "contrasts", value: ["a", "b"] },
+                        ],
+                        reason: "edgeR per R-0028",
+                    },
+                },
+            ],
+            claims: [
+                { id: "R-0028@d560", snapshot: "sha256:71ac", title: "Use the QL F-test", statement: "s", strength: "consensus", evidence: [source] },
+                // The same paper under a DOI in a different case is one source.
+                {
+                    id: "R-0031@e7d0",
+                    snapshot: "sha256:71ac",
+                    statement: "Filter the low counts",
+                    strength: "moderate",
+                    evidence: [{ ...source, doi: "10.1093/BIOINFORMATICS/btw014" }],
+                },
+                // A view of the same id in a different release does not match.
+                { id: "R-0099@0000", snapshot: "sha256:ffff", title: "Another release", statement: "s", strength: "weak", evidence: [] },
+                // A url keeps its case, thus two urls that differ in case are two sources.
+                {
+                    id: "R-0040@e7d0",
+                    snapshot: "sha256:71ac",
+                    title: "Read the manual",
+                    statement: "s",
+                    strength: "weak",
+                    evidence: [
+                        { url: "https://example.org/A.pdf", title: "Manual A", year: 2020 },
+                        { url: "https://example.org/a.pdf", title: "Manual a", year: 2020 },
+                    ],
+                },
+            ],
+        });
+
+        expect(present(card.steps[0]).grounding).toEqual({
+            status: "grounded",
+            snapshot: "sha256:71ac",
+            template: "tpl-edger-ql@1.8.0",
+            reason: "edgeR per R-0028",
+            rules: [
+                { id: "R-0028@d560", title: "Use the QL F-test", strength: "consensus" },
+                { id: "R-0031@e7d0", title: "Filter the low counts", strength: "moderate" },
+                { id: "R-0099@0000", title: "", strength: "" },
+                { id: "R-0040@e7d0", title: "Read the manual", strength: "weak" },
+            ],
+            settings: [
+                { step: "differential_expression", name: "fdr", value: "0.05", source: "doi:10.1093/bioinformatics/btw014" },
+                { step: "differential_expression", name: "contrasts", value: "a, b", source: "" },
+            ],
+            departures: [],
+            sources: [
+                { title: "edgeR QL", year: 2016, ref: "doi:10.1093/bioinformatics/btw014" },
+                { title: "Manual A", year: 2020, ref: "https://example.org/A.pdf" },
+                { title: "Manual a", year: 2020, ref: "https://example.org/a.pdf" },
+            ],
+        });
+    });
+
+    test("shows a setting as the run binds it: the value of a departure, or not applied, with the departure as its source", () => {
+        const card = readPlanCard({
+            type: "data-plan",
+            id: "pres-1",
+            planId: "pln-abc12345",
+            steps: [
+                {
+                    id: "T1S1",
+                    name: "QC",
+                    agent: "bulk",
+                    question: "q",
+                    depends_on: [],
+                    maxSteps: 30,
+                    grounding: {
+                        status: "grounded",
+                        snapshot: "sha256:71ac",
+                        claims: ["R-0001@e7d0", "R-0147@3c1d"],
+                        settings: [
+                            { step: "qc_sample_structure", name: "n_top_genes_pca", value: 500, source: "doi:10.1186/s13059-014-0550-8" },
+                            { step: "qc_bias", name: "gc_bias", value: true },
+                            { step: "qc_bias", name: "alpha", value: 0.05 },
+                            { step: "differential_expression", name: "covariates", value: ["batch"] },
+                        ],
+                        departures: [
+                            { rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" },
+                            { rule: "R-0001@e7d0", setting: "covariates", value: [], reason: "the design has no covariate" },
+                            { rule: "R-0147@3c1d", setting: "gc_bias", reason: "the inputs hold no amplicon sequence" },
+                            { rule: "R-0147@3c1d", reason: "the plan runs no length diagnostic" },
+                        ],
+                        reason: "QC per R-0001@e7d0",
+                    },
+                },
+            ],
+        });
+
+        const grounding = present(card.steps[0]).grounding;
+        expect(grounding?.settings).toEqual([
+            { step: "qc_sample_structure", name: "n_top_genes_pca", value: "364", source: "departure from R-0001@e7d0" },
+            { step: "qc_bias", name: "gc_bias", value: "true", source: "not applied: departure from R-0147@3c1d" },
+            { step: "qc_bias", name: "alpha", value: "0.05", source: "" },
+            { step: "differential_expression", name: "covariates", value: "[]", source: "departure from R-0001@e7d0" },
+        ]);
+        expect(grounding?.departures).toEqual([
+            { rule: "R-0001@e7d0", change: "value", setting: "n_top_genes_pca", value: "364", reason: "the panel holds 364 targets" },
+            { rule: "R-0001@e7d0", change: "value", setting: "covariates", value: "[]", reason: "the design has no covariate" },
+            { rule: "R-0147@3c1d", change: "not_applied", setting: "gc_bias", value: "", reason: "the inputs hold no amplicon sequence" },
+            { rule: "R-0147@3c1d", change: "left_out", setting: "", value: "", reason: "the plan runs no length diagnostic" },
+        ]);
+    });
+
+    test("gives no grounding to a step that has none", () => {
+        const card = readPlanCard({
+            type: "data-plan",
+            id: "pres-1",
+            planId: "pln-abc12345",
+            steps: [{ id: "S1", name: "align", agent: "exec", question: "q", depends_on: [], maxSteps: 30 }],
+        });
+
+        expect(present(card.steps[0]).grounding).toBeUndefined();
+    });
+
     test("extracts planId, title, and per-step fields", () => {
         const card = readPlanCard({
             type: "data-plan",

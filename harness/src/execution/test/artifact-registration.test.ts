@@ -19,6 +19,9 @@ import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
 import { registerStepArtifacts } from "../artifact-registration.js";
 import type { ArtifactRegistry, ExternalRegistrationResult } from "../artifact-registry.js";
 import { presentAt } from "../../lib/present.js";
+import { withSchema } from "../../__tests__/setup/postgres.js";
+import { upsertAnalysis } from "../../state/analyses.js";
+import { queryStepSummaryPaths, queryStepTemplateArtifacts } from "../../state/artifacts.js";
 
 const RID = "an-1";
 const RUN = "run-1";
@@ -144,5 +147,61 @@ describe("registerStepArtifacts — a failed ledger write", () => {
         const failure = registration._unsafeUnwrapErr();
         expect(failure.kind).toBe("ledger_failed");
         expect(failure.kind === "ledger_failed" && failure.error.op).toBe("artifacts.upsertArtifacts");
+    });
+});
+
+describe("registerStepArtifacts — the role and the template of a row", () => {
+    it("registers the summary with the step_summary role, and a rendered script with the facts of its template", async () => {
+        const { pool, drop } = await withSchema("artifact-registration-template");
+        try {
+            (await upsertAnalysis(pool, RID, null))._unsafeUnwrap();
+            const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+            collector.recordFileToolWrite({
+                path: `runs/${RUN}/${STEP}/work/qc.R`,
+                hash: HASH,
+                size: 10,
+                toolName: "run_template",
+                invocationId: "inv-1",
+                template: {
+                    template: "tpl-qc-eda@1.4.0",
+                    label: "QC",
+                    method: { id: "M-0001", label: "VST and PCA" },
+                    snapshot: "sha256:71ac",
+                    settings: [{ name: "alpha", value: 0.05, source: "plan" }],
+                    overrides: [],
+                    environmentMatch: "exact",
+                },
+            });
+            const artifacts: ArtifactManifestEntry[] = [
+                { stepId: STEP, runId: RUN, path: "work/qc.R", size: 10, type: "script", hash: HASH },
+                { stepId: STEP, runId: RUN, path: "work/pca.csv", size: 10, type: "output", hash: HASH },
+                { stepId: STEP, runId: RUN, path: "summary.md", size: 10, type: "output", hash: HASH },
+            ];
+
+            (
+                await registerStepArtifacts(
+                    pool,
+                    registryReturning({ registered: [], failed: [], failedCount: 0 }),
+                    { resourceId: RID, runId: RUN, stepId: STEP, artifacts, collector },
+                    session,
+                )
+            )._unsafeUnwrap();
+
+            expect((await queryStepSummaryPaths(pool, RID, RUN))._unsafeUnwrap()).toEqual(new Map([[STEP, `runs/${RUN}/${STEP}/summary.md`]]));
+            expect((await queryStepTemplateArtifacts(pool, RID, RUN, STEP))._unsafeUnwrap()).toEqual([
+                {
+                    path: `runs/${RUN}/${STEP}/work/qc.R`,
+                    template: {
+                        template: "tpl-qc-eda@1.4.0",
+                        label: "QC",
+                        method: { id: "M-0001", label: "VST and PCA" },
+                        snapshot: "sha256:71ac",
+                        environmentMatch: "exact",
+                    },
+                },
+            ]);
+        } finally {
+            await drop();
+        }
     });
 });

@@ -248,12 +248,14 @@ describe("inspectRun (dependency-bearing factory)", () => {
         run: Record<string, unknown>,
         steps: Array<Record<string, unknown>>,
         pauses: Array<Record<string, unknown>> = [],
+        summaries: Array<{ source_step: string; path: string }> = [],
     ): InspectRunQuerier {
         return {
             query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
                 if (text.includes("cortex_step_executions")) return Promise.resolve({ rows: steps, rowCount: steps.length });
                 if (text.includes("cortex_paused_work")) return Promise.resolve({ rows: pauses, rowCount: pauses.length });
+                if (text.includes("cortex_artifacts")) return Promise.resolve({ rows: summaries, rowCount: summaries.length });
                 return Promise.resolve({ rows: [run], rowCount: 1 });
             },
         };
@@ -280,6 +282,24 @@ describe("inspectRun (dependency-bearing factory)", () => {
         expect(synthesisStep).not.toHaveProperty("summaryPath");
         // The synthesis output is still reachable — via the run-level path.
         expect(run.synthesisPath).toBe("runs/run-1/synthesis.json");
+    });
+
+    it("gives the registered summary of a step, and the summary path of the old layout for a step with no registered summary", async () => {
+        const pool = poolForRunDetail(
+            runRow({ run_id: "run-1", synthesis_status: "produced" }),
+            [stepRow({ step_id: "T1S1" }), stepRow({ step_id: "T1S2" })],
+            [],
+            [{ source_step: "T1S2", path: "runs/run-1/T1S2/summary.md" }],
+        );
+        const { ctx } = makeToolContext();
+
+        const result = (await createInspectRunTool(pool).execute({ runId: "run-1" }, ctx))._unsafeUnwrap();
+        if (!("steps" in result)) throw new Error("expected the terminal inspection variant");
+
+        expect(result.steps.map((step) => [step.stepId, step.summaryPath])).toEqual([
+            ["T1S1", "runs/run-1/T1S1/output/summary.md"],
+            ["T1S2", "runs/run-1/T1S2/summary.md"],
+        ]);
     });
 
     it("reports running state and withholds every output path", async () => {
@@ -388,7 +408,8 @@ describe("inspectRun (dependency-bearing factory)", () => {
         const pool: InspectRunQuerier = {
             query: (queryOrConfig) => {
                 const text = typeof queryOrConfig === "string" ? queryOrConfig : queryOrConfig.text;
-                if (text.includes("cortex_step_executions") || text.includes("cortex_paused_work")) return Promise.resolve({ rows: [], rowCount: 0 });
+                if (text.includes("cortex_step_executions") || text.includes("cortex_paused_work") || text.includes("cortex_artifacts"))
+                    return Promise.resolve({ rows: [], rowCount: 0 });
                 const row = presentAt(rows, Math.min(reads++, rows.length - 1));
                 return Promise.resolve({ rows: [row], rowCount: 1 });
             },

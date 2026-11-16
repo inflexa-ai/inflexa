@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 
-/** Artifact type inferred from the step subdirectory. */
+/** Artifact type inferred from the file extension. */
 export const ArtifactTypeSchema = z.enum(["output", "figure", "script", "log", "notebook"]);
 
 export type ArtifactType = z.infer<typeof ArtifactTypeSchema>;
@@ -22,7 +22,7 @@ export const ArtifactManifestEntrySchema = z.object({
     path: z.string(),
     /** File size in bytes. */
     size: z.number(),
-    /** Artifact type inferred from subdirectory. */
+    /** Artifact type inferred from the file extension. */
     type: ArtifactTypeSchema,
     /** SHA-256 content hash for integrity verification (e.g., sha256:abcdef...). */
     hash: z.string().optional(),
@@ -30,17 +30,20 @@ export const ArtifactManifestEntrySchema = z.object({
 
 export type ArtifactManifestEntry = z.infer<typeof ArtifactManifestEntrySchema>;
 
-const FOLDER_TYPES = [
-    ["figures", "figure"],
-    ["scripts", "script"],
-    ["logs", "log"],
-    ["notebooks", "notebook"],
-] as const satisfies ReadonlyArray<readonly [string, ArtifactType]>;
+/**
+ * The type of a file by its extension. The agent of a step gives its work directory its own structure, thus no
+ * folder name states the type. Each other extension is an output.
+ */
+const EXTENSION_TYPES: ReadonlyMap<string, ArtifactType> = new Map([
+    ...[".png", ".jpg", ".jpeg", ".gif", ".svg", ".tif", ".tiff", ".webp", ".pdf"].map((extension) => [extension, "figure"] as const),
+    ...[".py", ".r", ".sh", ".js", ".ts", ".jl"].map((extension) => [extension, "script"] as const),
+    ...[".ipynb", ".rmd", ".qmd"].map((extension) => [extension, "notebook"] as const),
+    [".log", "log"] as const,
+]);
 
-/** Infer artifact type from a file path. A folder segment at the start of the path or after a `/` gives its type. */
+/** Infer artifact type from a file path, by the extension of its file name. */
 export function inferArtifactType(filePath: string): ArtifactType {
-    for (const [folder, type] of FOLDER_TYPES) {
-        if (filePath.startsWith(`${folder}/`) || filePath.includes(`/${folder}/`)) return type;
-    }
-    return "output";
+    const name = filePath.slice(filePath.lastIndexOf("/") + 1).toLowerCase();
+    const dot = name.lastIndexOf(".");
+    return dot <= 0 ? "output" : (EXTENSION_TYPES.get(name.slice(dot)) ?? "output");
 }

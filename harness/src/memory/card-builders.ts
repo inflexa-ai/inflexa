@@ -21,9 +21,9 @@ import type { Querier } from "../state/db.js";
 
 import { tryQuery, type DbError } from "../lib/db-result.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
-import type { PlanPart } from "../contracts/chat-parts.js";
+import type { PlanClaimView, PlanPart } from "../contracts/chat-parts.js";
 import { PlanPartSchema } from "../contracts/schemas/chat-parts.js";
-import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
+import { AnalysisPlanSchema, type ClaimView } from "../schemas/workflow-state.js";
 import { loadPlan, loadPlanRecord, type PlanRecord, type PlanRowQuerier } from "../state/index.js";
 import { parseStructureUrl } from "../contracts/structure-source.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
@@ -35,6 +35,8 @@ export type PlanCardData = {
     parentPlanId?: string;
     title?: string;
     steps: unknown;
+    /** The views of the claims that the steps cite. Absent when the plan keeps none. */
+    claims?: PlanClaimView[];
     analytical_narrative: unknown;
     omicsType: unknown;
     omicsSubtype: unknown;
@@ -83,7 +85,27 @@ export function planCardOf(record: Pick<PlanRecord, "planId" | "plan" | "parentP
         omicsSubtype: parsed.data.omicsSubtype,
     };
     if (record.parentPlanId !== null) card.parentPlanId = record.parentPlanId;
+    if (parsed.data.claims !== undefined && parsed.data.claims.length > 0) card.claims = parsed.data.claims.map(planClaimViewOf);
     return card;
+}
+
+/** The card view of a stored claim view: the keys that the part schema keeps, thus the live card equals the stored card. */
+function planClaimViewOf(view: ClaimView): PlanClaimView {
+    const out: PlanClaimView = {
+        id: view.id,
+        snapshot: view.snapshot,
+        statement: view.statement,
+        strength: view.strength,
+        evidence: view.evidence.map((source) => {
+            const entry: PlanClaimView["evidence"][number] = { title: source.title, year: source.year };
+            if (source.doi !== undefined) entry.doi = source.doi;
+            if (source.pmid !== undefined) entry.pmid = source.pmid;
+            if (source.url !== undefined) entry.url = source.url;
+            return entry;
+        }),
+    };
+    if (view.title !== undefined) out.title = view.title;
+    return out;
 }
 
 /** The `data-plan` part of a stored plan record, with the title of the plan. The

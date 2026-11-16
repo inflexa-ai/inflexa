@@ -8,7 +8,6 @@
  */
 
 import { chmod, mkdir } from "node:fs/promises";
-import { join } from "node:path";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { V1Toleration } from "@kubernetes/client-node";
@@ -170,12 +169,11 @@ export type CreateSandboxClientConfig = {
  * is not an error. A read-only sandbox has no writable mount, so there is
  * nothing to pre-create.
  *
- * The writable tree is the step directory with its five artifact subdirs, or the
- * declared write tail as one directory. `sandboxWriteTail` decides which, so the
- * directory the host makes and the directory the sandbox mounts are the same one,
- * and the run path keeps the tree it always had.
+ * The writable tree is the work directory of the step, or the declared write tail,
+ * as one directory. `sandboxWriteTail` decides which, so the directory the host
+ * makes and the directory the sandbox mounts are the same one.
  *
- * `stepTreeAccess: "world-writable"` chmods the directory and each subdir so the
+ * `stepTreeAccess: "world-writable"` chmods the directory so the
  * uid-1000 sandbox workload can write them through engines that honor host bind
  * ownership. The chmod is explicit, not `mkdir`'s `mode` option: the process
  * umask masks `mkdir`'s mode, and on replay the dirs already exist so `mkdir`
@@ -193,11 +191,7 @@ export async function precreateStepTree(
     // resolved root.
     const writeDir = tailWritePrefix({ workspaceRoot: await deps.resolveWorkspaceRoot(coords.analysisId), tail: write.tail });
     await mkdir(writeDir, { recursive: true });
-    await Promise.all(write.subdirs.map((sub) => mkdir(join(writeDir, sub), { recursive: true })));
-    if (deps.stepTreeAccess === "world-writable") {
-        await chmod(writeDir, 0o777);
-        await Promise.all(write.subdirs.map((sub) => chmod(join(writeDir, sub), 0o777)));
-    }
+    if (deps.stepTreeAccess === "world-writable") await chmod(writeDir, 0o777);
 }
 
 /** Pre-create the directory of the exec records of the lease, which each machine of the lease mounts read-write. */

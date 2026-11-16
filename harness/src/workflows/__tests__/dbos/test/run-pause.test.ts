@@ -127,7 +127,7 @@ function stepDeps(current: RunCase, stepId: string): SandboxStepDeps {
                 tools: [createSubmitFileMetadataTool(fileMetadata)],
                 maxIterations: 4,
             }),
-        resolveWritePrefix: (input) => Promise.resolve(join(workspaceRoot, "runs", input.runId, input.stepId)),
+        resolveStepDir: (input) => Promise.resolve(join(workspaceRoot, "runs", input.runId, input.stepId)),
     };
 }
 

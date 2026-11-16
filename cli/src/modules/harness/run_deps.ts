@@ -128,7 +128,7 @@ export type RunEngineComposition = {
     readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
     /**
      * The knowledge plane client, when the `knowledge` config block names an endpoint and the
-     * environment holds the key. Absent, no sandbox agent gets `knowledge_template` and the
+     * environment holds the key. Absent, no template step can run its template and the
      * planner gets no knowledge tool: the default state of the open-source CLI.
      */
     readonly knowledge?: KnowledgeClient;
@@ -167,7 +167,7 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
         citationResolver: ctx.citationResolver,
-        knowledge: comp.knowledge,
+        templateSource: comp.knowledge,
         scriptRuntime: comp.scriptRuntime,
         reportsBlocker: ctx.reportsBlocker,
         fileMetadata: ctx.fileMetadata,
@@ -177,7 +177,7 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
             workspaceRoot: await comp.resolveWorkspaceRoot(ctx.input.analysisId),
             analysisId: ctx.input.analysisId,
             allowedWritePrefix: ctx.stepWritePrefix,
-            templateBinding: ctx.input.templateBinding,
+            template: ctx.input.template,
         },
     };
 
@@ -203,10 +203,9 @@ async function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuild
  * composition's stable delegating artifact registry ({@link
  * RunEngineComposition.sandboxEmitters}) and the catalog-backed `buildAgent` are
  * the only run-specific realizations; everything else is a straight pass-through
- * of the shared backends. `resolveWritePrefix` follows the harness's own path
+ * of the shared backends. `resolveStepDir` follows the harness's own path
  * convention (`workspace/paths.ts`) resolved to an ABSOLUTE path under the
- * analysis's workspace root, matching how the profile path builds
- * `allowedWritePrefix`.
+ * analysis's workspace root.
  *
  * The injected registry emits `prov.command_executed` / `prov.file_written` /
  * `prov.input_used` events, each stamped with the composed `{provider}/{model}` name (never
@@ -234,7 +233,7 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDe
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         model: comp.sandbox.model,
         buildAgent: (ctx) => buildStepAgent(comp, ctx),
-        resolveWritePrefix: async (input: SandboxStepInput) => join(await comp.resolveWorkspaceRoot(input.analysisId), runStepDir(input.runId, input.stepId)),
+        resolveStepDir: async (input: SandboxStepInput) => join(await comp.resolveWorkspaceRoot(input.analysisId), runStepDir(input.runId, input.stepId)),
     };
 }
 
@@ -255,8 +254,8 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDe
  * the other two ride along because the seam is one type. With no installed seam the field
  * is absent, which the harness reads as absence and never as an error.
  *
- * `knowledge` is the same client the step agents and the planner draw: the parent reads
- * the template contract of a grounded step through it at dispatch and binds the plan
+ * `templateSource` is the knowledge client that the step agents and the planner draw: the parent
+ * reads the template contract of a template step through it at dispatch and binds the plan
  * settings to the render. Absent, the seed says the contract was not retrieved.
  */
 export function buildExecuteAnalysisDeps(
@@ -264,8 +263,8 @@ export function buildExecuteAnalysisDeps(
     sandboxStepCallable: ExecuteAnalysisDeps["sandboxStepCallable"],
     runAuthorizer: RunAuthorizer,
 ): ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]> {
-    const knowledgeOption: { knowledge?: KnowledgeClient } = {};
-    if (comp.knowledge) knowledgeOption.knowledge = comp.knowledge;
+    const templateSourceOption: { templateSource?: KnowledgeClient } = {};
+    if (comp.knowledge) templateSourceOption.templateSource = comp.knowledge;
     return {
         pool: comp.pool,
         provider: comp.sandbox.provider,
@@ -276,7 +275,7 @@ export function buildExecuteAnalysisDeps(
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
-        ...knowledgeOption,
+        ...templateSourceOption,
         provenance: provenanceSeam(),
         // The run-observation seam, injected beside the provenance one and sharing nothing with it.
         // Unlike the run emit this is NOT a swappable delegating handle: it binds no model and no

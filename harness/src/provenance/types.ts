@@ -11,8 +11,31 @@ import { z } from "zod";
 
 // ── Producer ────────────────────────────────────────────────────────
 
+/** A setting value of a template render: a scalar, or a list of strings. */
+const TemplateSettingValueSchema = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
+
 /**
- * File tool write (write_file, edit_file). Carries the loop's tool-call
+ * The facts of one template render: which template, from which release, with which settings. The write of the
+ * rendered script carries them, thus the script version that the render wrote names its template.
+ */
+export const TemplateRenderSchema = z.object({
+    /** The template id with its version, for example `tpl-deseq2-two-group@1.0.0`. */
+    template: z.string(),
+    label: z.string(),
+    method: z.object({ id: z.string(), label: z.string() }),
+    /** The snapshot digest of the release that served the render. */
+    snapshot: z.string(),
+    /** Each setting that the script reads, with its value and where the value came from (the plan, a default, the agent). */
+    settings: z.array(z.object({ name: z.string(), value: TemplateSettingValueSchema.optional(), source: z.string() })),
+    /** Each plan value that the agent changed, with the reason. */
+    overrides: z.array(z.object({ slot: z.string(), reason: z.string() })),
+    /** How the installed packages matched the pins of the template. */
+    environmentMatch: z.string(),
+});
+export type TemplateRender = z.infer<typeof TemplateRenderSchema>;
+
+/**
+ * File tool write (write_file, edit_file, run_template). Carries the loop's tool-call
  * `invocationId` — replay-stable, and the identity the bridge mixes into the
  * deterministic call-activity QName — instead of a wall-clock timestamp,
  * which would be re-minted on every durable replay.
@@ -21,6 +44,8 @@ export const FileToolProducerSchema = z.object({
     type: z.literal("file_tool"),
     tool: z.string(),
     invocationId: z.string(),
+    /** Present on the write of a rendered template script. */
+    template: TemplateRenderSchema.optional(),
 });
 
 /** Sandbox command execution (execute_command). */

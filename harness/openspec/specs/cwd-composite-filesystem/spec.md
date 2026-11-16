@@ -5,8 +5,8 @@
 Defines the per-step working-directory convention for sandbox tools and the
 composite mount it rests on. A sandbox container sees a **composite filesystem**:
 a flat read-only mount of the whole analysis tree at `/{resourceId}`, plus a
-nested read-write mount of just this step's artifact root at
-`/{resourceId}/runs/{runId}/{stepId}`. That step root is the step's `workingDir`
+nested read-write mount of just this step's work directory at
+`/{resourceId}/runs/{runId}/{stepId}/work`. That step root is the step's `workingDir`
 — the implicit cwd for `execute_command` and the confinement prefix for the
 write-side filesystem tools — while reads roam the full analysis tree
 read-only.
@@ -27,8 +27,8 @@ a step writes is read back at the identical path.
 ### Requirement: Composite read-only tree plus writable step mount
 
 A sandbox SHALL receive a flat read-only mount of the analysis tree at
-`/{resourceId}` and a nested read-write mount of the step's artifact root at
-`/{resourceId}/runs/{runId}/{stepId}`. Reads SHALL resolve against the read-only
+`/{resourceId}` and a nested read-write mount of the step's work directory at
+`/{resourceId}/runs/{runId}/{stepId}/work`. Reads SHALL resolve against the read-only
 tree; writes SHALL land in the nested writable mount only.
 
 #### Scenario: Read reaches the read-only tree
@@ -38,12 +38,12 @@ tree; writes SHALL land in the nested writable mount only.
 
 #### Scenario: Write lands in the nested writable mount
 
-- **WHEN** the agent writes a file under `/{resourceId}/runs/{runId}/{stepId}/`
+- **WHEN** the agent writes a file under `/{resourceId}/runs/{runId}/{stepId}/work/`
 - **THEN** the write lands in the step's nested read-write mount
 
 ### Requirement: Per-step writable root is the implicit cwd
 
-The step's writable artifact root SHALL be `/{resourceId}/runs/{runId}/{stepId}`.
+The step's writable artifact root SHALL be its work directory `/{resourceId}/runs/{runId}/{stepId}/work`.
 `execute_command` SHALL accept an optional `cwd`; when omitted it SHALL default to
 the step's writable root (`defaultCwd`), a relative `cwd` SHALL resolve against
 that root, and an absolute `cwd` SHALL be used as given. Absolute paths to the
@@ -51,10 +51,10 @@ read-only analysis tree (`/{resourceId}/...`) SHALL NOT be remapped.
 
 #### Scenario: Relative command path resolves under the step writable root
 
-- **GIVEN** the step's writable root is `/{resourceId}/runs/{runId}/{stepId}`
+- **GIVEN** the step's writable root is `/{resourceId}/runs/{runId}/{stepId}/work`
 - **WHEN** the agent calls `execute_command({ command: "python scripts/qc.py" })` without a `cwd`
 - **THEN** the command runs with cwd defaulted to the step's writable root
-- **AND** `scripts/qc.py` resolves under `/{resourceId}/runs/{runId}/{stepId}/scripts/qc.py`
+- **AND** `scripts/qc.py` resolves under `/{resourceId}/runs/{runId}/{stepId}/work/scripts/qc.py`
 
 #### Scenario: Absolute path to the analysis tree is not remapped
 
@@ -72,7 +72,7 @@ Confinement SHALL be expressed as these data variants and SHALL NOT throw.
 
 #### Scenario: Write inside the working directory succeeds
 
-- **WHEN** the agent calls `write_file("scripts/qc.py", content)` resolving under `/{resourceId}/runs/{runId}/{stepId}/`
+- **WHEN** the agent calls `write_file("scripts/qc.py", content)` resolving under `/{resourceId}/runs/{runId}/{stepId}/work/`
 - **THEN** `resolveForWrite` returns `ok` and the write succeeds
 
 #### Scenario: Write outside the working directory is out_of_prefix

@@ -16,13 +16,37 @@ import { z } from "zod";
  * of the step at dispatch, thus a template default never replaces a plan
  * decision silently.
  */
+/** A value of a setting: a scalar, or a list of strings. */
+const GroundingValueSchema = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
+
 export const GroundingSettingSchema = z.object({
     step: z.string().describe("The procedure step the setting belongs to (for example `differential_expression` or `normalize`)."),
     name: z.string().describe("The parameter name as the procedure names it (for example `alpha` or `lfc_shrink`)."),
-    value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).describe("The value the procedure sets."),
+    value: GroundingValueSchema.describe("The value the procedure sets."),
     source: z.string().optional().describe("The source of the value (a doi or a document) when the procedure names one. Absent otherwise."),
 });
 export type GroundingSetting = z.infer<typeof GroundingSettingSchema>;
+
+/**
+ * One place where a grounded step departs from a rule it cites. A departure
+ * with a value replaces the value of its setting in the binding of the
+ * template, and a departure with a setting and no value removes the setting
+ * from the binding.
+ */
+export const GroundingDepartureSchema = z.object({
+    rule: z.string().describe("The claim id of the rule the step departs from, as `grounding.claims` holds it (for example `R-0147@3c1d`)."),
+    setting: z
+        .string()
+        .optional()
+        .describe(
+            "The `name` of the entry of `grounding.settings` that the departure changes. Absent when the step leaves out a part of the rule that no setting carries, for example a diagnostic the plan does not run.",
+        ),
+    value: GroundingValueSchema.optional().describe(
+        "The value of the plan for the setting. The host binds it in place of the value of the rule. Absent when the plan does not apply the setting.",
+    ),
+    reason: z.string().describe("Why the step departs from the rule, from the design or the data, in one line."),
+});
+export type GroundingDeparture = z.infer<typeof GroundingDepartureSchema>;
 
 /**
  * The grounding of one method step: the claim identifiers and the snapshot
@@ -52,8 +76,16 @@ export const GroundingSchema = z.object({
         .optional()
         .describe(
             "The scientific settings of the step: the parameters of the procedure steps the plan step holds, as `knowledge_recommend` returned them. " +
-                "Copy the `grounding.settings` of the skeleton step as it is, one entry per parameter, with its step, name, value, and source. " +
-                "Do not restate a setting as prose only, and do not change a value here: state a different value in the step and its reason. Absent when the step is ungrounded.",
+                "Leave this field out on a step that keeps the id of a skeleton step: the host writes the `grounding.settings` of that skeleton step, one entry per parameter, with its step, name, value, and source. " +
+                "Do not restate a setting as prose only, and do not change a value here: give a different value as an entry of `departures`. Absent when the step is ungrounded.",
+        ),
+    departures: z
+        .array(GroundingDepartureSchema)
+        .optional()
+        .describe(
+            "Each place where the step keeps its method and departs from a rule it cites: a setting with a different value, a setting the plan does not apply, or a part of the rule the plan leaves out. " +
+                "One entry per setting, with the claim id of the rule, the setting name, the value of the plan, and the reason. " +
+                "The host binds the value of a departure in place of the value of the rule. Absent when the step obeys each rule it cites.",
         ),
     reason: z
         .string()
@@ -62,6 +94,36 @@ export const GroundingSchema = z.object({
         ),
 });
 export type Grounding = z.infer<typeof GroundingSchema>;
+
+/** One source of the evidence of a claim, as the knowledge snapshot holds it. */
+export const ClaimEvidenceSchema = z.object({
+    doi: z.string().optional(),
+    pmid: z.string().optional(),
+    url: z.string().optional(),
+    title: z.string(),
+    year: z.number(),
+    direction: z.string(),
+});
+
+/**
+ * The view of one claim that a step of the plan cites, as the snapshot of
+ * the step holds it. The host writes the views from the answer of
+ * `knowledge_recommend` when it saves the plan. A digest names one fixed
+ * release, thus the view of a claim id never changes for its digest, and a
+ * surface reads the rule text here with no call to the service.
+ */
+export const ClaimViewSchema = z.object({
+    id: z.string(),
+    snapshot: z.string(),
+    rule: z.string().optional(),
+    title: z.string().optional(),
+    statement: z.string(),
+    strength: z.string(),
+    severity: z.string().optional(),
+    evidence: z.array(ClaimEvidenceSchema),
+    license: z.string().optional(),
+});
+export type ClaimView = z.infer<typeof ClaimViewSchema>;
 
 /**
  * A step of an analysis plan. `PlanStepSchema` (schemas/plan-schemas.ts) narrows
@@ -99,6 +161,13 @@ export const AnalysisStepSchema = z.object({
         .array(z.string())
         .describe("IDs of steps in this plan that must complete before this one runs. Empty when the step has no prerequisites. The graph must be acyclic."),
     status: z.enum(["pending", "running", "completed", "failed", "skipped"]).default("pending"),
+    kind: z
+        .enum(["open", "template"])
+        .optional()
+        .describe(
+            "`template` when the agent of the step renders and runs the template that `grounding.template` names, and the step is done only after a run of it that succeeds. " +
+                "Absent or `open` when the agent writes its own scripts, and then no template runs. A skeleton step of `knowledge_recommend` that names a template is a template step: set `open` on it only when its template does not fit the step.",
+        ),
     grounding: GroundingSchema.optional().describe(
         "The knowledge grounding of a method step: fill it from the answer of `knowledge_recommend` when that tool is attached. Omit it when no knowledge tool is attached.",
     ),
@@ -113,6 +182,11 @@ export const AnalysisStepSchema = z.object({
     artifactIds: z.array(z.string()).optional().describe("Artifact IDs produced by this step"),
     error: z.string().optional().describe("Error message if step failed"),
 });
+
+/** True when the step renders and runs a template: its agent gets `run_template`, and it is done only after a successful run. */
+export function isTemplateStep(step: Pick<AnalysisStep, "kind">): boolean {
+    return step.kind === "template";
+}
 
 export const AnalysisPlanSchema = z.object({
     // Optional on the persistence schema so historical plans (pre-title) still
@@ -133,6 +207,12 @@ export const AnalysisPlanSchema = z.object({
         .optional()
         .describe(
             "The request that the plan answers, as `generate_plan` received it. The briefing of each step renders it. Absent on an ad hoc plan and on a historical plan.",
+        ),
+    claims: z
+        .array(ClaimViewSchema)
+        .optional()
+        .describe(
+            "The view of each claim that a step cites, one per claim id and snapshot, as the host saved it with the plan. Absent when no step cites a claim of a knowledge answer.",
         ),
 });
 

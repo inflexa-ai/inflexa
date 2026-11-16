@@ -390,7 +390,7 @@ Completed analysis outputs SHALL remain represented by Cortex-native ledgers, ty
 
 #### Scenario: Step summary remains a file-backed output
 
-- **GIVEN** a completed step with `output/summary.md`
+- **GIVEN** a completed step with its `summary.md`
 - **WHEN** the AI SDK message migration has run
 - **THEN** the step summary remains available as a Cortex-native file/artifact result
 
