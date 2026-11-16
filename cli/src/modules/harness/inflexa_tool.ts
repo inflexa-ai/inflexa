@@ -27,7 +27,7 @@ import type { Command } from "commander";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { type AgentPolicy, getAgentPolicy, isTransferPolicy } from "../../cli/agent_policy.ts";
+import { type AgentPolicy, getAgentPolicy, isExactGrantPolicy, isTransferPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
 import { env } from "../../lib/env.ts";
 import { hasWhitespace } from "../../lib/text.ts";
@@ -78,6 +78,9 @@ const FLUSH_GRACE_MS = 1_000;
  * hold `exited` open forever and the timeout would bound nothing.
  */
 const KILL_GRACE_MS = 2_000;
+
+const SUBCOMMAND_GRANT_DETAIL = 'Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.';
+const EXACT_GRANT_DETAIL = 'Approving "always" lets this exact command run again in this analysis without asking. A different argument asks again.';
 
 /**
  * What the approval prompt of a transfer command says before the standing-grant sentence.
@@ -550,6 +553,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
             const decision = decideAction(c.policy, c.grantKey, c.setOptions);
             if (decision.kind !== "ask") return undefined;
             const transfer = isTransferPolicy(c.policy);
+            const exact = isExactGrantPolicy(c.policy);
             return {
                 title: "Run inflexa command",
                 // The EXACT argv that will run — what the user approves is precisely what
@@ -559,13 +563,14 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
                 // The caveat leads, because it is what this approval buys that the argv line does not
                 // show: consent to a run with no deadline. It states the one condition that ends
                 // such a run, so "no time limit" cannot read as "no way out".
-                detail: `${transfer ? TRANSFER_DETAIL : ""}Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.`,
+                detail: `${transfer ? TRANSFER_DETAIL : ""}${exact ? EXACT_GRANT_DETAIL : SUBCOMMAND_GRANT_DETAIL}`,
                 // Trade-off accepted here: the standing grant keys on the bare subcommand PATH, not this exact
                 // argv, so an "always" on a benign `inflexa X` also blesses a later, more dangerous flag variant
                 // (`inflexa X --destructive`) of the same subcommand without a fresh prompt. That is tolerable
                 // because `command` above always shows the EXACT argv at the moment consent is given — nothing is
                 // hidden when the user decides; only a silent RE-RUN of the same subcommand is what the grant covers.
-                grantKey: c.grantKey,
+                // An exact grant keys on the command line above, the default of the ask contract.
+                grantKey: exact ? undefined : c.grantKey,
             };
         },
         execute: async (input, ctx): Promise<Result<RunInflexaResult, ToolError>> => {

@@ -24,11 +24,11 @@ function send(method: string, path: string, body?: unknown): Promise<Response> {
 
 const agentListBody = z.object({ agents: z.array(z.looseObject({ id: z.string(), kind: z.string(), draft: z.boolean() })) });
 
-describe("/agents", () => {
+describe("/catalog/agents", () => {
     test("GET lists the built-in agents and each draft", async () => {
         writeAgentFile(fixture, "broken", "---\nname: other\ndescription: Broken.\n---\nThe prompt.\n");
 
-        const response = await send("GET", "/agents");
+        const response = await send("GET", "/catalog/agents");
 
         expect(response.status).toBe(200);
         const { agents } = agentListBody.parse(await jsonBody(response));
@@ -37,13 +37,13 @@ describe("/agents", () => {
     });
 
     test("GET of an unknown id is 404 `not_found`", async () => {
-        const response = await send("GET", "/agents/nope");
+        const response = await send("GET", "/catalog/agents/nope");
         expect(response.status).toBe(404);
         expect(await errorBody(response)).toMatchObject({ error: "not_found" });
     });
 
     test("PATCH with a prompt of a built-in agent is 403, and the reason says that the prompt is read-only", async () => {
-        const response = await send("PATCH", "/agents/analyst", { prompt: "Do something else." });
+        const response = await send("PATCH", "/catalog/agents/analyst", { prompt: "Do something else." });
 
         expect(response.status).toBe(403);
         expect((await errorBody(response)).message).toContain("is read-only");
@@ -53,32 +53,32 @@ describe("/agents", () => {
     test("PATCH attaches a skill, and turns off an agent that can be off", async () => {
         writeSkill(fixture.userSkillsDir, "lab-protocols");
 
-        const attached = await send("PATCH", "/agents/analyst", { attach: { kind: "skill", name: "lab-protocols" } });
+        const attached = await send("PATCH", "/catalog/agents/analyst", { attach: { kind: "skill", name: "lab-protocols" } });
         expect(attached.status).toBe(200);
         expect(fixture.config.agents).toEqual({ analyst: { add: { skills: ["lab-protocols"] } } });
 
-        const off = await send("PATCH", "/agents/drug-analyst", { enabled: false });
+        const off = await send("PATCH", "/catalog/agents/drug-analyst", { enabled: false });
         expect(off.status).toBe(200);
         expect(await jsonBody(off)).toMatchObject({ id: "drug-analyst", enabled: false });
     });
 
     test("PATCH that turns off an agent that must stay on is 403 `forbidden`", async () => {
-        const response = await send("PATCH", "/agents/analyst", { enabled: false });
+        const response = await send("PATCH", "/catalog/agents/analyst", { enabled: false });
         expect(response.status).toBe(403);
         expect(await errorBody(response)).toMatchObject({ error: "forbidden" });
     });
 
     test("POST clone is 201, and a second clone with the same id is 409 `conflict`", async () => {
-        const first = await send("POST", "/agents/analyst/clone", { newId: "my-analyst" });
+        const first = await send("POST", "/catalog/agents/analyst/clone", { newId: "my-analyst" });
         expect(first.status).toBe(201);
         expect(await jsonBody(first)).toMatchObject({ id: "my-analyst", kind: "custom", path: join(fixture.agentsDir, "my-analyst.md") });
 
-        const second = await send("POST", "/agents/analyst/clone", { newId: "my-analyst" });
+        const second = await send("POST", "/catalog/agents/analyst/clone", { newId: "my-analyst" });
         expect(second.status).toBe(409);
     });
 
     test("POST import of a file that does not exist is 400 `validation_error`", async () => {
-        const response = await send("POST", "/agents/import", { path: join(fixture.root, "absent.md") });
+        const response = await send("POST", "/catalog/agents/import", { path: join(fixture.root, "absent.md") });
         expect(response.status).toBe(400);
         expect(await errorBody(response)).toMatchObject({ error: "validation_error" });
     });
@@ -86,8 +86,8 @@ describe("/agents", () => {
     test("DELETE removes a custom agent, and refuses a built-in agent", async () => {
         writeAgentFile(fixture, "mine", "---\nname: mine\ndescription: Mine.\n---\nThe prompt.\n");
 
-        expect(await jsonBody(send("DELETE", "/agents/mine"))).toEqual({ deleted: true });
-        expect((await send("DELETE", "/agents/analyst")).status).toBe(403);
+        expect(await jsonBody(send("DELETE", "/catalog/agents/mine"))).toEqual({ deleted: true });
+        expect((await send("DELETE", "/catalog/agents/analyst")).status).toBe(403);
     });
 });
 

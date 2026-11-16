@@ -25,7 +25,7 @@ import { apiError, holdConnection, internalError, readBody, type ServerEnv } fro
 
 const attachmentChangeSchema = z.object({ kind: z.enum(ATTACHMENT_KINDS), name: z.string().min(1) });
 
-/** The body of `PATCH /agents/:id`. `prompt` is read only to refuse it with a reason. */
+/** The body of `PATCH /catalog/agents/:id`. `prompt` is read only to refuse it with a reason. */
 const patchAgentBody = z.object({
     enabled: z.boolean().optional(),
     attach: attachmentChangeSchema.optional(),
@@ -96,14 +96,14 @@ function customizationError(c: Context, e: CustomizationError): Response {
 export function customizationRoutes(service: CustomizationService): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
 
-    routes.get("/agents", async (c) =>
+    routes.get("/catalog/agents", async (c) =>
         (await service.listAgents()).match(
             (agents) => c.json({ agents } satisfies AgentList),
             (e) => customizationError(c, e),
         ),
     );
 
-    routes.post("/agents/import", async (c) => {
+    routes.post("/catalog/agents/import", async (c) => {
         const body = await readBody(c, importBody);
         if (body.isErr()) return body.error;
         return (await service.importAgent(body.value.path)).match(
@@ -112,14 +112,14 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         );
     });
 
-    routes.get("/agents/:id", async (c) =>
+    routes.get("/catalog/agents/:id", async (c) =>
         (await service.showAgent(c.req.param("id"))).match(
             (agent) => c.json(agent satisfies AgentDetail),
             (e) => customizationError(c, e),
         ),
     );
 
-    routes.post("/agents/:id/clone", async (c) => {
+    routes.post("/catalog/agents/:id/clone", async (c) => {
         const body = await readBody(c, cloneAgentBody);
         if (body.isErr()) return body.error;
         return (await service.cloneAgent(c.req.param("id"), body.value.newId)).match(
@@ -129,7 +129,7 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
     });
 
     // The fields apply in a fixed order: `enabled`, then `attach`, then `detach`. A body with no field reads the agent.
-    routes.patch("/agents/:id", async (c) => {
+    routes.patch("/catalog/agents/:id", async (c) => {
         const id = c.req.param("id");
         const body = await readBody(c, patchAgentBody);
         if (body.isErr()) return body.error;
@@ -154,7 +154,7 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         );
     });
 
-    routes.delete("/agents/:id", async (c) =>
+    routes.delete("/catalog/agents/:id", async (c) =>
         (await service.removeAgent(c.req.param("id"))).match(
             () => c.json({ deleted: true } satisfies DeleteAgentResponse),
             (e) => customizationError(c, e),

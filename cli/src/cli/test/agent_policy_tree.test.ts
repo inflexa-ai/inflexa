@@ -14,6 +14,7 @@ const policyRowSchema = z.object({
     kind: z.enum(["auto", "approval", "blocked"]).nullable(),
     safeFlags: z.array(z.string()).nullable(),
     transfer: z.boolean(),
+    exactGrant: z.boolean(),
     declaredOptions: z.array(z.string()),
     commandKind: z.enum(["instance", "machine", "standalone"]).nullable(),
     machineFlags: z.array(z.string()).nullable(),
@@ -39,14 +40,15 @@ function runReport(channel: "development" | "production"): PolicyRow[] {
 }
 
 /**
- * Compact each row to its audit value: `auto(flag,flag)` for auto, otherwise the bare kind, and `+transfer`
- * on either when the command runs with no deadline of the tool's own.
+ * Compact each row to its audit value: `auto(flag,flag)` for auto, otherwise the bare kind, `+transfer`
+ * on either when the command runs with no deadline of the tool's own, and `+exact` when an approval grants only the
+ * exact argv.
  */
 function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (const row of rows) {
         const kind = row.kind === "auto" ? `auto(${(row.safeFlags ?? []).join(",")})` : String(row.kind);
-        out[row.grantKey] = row.transfer ? `${kind}+transfer` : kind;
+        out[row.grantKey] = `${kind}${row.transfer ? "+transfer" : ""}${row.exactGrant ? "+exact" : ""}`;
     }
     return out;
 }
@@ -56,12 +58,12 @@ function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
 // grantKey.
 const EXPECTED_DEV_OFF: Record<string, string> = {
     inflexa: "blocked",
-    "inflexa agent attach": "approval",
-    "inflexa agent clone": "approval",
-    "inflexa agent detach": "approval",
-    "inflexa agent disable": "approval",
-    "inflexa agent enable": "approval",
-    "inflexa agent import": "approval",
+    "inflexa agent attach": "auto()",
+    "inflexa agent clone": "auto()",
+    "inflexa agent detach": "auto()",
+    "inflexa agent disable": "auto()",
+    "inflexa agent enable": "auto()",
+    "inflexa agent import": "auto()",
     "inflexa agent ls": "auto(json)",
     "inflexa agent rm": "approval",
     "inflexa agent show": "auto(json)",
@@ -71,9 +73,9 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa auth whoami": "auto()",
     "inflexa config": "blocked",
     "inflexa connector ls": "auto(json)",
-    "inflexa connector set": "approval",
+    "inflexa connector set": "auto(enable,disable,credential)+exact",
     "inflexa credential ls": "auto(json)",
-    "inflexa credential set": "approval",
+    "inflexa credential set": "auto(env)+exact",
     "inflexa down": "blocked",
     "inflexa geo download": "approval+transfer",
     "inflexa gui": "blocked",
@@ -82,10 +84,10 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa inputs ls": "auto(analysis)",
     "inflexa inputs remove": "blocked",
     "inflexa ls": "auto(project)",
-    "inflexa mcp add": "blocked",
+    "inflexa mcp add": "approval+exact",
     "inflexa mcp auth": "blocked",
-    "inflexa mcp disable": "approval",
-    "inflexa mcp enable": "approval",
+    "inflexa mcp disable": "auto()",
+    "inflexa mcp enable": "auto()",
     "inflexa mcp logout": "blocked",
     "inflexa mcp ls": "auto(json)",
     "inflexa mcp rm": "approval",
@@ -116,7 +118,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa server walk": "blocked",
     "inflexa setup": "blocked",
     "inflexa skill find": "auto(json)",
-    "inflexa skill import": "approval",
+    "inflexa skill import": "auto()",
     "inflexa skill ls": "auto(json)",
     "inflexa status": "approval",
     "inflexa store add": "approval",

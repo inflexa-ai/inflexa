@@ -674,7 +674,7 @@ export function buildProgram(): Command {
             .argument("<id>", "The built-in executor to copy")
             .argument("<new-id>", "The id of the new agent: lowercase letters, digits, and hyphens"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (id: string, newId: string) => {
             const { agentClone } = await import("../client/commands/customization.ts");
             await agentClone(id, newId);
@@ -687,7 +687,7 @@ export function buildProgram(): Command {
             .description("Convert the agent file of another harness into an agent file of Inflexa")
             .argument("<file>", "The agent file to convert"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (file: string) => {
             const { agentImport } = await import("../client/commands/customization.ts");
             await agentImport(file);
@@ -697,7 +697,7 @@ export function buildProgram(): Command {
     registerAction(
         agent.command("enable").description("Turn an agent on").argument("<id>", "The agent to turn on"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (id: string) => {
             const { agentSetEnabled } = await import("../client/commands/customization.ts");
             await agentSetEnabled(id, true);
@@ -707,7 +707,7 @@ export function buildProgram(): Command {
     registerAction(
         agent.command("disable").description("Turn an agent off").argument("<id>", "The agent to turn off"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (id: string) => {
             const { agentSetEnabled } = await import("../client/commands/customization.ts");
             await agentSetEnabled(id, false);
@@ -722,7 +722,7 @@ export function buildProgram(): Command {
             .argument("<kind>", "connector, mcp, or skill")
             .argument("<name>", "The connector id, the MCP server name, or the skill name"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (id: string, kind: string, name: string) => {
             const { agentAttach } = await import("../client/commands/customization.ts");
             await agentAttach(id, kind, name, true);
@@ -737,7 +737,7 @@ export function buildProgram(): Command {
             .argument("<kind>", "connector, mcp, or skill")
             .argument("<name>", "The connector id, the MCP server name, or the skill name"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (id: string, kind: string, name: string) => {
             const { agentAttach } = await import("../client/commands/customization.ts");
             await agentAttach(id, kind, name, false);
@@ -783,7 +783,7 @@ export function buildProgram(): Command {
     registerAction(
         skill.command("import").description("Copy a skill directory into your custom skills").argument("<dir>", "The skill directory, with its SKILL.md"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (dir: string) => {
             const { skillImport } = await import("../client/commands/customization.ts");
             await skillImport(dir);
@@ -812,7 +812,7 @@ export function buildProgram(): Command {
             .option("--endpoint <url>", "Point the connector at a different instance (an empty value restores the default)")
             .option("--credential <slot=name...>", "Name the credential of a slot (an empty name restores the default)"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: ["enable", "disable", "credential"], exactGrant: true },
         async (id: string, options: { enable?: boolean; disable?: boolean; endpoint?: string; credential?: string[] }) => {
             const { connectorSet } = await import("../client/commands/customization.ts");
             await connectorSet(id, options);
@@ -844,7 +844,7 @@ export function buildProgram(): Command {
             .option("--format <format>", "The output format of the command: raw or exec-credential")
             .option("--ttl-ms <ms>", "How long a value of the command stays valid"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: ["env"], exactGrant: true },
         async (name: string, options: { env?: string; command?: string; format?: string; ttlMs?: string }) => {
             const { credentialSet } = await import("../client/commands/customization.ts");
             await credentialSet(name, options);
@@ -878,12 +878,7 @@ export function buildProgram(): Command {
             .option("--scriptable", "Also give the tools to scripts (needs --approval never)")
             .option("--disabled", "Add the server turned off"),
         "instance",
-        {
-            kind: "blocked",
-            reason:
-                "`inflexa mcp add` makes the host run a command, or reach a server, that the entry names. " +
-                "It is not available to you — tell the user to run it themselves.",
-        },
+        { kind: "approval", exactGrant: true },
         async (
             name: string,
             command: string[],
@@ -897,7 +892,7 @@ export function buildProgram(): Command {
     registerAction(
         mcp.command("enable").description("Turn an MCP server on").argument("<name>", "The server"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (name: string) => {
             const { mcpSetEnabled } = await import("../client/commands/customization.ts");
             await mcpSetEnabled(name, true);
@@ -907,7 +902,7 @@ export function buildProgram(): Command {
     registerAction(
         mcp.command("disable").description("Turn an MCP server off").argument("<name>", "The server"),
         "instance",
-        { kind: "approval" },
+        { kind: "auto", safeFlags: [] },
         async (name: string) => {
             const { mcpSetEnabled } = await import("../client/commands/customization.ts");
             await mcpSetEnabled(name, false);

@@ -10,32 +10,37 @@ Each command of the groups `inflexa agent`, `inflexa skill`, `inflexa connector`
 
 #### Scenario: A command and its route give the same result
 
-- **WHEN** a client calls `GET /api/v1/agents` and the user runs `inflexa agent ls --json`
+- **WHEN** a client calls `GET /api/v1/catalog/agents` and the user runs `inflexa agent ls --json`
 - **THEN** the two outputs list the same agents, drafts and gaps
 
 ### Requirement: The agent list shows built-in agents, custom agents and drafts
 
-`GET /api/v1/agents` MUST list each built-in agent, each custom agent and each draft. Each item MUST give its id, its role, its kind (built-in or custom), `enabled`, its resolved attachments and its gaps. A built-in item MUST give its release defaults and the change of the user. A built-in item MUST NOT let a client change its prompt.
+`GET /api/v1/catalog/agents` MUST list each built-in agent, each custom agent and each draft. Each item MUST give its id, its role, its kind (built-in or custom), `enabled`, its resolved attachments and its gaps. A built-in item MUST give its release defaults and the change of the user. A built-in item MUST NOT let a client change its prompt.
 
 #### Scenario: A built-in agent shows the change of the user
 
 - **GIVEN** a change that adds `lims` to `analyst`
-- **WHEN** a client reads `GET /api/v1/agents/analyst`
+- **WHEN** a client reads `GET /api/v1/catalog/agents/analyst`
 - **THEN** the item gives the release defaults, the added `lims`, and the resolved attachments
 
 #### Scenario: A prompt edit of a built-in agent is refused
 
-- **WHEN** a client sends `PATCH /api/v1/agents/analyst` with a prompt
+- **WHEN** a client sends `PATCH /api/v1/catalog/agents/analyst` with a prompt
 - **THEN** the server refuses the request, and the reason says that a built-in prompt is read-only
 
 ### Requirement: Each command declares its agent policy
 
-Each new command MUST declare an agent policy: `auto` for a read, `approval` for a change, and `blocked` for `mcp add`, `mcp auth` and `mcp logout`. The reason of `mcp add` MUST say that the command makes the host run a command. The reason of `mcp auth` and `mcp logout` MUST say that they need a person at a browser.
+Each new command MUST declare an agent policy by its risk, not by read or write. A read and a change to the state of Inflexa MUST run with no prompt. A command that makes the host run a command, or that sends a secret to a new place, MUST ask, and its approval MUST cover only the exact command. A command that deletes the work of the user MUST ask. `mcp auth` and `mcp logout` MUST stay blocked, and their reason MUST say that they need a person at a browser.
 
-#### Scenario: The chat agent cannot add an MCP server
+#### Scenario: The chat agent asks to add an MCP server
 
 - **WHEN** the chat agent calls `run_inflexa` with `mcp add`
-- **THEN** the tool refuses the call with the reason of the policy
+- **THEN** the tool asks the user, and an "always" covers only that exact command
+
+#### Scenario: A credential from a helper command asks
+
+- **WHEN** the chat agent calls `run_inflexa` with `credential set <name> --command <command>`
+- **THEN** the tool asks the user, and `credential set <name> --env <var>` runs with no prompt
 
 #### Scenario: An agent that no person answers refuses a server that asks approval
 
@@ -43,10 +48,10 @@ Each new command MUST declare an agent policy: `auto` for a read, `approval` for
 - **WHEN** the user runs `inflexa agent attach analyst mcp lims`
 - **THEN** the CLI refuses the attach and says that only the chat agent and the reporter can attach the server
 
-#### Scenario: The chat agent asks to attach a skill
+#### Scenario: The chat agent attaches a skill
 
 - **WHEN** the chat agent calls `run_inflexa` with `agent attach analyst skill lab-protocols`
-- **THEN** the tool asks the user for approval before the command runs
+- **THEN** the command runs with no prompt
 
 ### Requirement: Adding a server warns about repeated calls
 

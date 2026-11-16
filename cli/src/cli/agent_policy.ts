@@ -19,8 +19,8 @@ import type { Command } from "commander";
  * A runnable kind can also carry {@link TransferTrait}.
  */
 export type AgentPolicy =
-    | ({ readonly kind: "auto"; readonly safeFlags: readonly string[] } & TransferTrait)
-    | ({ readonly kind: "approval" } & TransferTrait)
+    | ({ readonly kind: "auto"; readonly safeFlags: readonly string[] } & TransferTrait & GrantTrait)
+    | ({ readonly kind: "approval" } & TransferTrait & GrantTrait)
     | { readonly kind: "blocked"; readonly reason: string };
 
 /**
@@ -41,6 +41,20 @@ export type AgentPolicy =
 export type TransferTrait = {
     readonly transfer?: true;
 };
+
+/**
+ * The trait of a command whose approval must cover only the exact argv that the user saw: a command that makes the
+ * host run a command, or that sends a secret to a new place. An "always" on it then blesses that argv only. Without
+ * the trait, an "always" keys on the subcommand path, thus it also blesses each later argv of the same subcommand.
+ */
+export type GrantTrait = {
+    readonly exactGrant?: true;
+};
+
+/** Whether an approval of `policy` grants only the exact argv — see {@link GrantTrait}. */
+export function isExactGrantPolicy(policy: AgentPolicy | undefined): boolean {
+    return policy !== undefined && policy.kind !== "blocked" && policy.exactGrant === true;
+}
 
 /** Whether `policy` marks a transfer — see {@link TransferTrait}. A `blocked` command never runs, thus it never carries one. */
 export function isTransferPolicy(policy: AgentPolicy | undefined): boolean {

@@ -51,17 +51,17 @@ export type AgentDetail = AgentView & {
     prompt: string | null;
 };
 
-/** The body of `GET /api/v1/agents`: the built-in agents first, then each custom agent and draft. */
+/** The body of `GET /api/v1/catalog/agents`: the built-in agents first, then each custom agent and draft. */
 export type AgentList = {
     agents: AgentView[];
 };
 
-/** The body of `POST /api/v1/agents/:id/clone`. */
+/** The body of `POST /api/v1/catalog/agents/:id/clone`. */
 export type CloneAgentRequest = {
     newId: string;
 };
 
-/** The body of `POST /api/v1/agents/import`. The path is absolute, on the machine of the server. */
+/** The body of `POST /api/v1/catalog/agents/import`. The path is absolute, on the machine of the server. */
 export type ImportAgentRequest = {
     path: string;
 };
@@ -73,7 +73,7 @@ export type AttachmentChange = {
 };
 
 /**
- * The body of `PATCH /api/v1/agents/:id`. Each field is optional, and the server applies `enabled`, then `attach`,
+ * The body of `PATCH /api/v1/catalog/agents/:id`. Each field is optional, and the server applies `enabled`, then `attach`,
  * then `detach`. A body with a `prompt` for a built-in agent is refused, because a built-in prompt is read-only.
  */
 export type PatchAgentRequest = {
@@ -82,7 +82,7 @@ export type PatchAgentRequest = {
     detach?: AttachmentChange;
 };
 
-/** The body of a `DELETE /api/v1/agents/:id` response. */
+/** The body of a `DELETE /api/v1/catalog/agents/:id` response. */
 export type DeleteAgentResponse = {
     deleted: true;
 };
