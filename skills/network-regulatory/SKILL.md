@@ -1,8 +1,9 @@
 ---
 name: network-regulatory
 description: Read before you build co-expression modules, score TF activity, analyze a protein interaction network, or find hub genes. It tells that de novo regulon discovery is not available, how a module is different from a regulon, and how to filter and size a network.
-version: 1.0.0
-tags: [network, wgcna, grn, ppi, regulatory, co-expression, networkx]
+metadata:
+  version: 1.0.0
+  tags: [network, wgcna, grn, ppi, regulatory, co-expression, networkx]
 ---
 
 # Network & Regulatory Analysis

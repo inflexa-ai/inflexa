@@ -30,7 +30,7 @@
 
 import { dbosRecvRecorder, dbosWriteStreamRecorder } from "./__fixtures__/dbos-event-mocks.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
-import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
+import { equipmentOf } from "../../catalog/memory.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { collapseWhitespace } from "../../lib/text.js";
 import { errorOf } from "../../lib/thrown.js";
@@ -74,7 +74,6 @@ import type { ChatProvider } from "../../providers/types.js";
 import type { AnalysisStep } from "../../schemas/workflow-state.js";
 import type { KnowledgeClient } from "../../tools/knowledge/client.js";
 import { contractAnswer, fakeKnowledgeClient } from "../../tools/knowledge/__fixtures__/fake-client.js";
-import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import { type CapturingLogger, createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { RUN_END_EVENT_KEY } from "../../execution/run-end-record.js";
 import { captureMetrics } from "../../__tests__/setup/metrics.js";
@@ -562,7 +561,7 @@ function makeDeps(opts: {
             },
         }),
         synthesisModel: "test-synthesis-model",
-        synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
+        synthesisEquipment: () => Promise.resolve(equipmentOf()),
         runCharge: {
             open: () => okAsync(undefined),
             close: ({ outcome }) => {
@@ -1514,8 +1513,8 @@ describe("executeAnalysis body", () => {
         const seeds = pool.queries.filter((q) => STEP_SEED_INSERT.test(q.text) && q.text.includes("'pending'"));
         expect(seeds.length).toBe(1);
         // One 5-value tuple per step (runId, stepId, analysisId, wave, agentId);
-        // B's wave is 1 (depends on A) and both name an agent the roster does not hold, thus both run on the analyst.
-        expect(presentAt(seeds, 0).values).toEqual(["run-test", "A", "a1", 0, "analyst", "run-test", "B", "a1", 1, "analyst"]);
+        // B's wave is 1 (depends on A), and each row keeps the agent id of the step.
+        expect(presentAt(seeds, 0).values).toEqual(["run-test", "A", "a1", 0, "agent-x", "run-test", "B", "a1", 1, "agent-x"]);
         expect(presentAt(seeds, 0).text).toContain("ON CONFLICT (run_id, step_id) DO NOTHING");
     });
 

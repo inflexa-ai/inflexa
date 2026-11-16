@@ -113,7 +113,7 @@ export function validatePlan(plan: AnalysisPlan): ValidationResult {
 
     // 3. Agent assignment validation
     for (const step of plan.steps) {
-        // An agent id that the roster no longer holds is valid: the step runs on the default agent.
+        // A structural check only: the planner and the launch check the id against the agent catalog of the moment.
         if (!step.agent) {
             errors.push(`Step "${step.id}" has no agent assigned — every step must specify an agent`);
         }

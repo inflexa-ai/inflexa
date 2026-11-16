@@ -34,6 +34,7 @@ import { recordTheWaiterOfAPause } from "./20261102120000_record_the_waiter_of_a
 import { pinTheModelOfAThread } from "./20261106120000_pin_the_model_of_a_thread.js";
 import { addTheRunMandateColumnAgain } from "./20261112120000_add_the_run_mandate_column_again.js";
 import { recordThePersonOfWork } from "./20261114120000_record_the_person_of_work.js";
+import { recordTheAgentOfAStep } from "./20261116120000_record_the_agent_of_a_step.js";
 import { recordTheTemplateOfAnArtifact } from "./20261116120000_record_the_template_of_an_artifact.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
@@ -67,6 +68,7 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261106120000_pin_the_model_of_a_thread": pinTheModelOfAThread,
         "20261112120000_add_the_run_mandate_column_again": addTheRunMandateColumnAgain,
         "20261114120000_record_the_person_of_work": recordThePersonOfWork,
+        "20261116120000_record_the_agent_of_a_step": recordTheAgentOfAStep,
         "20261116120000_record_the_template_of_an_artifact": recordTheTemplateOfAnArtifact,
     };
 }

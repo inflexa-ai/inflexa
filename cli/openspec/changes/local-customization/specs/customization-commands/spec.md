@@ -37,6 +37,12 @@ Each new command MUST declare an agent policy: `auto` for a read, `approval` for
 - **WHEN** the chat agent calls `run_inflexa` with `mcp add`
 - **THEN** the tool refuses the call with the reason of the policy
 
+#### Scenario: An agent that no person answers refuses a server that asks approval
+
+- **GIVEN** the server `lims` with `approval: "always"`
+- **WHEN** the user runs `inflexa agent attach analyst mcp lims`
+- **THEN** the CLI refuses the attach and says that only the chat agent and the reporter can attach the server
+
 #### Scenario: The chat agent asks to attach a skill
 
 - **WHEN** the chat agent calls `run_inflexa` with `agent attach analyst skill lab-protocols`

@@ -4,6 +4,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { fixedTurnAgent } from "../../agents/turn-agent.js";
 import { APICallError, type LanguageModelV4CallOptions, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { err, errAsync, ok, okAsync } from "neverthrow";
@@ -238,7 +239,7 @@ function turnPool(): Querier & Connectable {
 }
 
 const agents: ThreadAgentResolver = {
-    forThread: (threadType) => (threadType === "conversation" ? ok(agent) : err({ type: "unregistered_thread_type", threadType })),
+    forThread: (threadType) => (threadType === "conversation" ? ok(fixedTurnAgent(agent)) : err({ type: "unregistered_thread_type", threadType })),
 };
 
 const turns = registerChatTurns({

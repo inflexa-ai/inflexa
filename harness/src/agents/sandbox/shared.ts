@@ -1,20 +1,15 @@
 /**
  * Sandbox-agent composition root.
  *
- * `createSandboxAgent(deps, meta, body, opts?)` produces a fully dep-bound
+ * `createSandboxAgent(deps, spec, opts?)` produces a fully dep-bound
  * `AgentDefinition` for one sandbox agent (see the harness-durable-runtime spec): SOUL kernel + the
  * agent's own prompt body + sandbox standards composed into a single
  * static `systemPrompt` string (no processors at request time, see the harness-providers spec),
- * the workspace mutate trio — `execute_command` bound to the shared
- * `SandboxClient`, and `write_file` / `edit_file` confined to the step's
- * `allowedWritePrefix` through the host-side `WorkspaceMutator` —,
- * the workspace read tools (`read_file`, `grep`) over the shared
- * `WorkspaceFilesystem`, `inspect_data_profile` over the shared `Pool`, and the
- * bio/literature/context7 tools its `meta.tools` allowlist names.
- *
- * Tool resolution is a single registry lookup — every name in `meta.tools`
- * must map to a concrete `Tool`; unknown names throw at composition time
- * so misconfigured agents fail at startup, not at the first LLM call.
+ * the role tools — the workspace mutate trio (`execute_command` bound to the lease of the step, and
+ * `write_file` / `edit_file` confined to the step's `allowedWritePrefix` through the host-side
+ * `WorkspaceMutator`), the workspace read tools over the shared `WorkspaceFilesystem`,
+ * `inspect_data_profile` over the shared `Pool`, and the skill tools — and the tools of the connectors
+ * and the MCP servers that the agent attaches (its equipment, built from the catalog).
  */
 
 import type { Querier } from "../../state/db.js";
@@ -36,33 +31,8 @@ import { composeSystemPrompt } from "../system-prompt.js";
 // Sandbox-environment introspection, plus the farm-extension seam face.
 import { createLinkPackagesTool, createListAvailablePackagesTool, createListAvailableRefsTool } from "../../tools/sandbox/index.js";
 
-// Context7 docs (pure leaves).
-import { queryDocsTool, resolveLibraryIdTool } from "../../tools/research/context7-docs.js";
-
 // Data-profile retrieval (dependency-bearing) — always-on, see `createSandboxAgent`.
 import { createInspectDataProfileTool } from "../../tools/research/inspect-data-profile.js";
-
-// Bio leaf tools.
-import {
-    chemblTool,
-    genePreclinicalProfileTool,
-    getProteinDomainsTool,
-    getVariantFrequenciesTool,
-    humanbaseTool,
-    lookupAnnotationTool,
-    openTargetsTool,
-    pubchemTool,
-    resolveGeneIdsTool,
-    searchClinicalTrialsTool,
-    searchFaersTool,
-    searchGeneTool,
-    searchGeoDatasetsTool,
-    searchInteractionsTool,
-    searchProteinTool,
-    alphafoldPredictionTool,
-    targetSafetyTool,
-} from "../../tools/bio/index.js";
-import { createAmassTools, createNcbiTools, createChemDbTools, type BioToolKeys } from "../../tools/bio/keys.js";
 
 // Workspace read surface.
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../../tools/workspace/index.js";
@@ -71,9 +41,6 @@ import { createScanInputsTool } from "../../tools/workspace/scan-inputs.js";
 // Workspace mutate surface.
 import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, createWriteFileTool } from "../../tools/workspace/index.js";
 
-// Skills (declared per agent via meta.skills).
-import { createSkillTools, skillIndex } from "../../tools/sandbox/skills.js";
-
 import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { createAcquireSandboxTool, createReleaseSandboxTool } from "../../tools/sandbox/lease-tools.js";
 import { createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
@@ -81,26 +48,15 @@ import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools
 
 import { toSandboxPath } from "../../workspace/paths.js";
 
-import type { AgentMeta, SandboxToolName } from "./types.js";
-import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "./types.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import type { Logger } from "../../lib/logger.js";
-import type { CitationResolver } from "../../citations/types.js";
-import { createResolveCitationTool } from "../../tools/research/resolve-citation.js";
 import { createRunTemplateTool, type StepTemplate, type TemplateSource } from "../../tools/knowledge/index.js";
 import { templateStepPrompt } from "../../prompts/sandbox/template-step.js";
+import type { AgentEquipment } from "../../catalog/equip.js";
+import { createSkillTools } from "../../tools/sandbox/skills.js";
+import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "./types.js";
 import { createReadScriptTools } from "../../tools/script/file-tools.js";
-import { searchArxivTool } from "../../tools/research/search-arxiv.js";
-import { createSearchSemanticScholarTool } from "../../tools/research/search-semantic-scholar.js";
 import type { ScriptRuntime } from "../../tools/script/run-script.js";
-
-/**
- * Tools every sandbox agent receives — sandbox-environment introspection and
- * library docs. Spread into each agent's `meta.tools` so planner-facing
- * metadata and the resolved tool record stay in sync. Keep minimal — only
- * tools every agent genuinely needs.
- */
-export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = ["listAvailablePackages", "listAvailableRefs", "resolveLibraryId", "queryDocs"];
 
 /** Per-step coordinates the composition root threads through every mutate tool. */
 export type SandboxStepCoords = {
@@ -135,14 +91,8 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
     readonly lineageCollector?: LineageCollector;
     /** Model id provenance label — the provider owns the wire model. */
     readonly model: string;
-    /** Absolute path to the skills tree. Omit to skip the skill tools. */
-    readonly skillsDir?: string;
     /** Per-step coordinates resolved at the workflow body. */
     readonly step: SandboxStepCoords;
-    /** API keys for the external bio/chem data sources. */
-    readonly bioKeys: BioToolKeys;
-    /** Shared resolver. Required only when `meta.tools` declares `resolve_citation`. */
-    readonly citationResolver?: CitationResolver;
     /**
      * The agent gets a `report_blocker` tool (see the harness-sandbox-agents spec), and the
      * sandbox-step body selects the blocker from the recorded calls of the run. Omit for agents that
@@ -172,12 +122,6 @@ export type SandboxAgentDeps = EnvironmentStorePaths & {
     readonly scriptRuntime?: ScriptRuntime;
 };
 
-/**
- * The tools of the allowlist that stay direct: the environment of the step. Each other tool of the allowlist is a
- * lookup of an outside source, and it runs in `run_script`.
- */
-const DIRECT_ALLOWLIST_TOOLS: ReadonlySet<string> = new Set(["list_available_packages", "list_available_refs", "scan_inputs"]);
-
 /** Per-agent override for the prompt composition and tool surface. */
 export type SandboxAgentPromptOptions = {
     /** Append `sandboxAnalysisStepStandardsPrompt`. Defaults to true. */
@@ -190,75 +134,6 @@ export type SandboxAgentPromptOptions = {
      */
     readonly readOnly?: boolean;
 };
-
-/**
- * Resolve `meta.tools` into the bio/research tools record. The workspace
- * read/mutate tools and `inspect_data_profile` are added by `createSandboxAgent`
- * regardless of meta — they are the always-on substrate, not in the allowlist.
- */
-function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[]): Tool[] {
-    const ncbi = createNcbiTools(deps.bioKeys);
-    const chemDb = createChemDbTools(deps.bioKeys, { logger: deps.logger });
-    const amass = createAmassTools(deps.bioKeys);
-    if (tools.includes("resolve_citation") && deps.citationResolver === undefined) {
-        throw new Error('createSandboxAgent: SandboxToolName "resolve_citation" requires a CitationResolver dependency.');
-    }
-    const registry: Record<SandboxToolName, Tool | undefined> = {
-        listAvailablePackages: createListAvailablePackagesTool({
-            farmLockFile: deps.farmLockFile,
-            imagePackagesFile: deps.imagePackagesFile,
-            // The bound seam adds `link_packages` below, and the description of
-            // the listing must then stop at "absent", not at "missing".
-            linkToolPresent: deps.extendAnalysisFarm !== undefined,
-        }),
-        listAvailableRefs: createListAvailableRefsTool({ refStorePath: deps.refStorePath }),
-        scanInputs: createScanInputsTool({
-            workspaceFs: deps.workspaceFs,
-            analysisId: deps.step.analysisId,
-            lease: deps.step.lease,
-        }),
-        resolveLibraryId: resolveLibraryIdTool,
-        queryDocs: queryDocsTool,
-        pubmed: ncbi.pubmed,
-        resolve_citation: deps.citationResolver === undefined ? undefined : createResolveCitationTool(deps.citationResolver),
-        searchArxiv: searchArxivTool,
-        searchSemanticScholar: createSearchSemanticScholarTool({ apiKey: deps.bioKeys.semanticScholar }),
-        searchGene: searchGeneTool,
-        resolveGeneIds: resolveGeneIdsTool,
-        lookupAnnotation: lookupAnnotationTool,
-        searchInteractions: searchInteractionsTool,
-        humanbase: humanbaseTool,
-        chembl: chemblTool,
-        pubchem: pubchemTool,
-        opentargets: openTargetsTool,
-        geneDiseaseEvidence: chemDb.geneDiseaseEvidence,
-        getVariantFrequencies: getVariantFrequenciesTool,
-        getProteinDomains: getProteinDomainsTool,
-        searchProtein: searchProteinTool,
-        alphafoldPrediction: alphafoldPredictionTool,
-        drugGeneInteractions: chemDb.drugGeneInteractions,
-        genePreclinicalProfile: genePreclinicalProfileTool,
-        searchFaers: searchFaersTool,
-        searchClinicalTrials: searchClinicalTrialsTool,
-        searchGeoDatasets: searchGeoDatasetsTool,
-        searchRegulatoryApprovals: amass.regulatoryApprovals,
-        targetSafety: targetSafetyTool,
-        comptox: chemDb.comptox,
-    };
-
-    const seen = new Set<SandboxToolName>();
-    const resolved: Tool[] = [];
-    for (const name of tools) {
-        if (seen.has(name)) continue;
-        seen.add(name);
-        const tool = registry[name];
-        if (!tool) {
-            throw new Error(`createSandboxAgent: unknown SandboxToolName "${name}" — ` + `agent meta references a tool with no harness implementation.`);
-        }
-        resolved.push(tool);
-    }
-    return resolved;
-}
 
 /** Build the workspace mutate + read tools every sandbox agent receives. In
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
@@ -328,28 +203,37 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean, readLine
     ];
 }
 
+/** What one sandbox agent is: its prompt, the role that gives its role tools, and its equipment from the catalog. */
+export type SandboxAgentSpec = {
+    readonly id: string;
+    readonly role: "executor" | "profiler";
+    readonly prompt: string;
+    readonly equipment: AgentEquipment;
+    /** Per-agent override for `maxIterations`; defaults to {@link SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS}. */
+    readonly defaultMaxSteps?: number;
+};
+
 /**
  * Build one sandbox `AgentDefinition`. The system prompt is composed once
- * (SOUL execution core + agent body + sandbox standards) — no processors, and
+ * (SOUL execution core + agent body + skill index + sandbox standards) — no processors, and
  * neither human-facing SOUL layer: a sandbox agent is headless, so the identity
  * and conversational layers are dead weight in its context while every hard
- * guardrail it does need rides in the execution core. Tools are resolved
- * against the closed allowlist; the workspace surface is always wired
- * regardless of meta.
+ * guardrail it does need rides in the execution core.
  *
- * The composed `systemPrompt` is a **pure function of the agent type and the
- * kind of the step** — only the presence of `deps.step.template` reaches it, so
- * two steps of one kind, and two runs of one analysis, send a byte-identical
- * prefix that the provider's prompt cache can actually reuse. Keep it that way: a single interpolated id or path
+ * The composed `systemPrompt` is a **pure function of the agent and the kind of the step** — its prompt, its
+ * attached skills, and the presence of `deps.step.template`. Nothing else from `deps.step` reaches it, so two steps
+ * of one kind, and two runs of one
+ * analysis, send a byte-identical prefix that the provider's prompt
+ * cache can actually reuse. Keep it that way: a single interpolated id or path
  * makes every step's prefix unique again, and each step pays a full cache write
  * and reads nothing back. Per-step values belong in the step's briefing (its
  * first user message — see `prompts/briefing.ts`), which names the working
  * directory, the analysis root, the dataset, and what each dependency produced.
  */
-export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body: string, opts: SandboxAgentPromptOptions = {}): AgentDefinition {
+export function createSandboxAgent(deps: SandboxAgentDeps, spec: SandboxAgentSpec, opts: SandboxAgentPromptOptions = {}): AgentDefinition {
     const appendStandards = opts.appendAnalysisStepStandards ?? true;
     // The layer order is fixed by the harness-sandbox-agents spec: the agent
-    // body, the orient core keyed on the toolchain of the sandbox client, then
+    // body, the skill index, the orient core keyed on the toolchain of the sandbox client, then
     // the step standards.
     // The client is the one declaration: the environment it provisions and the
     // text that describes it come from the same value, thus a bag cannot
@@ -359,12 +243,12 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         ...(appendStandards ? [sandboxAnalysisStepStandardsPrompt] : []),
         ...(deps.step.template ? [templateStepPrompt] : []),
     ];
-    const index = deps.skillsDir === undefined ? undefined : skillIndex(deps.skillsDir, meta.skills);
-    const agentBody = [body, ...(index === undefined ? [] : [index]), ...sandboxLayer].map((s) => s.trim()).join("\n\n");
+    const { equipment } = spec;
+    const agentBody = [spec.prompt, ...(equipment.skillIndex === undefined ? [] : [equipment.skillIndex]), ...sandboxLayer].map((s) => s.trim()).join("\n\n");
 
     const systemPrompt = composeSystemPrompt(agentBody);
 
-    const skillTools = deps.skillsDir ? Object.values(createSkillTools({ skillsDir: deps.skillsDir, skills: meta.skills })) : [];
+    const skillTools = Object.values(createSkillTools({ store: equipment.skillStore, skills: equipment.skills }));
     // The working directory is the one of the read tools, thus a relative path resolves to the same file.
     const readLineage = deps.lineageCollector
         ? createWorkspaceReadLineage({
@@ -376,35 +260,46 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
           })
         : undefined;
     const workspaceTools = buildWorkspaceTools(deps, opts.readOnly ?? false, readLineage);
-    const allowlisted = resolveSandboxTools(deps, meta.tools);
     const tools: Tool[] = [
         ...workspaceTools,
         ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
-        // Always-on, not in the `meta.tools` allowlist: the data profile is the only
+        // Always-on: the data profile is the only
         // record of what the analysis's input dataset IS, and no file carries it (the
         // profiler's scratch tree is deleted on completion). An agent that cannot pull
         // it has no fallback but to re-derive organism, dimensions, and format from the
-        // raw bytes — so every sandbox agent gets it, whatever its meta declares.
+        // raw bytes — so every sandbox agent gets it.
         createInspectDataProfileTool(deps.pool),
-        // Always-on when the seam is bound, and never in the `meta.tools`
-        // allowlist — an allowlist entry would break an embedder that binds no
-        // seam (the harness-sandbox-agents spec).
+        // Always-on when the seam is bound — an attachment would break an embedder
+        // that binds no seam (the harness-sandbox-agents spec).
         ...(deps.extendAnalysisFarm ? [createLinkPackagesTool({ extendAnalysisFarm: deps.extendAnalysisFarm, analysisId: deps.step.analysisId })] : []),
         ...skillTools,
-        ...allowlisted.filter((tool) => DIRECT_ALLOWLIST_TOOLS.has(tool.id)),
+        // The environment of the step: role tools, and direct.
+        createListAvailablePackagesTool({
+            farmLockFile: deps.farmLockFile,
+            imagePackagesFile: deps.imagePackagesFile,
+            // The bound seam adds `link_packages` above, and the description of
+            // the listing must then stop at "absent", not at "missing".
+            linkToolPresent: deps.extendAnalysisFarm !== undefined,
+        }),
+        createListAvailableRefsTool({ refStorePath: deps.refStorePath }),
+        ...(spec.role === "profiler"
+            ? [createScanInputsTool({ workspaceFs: deps.workspaceFs, analysisId: deps.step.analysisId, lease: deps.step.lease })]
+            : []),
+        ...equipment.mcp.direct,
         ...(deps.reportsBlocker === true ? [createReportBlockerTool()] : []),
         ...(deps.fileMetadata ? [createSubmitFileMetadataTool(deps.fileMetadata)] : []),
     ];
 
     return {
-        id: meta.id,
+        id: spec.id,
         systemPrompt,
         model: deps.model,
         tools,
-        // A table, a paper, or a compressed file of the analysis is a first look that needs no sandbox, thus each agent
-        // reads them in a script on the host.
+        // Each lookup of an outside source runs in `run_script`. A table, a paper, or a compressed file of the
+        // analysis is a first look that needs no sandbox, thus each agent reads them in a script on the host.
         scriptTools: [
-            ...allowlisted.filter((tool) => !DIRECT_ALLOWLIST_TOOLS.has(tool.id)),
+            ...equipment.connectorTools,
+            ...equipment.mcp.script,
             ...createReadScriptTools({
                 workspaceFs: deps.workspaceFs,
                 resolveWorkspaceRoot: () => Promise.resolve(deps.step.workspaceRoot),
@@ -412,6 +307,6 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
             }),
         ],
         scriptRuntime: deps.scriptRuntime,
-        maxIterations: meta.defaultMaxSteps ?? SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS,
+        maxIterations: spec.defaultMaxSteps ?? SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS,
     };
 }

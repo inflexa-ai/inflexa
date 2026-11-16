@@ -35,6 +35,8 @@ import { createWriteFileTool } from "../workspace/write-file.js";
 import { Pool } from "pg";
 
 import { makeFakeChatProvider, makeFakeSandboxClient, makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
+import type { CatalogServices } from "../../catalog/equip.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
 import type { CitationResolver } from "../../citations/types.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
@@ -72,6 +74,8 @@ const notDrivenEmbedding: EmbeddingProvider = {
     dimensions: 1536,
     embed: () => refuse("embedding.embed"),
 };
+
+const notDrivenServices: CatalogServices = { catalog: createInMemoryCatalog(), connectorBase: {} };
 
 const notDrivenLauncher: RunLauncher = {
     launch: () => refuse("runLauncher.launch"),
@@ -182,12 +186,16 @@ describe("describeCall — conversation roster", () => {
     });
 
     it("execute_analysis names the mode and what it runs", () => {
-        const tool = createExecuteAnalysisTool({
-            pool: new Pool(),
-            executeAnalysisWorkflow: () => refuse("executeAnalysisWorkflow"),
-            runAuthorizer: createLocalRunAuthorizer(),
-            runLauncher: notDrivenLauncher,
-        });
+        const tool = createExecuteAnalysisTool(
+            {
+                pool: new Pool(),
+                services: notDrivenServices,
+                executeAnalysisWorkflow: () => refuse("executeAnalysisWorkflow"),
+                runAuthorizer: createLocalRunAuthorizer(),
+                runLauncher: notDrivenLauncher,
+            },
+            [{ id: "analyst", description: "Each analysis of data.", liveSources: [] }],
+        );
 
         expect(describeCall(tool, { mode: "plan", planId: "plan-42" })).toBe("plan plan-42");
         expect(describeCall(tool, { mode: "adhoc", request: "compare cluster 3 against cluster 5" })).toBe("ad hoc: compare cluster 3 against cluster 5");
@@ -210,7 +218,7 @@ describe("describeCall — conversation roster", () => {
             {
                 conversation: { provider: makeFakeChatProvider(), model: "test-model" },
                 pool: new Pool(),
-                bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+                services: notDrivenServices,
                 workspace: { workspaceFs: makeFakeWorkspaceFs(), pool: new Pool(), resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
             },
             inProcessSubAgent,

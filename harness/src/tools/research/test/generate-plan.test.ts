@@ -15,7 +15,8 @@ import { join } from "node:path";
 
 import { createCapturingLogger, type CapturedLog, type CapturingLogger } from "../../../__tests__/setup/logger.js";
 import { withSchema } from "../../../__tests__/setup/postgres.js";
-import { PLANNABLE_AGENT_IDS } from "../../../agents/sandbox-catalog.js";
+import type { CatalogServices } from "../../../catalog/equip.js";
+import { createInMemoryCatalog } from "../../../catalog/memory.js";
 import { TOOL_RESULT_CAP, type ToolOutputStore } from "../../../loop/tool-output.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../../../providers/types.js";
@@ -32,13 +33,20 @@ import { loadPlan, loadPlanRecord, type DataProfileResult } from "../../../state
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptedModel, type ScriptStep } from "../../../testing.js";
 import type { Tool, ToolContext } from "../../define-tool.js";
 import { fakeKnowledgeClient, SNAPSHOT } from "../../knowledge/__fixtures__/fake-client.js";
-import { buildPlannerSearchTools, createGeneratePlanTool, plannerAgentOf, plannerTerminalTools, type GeneratePlanDeps } from "../generate-plan.js";
+import {
+    buildPlannerSearchTools,
+    createGeneratePlanTool,
+    plannerAgentOf,
+    plannerSetupOf,
+    plannerTerminalTools,
+    type GeneratePlanDeps,
+} from "../generate-plan.js";
 import { presentAt, presentFind, presentFirst } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
 import { createCallLock } from "../../../loop/call-lock.js";
 
-/** The key slice the search tools of the planner take. An empty key keeps every tool constructible offline. */
-const TEST_BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
+/** The catalog services of the planner. An empty catalog gives the built-in agents, with no credential. */
+const TEST_SERVICES: CatalogServices = { catalog: createInMemoryCatalog(), connectorBase: {} };
 
 const TERMINAL_TOOLS = ["submit_plan", "request_clarification", "report_blocker"];
 
@@ -194,7 +202,7 @@ function blockImmediately(reason = "measurement complete"): ScriptedModel {
     return scriptedModel([callTools(toolCall("t1", "report_blocker", { reason })), reported]);
 }
 
-/** A schema-valid planner plan — one step, on a real plannable agent. */
+/** A schema-valid planner plan — one step, on a built-in executor. */
 function validCandidate(stepOverrides: Record<string, unknown> = {}) {
     return {
         title: "Bulk RNA-seq differential expression",
@@ -209,7 +217,7 @@ function validCandidate(stepOverrides: Record<string, unknown> = {}) {
                 question: "Which genes are differentially expressed between the two conditions?",
                 acceptance_criteria: ["A ranked DE table is produced."],
                 depends_on: [],
-                agent: PLANNABLE_AGENT_IDS[0],
+                agent: "analyst",
                 packages: ["pydeseq2"],
                 ...stepOverrides,
             },
@@ -287,7 +295,7 @@ describe("generatePlan loop-driving tool", () => {
             {
                 conversation: { provider, model: "claude-test" },
                 pool,
-                bioKeys: TEST_BIO_KEYS,
+                services: TEST_SERVICES,
                 workspace: { workspaceFs: makeFakeWorkspaceFs(), pool, resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
                 ...extra,
             },
@@ -350,7 +358,7 @@ describe("generatePlan loop-driving tool", () => {
         await awaitOk(toolFor(model.provider, { toolOutputStore }).execute(INPUT, toolContext()));
 
         const ids = toolNamesOf(presentAt(model.calls, 0));
-        expect(ids.slice(-5)).toEqual(["read_tool_output", ...TERMINAL_TOOLS, "run_script"]);
+        expect(ids.slice(-7)).toEqual(["read_tool_output", "skill_search", "skill_read", ...TERMINAL_TOOLS, "run_script"]);
         // The read surface of the workspace follows the search tools, and its last tool precedes read_tool_output.
         expect(ids.indexOf("list_available_packages")).toBe(ids.indexOf("read_file") - 1);
         expect(ids.indexOf("inspect_data_profile")).toBe(ids.indexOf("read_tool_output") - 1);
@@ -480,6 +488,28 @@ describe("generatePlan loop-driving tool", () => {
         expect(refused.value.issues.length).toBeGreaterThan(0);
         expect(refused.value.issues.every((issue) => issue.code === "semantic")).toBe(true);
         expect(JSON.stringify(refused.value.issues)).toContain("T9S9");
+    });
+
+    it("refuses a step whose agent is not an executor of the catalog, at the path of that step", async () => {
+        const analysisId = "an-unknown-agent";
+        await seedAnalysis(pool, analysisId, { dpStatus: null });
+        const model = scriptedModel([
+            callTools(submitPlan("t1", validCandidate({ agent: "bulk-transcriptomics-agent" }))),
+            callTools(submitPlan("t2", validCandidate())),
+            submitted,
+        ]);
+
+        const result = planResultOf((await toolFor(model.provider).execute(INPUT, toolContext(analysisId)))._unsafeUnwrap());
+
+        expect(result.event).toBe("plan_complete");
+        const refused = z
+            .object({
+                type: z.literal("json"),
+                value: z.object({ accepted: z.literal(false), issues: z.array(z.object({ path: z.string(), code: z.string(), message: z.string() })) }),
+            })
+            .parse(toolResultIn(presentAt(model.calls, 1), "t1"));
+        expect(refused.value.issues.map(({ path, code }) => ({ path, code }))).toEqual([{ path: "plan.steps[0].agent", code: "semantic" }]);
+        expect(presentAt(refused.value.issues, 0).message).toContain('"bulk-transcriptomics-agent" is not an available agent');
     });
 
     describe("the packages of a plan against the census (#512)", () => {
@@ -1694,14 +1724,15 @@ describe("buildPlannerSearchTools", () => {
         const deps: GeneratePlanDeps = {
             conversation: { provider: makeFakeChatProvider(), model: "claude-test" },
             pool,
-            bioKeys: TEST_BIO_KEYS,
+            services: TEST_SERVICES,
             workspace: { workspaceFs: makeFakeWorkspaceFs(), pool, resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
             knowledge: client,
             // No farm lock is bound, and the store holds DESeq2: the launch links it.
             readPoolInventory: () =>
                 Promise.resolve({ kind: "sections", sections: [{ title: "R (Bioconductor)", track: "r", packages: [{ name: "DESeq2", version: "1.52.0" }] }] }),
         };
-        const recommend = presentFind(buildPlannerSearchTools(deps), (tool) => tool.id === "knowledge_recommend");
+        const setup = await plannerSetupOf(deps.services);
+        const recommend = presentFind(buildPlannerSearchTools(deps, setup.equipment), (tool) => tool.id === "knowledge_recommend");
 
         // The ok value carries its call record under a symbol key, thus a loose object reads it.
         const packageOf = z.object({ name: z.string(), state: z.string(), version: z.string().optional() });
@@ -1718,15 +1749,16 @@ describe("buildPlannerSearchTools", () => {
 });
 
 describe("plannerAgentOf", () => {
-    it("gives the planner the read-only workspace, and the script reads of a PDF, a table, and a compressed file", () => {
+    it("gives the planner the read-only workspace, and the script reads of a PDF, a table, and a compressed file", async () => {
         const pool = new Pool();
         const deps: GeneratePlanDeps = {
             conversation: { provider: makeFakeChatProvider(), model: "claude-test" },
             pool,
-            bioKeys: TEST_BIO_KEYS,
+            services: TEST_SERVICES,
             workspace: { workspaceFs: makeFakeWorkspaceFs(), pool, resolveWorkspaceRoot: () => Promise.resolve("/workspace") },
         };
-        const agent = plannerAgentOf(deps, buildPlannerSearchTools(deps), plannerTerminalTools(createNoopLogger()));
+        const setup = await plannerSetupOf(deps.services);
+        const agent = plannerAgentOf(deps, setup, buildPlannerSearchTools(deps, setup.equipment), plannerTerminalTools(createNoopLogger(), setup));
 
         const tools = agent.tools.map((tool) => tool.id);
         for (const id of ["read_file", "list_files", "file_stat", "grep", "inspect_data_profile"]) expect(tools).toContain(id);

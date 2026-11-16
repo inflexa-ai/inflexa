@@ -1,8 +1,9 @@
 ---
 name: omics-general
 description: Read before your first step on omics data. It gives the rules for all omics steps (language and container defaults, how to find and read reference data, what to do when a dataset is absent, gene identifier conversion without network access, output standards).
-version: 2.0.0
-tags: [omics, bioinformatics, general-principles, anndata, mudata, python-first]
+metadata:
+  version: 2.0.0
+  tags: [omics, bioinformatics, general-principles, anndata, mudata, python-first]
 ---
 
 # Omics General Principles

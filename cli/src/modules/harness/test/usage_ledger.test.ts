@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ok } from "neverthrow";
 import { z } from "zod";
-import { defineTool, type AgentDefinition, type AgentSession, type Tool } from "@inflexa-ai/harness";
+import { defineTool, fixedTurnAgent, type AgentDefinition, type AgentSession, type Tool } from "@inflexa-ai/harness";
 import { inProcessChatTurns, reply, scriptedModel, text, toolCall, type ScriptStep } from "@inflexa-ai/harness/testing";
 
 import { freshDb } from "../../../test_support/db.ts";
@@ -68,7 +68,7 @@ async function chatTurn(analysisId: string, threadId: string, script: readonly S
         {
             chatTurns: inProcessChatTurns({
                 pool: emptyPool,
-                agents: { forThread: () => ok(conversation) },
+                agents: { forThread: () => ok(fixedTurnAgent(conversation)) },
                 provider: model.provider,
                 usageRecorder: createUsageRecorder(),
             }),

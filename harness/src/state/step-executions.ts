@@ -64,6 +64,9 @@ export type InsertStepExecutionInput = {
     agentId: string;
     /** DBOS child workflow id (`"${parent}-${N}"`). Optional for legacy callers. */
     childWorkflowId?: string | null;
+    /** The name of the agent of the step and the hash of its prompt, from the identity of the run. */
+    agentName?: string | null;
+    promptHash?: string | null;
 };
 
 export function insertStepExecution(pool: Querier, input: InsertStepExecutionInput): ResultAsync<void, DbError> {
@@ -73,8 +76,8 @@ export function insertStepExecution(pool: Querier, input: InsertStepExecutionInp
             text: `INSERT INTO cortex_step_executions
           (run_id, step_id, analysis_id, wave, agent_id, status, started_at,
            attempts, last_error_class, finish_reason, hit_max_steps,
-           child_workflow_id)
-          VALUES ($1, $2, $3, $4, $5, 'running', $6, 1, NULL, NULL, 0, $7)
+           child_workflow_id, agent_name, prompt_hash)
+          VALUES ($1, $2, $3, $4, $5, 'running', $6, 1, NULL, NULL, 0, $7, $8, $9)
           ON CONFLICT (run_id, step_id) DO UPDATE SET
             wave = EXCLUDED.wave,
             agent_id = EXCLUDED.agent_id,
@@ -87,8 +90,20 @@ export function insertStepExecution(pool: Querier, input: InsertStepExecutionInp
             last_error_class = NULL,
             finish_reason = NULL,
             hit_max_steps = 0,
-            child_workflow_id = EXCLUDED.child_workflow_id`,
-            values: [input.runId, input.stepId, input.analysisId, input.wave, input.agentId, now, input.childWorkflowId ?? null],
+            child_workflow_id = EXCLUDED.child_workflow_id,
+            agent_name = EXCLUDED.agent_name,
+            prompt_hash = EXCLUDED.prompt_hash`,
+            values: [
+                input.runId,
+                input.stepId,
+                input.analysisId,
+                input.wave,
+                input.agentId,
+                now,
+                input.childWorkflowId ?? null,
+                input.agentName ?? null,
+                input.promptHash ?? null,
+            ],
         });
     });
 }
@@ -233,7 +248,7 @@ export function queryStepsByRun(pool: StepRowQuerier, runId: string): ResultAsyn
             text: `SELECT run_id, step_id, analysis_id, wave, agent_id,
                  status, started_at, completed_at, duration_ms, error,
                  attempts, last_error_class, finish_reason, hit_max_steps,
-                 blocked_reason, child_workflow_id
+                 blocked_reason, child_workflow_id, agent_name, prompt_hash
           FROM cortex_step_executions
           WHERE run_id = $1
           ORDER BY wave, started_at NULLS LAST, step_id`,
@@ -292,5 +307,7 @@ function mapStepExecutionRow(row: Record<string, unknown>): StepExecutionRow {
         hitMaxSteps: row.hit_max_steps === 1 || row.hit_max_steps === true,
         blockedReason: row.blocked_reason ?? null,
         childWorkflowId: row.child_workflow_id ?? null,
+        agentName: row.agent_name ?? null,
+        promptHash: row.prompt_hash ?? null,
     });
 }

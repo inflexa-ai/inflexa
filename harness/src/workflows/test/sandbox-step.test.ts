@@ -38,7 +38,6 @@ import { isKnownPartType, isReconciling } from "@inflexa-ai/harness/contracts/pa
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
-import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import type { SpawnSession } from "../../auth/types.js";
 import { createCapturingLogger, silentLogger, type CapturingLogger } from "../../__tests__/setup/logger.js";
 import { classifyReadPath } from "../../provenance/collector.js";
@@ -49,14 +48,13 @@ import type { Querier } from "../../state/db.js";
 import type { SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../../execution/artifact-registry.js";
 import type { GateFailure } from "../../lib/hooks.js";
-import { callTools, reply, scriptedModel, text, toolCall } from "../../testing.js";
+import { callTools, reply, scriptedModel, text, toolCall, type ScriptedReply } from "../../testing.js";
 import type { KeptToolOutput, ToolOutputStore } from "../../loop/tool-output.js";
-import type { AgentDefinition } from "../../loop/types.js";
+import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "../../agents/sandbox/index.js";
+import type { CatalogServices } from "../../catalog/equip.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
+import { promptHash } from "../../catalog/resolve.js";
 import { defineTool, type Tool } from "../../tools/define-tool.js";
-import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
-import { createExecuteCommandTool } from "../../tools/workspace/execute-command.js";
-import { createReportBlockerTool } from "../../tools/sandbox/report-blocker.js";
-import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 import {
     CAPPED_OUT_EMPTY_REASON,
     TEMPLATE_NOT_RUN_REASON,
@@ -245,7 +243,10 @@ afterAll(async () => {
 const ANALYSIS_ID = "an-usage";
 const USAGE_RUN_ID = "run-usage";
 const USAGE_STEP_ID = "T1S1";
-const USAGE_AGENT_ID = "analyst";
+const USAGE_AGENT_ID = "step-agent";
+const STEP_AGENT_PROMPT = "you are a test step agent";
+/** The MCP server of the step agent: the direct tools that a test gives to the agent come from it. */
+const TEST_TOOLS_SERVER = "test-tools";
 const STEP_MODEL_ID = "test-step-model";
 
 /** A pool that answers every query with an empty rowset — no ledger assertions here. */
@@ -314,13 +315,30 @@ function usageStepInput(): SandboxStepInput {
     };
 }
 
-function stepAgent(fileMetadata: FileMetadataCell, tools: readonly Tool[] = [], maxIterations = 4): AgentDefinition {
+/** A catalog that holds the step agent as a custom executor. The step agent gets `tools` as direct tools. */
+function stepServices(tools: readonly Tool[] = [], prompt = STEP_AGENT_PROMPT): CatalogServices {
     return {
-        id: USAGE_AGENT_ID,
-        systemPrompt: "you are a test step agent",
-        model: STEP_MODEL_ID,
-        tools: [...tools, createSubmitFileMetadataTool(fileMetadata)],
-        maxIterations,
+        catalog: createInMemoryCatalog({
+            agents: [
+                {
+                    kind: "custom",
+                    enabled: true,
+                    definition: {
+                        id: USAGE_AGENT_ID,
+                        name: "Step agent",
+                        role: "executor",
+                        description: "A test step agent.",
+                        prompt,
+                        connectors: [],
+                        mcp: [TEST_TOOLS_SERVER],
+                        skills: [],
+                    },
+                },
+            ],
+            mcpServers: [{ name: TEST_TOOLS_SERVER, transport: { kind: "stdio", command: "unused", args: [], env: {} }, approval: "never", scriptable: false }],
+        }),
+        connectorBase: {},
+        mcp: { toolsFor: () => Promise.resolve({ direct: tools, script: [] }) },
     };
 }
 
@@ -329,12 +347,13 @@ function stepAgent(fileMetadata: FileMetadataCell, tools: readonly Tool[] = [], 
  * then an empty artifact tree.
  */
 function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
+    const pool = makeFakePool();
+    const provider = makeProvider(usage);
     return {
-        citationResolver: unusedCitationResolver,
-        pool: makeFakePool(),
+        pool,
         logger: silentLogger,
         runAuthorizer: createLocalRunAuthorizer(),
-        provider: makeProvider(usage),
+        provider,
         embedding: { dimensions: 3, embed: (texts: readonly string[]) => okAsync(texts.map(() => [0, 0, 0])) },
         leases: fakeLeases(leaseOverClient(makeSandboxClient(), SANDBOX_REF)),
         artifactRegistry: {
@@ -344,7 +363,8 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
         workspaceFs: makeFakeWorkspaceFs(),
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         model: STEP_MODEL_ID,
-        buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata)),
+        services: stepServices(),
+        agentDeps: { provider, pool, toolchainSource: "store", workspaceFs: makeFakeWorkspaceFs(), model: STEP_MODEL_ID },
         resolveStepDir: (stepInput) => Promise.resolve(join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId)),
     };
 }
@@ -551,7 +571,6 @@ function withoutCacheMarkers(prompt: LanguageModelV4Prompt): string {
 
 describe("sandbox-step file-metadata output tool", () => {
     it("masks submit_file_metadata during the task, thus the call gets the error of the mask", async () => {
-        let cell: FileMetadataCell | undefined;
         const { provider, calls } = scriptedModel([
             callTools(
                 toolCall("tu-meta", "submit_file_metadata", {
@@ -561,14 +580,7 @@ describe("sandbox-step file-metadata output tool", () => {
             reply([text("done")]),
             reply([text("## Summary")]),
         ]);
-        const deps: SandboxStepDeps = {
-            ...usageStepDeps(undefined),
-            provider,
-            buildAgent: ({ fileMetadata }) => {
-                cell = fileMetadata;
-                return Promise.resolve(stepAgent(fileMetadata));
-            },
-        };
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), provider };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
@@ -576,8 +588,6 @@ describe("sandbox-step file-metadata output tool", () => {
         const refusal = toolResultIn(presentAt(calls, 1), "tu-meta");
         expect(refusal?.output.type).toBe("error-text");
         expect(JSON.stringify(refusal?.output)).toContain("The tool submit_file_metadata is not available for this request");
-        expect(cell?.knownPaths).toBeNull();
-        expect(cell?.described.size).toBe(0);
     });
 });
 
@@ -649,11 +659,7 @@ describe("sandbox-step post-step continuations", () => {
 
     it("asks a template step for the run once, and blocks it when no run of the template ends with exit code 0", async () => {
         const { provider, calls } = scriptedModel([reply([text("done")]), reply([text("still done")])]);
-        const deps: SandboxStepDeps = {
-            ...usageStepDeps(undefined),
-            provider,
-            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [runTemplateTool(1)])),
-        };
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), provider, services: stepServices([runTemplateTool(1)]) };
 
         const result = await runSandboxStepBody({ ...usageStepInput(), ...TEMPLATE_STEP }, deps);
 
@@ -664,11 +670,7 @@ describe("sandbox-step post-step continuations", () => {
 
     it("completes a template step after a run of the template that ends with exit code 0", async () => {
         const { provider } = scriptedModel([callTools(toolCall("r1", RUN_TEMPLATE_TOOL_ID, {})), reply([text("done")]), reply([text("## Summary")])]);
-        const deps: SandboxStepDeps = {
-            ...usageStepDeps(undefined),
-            provider,
-            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [runTemplateTool(0)])),
-        };
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), provider, services: stepServices([runTemplateTool(0)]) };
 
         const result = await runSandboxStepBody({ ...usageStepInput(), ...TEMPLATE_STEP }, deps);
 
@@ -749,18 +751,6 @@ describe("sandbox-step kept tool outputs", () => {
             provider,
             leases: fakeLeases(leaseOverClient(sandboxClient, SANDBOX_REF)),
             toolOutputStore: store,
-            buildAgent: (ctx) => {
-                if (ctx.toolOutputStore === undefined) return Promise.reject(new Error("the tool output store is absent"));
-                return Promise.resolve(
-                    stepAgent(ctx.fileMetadata, [
-                        createExecuteCommandTool({
-                            lease: ctx.lease,
-                            defaultCwd: `/${ANALYSIS_ID}`,
-                        }),
-                        createReadToolOutputTool(ctx.toolOutputStore),
-                    ]),
-                );
-            },
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
@@ -798,10 +788,7 @@ describe("sandbox-step kept tool outputs", () => {
             ...usageStepDeps(undefined),
             provider,
             toolOutputStore: store,
-            buildAgent: (ctx) => {
-                if (ctx.toolOutputStore === undefined) return Promise.reject(new Error("the tool output store is absent"));
-                return Promise.resolve(stepAgent(ctx.fileMetadata, [big, createReadToolOutputTool(ctx.toolOutputStore)]));
-            },
+            services: stepServices([big]),
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
@@ -813,15 +800,6 @@ describe("sandbox-step kept tool outputs", () => {
         if (read.output.type !== "json") throw new Error(`expected a json excerpt, got ${read.output.type}`);
         expect(read.output.value).toMatchObject({ status: "ok", offset: 0 });
     });
-
-    it("logs one warn when the step has a store and its agent declares no read_tool_output", async () => {
-        const logger = createCapturingLogger();
-        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), logger, toolOutputStore: memoryStore() };
-
-        await runSandboxStepBody(usageStepInput(), deps);
-
-        expect(logger.records.filter((r) => r.level === "warn" && r.msg.includes("declares no read_tool_output"))).toHaveLength(1);
-    });
 });
 
 // ── a blocker ───────────────────────────────────────────────────────
@@ -829,12 +807,8 @@ describe("sandbox-step kept tool outputs", () => {
 describe("sandbox-step blocker", () => {
     const REASON = "The input has no batch column.";
 
-    function blockerDeps(provider: ChatProvider, blocker: Tool = createReportBlockerTool()): SandboxStepDeps {
-        return {
-            ...usageStepDeps(undefined),
-            provider,
-            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [blocker])),
-        };
+    function blockerDeps(provider: ChatProvider, tools: readonly Tool[] = []): SandboxStepDeps {
+        return { ...usageStepDeps(undefined), provider, services: stepServices(tools) };
     }
 
     function blockedParts(): Array<Record<string, unknown>> {
@@ -853,15 +827,23 @@ describe("sandbox-step blocker", () => {
     });
 
     it("forwards the tool events of the loop to the run stream with none of the three shown values", async () => {
-        const { provider } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: REASON }))]);
+        const { provider } = scriptedModel([callTools(toolCall("s1", "show", { label: "x" }), toolCall("b1", "report_blocker", { reason: REASON }))]);
 
         // A view that shows the input and the result: without the strip, the forwarded events would carry them.
-        const showing: Tool = { ...createReportBlockerTool(), view: { input: (input) => input, result: (_input, result) => result, error: true } };
-        await runSandboxStepBody(usageStepInput(), blockerDeps(provider, showing));
+        const showing = defineTool({
+            id: "show",
+            description: "Echo the label back.",
+            inputSchema: z.object({ label: z.string() }),
+            view: { input: (input) => input, result: (_input, result) => result, error: true },
+            describeCall: "none",
+            execute: ({ label }) => Promise.resolve(ok({ label })),
+        });
+        await runSandboxStepBody(usageStepInput(), blockerDeps(provider, [showing]));
 
         const events = dbosState.emittedParts
             .filter((part) => part.type === "data-loop-event")
             .flatMap((part) => parseUnknownRecord(parseUnknownRecord(part.data)?.event) ?? []);
+        expect(events).toContainEqual(expect.objectContaining({ type: "tool-finished", toolUseId: "s1", outcome: "ok" }));
         expect(events).toContainEqual(expect.objectContaining({ type: "tool-finished", toolUseId: "b1", outcome: "ok" }));
         for (const event of events) {
             for (const key of ["input", "result", "error"]) expect(event).not.toHaveProperty(key);
@@ -916,37 +898,31 @@ describe("sandbox-step blocker", () => {
                 return value;
             }),
         );
-        let executes = 0;
-        const blocker = createReportBlockerTool();
-        const counted: Tool = {
-            ...blocker,
-            execute: (input, ctx) => {
-                executes += 1;
-                return blocker.execute(input, ctx);
-            },
-        };
-
         const first = await runSandboxStepBody(
             usageStepInput(),
-            blockerDeps(scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: REASON }))]).provider, counted),
+            blockerDeps(scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: REASON }))]).provider),
         );
 
         // DBOS returns the recorded steps of a replay in the order of their function ids, and it refuses a step of a different name.
         let next = 0;
+        const ranAgain: Array<string | undefined> = [];
         Reflect.set(
             dbos.DBOS,
             "runStep",
             mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
                 const step = recorded[next];
                 next += 1;
-                if (step === undefined) return fn();
+                if (step === undefined) {
+                    ranAgain.push(config?.name);
+                    return fn();
+                }
                 if (step.name !== config?.name)
                     throw new Error(`the replay reached the step ${config?.name ?? "(unnamed)"} where the record holds ${step.name ?? "(unnamed)"}`);
                 return step.value;
             }),
         );
         const replay = scriptedModel([]);
-        const replayed = await runSandboxStepBody(usageStepInput(), blockerDeps(replay.provider, counted));
+        const replayed = await runSandboxStepBody(usageStepInput(), blockerDeps(replay.provider));
 
         const names = recorded.map((step) => step.name);
         expect(names).toContain(`${USAGE_AGENT_ID}.model`);
@@ -954,7 +930,40 @@ describe("sandbox-step blocker", () => {
         expect(first).toMatchObject({ status: "blocked", error: REASON });
         expect(replayed).toMatchObject({ status: "blocked", error: REASON });
         expect(replay.calls).toHaveLength(0);
-        expect(executes).toBe(1);
+        expect(ranAgain).not.toContain(`${USAGE_AGENT_ID}.model`);
+        expect(ranAgain).not.toContain("report_blocker.b1");
+    });
+});
+
+// ── the agent of the step ───────────────────────────────────────────
+
+describe("sandbox-step agent identity", () => {
+    it("builds the agent with the prompt of the identity of the input, not with the prompt of the catalog", async () => {
+        const kept = "you analyze sterols, as written when the run started";
+        const edited = "you analyze lipids, as edited after the run started";
+        const { provider, calls } = scriptedModel(Array.from({ length: ONE_REPLY_STEP_REQUESTS }, () => reply([text("done")])));
+        const input: SandboxStepInput = {
+            ...usageStepInput(),
+            agent: { id: USAGE_AGENT_ID, name: "Step agent", role: "executor", prompt: kept, promptHash: promptHash(kept) },
+        };
+
+        const result = await runSandboxStepBody(input, { ...usageStepDeps(undefined), provider, services: stepServices([], edited) });
+
+        expect(result.status).toBe("complete");
+        const system = JSON.stringify(presentAt(calls, 0).prompt.filter((message) => message.role === "system"));
+        expect(system).toContain(kept);
+        expect(system).not.toContain(edited);
+    });
+
+    it("records the name and the prompt hash of the catalog agent on the step row when the input has no identity", async () => {
+        const { provider } = scriptedModel(Array.from({ length: ONE_REPLY_STEP_REQUESTS }, () => reply([text("done")])));
+        const { pool, statements } = statementPool();
+
+        await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, provider, services: stepServices() });
+
+        const insert = statements.find((statement) => statement.text.includes("INSERT INTO cortex_step_executions"));
+        expect(insert?.values).toContain("Step agent");
+        expect(insert?.values).toContain(promptHash(STEP_AGENT_PROMPT));
     });
 });
 
@@ -1291,37 +1300,30 @@ describe("sandbox-step capped-out empty manifest", () => {
         return { pool, values };
     }
 
+    const echo = defineTool({
+        id: "echo",
+        description: "Echo the label back.",
+        inputSchema: z.object({ label: z.string() }),
+        view: "none",
+        describeCall: "none",
+        execute: ({ label }) => Promise.resolve(ok({ label })),
+    });
+
+    /** The `count` replies of the task before its last request: each one calls `echo`. */
+    function echoCalls(count: number): ScriptedReply[] {
+        return Array.from({ length: count }, (_, index) => callTools(toolCall(`tu-${index}`, "echo", { label: "x" })));
+    }
+
     /**
-     * Deps whose loop caps out: a one-iteration agent with one `echo` tool, and
-     * a provider whose first reply is a tool call. Each post-step continuation
+     * Deps whose loop caps out: the agent has one `echo` tool, and each request
+     * that the cap lets run replies with a tool call. Each post-step continuation
      * gets a plain "done", and the loop ends with `finish.cappedOut: true` and
      * `reason: "max_iterations"`.
      */
     function cappedOutDeps(): { deps: SandboxStepDeps; values: unknown[] } {
         const { pool, values } = makeRecordingPool();
-        const { provider } = scriptedModel([callTools(toolCall("tu-1", "echo", { label: "x" })), reply([text("done")]), reply([text("done")])]);
-        const deps: SandboxStepDeps = {
-            ...usageStepDeps(undefined),
-            pool,
-            provider,
-            buildAgent: ({ fileMetadata }) =>
-                Promise.resolve(
-                    stepAgent(
-                        fileMetadata,
-                        [
-                            defineTool({
-                                id: "echo",
-                                description: "Echo the label back.",
-                                inputSchema: z.object({ label: z.string() }),
-                                view: "none",
-                                describeCall: "none",
-                                execute: ({ label }) => Promise.resolve(ok({ label })),
-                            }),
-                        ],
-                        1,
-                    ),
-                ),
-        };
+        const { provider } = scriptedModel([...echoCalls(SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS), reply([text("done")]), reply([text("done")])]);
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), pool, provider, services: stepServices([echo]) };
         return { deps, values };
     }
 
@@ -1376,13 +1378,11 @@ describe("sandbox-step capped-out empty manifest", () => {
 
     it("keeps the blocker's own reason when the blocker comes in the last request that the cap lets run", async () => {
         const { pool } = makeRecordingPool();
-        const { provider } = scriptedModel([callTools(toolCall("b1", "report_blocker", { reason: "the input has no batch column" }))]);
-        const deps: SandboxStepDeps = {
-            ...usageStepDeps(undefined),
-            pool,
-            provider,
-            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool()], 1)),
-        };
+        const { provider } = scriptedModel([
+            ...echoCalls(SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS - 1),
+            callTools(toolCall("b1", "report_blocker", { reason: "the input has no batch column" })),
+        ]);
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), pool, provider, services: stepServices([echo]) };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
@@ -1439,7 +1439,7 @@ describe("sandbox-step usage in the step row", () => {
             ...usageStepDeps(undefined),
             pool,
             provider,
-            buildAgent: ({ fileMetadata }) => Promise.resolve(stepAgent(fileMetadata, [createReportBlockerTool()])),
+            services: stepServices(),
         };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);

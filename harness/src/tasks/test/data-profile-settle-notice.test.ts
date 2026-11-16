@@ -15,6 +15,7 @@ import { withSchema } from "../../__tests__/setup/postgres.js";
 import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
 import { silentLogger } from "../../__tests__/setup/logger.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
 import type { RunSession } from "../../auth/types.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import { fakeLeases, leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
@@ -101,10 +102,9 @@ describe("the settle notice of the data profile", () => {
                 suspend: () => okAsync(undefined),
                 renew: () => okAsync(undefined),
             },
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            services: { catalog: createInMemoryCatalog(), connectorBase: {} },
             // The embedder is read only when the body indexes a profile, which no case here reaches.
             embedding: { dimensions: 3, embed: () => okAsync([]) },
-            skillsDir: root,
             notifyDataProfileSettled,
         };
     }

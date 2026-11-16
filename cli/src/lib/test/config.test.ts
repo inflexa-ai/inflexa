@@ -328,3 +328,46 @@ describe("ensureRuntime", () => {
         expect(readConfig().runtime).toBeUndefined();
     });
 });
+
+describe("readConfig — the customization blocks", () => {
+    test("reads the agents, mcp, connectors and credentials blocks", () => {
+        writeRawConfig(
+            JSON.stringify({
+                telemetry: false,
+                agents: { analyst: { enabled: true, add: { mcp: ["lims"] }, remove: { skills: ["omics-general"] } } },
+                mcp: { lims: { type: "stdio", command: "lims-mcp" } },
+                connectors: { drugbank: { credentials: { apiKey: "drugbank-key" } } },
+                credentials: { "drugbank-key": { kind: "env", var: "DRUGBANK_API_KEY" } },
+            }),
+        );
+        const cfg = readConfig();
+        expect(cfg.agents?.analyst).toEqual({ enabled: true, add: { mcp: ["lims"] }, remove: { skills: ["omics-general"] } });
+        expect(cfg.mcp?.lims).toEqual({ type: "stdio", command: "lims-mcp" });
+        expect(cfg.connectors?.drugbank).toEqual({ credentials: { apiKey: "drugbank-key" } });
+        expect(cfg.credentials?.["drugbank-key"]).toEqual({ kind: "env", var: "DRUGBANK_API_KEY" });
+    });
+
+    test("a bad agent change or a bad connector entry becomes empty, and its siblings stay", () => {
+        writeRawConfig(
+            JSON.stringify({
+                telemetry: true,
+                agents: { analyst: { enabled: "yes" }, reporter: { add: { skills: ["omics-general"] } } },
+                connectors: { drugbank: { enabled: 3 }, chembl: { enabled: false } },
+            }),
+        );
+        const cfg = readConfig();
+        expect(cfg.agents).toEqual({ analyst: {}, reporter: { add: { skills: ["omics-general"] } } });
+        expect(cfg.connectors).toEqual({ drugbank: {}, chembl: { enabled: false } });
+        expect(cfg.telemetry).toBe(true);
+    });
+
+    test("a block of the wrong shape is unset, and the other fields stay", () => {
+        writeRawConfig(JSON.stringify({ telemetry: true, agents: [], mcp: "lims", connectors: 1, credentials: null }));
+        const cfg = readConfig();
+        expect(cfg.agents).toBeUndefined();
+        expect(cfg.mcp).toBeUndefined();
+        expect(cfg.connectors).toBeUndefined();
+        expect(cfg.credentials).toBeUndefined();
+        expect(cfg.telemetry).toBe(true);
+    });
+});

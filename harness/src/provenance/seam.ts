@@ -67,6 +67,8 @@ export type RunProvenanceEvent =
           status: "completed" | "failed" | "canceled";
           /** The child's durable execution duration; absent when the child settled by throwing. */
           durationMs?: number;
+          /** The agent that the step ran on: its id, its name, and the hash of its prompt. Absent for a run from before the agent catalog. */
+          agent?: { agentId: string; name: string; promptHash: string };
           atMs: number;
       }
     | {

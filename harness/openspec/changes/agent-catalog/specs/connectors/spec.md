@@ -44,9 +44,9 @@ For each connector, the host MUST be able to give `enabled`, an endpoint and the
 - **WHEN** an agent calls `web_search`
 - **THEN** the request goes to that endpoint
 
-### Requirement: A tool reads its credential when it runs
+### Requirement: A tool reads its credential when its agent is built
 
-A tool MUST get the value of a credential through `catalog.credential(name)` when the tool runs. The harness MUST NOT keep a credential value in a workflow input, a step output or a log. One credential name can serve more than one connector.
+The harness MUST read the value of a credential through `catalog.credential(name)` when it builds the agent of a turn or a step. Thus a new value reaches the next turn or step. The harness MUST NOT keep a credential value in a workflow input, a step output or a log. One credential name can serve more than one connector.
 
 #### Scenario: One key serves two connectors
 

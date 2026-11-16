@@ -24,6 +24,79 @@ import {
     type PostgresConnection,
 } from "../modules/infra/postgres_types.ts";
 
+/** The attachments that a change adds to a built-in agent, or removes from it. */
+const attachmentsChangeSchema = z.object({
+    connectors: z.array(z.string()).optional(),
+    mcp: z.array(z.string()).optional(),
+    skills: z.array(z.string()).optional(),
+});
+
+/** The change of the user to one built-in agent: on or off, and the attachments added and removed. */
+export const builtinAgentChangeSchema = z.object({
+    enabled: z.boolean().optional(),
+    add: attachmentsChangeSchema.optional(),
+    remove: attachmentsChangeSchema.optional(),
+});
+
+/** The settings of one connector: on or off, an endpoint, and the credential name of each slot. */
+export const connectorSettingsSchema = z.object({
+    enabled: z.boolean().optional(),
+    endpoint: z.string().optional(),
+    credentials: z.record(z.string(), z.string()).optional(),
+});
+
+/**
+ * Where the value of a named credential comes from: an environment variable, or a helper command whose output is the
+ * value. The block never holds the value itself.
+ */
+export const credentialSourceSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("env"), var: z.string().min(1) }),
+    z.object({
+        kind: z.literal("command"),
+        command: z.string().min(1),
+        format: z.enum(["raw", "exec-credential"]).optional(),
+        ttlMs: z.number().int().positive().optional(),
+    }),
+]);
+
+/** A credential source as the config holds it. */
+export type CredentialSourceConfig = z.infer<typeof credentialSourceSchema>;
+
+const mcpCommonFields = {
+    /**
+     * `always` sends each call of a tool of the server through the approval of the user. Only an agent that runs in a
+     * chat turn can attach such a server, because no person answers in a run. Absent: `never`.
+     */
+    approval: z.enum(["always", "never"]).default("never"),
+    /** A scriptable server also gives its tools to `run_script`. It needs `approval: "never"`. */
+    scriptable: z.boolean().default(false),
+    enabled: z.boolean().default(true),
+};
+
+/**
+ * One MCP server. A `stdio` server is a local command. An `http` server is a URL, and it can sign in with OAuth. A
+ * secret in `env` or `headers` is a `${cred:<name>}` reference, never a value.
+ */
+export const mcpServerEntrySchema = z.discriminatedUnion("type", [
+    z.object({
+        type: z.literal("stdio"),
+        command: z.string().min(1),
+        args: z.array(z.string()).default([]),
+        env: z.record(z.string(), z.string()).default({}),
+        ...mcpCommonFields,
+    }),
+    z.object({
+        type: z.literal("http"),
+        url: z.string().min(1),
+        headers: z.record(z.string(), z.string()).default({}),
+        auth: z.literal("oauth").optional(),
+        ...mcpCommonFields,
+    }),
+]);
+
+/** An MCP server entry of the config. */
+export type McpServerEntry = z.infer<typeof mcpServerEntrySchema>;
+
 const configSchema = z.object({
     telemetry: z.boolean(),
     theme: z.enum(themeIds).catch(DEFAULT_THEME_ID).default(DEFAULT_THEME_ID),
@@ -57,7 +130,7 @@ const configSchema = z.object({
     // The embedded harness runtime's settings (data-profile runs). Declared as opaque `unknown` and
     // validated downstream in modules/harness/config.ts (`resolveHarnessConfig`), NOT shaped inline:
     //
-    //   - There is no harness-package schema to import. The `harness.*` shape (model/bioKeys/
+    //   - There is no harness-package schema to import. The `harness.*` shape (model/
     //     sandboxImage/skillsDir) is THIS cli's user-facing config contract — the knobs the
     //     cli chooses to expose and map onto the harness's runtime deps — not something the harness
     //     package defines. `@inflexa-ai/harness` exports only `ResourceLimitsSchema`, for one sub-field.
@@ -125,6 +198,15 @@ const configSchema = z.object({
         })
         .optional()
         .catch(undefined),
+    // The customization of the agents. `agents` holds the change of the user to each built-in agent, as a difference
+    // from the release defaults, thus a release that changes a default still reaches the user. `mcp` and
+    // `credentials` cross as `unknown` entries and the customization module validates each entry alone, thus one bad
+    // entry is reported by name and never drops its siblings. None of these blocks holds a secret value: a
+    // credential names an environment variable or a helper command.
+    agents: z.record(z.string(), builtinAgentChangeSchema.catch({})).optional().catch(undefined),
+    mcp: z.record(z.string(), z.unknown()).optional().catch(undefined),
+    connectors: z.record(z.string(), connectorSettingsSchema.catch({})).optional().catch(undefined),
+    credentials: z.record(z.string(), z.unknown()).optional().catch(undefined),
     embedding: z
         .object({
             mode: z.enum(["local", "api-key", "off"]).optional().catch(undefined),

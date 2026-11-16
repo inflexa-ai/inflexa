@@ -167,6 +167,8 @@ function stepRow(overrides: Partial<StepExecutionRow> & Pick<StepExecutionRow, "
         analysisId: "a",
         wave: 0,
         agentId: "bio",
+        agentName: null,
+        promptHash: null,
         status: "completed",
         startedAt: "2026-10-01T10:01:00.000Z",
         completedAt: "2026-10-01T10:02:00.000Z",
@@ -1678,6 +1680,11 @@ describe("POST {A}/plans/:planId/approve", () => {
                 { type: "packages_missing", missing: [], collisions: [], unavailable: "the farm is locked" },
                 `The packages of plan ${planId} cannot link.`,
                 { reason: "packages_missing", missing: [], collisions: [], unavailable: "the farm is locked" },
+            ],
+            [
+                { type: "agent_unavailable", planId, steps: [{ stepId: "s1", agentId: "lims-analyst" }] },
+                `Plan ${planId} names an agent that is not available.`,
+                { reason: "agent_unavailable", steps: [{ stepId: "s1", agentId: "lims-analyst" }] },
             ],
             [
                 { type: "not_authorized", kind: "failed", transient: false, reason: "mint refused" },

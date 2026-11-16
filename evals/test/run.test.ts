@@ -11,7 +11,7 @@ import { openSandboxTrial } from "../lib/sandbox.js";
 import type { Tool } from "@inflexa-ai/harness/tools/define-tool.js";
 import { okAsync } from "neverthrow";
 
-const agents = evalAgents();
+const agents = await evalAgents();
 const agent = agents.conversation;
 
 function evalCase(overrides: Partial<EvalCase>): EvalCase {
@@ -158,7 +158,7 @@ describe("the CLI host tools", () => {
 async function toolsOf(c: EvalCase): Promise<readonly Tool[]> {
     const kind = c.agent ?? "conversation";
     if (kind === "synthesis") {
-        const agent = synthesisAgent(c.synthesis?.summaries ?? []);
+        const agent = await synthesisAgent(c.synthesis?.summaries ?? []);
         return [...agent.tools, ...(agent.scriptTools ?? [])];
     }
     if (kind !== "sandbox") return [...agents[kind].tools, ...(agents[kind].scriptTools ?? [])];
@@ -198,7 +198,7 @@ describe("the cases", () => {
         for (const c of allCases.filter((c) => c.set === "held-out")) expect(dev.has(c.id.slice(0, -"-held-out".length))).toBe(true);
     });
 
-    test("the prompt digest is stable for one composition", () => {
-        expect(promptDigest(evalAgents())).toBe(promptDigest(agents));
+    test("the prompt digest is stable for one composition", async () => {
+        expect(promptDigest(await evalAgents())).toBe(promptDigest(agents));
     });
 });

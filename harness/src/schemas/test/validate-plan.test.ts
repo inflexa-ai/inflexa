@@ -1,12 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-import { KNOWN_AGENT_IDS, resolveStepAgentId } from "../../agents/sandbox-catalog.js";
 import { AnalysisStepSchema } from "../workflow-state.js";
 import type { AnalysisPlan, AnalysisStep } from "../workflow-state.js";
 import { validatePlan } from "../validate-plan.js";
-import { presentAt } from "../../lib/present.js";
 
-const AGENT = presentAt(KNOWN_AGENT_IDS, 0);
+const AGENT = "analyst";
 
 function step(over: Partial<AnalysisStep> & { id: string }): AnalysisStep {
     return {
@@ -24,10 +22,8 @@ function step(over: Partial<AnalysisStep> & { id: string }): AnalysisStep {
 }
 
 describe("the agent of a step", () => {
-    it("accepts an agent id that the roster no longer holds, and the step runs on the analyst", () => {
+    it("accepts an agent id that the catalog no longer holds, because the launch decides on the agent", () => {
         expect(validatePlan(plan([step({ id: "T1S1", agent: "bulk-transcriptomics-agent" })])).errors).toEqual([]);
-        expect(resolveStepAgentId("bulk-transcriptomics-agent")).toBe("analyst");
-        expect(resolveStepAgentId("drug-analyst")).toBe("drug-analyst");
     });
 
     it("refuses a step with no agent", () => {

@@ -16,6 +16,10 @@ import { recoverAtCrashPoint } from "../../../../__tests__/setup/dbos-crash.js";
 import { setupDbosForTests, type DbosTestRig } from "../../../../__tests__/setup/dbos.js";
 import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
+import { plannerCatalogOf } from "../../../../agents/sandbox-catalog.js";
+import type { CatalogServices } from "../../../../catalog/equip.js";
+import { createInMemoryCatalog } from "../../../../catalog/memory.js";
+import { resolveCatalog } from "../../../../catalog/resolve.js";
 import { createDbosRunLauncher } from "../../../../execution/dbos-run-launcher.js";
 import { dbosClientFor } from "../../../../execution/dbos-workflow-purger.js";
 import { createNoopLogger } from "../../../../lib/console-logger.js";
@@ -111,12 +115,17 @@ beforeAll(async () => {
     };
     (await upsertPlan(rig.pool, { planId: PLAN_ID, analysisId: ANALYSIS_ID, plan }))._unsafeUnwrap();
     (await upsertPlan(rig.pool, { planId: SECOND_PLAN_ID, analysisId: ANALYSIS_ID, plan }))._unsafeUnwrap();
-    tool = createExecuteAnalysisTool({
-        pool: rig.pool,
-        executeAnalysisWorkflow: runWorkflow,
-        runAuthorizer: createLocalRunAuthorizer(),
-        runLauncher: createDbosRunLauncher({ pool: rig.pool }),
-    });
+    const services: CatalogServices = { catalog: createInMemoryCatalog(), connectorBase: {} };
+    tool = createExecuteAnalysisTool(
+        {
+            pool: rig.pool,
+            services,
+            executeAnalysisWorkflow: runWorkflow,
+            runAuthorizer: createLocalRunAuthorizer(),
+            runLauncher: createDbosRunLauncher({ pool: rig.pool }),
+        },
+        plannerCatalogOf(await resolveCatalog(services.catalog)),
+    );
 });
 
 afterAll(async () => {

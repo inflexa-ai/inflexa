@@ -509,8 +509,8 @@ The agent prompts are in `prompts/`. Each prompt obeys these conventions:
    file contents.
 5. **A sandbox agent knows its tools.** The shared sandbox-agent composition is in
    `agents/sandbox/shared.ts`. It has the always-on substrate (the workspace read
-   and mutate surface, plus `inspect_data_profile`) and the `meta.tools` allowlist
-   of the agent. An environment lookup is **conditional and narrow**, and never a
+   and mutate surface, plus `inspect_data_profile`) and the tools of the
+   connectors and the MCP servers that the agent attaches. An environment lookup is **conditional and narrow**, and never a
    catalog dump up front: `list_available_packages` before an import of a package
    that the agent is not sure is staged, and `list_available_refs` narrowed to the
    collection that it needs. There are no assumed paths, no runtime installs, and

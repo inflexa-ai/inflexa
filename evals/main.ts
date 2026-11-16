@@ -114,11 +114,11 @@ async function run(args: readonly string[]): Promise<void> {
     // A sandbox case runs on the sandbox model of the CLI. A provider file serves each case.
     const sandboxCases = cases.filter((c) => c.agent === "sandbox");
     const sandbox = sandboxCases.length === 0 || values.provider !== undefined ? undefined : await cliProvider(logger, "sandbox", values.model);
-    const agents = evalAgents();
+    const agents = await evalAgents();
     const startedAt = new Date().toISOString();
     const digest = promptDigest(
         exposedAgents(agents, exposure),
-        [...(await sandboxAgentsOf(sandboxCases)), synthesisAgent([])].map((agent) => exposed(agent, exposure)),
+        [...(await sandboxAgentsOf(sandboxCases)), await synthesisAgent([])].map((agent) => exposed(agent, exposure)),
     );
 
     process.stderr.write(

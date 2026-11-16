@@ -146,6 +146,7 @@ export type PlanApprovalConflict =
     | { reason: "superseded"; supersededBy: string }
     | { reason: "plan_invalid"; errors: string[] }
     | { reason: "packages_missing"; missing: string[]; collisions: string[]; unavailable?: string }
+    | { reason: "agent_unavailable"; steps: { stepId: string; agentId: string }[] }
     | { reason: "not_authorized"; kind: "failed"; transient: boolean }
     | { reason: "not_authorized"; kind: "credential" }
     | { reason: "suspended" };

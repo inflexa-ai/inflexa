@@ -16,6 +16,7 @@ import { z } from "zod";
 
 import { makeFakeSandboxClient } from "../../agents/sandbox/__fixtures__/deps.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
 import type { RunSession } from "../../auth/types.js";
 import type { Querier } from "../../state/db.js";
 import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
@@ -94,9 +95,8 @@ function deps(pool: Querier, lease: BoundLease, revoked: string[]): DataProfileD
         ...workspaceOf(root),
         model: "test-model",
         runAuthorizer: runAuthorizerOf(revoked),
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        services: { catalog: createInMemoryCatalog(), connectorBase: {} },
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) },
-        skillsDir: root,
     };
 }
 

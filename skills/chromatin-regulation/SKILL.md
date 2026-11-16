@@ -1,8 +1,9 @@
 ---
 name: chromatin-regulation
 description: Read before you analyze ATAC-seq, ChIP-seq, CUT&Tag, or scATAC data from peaks, counts, or signal tracks. It gives differential binding, peak annotation, and signal profiles, the upstream facts that change the counts, and which motif analyses are not available.
-version: 1.0.0
-tags: [atac-seq, chip-seq, cut-and-tag, cut-and-run, peaks, diffbind, chromatin]
+metadata:
+  version: 1.0.0
+  tags: [atac-seq, chip-seq, cut-and-tag, cut-and-run, peaks, diffbind, chromatin]
 ---
 
 # Chromatin Regulation Analysis

@@ -160,10 +160,10 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
     directory never collides with a subdir convention. Refer to
     [harness-workspace-tools](openspec/specs/harness-workspace-tools/spec.md).
 - **Skills** — Runtime knowledge packs (`skills/<name>/SKILL.md` plus
-  `references/`). Each agent declares them with `AgentMeta.skills`, and the
-  `skill_search` and `skill_read` tools surface them to a sandbox agent. The
-  search is by keyword, not by vector. `shared/omics-general` loads for each
-  analysis agent.
+  `references/`). Each agent attaches them in the agent catalog, and the
+  `skill_search` and `skill_read` tools surface them to the agent through the
+  `SkillStore` of the catalog. The search is by keyword, not by vector.
+  `omics-general` is a default skill of each built-in executor.
 - **Package store** — The host directory with the pool, the farms, and the
   graph, mounted read-only at `/mnt/libs`. The sandbox images bake no analysis
   package: the store is the one source of a library. The term replaces

@@ -24,6 +24,11 @@
  * across threads, and the provider cache reuses it.
  */
 
+import { builtinAgent } from "../catalog/builtins.js";
+import { equipAttachments, type CatalogServices } from "../catalog/equip.js";
+import { agentOfRole, resolveCatalog } from "../catalog/resolve.js";
+import { createSkillTools } from "../tools/sandbox/skills.js";
+import type { TurnAgent } from "./turn-agent.js";
 import type { Pool } from "pg";
 
 import type { AuthContext, Identity } from "../auth/types.js";
@@ -161,10 +166,12 @@ export type ReportSessionAgentDeps = {
     readonly toolOutputStore?: ToolOutputStore;
     /** Where the VM of `run_script` comes from. A bundled host gives the embedded paths; see `ScriptRuntime`. */
     readonly scriptRuntime?: ScriptRuntime;
+    /** The agent catalog: the skills, the connectors, and the MCP servers of the reporter, read at each turn. */
+    readonly services: CatalogServices;
 };
 
-/** Build the report `AgentDefinition` with every tool bound to its deps. */
-export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDefinition {
+/** Make the report agent with every tool bound to its deps. Each turn adds the skills and the MCP servers of the reporter. */
+export function createReportSessionAgent(deps: ReportSessionAgentDeps): TurnAgent {
     const { model, pool, embedding, workspaceFs, gateway, resolveWorkspaceRoot, store, threads, chrome, eyes, makeResolver, resolvePageAsset, logger } = deps;
     const { derivations, makeSessionPages, resolvePageUrl, provenance, syncSessionFile } = deps;
     // The seam rides into each tool that lands an act of the session, thus the composition binds it one
@@ -251,16 +258,23 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         }),
     ];
 
-    return {
-        id: REPORT_SESSION_AGENT_ID,
-        systemPrompt: composeSystemPrompt(reportSessionPrompt, { identity: true, conversational: true }),
-        model,
-        tools,
-        scriptTools,
-        scriptRuntime: deps.scriptRuntime,
-        scriptScratch,
-        maxIterations: REPORT_SESSION_MAX_ITERATIONS,
-        compaction: REPORT_SESSION_COMPACTION,
-        providerOptions: REPORT_SESSION_PROVIDER_OPTIONS,
+    const forTurn = async (): Promise<AgentDefinition> => {
+        const resolved = await resolveCatalog(deps.services.catalog);
+        const attachments = agentOfRole(resolved, "reporter")?.attachments ?? builtinAgent("reporter").defaults;
+        const equipment = await equipAttachments(deps.services, resolved, attachments);
+        const prompt = equipment.skillIndex === undefined ? reportSessionPrompt : `${reportSessionPrompt}\n\n${equipment.skillIndex}`;
+        return {
+            id: REPORT_SESSION_AGENT_ID,
+            systemPrompt: composeSystemPrompt(prompt, { identity: true, conversational: true }),
+            model,
+            tools: [...tools, ...Object.values(createSkillTools({ store: equipment.skillStore, skills: equipment.skills })), ...equipment.mcp.direct],
+            scriptTools: [...scriptTools, ...equipment.connectorTools, ...equipment.mcp.script],
+            scriptRuntime: deps.scriptRuntime,
+            scriptScratch,
+            maxIterations: REPORT_SESSION_MAX_ITERATIONS,
+            compaction: REPORT_SESSION_COMPACTION,
+            providerOptions: REPORT_SESSION_PROVIDER_OPTIONS,
+        };
     };
+    return { id: REPORT_SESSION_AGENT_ID, forTurn };
 }

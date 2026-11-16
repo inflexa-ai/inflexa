@@ -5,7 +5,7 @@
 
 import { okAsync } from "neverthrow";
 
-import { SANDBOX_AGENT_META } from "@inflexa-ai/harness/agents/sandbox/index.js";
+import { BUILTIN_AGENTS } from "@inflexa-ai/harness/catalog/builtins.js";
 import type { EvalCase } from "./case.js";
 import { openSandboxTrial, PROFILER_ID, type SandboxSetup } from "./sandbox.js";
 
@@ -17,7 +17,7 @@ type Replacement = Pick<SandboxSetup, "agentId">;
 
 /** The ids of the agents that can replace a step agent. The profiler runs a different task, thus it is not one. */
 export function overrideAgentIds(): string[] {
-    return Object.keys(SANDBOX_AGENT_META).filter((id) => id !== PROFILER_ID);
+    return BUILTIN_AGENTS.filter((agent) => agent.role === "executor").map((agent) => agent.id);
 }
 
 /**

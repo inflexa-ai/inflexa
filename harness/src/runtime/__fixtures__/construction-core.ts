@@ -39,7 +39,13 @@ export function constructionSandboxStepDeps(): CoreWorkflowDeps["sandboxStep"] {
         workspaceFs: makeFakeWorkspaceFs(),
         resolveWorkspaceRoot: () => Promise.resolve("/tmp/sessions/analysis-001"),
         model: "test/model",
-        buildAgent: () => refuse("buildAgent"),
+        agentDeps: {
+            provider: unusedChatProvider(),
+            pool: new Pool(),
+            toolchainSource: "store",
+            workspaceFs: makeFakeWorkspaceFs(),
+            model: "test/model",
+        },
         resolveStepDir: () => refuse("resolveStepDir"),
     };
 }
@@ -52,7 +58,6 @@ export function constructionExecuteAnalysisDeps(): ReturnType<CoreWorkflowDeps["
         sandboxStepCallable: () => refuse("sandboxStepCallable"),
         resolveWorkspaceRoot: () => Promise.resolve("/tmp/sessions/analysis-001"),
         synthesisModel: "test/model",
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         runCharge: createNoopRunCharge(),
         runAuthorizer: createLocalRunAuthorizer(),
     };
@@ -66,9 +71,7 @@ export function constructionDataProfileDeps(): CoreWorkflowDeps["dataProfile"] {
         resolveWorkspaceRoot: () => Promise.resolve("/tmp/sessions/analysis-001"),
         model: "test/model",
         runAuthorizer: createLocalRunAuthorizer(),
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         embedding: refuseEmbedding(),
-        skillsDir: "/skills",
     };
 }
 
@@ -96,8 +99,6 @@ export function conversationDeps(): ConversationAssemblyDeps {
         resolveWorkspaceRoot: (id: string) => Promise.resolve(join("/sessions", id)),
         runAuthorizer: createLocalRunAuthorizer(),
         runLauncher: refuseRunLauncher(),
-        bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        skillsDir: "/skills",
         chrome: {},
     };
 }

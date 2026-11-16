@@ -15,6 +15,7 @@
  * a `skipped` phase.
  */
 
+import type { AgentEquipment } from "../catalog/equip.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ScriptRuntime } from "../tools/script/run-script.js";
 import { errorMessageOf } from "../lib/thrown.js";
@@ -49,7 +50,6 @@ import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
-import type { Tool } from "../tools/define-tool.js";
 
 export type SynthesizeRunDeps = {
     /** Operational logging seam; omitted falls back to no-op. */
@@ -64,8 +64,8 @@ export type SynthesizeRunDeps = {
     readonly workspaceFs: WorkspaceFilesystem;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
-    /** The lookup tools of the synthesizer (`createSynthesisLookupTools`). */
-    readonly synthesisLookups: readonly Tool[];
+    /** What the synthesizer of one run gets from the agent catalog, read when the synthesis starts. */
+    readonly synthesisEquipment: () => Promise<AgentEquipment>;
     /** Where the VM of `run_script` comes from, for the lookups of the synthesizer. */
     readonly scriptRuntime?: ScriptRuntime;
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
@@ -108,7 +108,7 @@ export type SynthesizeRunResult = {
 };
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
-    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, synthesisLookups, usageRecorder } = deps;
+    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, usageRecorder } = deps;
     const { analysisId, runId, completedSteps, session, emit, onProgress, durably, pause } = params;
 
     await onProgress("starting", "Beginning literature-grounded synthesis");
@@ -147,7 +147,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             provider,
             session: synthesizerSession,
             model: synthesisModel,
-            synthesisLookups,
+            equipment: await deps.synthesisEquipment(),
             scriptRuntime: deps.scriptRuntime,
             usageRecorder,
             toolOutputStore: deps.toolOutputStore,

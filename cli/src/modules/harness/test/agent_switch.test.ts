@@ -1,11 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type {
-    AgentDefinition,
-    AgentSession,
-    ChatProvider,
-    ChatTurns,
-    RunProvenanceEvent,
-} from "@inflexa-ai/harness";
+import { fixedTurnAgent, type AgentDefinition, type AgentSession, type ChatProvider, type ChatTurns, type RunProvenanceEvent } from "@inflexa-ai/harness";
 
 import { Bus } from "../../../lib/bus.ts";
 import type { StampedEvent } from "../../../types/events.ts";
@@ -48,8 +42,7 @@ function fakeProvider({ model, effort }: AgentSelection): ChatProvider {
 
 function tagOf(handle: SwappableChatProvider): AgentSelection {
     const tag = TAGS.get(agentProviderInner(handle));
-    if (tag === undefined)
-        throw new Error("the handle does not delegate to a provider of fakeProvider");
+    if (tag === undefined) throw new Error("the handle does not delegate to a provider of fakeProvider");
     return tag;
 }
 
@@ -408,18 +401,14 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
             maxIterations: 1,
         };
         const chatTurns: ChatTurns = {
-            open: () =>
-                Promise.resolve({ kind: "started", turnId: "turn-1", agent: conversationAgent }),
+            open: () => Promise.resolve({ kind: "started", turnId: "turn-1", agent: fixedTurnAgent(conversationAgent) }),
             async *read() {
                 for (let i = 0; i < chunks.length; i++) {
                     await Promise.resolve();
                     yield { type: "text-delta", text: present(chunks[i]), source };
                     emitted.push(present(chunks[i]));
                     if (i === 2) {
-                        const result = requestAgentModelChange(
-                            "conversation",
-                            sel("claude-mid-stream"),
-                        );
+                        const result = requestAgentModelChange("conversation", sel("claude-mid-stream"));
                         midStream.push({
                             status: result.status,
                             idle: isAgentWorkIdle(),
@@ -459,9 +448,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         expect(outcome.kind).toBe("ok");
         // Mid-stream: the gauge was BUSY (the real bracket held), so the switch was SCHEDULED and the
         // in-flight provider inner was NEVER re-pointed — no request observed a mid-flight model change.
-        expect(midStream).toEqual([
-            { status: "scheduled", idle: false, innerModel: "claude-conv" },
-        ]);
+        expect(midStream).toEqual([{ status: "scheduled", idle: false, innerModel: "claude-conv" }]);
         // The swap lands only once the turn's bracket settles, before any next turn.
         expect(isAgentWorkIdle()).toBe(true);
         expect(agentModel(h.swappable.conversation)).toBe("claude-mid-stream");

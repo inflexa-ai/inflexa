@@ -1,8 +1,9 @@
 ---
 name: translational-safety
 description: Read before you grade adverse events or lab values, screen off-target or structural liabilities, assess CYP or drug interaction risk, detect adverse-event signals, or make matched negative genes for a tissue. It gives thresholds, the limits of the safety panel, and prohibited claims.
-version: 1.1.0
-tags: [safety, toxicology, CTCAE, hERG, hepatotoxicity, CYP, DDI, adverse-events, biomarkers, matched-negatives]
+metadata:
+  version: 1.1.0
+  tags: [safety, toxicology, CTCAE, hERG, hepatotoxicity, CYP, DDI, adverse-events, biomarkers, matched-negatives]
 ---
 
 # Translational Safety

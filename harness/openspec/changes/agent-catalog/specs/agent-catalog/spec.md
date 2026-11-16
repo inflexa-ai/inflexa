@@ -56,7 +56,7 @@ The role MUST give the role tools, and an agent definition MUST NOT name a role 
 
 ### Requirement: An agent entry is a built-in agent or a custom agent
 
-`AgentCatalog.agents()` MUST give a list of `AgentEntry` values. A `builtin` entry MUST name a `BuiltinAgentId` and MUST carry `enabled`, `add` and `remove`. It MUST NOT carry a prompt. A `custom` entry MUST carry `enabled` and a whole `AgentDefinition`: `id`, `name`, `role`, `description`, `prompt`, `connectors`, `mcp` and `skills`.
+`AgentCatalog.agents()` MUST give a list of `AgentEntry` values. A `builtin` entry MUST name a `BuiltinAgentId` and MUST carry `enabled`, `add` and `remove`. It MUST NOT carry a prompt. A `custom` entry MUST carry `enabled` and a whole `CustomAgent`: `id`, `name`, `role`, `description`, `prompt`, `connectors`, `mcp` and `skills`.
 
 A built-in agent with no entry MUST resolve to its release defaults. The attachments of a built-in agent MUST be its release defaults plus `add` minus `remove`.
 

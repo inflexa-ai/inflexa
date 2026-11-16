@@ -56,9 +56,9 @@ The harness exports the types and never parses a file:
 type AgentEntry =
   | { kind: "builtin"; id: BuiltinAgentId; enabled: boolean;
       add: AgentAttachments; remove: AgentAttachments }
-  | { kind: "custom"; enabled: boolean; definition: AgentDefinition };
+  | { kind: "custom"; enabled: boolean; definition: CustomAgent };
 
-type AgentDefinition = {
+type CustomAgent = {
   id: string;
   name: string;
   role: "executor";
@@ -155,7 +155,7 @@ The host resolves each credential reference before it gives the config. A manage
 - **Where the calls run.** Each MCP call runs in the harness process on the host, as one durable step. The sandbox never reaches an MCP server.
 - **Connections.** The harness connects to a server at its first use and keeps the connection for the process. It connects again when the config changes. It closes the connections at shutdown.
 - **Tool names.** A tool name is `mcp__<server>__<tool>`. Each character outside `[a-zA-Z0-9_-]` becomes `_`. A name longer than 64 characters is cut, and it ends with a short hash. The limit of 64 characters is the lowest limit of the supported providers.
-- **Approval.** With `approval: "always"`, each call goes through the existing tool-approval gate. The harness does not trust the annotations of a server.
+- **Approval.** With `approval: "always"`, each call goes through the existing tool-approval gate. The harness does not trust the annotations of a server. Only the chat agent and the reporter run in a chat turn, where a person answers. A run step, a sub-agent and a task have no person to answer, thus such a server attached to their agent is a gap. A host default of `never` keeps most servers usable everywhere.
 - **Scripts.** A tool is a direct tool. With `scriptable: true`, the tool is also a script tool under `run_script`. `run_script` refuses a tool that needs approval, so `scriptable` needs `approval: "never"`.
 - **Output.** The text blocks become the tool output, and `structuredContent` becomes JSON. An image or a resource becomes one line that names its type. `isError` becomes a tool error. The output cap of the loop applies.
 - **Absent servers.** If a server does not answer when the agent is built, its tools are absent. The harness logs a warning. The agent continues with the tools that it has.
@@ -176,7 +176,11 @@ defineConnector({
 });
 ```
 
-The connector registry is in the harness, and it is closed: a host cannot define a connector. The host gives the settings of each connector: `enabled`, an optional endpoint, and the credential name of each slot. A tool reads its credential through `catalog.credential(name)` when it runs. Thus one credential, for example the NCBI key, serves each connector that names it.
+The connector registry is in the harness, and it is closed: a host cannot define a connector. The host gives the settings of each connector: `enabled`, an optional endpoint, and the credential name of each slot. The harness reads each credential through `catalog.credential(name)` when it builds an agent for a turn or a step, and the value stays in memory. Thus one credential, for example the NCBI key, serves each connector that names it, and a new value reaches the next turn or step. The citation resolver is one shared service, thus it reads its two keys one time at boot.
+
+The `knowledge` connector is a gate. The tools of the knowledge plane need the client of the host and the hooks of each agent. Thus the host still gives the client, and each agent builds the tools when it attaches the connector.
+
+`CustomAgent` is the name of the custom definition, because the loop already exports `AgentDefinition`.
 
 The initial set has one connector for each tool that reaches an outside service. The team groups and prunes them later. A tool with a missing required key behaves as today: it stays attached, and the call returns an error that names the key.
 

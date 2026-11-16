@@ -18,6 +18,7 @@
 import { durableTools } from "@dbos-inc/vercel-ai";
 import { jsonSchema, tool as aiTool, type ToolSet, type UIMessageStreamWriter } from "ai";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
+import { err } from "neverthrow";
 import { z } from "zod";
 
 import type { ToolCallValue } from "../contracts/chat-events.js";
@@ -40,7 +41,9 @@ import {
     type ToolContext,
     type ToolError,
     type ToolResultImage,
+    defineTool,
 } from "../tools/define-tool.js";
+import { aliasedToolName } from "./tool-name-repair.js";
 import { recordKeyFor } from "./accounting.js";
 import { createCallLock, type CallLock } from "./call-lock.js";
 import type { AgentRunUsage } from "./metrics.js";
@@ -121,8 +124,63 @@ export function isFatalToolError(err: unknown): boolean {
  * named `<tool>.<toolCallId>`. A throw from a call is fatal by construction,
  * because the adapter turns each other failure into an output.
  */
+/**
+ * The tool of a name that the agent does not declare. A recovery can meet such a name: the first run called a tool
+ * that left the agent before the recovery, for example the tool of a removed MCP server. The call keeps its durable
+ * step, thus a recorded call replays its recorded result, and a new call gets an error result.
+ */
+function unavailableTool(name: string): Tool {
+    return defineTool({
+        id: name,
+        description: `The tool ${name} is not available.`,
+        inputSchema: z.record(z.string(), z.json()),
+        view: "none",
+        describeCall: "none",
+        execute: () => Promise.resolve(err({ error: `The tool ${name} is not available now. Continue with the tools that you have.`, retryable: false })),
+    });
+}
+
+/**
+ * The AI SDK tools of a run. Inside a workflow each call is a durable step
+ * named `<tool>.<toolCallId>`. A throw from a call is fatal by construction,
+ * because the adapter turns each other failure into an output.
+ *
+ * A call of a name that the agent does not declare runs as the step of an unavailable tool. The DBOS replay matches a
+ * step by its position and its name, thus a recorded call of a tool that left the agent must keep its step. A name
+ * that is an alias of a declared tool stays unknown, thus the repair of the loop maps it to the declared tool.
+ */
 export function adaptTools(tools: readonly Tool[], run: ToolRunContext): ToolSet {
     const callLock = createCallLock();
+    const declared = adaptToolSet(tools, run, callLock);
+    const declaredIds = new Set(tools.map((tool) => tool.id));
+    const unavailable = new Map<string, ToolSet[string]>();
+    const fallbackOf = (name: string | symbol): ToolSet[string] | undefined => {
+        if (typeof name !== "string" || aliasedToolName(name, declaredIds) !== undefined) return undefined;
+        let made = unavailable.get(name);
+        if (made === undefined) {
+            made = adaptToolSet([unavailableTool(name)], run, callLock)[name];
+            if (made !== undefined) unavailable.set(name, made);
+        }
+        return made;
+    };
+    // The proxy adds no key: the request declares only the tools of the agent, thus the prefix of the request stays
+    // the same. Only a lookup of an unknown name reaches the fallback.
+    return new Proxy(declared, {
+        get: (target, name, receiver): unknown => {
+            const value: unknown = Reflect.get(target, name, receiver);
+            return Object.hasOwn(target, name) ? value : (fallbackOf(name) ?? value);
+        },
+        has: (target, name) => Object.hasOwn(target, name) || fallbackOf(name) !== undefined,
+        getOwnPropertyDescriptor: (target, name) => {
+            const own = Reflect.getOwnPropertyDescriptor(target, name);
+            if (own !== undefined) return own;
+            const fallback = fallbackOf(name);
+            return fallback === undefined ? undefined : { value: fallback, writable: false, enumerable: false, configurable: true };
+        },
+    });
+}
+
+function adaptToolSet(tools: readonly Tool[], run: ToolRunContext, callLock: CallLock): ToolSet {
     const set: ToolSet = {};
     for (const harnessTool of tools) {
         set[harnessTool.id] = aiTool({

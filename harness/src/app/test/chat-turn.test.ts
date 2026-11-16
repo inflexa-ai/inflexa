@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { fixedTurnAgent } from "../../agents/turn-agent.js";
 import { textOf } from "../../lib/unknown-text.js";
 import { referencedToolOutput } from "../../lib/test/text-shapes.js";
 import { APICallError, type LanguageModelV4CallOptions, type LanguageModelV4Message, type LanguageModelV4ToolResultPart } from "@ai-sdk/provider";
@@ -525,7 +526,7 @@ describe("the person of the thread that a turn opens", () => {
             tools: [],
             maxIterations: 4,
         };
-        const resolver: ThreadAgentResolver = { forThread: () => ok(agent) };
+        const resolver: ThreadAgentResolver = { forThread: () => ok(fixedTurnAgent(agent)) };
         const model = scriptedModel([reply([text("done")], "stop")]);
 
         await runInProcessTurn(
@@ -558,7 +559,7 @@ describe("the run of a chat turn", () => {
     }
 
     function resolverFor(agent: AgentDefinition): ThreadAgentResolver {
-        return { forThread: (type) => (type === "conversation" ? ok(agent) : err({ type: "unregistered_thread_type", threadType: type })) };
+        return { forThread: (type) => (type === "conversation" ? ok(fixedTurnAgent(agent)) : err({ type: "unregistered_thread_type", threadType: type })) };
     }
 
     /** The runtime values of a turn over `model`: the values that `CoreRuntime.chatTurns` gives a host. */
@@ -1105,7 +1106,7 @@ describe("the run of a chat turn", () => {
         (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
         const { usageRecorder, records } = recordingUsage();
         const report: AgentDefinition = { ...agentWith([echoTool()]), id: "report-session-agent" };
-        const agents: ThreadAgentResolver = { forThread: (type) => ok(type === "report" ? report : agentWith([echoTool()])) };
+        const agents: ThreadAgentResolver = { forThread: (type) => ok(fixedTurnAgent(type === "report" ? report : agentWith([echoTool()]))) };
         const { provenance: _hostProvenance, ...session } = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } });
         const model = scriptedModel([reply([text("drafted")], "stop", { inputTokens: 5, outputTokens: 1 })]);
         const { analysisId, threadId, userInput, ...run } = params({ session });
@@ -1384,7 +1385,7 @@ describe("the compaction of a chat turn", () => {
     }
 
     const agents: () => ThreadAgentResolver = () => ({
-        forThread: (type) => ok(type === "report" ? reportAgent() : conversationAgent()),
+        forThread: (type) => ok(fixedTurnAgent(type === "report" ? reportAgent() : conversationAgent())),
     });
 
     function isExchangeRequest(call: LanguageModelV4CallOptions): boolean {
@@ -1810,7 +1811,7 @@ describe("the compaction of a chat turn", () => {
         const model = compactingModel([overCall("tu-1"), answer("done")], []);
         const { compaction: _compaction, ...noRules } = conversationAgent();
 
-        await runInProcessTurn(depsFor(model, { forThread: () => ok(noRules) }), params());
+        await runInProcessTurn(depsFor(model, { forThread: () => ok(fixedTurnAgent(noRules)) }), params());
 
         expect(model.calls.some(isExchangeRequest)).toBe(false);
         expect((await storedRows()).some((row) => compactionMarkerOf(row.message) !== undefined)).toBe(false);
@@ -1839,7 +1840,7 @@ describe("the compaction of a chat turn", () => {
                 return ok({ answer: sub.finish.reason });
             },
         });
-        const resolver: ThreadAgentResolver = { forThread: () => ok({ ...conversationAgent(), tools: [delegate] }) };
+        const resolver: ThreadAgentResolver = { forThread: () => ok(fixedTurnAgent({ ...conversationAgent(), tools: [delegate] })) };
 
         await runInProcessTurn(depsFor(model, resolver), params());
 

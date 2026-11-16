@@ -10,7 +10,6 @@
 export * from "./generate-plan.js";
 export * from "./inspect-run.js";
 export * from "./inspect-data-profile.js";
-export * from "./synthesis-lookups.js";
 export * from "./generate-analogy-report.js";
 export * from "./context7-docs.js";
 export * from "./search-semantic-scholar.js";

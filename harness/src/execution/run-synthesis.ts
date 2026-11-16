@@ -7,9 +7,10 @@
  *                            submission is the synthesis.
  *   - `report_blocker`    — the run produced nothing synthesizable. An
  *                            accepted synthesis wins over a blocker.
- *   - the lookups         — the gene, protein, annotation, interaction,
+ *   - the lookups         — the tools of the connectors of the synthesizer
+ *                            (by default the gene, protein, annotation, interaction,
  *                            PubMed, citation, drug-gene, and preclinical
- *                            tools (`createSynthesisLookupTools`). Each lookup
+ *                            connectors). Each lookup
  *                            records the PMIDs of its result, and
  *                            `submit_synthesis` refuses a PMID that no lookup
  *                            of the run returned.
@@ -25,6 +26,8 @@
  */
 
 import type { ScriptRuntime } from "../tools/script/run-script.js";
+import type { AgentEquipment } from "../catalog/equip.js";
+import { createSkillTools } from "../tools/sandbox/skills.js";
 import { open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ok, type Result } from "neverthrow";
@@ -400,8 +403,8 @@ export type GenerateRunSynthesisInput = {
     readonly provider: ChatProvider;
     readonly session: RunSession;
     readonly model: string;
-    /** The lookup tools of the synthesizer (`createSynthesisLookupTools`). They run in `run_script`. */
-    readonly synthesisLookups: readonly Tool[];
+    /** What the synthesizer gets from the catalog: its lookups (the connector tools, which run in `run_script`), its skills, and its MCP tools. */
+    readonly equipment: AgentEquipment;
     /** Where the VM of `run_script` comes from. See {@link ScriptRuntime}. */
     readonly scriptRuntime?: ScriptRuntime;
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
@@ -432,7 +435,7 @@ export type SynthesizerWorkspace = ReadSurfaceDeps & { readonly resolveWorkspace
 /** What the synthesizer agent is built from, for a consumer that runs the agent outside `generateRunSynthesis`. */
 export type SynthesizerAgentInput = Pick<
     GenerateRunSynthesisInput,
-    "model" | "synthesisLookups" | "scriptRuntime" | "toolOutputStore" | "summaries" | "workspace" | "methods"
+    "model" | "equipment" | "scriptRuntime" | "toolOutputStore" | "summaries" | "workspace" | "methods"
 >;
 
 /**
@@ -445,13 +448,27 @@ export function synthesizerAgentOf(input: SynthesizerAgentInput): AgentDefinitio
     const innerCtx: InnerToolContext = { knownStepIds, lookedUpPmids, methodSources: methodSourcesOf(input.methods ?? []) };
 
     const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
+    const { equipment } = input;
+    const skillTools = Object.values(createSkillTools({ store: equipment.skillStore, skills: equipment.skills }));
+    const prompt = equipment.skillIndex === undefined ? synthesisAgentPrompt : `${synthesisAgentPrompt}\n\n${equipment.skillIndex}`;
     // The lookups run in `run_script`, which gives the PMID record of each nested call to its lookup.
     return {
         id: SYNTHESIS_AGENT_ID,
-        systemPrompt: composeSystemPrompt(synthesisAgentPrompt),
+        systemPrompt: composeSystemPrompt(prompt),
         model: input.model,
-        tools: [...createReadSurfaceTools(input.workspace), buildSubmitTool(innerCtx), buildBlockerTool(), ...readTools],
-        scriptTools: [...input.synthesisLookups.map((tool) => recordingPmids(tool, lookedUpPmids)), ...createReadScriptTools(input.workspace)],
+        tools: [
+            ...createReadSurfaceTools(input.workspace),
+            buildSubmitTool(innerCtx),
+            buildBlockerTool(),
+            ...readTools,
+            ...skillTools,
+            ...equipment.mcp.direct,
+        ],
+        scriptTools: [
+            ...equipment.connectorTools.map((tool) => recordingPmids(tool, lookedUpPmids)),
+            ...equipment.mcp.script,
+            ...createReadScriptTools(input.workspace),
+        ],
         scriptRuntime: input.scriptRuntime,
         maxIterations: SYNTHESIZER_MAX_ITERATIONS,
     };

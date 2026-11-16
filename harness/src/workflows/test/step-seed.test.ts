@@ -9,7 +9,7 @@
  */
 
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
-import { createSynthesisLookupTools } from "../../tools/research/synthesis-lookups.js";
+import { equipmentOf } from "../../catalog/memory.js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,7 +19,6 @@ import { okAsync } from "neverthrow";
 
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createNoopRunCharge } from "../../billing/noop-run-charge.js";
-import { unusedCitationResolver } from "../../citations/__fixtures__/resolver.js";
 import { createWorkingMemory, type WorkingMemory } from "../../memory/working-memory.js";
 import { unusedChatProvider } from "../../providers/__fixtures__/chat-provider.js";
 import { ANALYSIS_MEMORY_HEADING } from "../../prompts/briefing.js";
@@ -114,7 +113,7 @@ function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: Knowledg
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         workspaceFs: makeFakeWorkspaceFs(),
         synthesisModel: "test-synthesis-model",
-        synthesisLookups: createSynthesisLookupTools({ bioKeys: { drugbank: "", disgenet: "", epaCcte: "" }, citationResolver: unusedCitationResolver }),
+        synthesisEquipment: () => Promise.resolve(equipmentOf()),
         runCharge: createNoopRunCharge(),
         runAuthorizer: {
             authorize() {

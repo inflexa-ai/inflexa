@@ -34,9 +34,9 @@ import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import type { StagedInput } from "../execution/staged-input.js";
-import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
+import { buildProfilerAgent } from "../agents/sandbox/index.js";
+import type { CatalogServices } from "../catalog/equip.js";
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
-import type { BioToolKeys } from "../tools/bio/keys.js";
 import { runWithSalvage, type LoopStep } from "../loop/run-loop.js";
 import { recordedInputOf } from "../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
@@ -235,8 +235,8 @@ export type DataProfileDeps = EnvironmentStorePaths & {
     /** Model id — provenance / metric label; the provider owns the wire model. */
     readonly model: string;
     readonly runAuthorizer: RunAuthorizer;
-    /** API keys for the bio/chem tools the profiler sandbox agent may use. */
-    readonly bioKeys: BioToolKeys;
+    /** The agent catalog: the profiler takes its attachments from it. */
+    readonly services: CatalogServices;
     /**
      * Write-side embedder for the vector indexer. An instance, not endpoint
      * config: the host composes its own realization (cloud endpoint, local
@@ -244,8 +244,6 @@ export type DataProfileDeps = EnvironmentStorePaths & {
      * per-analysis index — matching every other write-side workflow dep.
      */
     readonly embedding: EmbeddingProvider;
-    /** Absolute path to the skills tree (one subdirectory per skill). */
-    readonly skillsDir: string;
     /** LLM usage-accounting seam for the profiler agent loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
     /** The store of the profiler loop and of its read tool. */
@@ -522,13 +520,11 @@ export function profilerSandboxAgentDeps(deps: DataProfileDeps, step: SandboxAge
         workspaceFs: deps.workspaceFs,
         embedding: deps.embedding,
         model: deps.model,
-        skillsDir: deps.skillsDir,
         farmLockFile: deps.farmLockFile,
         imagePackagesFile: deps.imagePackagesFile,
         refStorePath: deps.refStorePath,
         extendAnalysisFarm: deps.extendAnalysisFarm,
         toolOutputStore: deps.toolOutputStore,
-        bioKeys: deps.bioKeys,
         scriptRuntime: deps.scriptRuntime,
         step,
     };
@@ -774,7 +770,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
 
             const submitProfileTool = createSubmitProfileTool(detected, briefingMenu);
 
-            const baseAgent = createDataProfilerAgent(sandboxAgentDeps);
+            const baseAgent = await buildProfilerAgent(deps.services, sandboxAgentDeps);
             const agentDef = { ...baseAgent, tools: [...baseAgent.tools, submitProfileTool] };
             const signal = new AbortController().signal;
 

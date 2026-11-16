@@ -130,12 +130,10 @@ completed successfully unless the user explicitly wants a different approach.
 ${agentCatalog}
 
 ### Routing Rules
-- Assign the drug analyst to a step about compounds, their exposure and
-  response, their safety, or their use for a new indication. Assign the
-  analyst to each other step.
+- Assign each step to the agent whose description covers what the step works
+  on. When no description covers it, assign the first agent of the list.
 - A gene list does not settle the assignment by itself. Read what the step
-  asks of the list. A step that builds, labels, or benchmarks a gene set for a
-  safety or tissue-risk question goes to the drug analyst.
+  asks of the list.
 
 ## Grounding
 

@@ -60,6 +60,16 @@ With `approval: "always"`, each call to a tool of the server MUST go through the
 - **WHEN** an agent calls that tool
 - **THEN** the call still goes through the approval gate
 
+### Requirement: A server that asks approval needs an agent that a person answers
+
+Only an agent of the role `chat` or `reporter` runs in a chat turn, where a person answers an approval. An agent of each other role MUST NOT get the tools of a server with `approval: "always"`. The catalog MUST give a gap for that attachment, and the agent MUST resolve without the server.
+
+#### Scenario: An executor does not get a server that asks approval
+
+- **GIVEN** a server with `approval: "always"` that an executor attaches
+- **WHEN** the catalog resolves
+- **THEN** the executor resolves without the server, and the catalog gives the gap `approval_needs_a_person`
+
 ### Requirement: An MCP tool is a direct tool unless the server is scriptable
 
 An MCP tool MUST be a direct tool of the agent. With `scriptable: true`, the tool MUST also be a script tool of `run_script`. A server with `approval: "always"` MUST NOT be scriptable. Such a config MUST give a gap, and its tools MUST stay direct only.

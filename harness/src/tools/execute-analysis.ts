@@ -10,8 +10,10 @@ import { errorNameOf } from "../lib/thrown.js";
 import type { Querier } from "../state/db.js";
 import { z } from "zod";
 
-import { resolveStepAgentId } from "../agents/sandbox-catalog.js";
-import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
+import type { PlannerAgentMeta } from "../agents/sandbox-catalog.js";
+import type { CatalogServices } from "../catalog/equip.js";
+import { agentIdentityOf, resolveCatalog, type ResolvedCatalog } from "../catalog/resolve.js";
+import type { AgentIdentity } from "../catalog/types.js";
 import type { AgentSession } from "../auth/types.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
@@ -48,47 +50,73 @@ import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
 import { PLAN_ID_RE } from "../contracts/schemas/chat-parts.js";
 import { collapseWhitespace } from "../lib/text.js";
 
-const AD_HOC_AGENT_IDS = ["analyst", "drug-analyst"] as const;
-type AdHocAgentId = (typeof AD_HOC_AGENT_IDS)[number];
+/** The executor of an ad hoc step that names none. */
+const AD_HOC_DEFAULT_AGENT_ID = "analyst";
 
 const planIdSchema = z.string().regex(PLAN_ID_RE, "planId must be a pln-<8hex> value");
-const inputSchema = z
-    .object({
-        mode: z
-            .enum(["plan", "adhoc"])
-            .describe("`plan` runs a stored plan that the user approved. `adhoc` runs one targeted step for an explicit user request."),
-        planId: planIdSchema
-            .optional()
-            .describe("mode=plan only, and required there: the `pln-<8hex>` id of the approved stored plan. Omit it for mode=adhoc."),
-        request: z
-            .string()
-            .min(1)
-            .optional()
-            .describe("mode=adhoc only, and required there: the computational request of the user, in the words of the user. Omit it for mode=plan."),
-        agent: z
-            .enum(AD_HOC_AGENT_IDS)
-            .optional()
-            .describe(
-                "mode=adhoc only: the agent of the step. `drug-analyst` for work on compounds, their exposure and response, their safety, or their use for a new indication. Omit it for each other request, and the step runs on `analyst`.",
-            ),
-        packages: z
-            .array(z.string())
-            .optional()
-            .describe("mode=adhoc only: the packages that the scripts of the step import, each as `[python:|r:]<name>[==<version>]`. An empty array is valid."),
-    })
-    .superRefine((value, ctx) => {
-        if (value.mode === "plan" && (value.planId === undefined || value.request !== undefined || value.agent !== undefined || value.packages !== undefined)) {
-            ctx.addIssue({ code: "custom", message: "plan mode requires planId and forbids request, agent, and packages" });
-        }
-        if (value.mode === "adhoc" && (value.request === undefined || value.planId !== undefined)) {
-            ctx.addIssue({ code: "custom", message: "adhoc mode requires request and forbids planId" });
-        }
-    });
+
+/** The ids of the executors, as the non-empty tuple that `z.enum` takes. The analyst is always on, thus the list holds it. */
+function executorIdTuple(executors: readonly PlannerAgentMeta[]): readonly [string, ...string[]] {
+    const [first, ...rest] = executors.map((executor) => executor.id);
+    return first === undefined ? [AD_HOC_DEFAULT_AGENT_ID] : [first, ...rest];
+}
+
+/** The input of `execute_analysis`. The ad hoc `agent` is an id of an executor that is on when the turn starts. */
+type ExecuteAnalysisToolInput = {
+    mode: "plan" | "adhoc";
+    planId?: string;
+    request?: string;
+    agent?: string;
+    packages?: string[];
+};
+
+function inputSchemaFor(executors: readonly PlannerAgentMeta[]): z.ZodType<ExecuteAnalysisToolInput> {
+    return z
+        .object({
+            mode: z
+                .enum(["plan", "adhoc"])
+                .describe("`plan` runs a stored plan that the user approved. `adhoc` runs one targeted step for an explicit user request."),
+            planId: planIdSchema
+                .optional()
+                .describe("mode=plan only, and required there: the `pln-<8hex>` id of the approved stored plan. Omit it for mode=adhoc."),
+            request: z
+                .string()
+                .min(1)
+                .optional()
+                .describe("mode=adhoc only, and required there: the computational request of the user, in the words of the user. Omit it for mode=plan."),
+            agent: z
+                .enum(executorIdTuple(executors))
+                .optional()
+                .describe(
+                    "mode=adhoc only: the agent of the step, the one whose work covers the request. Omit it, and the step runs on `analyst`. The agents: " +
+                        executors.map((executor) => `\`${executor.id}\` — ${executor.description}`).join(" "),
+                ),
+            packages: z
+                .array(z.string())
+                .optional()
+                .describe(
+                    "mode=adhoc only: the packages that the scripts of the step import, each as `[python:|r:]<name>[==<version>]`. An empty array is valid.",
+                ),
+        })
+        .superRefine((value, ctx) => {
+            if (
+                value.mode === "plan" &&
+                (value.planId === undefined || value.request !== undefined || value.agent !== undefined || value.packages !== undefined)
+            ) {
+                ctx.addIssue({ code: "custom", message: "plan mode requires planId and forbids request, agent, and packages" });
+            }
+            if (value.mode === "adhoc" && (value.request === undefined || value.planId !== undefined)) {
+                ctx.addIssue({ code: "custom", message: "adhoc mode requires request and forbids planId" });
+            }
+        });
+}
 
 type ExecuteAnalysisWorkflow = (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
 
 export type ExecuteAnalysisToolDeps = Pick<EnvironmentStorePaths, "farmLockFile" | "imagePackagesFile" | "readPoolInventory"> & {
     readonly pool: Querier & Connectable;
+    /** The agent catalog: the launch resolves the agent of each step, and the run keeps the identity of each. */
+    readonly services: CatalogServices;
     readonly executeAnalysisWorkflow: ExecuteAnalysisWorkflow;
     readonly runAuthorizer: RunAuthorizer;
     readonly runLauncher: RunLauncher;
@@ -125,6 +153,17 @@ export class PlanValidationError extends Error {
     }
 }
 
+export class PlanAgentUnavailableError extends Error {
+    constructor(
+        planId: string,
+        readonly steps: readonly { stepId: string; agentId: string }[],
+    ) {
+        const named = steps.map((step) => `step ${step.stepId} names "${step.agentId}"`).join(", ");
+        super(`Plan ${planId} names an agent that is not available: ${named}. Generate a new plan with an available agent.`);
+        this.name = "PlanAgentUnavailableError";
+    }
+}
+
 function isDedupCollision(err: unknown): boolean {
     return err instanceof RunDedupCollisionError || errorNameOf(err) === "RunDedupCollisionError";
 }
@@ -157,7 +196,7 @@ export class PlanPackagesMissingError extends Error {
 /** The deps that start the run of a stored plan. */
 export type LaunchPlanRunDeps = Pick<
     ExecuteAnalysisToolDeps,
-    "pool" | "executeAnalysisWorkflow" | "runAuthorizer" | "runLauncher" | "extendAnalysisFarm" | "logger"
+    "pool" | "executeAnalysisWorkflow" | "runAuthorizer" | "runLauncher" | "extendAnalysisFarm" | "logger" | "services"
 >;
 
 /**
@@ -173,6 +212,7 @@ export type PlanLaunch = { runId: string; started: boolean };
 export type LaunchPlanRunRefusal =
     | { type: "plan_not_found"; planId: string }
     | { type: "plan_invalid"; planId: string; malformed: boolean; errors: string[] }
+    | { type: "agent_unavailable"; planId: string; steps: { stepId: string; agentId: string }[] }
     | { type: "packages_missing"; missing: string[]; collisions: string[]; unavailable?: string }
     | { type: "run_not_found"; runId: string }
     | { type: "not_authorized"; kind: "failed"; transient: boolean; reason: string }
@@ -273,6 +313,25 @@ function planSummary(plan: AnalysisPlan): string {
     return plan.title?.trim() || plan.analytical_narrative.trim().slice(0, 280);
 }
 
+/**
+ * The identity of the agent of each step, from the catalog when the run starts. A step whose agent is not an enabled
+ * executor refuses the launch, and the refusal names the step and the agent.
+ */
+function stepAgentIdentities(resolved: ResolvedCatalog, planId: string, plan: AnalysisPlan): Result<Record<string, AgentIdentity>, LaunchPlanRunRefusal> {
+    const agents: Record<string, AgentIdentity> = {};
+    const missing: { stepId: string; agentId: string }[] = [];
+    for (const step of plan.steps) {
+        const agentId = step.agent ?? "";
+        const agent = resolved.agents.get(agentId);
+        if (agent?.role !== "executor") {
+            missing.push({ stepId: step.id, agentId });
+            continue;
+        }
+        agents[agentId] = agentIdentityOf(agent);
+    }
+    return missing.length > 0 ? err({ type: "agent_unavailable", planId, steps: missing }) : ok(agents);
+}
+
 function workflowInput(
     planId: string,
     plan: AnalysisPlan,
@@ -281,6 +340,7 @@ function workflowInput(
         threadId: string | null;
         runSession: ExecuteAnalysisInput["runSession"];
         synthesisEnabled: boolean;
+        agents: Readonly<Record<string, AgentIdentity>>;
     },
 ): ExecuteAnalysisInput {
     return {
@@ -292,7 +352,8 @@ function workflowInput(
         planStepById: Object.fromEntries(plan.steps.map((step) => [step.id, step])),
         request: plan.request,
         claims: plan.claims,
-        agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, resolveStepAgentId(step.agent ?? "")])),
+        agentByStepId: Object.fromEntries(plan.steps.map((step) => [step.id, step.agent ?? ""])),
+        agents: args.agents,
         runSession: args.runSession,
         synthesisEnabled: args.synthesisEnabled,
     };
@@ -326,7 +387,9 @@ const DROP_REASON_TEXT: Record<DroppedPackage["reason"], string> = {
 
 /** The agent and the validated packages of an ad hoc step. */
 export type AdHocStep = {
-    readonly agentId: AdHocAgentId;
+    readonly agentId: string;
+    /** The runaway cap of the agent of the step. Absent: the default of a sandbox step. */
+    readonly maxSteps?: number;
     /** The validated package entries of the step. Empty is a normal answer. */
     readonly packages: readonly string[];
     /** Every entry that the validation removed, with the reason for the caveat. */
@@ -353,7 +416,6 @@ function adHocCaveats(step: AdHocStep): string[] {
 }
 
 export function buildAdHocPlan(request: string, step: AdHocStep, createdAt = new Date().toISOString()): AnalysisPlan {
-    const meta = SANDBOX_AGENT_META[step.agentId];
     const caveats = adHocCaveats(step);
     const plan: AnalysisPlan = {
         title: adHocTitle(request),
@@ -380,7 +442,7 @@ export function buildAdHocPlan(request: string, step: AdHocStep, createdAt = new
                 depends_on: [],
                 status: "pending",
                 agent: step.agentId,
-                maxSteps: meta?.defaultMaxSteps ?? DEFAULT_SANDBOX_MAX_STEPS,
+                maxSteps: step.maxSteps ?? DEFAULT_SANDBOX_MAX_STEPS,
             },
         ],
     };
@@ -415,14 +477,20 @@ function adHocPackageResolver(deps: ExecuteAnalysisToolDeps, analysisId: string)
 
 async function persistedAdHocPlan(
     deps: ExecuteAnalysisToolDeps,
-    args: { analysisId: string; request: string; agent: AdHocAgentId; packages: readonly string[]; planId: string },
+    args: { analysisId: string; request: string; agent: string; packages: readonly string[]; planId: string },
 ): Promise<AnalysisPlan> {
     const existing = unwrapOrThrow(await loadPlan(deps.pool, args.planId, { analysisId: args.analysisId }));
     if (existing) return validateStoredPlan(existing, args.planId);
 
     const logger = (deps.logger ?? createNoopLogger()).named("execute-analysis-tool").with({ analysisId: args.analysisId });
     const { packages, droppedPackages } = await validateAdHocPackages(args.packages, adHocPackageResolver(deps, args.analysisId), logger);
-    const candidate = buildAdHocPlan(args.request, { agentId: args.agent, packages, droppedPackages });
+    const resolved = await resolveCatalog(deps.services.catalog);
+    const candidate = buildAdHocPlan(args.request, {
+        agentId: args.agent,
+        maxSteps: resolved.agents.get(args.agent)?.defaultMaxSteps,
+        packages,
+        droppedPackages,
+    });
     unwrapOrThrow(await upsertPlan(deps.pool, { planId: args.planId, analysisId: args.analysisId, plan: candidate }));
     const stored = unwrapOrThrow(await loadPlan(deps.pool, args.planId, { analysisId: args.analysisId }));
     if (!stored) throw new Error(`Internal ad hoc plan ${args.planId} could not be reloaded`);
@@ -459,6 +527,9 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
 
     // The link pass comes before the run reserves anything, thus a pool
     // miss leaves no run row and no revoked authorization behind.
+    const agents = stepAgentIdentities(await resolveCatalog(deps.services.catalog), planId, plan);
+    if (agents.isErr()) return err(agents.error);
+
     const linked = await linkPlanPackages(deps.extendAnalysisFarm, analysisId, planId, plan);
     if (linked.isErr()) return err(linked.error);
     const packageQueries = linked.value;
@@ -507,6 +578,7 @@ async function launchReservedRun(deps: LaunchPlanRunDeps, args: LaunchTailArgs):
         threadId,
         runSession,
         synthesisEnabled: args.mode === "plan",
+        agents: agents.value,
     });
     try {
         await deps.runLauncher.launch(deps.executeAnalysisWorkflow, { workflowId: runId }, wfInput);
@@ -688,6 +760,8 @@ function throwLaunchRefusal(refusal: Exclude<LaunchPlanRunRefusal, { type: "not_
             throw new PlanNotFoundError(refusal.planId);
         case "plan_invalid":
             throw refusal.malformed ? new PlanMalformedError(refusal.planId) : new PlanValidationError(refusal.planId, refusal.errors);
+        case "agent_unavailable":
+            throw new PlanAgentUnavailableError(refusal.planId, refusal.steps);
         case "packages_missing":
             throw new PlanPackagesMissingError(refusal.missing, refusal.collisions, refusal.unavailable);
         case "store_failed":
@@ -702,14 +776,22 @@ function throwLaunchRefusal(refusal: Exclude<LaunchPlanRunRefusal, { type: "not_
     }
 }
 
-export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z.infer<typeof inputSchema>, { runId: string; status: "in_progress" }> {
+/**
+ * The launch tool of a chat turn. `executors` is the list of the enabled executors when the turn starts, thus the
+ * ad hoc `agent` field names each agent that a step can run on now.
+ */
+export function createExecuteAnalysisTool(
+    deps: ExecuteAnalysisToolDeps,
+    executors: readonly PlannerAgentMeta[],
+): Tool<ExecuteAnalysisToolInput, { runId: string; status: "in_progress" }> {
+    const inputSchema = inputSchemaFor(executors);
     return defineTool({
         id: "execute_analysis",
         description:
             "Launch analysis computation asynchronously. Use mode=plan with the planId only after the user approved that stored plan. " +
             "Use mode=adhoc with the user's exact targeted computational request when they explicitly asked to run/compute/test/compare it; " +
             "that explicit request is consent and needs no synthetic-plan approval. If computation is merely your suggestion, ask first. " +
-            "An ad hoc step runs on `analyst` unless `agent` names `drug-analyst`, and it links the `packages` that you name. " +
+            "An ad hoc step runs on `analyst` unless `agent` names another agent, and it links the `packages` that you name. " +
             "Returns runId with status=in_progress; inspect results on a later turn. " +
             "A plan that already has an active run returns that run, so a second run of one plan does not start. " +
             "The launch fails with an error, and no run starts, when the plan is not found or fails validation, when a package of the plan cannot link, or when the run is not authorized.",
@@ -744,7 +826,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps): Tool<z
                 const plan = await persistedAdHocPlan(deps, {
                     analysisId,
                     request: input.request,
-                    agent: input.agent ?? "analyst",
+                    agent: input.agent ?? AD_HOC_DEFAULT_AGENT_ID,
                     packages: input.packages ?? [],
                     planId,
                 });

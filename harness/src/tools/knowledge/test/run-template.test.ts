@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { makeFakeSandboxAgentDeps } from "../../../agents/sandbox/__fixtures__/deps.js";
-import { createSandboxAgents } from "../../../agents/sandbox/index.js";
-import { presentAt, presentFind, presentGet } from "../../../lib/present.js";
+import { createSandboxAgent, type SandboxAgentSpec } from "../../../agents/sandbox/shared.js";
+import { equipmentOf } from "../../../catalog/memory.js";
+import { presentAt, presentFind } from "../../../lib/present.js";
 import type { LoopStep } from "../../../loop/run-loop.js";
 import type { ToolCallOutput } from "../../../loop/tool-adapter.js";
 import { ProvenanceCollector } from "../../../provenance/collector.js";
@@ -362,14 +363,16 @@ describe("hasSuccessfulTemplateRun", () => {
 });
 
 describe("the template of a step reaches the agent of the step", () => {
+    const analyst: SandboxAgentSpec = { id: "analyst", role: "executor", prompt: "# Analyst", equipment: equipmentOf() };
+
     it("gives run_template and the template-step prompt to the agent of a template step only", () => {
         const fake = fakeKnowledgeClient();
         const base = makeFakeSandboxAgentDeps();
-        const templateStep = presentGet(
-            createSandboxAgents({ ...base, templateSource: fake.client, step: { ...base.step, template: { ref: TEMPLATE, binding: binding() } } }),
-            "analyst",
+        const templateStep = createSandboxAgent(
+            { ...base, templateSource: fake.client, step: { ...base.step, template: { ref: TEMPLATE, binding: binding() } } },
+            analyst,
         );
-        const openStep = presentGet(createSandboxAgents({ ...base, templateSource: fake.client }), "analyst");
+        const openStep = createSandboxAgent({ ...base, templateSource: fake.client }, analyst);
 
         expect(templateStep.tools.some((tool) => tool.id === RUN_TEMPLATE_TOOL_ID)).toBe(true);
         expect(openStep.tools.some((tool) => tool.id === RUN_TEMPLATE_TOOL_ID)).toBe(false);
@@ -379,7 +382,7 @@ describe("the template of a step reaches the agent of the step", () => {
 
     it("gives no run_template when no template source is bound", () => {
         const base = makeFakeSandboxAgentDeps();
-        const agent = presentGet(createSandboxAgents({ ...base, step: { ...base.step, template: { ref: TEMPLATE } } }), "analyst");
+        const agent = createSandboxAgent({ ...base, step: { ...base.step, template: { ref: TEMPLATE } } }, analyst);
         expect(agent.tools.some((tool) => tool.id === RUN_TEMPLATE_TOOL_ID)).toBe(false);
     });
 });

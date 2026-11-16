@@ -56,6 +56,7 @@ import { awaitOk } from "../../lib/test/result-assert.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { RunDedupCollisionError, insertRun, queryNewestPlanRun, updateRunStatus, upsertAnalysis, upsertPlan } from "../../state/index.js";
 import {
+    PlanAgentUnavailableError,
     PlanMalformedError,
     PlanNotFoundError,
     PlanPackagesMissingError,
@@ -68,6 +69,49 @@ import {
 } from "../execute-analysis.js";
 import { presentAt, presentGet } from "../../lib/present.js";
 import { createCallLock } from "../../loop/call-lock.js";
+import { plannerCatalogOf, type PlannerAgentMeta } from "../../agents/sandbox-catalog.js";
+import type { CatalogServices } from "../../catalog/equip.js";
+import { createInMemoryCatalog } from "../../catalog/memory.js";
+import { resolveCatalog } from "../../catalog/resolve.js";
+import type { AgentCatalog } from "../../catalog/types.js";
+
+/** The catalog services over a catalog that holds the built-in agents only. */
+const SERVICES: CatalogServices = { catalog: createInMemoryCatalog(), connectorBase: {} };
+
+async function executorsOf(catalog: AgentCatalog): Promise<readonly PlannerAgentMeta[]> {
+    return plannerCatalogOf(await resolveCatalog(catalog));
+}
+
+const EXECUTORS = await executorsOf(SERVICES.catalog);
+
+/** A catalog with one custom executor beside the built-in agents, and the drug analyst turned off. */
+const CUSTOM_CATALOG = createInMemoryCatalog({
+    agents: [
+        {
+            kind: "custom",
+            enabled: true,
+            definition: {
+                id: "flow-cytometry",
+                name: "Flow cytometry",
+                role: "executor",
+                description: "The gating and the population statistics of flow cytometry data.",
+                prompt: "You analyze flow cytometry data.",
+                connectors: [],
+                mcp: [],
+                skills: [],
+            },
+        },
+        { kind: "builtin", id: "drug-analyst", enabled: false, add: {}, remove: {} },
+    ],
+});
+
+/** The tool over the built-in executors, unless the test gives its own services and executors. */
+function executeAnalysisTool(
+    deps: Omit<Parameters<typeof createExecuteAnalysisTool>[0], "services"> & { services?: CatalogServices },
+    executors: readonly PlannerAgentMeta[] = EXECUTORS,
+): ReturnType<typeof createExecuteAnalysisTool> {
+    return createExecuteAnalysisTool({ services: SERVICES, ...deps }, executors);
+}
 
 /** Records launches; never reaches the durability engine. */
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
@@ -156,7 +200,7 @@ function toolWithWorkflow(
     pool: Parameters<typeof createExecuteAnalysisTool>[0]["pool"],
     executeAnalysisWorkflow: NonNullable<Parameters<typeof createExecuteAnalysisTool>[0]["executeAnalysisWorkflow"]>,
 ): ReturnType<typeof createExecuteAnalysisTool> {
-    return createExecuteAnalysisTool({
+    return executeAnalysisTool({
         pool,
         runLauncher: fakeLauncher().launcher,
         runAuthorizer: throwingAuthorizer,
@@ -262,7 +306,7 @@ const validPlan = {
 
 describe("createExecuteAnalysisTool plan mode", () => {
     it("exposes one flat refined schema with mode, planId, request, agent, and packages", () => {
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool: new Pool(),
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: throwingAuthorizer,
@@ -385,7 +429,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             suspend: () => okAsync(undefined),
             renew: () => okAsync(undefined),
         };
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: failingAuthorizer,
@@ -416,7 +460,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
             suspend: () => okAsync(undefined),
             renew: () => okAsync(undefined),
         };
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: fakeLauncher().launcher,
             runAuthorizer: suspendingAuthorizer,
@@ -439,7 +483,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
         });
         const { authorizer, revokes } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -463,7 +507,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
         });
         const { authorizer } = recordingAuthorizer();
         const { launcher, inputs } = fakeLauncher();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -488,7 +532,7 @@ describe("createExecuteAnalysisTool plan mode", () => {
         });
         const { authorizer, revokes } = recordingAuthorizer();
         const { launcher } = fakeLauncher({ failLaunch: true });
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -510,7 +554,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches, inputs } = fakeLauncher();
         const emitted: unknown[] = [];
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runAuthorizer: authorizer,
             runLauncher: launcher,
@@ -541,7 +585,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 
     it("records the user of the launching session on the run row", async () => {
         const { pool, runs } = statefulAdHocPool();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runAuthorizer: recordingAuthorizer().authorizer,
             runLauncher: fakeLauncher().launcher,
@@ -559,7 +603,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         const { pool } = statefulAdHocPool();
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches, inputs } = fakeLauncher();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runAuthorizer: authorizer,
             runLauncher: launcher,
@@ -582,7 +626,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
         const seamCalls: Array<{ analysisId: string; queries: Array<{ spelling: string; track?: string }> }> = [];
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runAuthorizer: authorizer,
             runLauncher: launcher,
@@ -612,7 +656,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
     it("a bare both-track name refuses the launch with the two prefixed forms, and no run reserves", async () => {
         const { pool, runs } = statefulAdHocPool();
         const { launcher, launches } = fakeLauncher();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runAuthorizer: throwingAuthorizer,
             runLauncher: launcher,
@@ -644,7 +688,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
         let seamCalled = false;
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runAuthorizer: authorizer,
             runLauncher: launcher,
@@ -670,7 +714,7 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
 });
 
 describe("the input of execute_analysis", () => {
-    const tool = createExecuteAnalysisTool({
+    const tool = executeAnalysisTool({
         pool: statefulAdHocPool().pool,
         runAuthorizer: throwingAuthorizer,
         runLauncher: fakeLauncher().launcher,
@@ -680,6 +724,24 @@ describe("the input of execute_analysis", () => {
     it("accepts an ad hoc input with no agent, or with the drug analyst", () => {
         expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Compare the clusters" }).success).toBe(true);
         expect(tool.inputSchema.safeParse({ mode: "adhoc", request: "Fit the exposure", agent: "drug-analyst", packages: ["pkpy"] }).success).toBe(true);
+    });
+
+    it("lists each executor of the catalog, a custom one too, and no agent that the catalog turned off", async () => {
+        const custom = executeAnalysisTool(
+            {
+                pool: statefulAdHocPool().pool,
+                services: { catalog: CUSTOM_CATALOG, connectorBase: {} },
+                runAuthorizer: throwingAuthorizer,
+                runLauncher: fakeLauncher().launcher,
+                executeAnalysisWorkflow: () => Promise.reject(new Error("should not be called")),
+            },
+            await executorsOf(CUSTOM_CATALOG),
+        );
+
+        expect(custom.inputSchema.safeParse({ mode: "adhoc", request: "Gate the T cells", agent: "flow-cytometry" }).success).toBe(true);
+        expect(custom.inputSchema.safeParse({ mode: "adhoc", request: "Fit the exposure", agent: "drug-analyst" }).success).toBe(false);
+        expect(custom.description).not.toContain("drug-analyst");
+        expect(JSON.stringify(custom.jsonSchema)).toContain("flow-cytometry");
     });
 
     it("refuses an unknown agent, and an agent or packages in plan mode", () => {
@@ -756,7 +818,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         const { authorizer } = recordingAuthorizer();
         const { launcher } = fakeLauncher();
         const farmCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -782,7 +844,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
         const seamCalls: Array<{ analysisId: string; queries: unknown[] }> = [];
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -811,7 +873,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
         });
         const { launcher, launches } = fakeLauncher();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -842,7 +904,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
         });
         const { launcher, launches } = fakeLauncher();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -958,7 +1020,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         });
         const { launcher, launches } = fakeLauncher();
         const seamCalls: Array<{ queries: Array<{ spelling: string; track?: string }> }> = [];
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -997,7 +1059,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             "SELECT plan FROM cortex_plans": [{ plan: bareBothTrackPlan }],
         });
         const { launcher, launches } = fakeLauncher();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -1031,7 +1093,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
         });
         const { launcher, launches } = fakeLauncher();
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
@@ -1055,7 +1117,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         const { authorizer } = recordingAuthorizer();
         const { launcher, launches } = fakeLauncher();
         let seamCalled = false;
-        const tool = createExecuteAnalysisTool({
+        const tool = executeAnalysisTool({
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
@@ -1150,6 +1212,7 @@ describe("the launch of a stored plan, over a real database", () => {
             },
             runAuthorizer: recordingAuthorizer().authorizer,
             runLauncher: fakeLauncher().launcher,
+            services: SERVICES,
             ...over,
         };
     }
@@ -1245,6 +1308,46 @@ describe("the launch of a stored plan, over a real database", () => {
             expect(unknown).toEqual({ type: "plan_not_found", planId: PLAN_ID });
             expect(foreign).toEqual({ type: "plan_not_found", planId: "pln-0000000a" });
             expect(await runRows()).toEqual([]);
+        });
+
+        it("refuses a step whose agent is not an enabled executor with agent_unavailable, names each such step, and reserves no run", async () => {
+            await seedPlan({
+                ...validPlan,
+                steps: [makeStep("step-a"), { ...makeStep("step-b"), agent: "bulk-transcriptomics-agent" }, { ...makeStep("step-c"), agent: "drug-analyst" }],
+            });
+
+            const refusal = (
+                await launchPlanRun(deps({ services: { catalog: CUSTOM_CATALOG, connectorBase: {} }, runAuthorizer: throwingAuthorizer }), {
+                    session: session(),
+                    planId: PLAN_ID,
+                })
+            )._unsafeUnwrapErr();
+
+            expect(refusal).toEqual({
+                type: "agent_unavailable",
+                planId: PLAN_ID,
+                steps: [
+                    { stepId: "step-b", agentId: "bulk-transcriptomics-agent" },
+                    { stepId: "step-c", agentId: "drug-analyst" },
+                ],
+            });
+            expect(await runRows()).toEqual([]);
+        });
+
+        it("runs a step on the custom executor that the plan names, and the run keeps the identity of that agent", async () => {
+            await seedPlan({ ...validPlan, steps: [{ ...makeStep("step-a"), agent: "flow-cytometry" }] });
+            const { launcher, inputs } = fakeLauncher();
+
+            (
+                await launchPlanRun(deps({ services: { catalog: CUSTOM_CATALOG, connectorBase: {} }, runLauncher: launcher }), {
+                    session: session(),
+                    planId: PLAN_ID,
+                })
+            )._unsafeUnwrap();
+
+            expect(launchedInput(inputs[0]).agentByStepId).toEqual({ "step-a": "flow-cytometry" });
+            const { agents } = z.object({ agents: z.record(z.string(), z.object({ id: z.string(), role: z.string(), prompt: z.string() })) }).parse(inputs[0]);
+            expect(agents).toEqual({ "flow-cytometry": { id: "flow-cytometry", role: "executor", prompt: "You analyze flow cytometry data." } });
         });
 
         it("refuses a plan that fails the schema as malformed, and a plan that fails the validation with its errors", async () => {
@@ -1597,7 +1700,7 @@ describe("the launch of a stored plan, over a real database", () => {
 
     describe("the plan mode of execute_analysis", () => {
         function toolFor(over: Partial<LaunchPlanRunDeps> = {}, emitted: unknown[] = []) {
-            const tool = createExecuteAnalysisTool({ ...deps(over) });
+            const tool = executeAnalysisTool(deps(over));
             return { run: () => tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext("tool-call-1", emitted)) };
         }
 
@@ -1611,11 +1714,19 @@ describe("the launch of a stored plan, over a real database", () => {
             await expect(toolFor().run()).rejects.toBeInstanceOf(PlanMalformedError);
 
             await seedPlan({ ...validPlan, steps: [makeStep("a", ["b"]), makeStep("b", ["a"])] }, "pln-0000000b");
-            const tool = createExecuteAnalysisTool({ ...deps() });
+            const tool = executeAnalysisTool(deps());
             const failure = await tool.execute({ mode: "plan", planId: "pln-0000000b" }, fakeContext()).catch((error: unknown) => error);
 
             if (!(failure instanceof PlanValidationError)) throw new Error("the call fails with PlanValidationError");
             expect(failure.errors.length).toBeGreaterThan(0);
+        });
+
+        it("fails the call with the agent error, and the message names the step and the agent", async () => {
+            await seedPlan({ ...validPlan, steps: [{ ...makeStep("step-a"), agent: "bulk-transcriptomics-agent" }] });
+
+            await expect(toolFor({ runAuthorizer: throwingAuthorizer }).run()).rejects.toThrow(PlanAgentUnavailableError);
+            await expect(toolFor({ runAuthorizer: throwingAuthorizer }).run()).rejects.toThrow('step step-a names "bulk-transcriptomics-agent"');
+            expect(await runRows()).toEqual([]);
         });
 
         it("fails the call with the package error, and the message names the missing entry", async () => {
