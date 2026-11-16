@@ -19,6 +19,7 @@ import { freshDb } from "../../../test_support/db.ts";
 import { createAnalysis, removeInput } from "../../analysis/analysis.ts";
 import { createManageInputsTool } from "../inputs_tool.ts";
 import { awaitOk } from "../../../test_support/result.ts";
+import { createCallLock } from "@inflexa-ai/harness/loop/call-lock.js";
 
 /** A minimal `ToolContext` carrying the analysis scope the tool reads. */
 function ctxFor(analysisId: string): ToolContext {
@@ -26,6 +27,7 @@ function ctxFor(analysisId: string): ToolContext {
         session: buildAgentSession({ scope: { kind: "analysis", analysisId } }),
         invocationId: "test-tool-call",
         signal: new AbortController().signal,
+        callLock: createCallLock(),
         emit: () => {},
     };
 }

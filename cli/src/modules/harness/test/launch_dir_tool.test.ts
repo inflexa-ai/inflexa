@@ -13,12 +13,14 @@ import { listAnalysisInputs } from "../../../db/primary_query.ts";
 import { addInputs, createAnalysis } from "../../analysis/analysis.ts";
 import { createLaunchDirTool } from "../launch_dir_tool.ts";
 import { awaitOk } from "../../../test_support/result.ts";
+import { createCallLock } from "@inflexa-ai/harness/loop/call-lock.js";
 
 function ctxFor(analysisId: string): ToolContext {
     return {
         session: buildAgentSession({ scope: { kind: "analysis", analysisId } }),
         invocationId: "test-tool-call",
         signal: new AbortController().signal,
+        callLock: createCallLock(),
         emit: () => {},
     };
 }
@@ -78,6 +80,7 @@ describe("list_launch_dir tool", () => {
             session,
             invocationId: "test-tool-call",
             signal: new AbortController().signal,
+            callLock: createCallLock(),
             emit: () => {},
         };
         const result = (await tool.execute({}, ctx))._unsafeUnwrap();
