@@ -568,3 +568,70 @@ describe("reconcileManifestWithDisk — metric labels", () => {
         }
     });
 });
+
+describe("a file-tool write that a command run reports again", () => {
+    test("a command whose write leaves the bytes of the latest file-tool version did not make the file: the file-tool record stays", async () => {
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        try {
+            const root = join(sessionPath, RID);
+            const scriptRel = "work/qc.R";
+            await mkdir(join(root, "runs/run-001/de/work"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de", scriptRel), "library(DESeq2)\n");
+            const rendered = await computeSha256File(join(root, "runs/run-001/de", scriptRel));
+            const template = {
+                template: "tpl-qc-eda@1.4.0",
+                label: "QC",
+                method: { id: "M-0001", label: "VST and PCA" },
+                settings: [],
+                overrides: [],
+                environmentMatch: "exact",
+            };
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001" });
+            collector.recordFileToolWrite({
+                path: `runs/run-001/de/${scriptRel}`,
+                hash: rendered,
+                size: 16,
+                toolName: "run_template",
+                invocationId: "call-1",
+                template,
+            });
+            // The watcher of the sandbox reports the host write of the script inside the window of the run that reads it.
+            collector.recordCommandExecution("Rscript", [scriptRel], 0, 100, [{ path: scriptRel, hash: "", size: 0 }]);
+
+            await reconcileDeRun(root, [{ stepId: "de", runId: "run-001", path: scriptRel, size: 16, type: "script" }], collector);
+
+            expect(collector.getRecords().map((record) => [record.outputPath, record.producer])).toEqual([
+                [scriptRel, { type: "file_tool", tool: "run_template", invocationId: "call-1", template }],
+            ]);
+            expect(collector.getSupersededRecords()).toEqual([]);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("a command that changed the bytes made the new version, and the file-tool write stays an earlier version", async () => {
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        try {
+            const root = join(sessionPath, RID);
+            const scriptRel = "work/qc.R";
+            await mkdir(join(root, "runs/run-001/de/work"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de", scriptRel), "library(DESeq2)\n# changed by the run\n");
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001" });
+            collector.recordFileToolWrite({
+                path: `runs/run-001/de/${scriptRel}`,
+                hash: "sha256:render",
+                size: 16,
+                toolName: "run_template",
+                invocationId: "call-1",
+            });
+            collector.recordCommandExecution("sed", ["-i", "s/x/y/", scriptRel], 0, 100, [{ path: scriptRel, hash: "", size: 0 }]);
+
+            await reconcileDeRun(root, [{ stepId: "de", runId: "run-001", path: scriptRel, size: 16, type: "script" }], collector);
+
+            expect(collector.getRecords().map((record) => record.producer.type)).toEqual(["command"]);
+            expect(collector.getSupersededRecords().map((record) => record.outputHash)).toEqual(["sha256:render"]);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+});

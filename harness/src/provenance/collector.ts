@@ -377,6 +377,24 @@ export class ProvenanceCollector {
         return { ...ref, hash: current.outputHash };
     }
 
+    /**
+     * A command whose write leaves the bytes of the latest file-tool version of `outputPath` did not make the file. The
+     * watcher of the sandbox reports a create or a rename that a host write makes just before a command, inside the
+     * window of that command, for example the script that `run_template` writes and then runs. The file-tool record is
+     * the current record of the path again, thus the version keeps its writer and its template. `hash` is the hash of the
+     * bytes on disk after the step.
+     */
+    keepUnchangedFileToolWrite(outputPath: string, hash: string): void {
+        if (!this.commandRecords.has(outputPath)) return;
+        let at = this.supersededRecords.length - 1;
+        while (at >= 0 && this.supersededRecords[at]?.outputPath !== outputPath) at--;
+        const version = this.supersededRecords[at];
+        if (version === undefined || version.producer.type !== "file_tool" || version.outputHash !== hash) return;
+        this.supersededRecords.splice(at, 1);
+        this.commandRecords.delete(outputPath);
+        this.fileToolRecords.set(outputPath, version);
+    }
+
     /** Each earlier version of a step file with a known hash, in the order of the writes. */
     getSupersededRecords(): ProvenanceRecord[] {
         return [...this.supersededRecords];
