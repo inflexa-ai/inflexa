@@ -15,7 +15,7 @@ three disagreeing relative bases (read against the analysis root, write
 confinement against the step directory, exec with no default `cwd`), so
 `write_file("output/x.csv")` could never succeed and scripts silently wrote into
 a discarded `/workspace`. The model collapses this to one rule, parameterised by
-the agent's writable **working directory** (a step → `runs/{runId}/{stepId}`; the
+the agent's writable **working directory** (a step → `runs/{runId}/{stepId}/work`; the
 data profiler → its profile directory; the conversation agent → the analysis
 root):
 
@@ -36,9 +36,7 @@ The read surface is built on a `WorkspaceFilesystem` seam injected as a
 construction-time dependency; the mutate surface is unified behind a
 `WorkspaceMutator` seam that owns resolve-and-confine (`resolveForWrite`) +
 host byte-write + provenance, so confinement is enforced in one place rather
-than re-implemented per tool. The five reserved artifact-subdir names are
-rejected as step ids at plan validation so a step directory can never collide
-with the artifact convention.
+than re-implemented per tool.
 
 ## Requirements
 
@@ -95,7 +93,7 @@ lives on the host: it maps onto the root via the shared host↔container formula
 
 #### Scenario: A relative path is frame-local
 
-- **GIVEN** a step whose working directory is `runs/{runId}/{stepId}`
+- **GIVEN** a step whose working directory is `runs/{runId}/{stepId}/work`
 - **WHEN** a tool resolves the relative path `output/x.csv`
 - **THEN** it SHALL resolve to that step's `output/x.csv`, the same file a
   script's `open("output/x.csv")` and a later `read_file("output/x.csv")` name
@@ -250,25 +248,10 @@ The statement SHALL be context-neutral. `list_files` is attached to sandbox agen
 - **WHEN** the description disclaims directories outside the analysis
 - **THEN** it neither names a host-contributed tool nor asserts that one is attached, so the same description is correct for a sandbox agent that has none
 
-### Requirement: Reserved artifact-subdir names are rejected as step ids
-
-Plan validation SHALL reject any step whose id equals one of the reserved
-artifact-subdir names — `scripts`, `output`, `figures`, `logs`, `notebooks` —
-case-insensitively, because a step directory `runs/{runId}/{stepId}` named after
-one of those would collide with the artifact-subdirectory convention an agent
-relies on.
-
-#### Scenario: A reserved name fails plan validation
-
-- **GIVEN** a plan with a step whose id is `figures` (or `OUTPUT`)
-- **WHEN** the plan is validated
-- **THEN** validation SHALL fail with an error naming the reserved-name rule, and
-  the plan SHALL NOT execute
-
 ### Requirement: The run-phase id synthesis is rejected as a step id
 
 Plan validation SHALL reject any step whose id equals `synthesis`,
-case-insensitively, alongside the reserved artifact-subdir names: the id is
+case-insensitively: the id is
 reserved for the run-phase ledger row in `cortex_step_executions`
 (`PRIMARY KEY (run_id, step_id)` would collide), and a step directory
 `runs/{runId}/synthesis/` would additionally sit beside the run-level
@@ -384,7 +367,7 @@ failure causes a throw.
 
 #### Scenario: A write inside the working directory succeeds
 
-- **GIVEN** a step whose working directory is `runs/{runId}/{stepId}`
+- **GIVEN** a step whose working directory is `runs/{runId}/{stepId}/work`
 - **WHEN** the model invokes `write_file` with `path` `output/result.csv` and
   content
 - **THEN** the mutator resolves the path against the working directory and
@@ -447,7 +430,7 @@ read the post-edit content at the same path.
 
 #### Scenario: An edit outside the working directory is out_of_prefix
 
-- **GIVEN** a step whose working directory is `runs/{runId}/{stepId}`
+- **GIVEN** a step whose working directory is `runs/{runId}/{stepId}/work`
 - **WHEN** the model invokes `edit_file` with a target under `data/inputs/`
 - **THEN** the tool result MUST be an `out_of_prefix` data variant and no
   write MUST occur
@@ -640,13 +623,15 @@ top of a resolved, scope-checked path.
 The `WorkspaceMutator` seam MUST own write provenance the same way it owns
 confinement. `createWorkspaceMutator` MUST accept the `ProvenanceCollector` of
 the step as an optional construction-time dependency. `writeFile` MUST accept
-the agent-visible name of the invoking tool (`write_file` or `edit_file`) and
-the `invocationId` of the tool call, beside `path` and `content`.
+the agent-visible name of the invoking tool (`write_file`, `edit_file`, or
+`run_template`) and the `invocationId` of the tool call, beside `path` and
+`content`. `run_template` MUST also give the facts of its render, and the write
+record and the provenance record MUST carry them.
 
 The record and the write MUST be two calls. On a successful confined write,
 `writeFile` MUST give back a write record: the analysis id, the path, the hash
-and the size of the exact bytes that landed, the tool name, and the invocation
-id. On each other outcome it MUST give back no record. `recordWrite(record)`
+and the size of the exact bytes that landed, the tool name, the invocation
+id, and the facts of a render when the tool gave them. On each other outcome it MUST give back no record. `recordWrite(record)`
 MUST record the write: the step realization calls `recordFileToolWrite` on its
 collector, and the session realization emits the `write-file` session event.
 

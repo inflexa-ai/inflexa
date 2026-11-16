@@ -7,6 +7,7 @@ import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { showFileTool } from "../show-file.js";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { createShowPlanTool } from "../show-plan.js";
+import { createReadPlanTool } from "../read-plan.js";
 import { showUserTool } from "../../display/show-user.js";
 import { createWorkspaceSearchTool, type WorkspaceSearchQuerier } from "../workspace-search.js";
 import { presentAt } from "../../../lib/present.js";
@@ -232,6 +233,94 @@ describe("createShowPlanTool (dependency-bearing factory)", () => {
 
         const event = emittedEvent(emitted);
         expect(event.data).not.toHaveProperty("parentPlanId");
+    });
+});
+
+describe("createReadPlanTool (dependency-bearing factory)", () => {
+    const setting = { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" };
+    const stepOf = (id: string, claim: string) => ({
+        id,
+        name: `Step ${id}`,
+        description: "Fit the model.",
+        question: "Which genes differ?",
+        agent: "bulk-transcriptomics-agent",
+        depends_on: [],
+        status: "pending",
+        track: "T1",
+        step_type: "analysis",
+        acceptance_criteria: [],
+        maxSteps: 40,
+        grounding: { status: "grounded", snapshot: "sha256:0001", claims: [claim], settings: [setting], reason: "per the rule" },
+    });
+    const stored = {
+        title: "Two fits",
+        analytical_narrative: "why",
+        created_at: "2026-10-01T00:00:00.000Z",
+        steps: [stepOf("T1S1", "R-0001@e7d0"), stepOf("T1S2", "R-0002@6b60")],
+        claims: [
+            { id: "R-0001@e7d0", snapshot: "sha256:0001", title: "Wald test", strength: "established", statement: "long text", evidence: [] },
+            { id: "R-0002@6b60", snapshot: "sha256:0001", title: "Shrinkage", strength: "common_practice", statement: "long text", evidence: [] },
+        ],
+    };
+
+    function poolWith(plan: unknown): PlanRowQuerier {
+        const rows = plan === undefined ? [] : [{ plan, parent_plan_id: "pln-0000000a", created_at: "2026-10-02T00:00:00.000Z", superseded_by: null }];
+        return { query: () => Promise.resolve({ rows, rowCount: rows.length }) };
+    }
+
+    async function read(plan: unknown, stepId?: string) {
+        const { ctx, emitted } = makeToolContext();
+        const result = (await createReadPlanTool(poolWith(plan)).execute({ planId: "pln-0000000b", stepId }, ctx))._unsafeUnwrap();
+        expect(emitted).toHaveLength(0);
+        return result;
+    }
+
+    it("gives the outline of the plan: each step with its grounding by id, and no settings and no claim text", async () => {
+        const result = await read(stored);
+
+        if (!result.found || !("plan" in result)) throw new Error("the outline was not given");
+        expect(result.parentPlanId).toBe("pln-0000000a");
+        expect(result.plan.title).toBe("Two fits");
+        expect(result.plan.steps).toEqual([
+            {
+                id: "T1S1",
+                name: "Step T1S1",
+                kind: undefined,
+                agent: "bulk-transcriptomics-agent",
+                question: "Which genes differ?",
+                depends_on: [],
+                grounding: { status: "grounded", template: undefined, claims: ["R-0001@e7d0"], departures: undefined },
+            },
+            {
+                id: "T1S2",
+                name: "Step T1S2",
+                kind: undefined,
+                agent: "bulk-transcriptomics-agent",
+                question: "Which genes differ?",
+                depends_on: [],
+                grounding: { status: "grounded", template: undefined, claims: ["R-0002@6b60"], departures: undefined },
+            },
+        ]);
+        expect(JSON.stringify(result)).not.toContain("long text");
+    });
+
+    it("gives one step in full, with its settings and the views of the claims that it cites", async () => {
+        const result = await read(stored, "T1S2");
+
+        if (!result.found || !("step" in result)) throw new Error("the step was not given");
+        expect(result.step.id).toBe("T1S2");
+        expect(result.step.grounding?.settings).toEqual([setting]);
+        expect(result.claims?.map((claim) => claim.id)).toEqual(["R-0002@6b60"]);
+        expect(result.claims?.[0]?.statement).toBe("long text");
+    });
+
+    it("gives step_not_found for a step id that the plan does not hold", async () => {
+        expect(await read(stored, "T9S9")).toEqual({ found: false, reason: "step_not_found" });
+    });
+
+    it("gives plan_not_found for an absent plan and for a stored plan that does not parse", async () => {
+        expect(await read(undefined)).toEqual({ found: false, reason: "plan_not_found" });
+        expect(await read({ steps: "none" })).toEqual({ found: false, reason: "plan_not_found" });
     });
 });
 

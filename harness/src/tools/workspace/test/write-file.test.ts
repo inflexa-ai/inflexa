@@ -50,28 +50,28 @@ describe("write_file tool", () => {
         const { tool } = buildTool();
         const { ctx } = makeToolContext();
 
-        const out = (await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/result.csv`, content: "id,value\n1,42\n" }, ctx))._unsafeUnwrap();
+        const out = (await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/output/result.csv`, content: "id,value\n1,42\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
 
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessionsBasePath, id)) });
         const readTool = createReadFileTool(fs);
-        const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/result.csv` }, ctx))._unsafeUnwrap();
+        const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/work/output/result.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
         if (read.status === "ok") {
             expect(read.content).toBe("id,value\n1,42\n");
         }
     });
 
-    it("a relative path resolves INTO the working dir (step dir), creating the missing parent dirs inside the prefix", async () => {
+    it("a relative path resolves INTO the working dir, creating the missing parent dirs inside the prefix", async () => {
         const { tool, workingDir } = buildTool();
         const { ctx } = makeToolContext();
 
-        // Nothing under the step dir exists yet — the landing creates
+        // Nothing under the working dir exists yet — the landing creates
         // `output/deep` inside the prefix.
         const out = (await tool.execute({ path: "output/deep/x.csv", content: "id,value\n1,42\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
         if (out.status === "ok") {
-            expect(out.path).toBe(`/${ANALYSIS}/runs/${RUN}/${STEP}/output/deep/x.csv`);
+            expect(out.path).toBe(`/${ANALYSIS}/runs/${RUN}/${STEP}/work/output/deep/x.csv`);
         }
 
         const onDisk = await readFile(join(workingDir, "output", "deep", "x.csv"), "utf8");
@@ -87,11 +87,11 @@ describe("write_file tool", () => {
     });
 
     it("rejects a `..` escape out of the analysis tree as out_of_scope and lands no file", async () => {
-        // workingDir is the step dir (runs/run-abc/step-1); four `..` reach the
-        // analysis root and a fifth escapes it.
+        // workingDir is runs/run-abc/step-1/work; five `..` reach the
+        // analysis root and a sixth escapes it.
         const { tool } = buildTool();
         const { ctx } = makeToolContext();
-        const out = (await tool.execute({ path: "../../../../analysis-002/x.csv", content: "evil" }, ctx))._unsafeUnwrap();
+        const out = (await tool.execute({ path: "../../../../../analysis-002/x.csv", content: "evil" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("out_of_scope");
         expect(existsSync(join(sessionsBasePath, "analysis-002"))).toBe(false);
     });
@@ -157,10 +157,10 @@ describe("write_file tool", () => {
         const { tool } = buildTool();
         const { ctx } = makeToolContext();
         const content = "α,β,γ\n1,2,3\n";
-        await awaitOk(tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/u.csv`, content }, ctx));
+        await awaitOk(tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/output/u.csv`, content }, ctx));
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(sessionsBasePath, id)) });
         const readTool = createReadFileTool(fs);
-        const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/u.csv` }, ctx))._unsafeUnwrap();
+        const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/work/output/u.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
         if (read.status === "ok") expect(read.content).toBe(content);
     });
@@ -219,7 +219,7 @@ describe("write_file tool", () => {
         if (foldCallRecord === undefined) throw new Error("the tool folds no call record");
         foldCallRecord(readToolCallRecord(out));
         const records = collector.getRecords();
-        expect(records.map((record) => record.outputPath)).toEqual(["output/replay.txt"]);
+        expect(records.map((record) => record.outputPath)).toEqual(["work/output/replay.txt"]);
         expect(presentAt(records, 0).outputHash).toBe(computeSha256(Buffer.from("v1", "utf8")));
         expect(presentAt(records, 0).outputSize).toBe(2);
     });

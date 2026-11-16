@@ -33,7 +33,6 @@ import { computeSha256 } from "../../lib/fs-helpers.js";
 import { unwrapOrThrow, type DomainError } from "../../lib/result.js";
 import { stepExecId } from "../../sandbox/exec.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
-import { noteScriptChange, scriptSha256 } from "./decision-record.js";
 import type { LandedWrite, WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
 
 /** The `ok` outcome of an `edit_file` call. */
@@ -44,8 +43,6 @@ export type EditFileOk = {
     readonly bytesWritten: number;
     /** Regex mode only: 1-based line numbers where the matches started. */
     lines?: readonly number[];
-    /** True when the file is a rendered script and its decision record now lists this edit. */
-    decision_record_noted?: true;
 };
 
 /** Outcome of an `edit_file` call — expected outcomes are data variants, never throws. */
@@ -342,26 +339,7 @@ export function createEditFileTool(deps: EditFileDeps): Tool<z.infer<typeof Edit
                 },
             });
             if (write.status !== "ok") return ok(write);
-            // A rendered script carries a decision record. The edit is a change the curator did not vet, and the
-            // record keeps it with the digest after the change, thus an empty `unvetted_edits` stays a fact.
-            const noted = await noteScriptChange({
-                filesystem: deps.workspaceFilesystem,
-                mutator: deps.mutator,
-                session: ctx.session,
-                workingDir: deps.workingDir,
-                invocationId: ctx.invocationId,
-                toolName: "edit_file",
-                scriptPath: path,
-                note: `edit_file: ${replaced.replacements} replacement(s)`,
-                sha256: scriptSha256(replaced.content),
-            });
-            const result = resultOf(write);
-            if (noted.status !== "noted") return ok(withToolCallRecord(result, [write.record]));
-            result.decision_record_noted = true;
-            const callRecord = [write.record, noted.write];
-            // The first put holds the edit already, thus a failed update costs a rerun only the note of the decision record.
-            if (key !== undefined) await deps.intents.put(intentOf(key, write, result, callRecord)).unwrapOr(undefined);
-            return ok(withToolCallRecord(result, callRecord));
+            return ok(withToolCallRecord(resultOf(write), [write.record]));
         },
         foldCallRecord: (records) => {
             for (const record of records) deps.mutator.recordWrite(record);

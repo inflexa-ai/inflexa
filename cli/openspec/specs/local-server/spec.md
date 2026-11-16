@@ -2456,7 +2456,7 @@ A route MUST read the pending asks one time and the live turns one time for each
 - `size`, in bytes
 - `fileType`, or `null`
 - `kind` and `language`: the kind and the highlighter language of the file name of `path`, from the map of the file system routes. `kind` is `null` and `language` is `text` for a name that the map does not know.
-- `role`, `input` or `step_output`
+- `role`, `input`, `step_output`, or `step_summary`
 - `runId` and `stepId`, or `null`
 - `createdAt`, the time of the first registration of the path
 
@@ -2474,7 +2474,7 @@ The query value `extension` MUST be a list of extensions with a comma between th
 
 The response MUST add `extensionCounts` to the list shape. It MUST give one entry `{ extension, count }` for each extension that a selected row has, in the order of the extension. It MUST give one last entry with `extension` `null` for the selected rows that have no extension. It MUST give no entry with a count of 0. The counts MUST sum to `total`, and they MUST NOT depend on the page.
 
-The query value `role` MUST select the rows with that role, `input` or `step_output`. An absent or empty `role` MUST select each row. A different value MUST give 400 `validation_error` with the field error under `role`, and the server MUST then send no ledger read. The filter applies to `total` and to `extensionCounts`, as each filter does. Each `step_output` row carries its run. Thus with `role=step_output` and no `runId`, `total` is equal to the sum of the `artifactCount` of the runs of the analysis.
+The query value `role` MUST select the rows with that role, `input`, `step_output`, or `step_summary`. An absent or empty `role` MUST select each row. A different value MUST give 400 `validation_error` with the field error under `role`, and the server MUST then send no ledger read. The filter applies to `total` and to `extensionCounts`, as each filter does. Each `step_output` row carries its run. Thus with `role=step_output` and no `runId`, `total` is equal to the sum of the `artifactCount` of the runs of the analysis.
 
 The `sort` query value MUST select the order. `path` orders by the path, and it is the default. `recent` orders by `createdAt`, newest first, and the path breaks a tie. An absent or empty `sort` MUST select the default. A different value MUST give 400 `validation_error` with the field error under `sort`.
 

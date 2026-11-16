@@ -68,11 +68,12 @@ function fill(length: number): string {
 }
 
 /** A tool whose ok value is a string with a JSON text of exactly `length` characters. */
-function sizedTool(): Tool {
+function sizedTool(resultCap?: number): Tool {
     return defineTool({
         id: "big",
         description: "Give a text of a length.",
         inputSchema: z.object({ length: z.number().int() }),
+        resultCap,
         view: "none",
         describeCall: "none",
         execute: ({ length }) => Promise.resolve(ok(fill(length - 2))),
@@ -153,6 +154,29 @@ describe("runLoop — long tool results", () => {
             `[... ${length - EXCERPT_HEAD_CHARS - EXCERPT_TAIL_CHARS} characters not shown ...]`,
             text.slice(-EXCERPT_TAIL_CHARS),
         ]);
+    });
+
+    it("gives a result under the cap of its tool back whole, when the result is longer than the cap of the loop", async () => {
+        const cap = TOOL_RESULT_CAP * 2;
+        const store = memoryStore();
+
+        const { messages } = await runLoop(agentDef([sizedTool(cap), readToolStub]), GO, makeSession(), opts(callBig(cap), { toolOutputStore: store }));
+
+        expect(onlyResult(messages).output).toEqual({ type: "json", value: fill(cap - 2) });
+        expect(store.puts).toHaveLength(0);
+    });
+
+    it("cuts a result over the cap of its tool, and the first line names that cap", async () => {
+        const cap = TOOL_RESULT_CAP * 2;
+        const length = cap + 1;
+        const store = memoryStore();
+
+        const { messages } = await runLoop(agentDef([sizedTool(cap), readToolStub]), GO, makeSession(), opts(callBig(length), { toolOutputStore: store }));
+
+        expect(presentFirst(textOf(onlyResult(messages)).split("\n"))).toBe(
+            `[Tool result cut: ${length} characters, over the limit of ${cap}. Shown: the first ${EXCERPT_HEAD_CHARS} and the last ${EXCERPT_TAIL_CHARS} characters.]`,
+        );
+        expect(presentFirst(store.puts).totalLength).toBe(length);
     });
 
     it("cuts a thrown error into an error-text excerpt, and tool-finished reports an error", async () => {

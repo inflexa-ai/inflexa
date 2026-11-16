@@ -24,18 +24,26 @@ settlement:
   that group's `prov.file_written` events, with `generation:
   "command"`, the model id, and the step ref. Per FILE-TOOL group, emit
   `prov.file_written` with `generation: "call"`,
-  `call: { invocationId, tool }` from the collector record's producer, the model
+  `call: { invocationId, tool }` from the collector record's producer, with the
+  facts of the render when the producer carries them, the model
   id, and the step ref — and NO command event: the recorder mints the
   deterministic call activity from the event. Leaf-bucket entries emit
   `prov.file_written` with `generation: "step"`, the model id, and the step ref.
   The producer's observation timestamp SHALL NOT be forwarded.
+- **Superseded versions**: before the groups, emit one `prov.file_written` with
+  `generation: "call"` for each superseded version of a step file that a file tool
+  wrote, in the order of the writes. The file is the `(path, hash)` of that version,
+  and the call is the call of the tool that wrote it. A version whose `(path, hash)`
+  is the final manifest entry, or a version already emitted, SHALL emit nothing.
 - **Command-scoped inputs**: the group's `inputs` are its record's per-command reads
   with `source ∈ "data" | "upstream" | "prior"` passed through (container paths
   stripped to analysis-relative), and `source: "artifacts"` reads — the step's own
   prior outputs — RESOLVED to their analysis-scoped `runs/{runId}/{stepId}/…` form
   and included ONLY when that path is present in the reconciled manifest (a read of
   a written-then-deleted phantom is dropped: its entity was never registered and the
-  edge would dangle). This is what makes intra-step chains representable at command
+  edge would dangle). A read whose hash is the hash of an emitted superseded version
+  SHALL point at that version. Each other such read points at the final entity of
+  the path. This is what makes intra-step chains representable at command
   scope while the step-level registry continues to skip `"artifacts"` reads.
 - Manifest entries arrive STEP-relative; the adapter SHALL scope paths to the
   analysis-scoped form for events, QName seeds, and the `registered[].path`
@@ -58,6 +66,13 @@ settlement:
 
 - **WHEN** a manifest entry's collector record holds a `file_tool` producer with an invocation id
 - **THEN** its `prov.file_written` carries `generation: "call"`, `call: { invocationId, tool }`, the step ref, and the model id, and no `prov.command_executed` references it
+
+#### Scenario: A rendered script that the agent edited after a run
+
+- **GIVEN** a registration whose collector holds a superseded version of `work/tpl-x.R` that `run_template` wrote, a command that read that version, and a final version that `edit_file` wrote
+- **WHEN** `register` is called
+- **THEN** the bus receives a call-generation `prov.file_written` for the rendered version with its own hash, its `run_template` call, and the facts of the render
+- **AND** the `prov.command_executed` of the command lists the rendered version as its input, and not the final version
 
 #### Scenario: A leaf entry emits no command event
 

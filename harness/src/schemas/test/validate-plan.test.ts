@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
 import { KNOWN_AGENT_IDS, resolveStepAgentId } from "../../agents/sandbox-catalog.js";
-import { STEP_SUBDIRS } from "../../workspace/paths.js";
 import { AnalysisStepSchema } from "../workflow-state.js";
 import type { AnalysisPlan, AnalysisStep } from "../workflow-state.js";
 import { validatePlan } from "../validate-plan.js";
@@ -53,23 +52,24 @@ describe("validatePlan", () => {
         expect(result.errors).toEqual([]);
     });
 
-    it("rejects a step id equal to a reserved artifact subdir name (figures)", () => {
-        const result = validatePlan(plan([step({ id: "figures" })]));
+    it("accepts a step id that names a folder, because the layout of a step reserves no folder name", () => {
+        expect(validatePlan(plan([step({ id: "figures" })])).valid).toBe(true);
+        expect(validatePlan(plan([step({ id: "output" })])).valid).toBe(true);
+    });
+
+    it("rejects the run-phase synthesis id case-insensitively", () => {
+        const result = validatePlan(plan([step({ id: "SYNTHESIS" })]));
         expect(result.valid).toBe(false);
         expect(result.errors.some((e) => e.includes("reserved name"))).toBe(true);
     });
 
-    it("rejects reserved names case-insensitively (OUTPUT)", () => {
-        const result = validatePlan(plan([step({ id: "OUTPUT" })]));
-        expect(result.valid).toBe(false);
-        expect(result.errors.some((e) => e.includes("reserved name"))).toBe(true);
-    });
-
-    it("rejects every reserved subdir name", () => {
-        for (const reserved of STEP_SUBDIRS) {
-            const result = validatePlan(plan([step({ id: reserved })]));
-            expect(result.valid).toBe(false);
-        }
+    it("rejects a template step that names no template, and accepts a template on an open step", () => {
+        const grounding = { status: "grounded" as const, snapshot: "sha256:71ac", claims: [], reason: "r" };
+        const noTemplate = validatePlan(plan([step({ id: "T1S1", kind: "template", grounding })]));
+        expect(noTemplate.valid).toBe(false);
+        expect(noTemplate.errors).toContain('Step "T1S1" is a template step and names no template — set grounding.template, or make the step open');
+        expect(validatePlan(plan([step({ id: "T1S1", kind: "template", grounding: { ...grounding, template: "tpl-x@1.0.0" } })])).valid).toBe(true);
+        expect(validatePlan(plan([step({ id: "T1S1", grounding: { ...grounding, template: "tpl-x@1.0.0" } })])).valid).toBe(true);
     });
 
     it("rejects the run-phase synthesis id", () => {
@@ -188,6 +188,41 @@ describe("validatePlan package entries", () => {
         const result = validatePlan(plan([step({ id: "T1S1", packages: [" bioc:fgsea"] })]));
         expect(result.valid).toBe(false);
         expect(result.errors.some((e) => e.includes("T1S1") && e.includes("bioc:fgsea"))).toBe(true);
+    });
+});
+
+describe("the departures of a grounding", () => {
+    const grounding: NonNullable<AnalysisStep["grounding"]> = {
+        status: "grounded",
+        snapshot: "sha256:71ac",
+        claims: ["R-0001@e7d0", "R-0147@3c1d"],
+        settings: [{ step: "qc_sample_structure", name: "n_top_genes_pca", value: 500 }],
+        reason: "PCA per R-0001@e7d0",
+    };
+
+    it("accepts a departure from a cited rule, with or without a setting", () => {
+        const departures = [
+            { rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" },
+            { rule: "R-0147@3c1d", reason: "the inputs hold no amplicon sequence" },
+        ];
+        expect(validatePlan(plan([step({ id: "T1S1", grounding: { ...grounding, departures } })])).errors).toEqual([]);
+    });
+
+    it("refuses a rule the step does not cite, a setting the step does not hold, a second departure for one setting, and a value with no setting", () => {
+        const departures = [
+            { rule: "R-0200@aa00", reason: "the panel has no histone gene" },
+            { rule: "R-0001@e7d0", setting: "gc_bias", reason: "no sequence" },
+            { rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" },
+            { rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 300, reason: "a second value" },
+            { rule: "R-0147@3c1d", value: 1, reason: "a value with no setting" },
+        ];
+        const { errors } = validatePlan(plan([step({ id: "T1S1", grounding: { ...grounding, departures } })]));
+        expect(errors).toEqual([
+            'Step "T1S1" departs from R-0200@aa00, which is not a claim of its grounding — name a claim the step cites (R-0001@e7d0, R-0147@3c1d), or remove the departure',
+            'Step "T1S1" departs from the setting gc_bias, which grounding.settings does not hold — name one of its settings (n_top_genes_pca), or leave out the setting for a part of the rule that no setting carries',
+            'Step "T1S1" has two departures for the setting n_top_genes_pca — give one departure for each setting',
+            'Step "T1S1" gives a departure from R-0147@3c1d a value and no setting — name the setting of grounding.settings that the value replaces',
+        ]);
     });
 });
 

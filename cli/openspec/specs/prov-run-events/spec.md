@@ -112,7 +112,11 @@ used inputs as PROV **entities**:
   deterministic `inflexa:FileToolWrite` call activity, keyed on the invocation
   id and the scope (the step key, or else the thread). The call activity
   carries `inflexa:tool`, `inflexa:invocationId`, the optional
-  `inflexa:threadId`, and NO formal time. It takes the actor association and
+  `inflexa:threadId`, and NO formal time. A call that wrote a rendered template
+  script also carries the facts of the render: `inflexa:template`,
+  `inflexa:templateLabel`, `inflexa:method`, `inflexa:methodLabel`,
+  `inflexa:snapshot`, `inflexa:templateSettings` and `inflexa:templateOverrides`
+  as JSON text, and `inflexa:environmentMatch`. Each other call carries none. It takes the actor association and
   the model-agent association. With a step ref, it is `wasInformedBy` the
   step. The call generates the file. A produced file's
   (`generation: "command"`) generation
@@ -163,6 +167,11 @@ carry NO formal time.
 
 - **WHEN** the same call-generation `prov.file_written` event is recorded twice (workflow re-execution) and the document is unified
 - **THEN** the document contains one call activity under the invocation-scoped QName and one of each of its relation records — not two
+
+#### Scenario: The call of a rendered script carries the facts of the render
+
+- **WHEN** a call-generation `prov.file_written` carries a call whose render names `tpl-deseq2-two-group@1.0.0`
+- **THEN** the call activity carries `inflexa:template` `tpl-deseq2-two-group@1.0.0`, the method, the snapshot, the settings and the overrides as JSON text, and the environment match
 
 #### Scenario: A step activity is associated with both the CLI and the model
 

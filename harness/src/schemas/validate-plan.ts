@@ -16,19 +16,16 @@ import { textOf } from "../lib/unknown-text.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
 import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js";
 import { isLabelValue } from "../sandbox/labels.js";
-import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
+import { isSafeId, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
 import { slugify } from "../lib/slug.js";
-import type { AnalysisPlan } from "./workflow-state.js";
+import { isTemplateStep, type AnalysisPlan, type AnalysisStep } from "./workflow-state.js";
 
 /**
- * Reserved step-id names. A step id equal to an artifact subdirectory name
- * would make its directory (`runs/{runId}/{stepId}`) collide with the
- * subdirectory convention agents expect inside a step, and
- * {@link SYNTHESIS_STEP_ID} is the run-phase ledger row `executeAnalysis`
+ * Reserved step-id names. {@link SYNTHESIS_STEP_ID} is the run-phase ledger row `executeAnalysis`
  * writes for run-level synthesis — a plan step with that id would collide with
  * the row's `(run_id, step_id)` primary key (see the harness-workspace-tools spec).
  */
-const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([...STEP_SUBDIRS, SYNTHESIS_STEP_ID]);
+const RESERVED_STEP_IDS: ReadonlySet<string> = new Set([SYNTHESIS_STEP_ID]);
 
 export type ValidationResult = {
     valid: boolean;
@@ -128,8 +125,7 @@ export function validatePlan(plan: AnalysisPlan): ValidationResult {
         if (RESERVED_STEP_IDS.has(step.id.toLowerCase())) {
             errors.push(
                 `Step "${step.id}" uses a reserved name — step ids must not be one of: ` +
-                    `${[...RESERVED_STEP_IDS].join(", ")} (the artifact subdirectory names collide with the ` +
-                    `step-directory convention; "${SYNTHESIS_STEP_ID}" is the run-level synthesis phase)`,
+                    `${[...RESERVED_STEP_IDS].join(", ")} ("${SYNTHESIS_STEP_ID}" is the run-level synthesis phase)`,
             );
         }
     }
@@ -175,5 +171,53 @@ export function validatePlan(plan: AnalysisPlan): ValidationResult {
         }
     }
 
+    // 8. Each departure of a grounding names a rule the step cites, and the setting it changes is a setting
+    //    of the step. The binding replaces the value of that setting, thus a departure that names nothing
+    //    the step holds would change no value, and the plan would state a departure that did not take effect.
+    for (const step of plan.steps) errors.push(...departureErrors(step));
+
+    // 9. A template step names the template that its agent runs. A template on an open step does nothing: its
+    //    agent writes its own scripts, and a stored plan from before the kinds reads this way.
+    for (const step of plan.steps) {
+        if (isTemplateStep(step) && step.grounding?.template === undefined) {
+            errors.push(`Step "${step.id}" is a template step and names no template — set grounding.template, or make the step open`);
+        }
+    }
+
     return { valid: errors.length === 0, errors };
+}
+
+/** The errors of the departures of one step: an unknown rule, an unknown setting, a second departure for one setting, or a value with no setting. */
+function departureErrors(step: AnalysisStep): string[] {
+    const grounding = step.grounding;
+    if (!grounding?.departures) return [];
+    const errors: string[] = [];
+    const settings = new Set((grounding.settings ?? []).map((setting) => setting.name));
+    const departed = new Set<string>();
+    for (const departure of grounding.departures) {
+        if (!grounding.claims.includes(departure.rule)) {
+            const cited = grounding.claims.length > 0 ? grounding.claims.join(", ") : "none";
+            errors.push(
+                `Step "${step.id}" departs from ${departure.rule}, which is not a claim of its grounding — name a claim the step cites (${cited}), or remove the departure`,
+            );
+        }
+        if (departure.setting === undefined) {
+            if (departure.value !== undefined) {
+                errors.push(
+                    `Step "${step.id}" gives a departure from ${departure.rule} a value and no setting — name the setting of grounding.settings that the value replaces`,
+                );
+            }
+            continue;
+        }
+        if (!settings.has(departure.setting)) {
+            const names = settings.size > 0 ? [...settings].join(", ") : "none";
+            errors.push(
+                `Step "${step.id}" departs from the setting ${departure.setting}, which grounding.settings does not hold — name one of its settings (${names}), or leave out the setting for a part of the rule that no setting carries`,
+            );
+        }
+        if (departed.has(departure.setting))
+            errors.push(`Step "${step.id}" has two departures for the setting ${departure.setting} — give one departure for each setting`);
+        departed.add(departure.setting);
+    }
+    return errors;
 }

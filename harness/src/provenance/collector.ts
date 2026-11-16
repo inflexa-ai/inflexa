@@ -162,6 +162,13 @@ export class ProvenanceCollector {
     /** Command execution records, keyed by output path (relative to /artifacts). */
     private readonly commandRecords = new Map<string, ProvenanceRecord>();
 
+    /**
+     * Each earlier version of a step file with a known hash, in the order of the writes: a later write of the same
+     * path replaced it. A command write has no hash until the reconcile, thus only a version that a file tool wrote
+     * is here. A rendered script that the agent then edits keeps its render as one of these versions.
+     */
+    private readonly supersededRecords: ProvenanceRecord[] = [];
+
     /** Refused read paths already narrated, so the same edge is reported once per step. */
     private readonly narratedRefusals = new Set<string>();
 
@@ -267,8 +274,9 @@ export class ProvenanceCollector {
         // and registration's step-relative lookup never finds this record.
         const outputPath = artifact.path.startsWith(this.stepPrefix) ? artifact.path.slice(this.stepPrefix.length) : artifact.path;
 
-        // Last-write-wins: unlink any command record for this path.
+        // Last-write-wins: unlink any command record for this path, and keep the replaced version.
         // Post-step overwrites (e.g. summary generation) replace the command output.
+        this.supersede(outputPath);
         this.commandRecords.delete(outputPath);
 
         const record: ProvenanceRecord = {
@@ -279,6 +287,7 @@ export class ProvenanceCollector {
                 type: "file_tool",
                 tool: artifact.toolName ?? "unknown",
                 invocationId: artifact.invocationId,
+                template: artifact.template,
             },
             inputs: [],
 
@@ -311,7 +320,9 @@ export class ProvenanceCollector {
         scriptPath?: string,
         commandReads?: InputRef[],
     ): void {
-        const inputs = commandReads ?? Array.from(this.inputAccesses.values());
+        // A read of a file of this step names the version on disk when the command ran: the latest version with a
+        // known hash. The shared input ref holds no such hash, thus the read of each command gets its own copy.
+        const inputs = (commandReads ?? Array.from(this.inputAccesses.values())).map((ref) => (ref.source === "artifacts" ? this.versionedRead(ref) : ref));
         const timestamp = new Date().toISOString();
 
         const producer: Producer = {
@@ -339,10 +350,36 @@ export class ProvenanceCollector {
                 runId: this.runId,
             };
 
-            // Last-write-wins: unlink any file-tool record for this path.
+            // Last-write-wins: unlink any file-tool record for this path, and keep the replaced version.
+            this.supersede(outputPath);
             this.fileToolRecords.delete(outputPath);
             this.commandRecords.set(outputPath, record);
         }
+    }
+
+    /** Keep the current record of `outputPath` as a superseded version when its hash is known. */
+    private supersede(outputPath: string): void {
+        const current = this.commandRecords.get(outputPath) ?? this.fileToolRecords.get(outputPath);
+        if (current !== undefined && current.outputHash !== "") this.supersededRecords.push(current);
+    }
+
+    /**
+     * A read of a file of this step, with the hash of the latest version that a tool wrote at that path. A read of a
+     * path that no record holds, or whose latest version has no hash yet, stays as it is.
+     */
+    private versionedRead(ref: InputRef): InputRef {
+        const marker = `/${this.stepPrefix}`;
+        const at = ref.path.indexOf(marker);
+        if (at < 0) return ref;
+        const outputPath = ref.path.slice(at + marker.length);
+        const current = this.commandRecords.get(outputPath) ?? this.fileToolRecords.get(outputPath);
+        if (current === undefined || current.outputHash === "") return ref;
+        return { ...ref, hash: current.outputHash };
+    }
+
+    /** Each earlier version of a step file with a known hash, in the order of the writes. */
+    getSupersededRecords(): ProvenanceRecord[] {
+        return [...this.supersededRecords];
     }
 
     /**

@@ -3,7 +3,16 @@ import { basename, dirname } from "node:path";
 import type { EventSource, FileReferencePart, PlanPart, PresentationPart } from "@inflexa-ai/harness";
 import { PART_REGISTRY, type ChatFrame, type KnownChatPart } from "@inflexa-ai/harness/contracts/index.js";
 
-import type { OpenableEntry, PlanCardStepView, PresentationBody } from "../../types/session.ts";
+import type {
+    OpenableEntry,
+    PlanCardDepartureView,
+    PlanCardGroundingView,
+    PlanCardRuleView,
+    PlanCardSettingView,
+    PlanCardSourceView,
+    PlanCardStepView,
+    PresentationBody,
+} from "../../types/session.ts";
 
 // The readers that turn one chat frame, or one harness part, into the primitives a surface renders.
 //
@@ -77,6 +86,75 @@ export function isKnownPart(part: { type: string }): part is KnownChatPart {
     return Object.hasOwn(PART_REGISTRY, part.type);
 }
 
+/** The grounding of one step of a plan part. */
+type PlanPartGrounding = NonNullable<NonNullable<PlanPart["steps"]>[number]["grounding"]>;
+
+/** The view of one claim of a plan part. */
+type PlanPartClaim = NonNullable<PlanPart["claims"]>[number];
+
+/**
+ * Map the grounding of one plan step to its view. A claim id joins its view by the id and the snapshot of
+ * the step, thus a view of the same id in a different release does not match. A claim with no view keeps
+ * its id. The sources of the rules dedupe by their reference.
+ */
+function groundingViewOf(grounding: PlanPartGrounding, claims: readonly PlanPartClaim[]): PlanCardGroundingView {
+    const views = new Map(claims.filter((view) => view.snapshot === grounding.snapshot).map((view) => [view.id, view]));
+    const rules: PlanCardRuleView[] = [];
+    const sources: PlanCardSourceView[] = [];
+    const seen = new Set<string>();
+    for (const id of grounding.claims) {
+        const view = views.get(id);
+        rules.push({ id, title: view?.title ?? view?.statement ?? "", strength: view?.strength ?? "" });
+        for (const source of view?.evidence ?? []) {
+            const ref = source.doi !== undefined ? `doi:${source.doi}` : source.pmid !== undefined ? `PMID:${source.pmid}` : (source.url ?? "");
+            // A DOI is case-insensitive, thus its key is in lower case. A PubMed id and a url keep their case. A source with no reference keys by its title.
+            const key = ref === "" ? `title:${source.title}` : source.doi !== undefined ? ref.toLowerCase() : ref;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            sources.push({ title: source.title, year: source.year, ref });
+        }
+    }
+    return {
+        status: grounding.status,
+        snapshot: grounding.snapshot,
+        template: grounding.template ?? "",
+        reason: grounding.reason,
+        rules,
+        settings: settingViewsOf(grounding),
+        departures: (grounding.departures ?? []).map((departure): PlanCardDepartureView => ({
+            rule: departure.rule,
+            change: departure.setting === undefined ? "left_out" : departure.value === undefined ? "not_applied" : "value",
+            setting: departure.setting ?? "",
+            value: departure.value === undefined ? "" : valueText(departure.value),
+            reason: departure.reason,
+        })),
+        sources,
+    };
+}
+
+/** A value of a setting as text. A list value is joined with a comma. An empty value shows as `[]` or `""`, thus it does not read as an absent value. */
+function valueText(value: string | number | boolean | string[]): string {
+    if (Array.isArray(value)) return value.length === 0 ? "[]" : value.join(", ");
+    return value === "" ? '""' : String(value);
+}
+
+/**
+ * The settings of a step as the run binds them. A departure with a value replaces the value of its setting, and a
+ * departure with no value marks its setting as not applied. The source of each such setting names the departure.
+ */
+function settingViewsOf(grounding: PlanPartGrounding): PlanCardSettingView[] {
+    const departures = new Map(
+        (grounding.departures ?? []).flatMap((departure) => (departure.setting === undefined ? [] : [[departure.setting, departure] as const])),
+    );
+    return (grounding.settings ?? []).map((setting) => {
+        const departure = departures.get(setting.name);
+        const view = { step: setting.step, name: setting.name, value: valueText(setting.value), source: setting.source ?? "" };
+        if (departure === undefined) return view;
+        if (departure.value === undefined) return { ...view, source: `not applied: departure from ${departure.rule}` };
+        return { ...view, value: valueText(departure.value), source: `departure from ${departure.rule}` };
+    });
+}
+
 /**
  * Map a plan card to the fields that a surface renders. The receipt check validated the part, thus each
  * field is read as the type gives it. An absent optional field reads as empty, and each array is copied,
@@ -98,6 +176,7 @@ export function readPlanCard(part: PlanPart): { planId: string; title: string; s
             depends_on: [...step.depends_on],
             track: step.track ?? "",
             step_type: step.step_type ?? "",
+            grounding: step.grounding === undefined ? undefined : groundingViewOf(step.grounding, part.claims ?? []),
         })),
     };
 }

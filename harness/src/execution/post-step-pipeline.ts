@@ -19,7 +19,7 @@ import type { Querier } from "../state/db.js";
 import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { LoopMessage } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { STEP_SUMMARY_FILE, STEP_WORK_DIR, stepSummaryPaths, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -59,6 +59,12 @@ export type PostStepPipelineDeps = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
 };
 
+/** A manifest path is relative to the step directory, and the read tools of the step agent resolve a relative path against its working directory. */
+function workingPath(stepPath: string): string {
+    const prefix = `${STEP_WORK_DIR}/`;
+    return stepPath.startsWith(prefix) ? stepPath.slice(prefix.length) : stepPath;
+}
+
 /** The product of the file-metadata stage, as its `DBOS.runStep` checkpoints it. */
 export type StepFileMetadata = {
     /** One entry per manifest file, described or fallback. */
@@ -82,7 +88,7 @@ export async function generateStepFileMetadata(
     const dbPathPrefix = `runs/${input.runId}/${input.stepId}/`;
     const artifactsForMeta: ArtifactForMetadata[] = manifest.map((a) => ({
         dbPath: `${dbPathPrefix}${a.path}`,
-        displayPath: a.path,
+        displayPath: workingPath(a.path),
         sizeBytes: a.size,
     }));
     const result = await coreGenerateFileMetadata({
@@ -108,7 +114,7 @@ export async function generateStepFileMetadata(
 
 /**
  * Generates the interpretive step summary, continuing after `metadataMessages`,
- * and writes it to `output/summary.md`. A write failure is non-fatal.
+ * and writes it to `summary.md` of the step directory. A write failure is non-fatal.
  */
 export async function generateStepSummaryAndWrite(
     deps: PostStepPipelineDeps,
@@ -116,7 +122,7 @@ export async function generateStepSummaryAndWrite(
     manifest: readonly ArtifactManifestEntry[],
     metadataMessages: readonly LoopMessage[],
 ): Promise<StepSummary | undefined> {
-    const { input, session, transcript, agent, writePrefix } = postCtx;
+    const { input, session, transcript, agent, stepDir } = postCtx;
 
     const summary = await coreGenerateStepSummary({
         logger: deps.logger,
@@ -126,7 +132,7 @@ export async function generateStepSummaryAndWrite(
         session,
         agent,
         conversation: [...transcript, ...metadataMessages],
-        artifactPaths: manifest.map((a) => a.path),
+        artifactPaths: manifest.map((a) => workingPath(a.path)),
         stepId: input.stepId,
         agentId: input.agentId,
         runId: input.runId,
@@ -137,10 +143,10 @@ export async function generateStepSummaryAndWrite(
             // prefix (not the whole workspace) so a symlink a compromised agent
             // planted cannot redirect it onto a host file — and so this write can
             // never reach the hard-linked `data/` inputs, which are RO by design.
-            await writeFileWithinRoot(writePrefix, join(writePrefix, "output", "summary.md"), summary.markdown);
+            await writeFileWithinRoot(stepDir, join(stepDir, STEP_SUMMARY_FILE), summary.markdown);
         } catch (err) {
             const logger = (deps.logger ?? createNoopLogger()).named("post-step").named("summary");
-            logger.warn("writeFile output/summary.md failed", {
+            logger.warn("writeFile summary.md failed", {
                 runId: input.runId,
                 stepId: input.stepId,
                 ...logger.errorFields(err),
@@ -314,7 +320,7 @@ export async function vectorIndexStepOutputs(deps: PostStepPipelineDeps, postCtx
     }
 
     if (summary && summary.markdown.trim().length > 0) {
-        const relPath = `runs/${input.runId}/${input.stepId}/output/summary.md`;
+        const [relPath] = stepSummaryPaths(input.runId, input.stepId);
         const ok = await indexOne(`/${input.analysisId}/${relPath}`, summary.markdown, {
             text: summary.markdown,
             type: "summary",
@@ -348,12 +354,15 @@ export function collectStepOutputs(postCtx: PostStepContext, artifacts: PostStep
         descByPath.set(rel, e.description);
     }
 
-    const files: StepFileEntry[] = reconciledManifest.map((a) => ({
-        path: a.path,
-        size: a.size,
-        fileType: a.type,
-        description: descByPath.get(a.path) ?? "",
-    }));
+    // The summary rides beside the files as its own part, thus the file list holds the files of the agent.
+    const files: StepFileEntry[] = reconciledManifest
+        .filter((a) => a.path !== STEP_SUMMARY_FILE)
+        .map((a) => ({
+            path: a.path,
+            size: a.size,
+            fileType: a.type,
+            description: descByPath.get(a.path) ?? "",
+        }));
 
     const summaryMarkdown = summary?.markdown ?? "";
     if (files.length === 0 && summaryMarkdown.trim().length === 0) {

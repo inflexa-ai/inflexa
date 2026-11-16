@@ -18,6 +18,8 @@ import type { DbError } from "../lib/db-result.js";
 import { passGate, type GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { RegisterArtifactInput } from "../state/index.js";
+import type { ArtifactTemplate } from "../state/schema.js";
+import { STEP_SUMMARY_FILE } from "../workspace/paths.js";
 import { upsertArtifacts, updateArtifactId } from "../state/index.js";
 import type { ArtifactRegistry, ArtifactRegistrationInput } from "./artifact-registry.js";
 
@@ -70,6 +72,21 @@ export async function registerStepArtifacts(
     }
 
     const dbPathPrefix = `runs/${runId}/${stepId}/`;
+    // The template of a script that `run_template` wrote, from its provenance record: the facts the row keeps.
+    const templateByPath = new Map(
+        input.collector.getRecords().flatMap((record) => {
+            const render = record.producer.type === "file_tool" ? record.producer.template : undefined;
+            if (render === undefined) return [];
+            const template: ArtifactTemplate = {
+                template: render.template,
+                label: render.label,
+                method: render.method,
+                snapshot: render.snapshot,
+                environmentMatch: render.environmentMatch,
+            };
+            return [[record.outputPath, template] as const];
+        }),
+    );
     const emptyHash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     const localEntries: RegisterArtifactInput[] = artifacts.map((a) => {
         if (a.size === 0 || a.hash === emptyHash) {
@@ -80,10 +97,11 @@ export async function registerStepArtifacts(
             path: `${dbPathPrefix}${a.path}`,
             hash: a.hash ?? "",
             size: a.size,
-            role: "step_output" as const,
+            role: a.path === STEP_SUMMARY_FILE ? ("step_summary" as const) : ("step_output" as const),
             sourceStep: stepId,
             sourceRun: runId,
             fileType: a.type,
+            template: templateByPath.get(a.path) ?? null,
         };
     });
 

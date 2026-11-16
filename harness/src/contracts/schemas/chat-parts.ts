@@ -11,6 +11,15 @@ import { TokenUsageRollupSchema } from "./usage.js";
 
 // ── Presentation ────────────────────────────────────────────────────
 
+const PlanStepValueSchema = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
+
+export const PlanStepDepartureSchema = z.object({
+    rule: z.string(),
+    setting: z.string().optional(),
+    value: PlanStepValueSchema.optional(),
+    reason: z.string(),
+});
+
 export const PlanStepSchema = z.object({
     id: z.string(),
     name: z.string(),
@@ -28,11 +37,12 @@ export const PlanStepSchema = z.object({
                     z.object({
                         step: z.string(),
                         name: z.string(),
-                        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
+                        value: PlanStepValueSchema,
                         source: z.string().optional(),
                     }),
                 )
                 .optional(),
+            departures: z.array(PlanStepDepartureSchema).optional(),
             reason: z.string(),
         })
         .optional(),
@@ -101,6 +111,24 @@ export const AnalogyReportPartSchema = z.object({
 // oxlint-disable-next-line eslint-js/no-restricted-syntax -- the issued plan-id shape: the pln- prefix plus 8 hex digits.
 export const PLAN_ID_RE = /^pln-[a-f0-9]{8}$/;
 
+/** The view of one claim that a step of the plan cites. The schema drops each other key of a stored view. */
+export const PlanClaimViewSchema = z.object({
+    id: z.string(),
+    snapshot: z.string(),
+    title: z.string().optional(),
+    statement: z.string(),
+    strength: z.string(),
+    evidence: z.array(
+        z.object({
+            doi: z.string().optional(),
+            pmid: z.string().optional(),
+            url: z.string().optional(),
+            title: z.string(),
+            year: z.number(),
+        }),
+    ),
+});
+
 export const PlanPartSchema = z.object({
     type: z.literal("data-plan"),
     id: z.string(),
@@ -108,6 +136,7 @@ export const PlanPartSchema = z.object({
     parentPlanId: z.string().regex(PLAN_ID_RE).optional(),
     title: z.string().optional(),
     steps: z.array(PlanStepSchema).optional(),
+    claims: z.array(PlanClaimViewSchema).optional(),
     analytical_narrative: z.string().optional(),
     omicsType: z.string().optional(),
     omicsSubtype: z.string().optional(),
@@ -391,6 +420,7 @@ export const RunSynthesisPartSchema = z.object({
             description: z.string(),
         }),
     ),
+    methodReferences: z.array(z.object({ stepId: z.string(), source: z.string(), citation: z.string(), method: z.string() })).optional(),
 });
 
 // ── Synthesis Progress ─────────────────────────────────────────────

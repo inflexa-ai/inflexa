@@ -112,7 +112,7 @@ describe("resolveWorkspacePath", () => {
         if (r.kind === "ok") {
             expect(r.absolute).toBe(STEP_DIR + sep + "output" + sep + "x.csv");
             // relative is always analysis-root-relative
-            expect(r.relative).toBe(["runs", "run-abc", "step-1", "output", "x.csv"].join(sep));
+            expect(r.relative).toBe(["runs", "run-abc", "step-1", "work", "output", "x.csv"].join(sep));
         }
     });
 
@@ -142,7 +142,7 @@ describe("resolveForWrite", () => {
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             expect(r.absolute).toBe(STEP_DIR + sep + "output" + sep + "result.csv");
-            expect(r.relative).toBe(["runs", "run-abc", "step-1", "output", "result.csv"].join(sep));
+            expect(r.relative).toBe(["runs", "run-abc", "step-1", "work", "output", "result.csv"].join(sep));
         }
     });
 
@@ -150,7 +150,7 @@ describe("resolveForWrite", () => {
         const r = resolveForWrite({
             workspaceRoot: ROOT,
             analysisId: ANALYSIS,
-            path: `/${ANALYSIS}/runs/run-abc/step-1`,
+            path: `/${ANALYSIS}/runs/run-abc/step-1/work`,
             workingDir: STEP_DIR,
         });
         expect(r.kind).toBe("ok");
@@ -177,12 +177,12 @@ describe("resolveForWrite", () => {
     });
 
     it("rejects a `..` escape from the analysis tree as out_of_scope", () => {
-        // STEP_DIR is sessions/analysis-001/runs/run-abc/step-1; four `..` reach
-        // the analysis root and a fifth escapes it into a sibling analysis.
+        // STEP_DIR is sessions/analysis-001/runs/run-abc/step-1/work; five `..` reach
+        // the analysis root and a sixth escapes it into a sibling analysis.
         const r = resolveForWrite({
             workspaceRoot: ROOT,
             analysisId: ANALYSIS,
-            path: "../../../../analysis-002/secret.csv",
+            path: "../../../../../analysis-002/secret.csv",
             workingDir: STEP_DIR,
         });
         expect(r.kind).toBe("out_of_scope");
@@ -200,14 +200,14 @@ describe("resolveForWrite", () => {
 });
 
 describe("stepWritePrefix", () => {
-    it("composes {workspaceRoot}/runs/{runId}/{stepId}", () => {
+    it("composes {workspaceRoot}/runs/{runId}/{stepId}/work", () => {
         expect(
             stepWritePrefix({
                 workspaceRoot: ROOT,
                 runId: "run-abc",
                 stepId: "step-1",
             }),
-        ).toBe(ROOT + sep + ["runs", "run-abc", "step-1"].join(sep));
+        ).toBe(ROOT + sep + ["runs", "run-abc", "step-1", "work"].join(sep));
     });
 
     it("rejects a `..` stepId before it becomes a host path", () => {
@@ -285,7 +285,7 @@ describe("tailWritePrefix", () => {
             resolvePath(ROOT, "report-sessions", "thread-a", "derived"),
         );
         // The step tail gives the same path as the step builder, thus one preparation serves both.
-        expect(tailWritePrefix({ workspaceRoot: ROOT, tail: "runs/run-abc/step-1" })).toBe(STEP_DIR);
+        expect(tailWritePrefix({ workspaceRoot: ROOT, tail: "runs/run-abc/step-1/work" })).toBe(STEP_DIR);
     });
 
     it("refuses a crafted tail instead of resolving outside the root", () => {
@@ -295,7 +295,7 @@ describe("tailWritePrefix", () => {
 
 describe("toSandboxPath", () => {
     it("maps an in-tree host path onto /{resourceId}/{tail}", () => {
-        expect(toSandboxPath(ROOT, ANALYSIS, STEP_DIR)).toBe(`/${ANALYSIS}/runs/run-abc/step-1`);
+        expect(toSandboxPath(ROOT, ANALYSIS, STEP_DIR)).toBe(`/${ANALYSIS}/runs/run-abc/step-1/work`);
         expect(toSandboxPath(ROOT, ANALYSIS, ROOT)).toBe(`/${ANALYSIS}`);
     });
 

@@ -13,23 +13,23 @@ describe("walkStepArtifacts", () => {
         base = undefined;
     });
 
-    it("types and hashes the agent-written and command-produced files of a step by their folder", async () => {
+    it("types and hashes the files of a step by their extension, relative to the step directory, and leaves out the summary of the host", async () => {
         base = await mkdtemp(join(tmpdir(), "cortex-walk-step-"));
-        const writePrefix = join(base, "runs", "run-1", "T1S1");
-        const files = ["scripts/analysis.py", "output/results.csv", "figures/volcano.png", "logs/run.log"];
+        const stepDir = join(base, "runs", "run-1", "T1S1");
+        const files = ["work/de/analysis.py", "work/de/results.csv", "work/plots/volcano.png", "work/run.log", "summary.md"];
         for (const file of files) {
-            await mkdir(dirname(join(writePrefix, file)), { recursive: true });
-            await writeFile(join(writePrefix, file), `content of ${file}`);
+            await mkdir(dirname(join(stepDir, file)), { recursive: true });
+            await writeFile(join(stepDir, file), `content of ${file}`);
         }
 
-        const manifest = await walkStepArtifacts({ writePrefix, stepId: "T1S1", runId: "run-1" });
+        const manifest = await walkStepArtifacts({ stepDir, stepId: "T1S1", runId: "run-1" });
 
         const typeByPath = Object.fromEntries(manifest.map((entry) => [entry.path, entry.type]));
         expect(typeByPath).toEqual({
-            "scripts/analysis.py": "script",
-            "output/results.csv": "output",
-            "figures/volcano.png": "figure",
-            "logs/run.log": "log",
+            "work/de/analysis.py": "script",
+            "work/de/results.csv": "output",
+            "work/plots/volcano.png": "figure",
+            "work/run.log": "log",
         });
         expect(manifest.every((entry) => entry.stepId === "T1S1" && entry.runId === "run-1")).toBe(true);
         expect(manifest.every((entry) => typeof entry.hash === "string" && entry.hash.length > 0)).toBe(true);

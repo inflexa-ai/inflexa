@@ -5,6 +5,8 @@
  * `execution/` and `provenance/`.
  */
 
+import type { TemplateRender } from "../provenance/types.js";
+
 export type ArtifactRecord = {
     path: string;
     hash: string;
@@ -21,4 +23,6 @@ export type ArtifactRecord = {
      * deterministic call-activity identifier on it.
      */
     invocationId: string;
+    /** The facts of the render, on the write of a rendered template script. */
+    template?: TemplateRender;
 };

@@ -27,7 +27,7 @@ and `markdown` — defined by `StepSummarySchema` and produced via
 `StepSummarySchema.parse`. The `markdown` body SHALL carry the agent's full
 free-form prose (headings, bullets, inline code as it chooses); no structured
 findings/evidence/quality fields SHALL be persisted or validated beyond the three
-string fields.
+string fields. The host MUST NOT append text to the markdown of the agent.
 
 #### Scenario: Markdown summary object shape
 
@@ -61,8 +61,9 @@ no artifact backs.
 ### Requirement: summary.md is written by plain writeFile and is non-fatal
 
 `generateStepSummaryAndWrite` SHALL persist a non-empty summary to
-`output/summary.md` under the step's write prefix using the Node `writeFile`
-(`node:fs/promises`), creating the `output` directory if needed. A write failure
+`summary.md` in the step directory `runs/{runId}/{stepId}/`, beside the work
+directory of the agent, using the Node `writeFile` (`node:fs/promises`). The write
+MUST be confined to the step directory. A write failure
 SHALL be logged as a warning and SHALL NOT fail the step; the summary SHALL still
 be returned for vector indexing. An empty/whitespace summary, a summary-loop
 throw, or no final text SHALL yield `undefined` (logged, and
@@ -72,7 +73,7 @@ continue.
 #### Scenario: summary.md written on non-empty markdown
 
 - **WHEN** the summarizer returns non-empty markdown
-- **THEN** the workflow writes it to `output/summary.md` via `writeFile`
+- **THEN** the workflow writes it to `runs/{runId}/{stepId}/summary.md` via `writeFile`
 
 #### Scenario: Empty or failed summary is non-fatal
 
@@ -81,15 +82,30 @@ continue.
 
 #### Scenario: Write failure is non-fatal
 
-- **WHEN** writing `output/summary.md` throws
+- **WHEN** writing `summary.md` throws
 - **THEN** the failure is logged as a warning and the step is not marked failed
+
+### Requirement: The summary registers under its own role
+
+The registration of a step MUST add the written summary to the artifacts of the step, with the role `step_summary`. The walk of the step directory MUST leave the summary out, because the host writes it after the walk. The file list of the step outputs MUST NOT hold the summary. A reader MUST find the summary of a step at `runs/{runId}/{stepId}/summary.md`. When that file is absent, the reader MUST read `runs/{runId}/{stepId}/output/summary.md`, because a step that ran before the work directory existed holds its summary there.
+
+#### Scenario: A summary registers as step_summary
+
+- **WHEN** a step writes a non-empty summary
+- **THEN** `cortex_artifacts` holds `runs/{runId}/{stepId}/summary.md` with the role `step_summary`
+
+#### Scenario: A step of an earlier version
+
+- **GIVEN** a completed step that holds only `runs/{runId}/{stepId}/output/summary.md`
+- **WHEN** the synthesis reads the summaries of the run
+- **THEN** it reads that file
 
 ### Requirement: The summary is vector-indexed as type "summary"
 
 When a non-empty summary exists, `vectorIndexStepOutputs` SHALL embed the markdown
 and upsert it into the per-analysis vector store with metadata `type: "summary"`
-plus `stepId`, `runId`, `agentId`, and the `runs/{runId}/{stepId}/output/summary.md`
-path, under id `/{analysisId}/runs/{runId}/{stepId}/output/summary.md`. Indexing
+plus `stepId`, `runId`, `agentId`, and the `runs/{runId}/{stepId}/summary.md`
+path, under id `/{analysisId}/runs/{runId}/{stepId}/summary.md`. Indexing
 SHALL be best-effort — any failure is logged and swallowed without failing the
 step.
 
@@ -107,7 +123,7 @@ step.
 
 `generateStepSummary` MUST run a continuation of the conversation of the step agent (refer to the harness-agent-loop capability), under the accounting agent id `"step-summary-writer"`. The continuation derives its session through `forSubAgent(session, "step-summary-writer")`. It MUST use the agent definition, the provider, and the transcript of the task. When a file-metadata exchange exists, the conversation MUST also hold the messages of that exchange.
 
-The continuation MUST use a cap of 12 requests. Its mask MUST let only `read_file`, `grep`, and `read_tool_output` run. The three are declared tools of the step agent, and the two file tools resolve a path against the step directory. `read_tool_output` reads the rest of a `read_file` result that the loop cut. The continuation MUST run with the tool output store of the task.
+The continuation MUST use a cap of 12 requests. Its mask MUST let only `read_file`, `grep`, and `read_tool_output` run. The three are declared tools of the step agent, and the two file tools resolve a path against the work directory of the step. `read_tool_output` reads the rest of a `read_file` result that the loop cut. The continuation MUST run with the tool output store of the task.
 
 Its request MUST be the summary instructions and the list of the output files. It runs with a no-op `emit`, inside the `DBOS.runStep` wrapper of the stage. Thus each of its calls runs directly, with no step of its own. The summary text MUST be the final assistant text of the continuation.
 

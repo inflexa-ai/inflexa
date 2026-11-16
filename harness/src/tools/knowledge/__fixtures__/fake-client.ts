@@ -31,11 +31,16 @@ const QC_STEP = {
 };
 
 function claim(id: string, statement: string): RecommendResponse["claims"][number] {
+    const rule = id.split("@")[0] ?? id;
     return {
         id,
+        rule,
+        title: `The title of ${rule}`,
         statement,
         strength: "consensus",
+        severity: "info",
         evidence: [{ doi: "10.1261/rna.053959.115", title: "How many biological replicates", year: 2016, direction: "supports" }],
+        license: "CC-BY-4.0",
     };
 }
 
@@ -176,15 +181,6 @@ export function renderAnswer(): RenderResponse {
         environment: { match: "exact" },
         syntax: { status: "ok" },
         outputs: [{ name: "results", path: "output/de_results.csv" }],
-        decision_record: {
-            schema: "inflexa.decision_record/0.2",
-            claims: [],
-            template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "Two-group count model", method: DE_METHOD },
-            snapshot: SNAPSHOT,
-            slots: [{ name: "counts_path", source: "local", adaptable: true, lines: [1] }],
-            script_sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            unvetted_edits: [],
-        },
     };
 }
 
@@ -196,15 +192,6 @@ export function substituteRenderAnswer(): RenderResponse {
         ...renderAnswer(),
         template: { id: "tpl-decoupler-scores", version: "1.0.0", label: "decoupler pathway scores", method, substitute_for, language: "python" },
         script: 'SCORES = {{counts_path}}  # [adaptable: counts_path]\nprint("hello")\n',
-        decision_record: {
-            schema: "inflexa.decision_record/0.2",
-            claims: [],
-            template: { id: "tpl-decoupler-scores", version: "1.0.0", label: "decoupler pathway scores", method, substitute_for },
-            snapshot: SNAPSHOT,
-            slots: [],
-            script_sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            unvetted_edits: [],
-        },
     };
 }
 

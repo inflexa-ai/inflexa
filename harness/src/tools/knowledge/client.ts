@@ -91,9 +91,22 @@ const ProcedureStepSchema = z.looseObject({
 
 const ClaimSchema = z.looseObject({
     id: z.string(),
+    rule: z.string().optional(),
+    title: z.string().optional(),
     statement: z.string(),
     strength: z.string(),
-    evidence: z.array(z.looseObject({ doi: z.string().optional(), pmid: z.string().optional(), title: z.string(), year: z.number(), direction: z.string() })),
+    severity: z.string().optional(),
+    evidence: z.array(
+        z.looseObject({
+            doi: z.string().optional(),
+            pmid: z.string().optional(),
+            url: z.string().optional(),
+            title: z.string(),
+            year: z.number(),
+            direction: z.string(),
+        }),
+    ),
+    license: z.string().optional(),
 });
 
 export const RecommendResponseSchema = z.looseObject({
@@ -162,7 +175,6 @@ export const RenderResponseSchema = z.looseObject({
     environment: z.looseObject({ match: z.string() }),
     syntax: z.looseObject({ status: z.string() }),
     outputs: z.array(z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() })),
-    decision_record: z.record(z.string(), z.json()),
 });
 export type RenderResponse = z.infer<typeof RenderResponseSchema>;
 
@@ -221,6 +233,33 @@ export const TemplateContractSchema = z.looseObject({
     /** The design requirements the script realizes. Absent: not subject to them. */
     honors: z.array(z.string()).optional(),
     parameters: z.array(TemplateParameterSchema),
+    /**
+     * The policy settings of a rule that a slot of the template realizes. A plan setting with the `value` of an entry binds
+     * `slot` to `slot_value`. Absent when the template maps none.
+     */
+    setting_bindings: z
+        .array(
+            z.looseObject({
+                setting: z.string(),
+                value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]),
+                slot: z.string(),
+                slot_value: z.union([z.string(), z.number(), z.boolean()]),
+            }),
+        )
+        .optional(),
+    /**
+     * The settings of a rule that the script of the template does with no slot, for example the adjustment of a
+     * fit script. The seed lists such a setting of the plan step as done by the script. Absent when the template
+     * lists none.
+     */
+    settings_by_construction: z
+        .array(
+            z.looseObject({
+                setting: z.string(),
+                value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]),
+            }),
+        )
+        .optional(),
     inputs: z.array(TemplateInputSchema).optional(),
     outputs: z.array(z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() })),
     /** The input requirements in prose, from the applicability of the template. */
@@ -346,6 +385,12 @@ export type KnowledgeClient = {
      */
     contract(template: string): Promise<TemplateContract | KnowledgeUnavailable | KnowledgeRejected>;
 };
+
+/**
+ * Where the host reads the contract of a template and renders it. A template step of a plan names its template,
+ * and `run_template` renders it through this source. The knowledge client is one realization.
+ */
+export type TemplateSource = Pick<KnowledgeClient, "contract" | "render">;
 
 export type HttpKnowledgeClientConfig = {
     /** The service origin, for example `https://knowledge.inflexa.ai`. */

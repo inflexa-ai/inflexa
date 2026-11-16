@@ -90,14 +90,14 @@ describe("WorkspaceMutator provenance recording", () => {
         expect(rec.outputHash).toBe(computeSha256(contentBytes));
         expect(rec.outputSize).toBe(contentBytes.length);
         expect(rec.inputs).toEqual([]);
-        expect(rec.outputPath).toBe("output/x.csv");
+        expect(rec.outputPath).toBe("work/output/x.csv");
     });
 
     test("out_of_scope and out_of_prefix writes record nothing", async () => {
         // Escapes the analysis tree entirely.
         const scopeCollector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
         const scoped = await writeAndRecord(buildMutator({ collector: scopeCollector }), {
-            path: "../../../../other/x.csv",
+            path: "../../../../../other/x.csv",
             content: "x",
             toolName: "write_file",
             invocationId: "inv-1",
@@ -126,7 +126,7 @@ describe("WorkspaceMutator provenance recording", () => {
         expect(result.status).toBe("ok");
         if (result.status === "ok") {
             expect(result.bytesWritten).toBe(Buffer.byteLength(content, "utf8"));
-            expect(result.path).toBe(`/${ANALYSIS}/runs/${RUN}/${STEP}/output/x.csv`);
+            expect(result.path).toBe(`/${ANALYSIS}/runs/${RUN}/${STEP}/work/output/x.csv`);
         }
     });
 
@@ -142,11 +142,11 @@ describe("WorkspaceMutator provenance recording", () => {
         if (foldCallRecord === undefined) throw new Error("the tool folds no call record");
         foldCallRecord(readToolCallRecord(out));
 
-        // The key a manifest entry would use — `output/notes.md`, not a record-less leaf.
+        // The key a manifest entry would use — the path relative to the step directory, not a record-less leaf.
         const records = collector.getRecords();
         expect(records).toHaveLength(1);
         const rec = presentAt(records, 0);
-        expect(rec.outputPath).toBe("output/notes.md");
+        expect(rec.outputPath).toBe("work/output/notes.md");
         expect(rec.producer.type).toBe("file_tool");
         if (rec.producer.type === "file_tool") {
             expect(rec.producer.tool).toBe("write_file");
@@ -466,7 +466,11 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         await mkdir(inputDir, { recursive: true });
         writeFileSync(join(inputDir, "counts.csv"), "gene,count\n");
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
-        const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs, intents: { put: () => okAsync(undefined), get: () => okAsync(null) } });
+        const editTool = createEditFileTool({
+            mutator,
+            workspaceFilesystem: fs,
+            intents: { put: () => okAsync(undefined), get: () => okAsync(null) },
+        });
         const { ctx } = makeToolContext();
 
         const edited = (
@@ -497,7 +501,11 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => Promise.resolve(join(basePath, id)) });
         // No workingDir: the read seam defaults to the analysis root, matching
         // the session-scoped mutator's write prefix.
-        const editTool = createEditFileTool({ mutator, workspaceFilesystem: fs, intents: { put: () => okAsync(undefined), get: () => okAsync(null) } });
+        const editTool = createEditFileTool({
+            mutator,
+            workspaceFilesystem: fs,
+            intents: { put: () => okAsync(undefined), get: () => okAsync(null) },
+        });
         const { ctx } = makeToolContext();
 
         const written = (await writeTool.execute({ path: "notes/draft.md", content: "alpha beta\n" }, ctx))._unsafeUnwrap();

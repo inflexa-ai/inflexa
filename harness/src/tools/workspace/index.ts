@@ -15,6 +15,7 @@
 export * from "./workspace-search.js";
 export * from "./show-file.js";
 export * from "./show-plan.js";
+export * from "./read-plan.js";
 export * from "./read-file.js";
 export * from "./list-files.js";
 export * from "./file-stat.js";
@@ -25,6 +26,5 @@ export * from "./mutator.js";
 export * from "./execute-command.js";
 export * from "./write-file.js";
 export * from "./edit-file.js";
-export * from "./decision-record.js";
 export { EXEC_STREAM_BYTE_CAP, boundExecResult } from "./result-bounds.js";
 export type { BoundedExecResult } from "./result-bounds.js";

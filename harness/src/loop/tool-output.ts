@@ -10,7 +10,7 @@ import type { ResultAsync } from "neverthrow";
 
 import type { DomainError } from "../lib/result.js";
 
-/** Keeps each skill file whole, because the largest one gives about 29,300 characters. */
+/** Keeps each skill file whole, because the largest one gives about 29,300 characters. A tool can declare its own cap. */
 export const TOOL_RESULT_CAP = 32 * 1024;
 
 /** The start of an excerpt holds the shape of a result: its status, its first keys, or a header row. */
@@ -81,14 +81,12 @@ export function keptTextOf(text: string): string {
     return `${text.slice(0, headEnd)}\n[... ${tailStart - headEnd} characters not kept ...]\n${text.slice(tailStart)}`;
 }
 
-/** The excerpt of a text longer than `TOOL_RESULT_CAP`. `kept` is absent when the loop kept no text. */
-export function excerptOf(text: string, kept: { readonly ref: string; readonly keptLength: number } | undefined): string {
+/** The excerpt of a text longer than `cap`, the cap of its tool. `kept` is absent when the loop kept no text. */
+export function excerptOf(text: string, kept: { readonly ref: string; readonly keptLength: number } | undefined, cap: number = TOOL_RESULT_CAP): string {
     const headEnd = pairSafeIndex(text, EXCERPT_HEAD_CHARS, -1);
     const tailStart = pairSafeIndex(text, text.length - EXCERPT_TAIL_CHARS, 1);
     const shown = `Shown: the first ${headEnd} and the last ${text.length - tailStart} characters.`;
-    const lines = [
-        `[Tool result cut: ${text.length} characters, over the limit of ${TOOL_RESULT_CAP}. ${shown}${kept === undefined ? " The rest is not kept." : ""}]`,
-    ];
+    const lines = [`[Tool result cut: ${text.length} characters, over the limit of ${cap}. ${shown}${kept === undefined ? " The rest is not kept." : ""}]`];
     if (kept !== undefined) {
         lines.push(
             `[The harness kept ${kept.keptLength} characters as reference "${kept.ref}". Call ${READ_TOOL_OUTPUT_TOOL_ID} with this reference and an offset and a limit, or with a pattern. Offsets start at 0.]`,

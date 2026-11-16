@@ -12,7 +12,7 @@
  *                             tool call inside is its own durable step.
  *  4. `generateFileMetadata`— the file-metadata follow-up request of the step agent.
  *  5. `generateStepSummary` — the summary follow-up request of the step agent,
- *                             producing `output/summary.md`.
+ *                             producing `summary.md` beside the work directory.
  *  6. `reconcile + register`— write artifact manifest entries to cortex_artifacts.
  *  7. `syncArtifacts`       — register provenance + upload missing file_ids
  *                             via the managed root (scoped to this run+step).
@@ -28,6 +28,8 @@
  * steps go on, and each one pauses at its own failure. A refused spawn pauses
  * the lease workflow under the run, not this child.
  */
+
+import { join } from "node:path";
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { isWorkflowCancellation } from "../runtime/dbos.js";
@@ -45,7 +47,7 @@ import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { maskExcept } from "../loop/call-policy.js";
-import { runLoop, withRunScript, type LoopStep } from "../loop/run-loop.js";
+import { runLoop, runWithSalvage, withRunScript, type LoopStep } from "../loop/run-loop.js";
 import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import { withoutToolValues } from "../loop/tool-value.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
@@ -67,7 +69,7 @@ import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import type { SandboxLeases, BoundLease } from "../sandbox/leases.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { STEP_SUMMARY_FILE, STEP_WORK_DIR, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactRegistry } from "../execution/artifact-registry.js";
 import { walkStepArtifacts } from "../execution/post-step.js";
 import {
@@ -82,7 +84,7 @@ import {
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { blockerOf } from "../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
-import type { TemplateBinding } from "../tools/knowledge/template.js";
+import { hasSuccessfulTemplateRun, RUN_TEMPLATE_TOOL_ID, type StepTemplate } from "../tools/knowledge/run-template.js";
 import { pauseAtGate, workPause } from "./pause.js";
 
 // ── Workflow input/output shapes ─────────────────────────────────────
@@ -109,16 +111,11 @@ export type SandboxStepInput = {
      */
     readonly dependsOn?: readonly string[];
     /**
-     * The plan settings bound to the template of this step, composed by the
-     * parent at dispatch beside the seed. The agent factory hands it to
-     * `knowledge_template`, which merges the bound slots under the model
-     * values and refuses a silent change of one.
-     *
-     * Optional for the same reason as `dependsOn`: a durable input that
-     * predates the field recovers without it, and a step without a grounded
-     * template has nothing to bind. Absence means the model values ride alone.
+     * The template of a template step, and the plan settings bound to its contract, composed by the parent at
+     * dispatch beside the seed. The agent of the step gets `run_template` over it, and the step ends only after a
+     * successful run of the template or a blocker. Absent for an open step.
      */
-    readonly templateBinding?: TemplateBinding;
+    readonly template?: StepTemplate;
     /** Topological level — persisted on `cortex_step_executions.wave`. */
     readonly level: number;
     /** User-content prompt the agent receives as its initial message. */
@@ -142,6 +139,19 @@ export type SandboxStepInput = {
  * never model output — the summarizer does not run on this path.
  */
 export const CAPPED_OUT_EMPTY_REASON = "The step hit its iteration cap with no output files persisted.";
+
+/** The blocked reason of a template step whose agent has no way to run the template. */
+export const TEMPLATE_SOURCE_ABSENT_REASON = "The step runs a template, and the host binds no template source that renders it.";
+
+/** The blocked reason of a template step that ended with no successful run of its template. */
+export const TEMPLATE_NOT_RUN_REASON = "The step runs a template, and it ended with no run of the template that exited with code 0.";
+
+/** The text of the one follow-up request of a template step that ended with no successful run and no blocker. */
+const TEMPLATE_RUN_NUDGE =
+    "The step is not done: no run of the template ended with exit code 0. Run the template with `run_template`, and correct the inputs or the slot values when a run fails. When the template cannot do the step, call `report_blocker` with the reason.";
+
+/** The requests of that follow-up: room to correct an input and run the template again. */
+const TEMPLATE_RUN_SALVAGE_REQUESTS = 8;
 
 export type SandboxStepStatus = "complete" | "failed" | "canceled" | "blocked";
 
@@ -291,16 +301,17 @@ export type SandboxStepDeps = {
      */
     buildAgent(ctx: SandboxAgentBuildContext): Promise<AgentDefinition>;
     /**
-     * Resolve the absolute writable artifact prefix for this step. The
-     * workspace mutate tools enforce write confinement against this path.
+     * Resolve the absolute directory of this step. The agent writes its work
+     * directory under it, and the workspace mutate tools confine each write to
+     * that work directory. The host writes the summary of the step beside it.
      */
-    resolveWritePrefix(input: SandboxStepInput): Promise<string>;
+    resolveStepDir(input: SandboxStepInput): Promise<string>;
 };
 
 /**
  * Per-step context passed to every post-step dep. Carries the durable input
  * (analysisId/runId/stepId/agentId), the durable `RunSession`, the in-memory
- * agent transcript, and the on-disk write prefix. The write prefix is the
+ * agent transcript, and the on-disk step directory. The step directory is the
  * absolute path each post-step dep walks to discover artifacts;
  * `lineageCollector` carries the runtime-observed input/script edges the
  * step loop accumulated, which registration translates into managed-root parents.
@@ -313,8 +324,8 @@ export type PostStepContext = {
     readonly agent: AgentDefinition;
     /** The cell that the `submit_file_metadata` tool of `agent` records into. */
     readonly fileMetadata: FileMetadataCell;
-    /** Absolute path to the step's writable artifact directory. */
-    readonly writePrefix: string;
+    /** Absolute path to the step directory: the work directory of the agent, and the summary of the host. */
+    readonly stepDir: string;
     /** Same step-scoped collector the agent loop fed each exec frame into. */
     readonly lineageCollector: ProvenanceCollector;
 };
@@ -454,7 +465,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // "conversation-agent"). `run-loop.ts` builds source from
     // `session.provenance.agentId`, and billing tags ride the same provenance.
     const session = forSubAgent(input.runSession, input.agentId);
-    const writePrefix = await deps.resolveWritePrefix(input);
+    const stepDir = await deps.resolveStepDir(input);
+    const writePrefix = join(stepDir, STEP_WORK_DIR);
 
     const lineageCollector = createLineageCollector(input);
 
@@ -615,14 +627,17 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // is enforced at DBOS checkpoint (step) boundaries, not cooperatively in-loop.
     const neverAbort = new AbortController().signal;
 
-    let transcript: LoopMessage[];
-    let steps: readonly LoopStep[];
-    let finishReason: string;
+    // A template step runs its template, thus an agent with no `run_template` cannot do the step, and it runs no loop.
+    const templateUnrunnable = input.template !== undefined && !agent.tools.some((tool) => tool.id === RUN_TEMPLATE_TOOL_ID);
+
+    let transcript: LoopMessage[] = initial;
+    let steps: readonly LoopStep[] = [];
+    let finishReason = "blocked";
     // `false` until the loop reports otherwise: a loop that throws never reached its cap.
     let hitMaxSteps = false;
     let stepUsage: TokenUsageRollup | undefined;
-    try {
-        const agentResult = await runLoop(agent, initial, session, {
+    if (!templateUnrunnable) {
+        const loopOptions = {
             provider: deps.provider,
             signal: neverAbort,
             emit,
@@ -637,20 +652,34 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                 ),
             },
             // A blocker ends the step: the agent declared that it cannot do the work.
-            stopWhen: (done) => blockerOf(done) !== null,
+            stopWhen: (done: readonly LoopStep[]) => blockerOf(done) !== null,
             pause: pause.afterFailure,
-        });
-        transcript = agentResult.messages;
-        steps = agentResult.steps;
-        finishReason = agentResult.finish.reason;
-        hitMaxSteps = agentResult.finish.cappedOut;
-        stepUsage = agentResult.finish.usage;
-    } catch (err) {
-        // A failure with a cause of a pause waited in the loop, thus this one fails the step: tear down, mark failed (scrubbed), re-raise so
-        // the parent's `getResult` sees ERROR and the fail-fast cascade fires.
-        // `failStep` always throws; the outer `throw` is for control-flow analysis.
-        // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path, and a wrapper would erase the scrubbed cause the parent reads.
-        throw await failStep("agent_loop", err);
+        };
+        try {
+            // A template step that ends with no successful run of its template and no blocker gets one follow-up
+            // request that asks for the run. An open step runs the loop alone.
+            const agentResult =
+                input.template === undefined
+                    ? await runLoop(agent, initial, session, loopOptions)
+                    : await runWithSalvage(agent, initial, session, loopOptions, {
+                          tools: agent.tools.map((tool) => tool.id).filter((id) => id !== SUBMIT_FILE_METADATA_TOOL_ID),
+                          nudge: TEMPLATE_RUN_NUDGE,
+                          maxRequests: TEMPLATE_RUN_SALVAGE_REQUESTS,
+                          stopWhen: (done) => blockerOf(done) !== null,
+                          hasOutcome: (done) => hasSuccessfulTemplateRun(done) || blockerOf(done) !== null,
+                      });
+            transcript = agentResult.messages;
+            steps = agentResult.steps;
+            finishReason = agentResult.finish.reason;
+            hitMaxSteps = agentResult.finish.cappedOut;
+            stepUsage = agentResult.finish.usage;
+        } catch (err) {
+            // A failure with a cause of a pause waited in the loop, thus this one fails the step: tear down, mark failed (scrubbed), re-raise so
+            // the parent's `getResult` sees ERROR and the fail-fast cascade fires.
+            // `failStep` always throws; the outer `throw` is for control-flow analysis.
+            // oxlint-disable-next-line typescript/only-throw-error -- `failStep` always throws inside; the outer `throw` only ends the code path, and a wrapper would erase the scrubbed cause the parent reads.
+            throw await failStep("agent_loop", err);
+        }
     }
 
     // What the step's loop spent, emitted the moment the loop is done and before
@@ -684,7 +713,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         logger,
         () =>
             walkStepArtifacts({
-                writePrefix,
+                stepDir,
                 stepId: input.stepId,
                 runId: input.runId,
             }),
@@ -703,11 +732,22 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // reason. A capped-out step WITH artifacts stays on the completed path,
     // because partial output is real output.
     //
+    // A template step is done only after a successful run of its template: a step that ended without one, or
+    // that had no way to run it, is blocked with that reason.
+    //
     // The recorded calls give the blocker on the first run and on each replay alike.
     const blockerOutcome = blockerOf(steps);
     const cappedOutEmpty = hitMaxSteps && manifest.length === 0;
-    if (blockerOutcome || cappedOutEmpty) {
-        const blockedReason = blockerOutcome?.reason ?? CAPPED_OUT_EMPTY_REASON;
+    const templateReason =
+        input.template === undefined || blockerOutcome
+            ? undefined
+            : templateUnrunnable
+              ? TEMPLATE_SOURCE_ABSENT_REASON
+              : hasSuccessfulTemplateRun(steps)
+                ? undefined
+                : TEMPLATE_NOT_RUN_REASON;
+    if (blockerOutcome || cappedOutEmpty || templateReason !== undefined) {
+        const blockedReason = blockerOutcome?.reason ?? templateReason ?? CAPPED_OUT_EMPTY_REASON;
         await tryRelease(logger, deps, childWorkflowId);
         const durationMs = (await DBOS.now()) - startedAt;
         await DBOS.runStep(
@@ -758,7 +798,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         transcript,
         agent,
         fileMetadata,
-        writePrefix,
+        stepDir,
         lineageCollector,
     };
 
@@ -790,6 +830,12 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         "post-step.summary",
         undefined,
     );
+    // The summary of the host registers beside the files of the agent, under its own role. The reconcile hashes it
+    // from disk, and it drops the entry when the write of the summary failed.
+    const registrationManifest: readonly ArtifactManifestEntry[] =
+        summary && summary.markdown.trim().length > 0
+            ? [...manifest, { stepId: input.stepId, runId: input.runId, path: STEP_SUMMARY_FILE, size: 0, type: "output" }]
+            : manifest;
     // Lineage attestation (registration) is fail-fast (see the artifact-manifest spec): unlike
     // the best-effort enrichment stages, a failure here orphans the step's real
     // outputs, so it fails the step loudly instead of finishing green. Transient
@@ -823,7 +869,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     const register = async (): Promise<Awaited<ReturnType<typeof reconcileAndRegisterStepArtifacts>>> => {
         let registration: Awaited<ReturnType<typeof reconcileAndRegisterStepArtifacts>>;
         try {
-            registration = await reconcileAndRegisterStepArtifacts(deps, postCtx, manifest);
+            registration = await reconcileAndRegisterStepArtifacts(deps, postCtx, registrationManifest);
         } catch (attestationErr) {
             if (isWorkflowCancellation(attestationErr)) throw attestationErr;
             await syncStepArtifacts();

@@ -15,11 +15,18 @@
  *
  * A reference that carries a short citation also pins a bibliography record beside its key. The key list
  * keeps the membership role, thus the record map is optional and it changes no resolution.
+ *
+ * The methods of each run are the other half of the evidence: the sources of the claim views that the
+ * plan kept. A report names its methods, thus the pin takes each of their DOIs and PubMed ids, also for a
+ * run with no synthesis.
  */
 
 import { err, ok, type Result } from "neverthrow";
 
+import { normalizeCitationKey } from "../contracts/report-reference.js";
+import { readRunMethods } from "../execution/run-methods.js";
 import { readSynthesisText } from "../execution/run-synthesis.js";
+import { citationKeyOfSource } from "../execution/step-methods.js";
 import { parseJsonAs } from "../lib/parse-json.js";
 import { parseUnknownRecord, UnknownRecordSchema } from "../lib/unknown-containers.js";
 import { nullProtoRecord } from "../lib/null-proto.js";
@@ -36,7 +43,7 @@ import type { ArtifactSnapshot, CitationRecord, ReportSnapshot } from "./referen
  * log.
  */
 export type PinSnapshotError = {
-    kind: "ledger-read-failed" | "run-listing-failed";
+    kind: "ledger-read-failed" | "run-listing-failed" | "plan-read-failed";
     cause: unknown;
 };
 
@@ -111,6 +118,29 @@ function pushPmidCitations(list: unknown, entries: CitationEntry[]): void {
 }
 
 /**
+ * Take one citation from each method reference of a synthesis record. A reference carries its key in the
+ * prefixed form, and a key that names no DOI and no PubMed id gives no citation.
+ */
+function pushMethodCitations(list: unknown, entries: CitationEntry[]): void {
+    if (!Array.isArray(list)) {
+        return;
+    }
+    for (const reference of list) {
+        const fields = parseUnknownRecord(reference);
+        const source = trimmedText(fields?.source);
+        if (fields === undefined || source === undefined) {
+            continue;
+        }
+        const key = normalizeCitationKey(source);
+        if (!(key.startsWith("doi:") || key.startsWith("pmid:")) || key.endsWith(":")) {
+            continue;
+        }
+        const record = recordOf(fields);
+        entries.push(record === undefined ? { key } : { key, record });
+    }
+}
+
+/**
  * The citations of one synthesis text, in the order that the record carries them.
  *
  * The extraction is lenient: it parses the JSON, and it takes each PMID of `keyReferences` and of the
@@ -131,6 +161,7 @@ function citationsOf(text: string): CitationEntry[] {
     }
     const entries: CitationEntry[] = [];
     pushPmidCitations(fields.keyReferences, entries);
+    pushMethodCitations(fields.methodReferences, entries);
     const findings = fields.findings;
     if (Array.isArray(findings)) {
         for (const finding of findings) {
@@ -187,10 +218,20 @@ async function collectCitations(
         }
         for (const run of page.value) {
             const text = await readSynthesisText({ workspaceRoot: root, runId: run.runId });
-            if (text === undefined) {
-                continue;
+            const entries = text === undefined ? [] : citationsOf(text);
+            const methods = await readRunMethods({ pool, analysisId, runId: run.runId, planId: run.planId });
+            if (methods.isErr()) {
+                return err({ kind: "plan-read-failed", cause: methods.error.cause });
             }
-            for (const entry of citationsOf(text)) {
+            for (const { sources } of methods.value) {
+                for (const source of sources) {
+                    const key = citationKeyOfSource(source);
+                    if (key !== undefined) {
+                        entries.push({ key, record: { citation: source.year === undefined ? source.title : `${source.title} (${source.year})` } });
+                    }
+                }
+            }
+            for (const entry of entries) {
                 keys.add(entry.key);
                 if (entry.record !== undefined && !records.has(entry.key)) {
                     records.set(entry.key, entry.record);

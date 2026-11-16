@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { isSha256Hash } from "../../../lib/test/text-shapes.js";
 import { parseJsonAs } from "../../../lib/parse-json.js";
-import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { mkdtempSync, rmSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -13,17 +12,15 @@ import { readToolCallRecord, withToolCallRecord } from "../../define-tool.js";
 import { runLoop } from "../../../loop/run-loop.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../../testing.js";
-import { createWorkspaceMutator } from "../../workspace/mutator.js";
 import { GroundingSchema } from "../../../schemas/workflow-state.js";
-import { stepWritePrefix } from "../../../workspace/paths.js";
+import type { EnvironmentStorePaths, PoolInventoryRead } from "../../../config/environment-stores.js";
 import { fakeKnowledgeClient, limitAnswer, notAssessedCheckAnswer, recommendAnswer, SNAPSHOT, substitutionAnswer } from "../__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "../check.js";
+import { createClaimShelf, createKnowledgeClaimsTool } from "../claims.js";
 import { joinEnvironment } from "../environment.js";
 import { createKnowledgeTools, knowledgeToolDefinitionHash } from "../index.js";
 import { createKnowledgeRecommendTool, type KnowledgeRecommendAnswer } from "../recommend.js";
 import { buildPlanSkeleton } from "../skeleton.js";
-import { decisionRecordPath } from "../../workspace/decision-record.js";
-import { createKnowledgeTemplateTool } from "../template.js";
 import { presentAt, presentFind } from "../../../lib/present.js";
 import { awaitOk } from "../../../lib/test/result-assert.js";
 
@@ -39,18 +36,22 @@ const SITUATION = {
     batch: "none" as const,
 };
 
-/** The JSON of a written decision record, narrowed to the object the tool wrote. */
-function asRecord(json: unknown): Record<string, unknown> {
-    const record = parseUnknownRecord(json);
-    if (record === undefined) throw new Error("the decision record stored no object");
-    return record;
+/** The output of the result of one tool call, as the request sent it to the model. */
+function toolResultIn(call: LanguageModelV4CallOptions, toolCallId: string): unknown {
+    for (const message of call.prompt) {
+        if (message.role !== "tool") continue;
+        for (const part of message.content) {
+            if (part.type === "tool-result" && part.toolCallId === toolCallId) return part.output;
+        }
+    }
+    return undefined;
 }
 
 describe("createKnowledgeTools", () => {
-    it("attaches nothing without a client, and the two planner tools with one", () => {
+    it("attaches nothing without a client, and the three planner tools with one", () => {
         expect(createKnowledgeTools({})).toEqual([]);
         const { client } = fakeKnowledgeClient();
-        expect(createKnowledgeTools({ client }).map((tool) => tool.id)).toEqual(["knowledge_recommend", "knowledge_check"]);
+        expect(createKnowledgeTools({ client }).map((tool) => tool.id)).toEqual(["knowledge_recommend", "knowledge_claims", "knowledge_check"]);
     });
 
     it("emits flat object schemas that model tool calling accepts", () => {
@@ -64,7 +65,7 @@ describe("createKnowledgeTools", () => {
 describe("knowledge_recommend", () => {
     it("sends the situation with absent optional fields omitted and returns the skeleton", async () => {
         const { client, calls } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         expect(out.match).toBe("applicable");
@@ -75,9 +76,9 @@ describe("knowledge_recommend", () => {
         expect(Object.keys(presentAt(calls.recommend, 0).situation)).not.toContain("covariates");
     });
 
-    it("gives the planner one representation: the skeleton and the claims, never the procedure", async () => {
+    it("gives the planner one representation: the skeleton and a heading of each claim, never the procedure", async () => {
         const { client } = fakeKnowledgeClient({ recommend: { ...recommendAnswer(), dropped: ["shrink_lfc"], situation: SITUATION } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const input = tool.inputSchema.parse(SITUATION);
         const out = (await tool.execute(input, ctx))._unsafeUnwrap();
@@ -99,7 +100,29 @@ describe("knowledge_recommend", () => {
         expect(out.claims.map((claim) => claim.id)).toEqual(recommendAnswer().claims.map((claim) => claim.id));
         const cited = new Set(out.plan_skeleton.flatMap((step) => step.grounding.claims));
         for (const id of cited) expect(out.claims.some((claim) => claim.id === id)).toBe(true);
+        // The model reads the id, the title, the strength, and the severity of a claim, and the call record keeps the full view.
+        const model = parseJsonAs(JSON.stringify(out), z.object({ claims: z.array(z.record(z.string(), z.json())) }));
+        for (const heading of model.claims) expect(Object.keys(heading)).toEqual(["id", "title", "strength", "severity"]);
+        const kept = z.object({ claims: z.array(z.looseObject({ id: z.string() })) }).parse(readToolCallRecord(out));
+        expect(kept.claims).toEqual(recommendAnswer().claims);
         expect(tool.describeResult?.(input, out)).toBe("3 steps, 6 claims");
+    });
+
+    it("gives the statement in the heading of a claim with no title", async () => {
+        const [first, ...rest] = recommendAnswer().claims;
+        if (first === undefined) throw new Error("the fixture holds no claim");
+        const { title: _title, ...untitled } = first;
+        const { client } = fakeKnowledgeClient({ recommend: { ...recommendAnswer(), claims: [untitled, ...rest] } });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
+        if (out.match !== "applicable") throw new Error(out.match);
+        expect(parseJsonAs(JSON.stringify(presentAt(out.claims, 0)), z.record(z.string(), z.json()))).toEqual({
+            id: first.id,
+            statement: first.statement,
+            strength: first.strength,
+            severity: "info",
+        });
     });
 
     it("keeps the covered skeleton steps of a none answer beside the nearest rules", async () => {
@@ -114,7 +137,7 @@ describe("knowledge_recommend", () => {
                 reason: "no rule",
             },
         });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "none") throw new Error(out.match);
@@ -126,7 +149,7 @@ describe("knowledge_recommend", () => {
 
     it("sends the classifier flag and the import state as situation fields, and refuses an unknown import state", async () => {
         const { client, calls } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         await awaitOk(tool.execute(tool.inputSchema.parse({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" }), ctx));
         expect(calls.recommend[0]?.situation).toEqual({ ...SITUATION, question: "signature_scoring", classifier: true, import_state: "unknown" });
@@ -135,7 +158,7 @@ describe("knowledge_recommend", () => {
 
     it("sends the preferred language beside the situation, not inside it", async () => {
         const { client, calls } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         await awaitOk(tool.execute(tool.inputSchema.parse({ ...SITUATION, preferred_language: "python" }), ctx));
         expect(calls.recommend[0]?.preferences).toEqual({ language: "python" });
@@ -144,7 +167,7 @@ describe("knowledge_recommend", () => {
 
     it("passes an unavailable answer through as data, never as an error", async () => {
         const { client } = fakeKnowledgeClient({ recommend: { match: "unavailable", reason: "Request timed out after 30000ms" } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         expect(out).toEqual({ match: "unavailable", reason: "Request timed out after 30000ms" });
@@ -152,7 +175,7 @@ describe("knowledge_recommend", () => {
 
     it("describes the call and the result in one line each", () => {
         const { client } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         expect(tool.describeCall?.(tool.inputSchema.parse(SITUATION))).toBe("differential_expression: 6-6 per group, batch none");
         expect(tool.describeResult?.(tool.inputSchema.parse(SITUATION), { match: "unavailable", reason: "x" })).toBe("unavailable");
     });
@@ -182,11 +205,26 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const store = join(base, "refs");
         await Bun.write(join(store, "managed", "msigdb-hallmark-human", "2026.1", "h.all.v2026.1.Hs.symbols.gmt"), "HALLMARK_X\tna\tA\tB\n");
         const { client } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client, farmLockFile: lockPath, refStorePath: store });
+        // The pool holds fgsea, and the farm of the analysis does not link it yet.
+        const readPoolInventory = (): Promise<PoolInventoryRead> =>
+            Promise.resolve({
+                kind: "sections",
+                sections: [
+                    {
+                        title: "R (Bioconductor)",
+                        track: "r",
+                        packages: [
+                            { name: "DESeq2", version: "1.52.0" },
+                            { name: "fgsea", version: "1.36.0" },
+                        ],
+                    },
+                ],
+            });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client, farmLockFile: lockPath, refStorePath: store, readPoolInventory });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
-        expect(out.environment_source).toEqual({ farm: "lock", image: "unknown", references: "store" });
+        expect(out.environment_source).toEqual({ farm: "lock", image: "unknown", pool: "inventory", references: "store" });
 
         const skeleton = out.plan_skeleton;
         expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T2S1"]);
@@ -194,7 +232,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.agent).toBe("analyst");
         expect(analysis.packages).toEqual(["DESeq2"]);
         expect(analysis.depends_on).toEqual(["T1S1"]);
-        expect(analysis.environment).toEqual({ package: { name: "DESeq2", present: true, version: "1.52.0" } });
+        expect(analysis.environment).toEqual({ package: { name: "DESeq2", state: "installed", version: "1.52.0" } });
         // A parameter is a setting of the grounding, never a constraint of the step.
         expect("constraints" in analysis).toBe(false);
         expect(analysis.alternatives).toEqual([{ method: "M-0003", label: "Alternative count-model F-test", when: "robustness", rules: ["R-0001@e7d0"] }]);
@@ -212,7 +250,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(gsea.agent).toBe("analyst");
         expect(gsea.depends_on).toEqual(["T1S2"]);
         expect(gsea.caveats).toEqual(["Few DE genes: ORA has no power."]);
-        expect(gsea.environment?.package).toEqual({ name: "fgsea", present: false });
+        expect(gsea.environment?.package).toEqual({ name: "fgsea", state: "in_store", version: "1.36.0" });
         expect(gsea.environment?.collection?.present).toBe(true);
         expect(gsea.environment?.collection?.path).toContain("msigdb-hallmark-human");
         expect(gsea.grounding.settings).toEqual([{ step: "enrichment", name: "gene_set_collection", value: "msigdb_hallmark_human" }]);
@@ -235,7 +273,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
                   : step,
         );
         const { client } = fakeKnowledgeClient({ recommend: { ...base, procedure } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -250,7 +288,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("renders a parameter conflict as a caveat that names both rules, never as a setting", async () => {
         const { client } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -262,7 +300,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("names the substitute as the step method and renders the substitution as a caveat", async () => {
         const { client } = fakeKnowledgeClient({ recommend: substitutionAnswer() });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (
             await tool.execute(
@@ -281,7 +319,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("renders a language limit as a caveat and keeps the named template", async () => {
         const { client } = fakeKnowledgeClient({ recommend: limitAnswer() });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse({ ...SITUATION, paired: true, preferred_language: "python" }), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -312,7 +350,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
                 : step,
         );
         const { client } = fakeKnowledgeClient({ recommend: { ...answer, procedure } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse({ ...SITUATION, paired: true, preferred_language: "python" }), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -324,12 +362,12 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("carries no environment when no store is bound, and still folds the skeleton", async () => {
         const { client } = fakeKnowledgeClient();
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
         expect(out.plan_skeleton.every((step) => step.environment === undefined)).toBe(true);
-        expect(out.environment_source).toEqual({ farm: "unknown", image: "unknown", references: "unknown" });
+        expect(out.environment_source).toEqual({ farm: "unknown", image: "unknown", pool: "unknown", references: "unknown" });
         expect(out.plan_skeleton.length).toBe(3);
     });
 
@@ -337,7 +375,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const base = recommendAnswer();
         const skeletonStepOf = async (recommend: ReturnType<typeof recommendAnswer>, id: string) => {
             const { client } = fakeKnowledgeClient({ recommend });
-            const tool = createKnowledgeRecommendTool({ client });
+            const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
             const { ctx } = makeToolContext();
             const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
             if (out.match !== "applicable") throw new Error(out.match);
@@ -367,7 +405,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         };
         const procedure = base.procedure.map((step) => (step.step === "differential_expression" ? { ...step, template: undefined, unrealized: gap } : step));
         const { client } = fakeKnowledgeClient({ recommend: { ...base, procedure, unrealized: ["differential_expression"] } });
-        const tool = createKnowledgeRecommendTool({ client });
+        const tool = createKnowledgeRecommendTool({ shelf: createClaimShelf(), client });
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
@@ -379,7 +417,9 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.caveats.some((caveat) => caveat.includes("no vetted template realizes") && caveat.includes("n_timepoints is_null"))).toBe(true);
         // An answer with no gap carries no field.
         const { client: plain } = fakeKnowledgeClient({ recommend: base });
-        const plainOut = (await createKnowledgeRecommendTool({ client: plain }).execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
+        const plainOut = (
+            await createKnowledgeRecommendTool({ shelf: createClaimShelf(), client: plain }).execute(tool.inputSchema.parse(SITUATION), ctx)
+        )._unsafeUnwrap();
         expect("unrealized" in plainOut).toBe(false);
     });
 
@@ -407,6 +447,72 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         // Without the step the QC depends on nothing, as before.
         expect(presentAt(buildPlanSkeleton(answer), 0).depends_on).toEqual([]);
     });
+
+    it("the normalization diagnostics are a group of their own after the QC, and the test and the report depend on it", () => {
+        const answer = recommendAnswer();
+        const diagnostics = {
+            step: "normalization_diagnostics",
+            method: { id: "M-0083", label: "Normalization diagnostics" },
+            template: "tpl-normalization-diagnostics@1.0.0",
+            rules: ["R-0574@aa11"],
+            parameters: [{ name: "scale_of_the_fit", value: "stated_with_the_other_scale_as_a_sensitivity", default_source: "rule:R-0574", required: true }],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [presentAt(answer.procedure, 0), diagnostics, ...answer.procedure.slice(1)] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S7", "T1S2", "T2S1"]);
+        const group = presentAt(skeleton, 1);
+        expect(group.step_type).toBe("qc");
+        expect(group.depends_on).toEqual(["T1S1"]);
+        expect(group.grounding.template).toBe("tpl-normalization-diagnostics@1.0.0");
+        expect(group.grounding.settings.map((setting) => setting.name)).toEqual(["scale_of_the_fit"]);
+        // The fit reads the scale that the diagnostics state, thus the test waits for the group.
+        expect(presentAt(skeleton, 2).depends_on).toEqual(["T1S7", "T1S1"]);
+        // Without the step the test depends on the QC only, as before.
+        expect(presentAt(buildPlanSkeleton(answer), 1).depends_on).toEqual(["T1S1"]);
+    });
+
+    it("the permutation calibration is a group of its own after the test, and the report depends on it", () => {
+        const answer = recommendAnswer();
+        const calibration = {
+            step: "permutation_calibration",
+            method: { id: "M-0084", label: "Permutation calibration" },
+            template: "tpl-permutation-calibration@1.0.0",
+            rules: ["R-0575@aa11"],
+            parameters: [{ name: "n_permutations", value: 1000, default_source: "rule:R-0056" }],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [...answer.procedure, calibration] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T1S8", "T2S1"]);
+        const group = presentAt(skeleton, 2);
+        expect(group.step_type).toBe("analysis");
+        expect(group.depends_on).toEqual(["T1S2"]);
+        expect(group.grounding.template).toBe("tpl-permutation-calibration@1.0.0");
+        expect(group.grounding.settings).toEqual([{ step: "permutation_calibration", name: "n_permutations", value: 1000, source: "rule:R-0056" }]);
+        // The test group keeps its own script: the calibration is not a step of it.
+        expect(presentAt(skeleton, 1).grounding.settings.some((setting) => setting.step === "permutation_calibration")).toBe(false);
+    });
+
+    it("the sensitivity fits are a group of their own after the test and before the calibration", () => {
+        const answer = recommendAnswer();
+        const fits = {
+            step: "sensitivity_fits",
+            method: { id: "M-0085", label: "Sensitivity fits" },
+            template: "tpl-edger-ql-sensitivity@1.0.0",
+            rules: ["R-0576@aa11"],
+            parameters: [{ name: "primary_fit_selected_from_the_comparison", value: "never", default_source: "rule:R-0195", required: true }],
+        };
+        const calibration = {
+            step: "permutation_calibration",
+            method: { id: "M-0084", label: "Permutation calibration" },
+            template: "tpl-permutation-calibration@1.0.0",
+            rules: ["R-0575@aa11"],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [...answer.procedure, fits, calibration] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T1S9", "T1S8", "T2S1"]);
+        const group = presentAt(skeleton, 2);
+        expect(group.step_type).toBe("analysis");
+        expect(group.depends_on).toEqual(["T1S2"]);
+        expect(group.grounding.template).toBe("tpl-edger-ql-sensitivity@1.0.0");
+        expect(group.grounding.settings.map((setting) => setting.name)).toEqual(["primary_fit_selected_from_the_comparison"]);
+    });
 });
 
 describe("the release pin of one plan", () => {
@@ -414,7 +520,7 @@ describe("the release pin of one plan", () => {
         const fake = fakeKnowledgeClient();
         const tools = createKnowledgeTools({ client: fake.client });
         const recommend = presentAt(tools, 0, "the recommend tool");
-        const check = presentAt(tools, 1, "the check tool");
+        const check = presentFind(tools, (tool) => tool.id === "knowledge_check");
         const { ctx } = makeToolContext();
         await awaitOk(recommend.execute(SITUATION, ctx));
         expect(fake.calls.recommend[0]?.expected_snapshot).toBeUndefined();
@@ -427,7 +533,7 @@ describe("the release pin of one plan", () => {
     it("a check before any answer carries no pin, and a mismatch answer passes through as data", async () => {
         const mismatch = { match: "snapshot_mismatch" as const, message: "another release", expected: "sha256:aa", served: SNAPSHOT };
         const fake = fakeKnowledgeClient({ check: mismatch });
-        const check = presentAt(createKnowledgeTools({ client: fake.client }), 1, "the check tool");
+        const check = presentFind(createKnowledgeTools({ client: fake.client }), (tool) => tool.id === "knowledge_check");
         const { ctx } = makeToolContext();
         const out = (await check.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx))._unsafeUnwrap();
         expect(fake.calls.check[0]?.expected_snapshot).toBeUndefined();
@@ -462,7 +568,7 @@ describe("the release pin of one plan", () => {
         const tools = createKnowledgeTools({ client: replay.client });
         presentAt(tools, 0, "the recommend tool").foldCallRecord?.(recorded);
         await awaitOk(
-            presentAt(tools, 1, "the check tool").execute(
+            presentFind(tools, (tool) => tool.id === "knowledge_check").execute(
                 { ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] },
                 makeToolContext().ctx,
             ),
@@ -489,7 +595,41 @@ describe("the release pin of one plan", () => {
         expect(presentAt(answers, 0).snapshot).toEqual(SNAPSHOT);
     });
 
-    it("the tool definition hash is stable and names the three tools", () => {
+    it("gives the full view of a claim through knowledge_claims after the round of the answer, and names each id it does not hold", async () => {
+        const fake = fakeKnowledgeClient();
+        const tools = createKnowledgeTools({ client: fake.client });
+        const first = presentAt(recommendAnswer().claims, 0);
+        const model = scriptedModel([
+            callTools(toolCall("r1", "knowledge_recommend", SITUATION)),
+            callTools(toolCall("c1", "knowledge_claims", { claims: [first.id, "R-9999@0000", first.id] })),
+            reply([text("Planned.")]),
+        ]);
+        const agent = { id: "planner", systemPrompt: "Plan.", model: "scripted-model", tools, maxIterations: 4 };
+
+        await runLoop(agent, [{ role: "user", content: "Plan the analysis." }], makeSession(), {
+            provider: model.provider,
+            emit: () => undefined,
+            signal: new AbortController().signal,
+        });
+
+        const read = z
+            .object({ type: z.literal("json"), value: z.object({ claims: z.array(z.looseObject({ id: z.string() })), missing: z.array(z.string()) }) })
+            .parse(toolResultIn(presentAt(model.calls, 2), "c1"));
+        expect(read.value.claims).toEqual([first]);
+        expect(read.value.missing).toEqual(["R-9999@0000"]);
+        expect(fake.calls.recommend).toHaveLength(1);
+    });
+
+    it("answers each id as missing before a recommend answer", async () => {
+        const tool = createKnowledgeClaimsTool({ shelf: createClaimShelf() });
+        const { ctx } = makeToolContext();
+        const input = tool.inputSchema.parse({ claims: ["R-0001@e7d0"] });
+        const out = (await tool.execute(input, ctx))._unsafeUnwrap();
+        expect(out).toEqual({ claims: [], missing: ["R-0001@e7d0"] });
+        expect(tool.describeResult?.(input, out)).toBe("0 claims, 1 missing");
+    });
+
+    it("the tool definition hash is stable and names the four tools", () => {
         const first = knowledgeToolDefinitionHash();
         expect(isSha256Hash(first)).toBe(true);
         expect(knowledgeToolDefinitionHash()).toBe(first);
@@ -588,82 +728,7 @@ describe("knowledge_check", () => {
     });
 });
 
-describe("knowledge_template", () => {
-    const ANALYSIS = "analysis-001";
-    let base: string;
-    beforeEach(() => {
-        base = mkdtempSync(join(tmpdir(), "kt-test-"));
-    });
-    afterEach(() => {
-        rmSync(base, { recursive: true, force: true });
-    });
-
-    function build(answers: Parameters<typeof fakeKnowledgeClient>[0] = {}) {
-        const workspaceRoot = join(base, ANALYSIS);
-        const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S1" });
-        const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
-        const fake = fakeKnowledgeClient(answers);
-        return { tool: createKnowledgeTemplateTool({ client: fake.client, mutator }), workingDir, calls: fake.calls };
-    }
-
-    it("writes the rendered script and the decision record through the mutator and reports both paths", async () => {
-        const { tool, workingDir } = build();
-        const { ctx } = makeToolContext();
-        const out = (
-            await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: "/analysis-001/data/inputs/f1/counts.csv" } }, ctx)
-        )._unsafeUnwrap();
-        expect("status" in out && out.status).toBe("ok");
-        if (!("status" in out) || out.status !== "ok") return;
-        expect(out.script_path).toBe(`/${ANALYSIS}/runs/run-1/T1S1/scripts/tpl-deseq2-two-group.R`);
-        expect(out.decision_record_path).toBe(`/${ANALYSIS}/runs/run-1/T1S1/output/decision_record_tpl-deseq2-two-group.json`);
-        expect(out.run_with).toBe("Rscript scripts/tpl-deseq2-two-group.R");
-        expect(out.environment_match).toBe("exact");
-        // The count path is a local slot: the service answered with its marker, and the tool bound the value here.
-        const script = await readFile(join(workingDir, "scripts", "tpl-deseq2-two-group.R"), "utf8");
-        expect(script).toBe('COUNTS <- "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nmessage("hello")\n');
-        expect(out.local_slots).toEqual(["counts_path"]);
-        expect(isSha256Hash(out.written_sha256)).toBe(true);
-        const record = asRecord(parseJsonAs(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"), z.json()));
-        expect(record.template).toEqual({
-            id: "tpl-deseq2-two-group",
-            version: "1.0.0",
-            label: "Two-group count model",
-            method: { id: "M-0001", label: "Count-model Wald test with effect shrinkage" },
-        });
-        expect(record.script_path).toBe(out.script_path);
-        expect(record.written_sha256).toBe(out.written_sha256);
-        expect(record.slots).toEqual([
-            { name: "counts_path", value: "/analysis-001/data/inputs/f1/counts.csv", source: "caller", adaptable: true, lines: [1] },
-        ]);
-    });
-
-    it("never sends a local value to the service, with or without a binding", async () => {
-        const sentinel = "/analysis-001/data/inputs/SENTINEL-7f3a9c/counts.csv";
-        const { tool, calls } = build();
-        const { ctx } = makeToolContext();
-        const out = (
-            await tool.execute(
-                { template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: sentinel, condition_column: "SENTINEL_column", lfc_shrink: "ashr" } },
-                ctx,
-            )
-        )._unsafeUnwrap();
-        expect(out).toMatchObject({ status: "ok" });
-        // Without a binding the tool reads the contract for the local slots, then sends the rest only.
-        expect(calls.contract).toEqual([{ template: "tpl-deseq2-two-group@1.0.0" }]);
-        expect(calls.render).toHaveLength(1);
-        expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "ashr" });
-        expect(JSON.stringify(calls)).not.toContain("SENTINEL");
-    });
-
-    it("refuses a local value the contract refuses on this machine, before the render and before any write", async () => {
-        const { tool, workingDir, calls } = build();
-        const { ctx } = makeToolContext();
-        const out = (await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: 42 } }, ctx))._unsafeUnwrap();
-        expect(out).toMatchObject({ match: "rejected", issues: [{ slot: "counts_path", reason: "a non-empty string is required" }] });
-        expect(calls.render).toHaveLength(0);
-        expect(await Bun.file(join(workingDir, "scripts", "tpl-deseq2-two-group.R")).exists()).toBe(false);
-    });
-
+describe("the situation of knowledge_recommend", () => {
     it("refuses a column name where the situation takes a role", () => {
         const [recommend] = createKnowledgeTools({ client: fakeKnowledgeClient().client });
         expect(recommend?.inputSchema.safeParse({ ...SITUATION, blocking_factor: "donor_id" }).success).toBe(false);
@@ -672,80 +737,6 @@ describe("knowledge_template", () => {
                 .success,
         ).toBe(true);
         expect(recommend?.inputSchema.safeParse({ ...SITUATION, covariates: ["age_years"] }).success).toBe(false);
-    });
-
-    it("passes a snapshot mismatch through as data, and writes nothing", async () => {
-        const mismatch = { match: "snapshot_mismatch" as const, message: "another release", expected: "sha256:aa", served: SNAPSHOT };
-        const { tool, workingDir } = build({ render: mismatch });
-        const { ctx } = makeToolContext();
-        const out = (
-            await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: "/analysis-001/data/inputs/f1/counts.csv" } }, ctx)
-        )._unsafeUnwrap();
-        expect(out).toEqual(mismatch);
-        expect(tool.describeResult?.({ template: "tpl-x", slots: {} }, out)).toBe("snapshot_mismatch");
-        expect(await Bun.file(join(workingDir, "scripts", "tpl-deseq2-two-group.R")).exists()).toBe(false);
-    });
-
-    it("sends the installed versions of both records when the host names them, and none otherwise", async () => {
-        const lockPath = join(base, "inflexa.lock");
-        await Bun.write(
-            lockPath,
-            JSON.stringify({
-                schema: 1,
-                arch: "arm64",
-                languages: {},
-                merge_conflicts: [],
-                packages: [{ name: "DESeq2", version: "1.52.0", track: "bioconductor", store_dir: "x", hash: "y", requested: true }],
-            }),
-        );
-        const recordPath = join(base, "image-packages.json");
-        await Bun.write(
-            recordPath,
-            JSON.stringify({
-                schema: 1,
-                image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "20260917-abc1234", arch: "arm64" },
-                runtimes: { python: "3.12.3", r: "4.6.0", node: "24.19.0" },
-                system_tools: [],
-                node: [],
-                r_base: [{ name: "survival", version: "3.8-6", priority: "recommended" }],
-            }),
-        );
-        const workspaceRoot = join(base, ANALYSIS);
-        const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S1" });
-        const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
-        const fake = fakeKnowledgeClient();
-        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, farmLockFile: lockPath, imagePackagesFile: recordPath });
-        const { ctx } = makeToolContext();
-        await awaitOk(tool.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx));
-        const farm = fake.calls.render[0]?.farm;
-        // The lock schema may carry more than the two fields; the client sends the pair.
-        expect(farm?.some((pkg) => pkg.name === "DESeq2" && pkg.version === "1.52.0")).toBe(true);
-        // A template that pins a package of the R runtime matches against the version the image ships.
-        expect(farm?.some((pkg) => pkg.name === "survival" && pkg.version === "3.8-6")).toBe(true);
-
-        const { tool: bare, calls } = build();
-        await awaitOk(bare.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx));
-        expect(calls.render[0]?.farm).toBeUndefined();
-    });
-
-    it("returns a rejected answer with the slot and the permitted values as data", async () => {
-        const { tool, workingDir } = build({
-            render: {
-                match: "rejected",
-                message: "one or more slot values are not valid",
-                issues: [{ slot: "lfc_shrink", reason: "not permitted", permitted: ["apeglm", "ashr", "none"] }],
-            },
-        });
-        const { ctx } = makeToolContext();
-        const out = (await tool.execute({ template: "tpl-deseq2-two-group", slots: { lfc_shrink: "x" } }, ctx))._unsafeUnwrap();
-        expect(out).toMatchObject({ match: "rejected" });
-        expect(await Bun.file(join(workingDir, "scripts", "tpl-deseq2-two-group.R")).exists()).toBe(false);
-    });
-
-    it("refuses a script name that escapes scripts/ at the schema", () => {
-        const { tool } = build();
-        expect(tool.inputSchema.safeParse({ template: "tpl-x", slots: {}, script_name: "../evil.R" }).success).toBe(false);
-        expect(tool.inputSchema.safeParse({ template: "not-a-template", slots: {} }).success).toBe(false);
     });
 });
 
@@ -798,19 +789,27 @@ describe("joinEnvironment", () => {
                 claims: [],
             };
 
-            const joined = await joinEnvironment(answer, { farmLockFile: lockPath, imagePackagesFile: recordPath });
-            expect(joined.environment_source).toEqual({ farm: "lock", image: "record", references: "unknown" });
-            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "survival", present: true, version: "3.8-6" });
-            expect(joined.procedure[1]?.environment?.package).toEqual({ name: "ConsensusClusterPlus", present: false });
-            expect(joined.procedure[2]?.environment?.package).toEqual({ name: "survminer", present: true, version: "0.5.2" });
+            const pool = {
+                readPoolInventory: (): Promise<PoolInventoryRead> =>
+                    Promise.resolve({
+                        kind: "sections",
+                        sections: [{ title: "R (Bioconductor)", track: "r", packages: [{ name: "ConsensusClusterPlus", version: "1.74.0" }] }],
+                    }),
+            };
+            const joined = await joinEnvironment(answer, { farmLockFile: lockPath, imagePackagesFile: recordPath, ...pool });
+            expect(joined.environment_source).toEqual({ farm: "lock", image: "record", pool: "inventory", references: "unknown" });
+            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "survival", state: "installed", version: "3.8-6" });
+            // The farm does not link it, and the store holds it: the launch links it.
+            expect(joined.procedure[1]?.environment?.package).toEqual({ name: "ConsensusClusterPlus", state: "in_store", version: "1.74.0" });
+            expect(joined.procedure[2]?.environment?.package).toEqual({ name: "survminer", state: "installed", version: "0.5.2" });
             // Two records name Matrix, and the farm links the copy a step loads.
-            expect(joined.procedure[3]?.environment?.package).toEqual({ name: "Matrix", present: true, version: "1.8-0" });
-            expect(joined.procedure[4]?.environment?.package).toEqual({ name: "samtools", present: false });
+            expect(joined.procedure[3]?.environment?.package).toEqual({ name: "Matrix", state: "installed", version: "1.8-0" });
+            expect(joined.procedure[4]?.environment?.package).toEqual({ name: "samtools", state: "absent" });
 
             // The record is the ONE source of the R runtime packages: with no record, survival is absent.
-            const withoutRecord = await joinEnvironment(answer, { farmLockFile: lockPath });
-            expect(withoutRecord.environment_source).toEqual({ farm: "lock", image: "unknown", references: "unknown" });
-            expect(withoutRecord.procedure[0]?.environment?.package).toEqual({ name: "survival", present: false });
+            const withoutRecord = await joinEnvironment(answer, { farmLockFile: lockPath, ...pool });
+            expect(withoutRecord.environment_source).toEqual({ farm: "lock", image: "unknown", pool: "inventory", references: "unknown" });
+            expect(withoutRecord.procedure[0]?.environment?.package).toEqual({ name: "survival", state: "absent" });
         } finally {
             rmSync(base, { recursive: true, force: true });
         }
@@ -842,8 +841,91 @@ describe("joinEnvironment", () => {
 
             const joined = await joinEnvironment(answer, { imagePackagesFile: recordPath });
 
-            expect(joined.environment_source).toEqual({ farm: "unknown", image: "record", references: "unknown" });
-            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "stats", present: true, version: "4.6.0" });
+            expect(joined.environment_source).toEqual({ farm: "unknown", image: "record", pool: "unknown", references: "unknown" });
+            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "stats", state: "installed", version: "4.6.0" });
+        } finally {
+            rmSync(base, { recursive: true, force: true });
+        }
+    });
+
+    it("looks a package up in the track the service names, and names the track when the store holds the name in both", async () => {
+        const answer = {
+            match: "applicable" as const,
+            snapshot: { date: "2026-09-16", digest: "sha256:abc" },
+            procedure: [
+                { step: "network", rules: [], package: { name: "igraph", track: "python" } },
+                { step: "graph", rules: [], package: { name: "igraph", track: "cran" } },
+                // The pool holds the Python decoupler only, and a bare lookup of decoupleR resolves to it.
+                { step: "activity", rules: [], package: { name: "decoupleR", track: "bioconductor" } },
+                { step: "untracked", rules: [], package: { name: "igraph" } },
+            ],
+            uncovered: [],
+            flags: [],
+            claims: [],
+        };
+        const readPoolInventory = (): Promise<PoolInventoryRead> =>
+            Promise.resolve({
+                kind: "sections",
+                sections: [
+                    { title: "R (CRAN)", track: "r", packages: [{ name: "igraph", version: "2.1.4" }] },
+                    {
+                        title: "Python (pip)",
+                        track: "python",
+                        packages: [
+                            { name: "igraph", version: "0.11.9" },
+                            { name: "decoupler", version: "2.1.1" },
+                        ],
+                    },
+                ],
+            });
+
+        const joined = await joinEnvironment(answer, { readPoolInventory });
+
+        expect(joined.procedure[0]?.environment?.package).toEqual({ name: "igraph", state: "in_store", version: "0.11.9", entry: "python:igraph" });
+        expect(joined.procedure[1]?.environment?.package).toEqual({ name: "igraph", state: "in_store", version: "2.1.4", entry: "r:igraph" });
+        expect(joined.procedure[2]?.environment?.package).toEqual({ name: "decoupleR", state: "absent" });
+        // A bare name that both tracks hold names no one package.
+        expect(joined.procedure[3]?.environment).toBeUndefined();
+    });
+
+    it("gives no state to a package the sandbox lacks when the store cannot answer", async () => {
+        const base = mkdtempSync(join(tmpdir(), "inflexa-env-"));
+        try {
+            const lockPath = join(base, "inflexa.lock");
+            await Bun.write(
+                lockPath,
+                JSON.stringify({
+                    schema: 1,
+                    arch: "arm64",
+                    languages: {},
+                    merge_conflicts: [],
+                    packages: [{ name: "DESeq2", version: "1.52.0", track: "bioconductor", store_dir: "x", hash: "y", requested: true }],
+                }),
+            );
+            const answer = {
+                match: "applicable" as const,
+                snapshot: { date: "2026-09-16", digest: "sha256:abc" },
+                procedure: [
+                    { step: "differential_expression", rules: [], package: { name: "DESeq2" } },
+                    { step: "enrichment", rules: [], package: { name: "fgsea" } },
+                ],
+                uncovered: [],
+                flags: [],
+                claims: [],
+            };
+            const readers: readonly (EnvironmentStorePaths["readPoolInventory"] | undefined)[] = [
+                undefined,
+                () => Promise.resolve({ kind: "unavailable", reason: "the dependency graph has a dangling edge" }),
+                () => Promise.reject(new Error("EACCES")),
+            ];
+
+            for (const readPoolInventory of readers) {
+                const joined = await joinEnvironment(answer, { farmLockFile: lockPath, readPoolInventory });
+                expect(joined.environment_source).toEqual({ farm: "lock", image: "unknown", pool: "unknown", references: "unknown" });
+                expect(joined.procedure[0]?.environment?.package).toEqual({ name: "DESeq2", state: "installed", version: "1.52.0" });
+                // The farm alone cannot tell "absent" from "not linked yet", thus the step carries no state.
+                expect(joined.procedure[1]?.environment).toBeUndefined();
+            }
         } finally {
             rmSync(base, { recursive: true, force: true });
         }

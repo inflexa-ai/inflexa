@@ -292,11 +292,11 @@ describe("per-agent composition — run-engine bundles draw the sandbox agent", 
 });
 
 describe("buildSandboxStepDeps", () => {
-    test("resolveWritePrefix is the absolute runs/{runId}/{stepId} path under the analysis's workspace root", async () => {
+    test("resolveStepDir is the absolute runs/{runId}/{stepId} path under the analysis's workspace root", async () => {
         const deps = buildSandboxStepDeps(testComposition());
-        const prefix = await deps.resolveWritePrefix(stepInput("analyst"));
+        const stepDir = await deps.resolveStepDir(stepInput("analyst"));
 
-        expect(prefix).toBe("/tmp/sessions/an-1/runs/run-1/step-1");
+        expect(stepDir).toBe("/tmp/sessions/an-1/runs/run-1/step-1");
     });
 
     test("buildAgent returns the catalog definition for a known agent id, wired with the step write prefix", async () => {
@@ -337,9 +337,9 @@ describe("buildSandboxStepDeps", () => {
     });
 });
 
-// The parent bundle carries the knowledge client of the composition, so the seed composition can read
-// a template contract at dispatch. Absent from the composition, the field is absent from the bundle —
-// the harness reads absence as "no contract retrieved", never as an error.
+// The parent bundle carries the knowledge client of the composition as the template source, so the seed
+// composition can read a template contract at dispatch. Absent from the composition, the field is absent
+// from the bundle, and a template step ends blocked.
 describe("run-engine knowledge wiring", () => {
     const unavailable = { match: "unavailable" as const, reason: "test double" };
     const knowledge: KnowledgeClient = {
@@ -349,13 +349,13 @@ describe("run-engine knowledge wiring", () => {
         contract: () => Promise.resolve(unavailable),
     };
 
-    test("buildExecuteAnalysisDeps passes the knowledge client when the composition holds one", () => {
+    test("buildExecuteAnalysisDeps passes the knowledge client as the template source when the composition holds one", () => {
         const deps = buildExecuteAnalysisDeps({ ...testComposition(), knowledge }, unusedCallable, refusingRunAuthorizer);
-        expect(deps.knowledge).toBe(knowledge);
+        expect(deps.templateSource).toBe(knowledge);
     });
 
-    test("buildExecuteAnalysisDeps carries no knowledge field when the composition holds none", () => {
+    test("buildExecuteAnalysisDeps carries no template source when the composition holds no knowledge client", () => {
         const deps = buildExecuteAnalysisDeps(testComposition(), unusedCallable, refusingRunAuthorizer);
-        expect("knowledge" in deps).toBe(false);
+        expect("templateSource" in deps).toBe(false);
     });
 });

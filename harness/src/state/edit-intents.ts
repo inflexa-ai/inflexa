@@ -24,7 +24,6 @@ const EditFileOkSchema: z.ZodType<EditFileOk> = z.object({
     replacements: z.number(),
     bytesWritten: z.number(),
     lines: z.array(z.number()).optional(),
-    decision_record_noted: z.literal(true).optional(),
 });
 
 const EditIntentRowSchema = z.object({

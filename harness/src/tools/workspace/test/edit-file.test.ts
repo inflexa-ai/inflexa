@@ -1,18 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { isSha256Hash } from "../../../lib/test/text-shapes.js";
-import { parseJsonAs } from "../../../lib/parse-json.js";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { mkdir, readFile as readHostFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
-import { z } from "zod";
 
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { readToolCallRecord } from "../../define-tool.js";
 import { computeSha256 } from "../../../lib/fs-helpers.js";
-import { isUnknownArray } from "../../../lib/unknown-array.js";
-import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import { createEditFileTool, type EditIntent, type EditIntentStore } from "../edit-file.js";
 import { createReadFileTool } from "../read-file.js";
 import { createWorkspaceMutator } from "../mutator.js";
@@ -22,13 +17,6 @@ import { stepWritePrefix } from "../../../workspace/paths.js";
 const ANALYSIS = "analysis-001";
 const RUN = "run-abc";
 const STEP = "step-1";
-
-/** The JSON of a written decision record, narrowed to the object the tool wrote. */
-function asRecord(json: unknown): Record<string, unknown> {
-    const record = parseUnknownRecord(json);
-    if (record === undefined) throw new Error("the decision record stored no object");
-    return record;
-}
 
 /** An in-memory intent store. `failPut` keeps the intent and then fails the put, as a process that dies after the insert. */
 function createFakeIntentStore(opts: { readonly failPut?: boolean; readonly intents?: Map<string, EditIntent> } = {}) {
@@ -48,7 +36,7 @@ describe("edit_file tool", () => {
 
     beforeEach(async () => {
         sessionsBasePath = mkdtempSync(join(tmpdir(), "ef-test-"));
-        const outputDir = join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "output");
+        const outputDir = join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "work");
         await mkdir(outputDir, { recursive: true });
     });
     afterEach(() => {
@@ -79,11 +67,11 @@ describe("edit_file tool", () => {
     }
 
     async function seed(content: string, file = "notes.md") {
-        await writeFile(join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "output", file), content);
+        await writeFile(join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "work", file), content);
     }
 
     function hostPath(file = "notes.md") {
-        return join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "output", file);
+        return join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "work", file);
     }
 
     it("round-trip: edits a file in place and read surface returns the post-edit content", async () => {
@@ -94,7 +82,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: "world",
                     new_string: "harness",
                     replace_all: false,
@@ -106,53 +94,9 @@ describe("edit_file tool", () => {
         expect(out.status).toBe("ok");
 
         const readTool = createReadFileTool(fs);
-        const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/notes.md` }, ctx))._unsafeUnwrap();
+        const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/work/notes.md` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
         if (read.status === "ok") expect(read.content).toBe("hello harness");
-    });
-
-    it("notes an edit of a rendered script on its decision record, with the digest after the change", async () => {
-        const stepDir = join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP);
-        await mkdir(join(stepDir, "scripts"), { recursive: true });
-        await writeFile(join(stepDir, "scripts", "de.R"), "ALPHA <- 0.05  # [adaptable: alpha]\n");
-        await writeFile(
-            join(stepDir, "output", "decision_record_de.json"),
-            JSON.stringify({ template: { id: "tpl-x" }, written_sha256: "sha256:old", unvetted_edits: [] }),
-        );
-        const { tool } = buildTool();
-        const { ctx } = makeToolContext();
-
-        const out = (
-            await tool.execute({ path: "scripts/de.R", old_string: "0.05", new_string: "0.1", replace_all: false, regex: false }, ctx)
-        )._unsafeUnwrap();
-        expect(out).toMatchObject({ status: "ok", decision_record_noted: true });
-
-        const record = asRecord(parseJsonAs(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"), z.json()));
-        expect(record.written_sha256).toBe("sha256:old");
-        const edits = record.unvetted_edits;
-        if (!isUnknownArray(edits) || edits.length !== 1) throw new Error("the record stored no unvetted edit");
-        const editRecord = parseUnknownRecord(edits[0]);
-        if (editRecord === undefined || !("sha256" in editRecord)) throw new Error("the edit carries no sha256");
-        const { sha256, ...editShape } = editRecord;
-        expect(editShape).toEqual({ path: "scripts/de.R", note: "edit_file: 1 replacement(s)" });
-        expect(typeof sha256 === "string" && isSha256Hash(sha256)).toBe(true);
-        const edited = await readHostFile(join(stepDir, "scripts", "de.R"), "utf8");
-        expect(edited).toBe("ALPHA <- 0.1  # [adaptable: alpha]\n");
-
-        // A file that is not a rendered script, and a script without a record, note nothing.
-        await seed("hello world");
-        const plain = (
-            await tool.execute(
-                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "world", new_string: "there", replace_all: false, regex: false },
-                ctx,
-            )
-        )._unsafeUnwrap();
-        expect(plain).toMatchObject({ status: "ok" });
-        expect("decision_record_noted" in plain).toBe(false);
-        await writeFile(join(stepDir, "scripts", "own.R"), "x <- 1\n");
-        const own = (await tool.execute({ path: "scripts/own.R", old_string: "1", new_string: "2", replace_all: false, regex: false }, ctx))._unsafeUnwrap();
-        expect(own).toMatchObject({ status: "ok" });
-        expect("decision_record_noted" in own).toBe(false);
     });
 
     it("rejects edits under the read-only inputs tree as out_of_prefix and lands nothing", async () => {
@@ -186,7 +130,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: "import pandas as pd",
                     new_string: "import polars as pl",
                     replace_all: false,
@@ -201,7 +145,7 @@ describe("edit_file tool", () => {
         const out2 = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: "import pandas as pd",
                     new_string: "import polars as pl",
                     replace_all: true,
@@ -221,7 +165,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: "bar",
                     new_string: "baz",
                     replace_all: false,
@@ -239,7 +183,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/missing.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/missing.md`,
                     old_string: "a",
                     new_string: "b",
                     replace_all: false,
@@ -261,7 +205,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: "^gene_",
                     new_string: "GENE_",
                     regex: true,
@@ -288,7 +232,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: "^gene_",
                     new_string: "GENE_",
                     regex: true,
@@ -315,7 +259,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: ";$",
                     new_string: "",
                     regex: true,
@@ -340,7 +284,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: 'sample_(\\d+),"(\\w+)"',
                     new_string: "s$1\t$2",
                     regex: true,
@@ -359,7 +303,7 @@ describe("edit_file tool", () => {
         const { ctx } = makeToolContext();
         const out = (
             await tool.execute(
-                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "^zzz$", new_string: "x", regex: true, replace_all: true },
+                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`, old_string: "^zzz$", new_string: "x", regex: true, replace_all: true },
                 ctx,
             )
         )._unsafeUnwrap();
@@ -373,7 +317,7 @@ describe("edit_file tool", () => {
         const { ctx } = makeToolContext();
         const out = (
             await tool.execute(
-                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "([", new_string: "x", regex: true, replace_all: true },
+                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`, old_string: "([", new_string: "x", regex: true, replace_all: true },
                 ctx,
             )
         )._unsafeUnwrap();
@@ -387,7 +331,7 @@ describe("edit_file tool", () => {
 
         const neither = (
             await tool.execute(
-                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "a", new_string: "b", regex: true, replace_all: false },
+                { path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`, old_string: "a", new_string: "b", regex: true, replace_all: false },
                 ctx,
             )
         )._unsafeUnwrap();
@@ -396,7 +340,7 @@ describe("edit_file tool", () => {
         const both = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: "a",
                     new_string: "b",
                     regex: true,
@@ -417,7 +361,7 @@ describe("edit_file tool", () => {
         const out = (
             await tool.execute(
                 {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                     old_string: "a",
                     new_string: "b",
                     regex: false,
@@ -433,10 +377,10 @@ describe("edit_file tool", () => {
 
     describe("inside a durable step", () => {
         const KEY = "wf-1:7";
-        const EDIT = { path: "output/notes.md", old_string: "world", new_string: "harness", replace_all: false, regex: false };
+        const EDIT = { path: "notes.md", old_string: "world", new_string: "harness", replace_all: false, regex: false };
 
         function outputEntries(): string[] {
-            return readdirSync(join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "output")).sort();
+            return readdirSync(join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "work")).sort();
         }
 
         it("records the hashes and the result while the file still holds the old text", async () => {
@@ -461,11 +405,11 @@ describe("edit_file tool", () => {
             expect(stored).toMatchObject({
                 key: KEY,
                 analysisId: ctx.session.scope.analysisId,
-                path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                 hashBefore: computeSha256(Buffer.from("hello world", "utf8")),
                 hashAfter: computeSha256(Buffer.from("hello harness", "utf8")),
             });
-            expect(stored?.result).toEqual({ status: "ok", path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, replacements: 1, bytesWritten: 13 });
+            expect(stored?.result).toEqual({ status: "ok", path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`, replacements: 1, bytesWritten: 13 });
             expect(readToolCallRecord(out)).toEqual(stored?.callRecord);
             expect(outputEntries()).toEqual(["notes.md"]);
         });
@@ -487,28 +431,6 @@ describe("edit_file tool", () => {
             expect([...intents.keys()]).toEqual([KEY]);
         });
 
-        it("gives back the note of the decision record and both write records at the hash after, and notes nothing again", async () => {
-            const stepDir = join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP);
-            await mkdir(join(stepDir, "scripts"), { recursive: true });
-            await writeFile(join(stepDir, "scripts", "de.R"), "ALPHA <- 0.05\n");
-            await writeFile(join(stepDir, "output", "decision_record_de.json"), JSON.stringify({ written_sha256: "sha256:old", unvetted_edits: [] }));
-            const { store } = createFakeIntentStore();
-            const { tool } = buildTool({ intents: store, stepKey: () => KEY });
-            const { ctx } = makeToolContext();
-            const edit = { path: "scripts/de.R", old_string: "0.05", new_string: "0.1", replace_all: false, regex: false };
-            const first = (await tool.execute(edit, ctx))._unsafeUnwrap();
-            const record = await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8");
-
-            const rerun = (await tool.execute(edit, ctx))._unsafeUnwrap();
-
-            expect(rerun).toEqual(first);
-            expect(rerun).toMatchObject({ status: "ok", decision_record_noted: true });
-            const records = readToolCallRecord(rerun);
-            expect(records).toEqual(readToolCallRecord(first));
-            expect(isUnknownArray(records) ? records.length : 0).toBe(2);
-            expect(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8")).toBe(record);
-        });
-
         it("applies the edit again at the hash before, after a run that died before the write landed", async () => {
             await seed("hello world");
             const { ctx } = makeToolContext();
@@ -526,7 +448,7 @@ describe("edit_file tool", () => {
             expect(await readHostFile(hostPath(), "utf8")).toBe("hello harness");
             expect(crashed.intents.get(KEY)?.result).toEqual({
                 status: "ok",
-                path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
+                path: `/${ANALYSIS}/runs/${RUN}/${STEP}/work/notes.md`,
                 replacements: 1,
                 bytesWritten: 13,
             });

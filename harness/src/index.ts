@@ -175,7 +175,7 @@ export {
     createKnowledgeTools,
     knowledgeToolDefinitionHash,
 } from "./tools/knowledge/index.js";
-export type { KnowledgeClient, KnowledgeSituation, HttpKnowledgeClientConfig } from "./tools/knowledge/index.js";
+export type { KnowledgeClient, KnowledgeSituation, HttpKnowledgeClientConfig, TemplateSource } from "./tools/knowledge/index.js";
 export type { Tool, ToolDefinition, ToolContext, ToolError } from "./tools/define-tool.js";
 export { viewText, viewJson, viewCode, viewFields } from "./tools/tool-view.js";
 export type { ToolCallView, ViewText, ViewJson, ViewCode, ViewFields, ViewLeaf, ViewValue } from "./tools/tool-view.js";

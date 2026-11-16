@@ -26,9 +26,10 @@ import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from 
 import { WORKING_MEMORY_LIMITS, type WorkingMemory } from "../memory/working-memory.js";
 import type { DataProfileResult } from "../state/data-profile.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
-import type { AnalysisStep } from "../schemas/workflow-state.js";
+import { renderDeparture } from "../execution/step-methods.js";
+import { isTemplateStep, type AnalysisStep, type ClaimView } from "../schemas/workflow-state.js";
 import type { TemplateParameter } from "../tools/knowledge/client.js";
-import type { TemplateBindingValue } from "../tools/knowledge/template.js";
+import type { TemplateBindingValue } from "../tools/knowledge/run-template.js";
 
 // ── Bounds ────────────────────────────────────────────────────────────
 
@@ -49,6 +50,16 @@ export const MAX_TEMPLATE_SLOTS = 24;
 
 /** Characters of one slot description carried in the seed — the constraint, not the manual. */
 export const TEMPLATE_SLOT_DESCRIPTION_MAX_CHARS = 160;
+
+/**
+ * Characters of the notes of a template carried in the seed. The notes are the input requirements of the
+ * script (the import state, the shape of the table, a column the script renames), and a render that
+ * ignores one fails. Thus the bound is wide, and it only keeps a runaway note from the seed.
+ */
+export const TEMPLATE_NOTES_MAX_CHARS = 8000;
+
+/** Characters of one claim title carried in the Grounding section — the rule, not its evidence. */
+export const CLAIM_TITLE_MAX_CHARS = 160;
 
 // ── Field partition (the coverage guard's two halves) ─────────────────
 
@@ -91,6 +102,9 @@ export const STEP_NON_TASK_FIELDS = [
     // the agent does need to know about them — a dropped entry, or a step that
     // declares none — rides in `caveats`.
     "packages",
+    // The kind reaches the agent as its tools, its system prompt, and the Template contract section of a template
+    // step, not as a field of the task.
+    "kind",
 ] as const satisfies readonly (keyof AnalysisStep)[];
 
 // ── Formatting primitives ─────────────────────────────────────────────
@@ -120,7 +134,7 @@ function clamp(text: string, max: number): string {
  * folded in here — otherwise the agent runs against the bare question and
  * improvises the rest.
  */
-export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "template" | "templateNotRetrieved"> = {}): string {
+export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "template" | "templateNotRetrieved" | "claims"> = {}): string {
     const parts: string[] = [`# ${step.name}`, section("Task", step.question)];
 
     if (step.description?.trim()) {
@@ -139,18 +153,22 @@ export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "tem
         parts.push(section("Caveats", bullets(step.caveats)));
     }
     if (step.grounding) {
-        parts.push(section("Grounding", renderGrounding(step.grounding, contract)));
+        parts.push(section("Grounding", renderGrounding(step.grounding, isTemplateStep(step), contract)));
     }
 
     return parts.join("\n\n");
 }
 
 /**
- * The grounding as data lines. The template id is the one value the agent
- * acts on (it names it to `knowledge_template`), thus it renders first after
- * the status. The claim identifiers and the digest are for the record.
+ * The grounding as data lines. The template of a template step renders first
+ * after the status, because `run_template` renders it. An open step renders no
+ * template: its agent writes its own scripts. The digest is for the record.
  *
- * A grounding that names a template promises a Template contract section.
+ * Each claim renders with its strength and its title when the plan kept its
+ * view, thus the agent can name the rule that set a choice. A claim with no
+ * view renders as its id. A plan with no view at all keeps the one line of ids.
+ *
+ * A template step promises a Template contract section.
  * When the seed carries none, one line says so with the reason, thus the
  * agent knows the contract was not fetched rather than guessing at slots.
  *
@@ -160,15 +178,26 @@ export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "tem
  * seed carries no template contract, because the bound and the unbound
  * lists of the contract hold every setting already.
  */
-function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>, contract: Pick<StepBriefing, "template" | "templateNotRetrieved">): string {
+function renderGrounding(
+    grounding: NonNullable<AnalysisStep["grounding"]>,
+    templateStep: boolean,
+    contract: Pick<StepBriefing, "template" | "templateNotRetrieved" | "claims">,
+): string {
     const lines = [`- Status: ${grounding.status}`];
-    if (grounding.template) {
+    if (templateStep && grounding.template) {
         lines.push(`- Template: \`${grounding.template}\``);
         if (!contract.template) lines.push(`- Template contract: not retrieved (${contract.templateNotRetrieved ?? "no contract was fetched for this step"})`);
     }
     lines.push(`- Snapshot: ${grounding.snapshot}`);
-    lines.push(`- Claims: ${grounding.claims.length > 0 ? grounding.claims.join(", ") : "none"}`);
+    lines.push(...renderClaims(grounding.claims, contract.claims ?? []));
     lines.push(`- Reason: ${grounding.reason}`);
+    const departures = grounding.departures ?? [];
+    if (departures.length > 0) {
+        // A departure binds before the contract, thus the bound and the unbound lists show its value too. A step with
+        // no template has only these lines, and a departure with no setting is in no other list.
+        lines.push("- Departures (the plan departs from these rules; apply the value of the plan, not the value of the rule):");
+        for (const departure of departures) lines.push(`  - ${renderDeparture(departure)}`);
+    }
     const settings = grounding.settings ?? [];
     if (settings.length > 0 && !contract.template) {
         lines.push("- Settings (the vetted values of the procedure; another value is permitted when your summary states the reason):");
@@ -178,6 +207,22 @@ function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>, cont
         }
     }
     return lines.join("\n");
+}
+
+/** The Claims lines of the Grounding section: one line of ids, or one bullet for each claim when a view exists. */
+function renderClaims(ids: readonly string[], views: readonly ClaimView[]): string[] {
+    if (ids.length === 0) return ["- Claims: none"];
+    const viewById = new Map(views.map((view) => [view.id, view]));
+    if (!ids.some((id) => viewById.has(id))) return [`- Claims: ${ids.join(", ")}`];
+    return [
+        "- Claims (the rules of the knowledge service that this step obeys):",
+        ...ids.map((id) => {
+            const view = viewById.get(id);
+            if (!view) return `  - ${id}`;
+            const text = clamp((view.title ?? view.statement).trim(), CLAIM_TITLE_MAX_CHARS);
+            return `  - ${id} (${view.strength}): ${text}`;
+        }),
+    ];
 }
 
 // ── (1b) Analysis memory ──────────────────────────────────────────────
@@ -242,7 +287,7 @@ export function renderRequest(request: string | undefined): string {
         "The request of the analysis",
         "This step is one part of the plan that answers this request. Do the task of this step. " +
             "When this step writes a deliverable that the request describes, the deliverable keeps the file name, the fields, and the values of the request. " +
-            "It goes to `output/` of your working directory, with the other results of the step, whatever directory the request names.\n\n" +
+            "It goes into your working directory, with the other results of the step, whatever directory the request names.\n\n" +
             text,
     );
 }
@@ -280,8 +325,16 @@ export type TemplateBrief = {
     readonly inputs: readonly TemplateBriefInput[];
     /** The plan settings bound to a slot, in plan order. Empty when the served version differs from the plan. */
     readonly bound: readonly TemplateBoundSetting[];
+    /**
+     * The plan settings that the script of the template does, one line each: a setting with no slot, and a
+     * setting that the template pins at the plan value. The agent does not do them again, and sends no value
+     * for them. Empty when the served contract gives none.
+     */
+    readonly done_by_script: readonly string[];
     /** The plan settings no bound slot carries, one line each with the reason. */
     readonly unbound_settings: readonly string[];
+    /** The input requirements of the template in prose. Absent when the template gives none. */
+    readonly notes?: string;
 };
 
 /** A value as the render request carries it: JSON, thus `"apeglm"` and `10` cannot be confused. */
@@ -333,14 +386,16 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
 
     const refVersion = versionOfRef(brief.ref);
     const lead = [
-        `\`${brief.ref}\` (the service serves version ${brief.version_served}). Send only the slots listed here to \`knowledge_template\`; a slot not listed is pinned or unknown, and the render refuses it.`,
+        `\`${brief.ref}\` (the service serves version ${brief.version_served}). Send only the slots listed here to \`run_template\`; a slot not listed is pinned or unknown, and the render refuses it.`,
     ];
     if (refVersion !== undefined && refVersion !== brief.version_served) {
         lead.push(
-            `Caveat: the plan names version ${refVersion}, and the service serves version ${brief.version_served}. The plan settings are not bound to this render. Render the served version, and state each plan value yourself.`,
+            `Caveat: the plan names version ${refVersion}, and the service serves version ${brief.version_served}. The plan settings are not bound to this render. Send each plan value yourself.`,
         );
     }
     const blocks: string[] = [lead.join("\n")];
+
+    if (brief.notes) blocks.push(`Notes of the template (the input requirements of the script):\n${clamp(brief.notes, TEMPLATE_NOTES_MAX_CHARS)}`);
 
     const adaptable = brief.slots.filter((slot) => slot.adaptable);
     if (adaptable.length > 0) {
@@ -360,6 +415,12 @@ export function renderTemplateContract(brief: TemplateBrief | undefined): string
 
     if (brief.bound.length > 0) {
         blocks.push(`Bound by the plan:\n${bullets(brief.bound.map((setting) => `\`${setting.name}\` = ${slotValue(setting.value)} (${setting.source})`))}`);
+    }
+
+    if (brief.done_by_script.length > 0) {
+        blocks.push(
+            `Done by the script (the plan states them, and the script does them with no slot or with a pinned slot; send no value for them):\n${bullets(brief.done_by_script)}`,
+        );
     }
 
     if (brief.unbound_settings.length > 0) {
@@ -466,8 +527,8 @@ export type UpstreamHandoff = {
     readonly summaryMarkdown: string;
     /** In-sandbox absolute path of the full summary. */
     readonly summaryPath: string;
-    /** In-sandbox absolute path of the dependency's output directory. */
-    readonly outputDir: string;
+    /** In-sandbox absolute path of the dependency's work directory: its scripts and its results. */
+    readonly workDir: string;
     /** In-sandbox absolute paths of the artifacts the dependency registered. */
     readonly artifacts: readonly string[];
 };
@@ -481,7 +542,7 @@ export function renderUpstream(handoffs: readonly UpstreamHandoff[]): string {
     const listed = handoffs.slice(MAX_UPSTREAM_DEPS, MAX_UPSTREAM_DEPS + MAX_LISTED_UPSTREAM_DEPS);
     if (listed.length > 0) {
         blocks.push(
-            `More completed dependencies:\n${bullets(listed.map((h) => `\`${h.stepId}\` (${h.agentId}): summary \`${h.summaryPath}\`, outputs \`${h.outputDir}\``))}`,
+            `More completed dependencies:\n${bullets(listed.map((h) => `\`${h.stepId}\` (${h.agentId}): summary \`${h.summaryPath}\`, work \`${h.workDir}\``))}`,
         );
     }
 
@@ -491,7 +552,7 @@ export function renderUpstream(handoffs: readonly UpstreamHandoff[]): string {
     const counted = handoffs.length - shown.length - listed.length;
     if (counted > 0) {
         blocks.push(
-            `(+${counted} more completed ${counted === 1 ? "dependency" : "dependencies"}, not listed. The directory of each step of this run is beside your working directory, and it holds the summary of that step at \`output/summary.md\`.)`,
+            `(+${counted} more completed ${counted === 1 ? "dependency" : "dependencies"}, not listed. The directory of each step of this run is a sibling of the directory of this step, and it holds the summary of that step in \`summary.md\` and its work in \`work/\`.)`,
         );
     }
 
@@ -505,12 +566,12 @@ function renderHandoff(handoff: UpstreamHandoff): string {
     if (excerpt.length > 0) lines.push(excerpt);
 
     lines.push(`- Full summary: \`${handoff.summaryPath}\``);
-    lines.push(`- Output directory: \`${handoff.outputDir}\``);
+    lines.push(`- Work directory: \`${handoff.workDir}\``);
 
     if (handoff.artifacts.length > 0) {
         const shown = handoff.artifacts.slice(0, MAX_UPSTREAM_ARTIFACTS);
         const more = handoff.artifacts.length - shown.length;
-        lines.push(`- Artifacts: ${shown.map((a) => `\`${a}\``).join(", ")}${more > 0 ? ` (+${more} more in the output directory)` : ""}`);
+        lines.push(`- Artifacts: ${shown.map((a) => `\`${a}\``).join(", ")}${more > 0 ? ` (+${more} more in the work directory)` : ""}`);
     }
 
     return lines.join("\n");
@@ -532,6 +593,11 @@ export type StepBriefing = {
     readonly request?: string;
     /** The contract of the template the step renders, with the plan settings bound to it. Absent when none was retrieved. */
     readonly template?: TemplateBrief;
+    /**
+     * The views of the claims that the grounding of the step cites, as the plan kept them. Absent or
+     * empty when the plan kept no view: the Grounding section then renders the claim ids only.
+     */
+    readonly claims?: readonly ClaimView[];
     /**
      * Why the seed carries no template contract for a step whose grounding
      * names one: no client is bound, the service did not answer, or the

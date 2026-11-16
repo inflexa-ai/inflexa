@@ -29,10 +29,8 @@
  */
 
 import type { SpawnSession } from "../auth/types.js";
-import { assertSafeId, assertSafeTail } from "../workspace/paths.js";
+import { assertSafeId, assertSafeTail, STEP_WORK_DIR } from "../workspace/paths.js";
 import type { SandboxSpec, ToolchainSource } from "./types.js";
-
-export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"] as const;
 
 /**
  * Container mountpoints of the two read-only stores. Exported because they are
@@ -129,9 +127,6 @@ export type MountPlan = {
     recordsPath: string;
     /** The workspace-relative source of the records mount. */
     recordTail: string;
-    /** Pre-created subdirectories under the writable mount. Empty when read-only
-     *  (nothing to pre-create) and when a declared tail replaces the step tail. */
-    stepSubdirs: readonly string[];
     /** Env merged into the sandbox container: provenance + lib-store vars. */
     env: Record<string, string>;
 };
@@ -147,8 +142,9 @@ export type SessionSubPaths = {
 };
 
 /**
- * The step tail beneath an analysis's workspace root, in both container and
- * PVC-relative space. The harness owns this layout (workspace-layout spec).
+ * The work tail of a step beneath an analysis's workspace root, in both container and PVC-relative space: the one
+ * directory that the agent of the step writes. The host writes the summary of the step beside it, in the step
+ * directory. The harness owns this layout (workspace-layout spec).
  */
 function stepTail(runId: string, stepId: string): string {
     // The single builder feeding both the container RW path (`buildMountPlan`)
@@ -156,15 +152,13 @@ function stepTail(runId: string, stepId: string): string {
     // `stepId` cannot inject a `..`/`/` into either.
     assertSafeId(runId, "runId");
     assertSafeId(stepId, "stepId");
-    return `runs/${runId}/${stepId}`;
+    return `runs/${runId}/${stepId}/${STEP_WORK_DIR}`;
 }
 
-/** The one writable mount of a sandbox: its workspace-relative tail, and what the host pre-makes under it. */
+/** The one writable mount of a sandbox: its workspace-relative tail, one directory that the host pre-makes. */
 export type SandboxWriteTail = {
     /** The tail beneath the workspace root, in both container and PVC-relative space. */
     readonly tail: string;
-    /** The subdirectories the host pre-creates under the tail. A declared tail is one directory, thus none. */
-    readonly subdirs: readonly string[];
 };
 
 /**
@@ -184,13 +178,13 @@ export function sandboxWriteTail(coords: MountPlanCoords): SandboxWriteTail | un
     assertSafeId(coords.runId, "runId");
     assertSafeId(coords.stepId, "stepId");
     if (coords.writableTail === undefined) {
-        return coords.readOnly ? undefined : { tail: stepTail(coords.runId, coords.stepId), subdirs: STEP_SUBDIRS };
+        return coords.readOnly ? undefined : { tail: stepTail(coords.runId, coords.stepId) };
     }
     if (coords.readOnly) {
         throw new Error(`sandbox mount: a read-only sandbox cannot declare a write tail (got ${coords.writableTail})`);
     }
     // The segments come back validated, thus the join below re-splits nothing.
-    return { tail: assertSafeTail(coords.writableTail).join("/"), subdirs: [] };
+    return { tail: assertSafeTail(coords.writableTail).join("/") };
 }
 
 /**
@@ -274,7 +268,6 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
         refsPath: stores.refs ? REFS_CONTAINER_PATH : undefined,
         recordsPath: EXEC_RECORDS_CONTAINER_PATH,
         recordTail,
-        stepSubdirs: write?.subdirs ?? [],
         env,
     };
 }

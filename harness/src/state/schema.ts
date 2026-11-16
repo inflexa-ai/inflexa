@@ -22,8 +22,20 @@ export const AnalysisStateRowSchema = z.object({
 });
 export type AnalysisStateRow = z.infer<typeof AnalysisStateRowSchema>;
 
-export const ArtifactRole = z.enum(["input", "step_output"]);
+export const ArtifactRole = z.enum(["input", "step_output", "step_summary"]);
 export type ArtifactRole = z.infer<typeof ArtifactRole>;
+
+/** The template that rendered an artifact: a script that `run_template` wrote. */
+export const ArtifactTemplateSchema = z.object({
+    /** The template id with its version, for example `tpl-deseq2-two-group@1.0.0`. */
+    template: z.string(),
+    label: z.string(),
+    method: z.object({ id: z.string(), label: z.string() }),
+    /** The snapshot digest of the release that served the render. */
+    snapshot: z.string(),
+    environmentMatch: z.string(),
+});
+export type ArtifactTemplate = z.infer<typeof ArtifactTemplateSchema>;
 
 export const ArtifactRowSchema = z.object({
     resourceId: z.string(),
@@ -38,6 +50,7 @@ export const ArtifactRowSchema = z.object({
     createdAt: z.string(),
     unrecoverableAt: z.string().nullable(),
     fileType: z.string().nullable(),
+    template: ArtifactTemplateSchema.nullable(),
 });
 export type ArtifactRow = z.infer<typeof ArtifactRowSchema>;
 

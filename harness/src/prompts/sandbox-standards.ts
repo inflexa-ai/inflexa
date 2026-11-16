@@ -101,19 +101,14 @@ improvise a pipeline.
 
 ## Output Contract
 
-Your deliverable is persisted files in your working directory:
-
-\`\`\`
-scripts/    the scripts that you wrote (.py, .R)
-output/     the data that they computed: CSV, AnnData (.h5ad), MuData (.h5mu), JSON
-figures/    the figures
-logs/       the logs of long-running commands
-notebooks/  reserved
-\`\`\`
+Your deliverable is persisted files in your working directory. Give the
+directory the structure that a senior bioinformatician would give it: create
+the folders that the work needs, and name the scripts, the results, the
+figures, and the logs so that the next step and a reviewer find each one.
 
 Draw each conclusion from those files, never from stdout. A step that ends
 without persisted scripts and outputs produced nothing. A verdict with no table
-can be a short Markdown memo in \`output/\`.
+can be a short Markdown memo.
 
 ## Data Formats
 

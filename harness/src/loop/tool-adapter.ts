@@ -250,7 +250,7 @@ async function runToolCall(
     const [, settled] = await Promise.all([started, settling]);
     // The values come from the output before the cut for the model, thus a host shows the start and the end of the whole text.
     const shownError = showsValues && settled.output.outcome === "error" ? viewErrorValue(tool, settled.output.text) : undefined;
-    const output = await cutLongOutput(settled.output, tool.id, toolCallId, run);
+    const output = await cutLongOutput(settled.output, tool, toolCallId, run);
     await run.emit({
         type: "tool-finished",
         source: run.source,
@@ -403,10 +403,12 @@ function errorOutput(text: string): ToolCallOutput {
  * excerpt does not depend on the outcome of the put. Thus a rerun gives the
  * same bytes.
  */
-async function cutLongOutput(output: ToolCallOutput, toolName: string, toolCallId: string, run: ToolRunContext): Promise<ToolCallOutput> {
+async function cutLongOutput(output: ToolCallOutput, tool: Tool, toolCallId: string, run: ToolRunContext): Promise<ToolCallOutput> {
     if (output.outcome === "denied") return output;
     const text = output.outcome === "ok" ? JSON.stringify(output.value ?? null) : output.text;
-    if (text.length <= TOOL_RESULT_CAP) return output;
+    const cap = tool.resultCap ?? TOOL_RESULT_CAP;
+    if (text.length <= cap) return output;
+    const toolName = tool.id;
 
     let kept: { readonly ref: string; readonly keptLength: number } | undefined;
     if (run.store !== undefined) {
@@ -427,7 +429,7 @@ async function cutLongOutput(output: ToolCallOutput, toolName: string, toolCallI
         if (put.isErr()) run.log.warn("tool output not kept", { toolName, toolCallId, ref, errorType: put.error.type });
         kept = { ref, keptLength: content.length };
     }
-    const excerpt = excerptOf(text, kept);
+    const excerpt = excerptOf(text, kept, cap);
     if (output.outcome === "error") return { outcome: "error", text: excerpt };
     const cut: { -readonly [K in keyof Extract<ToolCallOutput, { outcome: "ok" }>]: Extract<ToolCallOutput, { outcome: "ok" }>[K] } = {
         outcome: "ok",

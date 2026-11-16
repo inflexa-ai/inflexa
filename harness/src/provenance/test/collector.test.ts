@@ -187,3 +187,67 @@ describe("ProvenanceCollector.claimRefusalNarration", () => {
         expect(collector.claimRefusalNarration("runs/run-002/norm/output/b.csv")).toBe(true);
     });
 });
+
+describe("ProvenanceCollector versions of a step file", () => {
+    const RENDERED = `sha256:${"b".repeat(64)}`;
+    const EDITED = `sha256:${"c".repeat(64)}`;
+    const RENDER = {
+        template: "tpl-qc-eda@1.4.0",
+        label: "QC",
+        method: { id: "M-0001", label: "VST and PCA" },
+        snapshot: "sha256:71ac",
+        settings: [{ name: "alpha", value: 0.05, source: "plan" }],
+        overrides: [],
+        environmentMatch: "exact",
+    };
+
+    test("an edit of a rendered script keeps the render as an earlier version, in the order of the writes", () => {
+        const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+
+        collector.recordFileToolWrite({
+            path: `${STEP_PREFIX}work/qc.R`,
+            hash: RENDERED,
+            size: 10,
+            toolName: "run_template",
+            invocationId: "inv-1",
+            template: RENDER,
+        });
+        collector.recordFileToolWrite({ path: `${STEP_PREFIX}work/qc.R`, hash: EDITED, size: 12, toolName: "edit_file", invocationId: "inv-2" });
+
+        expect(collector.getSupersededRecords().map((record) => [record.outputHash, record.producer])).toEqual([
+            [RENDERED, { type: "file_tool", tool: "run_template", invocationId: "inv-1", template: RENDER }],
+        ]);
+        expect(collector.getRecords().map((record) => record.outputHash)).toEqual([EDITED]);
+    });
+
+    test("a command write with no hash yet is not an earlier version", () => {
+        const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+
+        collector.recordCommandExecution("Rscript", ["qc.R"], 0, 100, [{ path: "work/pca.csv", hash: "", size: 20 }]);
+        collector.recordFileToolWrite(fileToolWrite(`${STEP_PREFIX}work/pca.csv`, "write_file"));
+
+        expect(collector.getSupersededRecords()).toEqual([]);
+    });
+
+    test("a command read of a step file names the hash of the version on disk when the command ran", () => {
+        const collector = new ProvenanceCollector({ stepId: STEP, runId: RUN });
+        const read = { path: `/an-1/${STEP_PREFIX}work/qc.R`, hash: "", source: "artifacts" as const, stepId: STEP, runId: RUN };
+
+        collector.recordFileToolWrite({
+            path: `${STEP_PREFIX}work/qc.R`,
+            hash: RENDERED,
+            size: 10,
+            toolName: "run_template",
+            invocationId: "inv-1",
+            template: RENDER,
+        });
+        collector.recordCommandExecution("Rscript", ["qc.R"], 0, 100, [{ path: "work/pca.csv", hash: HASH, size: 20 }], undefined, [read]);
+        collector.recordFileToolWrite({ path: `${STEP_PREFIX}work/qc.R`, hash: EDITED, size: 12, toolName: "edit_file", invocationId: "inv-2" });
+        collector.recordCommandExecution("Rscript", ["qc.R"], 0, 100, [{ path: "work/pca.csv", hash: HASH, size: 20 }], undefined, [read]);
+
+        const inputHashes = [...collector.getSupersededRecords(), ...collector.getRecords()]
+            .filter((record) => record.outputPath === "work/pca.csv")
+            .map((record) => record.inputs.map((input) => input.hash));
+        expect(inputHashes).toEqual([[RENDERED], [EDITED]]);
+    });
+});

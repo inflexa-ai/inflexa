@@ -47,6 +47,7 @@ import { tryFs, tryFsWrite } from "../../lib/fs-result.js";
 import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
+import type { TemplateRender } from "../../provenance/types.js";
 import { bindSessionEmit, type ProvenanceSeam, type SessionProvenanceEvent } from "../../provenance/seam.js";
 import { syncWrittenFile, type SyncSessionFile } from "../../workspace/session-files.js";
 import { resolveForWrite, STAGED_INPUT_ROOT, type ResolveWorkspaceRoot } from "../../workspace/paths.js";
@@ -74,6 +75,8 @@ export type WriteRecord = {
     readonly size: number;
     readonly toolName: MutateToolName;
     readonly invocationId: string;
+    /** The facts of the render, on the write of a rendered template script. */
+    readonly template?: TemplateRender;
 };
 
 /** A write that lands: the result, and the record of the write for `recordWrite`. */
@@ -88,7 +91,7 @@ export type WriteOutcome = LandedWrite | Exclude<WriteFileResult, { status: "ok"
  * (`inflexa:tool` in the signed document) — the seam records the write without
  * inspecting its caller.
  */
-export const MUTATE_TOOL_NAMES = ["write_file", "edit_file", "knowledge_template", "execute_command"] as const;
+export const MUTATE_TOOL_NAMES = ["write_file", "edit_file", "run_template", "execute_command"] as const;
 
 export type MutateToolName = (typeof MUTATE_TOOL_NAMES)[number];
 
@@ -133,6 +136,8 @@ export type WorkspaceMutator = {
         readonly invocationId: string;
         readonly session: AgentSession;
         readonly beforeLand?: (write: LandedWrite) => Promise<void>;
+        /** The facts of the render, when the content is a rendered template script. The record of the write carries them. */
+        readonly template?: TemplateRender;
     }): Promise<WriteOutcome>;
     /**
      * Record one landed write in provenance. A tool calls it from its call-record
@@ -142,17 +147,32 @@ export type WorkspaceMutator = {
 };
 
 /** Outcome of the hardened landing — the disk-touching half of a confined write. */
-type LandingStatus = "ok" | "out_of_prefix" | "symlink_denied" | "read_only";
+type LandingStatus = "ok" | "out_of_prefix" | "symlink_denied";
+
+/** The refusal of a write that lands in a directory that takes no write. */
+type ReadOnlyRefusal = { readonly status: "read_only"; readonly reason: string };
 
 /** The refusal of a write that lands under the staged inputs. */
-const STAGED_INPUT_REFUSAL = {
+const STAGED_INPUT_REFUSAL: ReadOnlyRefusal = {
     status: "read_only",
     reason: `${STAGED_INPUT_ROOT}/ holds the staged inputs of the analysis, and they are immutable. Write the file to a different directory.`,
-} as const;
+};
+
+/** A directory that takes no write, and the refusal of a write under it. */
+type ReadOnlyDir = { readonly dir: string; readonly refusal: ReadOnlyRefusal };
 
 /** True when `path` is `dir` or a path under it. */
 function isWithin(dir: string, path: string): boolean {
     return path === dir || path.startsWith(dir + sep);
+}
+
+/**
+ * {@link isWithin} with no case. A case-insensitive volume, the default on macOS, gives one directory for two
+ * spellings, thus a read-only directory compares with no case. On a case-sensitive volume the fold refuses some
+ * more paths, and no tool needs to write them.
+ */
+function isWithinAnyCase(dir: string, path: string): boolean {
+    return isWithin(dir.toLowerCase(), path.toLowerCase());
 }
 
 /**
@@ -174,10 +194,10 @@ function isWithin(dir: string, path: string): boolean {
  *      temporary file beside it and rename that file over it. The rename
  *      replaces a symlink raced in after the check, and never follows it.
  *
- * `readOnlyDir` is a directory under `prefix` that takes no write. The landing
- * refuses a canonical target under it as `read_only`, before the mkdir of
- * step 3 and again before step 4. Thus a symlinked ancestor cannot aim a write
- * into it.
+ * Each `readOnlyDirs` entry is a directory that takes no write. The landing
+ * refuses a canonical target under one with the refusal of that entry, before
+ * the mkdir of step 3 and again before step 4. Thus a symlinked ancestor cannot
+ * aim a write into it.
  *
  * Refusals are data; a genuine I/O failure throws (the loop's dispatch catch
  * maps it to an error tool result). A throw removes the temporary file.
@@ -188,16 +208,16 @@ async function landBytes(
     bytes: Buffer,
     stagingKey: string,
     beforeRename: (() => Promise<void>) | undefined,
-    readOnlyDir: string | undefined,
-): Promise<LandingStatus> {
+    readOnlyDirs: readonly ReadOnlyDir[],
+): Promise<LandingStatus | ReadOnlyRefusal> {
     unwrapOrThrow(await tryFsWrite("mutator.mkdirPrefix", () => mkdir(prefix, { recursive: true }), { path: prefix }));
     const realPrefix = unwrapOrThrow(await tryFs("mutator.realpathPrefix", () => realpath(prefix), { path: prefix }));
-    const realReadOnly =
-        readOnlyDir === undefined
-            ? undefined
-            : (unwrapOrThrow(
-                  await tryFs<string | null>("mutator.realpathReadOnly", () => realpath(readOnlyDir), { path: readOnlyDir, onAbsent: () => null }),
-              ) ?? joinPath(realPrefix, relativePath(prefix, readOnlyDir)));
+    const realReadOnly: ReadOnlyDir[] = [];
+    for (const { dir, refusal } of readOnlyDirs) {
+        const real = unwrapOrThrow(await tryFs<string | null>("mutator.realpathReadOnly", () => realpath(dir), { path: dir, onAbsent: () => null }));
+        realReadOnly.push({ dir: real ?? joinPath(realPrefix, relativePath(prefix, dir)), refusal });
+    }
+    const readOnlyRefusal = (path: string): ReadOnlyRefusal | undefined => realReadOnly.find(({ dir }) => isWithinAnyCase(dir, path))?.refusal;
 
     // Deepest existing ancestor of the target. The walk stops at the prefix,
     // which exists — the resolver already confined the lexical path under it.
@@ -213,7 +233,8 @@ async function landBytes(
     if (realDeepest !== realPrefix && !realDeepest.startsWith(realPrefix + sep)) return "out_of_prefix";
 
     const targetDir = joinPath(realDeepest, relativePath(deepest, dirname(absolute)));
-    if (realReadOnly !== undefined && isWithin(realReadOnly, joinPath(targetDir, basename(absolute)))) return "read_only";
+    const targetRefusal = readOnlyRefusal(joinPath(targetDir, basename(absolute)));
+    if (targetRefusal !== undefined) return targetRefusal;
     let landingDir = realDeepest;
     if (targetDir !== realDeepest) {
         unwrapOrThrow(await tryFsWrite("mutator.mkdirParents", () => mkdir(targetDir, { recursive: true }), { path: targetDir }));
@@ -232,7 +253,8 @@ async function landBytes(
     }
 
     const finalPath = joinPath(landingDir, basename(absolute));
-    if (realReadOnly !== undefined && isWithin(realReadOnly, finalPath)) return "read_only";
+    const finalRefusal = readOnlyRefusal(finalPath);
+    if (finalRefusal !== undefined) return finalRefusal;
     const finalStat = unwrapOrThrow(await tryFs<Stats | null>("mutator.lstatFinal", () => lstat(finalPath), { path: finalPath, onAbsent: () => null }));
     if (finalStat !== null && finalStat.isSymbolicLink()) return "symlink_denied";
 
@@ -290,9 +312,14 @@ export type ConfinedWriteOk = {
 };
 
 /** A refused confined write: the status, and the reason when the status alone does not give it. */
-type ConfinedWriteRefusal =
-    | { readonly status: Exclude<LandingStatus, "ok" | "read_only"> | "out_of_scope" }
-    | { readonly status: "read_only"; readonly reason: string };
+type ConfinedWriteRefusal = { readonly status: Exclude<LandingStatus, "ok"> | "out_of_scope" } | ReadOnlyRefusal;
+
+/** True when the root-relative `relative` is `dir` or a path under it, with no case, as {@link isWithinAnyCase}. */
+function isUnderRelative(relative: string, dir: string): boolean {
+    const folded = relative.toLowerCase();
+    const foldedDir = dir.toLowerCase();
+    return folded === foldedDir || folded.startsWith(`${foldedDir}/`);
+}
 
 /**
  * The shared write gauntlet both realizations run: resolve + confine
@@ -327,30 +354,31 @@ export async function confinedWrite(args: {
     // path prepends the `/{analysisId}` frame; a provenance record uses
     // the bare tail (the collector normalizes it step-relative itself).
     const relative = scoped.relative.split("\\").join("/");
-    if (args.refuseStagedInputs && (relative === STAGED_INPUT_ROOT || relative.startsWith(`${STAGED_INPUT_ROOT}/`))) return STAGED_INPUT_REFUSAL;
+    if (args.refuseStagedInputs && isUnderRelative(relative, STAGED_INPUT_ROOT)) return STAGED_INPUT_REFUSAL;
     const agentPath = `/${args.analysisId}/${relative}`;
     const bytes = typeof args.content === "string" ? Buffer.from(args.content, "utf8") : Buffer.from(args.content);
     const prefix = resolvePath(args.workingDir);
 
     const confined: ConfinedWriteOk = { status: "ok", relative, agentPath, bytes };
     const { beforeLand } = args;
-    const readOnlyDir = args.refuseStagedInputs ? resolvePath(args.workspaceRoot, STAGED_INPUT_ROOT) : undefined;
+    const readOnlyDirs: ReadOnlyDir[] = [];
+    if (args.refuseStagedInputs) readOnlyDirs.push({ dir: resolvePath(args.workspaceRoot, STAGED_INPUT_ROOT), refusal: STAGED_INPUT_REFUSAL });
     const landed = await landBytes(
         prefix,
         scoped.absolute,
         bytes,
         args.invocationId,
         beforeLand === undefined ? undefined : () => beforeLand(confined),
-        readOnlyDir,
+        readOnlyDirs,
     );
-    if (landed === "read_only") return STAGED_INPUT_REFUSAL;
+    if (typeof landed !== "string") return landed;
     if (landed !== "ok") return { status: landed };
     return confined;
 }
 
 export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMutator {
     return {
-        async writeFile({ path, content, toolName, invocationId, beforeLand }) {
+        async writeFile({ path, content, toolName, invocationId, beforeLand, template }) {
             const landedWrite = (landed: ConfinedWriteOk): LandedWrite => {
                 // `invocationId` is replay-stable: the model turn that minted the tool
                 // call is a durably cached step, so a re-execution replays the same id.
@@ -364,6 +392,7 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
                     size: landed.bytes.length,
                     toolName,
                     invocationId,
+                    template,
                 };
                 return { status: "ok", path: landed.agentPath, bytesWritten: landed.bytes.length, record };
             };
@@ -387,6 +416,7 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
                 size: record.size,
                 toolName: record.toolName,
                 invocationId: record.invocationId,
+                template: record.template,
             });
         },
     };

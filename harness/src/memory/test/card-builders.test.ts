@@ -55,6 +55,40 @@ describe("planCardOf", () => {
     it("gives null for a document that does not parse", () => {
         expect(planCardOf(recordOf({ plan: { steps: "no" } }))).toBeNull();
     });
+
+    it("carries the claim views of the stored plan with the keys of the part, and no claims key for a plan with none", () => {
+        const plan = {
+            ...planDocument("Differential expression"),
+            claims: [
+                {
+                    id: "R-0028@d560",
+                    snapshot: "sha256:71ac",
+                    rule: "R-0028",
+                    title: "Use the QL F-test",
+                    statement: "s",
+                    strength: "consensus",
+                    severity: "info",
+                    evidence: [{ doi: "10.1093/bioinformatics/btw014", title: "edgeR QL", year: 2016, direction: "supports" }],
+                    license: "CC-BY-4.0",
+                },
+            ],
+        };
+
+        const card = planCardOf(recordOf({ plan }));
+
+        expect(card?.claims).toEqual([
+            {
+                id: "R-0028@d560",
+                snapshot: "sha256:71ac",
+                title: "Use the QL F-test",
+                statement: "s",
+                strength: "consensus",
+                evidence: [{ doi: "10.1093/bioinformatics/btw014", title: "edgeR QL", year: 2016 }],
+            },
+        ]);
+        expect(planPartOf(recordOf({ plan }))?.claims).toEqual(card?.claims);
+        expect(planCardOf(recordOf())).not.toHaveProperty("claims");
+    });
 });
 
 describe("planPartOf", () => {
@@ -66,6 +100,21 @@ describe("planPartOf", () => {
         expect(part?.parentPlanId).toBe("pln-0000000a");
         expect(part?.title).toBe("Differential expression");
         expect(part?.steps?.map((step) => step.id)).toEqual(["T1S1"]);
+    });
+
+    it("keeps the settings and the departures of a grounded step", () => {
+        const grounding = {
+            status: "grounded",
+            snapshot: "sha256:71ac",
+            claims: ["R-0001@e7d0"],
+            settings: [{ step: "qc_sample_structure", name: "n_top_genes_pca", value: 500 }],
+            departures: [{ rule: "R-0001@e7d0", setting: "n_top_genes_pca", value: 364, reason: "the panel holds 364 targets" }],
+            reason: "PCA per R-0001@e7d0",
+        };
+        const document = planDocument();
+        const plan = { ...document, steps: document.steps.map((step) => ({ ...step, grounding })) };
+
+        expect(planPartOf(recordOf({ plan }))?.steps?.[0]?.grounding).toEqual(grounding);
     });
 
     it("gives null for a document that does not parse", () => {

@@ -23,6 +23,7 @@ import type {
     ProvCallRef,
     ProvScriptRunRef,
     ProvSessionRef,
+    ProvTemplateRender,
 } from "./types.js";
 
 // The tsprov-facing layer: seeding, appending to, and serializing an analysis's PROV document.
@@ -157,6 +158,24 @@ export type ProvDocumentModel = Pick<
 /** The host constructor: the full model, typed to the supported {@link ProvDocumentModel} surface. */
 export function createProvDocumentModel(options: ProvDocumentModelOptions = {}): ProvDocumentModel {
     return buildDocumentModel(options);
+}
+
+/**
+ * The attributes of a call activity that wrote a rendered template script: the template, its method, the release,
+ * and the settings and the overrides as JSON text. A call that wrote no rendered script has none.
+ */
+function templateAttributes(render: ProvTemplateRender | undefined): Record<string, string> {
+    if (render === undefined) return {};
+    return {
+        "inflexa:template": render.template,
+        "inflexa:templateLabel": render.label,
+        "inflexa:method": render.method.id,
+        "inflexa:methodLabel": render.method.label,
+        "inflexa:snapshot": render.snapshot,
+        "inflexa:templateSettings": JSON.stringify(render.settings),
+        "inflexa:templateOverrides": JSON.stringify(render.overrides),
+        "inflexa:environmentMatch": render.environmentMatch,
+    };
 }
 
 /** Replace every character a PROV qualified-name localpart disallows, so any string can seed an identifier. */
@@ -670,6 +689,7 @@ export function buildDocumentModel(options: ProvDocumentModelOptions = {}): Prov
                 "inflexa:tool": call.tool,
                 "inflexa:invocationId": call.invocationId,
                 "inflexa:threadId": call.threadId,
+                ...templateAttributes(call.template),
             });
             if (step !== undefined) doc.wasInformedBy(cQn, stepQName(step), `${NS_PREFIX}:informed-call-${cDigest}`);
             const assocIdBase = `${NS_PREFIX}:assoc-call-${cDigest}`;

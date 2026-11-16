@@ -26,6 +26,7 @@ export type {
     ProvCommandInputRef,
     ProvCommandRef,
     ProvCallRef,
+    ProvTemplateRender,
     ProvScriptRunRef,
     ProvSessionRef,
     ProvReportBlockRef,

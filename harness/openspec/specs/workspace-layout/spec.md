@@ -7,8 +7,8 @@ single directory tree under which input data, workflow-run artifacts, and report
 output live. The layout is the physical counterpart to the frame-aware path
 model: the canonical resolver (`workspace/paths.ts`) maps every agent-supplied
 path into this tree, and the sandbox mount strategy mirrors it (full analysis
-tree mounted read-only at `/{resourceId}`, the active step's directory mounted
-read-write at `/{resourceId}/runs/{runId}/{stepId}`). Because the structure is
+tree mounted read-only at `/{resourceId}`, the work directory of the active step
+mounted read-write at `/{resourceId}/runs/{runId}/{stepId}/work`). Because the structure is
 derived in one module, a file a step writes is read back by the read surface at
 the identical path, and the same path teaching holds in prompts, tools, and the
 scripts agents run.
@@ -20,9 +20,9 @@ workspace-root-resolution spec); host paths carry no `{resourceId}` segment.
 
 ### Requirement: Per-analysis workspace tree
 
-Each analysis SHALL have a workspace tree rooted at the embedder-resolved workspace root (`resolveWorkspaceRoot(resourceId)` — see the workspace-root-resolution capability) containing `data/` for immutable input files (per-file directories under `data/inputs/`, staged by the embedder before any run), `runs/` for workflow-run artifacts, `reports/` for flat report output, and `report-sessions/` for the page of a report session. Host paths carry no `{resourceId}` segment — the resolved root already identifies the resource. The `data/` tree SHALL be treated as read-only by every surface; only a step's own run directory, or one declared session write tail, is writable.
+Each analysis SHALL have a workspace tree rooted at the embedder-resolved workspace root (`resolveWorkspaceRoot(resourceId)` — see the workspace-root-resolution capability) containing `data/` for immutable input files (per-file directories under `data/inputs/`, staged by the embedder before any run), `runs/` for workflow-run artifacts, `reports/` for flat report output, and `report-sessions/` for the page of a report session. Host paths carry no `{resourceId}` segment — the resolved root already identifies the resource. The `data/` tree SHALL be treated as read-only by every surface; only the work directory of a step, or one declared session write tail, is writable.
 
-A sandbox write tail is a workspace-relative path that a sandbox creation declares in place of the step directory. Each segment passes the safe-id discipline of the step builder. The session derivation declares `report-sessions/{threadId}/derived`, and the run path declares none, thus the run mounts stay as they are.
+A sandbox write tail is a workspace-relative path that a sandbox creation declares in place of the work directory of a step. Each segment passes the safe-id discipline of the step builder. The session derivation declares `report-sessions/{threadId}/derived`, and the run path declares none, thus the run mounts stay as they are.
 
 #### Scenario: New analysis workspace structure
 
@@ -39,22 +39,25 @@ A sandbox write tail is a workspace-relative path that a sandbox creation declar
 
 #### Scenario: A declared write tail is the one writable mount
 - **WHEN** a sandbox creation declares a write tail
-- **THEN** the container holds the tree read-only and that tail read-write, and no step directory mounts
+- **THEN** the container holds the tree read-only and that tail read-write, and no work directory of a step mounts
 
 ### Requirement: Run and step directory structure
 
 A workflow run SHALL create `{workspaceRoot}/runs/{runId}/` and, per sandbox-agent
-step, a step directory `{workspaceRoot}/runs/{runId}/{stepId}/`. Each step
-directory SHALL carry the artifact subdirectories `scripts/`, `output/`,
-`figures/`, `logs/`, and `notebooks/`. The step directory is the agent's
-writable working directory: relative paths resolve against it and writes are
-confined to it.
+step, a step directory `{workspaceRoot}/runs/{runId}/{stepId}/`. The step
+directory SHALL hold the work directory `work/` of the agent and the `summary.md`
+of the host beside it. The work directory is the agent's writable working
+directory and the one writable mount of its sandbox: relative paths resolve
+against it and writes are confined to it. The host SHALL pre-create the work
+directory and no subdirectory of it. The agent gives the work directory its own
+structure. A step that ran before the work directory existed holds its files and
+its `output/summary.md` in the step directory, and a reader of a summary SHALL
+read that path when `summary.md` is absent.
 
 #### Scenario: Workflow run creates scoped step directories
 
 - **WHEN** a workflow run starts and a step begins
-- **THEN** `runs/{runId}/{stepId}/` SHALL exist under the workspace root with its `scripts/`, `output/`,
-  `figures/`, `logs/`, and `notebooks/` subdirectories available for artifacts
+- **THEN** `runs/{runId}/{stepId}/work/` SHALL exist under the workspace root, empty, as the working directory of the agent
 
 #### Scenario: Multiple runs coexist
 
@@ -62,12 +65,10 @@ confined to it.
 - **THEN** each run SHALL have its own `runs/{runId}/` directory with
   independent per-step outputs
 
-#### Scenario: Reserved subdir names cannot be step ids
+#### Scenario: The summary is beside the work directory
 
-- **WHEN** a plan assigns a step an id equal to a reserved artifact-subdir name
-  (`scripts`, `output`, `figures`, `logs`, or `notebooks`, case-insensitively)
-- **THEN** plan validation SHALL reject the plan, because the step directory
-  would collide with the artifact-subdirectory convention
+- **WHEN** a step completes with a non-empty summary
+- **THEN** the summary is at `runs/{runId}/{stepId}/summary.md`, outside the writable mount of the agent
 
 ### Requirement: Flat report output directory
 

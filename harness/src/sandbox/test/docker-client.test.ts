@@ -288,12 +288,12 @@ describe("docker createSandbox — confinement", () => {
         expect(env.EXEC_RECORD_DIR).toBe("/mnt/exec-records");
         expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
-        expect(sandbox.workingDir).toBe("/an-1/runs/run-1/step-a");
+        expect(sandbox.workingDir).toBe("/an-1/runs/run-1/step-a/work");
         // The farm bind comes after the store bind, and a present ref-store
         // directory is bound read-only at /mnt/refs (existing behavior).
         expect(sandbox.binds).toEqual([
             "/sessions/an-1:/an-1:ro",
-            "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
+            "/sessions/an-1/runs/run-1/step-a/work:/an-1/runs/run-1/step-a/work:rw",
             `${libRoot}:/mnt/libs:ro`,
             `${farmDir}:/mnt/libs/current:ro`,
             `${refsRoot}:/mnt/refs:ro`,
@@ -391,7 +391,7 @@ describe("docker createSandbox — confinement", () => {
         if (sandbox === undefined) throw new Error("sandbox is absent");
         expect(sandbox.binds).toEqual([
             `${wsRoot}/an-1:/an-1:ro`,
-            `${wsRoot}/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw`,
+            `${wsRoot}/an-1/runs/run-1/step-a/work:/an-1/runs/run-1/step-a/work:rw`,
             recordsBind(`${wsRoot}/an-1`),
             `${cpuDir}/online:/sys/devices/system/cpu/online:ro`,
             `${cpuDir}/cpuinfo:/proc/cpuinfo:ro`,
@@ -554,7 +554,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const env = envMapOf(sandbox);
         expect(sandbox.binds).toEqual([
             "/sessions/an-1:/an-1:ro",
-            "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
+            "/sessions/an-1/runs/run-1/step-a/work:/an-1/runs/run-1/step-a/work:rw",
             recordsBind("/sessions/an-1"),
         ]);
         expect(sandbox.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);

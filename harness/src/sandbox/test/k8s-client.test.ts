@@ -155,7 +155,7 @@ describe("k8s createSandbox", () => {
         expect(envMap.BIOCPARALLEL_WORKER_NUMBER).toBe("2");
         expect(envMap.MC_CORES).toBeUndefined();
 
-        expect(container.workingDir).toBe("/an-1/runs/run-1/step-a");
+        expect(container.workingDir).toBe("/an-1/runs/run-1/step-a/work");
 
         expect(container.resources?.requests?.cpu).toBe("2");
         expect(container.resources?.requests?.memory).toBe("4Gi");
@@ -174,8 +174,8 @@ describe("k8s createSandbox", () => {
         expect(ro.subPath).toBe("an-1");
         expect(ro.readOnly).toBe(true);
 
-        const rw = presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a");
-        expect(rw.subPath).toBe("an-1/runs/run-1/step-a");
+        const rw = presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a/work");
+        expect(rw.subPath).toBe("an-1/runs/run-1/step-a/work");
         expect(rw.readOnly).toBe(false);
 
         const libs = presentFind(mounts, (m) => m.name === "libs");
@@ -208,10 +208,10 @@ describe("k8s createSandbox", () => {
         if (mounts === undefined) throw new Error("mounts is absent");
 
         // Container-side paths are unchanged — the sandbox contract does not know where the tree lives.
-        expect(container.workingDir).toBe("/an-1/runs/run-1/step-a");
+        expect(container.workingDir).toBe("/an-1/runs/run-1/step-a/work");
         expect(presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1").subPath).toBe("tenants/acme/an-1");
-        expect(presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a").subPath).toBe(
-            "tenants/acme/an-1/runs/run-1/step-a",
+        expect(presentFind(mounts, (m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a/work").subPath).toBe(
+            "tenants/acme/an-1/runs/run-1/step-a/work",
         );
         expect(presentFind(mounts, (m) => m.mountPath === "/mnt/exec-records").subPath).toBe(`tenants/acme/an-1/${RECORD_TAIL}`);
     });

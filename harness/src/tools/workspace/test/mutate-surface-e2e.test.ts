@@ -98,7 +98,7 @@ describe("mutate surface — end-to-end", () => {
         expect(written.status).toBe("ok");
 
         // read the same file back via its analysis-root-relative path
-        const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/result.csv` }, ctx))._unsafeUnwrap();
+        const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/work/output/result.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
         if (read.status === "ok") expect(read.content).toBe("id,value\n1,42\n");
     });

@@ -44,7 +44,7 @@ describe("createEditIntentStore", () => {
     it("gives back the intent of a key as it was put, with the result and the call record", async () => {
         const record = intent({
             key: "wf-1:4",
-            result: { status: "ok", path: "/analysis-a/scripts/run.R", replacements: 1, bytesWritten: 9, decision_record_noted: true },
+            result: { status: "ok", path: "/analysis-a/scripts/run.R", replacements: 1, bytesWritten: 9 },
             callRecord: [
                 {
                     analysisId: "analysis-a",
@@ -52,15 +52,6 @@ describe("createEditIntentStore", () => {
                     path: "scripts/run.R",
                     hash: "sha256:after",
                     size: 9,
-                    toolName: "edit_file",
-                    invocationId: "toolu_02",
-                },
-                {
-                    analysisId: "analysis-a",
-                    threadId: "t-1",
-                    path: "output/decision_record_run.json",
-                    hash: "sha256:record",
-                    size: 120,
                     toolName: "edit_file",
                     invocationId: "toolu_02",
                 },
@@ -83,7 +74,6 @@ describe("createEditIntentStore", () => {
                 replacements: 2,
                 bytesWritten: 14,
                 lines: [3, 9],
-                decision_record_noted: true,
             },
         });
 
