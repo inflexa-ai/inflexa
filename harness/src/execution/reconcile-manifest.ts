@@ -123,6 +123,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
         // don't need to mirror the rehash back into the collector; the
         // collector's outputHash for an output path goes unread after this.
         const hash = await computeSha256File(absPath);
+        collector.keepUnchangedFileToolWrite(entry.path, hash);
         reconciled.push({ ...entry, hash, size: info.size });
     }
 

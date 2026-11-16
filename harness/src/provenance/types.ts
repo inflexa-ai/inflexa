@@ -23,8 +23,8 @@ export const TemplateRenderSchema = z.object({
     template: z.string(),
     label: z.string(),
     method: z.object({ id: z.string(), label: z.string() }),
-    /** The snapshot digest of the release that served the render. */
-    snapshot: z.string(),
+    /** The snapshot digest of the release that served the render. Absent for a template source with no releases. */
+    snapshot: z.string().optional(),
     /** Each setting that the script reads, with its value and where the value came from (the plan, a default, the agent). */
     settings: z.array(z.object({ name: z.string(), value: TemplateSettingValueSchema.optional(), source: z.string() })),
     /** Each plan value that the agent changed, with the reason. */
