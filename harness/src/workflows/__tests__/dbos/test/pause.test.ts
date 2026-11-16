@@ -28,6 +28,7 @@ import { registerSubAgent } from "../../../../loop/sub-agent.js";
 import { makeSession } from "../../../../providers/__fixtures__/session.js";
 import { queryPausesOfWork, type PauseRecord } from "../../../../state/paused-work.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../../../testing.js";
+import { createCallLock } from "../../../../loop/call-lock.js";
 import { defineTool } from "../../../../tools/define-tool.js";
 import { workPause } from "../../../pause.js";
 
@@ -143,7 +144,10 @@ const pausingSubAgent = registerSubAgent<{ readonly brief: string }, string>(
 /** A workflow that calls the sub-agent under a run session, as a step of a run does. */
 const runWithSubAgent = DBOS.registerWorkflow(
     async (runId: string): Promise<string> =>
-        pausingSubAgent({ brief: "go" }, { invocationId: "call-1", session: runSessionOf(runId), signal: new AbortController().signal, emit: () => undefined }),
+        pausingSubAgent(
+            { brief: "go" },
+            { invocationId: "call-1", session: runSessionOf(runId), signal: new AbortController().signal, callLock: createCallLock(), emit: () => undefined },
+        ),
     { name: "pause-run-with-sub-agent" },
 );
 
