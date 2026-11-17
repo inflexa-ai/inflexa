@@ -13,6 +13,9 @@
  * subcommands are the TERMINAL surface and are agent-blocked; the agent uses this.
  */
 
+import { realpath } from "node:fs/promises";
+import { sep } from "node:path";
+
 import { defineTool, scopeResource, DETAIL_MAX_LENGTH, type AgentSession, type AskRequest, type Tool, type ToolError } from "@inflexa-ai/harness";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -59,9 +62,30 @@ function askRequest(action: "add" | "remove", analysisId: string, paths: readonl
     };
 }
 
+/** The real path, with each link resolved, or `null` when it does not resolve. */
+async function realPathOrNull(path: string): Promise<string | null> {
+    return realpath(path).then(
+        (real) => real,
+        () => null,
+    );
+}
+
+/**
+ * Whether each path is inside the anchor folder, with each link resolved. A file there is already part of the folder of
+ * the analysis, for example the output of a GEO download, thus an add of it needs no approval. A link that points out
+ * of the folder resolves outside it, thus it still asks.
+ */
+async function allInsideAnchor(anchor: string, paths: readonly string[]): Promise<boolean> {
+    const root = await realPathOrNull(anchor);
+    if (root === null) return false;
+    const reals = await Promise.all(paths.map((path) => realPathOrNull(path)));
+    return reals.every((real) => real !== null && (real === root || real.startsWith(root.endsWith(sep) ? root : root + sep)));
+}
+
 /**
  * The paths that an add or a remove would change now, for the approval of the call. A call that changes nothing,
- * or that `execute` refuses, needs no approval. `execute` checks the input again before it changes anything.
+ * that `execute` refuses, or that adds only files of the anchor folder needs no approval. `execute` checks the input
+ * again before it changes anything.
  */
 async function changedPaths(
     input: { readonly action: "add" | "remove" | "list"; readonly paths?: readonly string[] },
@@ -76,11 +100,10 @@ async function changedPaths(
     const cwd = await anchorFolder(found.value.anchorId);
     if (cwd === null) return undefined;
     if (input.action === "add") {
-        const exists = await pathsExistAsync(
-            paths.map((p) => expandAndResolve(cwd, p)),
-            EXISTS_CHECK_WIDTH,
-        );
-        return exists.every(Boolean) ? { analysisId, paths } : undefined;
+        const resolved = paths.map((p) => expandAndResolve(cwd, p));
+        const exists = await pathsExistAsync(resolved, EXISTS_CHECK_WIDTH);
+        if (!exists.every(Boolean) || (await allInsideAnchor(cwd, resolved))) return undefined;
+        return { analysisId, paths };
     }
     const current = listAnalysisInputs(analysisId);
     if (current.isErr()) return undefined;
