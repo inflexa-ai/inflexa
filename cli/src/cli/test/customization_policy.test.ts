@@ -101,6 +101,19 @@ describe("run_inflexa — the customization commands", () => {
         expect(spawned).toEqual([["/bin/bun", "/app/src/index.ts", "skill", "import", "skills/lipidomics-lcms", "--analysis", "an-test"]]);
     });
 
+    test("`skill import --analysis` with the analysis of the chat runs with no prompt, and the analysis goes once", async () => {
+        const { asked, spawned } = await run(["skill", "import", "--analysis", "an-test", "skills/lipidomics-lcms"]);
+
+        expect(asked).toEqual([]);
+        expect(spawned).toEqual([["/bin/bun", "/app/src/index.ts", "skill", "import", "skills/lipidomics-lcms", "--analysis", "an-test"]]);
+    });
+
+    test("`skill import --analysis` with a different analysis asks, because it reads a workspace that is not the one of the chat", async () => {
+        const { asked } = await run(["skill", "import", "--analysis", "other", "skills/x"]);
+
+        expect(asked.map((request) => request.command)).toEqual(["inflexa skill import --analysis other skills/x"]);
+    });
+
     test.each([["/home/u/.claude/skills/x"], ["~/skills/x"], ["../x"]])(
         "`skill import %s` asks for the exact command, because it names a folder of the host",
         async (path) => {

@@ -33,7 +33,7 @@ import { env } from "../../lib/env.ts";
 import { hasWhitespace } from "../../lib/text.ts";
 import { runAfter } from "../../lib/timer.ts";
 import { anchorPathForAnalysisId } from "../analysis/output.ts";
-import { classifyInflexaArgv, toEffectiveArgv } from "./inflexa_classify.ts";
+import { classifyInflexaArgv, toEffectiveArgv, type Classification } from "./inflexa_classify.ts";
 
 /** Combined cap on a run's captured output (stdout and stderr together), so one runaway command cannot overflow the turn's context. */
 const MAX_OUTPUT_CHARS = 60_000;
@@ -275,6 +275,35 @@ function truncateOutput(text: string): string {
  * BOTH quote kinds is unrepresentable in the tokenizer's grammar and is simply
  * double-quoted.
  */
+/** `argv` without an `--analysis` that names `analysisId`. The words after `--` are operands and stay. */
+function withoutOwnAnalysis(argv: readonly string[], analysisId: string): string[] {
+    const out: string[] = [];
+    for (let index = 0; index < argv.length; index += 1) {
+        const element = argv[index] ?? "";
+        if (element === "--") {
+            out.push(...argv.slice(index));
+            break;
+        }
+        if (element === "--analysis" && argv[index + 1] === analysisId) {
+            index += 1;
+            continue;
+        }
+        if (element !== `--analysis=${analysisId}`) out.push(element);
+    }
+    return out;
+}
+
+/**
+ * Classify `argv` as the chat of `analysisId` runs it. A command that reads workspace paths gets the analysis of the
+ * chat from the tool, thus an `--analysis` that names that analysis changes nothing, and it does not make the call ask.
+ */
+async function classifyForChat(argv: string[], analysisId: string): Promise<Classification> {
+    const c = await classifyInflexaArgv(argv);
+    if (c.kind !== "action" || !isWorkspacePathPolicy(c.policy)) return c;
+    const own = withoutOwnAnalysis(c.argv, analysisId);
+    return own.length === c.argv.length ? c : classifyInflexaArgv(own);
+}
+
 function displayArgvElement(element: string): string {
     if (!hasWhitespace(element) && !element.includes('"') && !element.includes("'")) return element;
     return element.includes('"') ? `'${element}'` : `"${element}"`;
@@ -553,8 +582,8 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
         describeCall: ({ argv }) => toEffectiveArgv(argv).map(displayArgvElement).join(" "),
         // The loop asks the user before the call runs. A command that the policy blocks, or an argv that does
         // not parse, needs no approval: `execute` gives the model its refusal.
-        approval: async (input): Promise<AskRequest | undefined> => {
-            const c = await classifyInflexaArgv(input.argv);
+        approval: async (input, { session }): Promise<AskRequest | undefined> => {
+            const c = await classifyForChat(input.argv, session.scope.analysisId);
             if (c.kind !== "action") return undefined;
             const decision = decideAction(c.policy, c.grantKey, c.setOptions, c.operands);
             if (decision.kind !== "ask") return undefined;
@@ -588,7 +617,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
             // the classifier-normalized argv its verdict describes — the ONLY argv
             // this tool may display or spawn, so the command the user approves is
             // exactly the one that runs.
-            const c = await classifyInflexaArgv(input.argv);
+            const c = await classifyForChat(input.argv, ctx.session.scope.analysisId);
 
             // A rejected argv never reaches a process or a prompt — report it and let the model correct itself.
             if (c.kind === "malformed") return ok({ status: "invalid", message: c.message });
