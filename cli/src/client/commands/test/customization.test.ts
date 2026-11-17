@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { captureConsole } from "../../../test_support/console_capture.ts";
 import { fakeClient } from "../../../test_support/fake_client.ts";
-import { MCP_REPEAT_WARNING, mcpAdd } from "../customization.ts";
+import { agentAttach, MCP_REPEAT_WARNING, mcpAdd } from "../customization.ts";
 
 const LIMS = {
     type: "stdio",
@@ -52,5 +52,24 @@ describe("inflexa mcp add", () => {
             entry: { type: "http", url: "https://mcp.example", headers: { "X-Team": "a=b" }, auth: "oauth", scriptable: false, enabled: true },
         });
         expect(out.stdout).toContain("inflexa mcp auth remote");
+    });
+});
+
+describe("inflexa agent detach", () => {
+    test("sends one change for each name, and prints the gaps one time, after the last name", async () => {
+        const client = fakeClient(() => ({
+            status: 200,
+            body: { id: "analyst", gaps: [{ reason: "unknown_skill", reference: "x", message: "No skill x." }] },
+        }));
+
+        const out = await captureConsole(() => agentAttach("analyst", "skill", ["single-cell", "proteomics"], false, client.opts));
+
+        expect(client.requests.map((request) => request.body)).toEqual([
+            { detach: { kind: "skill", name: "single-cell" } },
+            { detach: { kind: "skill", name: "proteomics" } },
+        ]);
+        expect(out.stdout).toContain('Detached the skill "single-cell" from "analyst".');
+        expect(out.stdout).toContain('Detached the skill "proteomics" from "analyst".');
+        expect(out.stdout.split("No skill x.").length - 1).toBe(1);
     });
 });

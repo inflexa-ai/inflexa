@@ -725,73 +725,73 @@ export function buildProgram(): Command {
         agent
             .command("import")
             .description("Convert the agent file of another harness into an agent file of Inflexa")
-            .argument("<file>", "The agent file to convert")
-            .option("--role <role>", "The role of the new agent, for example reporter (default: executor)"),
+            .argument("<file...>", "The agent files to convert")
+            .option("--role <role>", "The role of each new agent, for example reporter (default: executor)"),
         "instance",
         { kind: "auto", safeFlags: ["role"] },
-        async (file: string, options: { role?: string }) => {
+        async (files: string[], options: { role?: string }) => {
             const { agentImport } = await import("../client/commands/customization.ts");
-            await agentImport(file, options);
+            await agentImport(files, options);
         },
     );
 
     registerAction(
-        agent.command("enable").description("Turn an agent on").argument("<id>", "The agent to turn on"),
+        agent.command("enable").description("Turn agents on").argument("<id...>", "The agents to turn on"),
         "instance",
         { kind: "auto", safeFlags: [] },
-        async (id: string) => {
+        async (ids: string[]) => {
             const { agentSetEnabled } = await import("../client/commands/customization.ts");
-            await agentSetEnabled(id, true);
+            await agentSetEnabled(ids, true);
         },
     );
 
     registerAction(
-        agent.command("disable").description("Turn an agent off").argument("<id>", "The agent to turn off"),
+        agent.command("disable").description("Turn agents off").argument("<id...>", "The agents to turn off"),
         "instance",
         { kind: "auto", safeFlags: [] },
-        async (id: string) => {
+        async (ids: string[]) => {
             const { agentSetEnabled } = await import("../client/commands/customization.ts");
-            await agentSetEnabled(id, false);
+            await agentSetEnabled(ids, false);
         },
     );
 
     registerAction(
         agent
             .command("attach")
-            .description("Attach a connector, an MCP server, or a skill to an agent")
+            .description("Attach connectors, MCP servers, or skills of one kind to an agent")
             .argument("<id>", "The agent")
             .argument("<kind>", "connector, mcp, or skill")
-            .argument("<name>", "The connector id, the MCP server name, or the skill name"),
+            .argument("<name...>", "The connector ids, the MCP server names, or the skill names"),
         "instance",
         { kind: "auto", safeFlags: [] },
-        async (id: string, kind: string, name: string) => {
+        async (id: string, kind: string, names: string[]) => {
             const { agentAttach } = await import("../client/commands/customization.ts");
-            await agentAttach(id, kind, name, true);
+            await agentAttach(id, kind, names, true);
         },
     );
 
     registerAction(
         agent
             .command("detach")
-            .description("Detach a connector, an MCP server, or a skill from an agent")
+            .description("Detach connectors, MCP servers, or skills of one kind from an agent")
             .argument("<id>", "The agent")
             .argument("<kind>", "connector, mcp, or skill")
-            .argument("<name>", "The connector id, the MCP server name, or the skill name"),
+            .argument("<name...>", "The connector ids, the MCP server names, or the skill names"),
         "instance",
         { kind: "auto", safeFlags: [] },
-        async (id: string, kind: string, name: string) => {
+        async (id: string, kind: string, names: string[]) => {
             const { agentAttach } = await import("../client/commands/customization.ts");
-            await agentAttach(id, kind, name, false);
+            await agentAttach(id, kind, names, false);
         },
     );
 
     registerAction(
-        agent.command("rm").description("Delete a custom agent file").argument("<id>", "The custom agent to delete"),
+        agent.command("rm").description("Delete custom agent files").argument("<id...>", "The custom agents to delete"),
         "instance",
         { kind: "approval" },
-        async (id: string) => {
+        async (ids: string[]) => {
             const { agentRm } = await import("../client/commands/customization.ts");
-            await agentRm(id);
+            await agentRm(ids);
         },
     );
 
@@ -836,12 +836,15 @@ export function buildProgram(): Command {
     );
 
     registerAction(
-        skill.command("import").description("Copy a skill directory into your custom skills").argument("<dir>", "The skill directory, with its SKILL.md"),
+        skill
+            .command("import")
+            .description("Copy skill directories into your custom skills")
+            .argument("<dir...>", "The skill directories, each with its SKILL.md"),
         "instance",
         { kind: "auto", safeFlags: [] },
-        async (dir: string) => {
+        async (dirs: string[]) => {
             const { skillImport } = await import("../client/commands/customization.ts");
-            await skillImport(dir);
+            await skillImport(dirs);
         },
     );
 
@@ -905,12 +908,12 @@ export function buildProgram(): Command {
     );
 
     registerAction(
-        credential.command("rm").description("Remove a credential and its stored value").argument("<name>", "The credential"),
+        credential.command("rm").description("Remove credentials and their stored values").argument("<name...>", "The credentials"),
         "instance",
         { kind: "approval" },
-        async (name: string) => {
+        async (names: string[]) => {
             const { credentialRm } = await import("../client/commands/customization.ts");
-            await credentialRm(name);
+            await credentialRm(names);
         },
     );
 
@@ -1008,32 +1011,32 @@ export function buildProgram(): Command {
     );
 
     registerAction(
-        mcp.command("enable").description("Turn an MCP server on").argument("<name>", "The server"),
+        mcp.command("enable").description("Turn MCP servers on").argument("<name...>", "The servers"),
         "instance",
         { kind: "auto", safeFlags: [] },
-        async (name: string) => {
+        async (names: string[]) => {
             const { mcpSetEnabled } = await import("../client/commands/customization.ts");
-            await mcpSetEnabled(name, true);
+            await mcpSetEnabled(names, true);
         },
     );
 
     registerAction(
-        mcp.command("disable").description("Turn an MCP server off").argument("<name>", "The server"),
+        mcp.command("disable").description("Turn MCP servers off").argument("<name...>", "The servers"),
         "instance",
         { kind: "auto", safeFlags: [] },
-        async (name: string) => {
+        async (names: string[]) => {
             const { mcpSetEnabled } = await import("../client/commands/customization.ts");
-            await mcpSetEnabled(name, false);
+            await mcpSetEnabled(names, false);
         },
     );
 
     registerAction(
-        mcp.command("rm").description("Remove an MCP server, with its tokens").argument("<name>", "The server"),
+        mcp.command("rm").description("Remove MCP servers, with their tokens").argument("<name...>", "The servers"),
         "instance",
         { kind: "approval" },
-        async (name: string) => {
+        async (names: string[]) => {
             const { mcpRm } = await import("../client/commands/customization.ts");
-            await mcpRm(name);
+            await mcpRm(names);
         },
     );
 

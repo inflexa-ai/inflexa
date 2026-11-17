@@ -184,13 +184,15 @@ export async function agentFind(flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIE
     console.log();
 }
 
-/** `inflexa agent import <file>`: convert the agent file of another harness. A file with gaps is kept as a draft. */
-export async function agentImport(file: string, flags: { role?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const agent = (await importAgent(resolve(file), flags.role, opts)).match(identity, failOn);
-    console.log(`Imported "${agent.id}" as a ${agent.role} agent to ${agent.path ?? agent.id}.`);
-    if (agent.draft) {
-        console.log("The agent is a draft until you correct these gaps in the file:");
-        printGaps(agent, "  ");
+/** `inflexa agent import <file...>`: convert agent files of other harnesses. A file with gaps is kept as a draft. */
+export async function agentImport(files: readonly string[], flags: { role?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    for (const file of files) {
+        const agent = (await importAgent(resolve(file), flags.role, opts)).match(identity, failOn);
+        console.log(`Imported "${agent.id}" as a ${agent.role} agent to ${agent.path ?? agent.id}.`);
+        if (agent.draft) {
+            console.log("The agent is a draft until you correct these gaps in the file:");
+            printGaps(agent, "  ");
+        }
     }
 }
 
@@ -208,23 +210,31 @@ export async function agentSet(id: string, flags: { description?: string; prompt
 }
 
 /** `inflexa agent enable <id>` and `inflexa agent disable <id>`. */
-export async function agentSetEnabled(id: string, enabled: boolean, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    (await patchAgent(id, { enabled }, opts)).match(identity, failOn);
-    console.log(`The agent "${id}" is ${enabled ? "on" : "off"}.`);
+export async function agentSetEnabled(ids: readonly string[], enabled: boolean, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    for (const id of ids) {
+        (await patchAgent(id, { enabled }, opts)).match(identity, failOn);
+        console.log(`The agent "${id}" is ${enabled ? "on" : "off"}.`);
+    }
 }
 
-/** `inflexa agent attach <id> <kind> <name>` and `inflexa agent detach <id> <kind> <name>`. */
-export async function agentAttach(id: string, kind: string, name: string, attach: boolean, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const change = { kind: attachmentKindOf(kind), name };
-    const agent = (await patchAgent(id, attach ? { attach: change } : { detach: change }, opts)).match(identity, failOn);
-    console.log(attach ? `Attached the ${kind} "${name}" to "${id}".` : `Detached the ${kind} "${name}" from "${id}".`);
-    printGaps(agent, "  ");
+/** `inflexa agent attach <id> <kind> <name...>` and `inflexa agent detach <id> <kind> <name...>`. The gaps print once, after the last name. */
+export async function agentAttach(id: string, kind: string, names: readonly string[], attach: boolean, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const attachmentKind = attachmentKindOf(kind);
+    let agent: AgentDetail | undefined;
+    for (const name of names) {
+        const change = { kind: attachmentKind, name };
+        agent = (await patchAgent(id, attach ? { attach: change } : { detach: change }, opts)).match(identity, failOn);
+        console.log(attach ? `Attached the ${kind} "${name}" to "${id}".` : `Detached the ${kind} "${name}" from "${id}".`);
+    }
+    if (agent !== undefined) printGaps(agent, "  ");
 }
 
 /** `inflexa agent rm <id>`: delete a custom agent file. */
-export async function agentRm(id: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    (await deleteAgent(id, opts)).match(identity, failOn);
-    console.log(`Removed the agent "${id}".`);
+export async function agentRm(ids: readonly string[], opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    for (const id of ids) {
+        (await deleteAgent(id, opts)).match(identity, failOn);
+        console.log(`Removed the agent "${id}".`);
+    }
 }
 
 function printSkills(list: SkillList): void {
@@ -278,9 +288,11 @@ export async function skillFind(dir: string | undefined, flags: JsonFlag, opts: 
 }
 
 /** `inflexa skill import <dir>`: copy a skill directory into the custom skills. */
-export async function skillImport(dir: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const skill = (await importSkill(resolve(dir), opts)).match(identity, failOn);
-    console.log(`Imported the skill "${skill.name}" to ${skill.directory}.`);
+export async function skillImport(dirs: readonly string[], opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    for (const dir of dirs) {
+        const skill = (await importSkill(resolve(dir), opts)).match(identity, failOn);
+        console.log(`Imported the skill "${skill.name}" to ${skill.directory}.`);
+    }
 }
 
 /** `inflexa connector ls`: each connector, its settings, and whether each credential gives a value. */
@@ -378,9 +390,11 @@ export async function credentialSet(name: string, flags: CredentialSetFlags, opt
 }
 
 /** `inflexa credential rm <name>`: remove a credential and its stored value. */
-export async function credentialRm(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    (await deleteCredential(name, opts)).match(identity, failOn);
-    console.log(`Removed the credential "${name}".`);
+export async function credentialRm(names: readonly string[], opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    for (const name of names) {
+        (await deleteCredential(name, opts)).match(identity, failOn);
+        console.log(`Removed the credential "${name}".`);
+    }
 }
 
 function mcpEntryText(entry: McpEntryView): string {
@@ -436,15 +450,19 @@ export async function mcpAdd(name: string, command: readonly string[], flags: Mc
 }
 
 /** `inflexa mcp enable <name>` and `inflexa mcp disable <name>`. */
-export async function mcpSetEnabled(name: string, enabled: boolean, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    (await patchMcpServer(name, enabled, opts)).match(identity, failOn);
-    console.log(`The MCP server "${name}" is ${enabled ? "on" : "off"}.`);
+export async function mcpSetEnabled(names: readonly string[], enabled: boolean, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    for (const name of names) {
+        (await patchMcpServer(name, enabled, opts)).match(identity, failOn);
+        console.log(`The MCP server "${name}" is ${enabled ? "on" : "off"}.`);
+    }
 }
 
 /** `inflexa mcp rm <name>`: remove an MCP server, its tokens, and its client registration. */
-export async function mcpRm(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    (await deleteMcpServer(name, opts)).match(identity, failOn);
-    console.log(`Removed the MCP server "${name}".`);
+export async function mcpRm(names: readonly string[], opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    for (const name of names) {
+        (await deleteMcpServer(name, opts)).match(identity, failOn);
+        console.log(`Removed the MCP server "${name}".`);
+    }
 }
 
 /** `inflexa mcp auth <name>`: sign in to an MCP server in the browser. */

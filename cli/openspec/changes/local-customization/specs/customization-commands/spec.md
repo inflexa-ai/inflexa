@@ -53,6 +53,15 @@ Each new command MUST declare an agent policy by its risk, not by read or write.
 - **WHEN** the chat agent calls `run_inflexa` with `agent attach analyst skill lab-protocols`
 - **THEN** the command runs with no prompt
 
+### Requirement: A command that acts on one item at a time takes many items
+
+`agent attach`, `agent detach`, `agent enable`, `agent disable`, `agent import`, `agent rm`, `skill import`, `credential rm`, `mcp enable`, `mcp disable` and `mcp rm` MUST take one or more values. The command MUST apply the values in order and stop at the first failure. A command of the policy `approval` MUST ask one time for all its values.
+
+#### Scenario: The chat agent detaches many skills in one call
+
+- **WHEN** the chat agent runs `inflexa agent detach analyst skill single-cell spatial-omics proteomics`
+- **THEN** one `run_inflexa` call detaches the three skills with no prompt
+
 ### Requirement: Adding a server warns about repeated calls
 
 `inflexa mcp add` MUST print a warning that a recovery can call a tool of the server again. The warning MUST say that a tool with a side effect can then act two times.
