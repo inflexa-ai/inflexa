@@ -74,6 +74,20 @@ describe("run_inflexa — the customization commands", () => {
         expect(spawned.length).toBe(1);
     });
 
+    test("`agent detach` with many skills is one call with no prompt", async () => {
+        const { asked, spawned } = await run(["agent", "detach", "analyst", "skill", "single-cell", "spatial-omics", "proteomics"]);
+
+        expect(asked).toEqual([]);
+        expect(spawned).toEqual([["/bin/bun", "/app/src/index.ts", "agent", "detach", "analyst", "skill", "single-cell", "spatial-omics", "proteomics"]]);
+    });
+
+    test("`mcp rm` with many servers asks one time for the whole command", async () => {
+        const { asked, spawned } = await run(["mcp", "rm", "lims", "notes"]);
+
+        expect(asked.map((request) => request.command)).toEqual(["inflexa mcp rm lims notes"]);
+        expect(spawned.length).toBe(1);
+    });
+
     test("`agent rm` asks, and an approval can cover each later removal", async () => {
         const { asked } = await run(["agent", "rm", "lipid-analyst"]);
 
