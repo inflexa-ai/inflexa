@@ -16,6 +16,7 @@ One `SKILL.md` per directory, grouped by domain:
 - **Chem / drug / translational** — `cheminformatics`, `drug-repurposing`, `translational-safety`, `pkpd-clinical-response`
 - **Viewer assets** — `mdv-preparation` (projects for MDV, the Multi-Dimensional Viewer)
 - **Cross-cutting** — `omics-general`, which each built-in executor attaches
+- **Customization** — `skill-creator`, which the CLI attaches to the chat agent in `cli/src/modules/customization/local_builtins.ts`, because only a local install can import a custom skill
 
 ## Anatomy of a pack
 

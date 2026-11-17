@@ -190,6 +190,21 @@ describe("clone", () => {
     });
 });
 
+describe("the local additions", () => {
+    test("the chat agent lists the skill creator as a default, and a detach removes it", async () => {
+        writeSkill(fixture.builtinSkillsDir, "skill-creator");
+
+        const chat = await awaitOk(service.showAgent("inflexa"));
+        expect(chat.defaults?.skills).toContain("skill-creator");
+        expect(chat.attachments.skills).toContain("skill-creator");
+        expect(chat.gaps).toEqual([]);
+
+        const detached = await awaitOk(service.detach("inflexa", "skill", "skill-creator"));
+        expect(detached.attachments.skills).not.toContain("skill-creator");
+        expect(detached.change?.remove.skills).toEqual(["skill-creator"]);
+    });
+});
+
 describe("import", () => {
     test("a Claude Code file maps its MCP tools, drops the role tools and the model, and keeps an unknown tool as a draft gap", async () => {
         fixture.config = { ...fixture.config, mcp: { github: LIMS } };

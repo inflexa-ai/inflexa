@@ -17,6 +17,7 @@ import {
 import { mcpServerEntrySchema, readConfig, type Config, type McpServerEntry } from "../../lib/config.ts";
 import { readAgentFiles, type AgentFile, type KnownReferences } from "./agent_files.ts";
 import { resolveCredentialReferences, type CredentialReader } from "./credentials.ts";
+import { entryAdditions, LOCALLY_EXTENDED_IDS } from "./local_builtins.ts";
 
 /** Where the file catalog reads its content. */
 export type FileCatalogOpts = {
@@ -131,10 +132,13 @@ export function createFileCatalog(opts: FileCatalogOpts): FileCatalog {
             const config = currentConfig();
             const changes = config.agents ?? {};
             const entries: AgentEntry[] = [];
-            for (const [key, change] of Object.entries(changes)) {
+            const builtinKeys = new Set([...Object.keys(changes), ...LOCALLY_EXTENDED_IDS]);
+            for (const key of builtinKeys) {
                 const id = builtinIdOf(key);
                 if (id === undefined) continue;
-                entries.push({ kind: "builtin", id, enabled: change.enabled ?? true, add: change.add ?? {}, remove: change.remove ?? {} });
+                const change = changes[key] ?? {};
+                const remove = change.remove ?? {};
+                entries.push({ kind: "builtin", id, enabled: change.enabled ?? true, add: entryAdditions(id, change.add ?? {}, remove), remove });
             }
             const files = readAgentFiles(opts.agentsDir, await knownReferences(config));
             for (const file of files) {
