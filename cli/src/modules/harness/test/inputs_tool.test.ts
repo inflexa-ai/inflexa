@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -93,7 +93,7 @@ function useInputsAnalysis() {
 describe("manage_inputs tool", () => {
     const inputs = useInputsAnalysis();
 
-    test("add registers an existing file, asks first, and emits prov.input_added", async () => {
+    test("add registers a file of the anchor folder with no approval, and emits prov.input_added", async () => {
         writeFileSync(join(inputs.dir, "data.csv"), "x,y\n1,2\n");
         acquireInstanceLock(inputs.analysisId);
         const ask = recordingAsk();
@@ -103,8 +103,22 @@ describe("manage_inputs tool", () => {
 
         expect(result.status).toBe("added");
         if (result.status === "added") expect(result.added).toEqual(["data.csv"]);
-        expect(ask.calls).toHaveLength(1);
+        expect(ask.calls).toHaveLength(0);
         expect(prov.types).toEqual(["prov.input_added"]);
+    });
+
+    test("add asks for a file outside the anchor folder, also through a link in the folder", async () => {
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-mi-out-")));
+        writeFileSync(join(outside, "secret.csv"), "x\n1\n");
+        symlinkSync(join(outside, "secret.csv"), join(inputs.dir, "linked.csv"));
+        acquireInstanceLock(inputs.analysisId);
+        const ask = recordingAsk();
+
+        (await runCall(inputs.tool, { action: "add", paths: [join(outside, "secret.csv")] }, inputs.analysisId, ask.fn))._unsafeUnwrap();
+        (await runCall(inputs.tool, { action: "add", paths: ["linked.csv"] }, inputs.analysisId, ask.fn))._unsafeUnwrap();
+        rmSync(outside, { recursive: true, force: true });
+
+        expect(ask.calls.map((call) => call.command)).toEqual([`add inputs: ${join(outside, "secret.csv")}`, "add inputs: linked.csv"]);
     });
 
     test("add rejects a non-existent path before asking or mutating", async () => {
