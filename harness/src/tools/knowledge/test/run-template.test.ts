@@ -141,6 +141,29 @@ describe("run_template", () => {
         });
     });
 
+    it("records a value that the plan binds as a plan setting, also when the agent sends it unchanged", async () => {
+        const answer = renderAnswer();
+        // The service names each value of the request `caller`: it cannot tell a bound value from a value of the agent.
+        const sent = [
+            { name: "lfc_shrink", value: "apeglm", source: "caller", adaptable: true, lines: [] },
+            { name: "min_count", value: 10, source: "caller", adaptable: true, lines: [] },
+            { name: "min_samples", value: 3, source: "caller", adaptable: true, lines: [] },
+        ];
+        const { tool, collector } = build({ binding: binding(), answers: { render: { ...answer, slots: [...answer.slots, ...sent] } } });
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ slots: { counts_path: COUNTS, min_count: 10, min_samples: 3 } }, ctx))._unsafeUnwrap();
+        tool.foldCallRecord?.(readToolCallRecord(out));
+
+        const record = presentFind(collector.getRecords(), (candidate) => candidate.outputPath === "work/tpl-deseq2-two-group.R", "the record of the script");
+        if (record.producer.type !== "file_tool") throw new Error("the script has no file-tool record");
+        expect(record.producer.template?.settings).toEqual([
+            { name: "counts_path", value: COUNTS, source: "caller", lines: [1] },
+            { name: "lfc_shrink", value: "apeglm", source: "plan", lines: [] },
+            { name: "min_count", value: 10, source: "plan", lines: [] },
+            { name: "min_samples", value: 3, source: "caller", lines: [] },
+        ]);
+    });
+
     it("refuses a render that sends no value for an excluded slot, or a value with no override", async () => {
         const departures = [{ rule: "R-0001@e7d0", setting: "lfc_shrink", reason: "the plan reports the unshrunk fold changes" }];
         const { tool, calls, execs } = build({ binding: binding({ slots: {}, sources: {}, departures, excluded: ["lfc_shrink"] }) });
