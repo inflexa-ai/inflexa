@@ -872,7 +872,7 @@ export function buildProgram(): Command {
             .option("--endpoint <url>", "Point the connector at a different instance (an empty value restores the default)")
             .option("--credential <slot=name...>", "Name the credential of a slot (an empty name restores the default)"),
         "instance",
-        { kind: "auto", safeFlags: ["credential"], exactGrant: true },
+        { kind: "auto", safeFlags: [], exactGrant: true },
         async (id: string, options: { endpoint?: string; credential?: string[] }) => {
             const { connectorSet } = await import("../client/commands/customization.ts");
             await connectorSet(id, options);
@@ -1574,7 +1574,7 @@ export function buildProgram(): Command {
             .addOption(new Option("--queued").hideHelp())
             .addOption(new Option(STORE_FLUSH_FLAG).hideHelp()),
         "machine",
-        { kind: "approval" },
+        { kind: "approval", ownAnalysisOnly: true },
         async (pkg: string | undefined, options: { version?: string; lang?: string; analysis?: string; queued?: boolean; runFlush?: boolean }) => {
             if (options.runFlush === true) {
                 const { flushAndPrint } = await import("../modules/libs/store.ts");
@@ -1610,7 +1610,7 @@ export function buildProgram(): Command {
             .option("--analysis <ref>", "The analysis whose farm gains the links (id or name; the analysis of this folder otherwise)")
             .option("--lang <ecosystem>", "The ecosystem: python or r (necessary when both ecosystems hold a name)"),
         "instance",
-        { kind: "auto", safeFlags: ["analysis", "lang"] },
+        { kind: "auto", safeFlags: ["analysis", "lang"], ownAnalysisOnly: true },
         async (packages: string[], options: { analysis?: string; lang?: string }) => {
             if (options.lang !== undefined && options.lang !== "python" && options.lang !== "r") {
                 console.error(`\n  Unknown ecosystem "${options.lang}". Choose python or r.\n`);

@@ -19,8 +19,8 @@ import type { Command } from "commander";
  * A runnable kind can also carry {@link TransferTrait}.
  */
 export type AgentPolicy =
-    | ({ readonly kind: "auto"; readonly safeFlags: readonly string[] } & TransferTrait & GrantTrait & WorkspacePathTrait)
-    | ({ readonly kind: "approval" } & TransferTrait & GrantTrait)
+    | ({ readonly kind: "auto"; readonly safeFlags: readonly string[] } & TransferTrait & GrantTrait & WorkspacePathTrait & OwnAnalysisTrait)
+    | ({ readonly kind: "approval" } & TransferTrait & GrantTrait & OwnAnalysisTrait)
     | { readonly kind: "blocked"; readonly reason: string };
 
 /**
@@ -59,6 +59,19 @@ export type GrantTrait = {
 export type WorkspacePathTrait = {
     readonly workspacePaths?: true;
 };
+
+/**
+ * The trait of a command that changes an analysis: a chat can run it only for its own analysis. An `--analysis` that
+ * names a different analysis blocks the call, because a chat has no reason to change the state of a different analysis.
+ */
+export type OwnAnalysisTrait = {
+    readonly ownAnalysisOnly?: true;
+};
+
+/** Whether `policy` lets a chat change only its own analysis — see {@link OwnAnalysisTrait}. */
+export function isOwnAnalysisOnlyPolicy(policy: AgentPolicy | undefined): boolean {
+    return policy !== undefined && policy.kind !== "blocked" && policy.ownAnalysisOnly === true;
+}
 
 /** Whether `policy` reads its operands as workspace paths — see {@link WorkspacePathTrait}. */
 export function isWorkspacePathPolicy(policy: AgentPolicy | undefined): boolean {
