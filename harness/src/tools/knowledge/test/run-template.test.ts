@@ -264,7 +264,7 @@ describe("run_template and the facts of the machine", () => {
         tool.foldCallRecord?.(readToolCallRecord(out));
         const record = presentFind(collector.getRecords(), (candidate) => candidate.outputPath === "work/tpl-deseq2-two-group.R", "the record of the script");
         if (record.producer.type !== "file_tool") throw new Error("the script has no file-tool record");
-        expect(record.producer.template?.settings).toEqual([{ name: "counts_path", value: COUNTS, source: "caller" }]);
+        expect(record.producer.template?.settings).toEqual([{ name: "counts_path", value: COUNTS, source: "caller", lines: [1] }]);
     });
 
     it("passes a snapshot mismatch through as data, and writes and runs nothing", async () => {

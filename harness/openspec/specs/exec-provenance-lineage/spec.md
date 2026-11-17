@@ -252,7 +252,7 @@ applies to both feeds.
 
 A later write of a step file replaces the record of that path. When the replaced record has a known hash, the collector MUST keep it as a superseded version, in the order of the writes. A command write has no hash until the reconcile, thus the kept versions are the versions that a file tool wrote. `getSupersededRecords` MUST give the kept versions. A read of a step file by a command MUST carry the hash of the latest version that a tool wrote at that path before the command, when that version has a known hash. A read of a path with no such version MUST stay as it is.
 
-The file-tool record of a script that `run_template` wrote MUST carry the facts of the render in its producer: the template with its version, the label, the method, the snapshot digest when the template source has releases, the settings with their sources, the overrides, and the environment match.
+The file-tool record of a script that `run_template` wrote MUST carry the facts of the render in its producer: the template with its version, the label, the method, the snapshot digest when the template source has releases, the settings with their sources and the lines of the script that carry them, the overrides, and the environment match.
 
 The watcher of the sandbox can report a host write that lands just before a command, inside the window of that command. Thus at the reconcile, a command record whose path holds the bytes of the latest file-tool version of that path MUST give way: the file-tool record MUST be the current record again, and it MUST leave the superseded versions. A command that changed the bytes MUST keep its record.
 

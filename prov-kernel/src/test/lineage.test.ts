@@ -910,7 +910,7 @@ describe("the render of a template on a call activity", () => {
         template: "tpl-qc-eda@1.4.0",
         label: "QC",
         method: { id: "M-0001", label: "VST and PCA" },
-        settings: [{ name: "alpha", value: 0.05, source: "plan" }],
+        settings: [{ name: "alpha", value: 0.05, source: "plan", lines: [12, 40] }],
         overrides: [{ slot: "alpha", reason: "an exploratory screen" }],
         environmentMatch: "exact",
     };
@@ -933,7 +933,7 @@ describe("the render of a template on a call activity", () => {
 
     const callQn = `inflexa:call-${defaultProvDigest(`${stepRef.runId}|${stepRef.stepId}|${renderCall.invocationId}`)}`;
 
-    test("gives the template, the settings, and the overrides of the render, with no snapshot for a source that has none", () => {
+    test("gives the template, the settings with their lines, and the overrides of the render, with no snapshot for a source that has none", () => {
         const node = nodeOf(renderedModel(render), callQn);
 
         expect(node).toMatchObject({ kind: "activity", activity: "file_tool", tool: "run_template", template: render });
