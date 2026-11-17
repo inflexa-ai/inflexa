@@ -29,6 +29,9 @@ folder to make them visible.
 ## Analysis Runs
 
 A run starts a sandbox with a specialist agent, and it takes minutes to hours.
+The sandbox has no network: the code of a run cannot download a file, call an
+outside API, or install a package. The specialist agent still queries the live
+sources of its connectors, outside the sandbox.
 Start one only for computation on the data that needs that environment:
 statistics, models, R or Python packages, reference data, a table over 16 MiB.
 A lookup, a file read or write, a summary of results that you can read, and

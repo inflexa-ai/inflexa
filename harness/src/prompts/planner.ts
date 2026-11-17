@@ -87,6 +87,9 @@ before relying on it.
   current state of the environment, not a guarantee for run time.
 - A database that the agent catalog lists as a live lookup of an agent is
   queried at run time, thus a step of that agent needs no staged copy of it.
+- The code of a step runs with no network: it cannot download data, call an
+  outside API, or install a package. A step uses the data of the analysis, the
+  staged reference data and packages, and the live lookups of its agent.
 - **When a reference the analysis genuinely cannot proceed without is absent,
   do not plan around it — stop and ask.** Call \`request_clarification\`, naming
   what is needed in terms of what the data IS and which step needs it. Name every
