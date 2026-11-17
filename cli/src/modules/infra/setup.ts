@@ -3206,8 +3206,8 @@ async function warnStalePinsAtLaunch(): Promise<void> {
 export type ProxyReadyOpts = {
     /**
      * Ask for the login, or for a new login, in the terminal when stdin is a TTY. False refuses with the
-     * remedy instead: the server boot runs in the terminal of `inflexa serve`, and a prompt there would stop
-     * the boot until someone answers it.
+     * remedy instead: the server boot runs in the background, and a prompt there would stop the boot until
+     * someone answers it.
      */
     readonly interactiveLogin: boolean;
     /** Runs at the start of each boot step. */

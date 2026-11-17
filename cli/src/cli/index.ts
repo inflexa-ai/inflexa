@@ -144,7 +144,7 @@ const HELP_GROUPS: readonly (readonly [heading: string, commands: readonly strin
     ["Agents:", ["agent", "skill", "connector", "credential", "mcp"]],
     ["Data:", ["geo", "refs"]],
     ["Provenance:", ["prov", "repair", "relocate", "prune"]],
-    ["Server:", ["gui", "serve", "server", "up", "down"]],
+    ["Server:", ["gui", "server", "up", "down"]],
     ["Setup:", ["config", "setup", "auth", "upgrade", "sandbox", "store", "sbom", "help"]],
 ];
 
@@ -502,30 +502,28 @@ export function buildProgram(): Command {
     // The local server: it boots the harness runtime and serves each client over HTTP on 127.0.0.1. Each
     // `instance` command starts it in the background when none answers. The hidden `--run-detached` is the
     // detached child of `--detach`, and the hidden `--for-client` marks the `--detach` that a client starts.
+    // The commands of the local server process.
+    const server = cli.command("server").description("Start, inspect, and stop the local Inflexa server");
+
     registerAction(
-        cli
-            .command("serve")
-            .description("Run the local Inflexa server in the foreground (Ctrl+C stops it), or in the background with --detach")
-            .option("--detach", "Start the server in the background, detached from this terminal, and return when it answers")
+        server
+            .command("start")
+            .description("Start the local server in the background, and return when it answers")
             .addOption(new Option(SERVE_DETACHED_CHILD_FLAG).hideHelp())
             .addOption(new Option(CLIENT_START_FLAG).hideHelp()),
         "machine",
         {
             kind: "blocked",
             reason:
-                "`inflexa serve` starts the local server, which runs until it is stopped, and this conversation itself runs inside that server. " +
+                "`inflexa server start` starts the local server, and this conversation runs inside that server, thus it runs already. " +
                 "It is not available to you.",
         },
-        async (options: { detach?: boolean; runDetached?: boolean }) => {
+        async (options: { runDetached?: boolean }) => {
             const { DEFAULT_SERVE_DETACHED_OPTS, runServe, runServeDetached } = await import("../server/serve.ts");
-            if (options.runDetached === true) await runServe("detached");
-            else if (options.detach === true) await runServeDetached(DEFAULT_SERVE_DETACHED_OPTS);
-            else await runServe("foreground");
+            if (options.runDetached === true) await runServe();
+            else await runServeDetached(DEFAULT_SERVE_DETACHED_OPTS);
         },
     );
-
-    // The commands of the server process itself. None starts a server.
-    const server = cli.command("server").description("Inspect and stop the local Inflexa server");
 
     // Read-only: the discovery file, a probe, and the activity read. `--json` only shapes the output.
     registerAction(

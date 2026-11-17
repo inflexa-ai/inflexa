@@ -164,13 +164,13 @@ describe("request", () => {
 
 describe("describeClientError", () => {
     test("an unreachable server says that a client starts one, and names the command that shows it", () => {
-        // A client starts the server in the background, thus the foreground `inflexa serve` is not the remedy.
+        // A client starts the server itself, thus the message names no start command.
         const refused: ClientError = { type: "unreachable", reason: "connection_failed", baseUrl: BASE, cause: null };
         const notRunning: ClientError = { type: "unreachable", reason: "not_running", baseUrl: BASE, cause: null };
         for (const e of [refused, notRunning]) {
             expect(describeClientError(e)).toContain("starts it");
             expect(describeClientError(e)).toContain("`inflexa server status`");
-            expect(describeClientError(e)).not.toContain("`inflexa serve`");
+            expect(describeClientError(e)).not.toContain("`inflexa server start`");
         }
     });
 

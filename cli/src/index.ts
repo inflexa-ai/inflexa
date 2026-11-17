@@ -1,6 +1,3 @@
-// Side-effect import, first of all: the foreground `inflexa serve` runs itself again with a larger file pool here,
-// before any module below opens the log stream or starts a file call.
-import "./lib/fs_pool_reexec.ts";
 // Side-effect import: installs the global runtime extensions before any command runs.
 import "./extensions/index.ts";
 
@@ -47,7 +44,7 @@ process.on("exit", releaseHeldInstanceLocks);
 // hung-up CLI, then exit with the conventional 128+signal code — otherwise `kill <pid>` or a
 // closed terminal would orphan the sidecar and drop the final log/telemetry batch. The FIRST
 // signal drives stopForSignal() — shutdown() by default, and the stop holder of the local server under
-// `inflexa serve` — through the module-level latch (shutdown() guards its cleanup against
+// the local server — through the module-level latch (shutdown() guards its cleanup against
 // re-entry but still calls process.exit on every invocation, so the latch keeps a second signal
 // from re-running the chain). A SECOND signal while that shutdown is still in flight must NOT be a
 // no-op: a hung cleanup hook would otherwise trap the user's repeated `kill` with no exit short of

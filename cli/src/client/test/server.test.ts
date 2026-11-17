@@ -184,7 +184,7 @@ describe("ensureServer: start", () => {
         const { opts, world } = machine();
         world.file = DISCOVERY;
         world.live.add(DISCOVERY.pid);
-        world.onStart = () => err("`inflexa serve --detach` exited with code 1");
+        world.onStart = () => err("`inflexa server start` exited with code 1");
         expect((await ensureServer(opts))._unsafeUnwrapErr().type).toBe("start_failed");
         expect(world.removed).toEqual([]);
         expect(world.starts).toBe(1);
@@ -216,9 +216,9 @@ describe("ensureServer: start", () => {
 
     test("a start that fails names the log file, and releases the lock", async () => {
         const { opts, world } = machine();
-        world.onStart = () => err("`inflexa serve --detach` exited with code 1");
+        world.onStart = () => err("`inflexa server start` exited with code 1");
         const e = (await ensureServer(opts))._unsafeUnwrapErr();
-        expect(e).toEqual({ type: "start_failed", detail: "`inflexa serve --detach` exited with code 1", logPath: opts.logPath });
+        expect(e).toEqual({ type: "start_failed", detail: "`inflexa server start` exited with code 1", logPath: opts.logPath });
         expect(describeServerError(e)).toContain(`See its log: ${opts.logPath}`);
         expect(world.lockReleased).toBe(1);
     });
@@ -231,11 +231,11 @@ describe("ensureServer: start", () => {
         expect(describeServerError(e)).toContain(opts.logPath);
     });
 
-    test("with auto start off, no answer is `not_running`: no lock, no start, and the message names `inflexa serve`", async () => {
+    test("with auto start off, no answer is `not_running`: no lock, no start, and the message names `inflexa server start`", async () => {
         const { opts, world } = machine();
         const e = (await ensureServer({ ...opts, autoStart: false }))._unsafeUnwrapErr();
         expect(e).toEqual({ type: "not_running", path: opts.discoveryPath });
-        expect(describeServerError(e)).toContain("`inflexa serve`");
+        expect(describeServerError(e)).toContain("`inflexa server start`");
         expect([world.lockTaken, world.starts]).toEqual([0, 0]);
     });
 });

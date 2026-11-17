@@ -249,7 +249,7 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
  * helpers so the whole stack identity derives from ONE channel signal ({@link isDevelopmentBuild} over the
  * baked build channel, never NODE_ENV), the same signal `compose.ts` names its containers/networks from.
  * The container-published ports (proxy, Postgres, SearXNG) sit beside the port of the local server, which
- * is bound by `inflexa serve`, not a container, yet lives in this same table because this helper is the
+ * is bound by `inflexa server start`, not a container, yet lives in this same table because this helper is the
  * SINGLE place a channel's owned host-port allocation is decided, so cross-channel collision avoidance is
  * provable in one spot. Exported
  * (rather than folded into `env`) because the frozen `env` reads the channel once at import and cannot be
@@ -288,7 +288,7 @@ export type StackPorts = {
      */
     readonly searxng: number;
     /**
-     * Host port the local Inflexa server (`inflexa serve`, src/server/) binds on `127.0.0.1`. The server also
+     * Host port the local Inflexa server (`inflexa server start`, src/server/) binds on `127.0.0.1`. The server also
      * writes it to its discovery file, which is where each client reads it.
      */
     readonly server: number;
@@ -344,7 +344,7 @@ export type StackPaths = {
      * its requests with the token of a production server, or the reverse.
      */
     readonly serverFilePath: string;
-    /** The output of a background server (`inflexa serve --detach`). Channel-aware, because two servers must not rotate one file. */
+    /** The output of a background server (`inflexa server start`). Channel-aware, because two servers must not rotate one file. */
     readonly serverLogPath: string;
 };
 

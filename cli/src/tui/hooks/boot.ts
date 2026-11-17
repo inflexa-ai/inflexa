@@ -241,7 +241,7 @@ export function bootRecoveryOpts(renderer: Pick<CliRenderer, "suspend" | "resume
 
 /**
  * {@link ensureServer} for the chat. The renderer owns the terminal, thus the notice of the start is a toast,
- * and the stderr of `inflexa serve --detach` is read into the error instead of printed over the screen.
+ * and the stderr of `inflexa server start` is read into the error instead of printed over the screen.
  */
 async function startServerFromChat(): Promise<Result<void, string>> {
     const started = await ensureServer({

@@ -66,7 +66,7 @@ describe("the server check (e2e)", () => {
         await server.stop();
         const result = await runCliAsync(["project", "ls"], { env: server.childEnv });
         expect(result.exitCode).not.toBe(0);
-        expect(result.stderr).toContain("inflexa serve");
+        expect(result.stderr).toContain("inflexa server");
         server = startTestServer();
     });
 });
