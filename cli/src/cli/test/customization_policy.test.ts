@@ -94,6 +94,30 @@ describe("run_inflexa — the customization commands", () => {
         expect(asked.map((request) => request.grantKey)).toEqual(["inflexa agent rm"]);
     });
 
+    test("`skill import` of a relative path runs with no prompt, and the tool adds the analysis of the chat", async () => {
+        const { asked, spawned } = await run(["skill", "import", "skills/lipidomics-lcms"]);
+
+        expect(asked).toEqual([]);
+        expect(spawned).toEqual([["/bin/bun", "/app/src/index.ts", "skill", "import", "skills/lipidomics-lcms", "--analysis", "an-test"]]);
+    });
+
+    test.each([["/home/u/.claude/skills/x"], ["~/skills/x"], ["../x"]])(
+        "`skill import %s` asks for the exact command, because it names a folder of the host",
+        async (path) => {
+            const { asked } = await run(["skill", "import", path]);
+
+            expect(asked.map((request) => request.grantKey)).toEqual([undefined]);
+        },
+    );
+
+    test("`skill import --replace` and `agent import --replace` ask, because each overwrites a custom copy", async () => {
+        const skill = await run(["skill", "import", "skills/x", "--replace"]);
+        const agent = await run(["agent", "import", "agents/x.md", "--replace"]);
+
+        expect(skill.asked.length).toBe(1);
+        expect(agent.asked.length).toBe(1);
+    });
+
     test("`agent ls --json` runs with no prompt", async () => {
         const { asked, spawned } = await run(["agent", "ls", "--json"]);
 

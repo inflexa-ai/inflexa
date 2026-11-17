@@ -19,7 +19,7 @@ import type { Command } from "commander";
  * A runnable kind can also carry {@link TransferTrait}.
  */
 export type AgentPolicy =
-    | ({ readonly kind: "auto"; readonly safeFlags: readonly string[] } & TransferTrait & GrantTrait)
+    | ({ readonly kind: "auto"; readonly safeFlags: readonly string[] } & TransferTrait & GrantTrait & WorkspacePathTrait)
     | ({ readonly kind: "approval" } & TransferTrait & GrantTrait)
     | { readonly kind: "blocked"; readonly reason: string };
 
@@ -50,6 +50,26 @@ export type TransferTrait = {
 export type GrantTrait = {
     readonly exactGrant?: true;
 };
+
+/**
+ * The trait of an `auto` command whose operands are paths that it copies into the state that an agent reads: an
+ * import. It runs with no prompt only while each operand is a relative path, which a chat reads inside its own
+ * workspace. An absolute path, a home path, or a path with `..` asks, because it names a folder of the host.
+ */
+export type WorkspacePathTrait = {
+    readonly workspacePaths?: true;
+};
+
+/** Whether `policy` reads its operands as workspace paths — see {@link WorkspacePathTrait}. */
+export function isWorkspacePathPolicy(policy: AgentPolicy | undefined): boolean {
+    return policy !== undefined && policy.kind === "auto" && policy.workspacePaths === true;
+}
+
+/** Whether a path operand names a place outside the workspace that a relative path reads in. */
+export function leavesWorkspace(operand: string): boolean {
+    const segments = operand.replaceAll("\\", "/").split("/");
+    return operand.startsWith("/") || operand.startsWith("\\") || operand.startsWith("~") || operand.charAt(1) === ":" || segments.includes("..");
+}
 
 /** Whether an approval of `policy` grants only the exact argv — see {@link GrantTrait}. */
 export function isExactGrantPolicy(policy: AgentPolicy | undefined): boolean {

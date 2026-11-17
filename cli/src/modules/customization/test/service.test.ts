@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { BUILTIN_AGENTS, revokeMcpSignIn, type McpAuthorizationCallback } from "@inflexa-ai/harness";
 import { startMcpOAuthFixture } from "@inflexa-ai/harness/testing";
@@ -582,6 +582,109 @@ describe("roles", () => {
         const agent = await awaitOk(service.cloneAgent("analyst", "lipid-analyst", "Lipidomics."));
 
         expect(agent).toMatchObject({ role: "executor", description: "Lipidomics." });
+    });
+});
+
+describe("imports from a workspace, links, and replace", () => {
+    /** The workspace of the analysis `lab`, with a skill draft in `skills/<name>`. */
+    function workspaceWithSkill(name: string, description = `The ${name} skill.`): string {
+        const workspace = join(fixture.root, "workspace");
+        fixture.workspaces.set("lab", workspace);
+        writeSkill(join(workspace, "skills"), name, description);
+        return workspace;
+    }
+
+    test("a relative path with an analysis reads inside its workspace, and a path that leaves it is refused", async () => {
+        workspaceWithSkill("lipidomics-lcms");
+
+        const skill = await awaitOk(service.importSkill("skills/lipidomics-lcms", { analysis: "lab" }));
+
+        expect(skill).toMatchObject({ name: "lipidomics-lcms", kind: "custom", directory: join(fixture.userSkillsDir, "lipidomics-lcms") });
+        expect((await service.importSkill("../outside", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "path_outside_workspace",
+            path: "../outside",
+        });
+        expect((await service.importSkill("skills/x", { analysis: "nope" }))._unsafeUnwrapErr()).toMatchObject({
+            type: "workspace_unavailable",
+            analysis: "nope",
+        });
+        expect((await service.importSkill("skills/x"))._unsafeUnwrapErr()).toMatchObject({ type: "import_failed" });
+    });
+
+    test("a relative path through a link that leaves the workspace is refused", async () => {
+        const workspace = workspaceWithSkill("inside");
+        const outside = writeSkill(join(fixture.root, "elsewhere"), "outside");
+        symlinkSync(outside, join(workspace, "skills", "outside"));
+
+        expect((await service.importSkill("skills/outside", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "path_outside_workspace",
+            path: "skills/outside",
+        });
+    });
+
+    test("a skill folder that holds a link is refused, and no copy stays", async () => {
+        const source = writeSkill(join(fixture.root, "found"), "leaky");
+        const secret = join(fixture.root, "id_ed25519");
+        writeFileSync(secret, "PRIVATE KEY");
+        symlinkSync(secret, join(source, "key"));
+
+        expect((await service.importSkill(source))._unsafeUnwrapErr()).toEqual({ type: "linked_entry", path: source, entry: "key" });
+        expect(existsSync(join(fixture.userSkillsDir, "leaky"))).toBe(false);
+        expect(readdirSync(dirname(fixture.userSkillsDir)).filter((name) => name.startsWith(".skill-import-"))).toEqual([]);
+    });
+
+    test("find gives a conflict for a found skill that holds a link", async () => {
+        const source = writeSkill(fixture.skillDirs[0] ?? "", "leaky");
+        symlinkSync(join(fixture.root, "absent"), join(source, "key"));
+
+        const list = await awaitOk(service.findSkills(undefined));
+
+        expect(list.skills.find((skill) => skill.name === "leaky")?.conflict).toContain('"key" is a link');
+    });
+
+    test("replace overwrites a custom skill and refuses a built-in name", async () => {
+        workspaceWithSkill("lab-protocols", "The first text.");
+        await awaitOk(service.importSkill("skills/lab-protocols", { analysis: "lab" }));
+        writeSkill(join(fixture.root, "workspace", "skills"), "lab-protocols", "The second text.");
+
+        expect((await service.importSkill("skills/lab-protocols", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "skill_exists",
+            name: "lab-protocols",
+            builtin: false,
+        });
+        const replaced = await awaitOk(service.importSkill("skills/lab-protocols", { analysis: "lab", replace: true }));
+
+        expect(replaced.description).toBe("The second text.");
+        expect(readFileSync(join(fixture.userSkillsDir, "lab-protocols", "SKILL.md"), "utf8")).toContain("The second text.");
+        const builtin = writeSkill(join(fixture.root, "copies"), "single-cell");
+        expect((await service.importSkill(builtin, { replace: true }))._unsafeUnwrapErr()).toEqual({
+            type: "skill_exists",
+            name: "single-cell",
+            builtin: true,
+        });
+    });
+
+    test("an agent import reads the workspace, refuses a linked file, and replace overwrites a custom agent", async () => {
+        const workspace = join(fixture.root, "workspace");
+        fixture.workspaces.set("lab", workspace);
+        mkdirSync(join(workspace, "agents"), { recursive: true });
+        writeFileSync(join(workspace, "agents", "lab-reporter.md"), "---\nname: lab-reporter\ndescription: First.\n---\nWrite.\n");
+        symlinkSync(join(workspace, "agents", "lab-reporter.md"), join(workspace, "agents", "linked.md"));
+
+        await awaitOk(service.importAgent("agents/lab-reporter.md", "reporter", { analysis: "lab" }));
+        writeFileSync(join(workspace, "agents", "lab-reporter.md"), "---\nname: lab-reporter\ndescription: Second.\n---\nWrite.\n");
+
+        expect((await service.importAgent("agents/lab-reporter.md", "reporter", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "agent_exists",
+            id: "lab-reporter",
+        });
+        expect(await awaitOk(service.importAgent("agents/lab-reporter.md", "reporter", { analysis: "lab", replace: true }))).toMatchObject({
+            description: "Second.",
+        });
+        expect((await service.importAgent("agents/linked.md", "reporter", { analysis: "lab" }))._unsafeUnwrapErr()).toMatchObject({
+            type: "linked_entry",
+            entry: "linked.md",
+        });
     });
 });
 

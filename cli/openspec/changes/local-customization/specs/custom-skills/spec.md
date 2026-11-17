@@ -45,6 +45,36 @@ A custom skill whose `name` equals a built-in skill name MUST be left out of the
 - **WHEN** the user runs `inflexa skill import <dir>`
 - **THEN** `~/.config/inflexa/skills/plate-reader/` holds a copy of the directory
 
+### Requirement: An import reads a relative path inside the workspace of an analysis
+
+`inflexa skill import` and `inflexa agent import` with `--analysis <id|name>` MUST read a relative path inside the workspace of that analysis. A path that leaves the workspace, also through a link, MUST be refused. An absolute path MUST stay as it is. Without `--analysis`, a relative path MUST read from the working directory. `run_inflexa` MUST add the analysis of the chat when the argv names none.
+
+#### Scenario: The chat imports its draft
+
+- **GIVEN** a chat that wrote `skills/lipidomics-lcms/SKILL.md` in its workspace
+- **WHEN** the chat runs `inflexa skill import skills/lipidomics-lcms`
+- **THEN** the skill is in the custom skills, with no approval prompt
+
+### Requirement: An import takes no link
+
+An import MUST refuse a skill folder that holds a link or a special file, and an agent file that is a link. The copy MUST NOT follow a link, and a refused copy MUST leave no folder in the custom skills. `skill find` MUST give a conflict for a found skill that holds a link.
+
+#### Scenario: A link to a private key
+
+- **GIVEN** a skill folder with a file `key` that links to a private key
+- **WHEN** the user imports the folder
+- **THEN** the import is refused with the name `key`, and the custom skills hold no copy
+
+### Requirement: Replace overwrites a custom skill or agent
+
+`--replace` MUST overwrite a custom skill or a custom agent of the same name. A built-in name MUST stay refused.
+
+#### Scenario: A second version of a skill
+
+- **GIVEN** a custom skill `lab-protocols`
+- **WHEN** the user imports a new `lab-protocols` with `--replace`
+- **THEN** the custom skill holds the new text
+
 ### Requirement: A skill shows its text
 
 `inflexa skill show <name>` and `GET /api/v1/skills/<name>` MUST give the title, the category, the tags, the description, the text of the `SKILL.md`, and the paths of the other files of the skill.

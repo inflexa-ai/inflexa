@@ -27,7 +27,7 @@ import {
 } from "../../api/customization.ts";
 import type { ApiErrorCode } from "../../api/common.ts";
 import { mcpServerEntrySchema } from "../../lib/config.ts";
-import { customizationErrorMessage, type CustomizationError, type CustomizationService } from "../../modules/customization/service.ts";
+import { customizationErrorMessage, type CustomizationError, type CustomizationService, type ImportOptions } from "../../modules/customization/service.ts";
 import { apiError, holdConnection, internalError, readBody, type ServerEnv } from "../http.ts";
 
 const attachmentChangeSchema = z.object({ kind: z.enum(ATTACHMENT_KINDS), name: z.string().min(1) });
@@ -42,8 +42,9 @@ const patchAgentBody = z.object({
 });
 
 const cloneAgentBody = z.object({ newId: z.string(), description: z.string().trim().min(1).optional() });
-const importBody = z.object({ path: z.string().min(1) });
-const importAgentBody = z.object({ path: z.string().min(1), role: z.string().optional() });
+const importOptions = { analysis: z.string().min(1).optional(), replace: z.boolean().optional() };
+const importBody = z.object({ path: z.string().min(1), ...importOptions });
+const importAgentBody = z.object({ path: z.string().min(1), role: z.string().optional(), ...importOptions });
 const patchConnectorBody = z.object({
     endpoint: z.string().nullable().optional(),
     credentials: z.record(z.string(), z.string().nullable()).optional(),
@@ -94,6 +95,9 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
         case "approval_needs_a_person":
         case "import_failed":
         case "invalid_skill":
+        case "linked_entry":
+        case "too_many_files":
+        case "path_outside_workspace":
         case "unknown_slot":
         case "invalid_credential_name":
         case "invalid_mcp_name":
@@ -107,6 +111,7 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
             return "validation_error";
         case "sign_in_failed":
         case "registry_unavailable":
+        case "workspace_unavailable":
             return "unavailable";
         case "io_failed":
         case "config_write_failed":
@@ -116,6 +121,11 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
             return _exhaustive;
         }
     }
+}
+
+/** The options of an import body. */
+function importOptionsOf(body: { readonly analysis?: string | undefined; readonly replace?: boolean | undefined }): ImportOptions {
+    return { analysis: body.analysis, replace: body.replace };
 }
 
 function customizationError(c: Context, e: CustomizationError): Response {
@@ -151,7 +161,7 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         const wanted = body.value.role ?? "executor";
         const role = AGENT_ROLES.find((candidate) => candidate === wanted);
         if (role === undefined) return apiError(c, "validation_error", `No role "${wanted}". A role is one of: ${AGENT_ROLES.join(", ")}.`);
-        return (await service.importAgent(body.value.path, role)).match(
+        return (await service.importAgent(body.value.path, role, importOptionsOf(body.value))).match(
             (agent) => c.json(agent satisfies AgentDetail, 201),
             (e) => customizationError(c, e),
         );
@@ -243,7 +253,7 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
     routes.post("/skills/import", async (c) => {
         const body = await readBody(c, importBody);
         if (body.isErr()) return body.error;
-        return (await service.importSkill(body.value.path)).match(
+        return (await service.importSkill(body.value.path, importOptionsOf(body.value))).match(
             (skill) => c.json(skill satisfies SkillView, 201),
             (e) => customizationError(c, e),
         );

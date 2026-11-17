@@ -36,6 +36,7 @@ describe("classifyInflexaArgv — action", () => {
             policy: { kind: "approval", transfer: true },
             // `--yes` is explicitly set; the positional dataset id contributes nothing.
             setOptions: ["yes"],
+            operands: ["reactome-pathways"],
         });
     });
 
@@ -51,6 +52,7 @@ describe("classifyInflexaArgv — action", () => {
             grantKey: "inflexa refs download",
             policy: { kind: "approval", transfer: true },
             setOptions: [],
+            operands: ["reactome-pathways", "--help"],
         });
     });
 
@@ -115,6 +117,7 @@ describe("classifyInflexaArgv — defensive tokenization", () => {
             grantKey: "inflexa refs download",
             policy: { kind: "approval", transfer: true },
             setOptions: ["yes"],
+            operands: ["reactome-pathways"],
         });
     });
 
@@ -199,6 +202,7 @@ describe("classifyInflexaArgv — policy + setOptions", () => {
             grantKey: "inflexa ls",
             policy: { kind: "auto", safeFlags: ["project"] },
             setOptions: ["project"],
+            operands: [],
         });
     });
 

@@ -51,10 +51,8 @@ These patterns help in the built-in skills:
 - Say what to do when a resource is not there.
 - Keep the body short. Put long detail in a `references/` folder next to `SKILL.md`, and list each file in the body. The agent reads a reference file only when it needs it.
 
-## Try the skill
+## Save and try the skill
 
-Write two or three requests that a user can send, for example a real question from the lab. Attach the skill to an agent, send each request, and compare the result with an agent that does not have the skill. If the agent does not read the skill, the description does not match the request. If the agent reads it but the result does not improve, the body does not give what the task needs. Change the skill and try again.
+Write the folder in the workspace, then import it into the custom skills of the user. An import of a skill that exists already needs the replace option. Then attach the skill to the agents that need it. Tell the user where the skill is and which agents use it.
 
-## Save the skill
-
-Write the folder in the workspace, then import it into the custom skills of the user. Then attach the skill to the agents that need it. Tell the user where the skill is and which agents use it.
+A chat agent gets a new skill from the next message of the user. To try the skill, ask the user for a real request from the lab, and look at how the agent uses the skill. If the agent does not read the skill, the description does not match the request. If the agent reads it but the result does not improve, the body does not give what the task needs. Change the skill and import it again.

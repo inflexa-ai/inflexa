@@ -725,11 +725,13 @@ export function buildProgram(): Command {
         agent
             .command("import")
             .description("Convert the agent file of another harness into an agent file of Inflexa")
-            .argument("<file...>", "The agent files to convert")
-            .option("--role <role>", "The role of each new agent, for example reporter (default: executor)"),
+            .argument("<file...>", "The agent files to convert: absolute, or relative to the working directory")
+            .option("--role <role>", "The role of each new agent, for example reporter (default: executor)")
+            .option("--analysis <id|name>", "With --analysis, a relative path reads inside the workspace of that analysis; a chat passes its own analysis")
+            .option("--replace", "Overwrite a custom agent of the same id; a built-in agent stays refused"),
         "instance",
-        { kind: "auto", safeFlags: ["role"] },
-        async (files: string[], options: { role?: string }) => {
+        { kind: "auto", safeFlags: ["role"], exactGrant: true, workspacePaths: true },
+        async (files: string[], options: { role?: string; analysis?: string; replace?: boolean }) => {
             const { agentImport } = await import("../client/commands/customization.ts");
             await agentImport(files, options);
         },
@@ -839,12 +841,14 @@ export function buildProgram(): Command {
         skill
             .command("import")
             .description("Copy skill directories into your custom skills")
-            .argument("<dir...>", "The skill directories, each with its SKILL.md"),
+            .argument("<dir...>", "The skill directories, each with its SKILL.md: absolute, or relative to the working directory")
+            .option("--analysis <id|name>", "With --analysis, a relative path reads inside the workspace of that analysis; a chat passes its own analysis")
+            .option("--replace", "Overwrite a custom skill of the same name; a built-in skill stays refused"),
         "instance",
-        { kind: "auto", safeFlags: [] },
-        async (dirs: string[]) => {
+        { kind: "auto", safeFlags: [], exactGrant: true, workspacePaths: true },
+        async (dirs: string[], options: { analysis?: string; replace?: boolean }) => {
             const { skillImport } = await import("../client/commands/customization.ts");
-            await skillImport(dirs);
+            await skillImport(dirs, options);
         },
     );
 

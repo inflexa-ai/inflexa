@@ -1,7 +1,8 @@
-import { cpSync, existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { cpSync, existsSync, lstatSync, realpathSync } from "node:fs";
+import { opendir, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
     AGENT_ROLES,
@@ -62,11 +63,12 @@ import {
     type McpServerEntry,
 } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
-import { errnoCode, mkdirResult, readFileResult, rmResult, writeFileResult } from "../../lib/fs.ts";
+import { errnoCode, mkdirResult, readFileResult, renameResult, rmResult, writeFileResult } from "../../lib/fs.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { getLogger } from "../../lib/log.ts";
 import { openExternal } from "../../lib/open_external.ts";
 import { runAfter } from "../../lib/timer.ts";
+import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { resolveHarnessConfig } from "../harness/config.ts";
 import { LOCAL_BUILTIN_AGENTS } from "./local_builtins.ts";
 import { agentIdOf, cloneDefinition, convertForeignAgent, type ImportedAgent } from "./agent_import.ts";
@@ -107,6 +109,10 @@ export type CustomizationError =
     | { readonly type: "skill_dir_missing"; readonly path: string }
     | { readonly type: "invalid_skill"; readonly path: string; readonly detail: string }
     | { readonly type: "skill_exists"; readonly name: string; readonly builtin: boolean }
+    | { readonly type: "linked_entry"; readonly path: string; readonly entry: string }
+    | { readonly type: "too_many_files"; readonly path: string; readonly limit: number }
+    | { readonly type: "path_outside_workspace"; readonly path: string }
+    | { readonly type: "workspace_unavailable"; readonly analysis: string; readonly detail: string }
     | { readonly type: "unknown_connector"; readonly id: string }
     | { readonly type: "unknown_slot"; readonly id: string; readonly slot: string }
     | { readonly type: "invalid_credential_name"; readonly name: string }
@@ -163,7 +169,15 @@ export function customizationErrorMessage(e: CustomizationError): string {
         case "skill_exists":
             return e.builtin
                 ? `The name "${e.name}" belongs to a built-in skill. A custom skill needs a different name.`
-                : `A custom skill "${e.name}" exists already.`;
+                : `A custom skill "${e.name}" exists already. An import with \`--replace\` overwrites it.`;
+        case "linked_entry":
+            return `"${e.entry}" in ${e.path} is a link or a special file. An import takes only folders and regular files, because a link can point to a file outside the folder.`;
+        case "too_many_files":
+            return `${e.path} holds more than ${String(e.limit)} entries. A skill is a small folder.`;
+        case "path_outside_workspace":
+            return `The path "${e.path}" leaves the workspace of the analysis. Give a path inside the workspace, or an absolute path.`;
+        case "workspace_unavailable":
+            return `The workspace of the analysis "${e.analysis}" is not available: ${e.detail}`;
         case "unknown_connector":
             return `No connector "${e.id}". \`inflexa connector ls\` lists the connectors.`;
         case "unknown_slot":
@@ -231,6 +245,8 @@ export type CustomizationOpts = {
     readonly skillDirs: readonly string[];
     /** The user agent directories of other harnesses, for `agent find`. */
     readonly agentDirs: readonly AgentDir[];
+    /** The workspace folder of an analysis, by id or name. A relative import path from a chat reads inside it. */
+    readonly workspaceRoot: (analysis: string) => ResultAsync<string, string>;
     /** Open the authorization page of a sign-in. */
     readonly openBrowser: (url: URL) => void;
     readonly signIn: typeof signInToMcpServer;
@@ -258,6 +274,7 @@ export function defaultCustomizationOpts(): CustomizationOpts {
         registry: DEFAULT_REGISTRY_OPTS,
         skillDirs: knownSkillDirs(),
         agentDirs: knownAgentDirs(),
+        workspaceRoot: (analysis) => workspaceRootForAnalysisId(analysis).mapErr((e) => ("message" in e ? e.message : e.type)),
         openBrowser: (url) => {
             openExternal(url.toString()).match(
                 () => undefined,
@@ -280,7 +297,7 @@ export type CustomizationService = {
     readonly cloneAgent: (sourceId: string, newId: string, description?: string) => ResultAsync<AgentDetail, CustomizationError>;
     /** The agent files in the user agent directories of other harnesses. */
     readonly findAgents: () => ResultAsync<FoundAgentList, CustomizationError>;
-    readonly importAgent: (path: string, role: AgentRole) => ResultAsync<AgentDetail, CustomizationError>;
+    readonly importAgent: (path: string, role: AgentRole, options?: ImportOptions) => ResultAsync<AgentDetail, CustomizationError>;
     readonly setAgentEnabled: (id: string, enabled: boolean) => ResultAsync<AgentDetail, CustomizationError>;
     /** Replace the description or the prompt body of a custom agent in its file. A built-in agent is read-only. */
     readonly editAgent: (id: string, edit: AgentEdit) => ResultAsync<AgentDetail, CustomizationError>;
@@ -291,7 +308,7 @@ export type CustomizationService = {
     readonly showSkill: (name: string) => ResultAsync<SkillDetail, CustomizationError>;
     /** The skills of a directory, or of the usual skill directories of other harnesses when `dir` is absent. */
     readonly findSkills: (dir: string | undefined) => ResultAsync<SkillList, CustomizationError>;
-    readonly importSkill: (dir: string) => ResultAsync<SkillView, CustomizationError>;
+    readonly importSkill: (dir: string, options?: ImportOptions) => ResultAsync<SkillView, CustomizationError>;
     readonly listConnectors: () => ResultAsync<ConnectorView[], CustomizationError>;
     readonly setConnector: (id: string, patch: PatchConnectorRequest) => ResultAsync<ConnectorView, CustomizationError>;
     readonly listCredentials: () => ResultAsync<CredentialView[], CustomizationError>;
@@ -523,6 +540,25 @@ function foundList(installed: SkillList, found: readonly ScannedSkill[], problem
     };
 }
 
+/** The found skills with a conflict for each folder that holds a link or too many entries: an import refuses it. */
+function withLinkConflicts(list: SkillList): ResultAsync<SkillList, CustomizationError> {
+    return ResultAsync.fromPromise(
+        Promise.all(
+            list.skills.map(async (skill): Promise<SkillView> => {
+                if (skill.conflict !== undefined) return skill;
+                const entry = await firstLinkedEntry(realPathOf(skill.directory));
+                if (entry === undefined) return skill;
+                const conflict =
+                    entry.kind === "too_many"
+                        ? `The folder holds more than ${String(IMPORT_ENTRY_LIMIT)} entries.`
+                        : `"${entry.entry}" is a link or a special file, and an import takes only folders and regular files.`;
+                return { ...skill, conflict };
+            }),
+        ),
+        (cause): CustomizationError => ({ type: "io_failed", op: "read the found skills", cause }),
+    ).map((skills) => ({ ...list, skills }));
+}
+
 /** The paths of the files of a skill other than its `SKILL.md`, relative to the skill directory, sorted. */
 async function listSkillFiles(directory: string): Promise<string[]> {
     const entries = await readdir(directory, { recursive: true, withFileTypes: true });
@@ -531,6 +567,39 @@ async function listSkillFiles(directory: string): Promise<string[]> {
         .map((entry) => relative(directory, join(entry.parentPath, entry.name)))
         .filter((path) => path !== "SKILL.md")
         .sort();
+}
+
+/**
+ * Where an import reads, and whether it overwrites. With `analysis`, a relative path reads inside the workspace of that
+ * analysis. `replace` overwrites a custom skill or a custom agent of the same name, never a built-in one.
+ */
+export type ImportOptions = { readonly analysis?: string; readonly replace?: boolean };
+
+/** The most entries that an import reads in a folder. A skill is a small folder, and a larger one is a wrong path. */
+export const IMPORT_ENTRY_LIMIT = 2000;
+
+/** What a folder check found: an entry that is not a folder or a regular file, or more entries than the limit. */
+type LinkedEntry = { readonly kind: "linked"; readonly entry: string } | { readonly kind: "too_many" };
+
+/**
+ * The first entry of `directory` that is not a folder or a regular file, relative to it, or `too_many` past the limit.
+ * A link can point outside the folder, thus a copy that follows it can bring a file of the host into a skill.
+ */
+async function firstLinkedEntry(directory: string): Promise<LinkedEntry | undefined> {
+    const pending = [directory];
+    let seen = 0;
+    while (pending.length > 0) {
+        const current = pending.pop();
+        if (current === undefined) break;
+        for await (const entry of await opendir(current)) {
+            seen += 1;
+            if (seen > IMPORT_ENTRY_LIMIT) return { kind: "too_many" };
+            const path = join(current, entry.name);
+            if (entry.isDirectory()) pending.push(path);
+            else if (!entry.isFile()) return { kind: "linked", entry: relative(directory, path) };
+        }
+    }
+    return undefined;
 }
 
 /** A change to a custom agent. Each field that is absent stays as the file has it. */
@@ -597,9 +666,36 @@ function parseYamlRecord(yaml: string): Record<string, unknown> | undefined {
 /** `cpSync` throws on each failure. */
 function copyDirectory(from: string, to: string): Result<void, CustomizationError> {
     return Result.fromThrowable(
-        () => cpSync(from, to, { recursive: true, errorOnExist: true, force: false, dereference: true }),
+        () => cpSync(from, to, { recursive: true, errorOnExist: true, force: false, dereference: false, verbatimSymlinks: true }),
         (cause): CustomizationError => ({ type: "io_failed", op: "copy the skill directory", cause }),
     )();
+}
+
+/** The real path, with each link resolved, or `path` itself when it does not exist. `realpathSync` throws on each failure. */
+function realPathOf(path: string): string {
+    return Result.fromThrowable(
+        () => realpathSync(path),
+        () => path,
+    )().unwrapOr(path);
+}
+
+/** Whether `path` is a link. `lstatSync` throws on each failure. */
+function isLink(path: string): boolean {
+    return Result.fromThrowable(
+        () => lstatSync(path).isSymbolicLink(),
+        () => false,
+    )().unwrapOr(false);
+}
+
+/** The check of a folder before and after its copy: no link, no special file, and a bounded size. */
+function checkImportFolder(directory: string, shown: string): ResultAsync<void, CustomizationError> {
+    return ResultAsync.fromPromise(firstLinkedEntry(directory), (cause): CustomizationError => ({ type: "io_failed", op: "read the folder", cause })).andThen(
+        (entry): Result<void, CustomizationError> => {
+            if (entry === undefined) return ok(undefined);
+            if (entry.kind === "too_many") return err({ type: "too_many_files", path: shown, limit: IMPORT_ENTRY_LIMIT });
+            return err({ type: "linked_entry", path: shown, entry: entry.entry });
+        },
+    );
 }
 
 /** The {@link CustomizationService} over `opts`. */
@@ -720,6 +816,26 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         });
 
     const writeConfigChange = (config: Config): Result<void, CustomizationError> => opts.writeConfig(config);
+
+    /**
+     * The path that an import reads. An absolute path stays. A relative path reads inside the workspace of `analysis`, and
+     * a path that leaves the workspace, also through a link, is refused.
+     */
+    const importPathOf = (path: string, analysis: string | undefined): ResultAsync<string, CustomizationError> => {
+        if (isAbsolute(path)) return okAsync(path);
+        if (analysis === undefined) return errAsync({ type: "import_failed", path, detail: "the path must be absolute, or name an analysis" });
+        return opts
+            .workspaceRoot(analysis)
+            .mapErr((detail): CustomizationError => ({ type: "workspace_unavailable", analysis, detail }))
+            .andThen((root): Result<string, CustomizationError> => {
+                const full = resolve(root, path);
+                const realRoot = realPathOf(root);
+                const realFull = realPathOf(full);
+                const inside = (candidate: string, base: string): boolean => candidate === base || isInside(candidate, base);
+                if (!inside(full, root) || !inside(realFull, realRoot)) return err({ type: "path_outside_workspace", path });
+                return ok(full);
+            });
+    };
 
     /** Read and convert the agent file of another harness. */
     const convertAgentFile = (state: AgentState, path: string, role: AgentRole): Result<ImportedAgent, CustomizationError> => {
@@ -1075,15 +1191,19 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 }),
             ),
 
-        importAgent: (path, role) =>
-            loadAgents()
-                .andThen((state): Result<string, CustomizationError> =>
-                    convertAgentFile(state, path, role).andThen(({ id, definition, unmappedTools }) =>
-                        checkNewAgentId(id, state.files).andThen((target) =>
-                            writeNewAgentFile(id, target, renderAgentFile(definition, unmappedTools)).map(() => id),
-                        ),
-                    ),
-                )
+        importAgent: (path, role, options = {}) =>
+            importPathOf(path, options.analysis)
+                .andThen((source) => loadAgents().map((state) => ({ source, state })))
+                .andThen(({ source, state }): Result<string, CustomizationError> => {
+                    if (isLink(source)) return err({ type: "linked_entry", path: dirname(source), entry: relative(dirname(source), source) });
+                    return convertAgentFile(state, source, role).andThen(({ id, definition, unmappedTools }) => {
+                        const text = renderAgentFile(definition, unmappedTools);
+                        const existing = state.files.find((file) => file.id.toLowerCase() === id);
+                        if (options.replace === true && existing !== undefined)
+                            return writeFileResult(existing.path, text, "write the agent file").map(() => id);
+                        return checkNewAgentId(id, state.files).andThen((target) => writeNewAgentFile(id, target, text).map(() => id));
+                    });
+                })
                 .andThen((id) => findDetail(id)),
 
         setAgentEnabled: (id, enabled) =>
@@ -1139,14 +1259,16 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                         type: "io_failed",
                         op: "read the skill directories",
                         cause,
-                    })).map(({ skills, problems }): SkillList => foundList(list, [...skills], problems.map(foundProblem))),
+                    }))
+                        .map(({ skills, problems }): SkillList => foundList(list, [...skills], problems.map(foundProblem)))
+                        .andThen(withLinkConflicts),
                 );
             }
             const root = resolve(dir);
             if (!existsSync(root)) return errAsync({ type: "skill_dir_missing", path: root });
             return scanSkills().andThen(({ list }) =>
-                ResultAsync.fromPromise(scanSkillRoots([root]), (cause): CustomizationError => ({ type: "io_failed", op: "read the directory", cause })).map(
-                    ({ skills, problems }): SkillList => {
+                ResultAsync.fromPromise(scanSkillRoots([root]), (cause): CustomizationError => ({ type: "io_failed", op: "read the directory", cause }))
+                    .map(({ skills, problems }): SkillList => {
                         const found: ScannedSkill[] = [...skills];
                         // The named directory can be one skill itself, not only a directory of skills.
                         const own = readFileResult(join(root, "SKILL.md"), "read the SKILL.md");
@@ -1162,31 +1284,55 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                                 });
                         }
                         return foundList(list, found, foundProblems);
-                    },
-                ),
+                    })
+                    .andThen(withLinkConflicts),
             );
         },
 
-        importSkill: (dir) => {
-            const root = resolve(dir);
-            return scanSkills().andThen(({ list }): Result<SkillView, CustomizationError> => {
-                const text = readFileResult(join(root, "SKILL.md"), "read the SKILL.md");
-                if (text.isErr()) return err({ type: "invalid_skill", path: root, detail: "the directory holds no readable SKILL.md" });
-                const parsed = parseSkillFrontmatter(text.value);
-                if (!parsed.ok) return err({ type: "invalid_skill", path: root, detail: `the frontmatter of the SKILL.md is not correct (${parsed.problem})` });
-                const { name } = parsed.skill;
-                // The name becomes the directory name of the copy, thus it must be a clean single path segment.
-                if (agentIdOf(name) !== name)
-                    return err({ type: "invalid_skill", path: root, detail: `the name "${name}" must be lowercase letters, digits, and hyphens` });
-                const existing = list.skills.find((skill) => skill.name === name);
-                if (existing?.kind === "builtin") return err({ type: "skill_exists", name, builtin: true });
-                const target = join(opts.userSkillsDir, name);
-                if (existing !== undefined || existsSync(target)) return err({ type: "skill_exists", name, builtin: false });
-                return mkdirResult(opts.userSkillsDir, "make the skills directory")
-                    .andThen(() => copyDirectory(root, target))
-                    .map((): SkillView => skillView({ ...parsed.skill, directory: target }, "custom"));
-            });
-        },
+        importSkill: (dir, options = {}) =>
+            importPathOf(dir, options.analysis).andThen((path) => {
+                const root = realPathOf(path);
+                return scanSkills()
+                    .andThen(({ list }): Result<{ readonly skill: ScannedSkill; readonly target: string; readonly taken: boolean }, CustomizationError> => {
+                        const text = readFileResult(join(root, "SKILL.md"), "read the SKILL.md");
+                        if (text.isErr()) return err({ type: "invalid_skill", path, detail: "the directory holds no readable SKILL.md" });
+                        const parsed = parseSkillFrontmatter(text.value);
+                        if (!parsed.ok)
+                            return err({ type: "invalid_skill", path, detail: `the frontmatter of the SKILL.md is not correct (${parsed.problem})` });
+                        const { name } = parsed.skill;
+                        // The name becomes the directory name of the copy, thus it must be a clean single path segment.
+                        if (agentIdOf(name) !== name)
+                            return err({ type: "invalid_skill", path, detail: `the name "${name}" must be lowercase letters, digits, and hyphens` });
+                        const existing = list.skills.find((skill) => skill.name === name);
+                        if (existing?.kind === "builtin") return err({ type: "skill_exists", name, builtin: true });
+                        const target = join(opts.userSkillsDir, name);
+                        const taken = existing !== undefined || existsSync(target);
+                        if (taken && options.replace !== true) return err({ type: "skill_exists", name, builtin: false });
+                        return ok({ skill: { ...parsed.skill, directory: target }, target, taken });
+                    })
+                    .andThen((plan) => checkImportFolder(root, path).map(() => plan))
+                    .andThen(({ skill, target, taken }) => {
+                        // The copy goes to a folder beside the skills, then a rename puts it in place. Thus a refused
+                        // copy leaves no half skill, and a replace swaps the whole folder.
+                        const staging = join(dirname(opts.userSkillsDir), `.skill-import-${randomUUID()}`);
+                        const discard = (e: CustomizationError): ResultAsync<never, CustomizationError> => {
+                            // The refusal is the answer. A copy that the removal leaves stays outside the skills folder.
+                            return errAsync(
+                                rmResult(staging, "remove the staged skill copy").match(
+                                    () => e,
+                                    () => e,
+                                ),
+                            );
+                        };
+                        return mkdirResult(opts.userSkillsDir, "make the skills directory")
+                            .andThen(() => copyDirectory(root, staging))
+                            .asyncAndThen(() => checkImportFolder(staging, path))
+                            .andThen(() => (taken ? rmResult(target, "remove the replaced skill") : ok(undefined)))
+                            .andThen(() => renameResult(staging, target, "move the skill copy into place"))
+                            .orElse(discard)
+                            .map((): SkillView => skillView(skill, "custom"));
+                    });
+            }),
 
         listConnectors: () => {
             const config = opts.readConfig();

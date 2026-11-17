@@ -27,7 +27,7 @@ import type { Command } from "commander";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { type AgentPolicy, getAgentPolicy, isExactGrantPolicy, isTransferPolicy } from "../../cli/agent_policy.ts";
+import { type AgentPolicy, getAgentPolicy, isExactGrantPolicy, isTransferPolicy, isWorkspacePathPolicy, leavesWorkspace } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
 import { env } from "../../lib/env.ts";
 import { hasWhitespace } from "../../lib/text.ts";
@@ -128,7 +128,12 @@ const WORKER_MODE_OPTIONS: ReadonlyMap<string, string> = new Map([
  *   flag can push an `auto` invocation up to a prompt, never down past a block.
  * - `approval` → `ask`.
  */
-export function decideAction(policy: AgentPolicy | undefined, grantKey: string, setOptions: readonly string[]): ActionDecision {
+export function decideAction(
+    policy: AgentPolicy | undefined,
+    grantKey: string,
+    setOptions: readonly string[],
+    operands: readonly string[] = [],
+): ActionDecision {
     if (policy === undefined) {
         return {
             kind: "blocked",
@@ -152,6 +157,7 @@ export function decideAction(policy: AgentPolicy | undefined, grantKey: string, 
         case "blocked":
             return { kind: "blocked", message: policy.reason };
         case "auto":
+            if (policy.workspacePaths === true && operands.some(leavesWorkspace)) return { kind: "ask" };
             return setOptions.every((opt) => policy.safeFlags.includes(opt)) ? { kind: "spawn" } : { kind: "ask" };
         case "approval":
             return { kind: "ask" };
@@ -550,7 +556,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
         approval: async (input): Promise<AskRequest | undefined> => {
             const c = await classifyInflexaArgv(input.argv);
             if (c.kind !== "action") return undefined;
-            const decision = decideAction(c.policy, c.grantKey, c.setOptions);
+            const decision = decideAction(c.policy, c.grantKey, c.setOptions, c.operands);
             if (decision.kind !== "ask") return undefined;
             const transfer = isTransferPolicy(c.policy);
             const exact = isExactGrantPolicy(c.policy);
@@ -594,7 +600,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
             if (c.kind === "action") {
                 // The registration-declared policy is the floor. The check runs again here, after the approval of
                 // the loop, thus a `blocked` command (or an unclassified one, fail-closed) never runs.
-                const decision = decideAction(c.policy, c.grantKey, c.setOptions);
+                const decision = decideAction(c.policy, c.grantKey, c.setOptions, c.operands);
                 if (decision.kind === "blocked") return ok({ status: "blocked", message: decision.message });
                 // `decision.kind === "spawn"` (an `auto` run within its safeFlags) and an approved `ask`
                 // both fall through to the shared run path below — an `auto` run leaves no ask-ledger
@@ -619,6 +625,10 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
                 if (!argv.includes("--analysis")) extra.push("--analysis", scoped.analysisId);
                 argv = [...argv, ...extra];
             }
+            // An import of the chat reads a relative path inside the workspace of its own analysis, the place where
+            // its file tools write. The analysis comes from the trusted session scope, as for `store add` above.
+            if (c.kind === "action" && isWorkspacePathPolicy(c.policy) && !argv.includes("--analysis"))
+                argv = [...argv, "--analysis", ctx.session.scope.analysisId];
             const cmd = resolveInvocation(argv, { isDevelopment, execPath, scriptPath });
             // Run the child in the analysis's own folder, so a command that resolves its target from the
             // working directory lands on the chat's analysis rather than wherever this process happens to

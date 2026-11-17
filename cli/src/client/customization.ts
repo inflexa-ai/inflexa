@@ -6,6 +6,7 @@ import type {
     CloneAgentRequest,
     FoundAgentList,
     ImportAgentRequest,
+    ImportSkillRequest,
     AgentList,
     ConnectorList,
     ConnectorView,
@@ -58,9 +59,8 @@ export function fetchFoundAgents(opts: ClientOpts = DEFAULT_CLIENT_OPTS): Result
     return request<FoundAgentList>("GET", "/api/v1/catalog/agents/found", {}, opts);
 }
 
-/** `POST /api/v1/catalog/agents/import`: convert the agent file of another harness. `path` is absolute. Absent `role`: `executor`. */
-export function importAgent(path: string, role: string | undefined, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
-    const body: ImportAgentRequest = role === undefined ? { path } : { path, role };
+/** `POST /api/v1/catalog/agents/import`: convert the agent file of another harness. Absent `role`: `executor`. */
+export function importAgent(body: ImportAgentRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
     return request<AgentDetail>("POST", "/api/v1/catalog/agents/import", { body }, opts);
 }
 
@@ -94,9 +94,9 @@ export function findSkills(dir: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS):
     return request<SkillList>("GET", `/api/v1/skills?dir=${encodeURIComponent(dir)}`, {}, opts);
 }
 
-/** `POST /api/v1/skills/import`: copy one skill directory into the custom skills. `path` is absolute. */
-export function importSkill(path: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillView, ClientError> {
-    return request<SkillView>("POST", "/api/v1/skills/import", { body: { path } }, opts);
+/** `POST /api/v1/skills/import`: copy one skill directory into the custom skills. */
+export function importSkill(body: ImportSkillRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillView, ClientError> {
+    return request<SkillView>("POST", "/api/v1/skills/import", { body }, opts);
 }
 
 /** `GET /api/v1/connectors`: each connector with its settings and the state of each credential slot. */
