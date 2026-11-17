@@ -184,10 +184,25 @@ export async function agentFind(flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIE
     console.log();
 }
 
+/** The flags of `agent import` and `skill import`. */
+type ImportFlags = { analysis?: string; replace?: boolean };
+
+/**
+ * The body of an import of `path`. With `--analysis`, the server reads a relative path inside the workspace of the
+ * analysis, thus the path goes as it is. Without it, a relative path reads from the working directory.
+ */
+function importBodyOf(path: string, flags: ImportFlags): { path: string; analysis?: string; replace?: boolean } {
+    const body: { path: string; analysis?: string; replace?: boolean } = { path: flags.analysis === undefined ? resolve(path) : path };
+    if (flags.analysis !== undefined) body.analysis = flags.analysis;
+    if (flags.replace === true) body.replace = true;
+    return body;
+}
+
 /** `inflexa agent import <file...>`: convert agent files of other harnesses. A file with gaps is kept as a draft. */
-export async function agentImport(files: readonly string[], flags: { role?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+export async function agentImport(files: readonly string[], flags: ImportFlags & { role?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
     for (const file of files) {
-        const agent = (await importAgent(resolve(file), flags.role, opts)).match(identity, failOn);
+        const body = importBodyOf(file, flags);
+        const agent = (await importAgent(flags.role === undefined ? body : { ...body, role: flags.role }, opts)).match(identity, failOn);
         console.log(`Imported "${agent.id}" as a ${agent.role} agent to ${agent.path ?? agent.id}.`);
         if (agent.draft) {
             console.log("The agent is a draft until you correct these gaps in the file:");
@@ -226,7 +241,10 @@ export async function agentAttach(id: string, kind: string, names: readonly stri
         agent = (await patchAgent(id, attach ? { attach: change } : { detach: change }, opts)).match(identity, failOn);
         console.log(attach ? `Attached the ${kind} "${name}" to "${id}".` : `Detached the ${kind} "${name}" from "${id}".`);
     }
-    if (agent !== undefined) printGaps(agent, "  ");
+    if (agent === undefined) return;
+    printGaps(agent, "  ");
+    // A chat reads its catalog at the start of each turn, thus the turn that runs this command keeps its tools.
+    if (agent.role === "chat") console.log("The chat agent gets the change from the next message of the user.");
 }
 
 /** `inflexa agent rm <id>`: delete a custom agent file. */
@@ -288,9 +306,9 @@ export async function skillFind(dir: string | undefined, flags: JsonFlag, opts: 
 }
 
 /** `inflexa skill import <dir>`: copy a skill directory into the custom skills. */
-export async function skillImport(dirs: readonly string[], opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+export async function skillImport(dirs: readonly string[], flags: ImportFlags, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
     for (const dir of dirs) {
-        const skill = (await importSkill(resolve(dir), opts)).match(identity, failOn);
+        const skill = (await importSkill(importBodyOf(dir, flags), opts)).match(identity, failOn);
         console.log(`Imported the skill "${skill.name}" to ${skill.directory}.`);
     }
 }

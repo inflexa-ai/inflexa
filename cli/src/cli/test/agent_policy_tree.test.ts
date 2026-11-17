@@ -15,6 +15,7 @@ const policyRowSchema = z.object({
     safeFlags: z.array(z.string()).nullable(),
     transfer: z.boolean(),
     exactGrant: z.boolean(),
+    workspacePaths: z.boolean(),
     declaredOptions: z.array(z.string()),
     commandKind: z.enum(["instance", "machine", "standalone"]).nullable(),
     machineFlags: z.array(z.string()).nullable(),
@@ -48,7 +49,7 @@ function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (const row of rows) {
         const kind = row.kind === "auto" ? `auto(${(row.safeFlags ?? []).join(",")})` : String(row.kind);
-        out[row.grantKey] = `${kind}${row.transfer ? "+transfer" : ""}${row.exactGrant ? "+exact" : ""}`;
+        out[row.grantKey] = `${kind}${row.transfer ? "+transfer" : ""}${row.exactGrant ? "+exact" : ""}${row.workspacePaths ? "+workspace" : ""}`;
     }
     return out;
 }
@@ -63,7 +64,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa agent disable": "auto()",
     "inflexa agent enable": "auto()",
     "inflexa agent find": "auto(json)",
-    "inflexa agent import": "auto(role)",
+    "inflexa agent import": "auto(role)+exact+workspace",
     "inflexa agent ls": "auto(json)",
     "inflexa agent rm": "approval",
     "inflexa agent set": "auto(description,prompt)",
@@ -125,7 +126,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa server walk": "blocked",
     "inflexa setup": "blocked",
     "inflexa skill find": "auto(json)",
-    "inflexa skill import": "auto()",
+    "inflexa skill import": "auto()+exact+workspace",
     "inflexa skill ls": "auto(json)",
     "inflexa skill show": "auto(json)",
     "inflexa status": "approval",

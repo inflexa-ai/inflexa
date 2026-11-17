@@ -85,11 +85,16 @@ export type CloneAgentRequest = {
     description?: string;
 };
 
-/** The body of `POST /api/v1/catalog/agents/import`. The path is absolute, on the machine of the server. */
+/** The body of `POST /api/v1/catalog/agents/import`, on the machine of the server. */
 export type ImportAgentRequest = {
+    /** Absolute, or relative to the workspace of `analysis`. */
     path: string;
     /** The role of the new agent. Absent: `executor`. */
     role?: string;
+    /** The analysis, by id or name, whose workspace holds a relative `path`. */
+    analysis?: string;
+    /** Overwrite a custom agent of the same id. A built-in agent stays refused. */
+    replace?: boolean;
 };
 
 /** One agent file in the agent directory of another harness. */
@@ -177,9 +182,14 @@ export type SkillList = {
     problems: SkillProblemView[];
 };
 
-/** The body of `POST /api/v1/skills/import`. The path is absolute, on the machine of the server. */
+/** The body of `POST /api/v1/skills/import`, on the machine of the server. */
 export type ImportSkillRequest = {
+    /** Absolute, or relative to the workspace of `analysis`. */
     path: string;
+    /** The analysis, by id or name, whose workspace holds a relative `path`. */
+    analysis?: string;
+    /** Overwrite a custom skill of the same name. A built-in skill stays refused. */
+    replace?: boolean;
 };
 
 /** One credential slot of a connector, and the credential that fills it. */

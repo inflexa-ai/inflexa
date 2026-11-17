@@ -37,6 +37,8 @@ export type Classification =
           readonly grantKey: string;
           readonly policy: AgentPolicy | undefined;
           readonly setOptions: readonly string[];
+          /** The positional operands of the command, as the argv gives them. */
+          readonly operands: readonly string[];
       }
     | { readonly kind: "malformed"; readonly message: string };
 
@@ -237,7 +239,7 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
                 const src = leaf.getOptionValueSourceWithGlobals(attr);
                 if (src !== undefined && src !== "default") setOptions.push(attr);
             }
-            return { kind: "action", argv: args, path, grantKey: path.join(" "), policy: getAgentPolicy(leaf), setOptions };
+            return { kind: "action", argv: args, path, grantKey: path.join(" "), policy: getAgentPolicy(leaf), setOptions, operands: leaf.args };
         }
         if (e instanceof CommanderError) {
             if (INTROSPECTION_CODES.has(e.code)) return { kind: "introspection", argv: args };
