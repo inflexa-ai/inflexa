@@ -25,8 +25,8 @@ export const TemplateRenderSchema = z.object({
     method: z.object({ id: z.string(), label: z.string() }),
     /** The snapshot digest of the release that served the render. Absent for a template source with no releases. */
     snapshot: z.string().optional(),
-    /** Each setting that the script reads, with its value and where the value came from (the plan, a default, the agent). */
-    settings: z.array(z.object({ name: z.string(), value: TemplateSettingValueSchema.optional(), source: z.string() })),
+    /** Each setting that the script reads, with its value, where the value came from (the plan, a default, the agent), and the 1-based lines of the script that carry it. */
+    settings: z.array(z.object({ name: z.string(), value: TemplateSettingValueSchema.optional(), source: z.string(), lines: z.array(z.number()).optional() })),
     /** Each plan value that the agent changed, with the reason. */
     overrides: z.array(z.object({ slot: z.string(), reason: z.string() })),
     /** How the installed packages matched the pins of the template. */

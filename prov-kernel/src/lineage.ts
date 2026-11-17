@@ -296,7 +296,12 @@ function toActivityNode(record: ProvActivity): LineageActivityNode {
 }
 
 const TemplateSettingsSchema = z.array(
-    z.object({ name: z.string(), value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).optional(), source: z.string() }),
+    z.object({
+        name: z.string(),
+        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).optional(),
+        source: z.string(),
+        lines: z.array(z.number()).optional(),
+    }),
 );
 const TemplateOverridesSchema = z.array(z.object({ slot: z.string(), reason: z.string() }));
 
