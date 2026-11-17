@@ -16,6 +16,7 @@ const policyRowSchema = z.object({
     transfer: z.boolean(),
     exactGrant: z.boolean(),
     workspacePaths: z.boolean(),
+    ownAnalysisOnly: z.boolean(),
     declaredOptions: z.array(z.string()),
     commandKind: z.enum(["instance", "machine", "standalone"]).nullable(),
     machineFlags: z.array(z.string()).nullable(),
@@ -49,7 +50,8 @@ function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (const row of rows) {
         const kind = row.kind === "auto" ? `auto(${(row.safeFlags ?? []).join(",")})` : String(row.kind);
-        out[row.grantKey] = `${kind}${row.transfer ? "+transfer" : ""}${row.exactGrant ? "+exact" : ""}${row.workspacePaths ? "+workspace" : ""}`;
+        out[row.grantKey] =
+            `${kind}${row.transfer ? "+transfer" : ""}${row.exactGrant ? "+exact" : ""}${row.workspacePaths ? "+workspace" : ""}${row.ownAnalysisOnly ? "+own" : ""}`;
     }
     return out;
 }
@@ -76,7 +78,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa auth whoami": "auto()",
     "inflexa config": "blocked",
     "inflexa connector ls": "auto(json)",
-    "inflexa connector set": "auto(credential)+exact",
+    "inflexa connector set": "auto()+exact",
     "inflexa credential ls": "auto(json)",
     "inflexa credential rm": "approval",
     "inflexa credential set": "auto(env)+exact",
@@ -130,10 +132,10 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa skill ls": "auto(json)",
     "inflexa skill show": "auto(json)",
     "inflexa status": "approval",
-    "inflexa store add": "approval",
+    "inflexa store add": "approval+own",
     "inflexa store cancel": "approval",
     "inflexa store download": "approval",
-    "inflexa store link": "auto(analysis,lang)",
+    "inflexa store link": "auto(analysis,lang)+own",
     "inflexa store ls": "auto()",
     "inflexa store reclaim": "approval",
     "inflexa up": "blocked",

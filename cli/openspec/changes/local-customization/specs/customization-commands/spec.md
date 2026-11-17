@@ -53,6 +53,20 @@ Each new command MUST declare an agent policy by its risk, not by read or write.
 - **WHEN** the chat agent calls `run_inflexa` with `agent attach analyst skill lab-protocols`
 - **THEN** the command runs with no prompt
 
+#### Scenario: A credential for a connector slot asks
+
+- **WHEN** the chat agent calls `run_inflexa` with `connector set pubmed --credential api_key=github-token`
+- **THEN** the tool asks the user for that exact command, because the connector sends the credential to its endpoint
+
+### Requirement: A chat names its own analysis with no prompt, and changes no other analysis
+
+`--analysis` with the id or the name of the analysis of the chat MUST NOT make a call ask. `store add` and `store link` with a different analysis MUST be blocked, because a chat has no reason to change the package set of a different analysis.
+
+#### Scenario: The chat names its own analysis
+
+- **WHEN** the chat agent calls `run_inflexa` with `store link lipidr --analysis <the id of its analysis>`
+- **THEN** the command runs with no prompt, and the same call with a different analysis is blocked
+
 ### Requirement: An import from the chat asks for a folder of the host
 
 `skill import` and `agent import` MUST run from the chat with no approval prompt only while each path is relative. An absolute path, a home path, or a path with `..` MUST ask for the exact command. `--replace` MUST ask.

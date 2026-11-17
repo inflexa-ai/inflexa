@@ -27,13 +27,22 @@ import type { Command } from "commander";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { type AgentPolicy, getAgentPolicy, isExactGrantPolicy, isTransferPolicy, isWorkspacePathPolicy, leavesWorkspace } from "../../cli/agent_policy.ts";
+import {
+    type AgentPolicy,
+    getAgentPolicy,
+    isExactGrantPolicy,
+    isOwnAnalysisOnlyPolicy,
+    isTransferPolicy,
+    isWorkspacePathPolicy,
+    leavesWorkspace,
+} from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
 import { env } from "../../lib/env.ts";
 import { hasWhitespace } from "../../lib/text.ts";
 import { runAfter } from "../../lib/timer.ts";
+import { findAnalysesByRef } from "../../db/primary_query.ts";
 import { anchorPathForAnalysisId } from "../analysis/output.ts";
-import { classifyInflexaArgv, toEffectiveArgv, type Classification } from "./inflexa_classify.ts";
+import { classifyInflexaArgv, toEffectiveArgv } from "./inflexa_classify.ts";
 
 /** Combined cap on a run's captured output (stdout and stderr together), so one runaway command cannot overflow the turn's context. */
 const MAX_OUTPUT_CHARS = 60_000;
@@ -133,6 +142,7 @@ export function decideAction(
     grantKey: string,
     setOptions: readonly string[],
     operands: readonly string[] = [],
+    analysis: AnalysisTarget = "none",
 ): ActionDecision {
     if (policy === undefined) {
         return {
@@ -153,12 +163,19 @@ export function decideAction(
             };
         }
     }
+    if (analysis === "other" && isOwnAnalysisOnlyPolicy(policy))
+        return {
+            kind: "blocked",
+            message: `\`${grantKey}\` changes an analysis, and a chat can change only its own analysis. Run it without \`--analysis\`, or name the analysis of this chat.`,
+        };
+    // Each command of a chat reads its analysis from the session, thus naming the analysis of the chat changes nothing.
+    const flags = analysis === "own" ? setOptions.filter((option) => option !== "analysis") : setOptions;
     switch (policy.kind) {
         case "blocked":
             return { kind: "blocked", message: policy.reason };
         case "auto":
             if (policy.workspacePaths === true && operands.some(leavesWorkspace)) return { kind: "ask" };
-            return setOptions.every((opt) => policy.safeFlags.includes(opt)) ? { kind: "spawn" } : { kind: "ask" };
+            return flags.every((opt) => policy.safeFlags.includes(opt)) ? { kind: "spawn" } : { kind: "ask" };
         case "approval":
             return { kind: "ask" };
         default: {
@@ -275,33 +292,26 @@ function truncateOutput(text: string): string {
  * BOTH quote kinds is unrepresentable in the tokenizer's grammar and is simply
  * double-quoted.
  */
-/** `argv` without an `--analysis` that names `analysisId`. The words after `--` are operands and stay. */
-function withoutOwnAnalysis(argv: readonly string[], analysisId: string): string[] {
-    const out: string[] = [];
+/** Which analysis an argv names with `--analysis`: none, only the analysis of the chat, or a different one. */
+export type AnalysisTarget = "none" | "own" | "other";
+
+/** The values of each `--analysis` of `argv`. The words after `--` are operands. */
+function analysisValuesOf(argv: readonly string[]): string[] {
+    const values: string[] = [];
     for (let index = 0; index < argv.length; index += 1) {
         const element = argv[index] ?? "";
-        if (element === "--") {
-            out.push(...argv.slice(index));
-            break;
-        }
-        if (element === "--analysis" && argv[index + 1] === analysisId) {
-            index += 1;
-            continue;
-        }
-        if (element !== `--analysis=${analysisId}`) out.push(element);
+        if (element === "--") break;
+        if (element === "--analysis") values.push(argv[index + 1] ?? "");
+        else if (element.startsWith("--analysis=")) values.push(element.slice("--analysis=".length));
     }
-    return out;
+    return values;
 }
 
-/**
- * Classify `argv` as the chat of `analysisId` runs it. A command that reads workspace paths gets the analysis of the
- * chat from the tool, thus an `--analysis` that names that analysis changes nothing, and it does not make the call ask.
- */
-async function classifyForChat(argv: string[], analysisId: string): Promise<Classification> {
-    const c = await classifyInflexaArgv(argv);
-    if (c.kind !== "action" || !isWorkspacePathPolicy(c.policy)) return c;
-    const own = withoutOwnAnalysis(c.argv, analysisId);
-    return own.length === c.argv.length ? c : classifyInflexaArgv(own);
+/** The {@link AnalysisTarget} of `argv` for the chat of `ownId`. A name counts as own when it resolves to `ownId`. */
+function analysisTargetOf(argv: readonly string[], ownId: string, analysisIdOf: (ref: string) => string | undefined): AnalysisTarget {
+    const values = analysisValuesOf(argv);
+    if (values.length === 0) return "none";
+    return values.every((value) => value === ownId || analysisIdOf(value) === ownId) ? "own" : "other";
 }
 
 function displayArgvElement(element: string): string {
@@ -513,6 +523,8 @@ export type RunInflexaToolDeps = {
     readonly timeoutMs?: number;
     readonly idleTimeoutMs?: number;
     readonly resolveAnalysisFolder?: ResolveAnalysisFolder;
+    /** The id of the analysis that an id or a name names, or `undefined` for no analysis. */
+    readonly analysisIdOf?: (ref: string) => string | undefined;
 };
 
 /**
@@ -530,6 +542,13 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
     const resolveAnalysisFolder: ResolveAnalysisFolder =
         deps.resolveAnalysisFolder ?? (async (analysisId) => (await anchorPathForAnalysisId(analysisId)) ?? undefined);
     const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, cwd, signal, bounds) => spawnInflexa(cmd, signal, bounds, cwd));
+    const analysisIdOf =
+        deps.analysisIdOf ??
+        ((ref: string) =>
+            findAnalysesByRef(ref).match(
+                (rows) => rows[0]?.id,
+                () => undefined,
+            ));
 
     return defineTool({
         id: "run_inflexa",
@@ -583,9 +602,9 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
         // The loop asks the user before the call runs. A command that the policy blocks, or an argv that does
         // not parse, needs no approval: `execute` gives the model its refusal.
         approval: async (input, { session }): Promise<AskRequest | undefined> => {
-            const c = await classifyForChat(input.argv, session.scope.analysisId);
+            const c = await classifyInflexaArgv(input.argv);
             if (c.kind !== "action") return undefined;
-            const decision = decideAction(c.policy, c.grantKey, c.setOptions, c.operands);
+            const decision = decideAction(c.policy, c.grantKey, c.setOptions, c.operands, analysisTargetOf(c.argv, session.scope.analysisId, analysisIdOf));
             if (decision.kind !== "ask") return undefined;
             const transfer = isTransferPolicy(c.policy);
             const exact = isExactGrantPolicy(c.policy);
@@ -617,7 +636,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
             // the classifier-normalized argv its verdict describes — the ONLY argv
             // this tool may display or spawn, so the command the user approves is
             // exactly the one that runs.
-            const c = await classifyForChat(input.argv, ctx.session.scope.analysisId);
+            const c = await classifyInflexaArgv(input.argv);
 
             // A rejected argv never reaches a process or a prompt — report it and let the model correct itself.
             if (c.kind === "malformed") return ok({ status: "invalid", message: c.message });
@@ -629,7 +648,13 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
             if (c.kind === "action") {
                 // The registration-declared policy is the floor. The check runs again here, after the approval of
                 // the loop, thus a `blocked` command (or an unclassified one, fail-closed) never runs.
-                const decision = decideAction(c.policy, c.grantKey, c.setOptions, c.operands);
+                const decision = decideAction(
+                    c.policy,
+                    c.grantKey,
+                    c.setOptions,
+                    c.operands,
+                    analysisTargetOf(c.argv, ctx.session.scope.analysisId, analysisIdOf),
+                );
                 if (decision.kind === "blocked") return ok({ status: "blocked", message: decision.message });
                 // `decision.kind === "spawn"` (an `auto` run within its safeFlags) and an approved `ask`
                 // both fall through to the shared run path below — an `auto` run leaves no ask-ledger

@@ -12,13 +12,16 @@ function makeCtx(): ToolContext {
 }
 
 /** Run one call as the loop does: the approval hook first, then `execute`. Each approval is granted and recorded. */
-async function run(argv: string[]): Promise<{ readonly asked: AskRequest[]; readonly spawned: (readonly string[])[]; readonly result: RunInflexaResult }> {
+async function run(
+    argv: string[],
+    analysisIdOf: (ref: string) => string | undefined = () => undefined,
+): Promise<{ readonly asked: AskRequest[]; readonly spawned: (readonly string[])[]; readonly result: RunInflexaResult }> {
     const spawned: (readonly string[])[] = [];
     const runSubprocess: RunSubprocess = (cmd) => {
         spawned.push(cmd);
         return Promise.resolve({ exitCode: 0, stdout: "", stderr: "", endedBy: "exit" });
     };
-    const tool = createRunInflexaTool({ runSubprocess, isDevelopment: true, execPath: "/bin/bun", scriptPath: "/app/src/index.ts" });
+    const tool = createRunInflexaTool({ runSubprocess, isDevelopment: true, execPath: "/bin/bun", scriptPath: "/app/src/index.ts", analysisIdOf });
     const ctx = makeCtx();
     const asked: AskRequest[] = [];
     const request = await tool.approval?.({ argv }, { invocationId: ctx.invocationId, session: ctx.session });
@@ -101,11 +104,41 @@ describe("run_inflexa — the customization commands", () => {
         expect(spawned).toEqual([["/bin/bun", "/app/src/index.ts", "skill", "import", "skills/lipidomics-lcms", "--analysis", "an-test"]]);
     });
 
-    test("`skill import --analysis` with the analysis of the chat runs with no prompt, and the analysis goes once", async () => {
+    test("`skill import --analysis` with the analysis of the chat runs with no prompt, as the argv gives it", async () => {
         const { asked, spawned } = await run(["skill", "import", "--analysis", "an-test", "skills/lipidomics-lcms"]);
 
         expect(asked).toEqual([]);
-        expect(spawned).toEqual([["/bin/bun", "/app/src/index.ts", "skill", "import", "skills/lipidomics-lcms", "--analysis", "an-test"]]);
+        expect(spawned).toEqual([["/bin/bun", "/app/src/index.ts", "skill", "import", "--analysis", "an-test", "skills/lipidomics-lcms"]]);
+    });
+
+    test("the name of the analysis of the chat counts as its own analysis", async () => {
+        const { asked } = await run(["usage", "steps", "--analysis", "lipids", "--run", "r1"], (ref) => (ref === "lipids" ? "an-test" : undefined));
+
+        expect(asked).toEqual([]);
+    });
+
+    test.each([[["store", "link", "lipidr", "--analysis", "other"]], [["store", "add", "lipidr", "--analysis", "other"]]])(
+        "`%s` is refused, because a chat changes only its own analysis",
+        async (argv) => {
+            const { asked, spawned, result } = await run(argv);
+
+            expect(asked).toEqual([]);
+            expect(spawned).toEqual([]);
+            expect(blockedMessage(result)).toContain("only its own analysis");
+        },
+    );
+
+    test("`store link --analysis` with the analysis of the chat runs with no prompt", async () => {
+        const { asked, spawned } = await run(["store", "link", "lipidr", "--analysis", "an-test"]);
+
+        expect(asked).toEqual([]);
+        expect(spawned.length).toBe(1);
+    });
+
+    test("`connector set --credential` asks for the exact command, because it sends a secret to a connector", async () => {
+        const { asked } = await run(["connector", "set", "pubmed", "--credential", "api_key=github-token"]);
+
+        expect(asked.map((request) => request.grantKey)).toEqual([undefined]);
     });
 
     test("`skill import --analysis` with a different analysis asks, because it reads a workspace that is not the one of the chat", async () => {
