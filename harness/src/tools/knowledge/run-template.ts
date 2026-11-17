@@ -357,7 +357,10 @@ export function createRunTemplateTool(deps: RunTemplateDeps): Tool<z.infer<typeo
             const settings = answer.slots.flatMap((slot): TemplateRender["settings"] => {
                 const entry = slot.source === "local" ? boundByName.get(slot.name) : slot;
                 if (entry === undefined || entry.read === false) return [];
-                return [{ name: entry.name, value: settingValue(entry.value), source: entry.source, lines: [...entry.lines] }];
+                // The source names each value of the request `caller`, thus a value that the plan binds is a plan setting here.
+                const bound = binding?.slots[entry.name];
+                const fromPlan = bound !== undefined && !reasons.has(entry.name) && sameValue(bound, entry.value);
+                return [{ name: entry.name, value: settingValue(entry.value), source: fromPlan ? "plan" : entry.source, lines: [...entry.lines] }];
             });
             const render: TemplateRender = {
                 template: `${answer.template.id}@${answer.template.version}`,
