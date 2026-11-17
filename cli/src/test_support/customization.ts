@@ -8,7 +8,9 @@ import { ok } from "neverthrow";
 import type { Config } from "../lib/config.ts";
 import { DEFAULT_THEME_ID } from "../lib/design_system.ts";
 import { createCredentialReader } from "../modules/customization/credentials.ts";
+import type { FoundMcpServer, RegistryOpts } from "../modules/customization/mcp_sources.ts";
 import { createMcpTokenStore, type McpTokenStore } from "../modules/customization/mcp_tokens.ts";
+import type { SecretStore } from "../modules/customization/secret_store.ts";
 import type { CustomizationOpts } from "../modules/customization/service.ts";
 
 /** The customization state of one test: temporary directories, a config in memory, and a token file. */
@@ -18,6 +20,14 @@ export type CustomizationFixture = {
     readonly userSkillsDir: string;
     readonly builtinSkillsDir: string;
     readonly tokenStore: McpTokenStore;
+    /** The stored credential values, by name. */
+    readonly secrets: Map<string, string>;
+    /** The MCP servers that the configs of other harnesses hold. */
+    found: FoundMcpServer[];
+    /** The answer of the MCP Registry to each path. Absent: 404. */
+    readonly registry: Map<string, unknown>;
+    /** The usual skill directories of other harnesses. */
+    readonly skillDirs: string[];
     /** The URLs that the service asked the browser to open. */
     readonly opened: URL[];
     config: Config;
@@ -45,12 +55,37 @@ export function customizationFixture(): CustomizationFixture {
     const userSkillsDir = join(root, "skills");
     const tokenStore = createMcpTokenStore({ platform: "linux", filePath: join(root, "mcp-tokens.json") });
     const opened: URL[] = [];
+    const secrets = new Map<string, string>();
+    const credentialStore: SecretStore = {
+        read: (account) => Promise.resolve(secrets.get(account)),
+        write: (account, value) => {
+            secrets.set(account, value);
+            return Promise.resolve();
+        },
+        remove: (account) => {
+            secrets.delete(account);
+            return Promise.resolve();
+        },
+    };
+    const registryAnswers = new Map<string, unknown>();
+    const registry: RegistryOpts = {
+        baseUrl: "https://registry.test",
+        fetch: (input) => {
+            const answer = registryAnswers.get(input.slice("https://registry.test".length));
+            return Promise.resolve(answer === undefined ? new Response("not found", { status: 404 }) : Response.json(answer));
+        },
+    };
+    const skillDirs = [join(root, "claude-skills"), join(root, "codex-skills")];
     const fixture: CustomizationFixture = {
         root,
         agentsDir,
         userSkillsDir,
         builtinSkillsDir,
         tokenStore,
+        secrets,
+        found: [],
+        registry: registryAnswers,
+        skillDirs,
         opened,
         config: { telemetry: false, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } },
         opts: {
@@ -62,8 +97,12 @@ export function customizationFixture(): CustomizationFixture {
                 fixture.config = config;
                 return ok(undefined);
             },
-            credentials: createCredentialReader(() => fixture.config.credentials),
+            credentials: createCredentialReader({ declarations: () => fixture.config.credentials, stored: credentialStore }),
+            credentialStore,
             tokenStore,
+            findMcpServers: () => fixture.found,
+            registry,
+            skillDirs,
             openBrowser: (url) => {
                 opened.push(url);
             },

@@ -30,12 +30,11 @@ import {
     plannerTerminalTools,
     type GeneratePlanDeps,
 } from "@inflexa-ai/harness/tools/research/generate-plan.js";
-import { builtinAgent } from "@inflexa-ai/harness/catalog/builtins.js";
-import { equipAttachments, type AgentEquipment, type CatalogServices } from "@inflexa-ai/harness/catalog/equip.js";
+import { requiredRoleSetup, type CatalogServices, type RoleSetup } from "@inflexa-ai/harness/catalog/equip.js";
 import { createInMemoryCatalog } from "@inflexa-ai/harness/catalog/memory.js";
 import { resolveCatalog } from "@inflexa-ai/harness/catalog/resolve.js";
 import { createDirectorySkillStore } from "@inflexa-ai/harness/catalog/skill-files.js";
-import type { BuiltinAgentId } from "@inflexa-ai/harness/catalog/types.js";
+import type { SingleAgentRole } from "@inflexa-ai/harness/catalog/types.js";
 import { makeFakeWorkspaceFs } from "@inflexa-ai/harness/agents/sandbox/__fixtures__/deps.js";
 import { createLocalRunAuthorizer } from "@inflexa-ai/harness/auth/local-run-authorizer.js";
 import { unusedCitationResolver } from "@inflexa-ai/harness/citations/__fixtures__/resolver.js";
@@ -130,10 +129,10 @@ export function evalServices(): CatalogServices {
     };
 }
 
-/** The equipment of one built-in agent with its release defaults. */
-async function builtinEquipment(id: BuiltinAgentId): Promise<AgentEquipment> {
+/** The setup of the built-in agent of one role with its release defaults. */
+async function builtinSetup(role: SingleAgentRole): Promise<RoleSetup> {
     const services = evalServices();
-    return equipAttachments(services, await resolveCatalog(services.catalog), builtinAgent(id).defaults);
+    return requiredRoleSetup(services, await resolveCatalog(services.catalog), role);
 }
 
 /** The conversation agent as the CLI composes it. */
@@ -282,7 +281,7 @@ export function reportAgent(): Promise<AgentDefinition> {
 
 /** The analogical reasoner that `generate_analogy_report` runs. */
 export async function analogyAgent(): Promise<AgentDefinition> {
-    return analogyAgentOf({ model: "eval", toolOutputStore: unusedToolOutputStore }, await builtinEquipment("analogy"));
+    return analogyAgentOf({ model: "eval", toolOutputStore: unusedToolOutputStore }, await builtinSetup("analogy"));
 }
 
 /** The read-only workspace of the planner and the synthesizer. Each read tool is scripted, thus nothing below is reached. */
@@ -299,7 +298,7 @@ function evalWorkspace() {
 export async function synthesisAgent(summaries: readonly StepSummary[]): Promise<AgentDefinition> {
     return synthesizerAgentOf({
         model: "eval",
-        equipment: await builtinEquipment("synthesizer"),
+        setup: await builtinSetup("synthesizer"),
         summaries,
         toolOutputStore: unusedToolOutputStore,
         workspace: evalWorkspace(),

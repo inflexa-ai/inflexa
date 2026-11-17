@@ -6,8 +6,8 @@
  * are available then.
  */
 
-import { builtinAgent, DEFAULT_EXECUTOR_ID } from "../../catalog/builtins.js";
-import { equipAgent, equipAttachments, type CatalogServices } from "../../catalog/equip.js";
+import { DEFAULT_EXECUTOR_ID } from "../../catalog/builtins.js";
+import { equipAgent, equipAttachments, requiredRoleSetup, type CatalogServices } from "../../catalog/equip.js";
 import { agentIdentityOf, resolveCatalog, type ResolvedAgent, type ResolvedCatalog } from "../../catalog/resolve.js";
 import type { AgentIdentity } from "../../catalog/types.js";
 import type { AgentDefinition } from "../../loop/types.js";
@@ -52,18 +52,13 @@ export async function buildStepAgent(
         return createSandboxAgent(deps, { id: identity.id, role: "executor", prompt: identity.prompt, equipment, defaultMaxSteps: current?.defaultMaxSteps });
     }
     const agent = catalogExecutorOf(resolved, agentId);
-    if (agent === undefined || agent.prompt === undefined) throw new Error(`no executor "${agentId}" and no fallback executor`);
+    if (agent === undefined) throw new Error(`no executor "${agentId}" and no fallback executor`);
     const equipment = await equipAgent(services, resolved, agent);
     return createSandboxAgent(deps, { id: agent.id, role: "executor", prompt: agent.prompt, equipment, defaultMaxSteps: agent.defaultMaxSteps });
 }
 
-/** The data profiler with its attachments from the catalog. Its output is a JSON summary, thus no step standards. */
+/** The active data profiler with its attachments from the catalog. Its output is a JSON summary, thus no step standards. */
 export async function buildProfilerAgent(services: CatalogServices, deps: SandboxAgentDeps): Promise<AgentDefinition> {
-    const resolved = await resolveCatalog(services.catalog);
-    const definition = builtinAgent("data-profiler");
-    const attachments = resolved.agents.get(definition.id)?.attachments ?? definition.defaults;
-    const equipment = await equipAttachments(services, resolved, attachments);
-    // BuiltinAgent gives a prompt body to each executor and to the profiler.
-    const prompt = definition.prompt ?? "";
-    return createSandboxAgent(deps, { id: definition.id, role: "profiler", prompt, equipment }, { appendAnalysisStepStandards: false });
+    const { agent, equipment } = await requiredRoleSetup(services, await resolveCatalog(services.catalog), "profiler");
+    return createSandboxAgent(deps, { id: agent.id, role: "profiler", prompt: agent.prompt, equipment }, { appendAnalysisStepStandards: false });
 }

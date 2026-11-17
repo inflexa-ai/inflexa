@@ -128,17 +128,13 @@ describe("cloneDefinition", () => {
         });
     });
 
-    test("a built-in agent that is not an executor cannot clone", () => {
-        const planner: ResolvedAgent = { ...analyst, id: "planner", role: "planner", prompt: undefined };
+    test("a clone of an agent of a different role keeps the role", () => {
+        const planner: ResolvedAgent = { ...analyst, id: "planner", role: "planner", prompt: "You plan." };
 
-        expect(cloneDefinition(planner, "planner", "my-planner")._unsafeUnwrapErr()).toEqual({ type: "not_an_executor", id: "planner" });
+        expect(cloneDefinition(planner, "planner", "my-planner")._unsafeUnwrap()).toMatchObject({ id: "my-planner", role: "planner", prompt: "You plan." });
     });
 
-    test("an id that is not a built-in agent cannot clone", () => {
-        expect(cloneDefinition({ ...analyst, id: "lipid-analyst", builtin: false }, "lipid-analyst", "copy")._unsafeUnwrapErr()).toEqual({
-            type: "unknown_agent",
-            id: "lipid-analyst",
-        });
+    test("an agent that the catalog does not hold cannot clone", () => {
         expect(cloneDefinition(undefined, "analyst", "copy")._unsafeUnwrapErr()).toEqual({ type: "unknown_agent", id: "analyst" });
     });
 });

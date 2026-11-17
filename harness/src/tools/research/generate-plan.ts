@@ -36,9 +36,8 @@ import type { Pool } from "pg";
 import { z } from "zod";
 
 import { formatAgentCatalog, plannerCatalogOf, type PlannerAgentMeta } from "../../agents/sandbox-catalog.js";
-import { builtinAgent } from "../../catalog/builtins.js";
-import { attachesKnowledge, equipAttachments, type AgentEquipment, type CatalogServices } from "../../catalog/equip.js";
-import { agentOfRole, resolveCatalog } from "../../catalog/resolve.js";
+import { attachesKnowledge, requiredRoleSetup, type AgentEquipment, type CatalogServices } from "../../catalog/equip.js";
+import { resolveCatalog } from "../../catalog/resolve.js";
 import { createSkillTools } from "../sandbox/skills.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { DEFAULT_SALVAGE_REQUESTS, runWithSalvage, type LoopStep, type SalvagedResult } from "../../loop/run-loop.js";
@@ -63,7 +62,7 @@ import { createKnowledgeTools, type KnowledgeClient, type KnowledgeRecommendAnsw
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../../config/resource-limits.js";
-import { plannerPrompt } from "../../prompts/planner.js";
+import { plannerSystemPrompt } from "../../prompts/planner.js";
 import { planCardOf } from "../../memory/card-builders.js";
 import { hydratePlanSteps, PlannerPlanSchema, type GeneratePlanOutput, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { claimTitlesOf, planOutline } from "../../schemas/plan-view.js";
@@ -235,22 +234,23 @@ function traceOf(steps: readonly LoopStep[]): PlannerTrace {
 
 // ── Prompt / catalog ────────────────────────────────────────────────
 
-/** The planner system prompt: the catalog of the enabled executors when the plan is made. */
-export function plannerInstructions(catalog: readonly PlannerAgentMeta[]): string {
-    return plannerPrompt(formatAgentCatalog(catalog));
+/** The planner system prompt: the body of the active planner, then the enabled executors when the plan is made. */
+export function plannerInstructions(setup: Pick<PlannerSetup, "prompt" | "catalog">): string {
+    return plannerSystemPrompt(setup.prompt, formatAgentCatalog(setup.catalog));
 }
 
-/** What the planner of one invocation reads from the agent catalog: the executors it can assign, and its own equipment. */
+/** What the planner of one invocation reads from the agent catalog: its prompt body, the executors it can assign, and its own equipment. */
 export type PlannerSetup = {
+    readonly prompt: string;
     readonly catalog: readonly PlannerAgentMeta[];
     readonly equipment: AgentEquipment;
 };
 
-/** The planner setup from the catalog now. A new executor, connector, or skill reaches the next plan. */
+/** The planner setup from the catalog now. A new executor, connector, skill, or planner reaches the next plan. */
 export async function plannerSetupOf(services: CatalogServices): Promise<PlannerSetup> {
     const resolved = await resolveCatalog(services.catalog);
-    const attachments = agentOfRole(resolved, "planner")?.attachments ?? builtinAgent("planner").defaults;
-    return { catalog: plannerCatalogOf(resolved), equipment: await equipAttachments(services, resolved, attachments) };
+    const { agent, equipment } = await requiredRoleSetup(services, resolved, "planner");
+    return { prompt: agent.prompt, catalog: plannerCatalogOf(resolved), equipment };
 }
 
 // ── Shared types ────────────────────────────────────────────────────
@@ -891,7 +891,7 @@ type InnerTools = {
 export function plannerAgentOf(deps: GeneratePlanDeps, setup: PlannerSetup, searchTools: readonly Tool[], terminal: readonly Tool[]): AgentDefinition {
     const readTools = deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : [];
     const { equipment } = setup;
-    const instructions = [plannerInstructions(setup.catalog), ...(equipment.skillIndex === undefined ? [] : [equipment.skillIndex])].join("\n\n");
+    const instructions = [plannerInstructions(setup), ...(equipment.skillIndex === undefined ? [] : [equipment.skillIndex])].join("\n\n");
     const skillTools = Object.values(createSkillTools({ store: equipment.skillStore, skills: equipment.skills }));
     return {
         id: PLANNER_AGENT_ID,

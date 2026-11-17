@@ -1,11 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-
 import type { McpOAuthClientInformation, McpOAuthClientMetadata, McpOAuthDiscoveryState, McpOAuthProvider, McpOAuthTokens } from "@inflexa-ai/harness";
 import { z } from "zod";
 
 import { env } from "../../lib/env.ts";
-import { getLogger } from "../../lib/log.ts";
+import { createSecretStore, type SecretStoreOpts } from "./secret_store.ts";
 
 /** The sign-in state of one MCP endpoint: the client registration, the tokens, and the code verifier of a flow in progress. */
 export type McpTokenEntry = {
@@ -41,107 +38,24 @@ const McpTokenEntrySchema = z.object({
     codeVerifier: z.string().optional(),
 });
 
-const TokenFileSchema = z.record(z.string(), McpTokenEntrySchema);
-
+/** The Keychain service of the MCP sign-ins. */
 const KEYCHAIN_SERVICE = "inflexa-mcp";
 
-/** The effectful edges of the store, injectable for tests: the Keychain commands and the file. */
-export type McpTokenStoreOpts = {
-    readonly platform?: NodeJS.Platform;
-    readonly filePath?: string;
-    /** Run `security` with the arguments and the standard input. Gives the exit code and the standard output. */
-    readonly security?: (args: readonly string[], stdin?: string) => Promise<{ readonly exitCode: number; readonly stdout: string }>;
-};
+/** The secret store of the MCP sign-ins, injectable for tests. */
+export type McpTokenStoreOpts = Partial<Omit<SecretStoreOpts, "service">>;
 
-async function runSecurity(args: readonly string[], stdin?: string): Promise<{ readonly exitCode: number; readonly stdout: string }> {
-    const proc = Bun.spawn({ cmd: ["security", ...args], stdin: stdin === undefined ? "ignore" : new Blob([stdin]), stdout: "pipe", stderr: "ignore" });
-    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    return { exitCode, stdout };
-}
-
-/**
- * True for an endpoint that can go into a line of `security -i`: a URL in its normal form, with no quote, no backslash,
- * and no white space. The interactive mode reads each line as a command, thus such a character could add a command.
- * The endpoint of another form keeps its sign-in in the token file.
- */
-function keychainSafe(endpoint: string): boolean {
-    if (!URL.canParse(endpoint) || new URL(endpoint).href !== endpoint) return false;
-    for (const char of endpoint) if (char === '"' || char === "\\" || char.trim() === "") return false;
-    return true;
-}
-
-function parseEntry(text: string): McpTokenEntry | undefined {
-    let parsed: z.infer<typeof McpTokenEntrySchema> | null;
-    try {
-        parsed = JSON.parseWith(text, McpTokenEntrySchema);
-    } catch {
-        return undefined;
-    }
-    return parsed ?? undefined;
-}
-
+/** The sign-in state of each MCP endpoint as JSON in a {@link SecretStore}, keyed by the URL of the endpoint. */
 export function createMcpTokenStore(opts: McpTokenStoreOpts = {}): McpTokenStore {
-    const platform = opts.platform ?? process.platform;
-    const filePath = opts.filePath ?? env.mcpTokensPath;
-    const security = opts.security ?? runSecurity;
-    const log = getLogger("mcp-tokens");
-
-    const readFile = (): Record<string, z.infer<typeof McpTokenEntrySchema>> => {
-        try {
-            return JSON.parseWith(readFileSync(filePath, "utf8"), TokenFileSchema) ?? {};
-        } catch {
-            return {};
-        }
-    };
-    const writeFile = (entries: Record<string, unknown>): void => {
-        mkdirSync(dirname(filePath), { recursive: true });
-        const tmp = `${filePath}.tmp`;
-        writeFileSync(tmp, `${JSON.stringify(entries, null, 2)}\n`, { mode: 0o600 });
-        renameSync(tmp, filePath);
-    };
-
-    const keychainRead = async (endpoint: string): Promise<McpTokenEntry | undefined> => {
-        if (!keychainSafe(endpoint)) return undefined;
-        const found = await security(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", endpoint, "-w"]);
-        return found.exitCode === 0 ? parseEntry(found.stdout.trim()) : undefined;
-    };
-    // The value goes in as hexadecimal on the standard input of `security -i`, thus no token is on a command line
-    // that another process can read.
-    const keychainWrite = async (endpoint: string, entry: McpTokenEntry): Promise<boolean> => {
-        if (!keychainSafe(endpoint)) return false;
-        const hex = Buffer.from(JSON.stringify(entry), "utf8").toString("hex");
-        const done = await security(["-i"], `add-generic-password -U -s ${KEYCHAIN_SERVICE} -a "${endpoint}" -X ${hex}\n`);
-        return done.exitCode === 0 && (await keychainRead(endpoint)) !== undefined;
-    };
-
+    const secrets = createSecretStore({ ...opts, service: KEYCHAIN_SERVICE, filePath: opts.filePath ?? env.mcpTokensPath });
     return {
         read: async (endpoint) => {
-            if (platform === "darwin") {
-                const fromKeychain = await keychainRead(endpoint);
-                if (fromKeychain !== undefined) return fromKeychain;
-            }
-            const stored = readFile()[endpoint];
-            return stored === undefined ? undefined : parseEntry(JSON.stringify(stored));
+            const text = await secrets.read(endpoint);
+            if (text === undefined) return undefined;
+            return JSON.parseWith(text, McpTokenEntrySchema) ?? undefined;
         },
-        write: async (endpoint, entry) => {
-            if (platform === "darwin" && (await keychainWrite(endpoint, entry))) {
-                const entries = readFile();
-                if (endpoint in entries) writeFile(withoutKey(entries, endpoint));
-                return;
-            }
-            if (platform === "darwin") log.warn({ endpoint }, "the Keychain refused the sign-in of an MCP server; it goes to the token file");
-            writeFile({ ...readFile(), [endpoint]: entry });
-        },
-        remove: async (endpoint) => {
-            if (platform === "darwin" && keychainSafe(endpoint)) await security(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", endpoint]);
-            const entries = readFile();
-            if (endpoint in entries) writeFile(withoutKey(entries, endpoint));
-        },
+        write: (endpoint, entry) => secrets.write(endpoint, JSON.stringify(entry)),
+        remove: (endpoint) => secrets.remove(endpoint),
     };
-}
-
-function withoutKey<T>(entries: Readonly<Record<string, T>>, key: string): Record<string, T> {
-    return Object.fromEntries(Object.entries(entries).filter(([candidate]) => candidate !== key));
 }
 
 /** What a provider of one server needs: the store, and for an interactive sign-in, the callback URL and the browser. */

@@ -4,6 +4,7 @@ description: Read before you do QC, integration, clusters, cell type labels, mal
 metadata:
   version: 1.1.0
   tags: [scrna-seq, snrna-seq, single-cell, scanpy, anndata, cytof, mass-cytometry, catalyst, flowsom]
+  category: transcriptomics
 ---
 
 # Single-Cell Analysis

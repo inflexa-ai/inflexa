@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test, type Mock } from "bun:test";
 
 import * as envModule from "../../../lib/env.ts";
-import { createCredentialReader, resolveCredentialReferences, type CredentialReader } from "../credentials.ts";
+import { createCredentialReader, resolveCredentialReferences, type CredentialReader, type CredentialReaderOpts } from "../credentials.ts";
 
 // The `env` kind reads the live environment through `readEnvCredentialVar` of env.ts. The test replaces that one
 // reader, thus no test writes to `process.env`.
@@ -15,42 +15,56 @@ afterEach(() => {
     readVar.mockRestore();
 });
 
+const NO_STORED: CredentialReaderOpts["stored"] = { read: () => Promise.resolve(undefined) };
+
+function readerOver(declarations: () => Record<string, unknown> | undefined, stored: CredentialReaderOpts["stored"] = NO_STORED): CredentialReader {
+    return createCredentialReader({ declarations, stored });
+}
+
 describe("createCredentialReader", () => {
+    test("a `stored` credential gives the value of the store, and the config holds no value", async () => {
+        const reader = readerOver(() => ({ "lims-key": { kind: "stored" } }), {
+            read: (name) => Promise.resolve(name === "lims-key" ? "typed-key" : undefined),
+        });
+
+        expect(await reader.read("lims-key")).toBe("typed-key");
+    });
+
     test("an `env` credential gives the value of its variable", async () => {
-        const reader = createCredentialReader(() => ({ github: { kind: "env", var: "GITHUB_TOKEN" } }));
+        const reader = readerOver(() => ({ github: { kind: "env", var: "GITHUB_TOKEN" } }));
 
         expect(await reader.read("github")).toBe("gh-token");
         expect(readVar).toHaveBeenCalledWith("GITHUB_TOKEN");
     });
 
     test("a `command` credential gives the output of its helper command", async () => {
-        const reader = createCredentialReader(() => ({ lims: { kind: "command", command: "printf helper-token" } }));
+        const reader = readerOver(() => ({ lims: { kind: "command", command: "printf helper-token" } }));
 
         expect(await reader.read("lims")).toBe("helper-token");
     });
 
     test("a name that the config does not declare gives undefined", async () => {
-        const reader = createCredentialReader(() => ({ github: { kind: "env", var: "GITHUB_TOKEN" } }));
+        const reader = readerOver(() => ({ github: { kind: "env", var: "GITHUB_TOKEN" } }));
 
         expect(await reader.read("ncbi")).toBeUndefined();
-        expect(await createCredentialReader(() => undefined).read("github")).toBeUndefined();
+        expect(await readerOver(() => undefined).read("github")).toBeUndefined();
     });
 
     test("a declaration that does not parse gives undefined", async () => {
-        const reader = createCredentialReader(() => ({ github: { kind: "vault", path: "x" } }));
+        const reader = readerOver(() => ({ github: { kind: "vault", path: "x" } }));
 
         expect(await reader.read("github")).toBeUndefined();
     });
 
     test("a variable that is not set gives undefined", async () => {
-        const reader = createCredentialReader(() => ({ github: { kind: "env", var: "UNSET_TOKEN" } }));
+        const reader = readerOver(() => ({ github: { kind: "env", var: "UNSET_TOKEN" } }));
 
         expect(await reader.read("github")).toBeUndefined();
     });
 
     test("a change of the declaration builds a new source, thus the next read uses the new variable", async () => {
         let declarations: Record<string, unknown> = { key: { kind: "env", var: "GITHUB_TOKEN" } };
-        const reader = createCredentialReader(() => declarations);
+        const reader = readerOver(() => declarations);
 
         expect(await reader.read("key")).toBe("gh-token");
         declarations = { key: { kind: "env", var: "NCBI_KEY" } };

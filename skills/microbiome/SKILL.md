@@ -4,6 +4,7 @@ description: Read before you analyze amplicon or shotgun microbiome data (ASVs, 
 metadata:
   version: 1.0.0
   tags: [microbiome, 16s, its, shotgun, metagenomics, compositional, ancombc, aldex2]
+  category: genomics
 ---
 
 # Microbiome Analysis

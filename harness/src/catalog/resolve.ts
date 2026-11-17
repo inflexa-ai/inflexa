@@ -8,15 +8,15 @@ import { createHash } from "node:crypto";
 
 import { CONNECTORS } from "../connectors/registry.js";
 import { BUILTIN_AGENTS, BUILTIN_AGENT_IDS, type BuiltinAgent } from "./builtins.js";
-import type { AgentAttachments, AgentCatalog, AgentEntry, AgentIdentity, AgentRole, ConnectorSettings, McpServerConfig } from "./types.js";
+import type { AgentAttachments, AgentCatalog, AgentEntry, AgentIdentity, AgentRole, ConnectorSettings, McpServerConfig, SingleAgentRole } from "./types.js";
 
 export type ResolvedAgent = {
     readonly id: string;
     readonly name: string;
     readonly role: AgentRole;
     readonly description: string;
-    /** The prompt body of an executor or of the profiler. Absent for a role that composes its own prompt. */
-    readonly prompt: string | undefined;
+    /** The prompt body. The harness adds the parts that each agent of the role shares. */
+    readonly prompt: string;
     readonly builtin: boolean;
     readonly attachments: AgentAttachments;
     readonly defaultMaxSteps?: number;
@@ -28,14 +28,14 @@ export type CatalogGapReason =
     | "unknown_skill"
     | "duplicate_id"
     | "builtin_id"
-    | "role_not_allowed"
     | "cannot_disable"
     | "scriptable_needs_no_approval"
-    | "approval_needs_a_person";
+    | "approval_needs_a_person"
+    | "role_agent_unavailable";
 
 export type CatalogGap = {
     readonly reason: CatalogGapReason;
-    /** The agent or the MCP server that the gap belongs to. */
+    /** The agent, the MCP server, or the role that the gap belongs to. */
     readonly subject: string;
     /** The reference that did not resolve. */
     readonly reference?: string;
@@ -44,6 +44,8 @@ export type CatalogGap = {
 export type ResolvedCatalog = {
     /** Each enabled agent, by id. */
     readonly agents: ReadonlyMap<string, ResolvedAgent>;
+    /** The active agent of each role that one agent fills, by id. A role whose agent is off has no entry. */
+    readonly roles: ReadonlyMap<SingleAgentRole, string>;
     readonly gaps: readonly CatalogGap[];
     /** The settings of each enabled connector of the registry. */
     readonly connectors: ReadonlyMap<string, ConnectorSettings>;
@@ -113,7 +115,13 @@ function withoutDisabledConnectors(agent: ResolvedAgent, disabled: ReadonlySet<s
 }
 
 export async function resolveCatalog(catalog: AgentCatalog): Promise<ResolvedCatalog> {
-    const [entries, servers, settings, skills] = await Promise.all([catalog.agents(), catalog.mcpServers(), catalog.connectors(), catalog.skills.list()]);
+    const [entries, servers, settings, skills, assignments] = await Promise.all([
+        catalog.agents(),
+        catalog.mcpServers(),
+        catalog.connectors(),
+        catalog.skills.list(),
+        catalog.roles(),
+    ]);
     const gaps: CatalogGap[] = [];
 
     const mcpServers = new Map<string, McpServerConfig>();
@@ -165,15 +173,11 @@ export async function resolveCatalog(catalog: AgentCatalog): Promise<ResolvedCat
             gaps.push({ reason: "duplicate_id", subject: definition.id });
             continue;
         }
-        if (definition.role !== "executor") {
-            gaps.push({ reason: "role_not_allowed", subject: definition.id, reference: definition.role });
-            continue;
-        }
         if (!enabled) continue;
         resolved.push({
             id: definition.id,
             name: definition.name,
-            role: "executor",
+            role: definition.role,
             description: definition.description,
             prompt: definition.prompt,
             builtin: false,
@@ -188,7 +192,36 @@ export async function resolveCatalog(catalog: AgentCatalog): Promise<ResolvedCat
     };
     const agents = new Map<string, ResolvedAgent>();
     for (const agent of resolved) agents.set(agent.id, withoutDisabledConnectors(checkAttachments(agent, known, gaps), disabledConnectors));
-    return { agents, gaps, connectors, mcpServers };
+    return { agents, roles: activeRoles(agents, assignments, gaps), gaps, connectors, mcpServers };
+}
+
+export const SINGLE_AGENT_ROLES: readonly SingleAgentRole[] = ["chat", "planner", "profiler", "synthesizer", "analogy", "reporter"];
+
+export const AGENT_ROLES: readonly AgentRole[] = ["chat", "planner", "executor", "profiler", "synthesizer", "analogy", "reporter"];
+
+/**
+ * The active agent of each role that one agent fills: the agent that the host chose, when it is on and has that role,
+ * else the built-in agent of the role. A choice that does not resolve is a gap, and the role keeps its built-in agent.
+ */
+function activeRoles(
+    agents: ReadonlyMap<string, ResolvedAgent>,
+    assignments: Readonly<Partial<Record<SingleAgentRole, string>>>,
+    gaps: CatalogGap[],
+): Map<SingleAgentRole, string> {
+    const roles = new Map<SingleAgentRole, string>();
+    for (const role of SINGLE_AGENT_ROLES) {
+        const chosen = assignments[role];
+        if (chosen !== undefined) {
+            if (agents.get(chosen)?.role === role) {
+                roles.set(role, chosen);
+                continue;
+            }
+            gaps.push({ reason: "role_agent_unavailable", subject: role, reference: chosen });
+        }
+        const builtin = BUILTIN_AGENTS.find((agent) => agent.role === role);
+        if (builtin !== undefined && agents.has(builtin.id)) roles.set(role, builtin.id);
+    }
+    return roles;
 }
 
 /** The enabled executors, the built-in ones first. */
@@ -196,9 +229,19 @@ export function executorsOf(resolved: ResolvedCatalog): readonly ResolvedAgent[]
     return [...resolved.agents.values()].filter((agent) => agent.role === "executor");
 }
 
-/** The one agent of a role that holds a single agent. */
-export function agentOfRole(resolved: ResolvedCatalog, role: Exclude<AgentRole, "executor">): ResolvedAgent | undefined {
-    return [...resolved.agents.values()].find((agent) => agent.role === role);
+/** The built-in agent of a role with its release defaults, as the catalog resolves it when the host changes nothing. */
+export function builtinOfRole(role: SingleAgentRole): ResolvedAgent {
+    const agent = BUILTIN_AGENTS.find((candidate) => candidate.role === role);
+    // BUILTIN_AGENTS holds one built-in agent for each role that one agent fills.
+    if (agent === undefined) throw new Error(`no built-in agent for the role ${role}`);
+    const { id, name, description, prompt, defaults, defaultMaxSteps } = agent;
+    return { id, name, role, description, prompt, builtin: true, attachments: defaults, defaultMaxSteps };
+}
+
+/** The active agent of a role that one agent fills, or `undefined` when the role is off. */
+export function agentOfRole(resolved: ResolvedCatalog, role: SingleAgentRole): ResolvedAgent | undefined {
+    const id = resolved.roles.get(role);
+    return id === undefined ? undefined : resolved.agents.get(id);
 }
 
 export function promptHash(prompt: string): string {
@@ -206,6 +249,5 @@ export function promptHash(prompt: string): string {
 }
 
 export function agentIdentityOf(agent: ResolvedAgent): AgentIdentity {
-    const prompt = agent.prompt ?? "";
-    return { id: agent.id, name: agent.name, role: agent.role, prompt, promptHash: promptHash(prompt) };
+    return { id: agent.id, name: agent.name, role: agent.role, prompt: agent.prompt, promptHash: promptHash(agent.prompt) };
 }

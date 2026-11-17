@@ -111,18 +111,24 @@ The CLI builds the `SkillStore` over two roots: the built-in skills and `~/.conf
 | `agent import <file>` | `POST /api/v1/catalog/agents/import` | auto |
 | `agent enable`, `agent disable` | `PATCH /api/v1/catalog/agents/:id` | auto |
 | `agent attach`, `agent detach` | `PATCH /api/v1/catalog/agents/:id` | auto |
+| `agent use <id>` | `PUT /api/v1/catalog/roles/:role` | auto |
 | `agent rm <id>` | `DELETE /api/v1/catalog/agents/:id` | approval |
 | `skill ls`, `skill find <dir>` | `GET /api/v1/skills` | auto |
+| `skill find` (no directory) | `GET /api/v1/skills/found` | auto |
+| `skill show <name>` | `GET /api/v1/skills/:name` | auto |
 | `skill import <dir>` | `POST /api/v1/skills/import` | auto |
 | `connector ls` | `GET /api/v1/connectors` | auto |
 | `connector set <id>` | `PATCH /api/v1/connectors/:id` | auto, `--endpoint` asks for the exact command |
 | `mcp ls` | `GET /api/v1/mcp` | auto |
 | `mcp add` | `POST /api/v1/mcp` | approval for the exact command |
+| `mcp find`, `mcp search <text>` | `GET /api/v1/mcp/found`, `GET /api/v1/mcp/registry` | auto |
+| `mcp import <source-path> <name>`, `mcp install <registry-name>` | `POST /api/v1/mcp/import`, `POST /api/v1/mcp/install` | approval for the exact command |
 | `mcp auth`, `mcp logout` | `POST /api/v1/mcp/:name/auth`, `DELETE /api/v1/mcp/:name/auth` | blocked |
 | `mcp enable`, `mcp disable` | `PATCH /api/v1/mcp/:name` | auto |
 | `mcp rm` | `DELETE /api/v1/mcp/:name` | approval |
 | `credential ls` | `GET /api/v1/credentials` | auto |
 | `credential set <name>` | `PUT /api/v1/credentials/:name` | auto, `--command` asks for the exact command |
+| `credential rm <name>` | `DELETE /api/v1/credentials/:name` | approval |
 
 The policy follows the risk of a command, because a prompt for each change makes users stop reading prompts. A change to the state of Inflexa can be undone, thus it runs with no prompt. Text that the agent reads can hold instructions, thus a command that runs a host command or sends a secret to a new place asks, and an "always" covers only that exact command. A deletion of the work of the user asks. `mcp auth` and `mcp logout` stay blocked, because the sign-in needs a person at a browser.
 

@@ -82,10 +82,12 @@ describe("checkAgentFile", () => {
         expect(file).toMatchObject({ status: "draft", gaps: [{ type: "builtin_id" }] });
     });
 
-    test("a role other than executor is a draft", () => {
-        const file = checkAgentFile("lipid-analyst", "/a/lipid-analyst.md", agentText(["name: lipid-analyst", "description: d", "role: planner"]), known);
+    test("a file of any role resolves, and a role that the harness does not have is a draft", () => {
+        const planner = checkAgentFile("my-planner", "/a/my-planner.md", agentText(["name: my-planner", "description: d", "role: planner"]), known);
+        const unknown = checkAgentFile("lipid-analyst", "/a/lipid-analyst.md", agentText(["name: lipid-analyst", "description: d", "role: wizard"]), known);
 
-        expect(file).toMatchObject({ status: "draft", gaps: [{ type: "role_not_allowed", role: "planner" }] });
+        expect(planner).toMatchObject({ status: "ok", definition: { role: "planner" } });
+        expect(unknown).toMatchObject({ status: "draft", gaps: [{ type: "unknown_role", role: "wizard" }] });
     });
 
     test("each unknown connector, MCP server, and skill is a gap that names it", () => {

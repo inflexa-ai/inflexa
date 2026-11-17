@@ -4,8 +4,9 @@
 
 import type { Tool } from "../tools/define-tool.js";
 import { skillIndex } from "../tools/sandbox/skills.js";
-import type { AgentEquipment } from "./equip.js";
-import type { AgentCatalog, AgentEntry, ConnectorSettings, McpServerConfig, SkillInfo, SkillStore } from "./types.js";
+import type { AgentEquipment, RoleSetup } from "./equip.js";
+import { builtinOfRole } from "./resolve.js";
+import type { AgentCatalog, AgentEntry, ConnectorSettings, McpServerConfig, RoleAssignments, SingleAgentRole, SkillInfo, SkillStore } from "./types.js";
 
 export type InMemorySkill = SkillInfo & {
     /** The files of the skill by relative path. `SKILL.md` is added from the name and the description when absent. */
@@ -36,6 +37,7 @@ export type InMemoryCatalogContent = {
     readonly mcpServers?: readonly McpServerConfig[];
     readonly connectors?: readonly ConnectorSettings[];
     readonly credentials?: Readonly<Record<string, string>>;
+    readonly roles?: RoleAssignments;
 };
 
 export function createInMemoryCatalog(content: InMemoryCatalogContent = {}): AgentCatalog {
@@ -44,11 +46,17 @@ export function createInMemoryCatalog(content: InMemoryCatalogContent = {}): Age
         skills: content.skills ?? createInMemorySkillStore(),
         mcpServers: () => Promise.resolve(content.mcpServers ?? []),
         connectors: () => Promise.resolve(content.connectors ?? []),
+        roles: () => Promise.resolve(content.roles ?? {}),
         credential: (name) => Promise.resolve(content.credentials?.[name]),
     };
 }
 
 /** The equipment of an agent with the given tools and skills: a test builds an agent without a catalog. */
+/** The setup of the built-in agent of `role` with the equipment of `content`. A test helper. */
+export function setupOf(role: SingleAgentRole, content: Parameters<typeof equipmentOf>[0] = {}): RoleSetup {
+    return { agent: builtinOfRole(role), equipment: equipmentOf(content) };
+}
+
 export function equipmentOf(
     content: { readonly connectorTools?: readonly Tool[]; readonly skills?: readonly InMemorySkill[]; readonly connectorIds?: readonly string[] } = {},
 ): AgentEquipment {

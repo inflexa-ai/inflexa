@@ -54,9 +54,8 @@ import type { ProvenanceSeam } from "../provenance/seam.js";
 import type { SyncSessionFile } from "../workspace/session-files.js";
 import { createAskGateway, type AskGateway } from "../tools/approval/gateway.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
-import { builtinAgent } from "../catalog/builtins.js";
-import { equipAttachments, type AgentEquipment, type CatalogServices } from "../catalog/equip.js";
-import { agentOfRole, resolveCatalog } from "../catalog/resolve.js";
+import { requiredRoleSetup, type CatalogServices, type RoleSetup } from "../catalog/equip.js";
+import { resolveCatalog } from "../catalog/resolve.js";
 import type { AgentCatalog } from "../catalog/types.js";
 import type { TurnAgent } from "../agents/turn-agent.js";
 import { createMcpConnections } from "../mcp/connections.js";
@@ -85,7 +84,7 @@ export type CoreWorkflowDeps = {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "services" | "toolOutputStore" | "runAuthorizer" | "leases">;
     readonly buildExecuteAnalysis: (
         sandboxStep: SandboxStepCallable,
-    ) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "synthesisEquipment" | "toolOutputStore" | "workingMemory" | "workspaceFs">;
+    ) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "synthesisSetup" | "toolOutputStore" | "workingMemory" | "workspaceFs">;
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore" | "leases" | "services">;
 };
 
@@ -437,13 +436,10 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         runAuthorizer: conversation.runAuthorizer,
     });
     const executeAnalysisDeps = wf.buildExecuteAnalysis(sandboxStep);
-    const synthesisEquipment = async (): Promise<AgentEquipment> => {
-        const resolved = await resolveCatalog(deps.catalog);
-        return equipAttachments(services, resolved, agentOfRole(resolved, "synthesizer")?.attachments ?? builtinAgent("synthesizer").defaults);
-    };
+    const synthesisSetup = async (): Promise<RoleSetup> => requiredRoleSetup(services, await resolveCatalog(deps.catalog), "synthesizer");
     const executeAnalysis = registerExecuteAnalysis({
         ...executeAnalysisDeps,
-        synthesisEquipment,
+        synthesisSetup,
         scriptRuntime: conversation.scriptRuntime,
         workspaceFs: conversation.workspaceFs,
         usageRecorder,

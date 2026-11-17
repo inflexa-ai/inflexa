@@ -9,6 +9,13 @@ import type {
     CredentialList,
     CredentialView,
     DeleteAgentResponse,
+    DeleteCredentialResponse,
+    ImportMcpServerRequest,
+    InstallMcpServerRequest,
+    McpCandidateList,
+    RegistryServerList,
+    RoleView,
+    SkillDetail,
     DeleteMcpServerResponse,
     McpAuthResponse,
     McpLogoutResponse,
@@ -58,6 +65,16 @@ export function fetchSkills(opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync
 }
 
 /** `GET /api/v1/skills?dir=<dir>`: the skills in a directory that the user names. `dir` is absolute. */
+/** `GET /api/v1/skills/:name`: one skill with its text and the paths of its other files. */
+export function fetchSkill(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillDetail, ClientError> {
+    return request<SkillDetail>("GET", `/api/v1/skills/${encodeURIComponent(name)}`, {}, opts);
+}
+
+/** `GET /api/v1/skills/found`: the skills in the usual skill directories of other harnesses. */
+export function fetchFoundSkills(opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillList, ClientError> {
+    return request<SkillList>("GET", "/api/v1/skills/found", {}, opts);
+}
+
 export function findSkills(dir: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillList, ClientError> {
     return request<SkillList>("GET", `/api/v1/skills?dir=${encodeURIComponent(dir)}`, {}, opts);
 }
@@ -115,4 +132,40 @@ export function signInMcpServer(name: string, opts: ClientOpts = DEFAULT_CLIENT_
 /** `DELETE /api/v1/mcp/:name/auth`: delete the stored tokens of an MCP server. */
 export function signOutMcpServer(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<McpLogoutResponse, ClientError> {
     return request<McpLogoutResponse>("DELETE", `/api/v1/mcp/${encodeURIComponent(name)}/auth`, {}, opts);
+}
+
+/** `PUT /api/v1/catalog/roles/:role`: make an agent the active agent of its role. */
+export function chooseRoleAgent(role: string, agentId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<RoleView, ClientError> {
+    return request<RoleView>("PUT", `/api/v1/catalog/roles/${encodeURIComponent(role)}`, { body: { agentId } }, opts);
+}
+
+/** `DELETE /api/v1/credentials/:name`: remove a credential and its stored value. */
+export function deleteCredential(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<DeleteCredentialResponse, ClientError> {
+    return request<DeleteCredentialResponse>("DELETE", `/api/v1/credentials/${encodeURIComponent(name)}`, {}, opts);
+}
+
+/** `GET /api/v1/mcp/found`: the MCP servers in the configs of other harnesses, with no value. */
+export function fetchMcpCandidates(opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<McpCandidateList, ClientError> {
+    return request<McpCandidateList>("GET", "/api/v1/mcp/found", {}, opts);
+}
+
+/** `POST /api/v1/mcp/import`: copy a server of a different harness, with each value as a stored credential. */
+export function importMcpServer(body: ImportMcpServerRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<McpServerView, ClientError> {
+    return request<McpServerView>("POST", "/api/v1/mcp/import", { body }, opts);
+}
+
+/** `GET /api/v1/mcp/registry`: a page of the official MCP Registry. */
+export function searchMcpRegistry(
+    search: string,
+    cursor: string | undefined,
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): ResultAsync<RegistryServerList, ClientError> {
+    const query = new URLSearchParams({ search });
+    if (cursor !== undefined) query.set("cursor", cursor);
+    return request<RegistryServerList>("GET", `/api/v1/mcp/registry?${query.toString()}`, {}, opts);
+}
+
+/** `POST /api/v1/mcp/install`: add a server of the MCP Registry, with each secret input as a stored credential. */
+export function installMcpServer(body: InstallMcpServerRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<McpServerView, ClientError> {
+    return request<McpServerView>("POST", "/api/v1/mcp/install", { body }, opts);
 }

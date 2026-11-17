@@ -21,7 +21,7 @@ The agent catalog is the input through which a host gives the harness its agents
 
 ### Requirement: Each agent has one role
 
-Each agent MUST have exactly one role: `chat`, `planner`, `executor`, `profiler`, `synthesizer`, `analogy` or `reporter`. Only the `executor` role can hold more than one agent. A custom agent MUST have the role `executor`.
+Each agent MUST have exactly one role: `chat`, `planner`, `executor`, `profiler`, `synthesizer`, `analogy` or `reporter`. A custom agent can have each role. Each enabled executor is available to the plans. Each other role has one active agent at a time.
 
 #### Scenario: The built-in agents and their roles
 
@@ -40,10 +40,36 @@ Each agent MUST have exactly one role: `chat`, `planner`, `executor`, `profiler`
 - **WHEN** its agent is built
 - **THEN** its tools hold `execute_command`, `write_file`, `read_file` and `report_blocker`
 
-#### Scenario: A custom agent with another role is refused
+#### Scenario: A custom agent of another role resolves
 
-- **WHEN** a custom entry has a role other than `executor`
-- **THEN** the resolution reports a gap for the entry, and the entry is absent from the resolved agents
+- **WHEN** a custom entry has the role `planner`
+- **THEN** the entry is in the resolved agents, and it is not an executor
+
+### Requirement: The host chooses the active agent of each role that one agent fills
+
+`AgentCatalog.roles()` MUST give the agent that the host chose for each role that one agent fills, by id. The active agent of a role MUST be the chosen agent when it is enabled and has that role. Else it MUST be the built-in agent of the role, and a choice that does not resolve MUST give the gap `role_agent_unavailable`. A role whose active agent is off MUST have no active agent.
+
+#### Scenario: A clone of the planner plans
+
+- **GIVEN** a custom agent `lab-planner` with the role `planner`, and a choice of `lab-planner` for `planner`
+- **WHEN** the planner makes a plan
+- **THEN** the planner runs with the prompt and the attachments of `lab-planner`
+
+#### Scenario: A chosen agent that is off
+
+- **GIVEN** a choice of `lab-planner` for `planner`, and `lab-planner` is off
+- **WHEN** the catalog resolves
+- **THEN** the active planner is the built-in `planner`, and the gaps name `lab-planner`
+
+### Requirement: Each built-in agent has a prompt body
+
+Each built-in agent MUST have a prompt body. The harness MUST add the parts that each agent of the role shares around the body of the active agent, for example the identity, the skill index, and the list of the executors of the planner. A custom agent of a role MUST replace only the body.
+
+#### Scenario: A custom planner keeps the list of the executors
+
+- **GIVEN** an active custom planner whose body names no executor
+- **WHEN** the planner makes a plan
+- **THEN** its system prompt holds its body, then the enabled executors
 
 ### Requirement: The role gives the role tools
 

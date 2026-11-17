@@ -20,8 +20,11 @@ Every step carries a \`packages\` array — the packages its scripts import.
   list defensively.`;
 }
 
-export function plannerPrompt(agentCatalog: string): string {
-    return `# Analysis Planner
+/**
+ * The body of the planner prompt: the part that a custom planner replaces. The list of the agents that a plan can
+ * assign comes after it, from the catalog when the plan is made.
+ */
+export const plannerPrompt = `# Analysis Planner
 
 You are a bioinformatics analysis planner. Your job is to produce a
 structured analysis plan (DAG of steps) given a data context and research
@@ -125,13 +128,10 @@ completed successfully unless the user explicitly wants a different approach.
 
 ## Agent Assignment
 
-### Available Agents
-
-${agentCatalog}
-
 ### Routing Rules
 - Assign each step to the agent whose description covers what the step works
-  on. When no description covers it, assign the first agent of the list.
+  on. The agents are listed under "Available Agents" at the end. When no
+  description covers the step, assign the first agent of that list.
 - A gene list does not settle the assignment by itself. Read what the step
   asks of the list.
 
@@ -209,4 +209,8 @@ safety, toxicity, or treatment outcomes:
 Do NOT add translational steps speculatively — only when the research
 question or data context explicitly supports them.
 `;
+
+/** The planner system prompt: the body, then the agents that a plan of this invocation can assign. */
+export function plannerSystemPrompt(body: string, agentCatalog: string): string {
+    return `${body.trimEnd()}\n\n## Available Agents\n\n${agentCatalog}\n`;
 }

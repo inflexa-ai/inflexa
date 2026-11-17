@@ -9,7 +9,7 @@
  */
 
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
-import { equipmentOf } from "../../catalog/memory.js";
+import { setupOf } from "../../catalog/memory.js";
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -113,7 +113,7 @@ function deps(workspaceRoot: string, state: FakeState = {}, knowledge?: Knowledg
         resolveWorkspaceRoot: () => Promise.resolve(workspaceRoot),
         workspaceFs: makeFakeWorkspaceFs(),
         synthesisModel: "test-synthesis-model",
-        synthesisEquipment: () => Promise.resolve(equipmentOf()),
+        synthesisSetup: () => Promise.resolve(setupOf("synthesizer")),
         runCharge: createNoopRunCharge(),
         runAuthorizer: {
             authorize() {

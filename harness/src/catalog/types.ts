@@ -7,6 +7,12 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/client";
 
 export type AgentRole = "chat" | "planner" | "executor" | "profiler" | "synthesizer" | "analogy" | "reporter";
 
+/** A role that one agent fills at a time. The executors are many, and a plan chooses one for each step. */
+export type SingleAgentRole = Exclude<AgentRole, "executor">;
+
+/** The agent that the host chose for a role, by id. A role with no choice takes its built-in agent. */
+export type RoleAssignments = Readonly<Partial<Record<SingleAgentRole, string>>>;
+
 export type BuiltinAgentId = "inflexa" | "planner" | "analyst" | "drug-analyst" | "data-profiler" | "synthesizer" | "analogy" | "reporter";
 
 /** What a user attaches to an agent. A user attaches connectors and MCP servers, never single tools. */
@@ -64,7 +70,14 @@ export type ConnectorSettings = {
 
 export type SkillInfo = {
     readonly name: string;
+    /** When to read the skill. The agent reads it, thus it opens with "Read before you". */
     readonly description: string;
+    /** The first heading of the body, for a list that a person reads. */
+    readonly title?: string;
+    /** The group of the skill in a list for a person: `metadata.category`. */
+    readonly category?: string;
+    /** `metadata.tags`. */
+    readonly tags?: readonly string[];
 };
 
 /** A reader of skill files. The harness never takes a skills directory. */
@@ -83,6 +96,7 @@ export type AgentCatalog = {
     readonly skills: SkillStore;
     readonly mcpServers: () => Promise<readonly McpServerConfig[]>;
     readonly connectors: () => Promise<readonly ConnectorSettings[]>;
+    readonly roles: () => Promise<RoleAssignments>;
     /** The value of a credential, or `undefined` when the host has none. */
     readonly credential: (name: string) => Promise<string | undefined>;
 };

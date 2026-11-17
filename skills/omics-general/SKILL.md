@@ -4,6 +4,7 @@ description: Read before your first step on omics data. It gives the rules for a
 metadata:
   version: 2.0.0
   tags: [omics, bioinformatics, general-principles, anndata, mudata, python-first]
+  category: methods
 ---
 
 # Omics General Principles

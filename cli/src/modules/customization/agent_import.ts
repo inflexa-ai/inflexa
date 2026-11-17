@@ -1,4 +1,4 @@
-import { BUILTIN_AGENTS, type CustomAgent, type ResolvedAgent } from "@inflexa-ai/harness";
+import type { CustomAgent, ResolvedAgent } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 
 import { mcpServerNamesOf, parseAgentFrontmatter, toolNamesOf, type AgentFileGap } from "./agent_files.ts";
@@ -133,21 +133,19 @@ export function convertForeignAgent(text: string, knownServers: ReadonlySet<stri
 }
 
 /** Why a clone cannot run. */
-export type CloneError = { readonly type: "not_an_executor"; readonly id: string } | { readonly type: "unknown_agent"; readonly id: string };
+export type CloneError = { readonly type: "unknown_agent"; readonly id: string };
 
 /**
- * The definition of a clone of a built-in executor: its prompt, its description, and its attachments as the user has
- * them now. The clone has no link to the built-in agent, thus a release that changes the built-in agent leaves the
- * clone as it is.
+ * The definition of a clone of an agent: its role, its prompt body, its description, and its attachments as the user
+ * has them now. The clone has no link to its source, thus a release that changes a built-in agent leaves the clone as
+ * it is.
  */
 export function cloneDefinition(source: ResolvedAgent | undefined, sourceId: string, newId: string): Result<CustomAgent, CloneError> {
-    const builtin = BUILTIN_AGENTS.find((agent) => agent.id === sourceId);
-    if (source === undefined || builtin === undefined) return err({ type: "unknown_agent", id: sourceId });
-    if (source.role !== "executor" || source.prompt === undefined) return err({ type: "not_an_executor", id: sourceId });
+    if (source === undefined) return err({ type: "unknown_agent", id: sourceId });
     return ok({
         id: newId,
         name: newId,
-        role: "executor",
+        role: source.role,
         description: source.description,
         prompt: source.prompt,
         connectors: source.attachments.connectors,

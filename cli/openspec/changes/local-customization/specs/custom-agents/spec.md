@@ -1,12 +1,12 @@
 ## Purpose
 
-Custom agents let a user add executors as Markdown files under `~/.config/inflexa/agents/`. The CLI reads each file, keeps a file that does not resolve as a draft, and converts agent files of other harnesses on import.
+Custom agents let a user add an agent of each role as Markdown files under `~/.config/inflexa/agents/`. The CLI reads each file, keeps a file that does not resolve as a draft, and converts agent files of other harnesses on import.
 
 ## ADDED Requirements
 
 ### Requirement: A custom agent is one Markdown file
 
-The CLI MUST read each custom agent from `~/.config/inflexa/agents/<id>.md`. The file MUST hold YAML frontmatter and a prompt body. The frontmatter MUST hold `name` and `description`, and `name` MUST equal `<id>`. The frontmatter can hold `role`, `connectors`, `mcpServers` and `skills`. The default `role` is `executor`.
+The CLI MUST read each custom agent from `~/.config/inflexa/agents/<id>.md`. The file MUST hold YAML frontmatter and a prompt body. The frontmatter MUST hold `name` and `description`, and `name` MUST equal `<id>`. The frontmatter can hold `role`, `connectors`, `mcpServers` and `skills`. `role` can name each role of the harness, and the default `role` is `executor`.
 
 #### Scenario: A valid file becomes a custom entry
 
@@ -28,6 +28,7 @@ The CLI MUST keep a file as a draft when one of these conditions is true:
 - It has no `name` or no `description`.
 - Its `name` does not equal its file name.
 - Its id is a built-in id or the id of another file.
+- Its `role` names no role of the harness.
 - It names an unknown connector, MCP server or skill.
 
 A draft MUST NOT reach the harness. A draft MUST NOT stop the boot.
@@ -75,9 +76,14 @@ The CLI MUST ignore a `model` field in an agent file. The role models of the CLI
 - **WHEN** an imported file names `mcp__lims__query`, `lims/query`, `mcp_lims_*` or `lims_query` with a server `lims` in `config.json`
 - **THEN** the new file lists `lims` under `mcpServers`
 
-### Requirement: Clone copies a built-in executor
+### Requirement: Clone copies an agent of each role
 
-`inflexa agent clone <id> <new-id>` MUST write `agents/<new-id>.md` with the prompt, the description and the resolved attachments of the built-in executor `<id>`. The clone MUST have no link to the built-in agent. A user MUST be able to clone only an executor.
+`inflexa agent clone <id> <new-id>` MUST write `agents/<new-id>.md` with the role, the prompt body, the description and the resolved attachments of the agent `<id>`. The clone MUST have no link to its source. A user can clone a built-in agent of each role and a custom agent.
+
+#### Scenario: A clone of the chat agent
+
+- **WHEN** the user clones `inflexa` to `terse-chat`
+- **THEN** `agents/terse-chat.md` has the role `chat` and the prompt body of `inflexa`, and the chat agent stays `inflexa` until the user chooses `terse-chat`
 
 #### Scenario: A clone keeps the attachments
 
@@ -90,3 +96,24 @@ The CLI MUST ignore a `model` field in an agent file. The role models of the CLI
 - **GIVEN** a clone of `analyst`
 - **WHEN** a release changes the prompt of `analyst`
 - **THEN** the file of the clone is unchanged
+
+### Requirement: The user chooses the agent of a role
+
+`inflexa agent use <id>` MUST make the agent `<id>` the active agent of its role, through `PUT /api/v1/catalog/roles/<role>`. The config MUST hold the choice as `roles.<role>`. A choice of the built-in agent of the role MUST clear the entry. The removal of a chosen agent MUST clear its entry. An executor needs no choice, because each enabled executor is available to the plans.
+
+#### Scenario: A clone becomes the planner
+
+- **GIVEN** a clone `lab-planner` of `planner`
+- **WHEN** the user runs `inflexa agent use lab-planner`
+- **THEN** `config.json` holds `roles.planner: "lab-planner"`, and the next plan uses the prompt of `lab-planner`
+
+### Requirement: The prompt of a custom agent is editable through its route
+
+`PATCH /api/v1/catalog/agents/<id>` with a `prompt` MUST replace the body of the file of a custom agent and keep its frontmatter. The same request for a built-in agent MUST be refused, because a built-in prompt is read-only.
+
+#### Scenario: The GUI edits a clone
+
+- **GIVEN** a clone `lab-planner`
+- **WHEN** a client sends a new prompt for `lab-planner`
+- **THEN** the file holds the new body under the same frontmatter
+

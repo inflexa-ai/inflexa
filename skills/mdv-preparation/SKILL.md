@@ -4,6 +4,7 @@ description: Read before you prepare single-cell, scATAC, spatial transcriptomic
 metadata:
   version: 1.0.0
   tags: [mdv, multi-dimensional-viewer, visualization, anndata, h5ad, cosmx, xenium, visium, merfish, codex, imc, mibi]
+  category: methods
 ---
 
 # MDV Asset Preparation

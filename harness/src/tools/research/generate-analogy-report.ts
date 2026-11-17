@@ -8,9 +8,8 @@
  * request, then an `extraction-failed` envelope, so the frontend never renders raw prose.
  */
 
-import { builtinAgent } from "../../catalog/builtins.js";
-import { equipAttachments, type AgentEquipment, type CatalogServices } from "../../catalog/equip.js";
-import { agentOfRole, resolveCatalog } from "../../catalog/resolve.js";
+import { requiredRoleSetup, type CatalogServices, type RoleSetup } from "../../catalog/equip.js";
+import { resolveCatalog } from "../../catalog/resolve.js";
 import { createSkillTools } from "../sandbox/skills.js";
 import { errorMessageOf } from "../../lib/thrown.js";
 import { textOf } from "../../lib/unknown-text.js";
@@ -25,7 +24,6 @@ import {
     type AnalogyReport,
 } from "@inflexa-ai/harness/contracts/analogy-report.js";
 
-import { analogicalReasonerPrompt } from "../../prompts/analogical-reasoner.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
@@ -230,11 +228,9 @@ export type GenerateAnalogyReportDeps = {
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
 /** The analogical reasoner: its searches run in a script, and it records its report and a blocker directly. */
-export function analogyAgentOf(
-    deps: Pick<GenerateAnalogyReportDeps, "model" | "toolOutputStore" | "scriptRuntime">,
-    equipment: AgentEquipment,
-): AgentDefinition {
-    const prompt = equipment.skillIndex === undefined ? analogicalReasonerPrompt : `${analogicalReasonerPrompt}\n\n${equipment.skillIndex}`;
+export function analogyAgentOf(deps: Pick<GenerateAnalogyReportDeps, "model" | "toolOutputStore" | "scriptRuntime">, setup: RoleSetup): AgentDefinition {
+    const { equipment } = setup;
+    const prompt = equipment.skillIndex === undefined ? setup.agent.prompt : `${setup.agent.prompt}\n\n${equipment.skillIndex}`;
     return {
         id: AGENT_ID,
         systemPrompt: composeSystemPrompt(prompt),
@@ -259,9 +255,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps,
 
     const research = registerSubAgent<GenerateAnalogyReportInput, AnalogicalReasonerOutput>(AGENT_ID, async ({ payload: input, ctx, loop }) => {
         const childSession = forSubAgent(ctx.session, AGENT_ID);
-        const resolved = await resolveCatalog(deps.services.catalog);
-        const attachments = agentOfRole(resolved, "analogy")?.attachments ?? builtinAgent("analogy").defaults;
-        const agent = analogyAgentOf(deps, await equipAttachments(deps.services, resolved, attachments));
+        const agent = analogyAgentOf(deps, await requiredRoleSetup(deps.services, await resolveCatalog(deps.services.catalog), "analogy"));
 
         let steps: readonly LoopStep[];
         try {

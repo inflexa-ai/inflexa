@@ -4,6 +4,7 @@ description: Read before you build co-expression modules, score TF activity, ana
 metadata:
   version: 1.0.0
   tags: [network, wgcna, grn, ppi, regulatory, co-expression, networkx]
+  category: integration-and-networks
 ---
 
 # Network & Regulatory Analysis

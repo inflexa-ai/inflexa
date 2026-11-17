@@ -160,3 +160,66 @@ describe("/mcp", () => {
         expect(await fixture.tokenStore.read("https://mcp.example/mcp")).toBeUndefined();
     });
 });
+
+describe("/catalog/roles, /skills/:name, stored credentials, and /mcp/found", () => {
+    test("PUT a role makes a clone the active agent of the role, and the list gives the roles", async () => {
+        expect((await send("POST", "/catalog/agents/planner/clone", { newId: "lab-planner" })).status).toBe(201);
+
+        expect(await jsonBody(send("PUT", "/catalog/roles/planner", { agentId: "lab-planner" }))).toMatchObject({
+            role: "planner",
+            activeAgentId: "lab-planner",
+        });
+        const list = z
+            .object({ roles: z.array(z.looseObject({ role: z.string(), activeAgentId: z.string().nullable() })) })
+            .parse(await jsonBody(send("GET", "/catalog/agents")));
+        expect(list.roles.find((role) => role.role === "planner")?.activeAgentId).toBe("lab-planner");
+        expect((await send("PUT", "/catalog/roles/planner", { agentId: "analyst" })).status).toBe(400);
+    });
+
+    test("PATCH with a prompt rewrites a custom agent, and a built-in prompt stays read-only", async () => {
+        await send("POST", "/catalog/agents/planner/clone", { newId: "lab-planner" });
+
+        expect(await jsonBody(send("PATCH", "/catalog/agents/lab-planner", { prompt: "You plan." }))).toMatchObject({ prompt: "You plan." });
+        expect((await send("PATCH", "/catalog/agents/planner", { prompt: "You plan." })).status).toBe(403);
+    });
+
+    test("GET a skill gives its text, and an unknown skill is 404", async () => {
+        expect(await jsonBody(send("GET", "/skills/single-cell"))).toMatchObject({ name: "single-cell", kind: "builtin" });
+        expect((await send("GET", "/skills/nope")).status).toBe(404);
+    });
+
+    test("PUT a stored credential answers with no value, and DELETE removes it", async () => {
+        const body = await jsonBody(send("PUT", "/credentials/lims-key", { kind: "stored", value: "typed-secret" }));
+
+        expect(body).toEqual({ name: "lims-key", source: { kind: "stored" }, resolves: true });
+        expect(await jsonBody(send("DELETE", "/credentials/lims-key"))).toEqual({ deleted: true });
+        expect((await send("DELETE", "/credentials/lims-key")).status).toBe(404);
+    });
+
+    test("GET /mcp/found lists the servers of other harnesses with no value", async () => {
+        fixture.found = [
+            {
+                name: "lims",
+                source: "Cursor",
+                sourcePath: "/home/u/.cursor/mcp.json",
+                entry: { type: "http", url: "https://lims.example/mcp", headers: { Authorization: "Bearer s" } },
+            },
+        ];
+
+        const body = await jsonBody(send("GET", "/mcp/found"));
+
+        expect(body).toEqual({
+            candidates: [
+                {
+                    name: "lims",
+                    source: "Cursor",
+                    sourcePath: "/home/u/.cursor/mcp.json",
+                    type: "http",
+                    url: "https://lims.example/mcp",
+                    envKeys: [],
+                    headerKeys: ["Authorization"],
+                },
+            ],
+        });
+    });
+});

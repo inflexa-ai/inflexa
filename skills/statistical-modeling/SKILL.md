@@ -4,6 +4,7 @@ description: Read before you fit survival, classification, regression, or mixed-
 metadata:
   version: 1.0.0
   tags: [survival, machine-learning, classification, regression, mixed-models, biomarker, shap]
+  category: methods
 ---
 
 # Statistical Modeling

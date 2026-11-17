@@ -1,6 +1,7 @@
 import {
     BUILTIN_AGENTS,
     CONNECTOR_IDS,
+    SINGLE_AGENT_ROLES,
     createDirectorySkillStore,
     type AgentCatalog,
     type AgentEntry,
@@ -8,6 +9,8 @@ import {
     type ConnectorSettings,
     type McpOAuthProvider,
     type McpServerConfig,
+    type RoleAssignments,
+    type SingleAgentRole,
     type SkillStore,
 } from "@inflexa-ai/harness";
 
@@ -56,6 +59,16 @@ export function isValidMcpServerName(name: string): boolean {
         if (!alnum && !(index > 0 && char === "-")) return false;
     }
     return true;
+}
+
+/** The agent that the user chose for each role that one agent fills. A key that is no such role is left out. */
+export function roleAssignmentsOf(config: Config): RoleAssignments {
+    const assignments: Partial<Record<SingleAgentRole, string>> = {};
+    for (const role of SINGLE_AGENT_ROLES) {
+        const chosen = config.roles?.[role];
+        if (chosen !== undefined) assignments[role] = chosen;
+    }
+    return assignments;
 }
 
 export function mcpRecordsOf(config: Config): readonly McpServerRecord[] {
@@ -140,12 +153,13 @@ export function createFileCatalog(opts: FileCatalogOpts): FileCatalog {
             return Promise.resolve(
                 Object.entries(settings).map(([id, value]): ConnectorSettings => ({
                     id,
-                    enabled: value.enabled ?? true,
+                    enabled: true,
                     endpoint: value.endpoint,
                     credentials: value.credentials,
                 })),
             );
         },
+        roles: () => Promise.resolve(roleAssignmentsOf(currentConfig())),
         credential: (name) => opts.credentials.read(name),
     };
 }

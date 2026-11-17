@@ -4,6 +4,7 @@ description: Read before you rank existing drugs for a new indication from a dis
 metadata:
   version: 1.0.0
   tags: [drug-repurposing, repositioning, cmap, connectivity-score, network-proximity, genetic-evidence, indication-expansion]
+  category: drugs-and-safety
 ---
 
 # Drug Repurposing

@@ -4,6 +4,7 @@ description: Read before you analyze untargeted or targeted metabolomics or lipi
 metadata:
   version: 1.0.0
   tags: [metabolomics, lipidomics, untargeted, targeted, xcms, mass-spectrometry]
+  category: proteomics-and-metabolomics
 ---
 
 # Metabolomics & Lipidomics Analysis

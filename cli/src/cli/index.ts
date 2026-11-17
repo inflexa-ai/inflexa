@@ -670,14 +670,27 @@ export function buildProgram(): Command {
     registerAction(
         agent
             .command("clone")
-            .description("Copy a built-in executor into a new agent file that you can edit")
-            .argument("<id>", "The built-in executor to copy")
+            .description("Copy an agent into a new agent file of the same role, whose prompt you can edit")
+            .argument("<id>", "The agent to copy: a built-in agent of any role, or a custom agent")
             .argument("<new-id>", "The id of the new agent: lowercase letters, digits, and hyphens"),
         "instance",
         { kind: "auto", safeFlags: [] },
         async (id: string, newId: string) => {
             const { agentClone } = await import("../client/commands/customization.ts");
             await agentClone(id, newId);
+        },
+    );
+
+    registerAction(
+        agent
+            .command("use")
+            .description("Make an agent the active agent of its role, for example a clone of the planner")
+            .argument("<id>", "The agent; the built-in agent of the role restores the default"),
+        "instance",
+        { kind: "auto", safeFlags: [] },
+        async (id: string) => {
+            const { agentUse } = await import("../client/commands/customization.ts");
+            await agentUse(id);
         },
     );
 
@@ -769,14 +782,28 @@ export function buildProgram(): Command {
     registerAction(
         skill
             .command("find")
-            .description("List the skills in a directory that you name")
-            .argument("<dir>", "The directory to read")
+            .description("List the skills in a directory, or in the skill directories of other harnesses")
+            .argument("[dir]", "The directory to read; absent, the usual skill directories of other harnesses")
             .option("--json", "Print the list as JSON"),
         "instance",
         { kind: "auto", safeFlags: ["json"] },
-        async (dir: string, options: { json?: boolean }) => {
+        async (dir: string | undefined, options: { json?: boolean }) => {
             const { skillFind } = await import("../client/commands/customization.ts");
             await skillFind(dir, options);
+        },
+    );
+
+    registerAction(
+        skill
+            .command("show")
+            .description("Show one skill: its title, its category, its files, and its text")
+            .argument("<name>", "The skill")
+            .option("--json", "Print the skill as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (name: string, options: { json?: boolean }) => {
+            const { skillShow } = await import("../client/commands/customization.ts");
+            await skillShow(name, options);
         },
     );
 
@@ -807,13 +834,11 @@ export function buildProgram(): Command {
             .command("set")
             .description("Change the settings of a connector")
             .argument("<id>", "The connector")
-            .option("--enable", "Turn the connector on")
-            .option("--disable", "Turn the connector off")
             .option("--endpoint <url>", "Point the connector at a different instance (an empty value restores the default)")
             .option("--credential <slot=name...>", "Name the credential of a slot (an empty name restores the default)"),
         "instance",
-        { kind: "auto", safeFlags: ["enable", "disable", "credential"], exactGrant: true },
-        async (id: string, options: { enable?: boolean; disable?: boolean; endpoint?: string; credential?: string[] }) => {
+        { kind: "auto", safeFlags: ["credential"], exactGrant: true },
+        async (id: string, options: { endpoint?: string; credential?: string[] }) => {
             const { connectorSet } = await import("../client/commands/customization.ts");
             await connectorSet(id, options);
         },
@@ -837,9 +862,9 @@ export function buildProgram(): Command {
     registerAction(
         credential
             .command("set")
-            .description("Declare an environment variable or a helper command as the source of a credential")
+            .description("Declare the source of a credential: an environment variable, a helper command, or a value that you type")
             .argument("<name>", "The credential name")
-            .option("--env <var>", "Read the value from this environment variable")
+            .option("--env <var>", "Read the value from this environment variable (with no option, type the value in a masked prompt)")
             .option("--command <command>", "Read the value from the output of this command")
             .option("--format <format>", "The output format of the command: raw or exec-credential")
             .option("--ttl-ms <ms>", "How long a value of the command stays valid"),
@@ -848,6 +873,16 @@ export function buildProgram(): Command {
         async (name: string, options: { env?: string; command?: string; format?: string; ttlMs?: string }) => {
             const { credentialSet } = await import("../client/commands/customization.ts");
             await credentialSet(name, options);
+        },
+    );
+
+    registerAction(
+        credential.command("rm").description("Remove a credential and its stored value").argument("<name>", "The credential"),
+        "instance",
+        { kind: "approval" },
+        async (name: string) => {
+            const { credentialRm } = await import("../client/commands/customization.ts");
+            await credentialRm(name);
         },
     );
 
@@ -886,6 +921,61 @@ export function buildProgram(): Command {
         ) => {
             const { mcpAdd } = await import("../client/commands/customization.ts");
             await mcpAdd(name, command, options);
+        },
+    );
+
+    registerAction(
+        mcp.command("find").description("List the MCP servers in the configs of other harnesses on this machine").option("--json", "Print the list as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (options: { json?: boolean }) => {
+            const { mcpFind } = await import("../client/commands/customization.ts");
+            await mcpFind(options);
+        },
+    );
+
+    registerAction(
+        mcp
+            .command("import")
+            .description("Copy an MCP server of a different harness; each of its values becomes a stored credential")
+            .argument("<source-path>", "The config file that `inflexa mcp find` names")
+            .argument("<name>", "The server name in that file")
+            .option("--as <name>", "The name in this config"),
+        "instance",
+        { kind: "approval", exactGrant: true },
+        async (sourcePath: string, name: string, options: { as?: string }) => {
+            const { mcpImport } = await import("../client/commands/customization.ts");
+            await mcpImport(sourcePath, name, options);
+        },
+    );
+
+    registerAction(
+        mcp
+            .command("search")
+            .description("Search the official MCP Registry")
+            .argument("<text>", "Text of the name or the description")
+            .option("--json", "Print the page as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (text: string, options: { json?: boolean }) => {
+            const { mcpSearch } = await import("../client/commands/customization.ts");
+            await mcpSearch(text, options);
+        },
+    );
+
+    registerAction(
+        mcp
+            .command("install")
+            .description("Add a server of the MCP Registry; each secret becomes a stored credential")
+            .argument("<registry-name>", "The name in the registry, for example io.github.owner/server")
+            .option("--as <name>", "The name in this config")
+            .option("--option <id>", "The install option that `inflexa mcp search` lists (default: the first)")
+            .option("--input <key=value...>", "A value that the server asks for; a secret is typed in a masked prompt"),
+        "instance",
+        { kind: "approval", exactGrant: true },
+        async (registryName: string, options: { as?: string; option?: string; input?: string[] }) => {
+            const { mcpInstall } = await import("../client/commands/customization.ts");
+            await mcpInstall(registryName, options);
         },
     );
 

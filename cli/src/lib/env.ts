@@ -385,6 +385,7 @@ export const env = Object.freeze({
     logDir: join(dataDir(), "inflexa", "logs"),
     /** The OAuth tokens of the MCP servers when the macOS Keychain is not available: a `0600` file, keyed by endpoint. */
     mcpTokensPath: join(dataDir(), "inflexa", "mcp-tokens.json"),
+    credentialsPath: join(dataDir(), "inflexa", "credentials.json"),
     /**
      * Public reference-data store. Deliberate setup/download actions create this path; passive
      * runtime composition only checks whether it exists before offering it to the harness.
@@ -679,6 +680,7 @@ export const envDoc: Readonly<
     dbPath: { kind: "path", label: "database", description: "anchors, analyses, projects, and their input refs (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "one file per local day, 7-day retention", baseVar: dataVar },
     mcpTokensPath: { kind: "path", label: "MCP sign-ins", description: "MCP OAuth tokens when the macOS Keychain is not available (mode 0600)", baseVar: dataVar },
+    credentialsPath: { kind: "path", label: "stored credentials", description: "the values of stored credentials when the macOS Keychain is not available (mode 0600)", baseVar: dataVar },
     refsDir: {
         kind: "path",
         label: "references",

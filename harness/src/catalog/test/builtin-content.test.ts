@@ -21,6 +21,12 @@ describe("the built-in content", () => {
         expect(skills.map((skill) => skill.name).sort()).toEqual(directories.sort());
     });
 
+    it("gives each skill a title and a category for a person", async () => {
+        const { skills } = await scanSkillRoots([SKILLS_ROOT]);
+
+        expect(skills.filter((skill) => skill.title === undefined || skill.category === undefined).map((skill) => skill.name)).toEqual([]);
+    });
+
     it("attaches only built-in skills that exist", async () => {
         const { skills } = await scanSkillRoots([SKILLS_ROOT]);
         const names = new Set(skills.map((skill) => skill.name));
