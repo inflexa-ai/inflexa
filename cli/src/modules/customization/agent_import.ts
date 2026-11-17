@@ -1,4 +1,4 @@
-import type { CustomAgent, ResolvedAgent } from "@inflexa-ai/harness";
+import type { AgentRole, CustomAgent, ResolvedAgent } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 
 import { mcpServerNamesOf, parseAgentFrontmatter, toolNamesOf, type AgentFileGap } from "./agent_files.ts";
@@ -97,7 +97,7 @@ export function agentIdOf(name: string): string {
  * reference to a server name. A tool that maps to nothing stays under `tools`. A server that the file defines inline
  * becomes a reference by its name, which stays a gap until the user defines the server in the config.
  */
-export function convertForeignAgent(text: string, knownServers: ReadonlySet<string>): Result<ImportedAgent, ImportError> {
+export function convertForeignAgent(text: string, knownServers: ReadonlySet<string>, role: AgentRole = "executor"): Result<ImportedAgent, ImportError> {
     const parsed = parseAgentFrontmatter(text);
     if (parsed.isErr()) return err({ type: "unreadable", gap: parsed.error });
     const { frontmatter, body } = parsed.value;
@@ -122,7 +122,7 @@ export function convertForeignAgent(text: string, knownServers: ReadonlySet<stri
         definition: {
             id,
             name: id,
-            role: "executor",
+            role,
             description: frontmatter.description,
             prompt: body,
             connectors: frontmatter.connectors ?? [],

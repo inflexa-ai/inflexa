@@ -33,6 +33,7 @@ import {
     fetchSkills,
     findSkills,
     importAgent,
+    fetchFoundAgents,
     importMcpServer,
     installMcpServer,
     importSkill,
@@ -164,10 +165,28 @@ export async function agentUse(id: string, opts: ClientOpts = DEFAULT_CLIENT_OPT
     console.log(`The ${role.role} agent is "${role.activeAgentId ?? id}".`);
 }
 
+/** `inflexa agent find`: the agent files in the agent directories of other harnesses. */
+export async function agentFind(flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const list = (await fetchFoundAgents(opts)).match(identity, failOn);
+    if (flags.json === true) {
+        printJson(list);
+        return;
+    }
+    const width = Math.max(0, ...list.agents.map((agent) => agent.id.length));
+    console.log();
+    if (list.agents.length === 0) console.log("  No agent files.");
+    for (const agent of list.agents) {
+        console.log(`  ${agent.id.padEnd(width)}  ${agent.source}  ${agent.path}`);
+        if (agent.conflict !== undefined) console.log(`  ${" ".repeat(width)}  ! ${agent.conflict}`);
+    }
+    for (const problem of list.problems) console.log(`  ! ${problem.path}: ${problem.message}`);
+    console.log();
+}
+
 /** `inflexa agent import <file>`: convert the agent file of another harness. A file with gaps is kept as a draft. */
-export async function agentImport(file: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const agent = (await importAgent(resolve(file), opts)).match(identity, failOn);
-    console.log(`Imported "${agent.id}" to ${agent.path ?? agent.id}.`);
+export async function agentImport(file: string, flags: { role?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const agent = (await importAgent(resolve(file), flags.role, opts)).match(identity, failOn);
+    console.log(`Imported "${agent.id}" as a ${agent.role} agent to ${agent.path ?? agent.id}.`);
     if (agent.draft) {
         console.log("The agent is a draft until you correct these gaps in the file:");
         printGaps(agent, "  ");
