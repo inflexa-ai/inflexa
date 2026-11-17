@@ -84,7 +84,9 @@ describe("the agent routes", () => {
     const app = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
 
     test("`/api/v1/agents` gives the models of the roles, and `/api/v1/catalog/agents` gives the agents of the catalog", async () => {
-        const roles = z.object({ agents: z.array(z.looseObject({ role: z.string() })) }).parse(await (await app.request("/api/v1/agents", { headers: AUTH })).json());
+        const roles = z
+            .object({ agents: z.array(z.looseObject({ role: z.string() })) })
+            .parse(await (await app.request("/api/v1/agents", { headers: AUTH })).json());
         const catalog = z
             .object({ agents: z.array(z.looseObject({ id: z.string(), kind: z.string() })) })
             .parse(await (await app.request("/api/v1/catalog/agents", { headers: AUTH })).json());

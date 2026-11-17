@@ -164,7 +164,9 @@ export async function runServe(): Promise<void> {
     const url = serverBaseUrl(env.serverPort);
     // The requested size, not the measured one: the runtime clamps the value, and it gives no reader of its pool.
     const pool = fsPoolSize() ?? "default";
-    console.log(`Inflexa server ${pkg.version} at ${url}, pid ${process.pid}, file pool ${pool}, started ${startedAt.toISOString()}. \`inflexa server stop\` stops it.`);
+    console.log(
+        `Inflexa server ${pkg.version} at ${url}, pid ${process.pid}, file pool ${pool}, started ${startedAt.toISOString()}. \`inflexa server stop\` stops it.`,
+    );
     await boot.start();
 }
 
