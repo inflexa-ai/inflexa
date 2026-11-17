@@ -670,12 +670,28 @@ export function buildProgram(): Command {
             .command("clone")
             .description("Copy an agent into a new agent file of the same role, whose prompt you can edit")
             .argument("<id>", "The agent to copy: a built-in agent of any role, or a custom agent")
-            .argument("<new-id>", "The id of the new agent: lowercase letters, digits, and hyphens"),
+            .argument("<new-id>", "The id of the new agent: lowercase letters, digits, and hyphens")
+            .option("--description <text>", "The description of the new agent; the planner reads it to give steps to an executor"),
         "instance",
-        { kind: "auto", safeFlags: [] },
-        async (id: string, newId: string) => {
+        { kind: "auto", safeFlags: ["description"] },
+        async (id: string, newId: string, options: { description?: string }) => {
             const { agentClone } = await import("../client/commands/customization.ts");
-            await agentClone(id, newId);
+            await agentClone(id, newId, options);
+        },
+    );
+
+    registerAction(
+        agent
+            .command("set")
+            .description("Change the description or the prompt of a custom agent")
+            .argument("<id>", "The custom agent; a built-in agent is read-only")
+            .option("--description <text>", "The new description; the planner reads it to give steps to an executor")
+            .option("--prompt <text>", "The new prompt body"),
+        "instance",
+        { kind: "auto", safeFlags: ["description", "prompt"] },
+        async (id: string, options: { description?: string; prompt?: string }) => {
+            const { agentSet } = await import("../client/commands/customization.ts");
+            await agentSet(id, options);
         },
     );
 

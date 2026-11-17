@@ -58,7 +58,7 @@ function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
 // grantKey.
 const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa agent attach": "auto()",
-    "inflexa agent clone": "auto()",
+    "inflexa agent clone": "auto(description)",
     "inflexa agent detach": "auto()",
     "inflexa agent disable": "auto()",
     "inflexa agent enable": "auto()",
@@ -66,6 +66,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa agent import": "auto(role)",
     "inflexa agent ls": "auto(json)",
     "inflexa agent rm": "approval",
+    "inflexa agent set": "auto(description,prompt)",
     "inflexa agent show": "auto(json)",
     "inflexa agent use": "auto()",
     "inflexa analysis set-project": "approval",
@@ -178,6 +179,7 @@ const EXPECTED_KINDS: Record<string, string> = {
     "inflexa agent import": "instance",
     "inflexa agent ls": "instance",
     "inflexa agent rm": "instance",
+    "inflexa agent set": "instance",
     "inflexa agent show": "instance",
     "inflexa agent use": "instance",
     "inflexa analysis set-project": "instance",

@@ -81,6 +81,8 @@ export type ChooseRoleAgentRequest = {
 /** The body of `POST /api/v1/catalog/agents/:id/clone`. */
 export type CloneAgentRequest = {
     newId: string;
+    /** The description of the new agent. Absent: the description of the source. */
+    description?: string;
 };
 
 /** The body of `POST /api/v1/catalog/agents/import`. The path is absolute, on the machine of the server. */
@@ -121,13 +123,18 @@ export type AttachmentChange = {
 };
 
 /**
- * The body of `PATCH /api/v1/catalog/agents/:id`. Each field is optional, and the server applies `enabled`, then `attach`,
- * then `detach`. A body with a `prompt` for a built-in agent is refused, because a built-in prompt is read-only.
+ * The body of `PATCH /api/v1/catalog/agents/:id`. Each field is optional, and the server applies `enabled`, then
+ * `description` and `prompt`, then `attach`, then `detach`. A body with a `description` or a `prompt` for a built-in agent
+ * is refused, because a built-in agent is read-only.
  */
 export type PatchAgentRequest = {
     enabled?: boolean;
     attach?: AttachmentChange;
     detach?: AttachmentChange;
+    /** The description of a custom agent. The planner reads the description of an executor to assign the steps. */
+    description?: string;
+    /** The prompt body of a custom agent. */
+    prompt?: string;
 };
 
 /** The body of a `DELETE /api/v1/catalog/agents/:id` response. */

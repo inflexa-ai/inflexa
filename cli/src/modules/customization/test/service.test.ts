@@ -542,11 +542,31 @@ describe("roles", () => {
     test("the prompt of a custom agent is rewritten in its file, and the frontmatter stays", async () => {
         await awaitOk(service.cloneAgent("planner", "lab-planner"));
 
-        const agent = await awaitOk(service.setAgentPrompt("lab-planner", "You plan the assays of the lab."));
+        const agent = await awaitOk(service.editAgent("lab-planner", { prompt: "You plan the assays of the lab." }));
 
         expect(agent.prompt).toBe("You plan the assays of the lab.");
         expect(readFileSync(join(fixture.agentsDir, "lab-planner.md"), "utf8")).toContain("role: planner");
-        expect((await service.setAgentPrompt("planner", "x"))._unsafeUnwrapErr()).toEqual({ type: "builtin_agent", id: "planner" });
+        expect((await service.editAgent("planner", { prompt: "x" }))._unsafeUnwrapErr()).toEqual({ type: "builtin_agent", id: "planner" });
+    });
+
+    test("the description of a custom agent changes in its frontmatter, and the prompt and the attachments stay", async () => {
+        await awaitOk(service.cloneAgent("analyst", "lipid-analyst"));
+        const before = await awaitOk(service.showAgent("lipid-analyst"));
+
+        const agent = await awaitOk(service.editAgent("lipid-analyst", { description: "Lipidomics: lipid identification and quantification." }));
+
+        expect(agent).toMatchObject({
+            description: "Lipidomics: lipid identification and quantification.",
+            prompt: before.prompt,
+            attachments: before.attachments,
+            draft: false,
+        });
+    });
+
+    test("a clone takes the description that the user gives", async () => {
+        const agent = await awaitOk(service.cloneAgent("analyst", "lipid-analyst", "Lipidomics."));
+
+        expect(agent).toMatchObject({ role: "executor", description: "Lipidomics." });
     });
 });
 
