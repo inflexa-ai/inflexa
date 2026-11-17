@@ -108,20 +108,15 @@ figures, and the logs so that the next step and a reviewer find each one.
 
 Draw each conclusion from those files, never from stdout. A step that ends
 without persisted scripts and outputs produced nothing. A verdict with no table
-can be a short Markdown memo.
+can be a short Markdown memo. The host writes the summary of the step beside
+your working directory after your work, thus write no summary of the step.
 
 ## Data Formats
 
-The later steps read AnnData, MuData, and CSV:
-
-- Sample-by-feature data of any modality goes in AnnData: samples in \`.obs\`,
-  features in \`.var\`, values in \`.X\`, and the metadata in \`.obs\` and
-  \`.var\`, not in a separate CSV. Multi-modal data goes in MuData.
-- Convert an R object (DESeqDataSet, phyloseq, SingleCellExperiment) back to
-  AnnData or a table. Do not save \`.rds\` or \`.pkl\`.
-- Tables are CSV with readable column names (\`log2_fold_change\`, not \`lfc\`).
-  With a modality-specific result, also write a generic CSV.
-- VCF, BED, and BAM stay as they are. Derived statistics go to AnnData or CSV.
+Give each output the format that makes logical and scientific sense to a
+bioinformatician or a biologist who opens it, and to the agent of a later step
+that reads it. A reader must understand each file without the script that made
+it.
 
 ## Findings
 

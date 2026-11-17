@@ -39,57 +39,25 @@ when the method has no mature Python implementation.
 - **WHEN** the system prompt of `analyst` or `drug-analyst` is assembled
 - **THEN** it states Python as the default and R for a method with no mature Python implementation
 
-### Requirement: AnnData/MuData as universal data containers
+### Requirement: Each output has a format that a reader understands
 
-All sandbox agents SHALL use AnnData (.h5ad) as the universal container for
-sample-by-feature data across all modalities, and MuData (.h5mu) for multi-modal
-data. Intermediate analysis objects SHALL be saved as `.h5ad`/`.h5mu`, never as
-`.rds` or `.pkl`. Genomic variant data MAY use VCF/BED/BAM as primary containers,
-with derived summary statistics in AnnData or CSV.
+`sandboxAnalysisStepStandardsPrompt` MUST state the rule of the output formats as one principle: each output has the format that makes logical and scientific sense to a bioinformatician or a biologist who opens it, and to the agent of a later step that reads it. A reader understands each file without the script that made it. The prompt MUST NOT give a list of fixed containers or column names.
 
-#### Scenario: Bulk RNA-seq data stored in AnnData
+A template step keeps the outputs of its template in the files and the formats that the template writes. The template-step section MUST state this.
 
-- **WHEN** the `analyst` processes bulk RNA-seq data
-- **THEN** it stores it as AnnData with samples in `.obs`, genes in `.var`, and values in `.X`
+#### Scenario: The prompt states the principle
 
-#### Scenario: MuData used for multi-modal single-cell data
-
-- **WHEN** the `analyst` processes CITE-seq data (RNA + protein)
-- **THEN** it stores it as MuData with a separate AnnData modality per assay and shared sample metadata at the MuData level
-
-#### Scenario: Intermediate objects saved as h5ad/h5mu, not rds or pkl
-
-- **WHEN** any sandbox agent saves intermediate objects for downstream steps
-- **THEN** it saves them as `.h5ad` or `.h5mu`, not `.rds` or `.pkl`
-
-### Requirement: Output format standards
-
-The step contract MUST direct tabular results to CSV with human-readable column
-names. A later step reads them without the source modality.
-
-#### Scenario: Tabular results saved as descriptive CSV
-
-- **WHEN** any sandbox agent produces tabular results
-- **THEN** it saves them as CSV with descriptive column names (e.g. `log2_fold_change`, `adjusted_pvalue`)
-
-### Requirement: Metadata in obs/var, not separate files
-
-All sandbox agents SHALL store sample and feature metadata within the
-AnnData/MuData object's `.obs` and `.var` DataFrames, not as separate CSV files,
-so metadata travels with the data through the pipeline.
-
-#### Scenario: Analysis results stored in the AnnData object
-
-- **WHEN** the `analyst` performs clustering
-- **THEN** cluster assignments are stored in `.obs` and UMAP coordinates in `.obsm['X_umap']`
-- **AND** they are NOT written as separate CSV files for the result itself (a summary CSV for human readability is allowed)
+- **WHEN** a plannable analysis-step agent's prompt is assembled
+- **THEN** it states the principle of the output formats, and it names no fixed container and no fixed column name
 
 ### Requirement: The agent gives its working directory its own structure
 
 `sandboxAnalysisStepStandardsPrompt` SHALL state that the deliverable of an
 analysis step is persisted files in its working directory, and that the agent
 gives that directory its own structure. The prompt SHALL NOT name a fixed set
-of artifact subdirectories, because the host pre-creates none.
+of artifact subdirectories, because the host pre-creates none. The prompt MUST
+state that the host writes the summary of the step beside the working directory,
+thus the agent writes no summary of the step.
 
 #### Scenario: No fixed subdirectories
 
