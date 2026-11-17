@@ -34,7 +34,7 @@ describe("listAgents and showAgent", () => {
         writeAgentFile(fixture, "lipid-analyst", "---\nname: lipid-analyst\ndescription: Lipids.\nconnectors: [pubmed]\n---\nThe prompt.\n");
         writeAgentFile(fixture, "broken", "---\nname: broken\ndescription: Broken.\nmcpServers: [lipidmaps]\n---\nThe prompt.\n");
 
-        const agents = await awaitOk(service.listAgents());
+        const { agents } = await awaitOk(service.listAgents());
 
         expect(agents.slice(0, BUILTIN_AGENTS.length).map((agent) => agent.id)).toEqual(BUILTIN_AGENTS.map((agent) => agent.id));
         expect(agents.find((agent) => agent.id === "analyst")).toMatchObject({
@@ -181,12 +181,11 @@ describe("clone", () => {
         expect(existsSync(join(fixture.agentsDir, "my-drugs.md"))).toBe(true);
     });
 
-    test("an id that exists, an id that is not clean, and a role that is not an executor are refused", async () => {
+    test("an id that exists and an id that is not clean are refused", async () => {
         await awaitOk(service.cloneAgent("analyst", "copy"));
         expect((await service.cloneAgent("analyst", "copy"))._unsafeUnwrapErr()).toEqual({ type: "agent_exists", id: "copy" });
         expect((await service.cloneAgent("analyst", "planner"))._unsafeUnwrapErr()).toEqual({ type: "agent_exists", id: "planner" });
         expect((await service.cloneAgent("analyst", "Bad Id"))._unsafeUnwrapErr()).toEqual({ type: "invalid_agent_id", id: "Bad Id" });
-        expect((await service.cloneAgent("planner", "my-planner"))._unsafeUnwrapErr()).toEqual({ type: "not_an_executor", id: "planner" });
         expect((await service.cloneAgent("nope", "my-nope"))._unsafeUnwrapErr()).toEqual({ type: "unknown_agent", id: "nope" });
     });
 });
@@ -288,6 +287,7 @@ describe("skills", () => {
             name: "plate-reader",
             description: "The plate-reader skill.",
             kind: "custom",
+            tags: [],
             directory: join(fixture.userSkillsDir, "plate-reader"),
         });
         expect(readFileSync(join(fixture.userSkillsDir, "plate-reader", "references", "notes.md"), "utf8")).toBe("notes");
@@ -335,9 +335,11 @@ describe("connectors and credentials", () => {
         });
     });
 
-    test("a connector turned off keeps only `enabled: false`", async () => {
-        expect((await awaitOk(service.setConnector("geo", { enabled: false }))).enabled).toBe(false);
-        expect(fixture.config.connectors).toEqual({ geo: { enabled: false } });
+    test("each connector gives its category", async () => {
+        const connectors = await awaitOk(service.listConnectors());
+
+        expect(connectors.find((connector) => connector.id === "pubmed")?.category).toBe("literature");
+        expect(connectors.find((connector) => connector.id === "chembl")?.category).toBe("chemistry-and-drugs");
     });
 });
 
@@ -468,5 +470,206 @@ describe("MCP servers", () => {
         expect((await service.mcpLogout("lims"))._unsafeUnwrapErr()).toEqual({ type: "not_oauth", name: "lims" });
         expect(await awaitOk(service.mcpLogout("remote"))).toEqual({ status: "no_endpoint" });
         expect(await fixture.tokenStore.read(REMOTE.url)).toBeUndefined();
+    });
+});
+
+describe("roles", () => {
+    test("a clone of the planner is a custom planner, and `use` makes it the active planner", async () => {
+        await awaitOk(service.cloneAgent("planner", "lab-planner"));
+        const before = await awaitOk(service.listAgents());
+        expect(before.roles.find((role) => role.role === "planner")?.activeAgentId).toBe("planner");
+        expect(before.agents.find((agent) => agent.id === "lab-planner")).toMatchObject({ role: "planner", active: false });
+
+        const role = await awaitOk(service.chooseRoleAgent("planner", "lab-planner"));
+
+        expect(role).toMatchObject({ role: "planner", activeAgentId: "lab-planner", chosenAgentId: "lab-planner" });
+        expect(fixture.config.roles).toEqual({ planner: "lab-planner" });
+        const after = await awaitOk(service.listAgents());
+        expect(after.agents.find((agent) => agent.id === "lab-planner")?.active).toBe(true);
+        expect(after.agents.find((agent) => agent.id === "planner")?.active).toBe(false);
+    });
+
+    test("the built-in agent of the role clears the choice, and the removal of the chosen agent clears it too", async () => {
+        await awaitOk(service.cloneAgent("inflexa", "terse-chat"));
+        await awaitOk(service.chooseRoleAgent("chat", "terse-chat"));
+        await awaitOk(service.chooseRoleAgent("chat", "inflexa"));
+        expect(fixture.config.roles).toBeUndefined();
+
+        await awaitOk(service.chooseRoleAgent("chat", "terse-chat"));
+        await awaitOk(service.removeAgent("terse-chat"));
+        expect(fixture.config.roles).toBeUndefined();
+    });
+
+    test("an agent of a different role, an unknown role, and an unknown agent are refused", async () => {
+        expect((await service.chooseRoleAgent("planner", "analyst"))._unsafeUnwrapErr()).toEqual({ type: "role_mismatch", id: "analyst", role: "planner" });
+        expect((await service.chooseRoleAgent("executor", "analyst"))._unsafeUnwrapErr()).toEqual({ type: "unknown_role", role: "executor" });
+        expect((await service.chooseRoleAgent("planner", "nope"))._unsafeUnwrapErr()).toEqual({ type: "unknown_agent", id: "nope" });
+    });
+
+    test("the prompt of a custom agent is rewritten in its file, and the frontmatter stays", async () => {
+        await awaitOk(service.cloneAgent("planner", "lab-planner"));
+
+        const agent = await awaitOk(service.setAgentPrompt("lab-planner", "You plan the assays of the lab."));
+
+        expect(agent.prompt).toBe("You plan the assays of the lab.");
+        expect(readFileSync(join(fixture.agentsDir, "lab-planner.md"), "utf8")).toContain("role: planner");
+        expect((await service.setAgentPrompt("planner", "x"))._unsafeUnwrapErr()).toEqual({ type: "builtin_agent", id: "planner" });
+    });
+});
+
+describe("skill details and the skills of other harnesses", () => {
+    test("a skill gives its text, its title, its category, and its other files", async () => {
+        const dir = join(fixture.userSkillsDir, "plate-reader");
+        mkdirSync(join(dir, "references"), { recursive: true });
+        writeFileSync(
+            join(dir, "SKILL.md"),
+            "---\nname: plate-reader\ndescription: Read before you read a plate.\nmetadata:\n  category: methods\n  tags: [plates]\n---\n\n# Plate Reader\n\nThe body.\n",
+        );
+        writeFileSync(join(dir, "references", "wells.md"), "wells");
+
+        const skill = await awaitOk(service.showSkill("plate-reader"));
+
+        expect(skill).toMatchObject({
+            name: "plate-reader",
+            title: "Plate Reader",
+            category: "methods",
+            tags: ["plates"],
+            kind: "custom",
+            files: ["references/wells.md"],
+        });
+        expect(skill.body).toContain("The body.");
+        expect((await service.showSkill("nope"))._unsafeUnwrapErr()).toEqual({ type: "unknown_skill", name: "nope" });
+    });
+
+    test("with no directory, find reads the usual skill directories of other harnesses", async () => {
+        writeSkill(fixture.skillDirs[0] ?? "", "plate-reader");
+        writeSkill(fixture.skillDirs[1] ?? "", "single-cell");
+
+        const list = await awaitOk(service.findSkills(undefined));
+
+        expect(list.skills.map((skill) => [skill.name, skill.conflict !== undefined])).toEqual([
+            ["plate-reader", false],
+            ["single-cell", true],
+        ]);
+    });
+});
+
+describe("stored credentials", () => {
+    test("a stored value goes to the store, the config declares only its kind, and no view gives the value", async () => {
+        const view = await awaitOk(service.setCredential("lims-key", { kind: "stored", value: "typed-secret" }));
+
+        expect(fixture.secrets.get("lims-key")).toBe("typed-secret");
+        expect(fixture.config.credentials).toEqual({ "lims-key": { kind: "stored" } });
+        expect(view).toEqual({ name: "lims-key", source: { kind: "stored" }, resolves: true });
+        expect(JSON.stringify(await awaitOk(service.listCredentials()))).not.toContain("typed-secret");
+    });
+
+    test("rm removes the declaration and the stored value", async () => {
+        await awaitOk(service.setCredential("lims-key", { kind: "stored", value: "typed-secret" }));
+
+        await awaitOk(service.removeCredential("lims-key"));
+
+        expect(fixture.secrets.has("lims-key")).toBe(false);
+        expect(fixture.config.credentials).toBeUndefined();
+        expect((await service.removeCredential("lims-key"))._unsafeUnwrapErr()).toEqual({ type: "unknown_credential", name: "lims-key" });
+    });
+});
+
+describe("MCP servers of other harnesses and of the registry", () => {
+    test("find gives the keys of the values, never the values, and import stores each value as a credential", async () => {
+        fixture.found = [
+            {
+                name: "lims",
+                source: "Claude Code",
+                sourcePath: "/home/u/.claude.json",
+                entry: { type: "stdio", command: "lims-mcp", args: ["--ro"], env: { LIMS_TOKEN: "secret-1" } },
+            },
+        ];
+
+        const candidates = await awaitOk(service.findMcp());
+        expect(candidates).toEqual([
+            {
+                name: "lims",
+                source: "Claude Code",
+                sourcePath: "/home/u/.claude.json",
+                type: "stdio",
+                command: "lims-mcp",
+                args: ["--ro"],
+                envKeys: ["LIMS_TOKEN"],
+                headerKeys: [],
+            },
+        ]);
+        expect(JSON.stringify(candidates)).not.toContain("secret-1");
+
+        await awaitOk(service.importMcp({ sourcePath: "/home/u/.claude.json", name: "lims" }));
+
+        expect(fixture.config.mcp?.lims).toMatchObject({
+            type: "stdio",
+            command: "lims-mcp",
+            args: ["--ro"],
+            env: { LIMS_TOKEN: "${cred:lims-lims-token}" },
+            approval: "never",
+        });
+        expect(fixture.config.credentials).toEqual({ "lims-lims-token": { kind: "stored" } });
+        expect(fixture.secrets.get("lims-lims-token")).toBe("secret-1");
+    });
+
+    test("install builds the entry of a registry package, stores the secret input, and keeps the other input in the entry", async () => {
+        const server = {
+            name: "io.github.lab/lims",
+            description: "The LIMS of the lab.",
+            version: "1.2.0",
+            packages: [
+                {
+                    registryType: "npm",
+                    identifier: "@lab/lims-mcp",
+                    version: "1.2.0",
+                    transport: { type: "stdio" },
+                    environmentVariables: [
+                        { name: "LIMS_TOKEN", isSecret: true, isRequired: true },
+                        { name: "LIMS_SITE", isRequired: true },
+                    ],
+                },
+            ],
+        };
+        fixture.registry.set("/v0/servers/io.github.lab%2Flims/versions/1.2.0", { server });
+        fixture.registry.set("/v0/servers?search=lims&limit=30&version=latest", { servers: [{ server }] });
+
+        const page = await awaitOk(service.searchRegistry("lims", undefined));
+        expect(page.servers[0]?.installs).toEqual([
+            {
+                id: 0,
+                kind: "npm",
+                label: "npx -y @lab/lims-mcp@1.2.0",
+                inputs: [
+                    { name: "LIMS_TOKEN", kind: "env", required: true, secret: true },
+                    { name: "LIMS_SITE", kind: "env", required: true, secret: false },
+                ],
+            },
+        ]);
+
+        await awaitOk(
+            service.installMcp({
+                registryName: "io.github.lab/lims",
+                version: "1.2.0",
+                install: 0,
+                name: "lims",
+                inputs: { LIMS_TOKEN: "t-1", LIMS_SITE: "boston" },
+            }),
+        );
+
+        expect(fixture.config.mcp?.lims).toMatchObject({
+            type: "stdio",
+            command: "npx",
+            args: ["-y", "@lab/lims-mcp@1.2.0"],
+            env: { LIMS_TOKEN: "${cred:lims-lims-token}", LIMS_SITE: "boston" },
+        });
+        expect(fixture.secrets.get("lims-lims-token")).toBe("t-1");
+        expect(
+            (await service.installMcp({ registryName: "io.github.lab/lims", version: "1.2.0", install: 0, name: "lims2", inputs: {} }))._unsafeUnwrapErr(),
+        ).toEqual({
+            type: "missing_input",
+            name: "LIMS_SITE",
+        });
     });
 });

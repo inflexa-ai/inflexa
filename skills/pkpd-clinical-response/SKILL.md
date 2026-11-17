@@ -4,6 +4,7 @@ description: Read before you classify tumor response, do NCA or population PK, m
 metadata:
   version: 1.1.0
   tags: [pharmacokinetics, pharmacodynamics, PK/PD, exposure-response, RECIST, iRECIST, dose-response, clinical-response, pd-biomarker, hysteresis, NCA, population-pk, lifelines, survival-analysis]
+  category: drugs-and-safety
 ---
 
 # PK/PD & Clinical Response

@@ -4,6 +4,7 @@ description: Read before you analyze bulk RNA-seq counts or normalized microarra
 metadata:
   version: 1.0.0
   tags: [bulk-rna-seq, microarray, differential-expression, deseq2, limma, edger]
+  category: transcriptomics
 ---
 
 # Bulk Transcriptomics

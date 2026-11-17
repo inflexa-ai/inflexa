@@ -24,9 +24,8 @@
  * across threads, and the provider cache reuses it.
  */
 
-import { builtinAgent } from "../catalog/builtins.js";
-import { equipAttachments, type CatalogServices } from "../catalog/equip.js";
-import { agentOfRole, resolveCatalog } from "../catalog/resolve.js";
+import { requiredRoleSetup, type CatalogServices } from "../catalog/equip.js";
+import { resolveCatalog } from "../catalog/resolve.js";
 import { createSkillTools } from "../tools/sandbox/skills.js";
 import type { TurnAgent } from "./turn-agent.js";
 import type { Pool } from "pg";
@@ -63,7 +62,6 @@ import {
 } from "../tools/report-session/index.js";
 import { createFileStatTool, createGrepTool, createListFilesTool, createReadFileTool, createWorkspaceSearchTool } from "../tools/workspace/index.js";
 import { createInspectDataProfileTool, createInspectRunTool } from "../tools/research/index.js";
-import { reportSessionPrompt } from "../prompts/report-session.js";
 import { composeSystemPrompt } from "./system-prompt.js";
 import { createReportScriptTools } from "../tools/report-session/script-tools.js";
 import type { ScriptRuntime } from "../tools/script/run-script.js";
@@ -259,10 +257,8 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): TurnAgen
     ];
 
     const forTurn = async (): Promise<AgentDefinition> => {
-        const resolved = await resolveCatalog(deps.services.catalog);
-        const attachments = agentOfRole(resolved, "reporter")?.attachments ?? builtinAgent("reporter").defaults;
-        const equipment = await equipAttachments(deps.services, resolved, attachments);
-        const prompt = equipment.skillIndex === undefined ? reportSessionPrompt : `${reportSessionPrompt}\n\n${equipment.skillIndex}`;
+        const { agent: reporter, equipment } = await requiredRoleSetup(deps.services, await resolveCatalog(deps.services.catalog), "reporter");
+        const prompt = equipment.skillIndex === undefined ? reporter.prompt : `${reporter.prompt}\n\n${equipment.skillIndex}`;
         return {
             id: REPORT_SESSION_AGENT_ID,
             systemPrompt: composeSystemPrompt(prompt, { identity: true, conversational: true }),

@@ -52,11 +52,13 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-/** The token file as the store writes it: the entries keyed by endpoint. */
-const TokenFileSchema = z.record(z.string(), z.looseObject({ tokens: z.looseObject({ access_token: z.string(), token_type: z.string() }).optional() }));
+/** The token file as the store writes it: the JSON of each entry, keyed by endpoint. */
+const TokenFileSchema = z.record(z.string(), z.string());
+const EntrySchema = z.looseObject({ tokens: z.looseObject({ access_token: z.string(), token_type: z.string() }).optional() });
 
 function fileEntries(): Record<string, unknown> {
-    return existsSync(filePath) ? (JSON.parseWith(readFileSync(filePath, "utf8"), TokenFileSchema) ?? {}) : {};
+    const file = existsSync(filePath) ? (JSON.parseWith(readFileSync(filePath, "utf8"), TokenFileSchema) ?? {}) : {};
+    return Object.fromEntries(Object.entries(file).map(([endpoint, text]) => [endpoint, JSON.parseWith(text, EntrySchema)]));
 }
 
 describe("createMcpTokenStore on macOS", () => {

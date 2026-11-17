@@ -18,7 +18,22 @@ const TEXT_EXTENSIONS = [".md", ".markdown", ".txt", ".py", ".r", ".R", ".json",
 const SkillFrontmatterSchema = z.looseObject({
     name: z.string().min(1),
     description: z.string().min(1),
+    metadata: z
+        .looseObject({ category: z.string().min(1).optional().catch(undefined), tags: z.array(z.string()).optional().catch(undefined) })
+        .optional()
+        .catch(undefined),
 });
+
+/** The text of the first `# ` heading of a Markdown body, or `undefined` when the body has none. */
+function firstHeading(body: string): string | undefined {
+    for (const line of body.split("\n")) {
+        if (line.startsWith("# ")) {
+            const title = line.slice(2).trim();
+            return title.length > 0 ? title : undefined;
+        }
+    }
+    return undefined;
+}
 
 export type SkillFrontmatterProblem = "no_frontmatter" | "invalid_yaml" | "missing_name_or_description";
 
@@ -38,7 +53,15 @@ export function parseSkillFrontmatter(
     }
     const parsed = SkillFrontmatterSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, problem: "missing_name_or_description" };
-    return { ok: true, skill: { name: parsed.data.name, description: parsed.data.description.trim() } };
+    const { name, description, metadata } = parsed.data;
+    const skill: SkillInfo = {
+        name,
+        description: description.trim(),
+        title: firstHeading(normalized.slice(end + 4)),
+        category: metadata?.category,
+        tags: metadata?.tags,
+    };
+    return { ok: true, skill };
 }
 
 export type SkillRootProblem =
@@ -78,7 +101,7 @@ export async function scanSkillRoots(
                 problems.push({ kind: "frontmatter", directory, problem: parsed.problem });
                 continue;
             }
-            const { name, description } = parsed.skill;
+            const { name } = parsed.skill;
             if (name !== entry.name) {
                 problems.push({ kind: "name_mismatch", directory, name });
                 continue;
@@ -88,7 +111,7 @@ export async function scanSkillRoots(
                 problems.push({ kind: "name_taken", directory, name, by: taken.directory });
                 continue;
             }
-            skills.set(name, { name, description, directory });
+            skills.set(name, { ...parsed.skill, directory });
         }
     }
     return { skills: [...skills.values()], problems };

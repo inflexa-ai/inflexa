@@ -1,7 +1,10 @@
 import { cpSync, existsSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
 
 import {
+    AGENT_ROLES,
     BUILTIN_AGENTS,
     canAnswerApproval,
     CONNECTOR_IDS,
@@ -11,11 +14,14 @@ import {
     scanSkillRoots,
     revokeMcpSignIn,
     signInToMcpServer,
+    SINGLE_AGENT_ROLES,
+    type AgentRole,
     type BuiltinAgent,
     type CatalogGap,
     type McpAuthorizationCallback,
     type ResolvedAgent,
     type ResolvedCatalog,
+    type ScannedSkill,
     type SkillRootProblem,
 } from "@inflexa-ai/harness";
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
@@ -24,14 +30,21 @@ import { z } from "zod";
 import type {
     AgentDetail,
     AgentGapView,
-    AgentView,
+    AgentList,
     AttachmentKind,
     AttachmentsView,
     ConnectorView,
     CredentialView,
+    ImportMcpServerRequest,
+    InstallMcpServerRequest,
+    McpCandidateView,
     McpRevocationView,
     McpServerView,
     PatchConnectorRequest,
+    PutCredentialRequest,
+    RegistryServerList,
+    RoleView,
+    SkillDetail,
     SkillList,
     SkillProblemView,
     SkillView,
@@ -57,7 +70,18 @@ import { resolveHarnessConfig } from "../harness/config.ts";
 import { agentIdOf, cloneDefinition, convertForeignAgent } from "./agent_import.ts";
 import { renderAgentFile, splitFrontmatter, type AgentFile, type AgentFileGap } from "./agent_files.ts";
 import { createFileCatalog, isValidMcpServerName, mcpRecordsOf, type FileCatalog } from "./catalog.ts";
-import { createCredentialReader, type CredentialReader } from "./credentials.ts";
+import { createCredentialReader, createCredentialStore, type CredentialReader } from "./credentials.ts";
+import {
+    candidateView,
+    DEFAULT_REGISTRY_OPTS,
+    findMcpServers,
+    planInstall,
+    readRegistryServer,
+    searchRegistry,
+    type FoundMcpServer,
+    type RegistryOpts,
+} from "./mcp_sources.ts";
+import type { SecretStore } from "./secret_store.ts";
 import { createMcpOAuthProvider, createMcpTokenStore, type McpTokenStore } from "./mcp_tokens.ts";
 
 /** Why a customization operation failed. */
@@ -65,7 +89,13 @@ export type CustomizationError =
     | { readonly type: "unknown_agent"; readonly id: string }
     | { readonly type: "agent_exists"; readonly id: string }
     | { readonly type: "invalid_agent_id"; readonly id: string }
-    | { readonly type: "not_an_executor"; readonly id: string }
+    | { readonly type: "unknown_role"; readonly role: string }
+    | { readonly type: "role_mismatch"; readonly id: string; readonly role: string }
+    | { readonly type: "unknown_skill"; readonly name: string }
+    | { readonly type: "unknown_candidate"; readonly name: string; readonly sourcePath: string }
+    | { readonly type: "registry_unavailable"; readonly detail: string }
+    | { readonly type: "unknown_install"; readonly id: number }
+    | { readonly type: "missing_input"; readonly name: string }
     | { readonly type: "cannot_disable"; readonly id: string }
     | { readonly type: "builtin_agent"; readonly id: string }
     | { readonly type: "draft_unreadable"; readonly id: string; readonly path: string }
@@ -78,6 +108,7 @@ export type CustomizationError =
     | { readonly type: "unknown_connector"; readonly id: string }
     | { readonly type: "unknown_slot"; readonly id: string; readonly slot: string }
     | { readonly type: "invalid_credential_name"; readonly name: string }
+    | { readonly type: "unknown_credential"; readonly name: string }
     | { readonly type: "invalid_mcp_name"; readonly name: string }
     | { readonly type: "invalid_mcp_entry"; readonly detail: string }
     | { readonly type: "unknown_mcp_server"; readonly name: string }
@@ -97,8 +128,20 @@ export function customizationErrorMessage(e: CustomizationError): string {
             return `An agent "${e.id}" exists already. Select a different id.`;
         case "invalid_agent_id":
             return `The id "${e.id}" is not permitted. An agent id is lowercase letters, digits, and hyphens.`;
-        case "not_an_executor":
-            return `The agent "${e.id}" is not an executor. Only an executor can be cloned.`;
+        case "unknown_role":
+            return `No role "${e.role}". The roles: ${SINGLE_AGENT_ROLES.join(", ")}.`;
+        case "role_mismatch":
+            return `The agent "${e.id}" is not an agent of the role "${e.role}". Clone an agent of that role, then choose the clone.`;
+        case "unknown_skill":
+            return `No skill "${e.name}". \`inflexa skill ls\` lists the skills.`;
+        case "unknown_candidate":
+            return `No MCP server "${e.name}" in ${e.sourcePath}. \`inflexa mcp find\` lists the servers of other harnesses.`;
+        case "registry_unavailable":
+            return `The MCP Registry did not answer: ${e.detail}`;
+        case "unknown_install":
+            return `The registry entry has no install option ${e.id}.`;
+        case "missing_input":
+            return `The server needs a value for "${e.name}".`;
         case "cannot_disable":
             return `The built-in agent "${e.id}" must stay on.`;
         case "builtin_agent":
@@ -123,6 +166,8 @@ export function customizationErrorMessage(e: CustomizationError): string {
             return `No connector "${e.id}". \`inflexa connector ls\` lists the connectors.`;
         case "unknown_slot":
             return `The connector "${e.id}" has no credential slot "${e.slot}".`;
+        case "unknown_credential":
+            return `No credential "${e.name}". \`inflexa credential ls\` lists the credentials.`;
         case "invalid_credential_name":
             return `The credential name "${e.name}" is not permitted. Use lowercase letters, digits, hyphens, and underscores, up to 64 characters.`;
         case "invalid_mcp_name":
@@ -174,7 +219,14 @@ export type CustomizationOpts = {
     readonly readConfig: () => Config;
     readonly writeConfig: (config: Config) => Result<void, ConfigError>;
     readonly credentials: CredentialReader;
+    /** The values that the user typed for `stored` credentials. */
+    readonly credentialStore: SecretStore;
     readonly tokenStore: McpTokenStore;
+    /** The MCP servers in the configs of other harnesses on this machine. */
+    readonly findMcpServers: () => readonly FoundMcpServer[];
+    readonly registry: RegistryOpts;
+    /** The usual skill directories of other harnesses, for `skill find` with no directory. */
+    readonly skillDirs: readonly string[];
     /** Open the authorization page of a sign-in. */
     readonly openBrowser: (url: URL) => void;
     readonly signIn: typeof signInToMcpServer;
@@ -196,7 +248,11 @@ export function defaultCustomizationOpts(): CustomizationOpts {
         readConfig,
         writeConfig,
         credentials: createCredentialReader(),
+        credentialStore: createCredentialStore(),
         tokenStore: createMcpTokenStore(),
+        findMcpServers: () => findMcpServers(),
+        registry: DEFAULT_REGISTRY_OPTS,
+        skillDirs: knownSkillDirs(),
         openBrowser: (url) => {
             openExternal(url.toString()).match(
                 () => undefined,
@@ -211,23 +267,34 @@ export function defaultCustomizationOpts(): CustomizationOpts {
 
 /** The customization operations of the server. Each one reads the files and the config again, thus an edit applies at once. */
 export type CustomizationService = {
-    readonly listAgents: () => ResultAsync<AgentView[], CustomizationError>;
+    readonly listAgents: () => ResultAsync<AgentList, CustomizationError>;
+    /** Make an agent the active agent of its role. The built-in agent of the role clears the choice. */
+    readonly chooseRoleAgent: (role: string, agentId: string) => ResultAsync<RoleView, CustomizationError>;
     readonly showAgent: (id: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly cloneAgent: (sourceId: string, newId: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly importAgent: (path: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly setAgentEnabled: (id: string, enabled: boolean) => ResultAsync<AgentDetail, CustomizationError>;
+    /** Replace the prompt body of a custom agent in its file. A built-in prompt is read-only. */
+    readonly setAgentPrompt: (id: string, prompt: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly attach: (id: string, kind: AttachmentKind, name: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly detach: (id: string, kind: AttachmentKind, name: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly removeAgent: (id: string) => ResultAsync<void, CustomizationError>;
     readonly listSkills: () => ResultAsync<SkillList, CustomizationError>;
-    readonly findSkills: (dir: string) => ResultAsync<SkillList, CustomizationError>;
+    readonly showSkill: (name: string) => ResultAsync<SkillDetail, CustomizationError>;
+    /** The skills of a directory, or of the usual skill directories of other harnesses when `dir` is absent. */
+    readonly findSkills: (dir: string | undefined) => ResultAsync<SkillList, CustomizationError>;
     readonly importSkill: (dir: string) => ResultAsync<SkillView, CustomizationError>;
     readonly listConnectors: () => ResultAsync<ConnectorView[], CustomizationError>;
     readonly setConnector: (id: string, patch: PatchConnectorRequest) => ResultAsync<ConnectorView, CustomizationError>;
     readonly listCredentials: () => ResultAsync<CredentialView[], CustomizationError>;
-    readonly setCredential: (name: string, source: CredentialSourceConfig) => ResultAsync<CredentialView, CustomizationError>;
+    readonly setCredential: (name: string, source: PutCredentialRequest) => ResultAsync<CredentialView, CustomizationError>;
+    readonly removeCredential: (name: string) => ResultAsync<void, CustomizationError>;
     readonly listMcp: () => ResultAsync<McpServerView[], CustomizationError>;
     readonly addMcp: (name: string, entry: unknown) => ResultAsync<McpServerView, CustomizationError>;
+    readonly findMcp: () => ResultAsync<McpCandidateView[], CustomizationError>;
+    readonly importMcp: (request: ImportMcpServerRequest) => ResultAsync<McpServerView, CustomizationError>;
+    readonly searchRegistry: (search: string, cursor: string | undefined) => ResultAsync<RegistryServerList, CustomizationError>;
+    readonly installMcp: (request: InstallMcpServerRequest) => ResultAsync<McpServerView, CustomizationError>;
     readonly setMcpEnabled: (name: string, enabled: boolean) => ResultAsync<McpServerView, CustomizationError>;
     readonly removeMcp: (name: string) => ResultAsync<void, CustomizationError>;
     readonly mcpAuth: (name: string) => ResultAsync<void, CustomizationError>;
@@ -280,8 +347,8 @@ function fileGapView(gap: AgentFileGap): AgentGapView {
             return { reason: gap.type, message: "The id is the id of a built-in agent." };
         case "duplicate_id":
             return { reason: gap.type, message: "A different file gives the same id." };
-        case "role_not_allowed":
-            return { reason: gap.type, reference: gap.role, message: `The role "${gap.role}" is not permitted. A custom agent is an executor.` };
+        case "unknown_role":
+            return { reason: gap.type, reference: gap.role, message: `No role "${gap.role}". A role is one of: ${AGENT_ROLES.join(", ")}.` };
         case "unknown_connector":
             return { reason: gap.type, reference: gap.name, message: `No connector "${gap.name}".` };
         case "unknown_mcp_server":
@@ -316,8 +383,6 @@ function catalogGapView(gap: CatalogGap): AgentGapView {
             return { reason: gap.reason, message: "A different agent has the same id." };
         case "builtin_id":
             return { reason: gap.reason, message: "The id is the id of a built-in agent." };
-        case "role_not_allowed":
-            return { reason: gap.reason, reference, message: `The role "${reference}" is not permitted. A custom agent is an executor.` };
         case "cannot_disable":
             return { reason: gap.reason, message: "The config turns off an agent that must stay on. The agent stays on." };
         case "scriptable_needs_no_approval":
@@ -327,6 +392,12 @@ function catalogGapView(gap: CatalogGap): AgentGapView {
                 reason: gap.reason,
                 reference: gap.reference,
                 message: `The MCP server "${gap.reference ?? ""}" asks approval for each call, and no person answers this agent. The agent runs without it.`,
+            };
+        case "role_agent_unavailable":
+            return {
+                reason: gap.reason,
+                reference,
+                message: `The chosen agent "${reference}" is off, absent, or of a different role. The role uses its built-in agent.`,
             };
         default: {
             const _exhaustive: never = gap.reason;
@@ -419,6 +490,54 @@ function skillProblemMessage(problem: SkillRootProblem, builtinRoot: string | nu
     }
 }
 
+function skillView(skill: ScannedSkill, kind: SkillView["kind"]): SkillView {
+    const view: SkillView = { name: skill.name, description: skill.description, kind, directory: skill.directory, tags: [...(skill.tags ?? [])] };
+    if (skill.title !== undefined) view.title = skill.title;
+    if (skill.category !== undefined) view.category = skill.category;
+    return view;
+}
+
+function foundProblem(problem: SkillRootProblem): SkillProblemView {
+    return { directory: problem.directory, kind: "found", message: skillProblemMessage(problem, null) };
+}
+
+/** The found skills, each with the conflict that an import of it meets. */
+function foundList(installed: SkillList, found: readonly ScannedSkill[], problems: SkillProblemView[]): SkillList {
+    const taken = new Map(installed.skills.map((skill) => [skill.name, skill]));
+    return {
+        skills: found.map((skill): SkillView => {
+            const view = skillView(skill, "found");
+            const existing = taken.get(skill.name);
+            if (existing === undefined) return view;
+            return { ...view, conflict: `A ${existing.kind === "builtin" ? "built-in" : "custom"} skill "${skill.name}" exists already.` };
+        }),
+        problems,
+    };
+}
+
+/** The paths of the files of a skill other than its `SKILL.md`, relative to the skill directory, sorted. */
+async function listSkillFiles(directory: string): Promise<string[]> {
+    const entries = await readdir(directory, { recursive: true, withFileTypes: true });
+    return entries
+        .filter((entry) => entry.isFile())
+        .map((entry) => relative(directory, join(entry.parentPath, entry.name)))
+        .filter((path) => path !== "SKILL.md")
+        .sort();
+}
+
+/** The usual skill directories of other harnesses: Claude Code, Codex, and the shared `.agents` folder. */
+export function knownSkillDirs(home: string = homedir()): readonly string[] {
+    return [join(home, ".claude", "skills"), join(home, ".codex", "skills"), join(home, ".agents", "skills"), join(home, ".config", "opencode", "skills")];
+}
+
+/** The credential that holds one value of a server: `<server>-<key>`, in the letters that a credential name permits. */
+function credentialNameOf(server: string, key: string): string {
+    let slug = "";
+    for (const char of key.toLowerCase()) slug += (char >= "a" && char <= "z") || (char >= "0" && char <= "9") ? char : "-";
+    const parts = `${server}-${slug}`.split("-").filter((part) => part.length > 0);
+    return parts.join("-").slice(0, CREDENTIAL_NAME_MAX);
+}
+
 function isInside(path: string, root: string): boolean {
     return path.startsWith(root.endsWith(sep) ? root : root + sep);
 }
@@ -472,6 +591,26 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
 
     const gapsOf = (resolved: ResolvedCatalog, id: string): AgentGapView[] => resolved.gaps.filter((gap) => gap.subject === id).map(catalogGapView);
 
+    /** An agent is active when it fills its role now: each enabled executor, or the active agent of a role that one agent fills. */
+    const isActive = (state: AgentState, id: string, role: AgentRole): boolean => {
+        if (role === "executor") return state.resolved.agents.has(id);
+        return state.resolved.roles.get(role) === id;
+    };
+
+    const roleViews = (state: AgentState): RoleView[] =>
+        SINGLE_AGENT_ROLES.map((role): RoleView => {
+            const builtin = BUILTIN_AGENTS.find((agent) => agent.role === role);
+            const view: RoleView = {
+                role,
+                activeAgentId: state.resolved.roles.get(role) ?? null,
+                builtinAgentId: builtin?.id ?? role,
+                gaps: state.resolved.gaps.filter((gap) => gap.subject === role).map(catalogGapView),
+            };
+            const chosen = state.config.roles?.[role];
+            if (chosen !== undefined) view.chosenAgentId = chosen;
+            return view;
+        });
+
     const builtinDetail = (agent: BuiltinAgent, state: AgentState): AgentDetail => {
         const change = state.config.agents?.[agent.id];
         const resolved = state.resolved.agents.get(agent.id);
@@ -484,11 +623,12 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             description: agent.description,
             enabled: resolved !== undefined,
             canDisable: agent.canDisable,
+            active: isActive(state, agent.id, agent.role),
             attachments: resolved === undefined ? mergedAttachments(agent, change) : attachmentsView(resolved.attachments),
             defaults: attachmentsView(agent.defaults),
             change: { add: attachmentsView(change?.add), remove: attachmentsView(change?.remove) },
             gaps: gapsOf(state.resolved, agent.id),
-            prompt: agent.prompt ?? null,
+            prompt: agent.prompt,
         };
     };
 
@@ -503,6 +643,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             description: definition?.description ?? "",
             enabled,
             canDisable: true,
+            active: file.status === "ok" && isActive(state, file.id, definition?.role ?? "executor"),
             path: file.path,
             prompt: definition?.prompt ?? null,
         };
@@ -593,7 +734,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                         const builtin = BUILTIN_AGENTS.find((agent) => agent.id === id);
                         if (attach && kind === "mcp") {
                             const entry = mcpEntryOf(state.config, name);
-                            const role = builtin?.role ?? "executor";
+                            const role = builtin?.role ?? state.files.find((candidate) => candidate.id === id)?.definition?.role ?? "executor";
                             if (entry.isOk() && entry.value.approval === "always" && !canAnswerApproval(role))
                                 return err({ type: "approval_needs_a_person", id, name });
                         }
@@ -623,12 +764,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         })).map(({ skills, problems }) => ({
             builtinRoot,
             list: {
-                skills: skills.map((skill): SkillView => ({
-                    name: skill.name,
-                    description: skill.description,
-                    kind: kindOf(skill.directory),
-                    directory: skill.directory,
-                })),
+                skills: skills.map((skill): SkillView => skillView(skill, kindOf(skill.directory))),
                 problems: problems.map((problem): SkillProblemView => ({
                     directory: problem.directory,
                     kind: kindOf(problem.directory),
@@ -654,8 +790,8 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         );
         return {
             id: definition.id,
+            category: definition.category,
             description: definition.description,
-            enabled: settings?.enabled ?? true,
             endpoint: settings?.endpoint,
             defaultEndpoint: definition.defaultEndpoint,
             slots,
@@ -666,6 +802,17 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         const parsed = credentialSourceSchema.safeParse(raw);
         if (!parsed.success) return { name, problem: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ") };
         return { name, source: parsed.data, resolves: (await opts.credentials.read(name)) !== undefined };
+    };
+
+    /** Store the value of a `stored` credential, then declare it in the config. A value never goes into the config. */
+    const writeCredential = async (name: string, request: PutCredentialRequest): Promise<Result<CredentialSourceConfig, CustomizationError>> => {
+        if (request.kind !== "stored") return ok(request);
+        const stored = await ResultAsync.fromPromise(opts.credentialStore.write(name, request.value), (cause): CustomizationError => ({
+            type: "io_failed",
+            op: "store the credential",
+            cause,
+        }));
+        return stored.map(() => ({ kind: "stored" }));
     };
 
     const mcpView = async (name: string, entry: McpServerEntry): Promise<McpServerView> => {
@@ -762,8 +909,74 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         }
     };
 
-    return {
-        listAgents: () => loadAgents().map((state) => agentDetails(state).map(({ prompt: _prompt, ...view }) => view)),
+    /**
+     * Add a server whose entry references stored credentials. The values go to the store first, then each credential
+     * is declared, then the server is added. A secret with no value is declared too: the user gives its value later.
+     */
+    const addServerWithSecrets = (
+        name: string,
+        entry: unknown,
+        secrets: readonly { readonly credential: string; readonly value: string | undefined }[],
+    ): ResultAsync<McpServerView, CustomizationError> => {
+        const config = opts.readConfig();
+        if (config.mcp !== undefined && Object.hasOwn(config.mcp, name)) return errAsync({ type: "mcp_server_exists", name });
+        const parsed = mcpServerEntrySchema.safeParse(entry);
+        if (!parsed.success)
+            return errAsync({
+                type: "invalid_mcp_entry",
+                detail: parsed.error.issues.map((issue) => `${issue.path.join(".") || "entry"}: ${issue.message}`).join("; "),
+            });
+        const stored = ResultAsync.fromPromise(
+            Promise.all(secrets.flatMap(({ credential, value }) => (value === undefined ? [] : [opts.credentialStore.write(credential, value)]))),
+            (cause): CustomizationError => ({ type: "io_failed", op: "store the credentials of the server", cause }),
+        );
+        return stored.andThen(() => {
+            const current = opts.readConfig();
+            let credentials = current.credentials;
+            for (const { credential } of secrets) credentials = withRecordEntry<unknown>(credentials, credential, { kind: "stored" });
+            const written = writeConfigChange({ ...current, credentials });
+            if (written.isErr()) return errAsync<McpServerView, CustomizationError>(written.error);
+            return service.addMcp(name, parsed.data);
+        });
+    };
+
+    const service: CustomizationService = {
+        listAgents: () =>
+            loadAgents().map((state): AgentList => ({ agents: agentDetails(state).map(({ prompt: _prompt, ...view }) => view), roles: roleViews(state) })),
+
+        setAgentPrompt: (id, prompt) =>
+            loadAgents()
+                .andThen((state): Result<void, CustomizationError> => {
+                    if (BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent", id });
+                    const file = state.files.find((candidate) => candidate.id === id);
+                    if (file === undefined) return err({ type: "unknown_agent", id });
+                    return readFileResult(file.path, "read the agent file").andThen((text): Result<void, CustomizationError> => {
+                        const split = splitFrontmatter(text);
+                        if (split === null) return err({ type: "draft_unreadable", id, path: file.path });
+                        return writeFileResult(file.path, `---\n${split.yaml}\n---\n\n${prompt.trim()}\n`, "write the agent file");
+                    });
+                })
+                .andThen(() => findDetail(id)),
+
+        chooseRoleAgent: (role, agentId) => {
+            const single = SINGLE_AGENT_ROLES.find((candidate) => candidate === role);
+            if (single === undefined) return errAsync({ type: "unknown_role", role });
+            return loadAgents()
+                .andThen((state): Result<void, CustomizationError> => {
+                    const agent = agentDetails(state).find((candidate) => candidate.id === agentId);
+                    if (agent === undefined) return err({ type: "unknown_agent", id: agentId });
+                    if (agent.role !== single) return err({ type: "role_mismatch", id: agentId, role: single });
+                    const config = opts.readConfig();
+                    // The built-in agent is the default of its role, thus a choice of it is no choice to keep.
+                    const chosen = agent.kind === "builtin" ? undefined : agentId;
+                    return writeConfigChange({ ...config, roles: withRecordEntry(config.roles, single, chosen) });
+                })
+                .andThen(() => loadAgents())
+                .andThen((state) => {
+                    const view = roleViews(state).find((candidate) => candidate.role === single);
+                    return view === undefined ? errAsync<RoleView, CustomizationError>({ type: "unknown_role", role }) : okAsync(view);
+                });
+        },
 
         showAgent: findDetail,
 
@@ -773,8 +986,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                     const path = checkNewAgentId(newId, state.files);
                     if (path.isErr()) return err(path.error);
                     const cloned = cloneDefinition(cloneSource(state, sourceId), sourceId, newId);
-                    if (cloned.isErr())
-                        return err(cloned.error.type === "unknown_agent" ? { type: "unknown_agent", id: sourceId } : { type: "not_an_executor", id: sourceId });
+                    if (cloned.isErr()) return err({ type: "unknown_agent", id: sourceId });
                     return writeNewAgentFile(newId, path.value, renderAgentFile(cloned.value));
                 })
                 .andThen(() => findDetail(newId)),
@@ -820,26 +1032,48 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 if (file === undefined) return err({ type: "unknown_agent", id });
                 return rmResult(file.path, "delete the agent file").andThen(() => {
                     const config = opts.readConfig();
-                    return config.agents?.[id] === undefined ? ok(undefined) : writeConfigChange(withAgentChange(config, id, {}));
+                    // A role that chose the agent goes back to its built-in agent.
+                    const roles = Object.fromEntries(Object.entries(config.roles ?? {}).filter(([, chosen]) => chosen !== id));
+                    const withoutChoice: Config = { ...config, roles: Object.keys(roles).length === 0 ? undefined : roles };
+                    return writeConfigChange(config.agents?.[id] === undefined ? withoutChoice : withAgentChange(withoutChoice, id, {}));
                 });
             }),
 
         listSkills: () => scanSkills().map(({ list }) => list),
 
+        showSkill: (name) =>
+            scanSkills().andThen(({ list }) => {
+                const skill = list.skills.find((candidate) => candidate.name === name);
+                if (skill === undefined) return errAsync<SkillDetail, CustomizationError>({ type: "unknown_skill", name });
+                const body = readFileResult(join(skill.directory, "SKILL.md"), "read the SKILL.md");
+                if (body.isErr()) return errAsync<SkillDetail, CustomizationError>(body.error);
+                return ResultAsync.fromPromise(listSkillFiles(skill.directory), (cause): CustomizationError => ({
+                    type: "io_failed",
+                    op: "list the files of the skill",
+                    cause,
+                })).map((files): SkillDetail => ({ ...skill, body: body.value, files }));
+            }),
+
         findSkills: (dir) => {
+            if (dir === undefined) {
+                const roots = opts.skillDirs.filter((candidate) => existsSync(candidate));
+                return scanSkills().andThen(({ list }) =>
+                    ResultAsync.fromPromise(scanSkillRoots(roots), (cause): CustomizationError => ({
+                        type: "io_failed",
+                        op: "read the skill directories",
+                        cause,
+                    })).map(({ skills, problems }): SkillList => foundList(list, [...skills], problems.map(foundProblem))),
+                );
+            }
             const root = resolve(dir);
             if (!existsSync(root)) return errAsync({ type: "skill_dir_missing", path: root });
             return scanSkills().andThen(({ list }) =>
                 ResultAsync.fromPromise(scanSkillRoots([root]), (cause): CustomizationError => ({ type: "io_failed", op: "read the directory", cause })).map(
                     ({ skills, problems }): SkillList => {
-                        const found: { name: string; description: string; directory: string }[] = [...skills];
+                        const found: ScannedSkill[] = [...skills];
                         // The named directory can be one skill itself, not only a directory of skills.
                         const own = readFileResult(join(root, "SKILL.md"), "read the SKILL.md");
-                        const foundProblems: SkillProblemView[] = problems.map((problem) => ({
-                            directory: problem.directory,
-                            kind: "found",
-                            message: skillProblemMessage(problem, null),
-                        }));
+                        const foundProblems: SkillProblemView[] = problems.map(foundProblem);
                         if (own.isOk()) {
                             const parsed = parseSkillFrontmatter(own.value);
                             if (parsed.ok) found.unshift({ ...parsed.skill, directory: root });
@@ -850,16 +1084,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                                     message: skillProblemMessage({ kind: "frontmatter", directory: root, problem: parsed.problem }, null),
                                 });
                         }
-                        const taken = new Map(list.skills.map((skill) => [skill.name, skill]));
-                        return {
-                            skills: found.map((skill): SkillView => {
-                                const existing = taken.get(skill.name);
-                                const view: SkillView = { name: skill.name, description: skill.description, kind: "found", directory: skill.directory };
-                                if (existing === undefined) return view;
-                                return { ...view, conflict: `A ${existing.kind === "builtin" ? "built-in" : "custom"} skill "${skill.name}" exists already.` };
-                            }),
-                            problems: foundProblems,
-                        };
+                        return foundList(list, found, foundProblems);
                     },
                 ),
             );
@@ -872,7 +1097,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 if (text.isErr()) return err({ type: "invalid_skill", path: root, detail: "the directory holds no readable SKILL.md" });
                 const parsed = parseSkillFrontmatter(text.value);
                 if (!parsed.ok) return err({ type: "invalid_skill", path: root, detail: `the frontmatter of the SKILL.md is not correct (${parsed.problem})` });
-                const { name, description } = parsed.skill;
+                const { name } = parsed.skill;
                 // The name becomes the directory name of the copy, thus it must be a clean single path segment.
                 if (agentIdOf(name) !== name)
                     return err({ type: "invalid_skill", path: root, detail: `the name "${name}" must be lowercase letters, digits, and hyphens` });
@@ -882,7 +1107,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 if (existing !== undefined || existsSync(target)) return err({ type: "skill_exists", name, builtin: false });
                 return mkdirResult(opts.userSkillsDir, "make the skills directory")
                     .andThen(() => copyDirectory(root, target))
-                    .map((): SkillView => ({ name, description, kind: "custom", directory: target }));
+                    .map((): SkillView => skillView({ ...parsed.skill, directory: target }, "custom"));
             });
         },
 
@@ -901,7 +1126,6 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             if (unknownSlot !== undefined) return errAsync({ type: "unknown_slot", id, slot: unknownSlot });
             const config = opts.readConfig();
             const current = config.connectors?.[id] ?? {};
-            const enabled = patch.enabled === undefined ? current.enabled : patch.enabled ? undefined : false;
             const endpoint =
                 patch.endpoint === undefined ? current.endpoint : patch.endpoint === null || patch.endpoint.length === 0 ? undefined : patch.endpoint;
             const merged: Record<string, string | null> = { ...current.credentials, ...patch.credentials };
@@ -910,7 +1134,6 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 Object.entries(merged).flatMap(([slot, name]) => (name === null || name.length === 0 || name === slot ? [] : [[slot, name] as const])),
             );
             const next: NonNullable<Config["connectors"]>[string] = {};
-            if (enabled === false) next.enabled = false;
             if (endpoint !== undefined) next.endpoint = endpoint;
             if (Object.keys(credentials).length > 0) next.credentials = credentials;
             const written = writeConfigChange({
@@ -933,14 +1156,28 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             );
         },
 
-        setCredential: (name, source) => {
+        setCredential: (name, request) => {
             if (!isValidCredentialName(name)) return errAsync({ type: "invalid_credential_name", name });
+            return new ResultAsync(writeCredential(name, request)).andThen((source) => {
+                const config = opts.readConfig();
+                const written = writeConfigChange({ ...config, credentials: withRecordEntry<unknown>(config.credentials, name, source) });
+                if (written.isErr()) return errAsync<CredentialView, CustomizationError>(written.error);
+                return ResultAsync.fromPromise(credentialView(name, source), (cause): CustomizationError => ({
+                    type: "io_failed",
+                    op: "read the credential",
+                    cause,
+                }));
+            });
+        },
+
+        removeCredential: (name) => {
             const config = opts.readConfig();
-            const written = writeConfigChange({ ...config, credentials: withRecordEntry<unknown>(config.credentials, name, source) });
+            if (config.credentials === undefined || !Object.hasOwn(config.credentials, name)) return errAsync({ type: "unknown_credential", name });
+            const written = writeConfigChange({ ...config, credentials: withRecordEntry<unknown>(config.credentials, name, undefined) });
             if (written.isErr()) return errAsync(written.error);
-            return ResultAsync.fromPromise(credentialView(name, source), (cause): CustomizationError => ({
+            return ResultAsync.fromPromise(opts.credentialStore.remove(name), (cause): CustomizationError => ({
                 type: "io_failed",
-                op: "read the credential",
+                op: "delete the stored credential",
                 cause,
             }));
         },
@@ -972,6 +1209,56 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 op: "read the MCP server",
                 cause,
             }));
+        },
+
+        findMcp: () => {
+            const config = opts.readConfig();
+            return ResultAsync.fromPromise(Promise.resolve(opts.findMcpServers()), (cause): CustomizationError => ({
+                type: "io_failed",
+                op: "read the MCP configs of other harnesses",
+                cause,
+            })).map((found) =>
+                found.map((server) =>
+                    candidateView(
+                        server,
+                        config.mcp !== undefined && Object.hasOwn(config.mcp, server.name) ? `An MCP server "${server.name}" exists already.` : undefined,
+                    ),
+                ),
+            );
+        },
+
+        importMcp: (request) => {
+            const found = opts.findMcpServers().find((server) => server.sourcePath === request.sourcePath && server.name === request.name);
+            if (found === undefined) return errAsync({ type: "unknown_candidate", name: request.name, sourcePath: request.sourcePath });
+            const name = request.as ?? request.name;
+            if (!isValidMcpServerName(name)) return errAsync({ type: "invalid_mcp_name", name });
+            // Each value of the other config can be a secret, thus each one goes to a stored credential.
+            const secrets: { credential: string; value: string | undefined }[] = [];
+            const referenced = (values: Readonly<Record<string, string>>): Record<string, string> =>
+                Object.fromEntries(
+                    Object.entries(values).map(([key, value]) => {
+                        const credential = credentialNameOf(name, key);
+                        secrets.push({ credential, value });
+                        return [key, `\${cred:${credential}}`];
+                    }),
+                );
+            const entry =
+                found.entry.type === "stdio"
+                    ? { type: "stdio", command: found.entry.command, args: [...found.entry.args], env: referenced(found.entry.env) }
+                    : { type: "http", url: found.entry.url, headers: referenced(found.entry.headers) };
+            return addServerWithSecrets(name, entry, secrets);
+        },
+
+        searchRegistry: (search, cursor) => searchRegistry(search, cursor, opts.registry).mapErr((e): CustomizationError => e),
+
+        installMcp: (request) => {
+            if (!isValidMcpServerName(request.name)) return errAsync({ type: "invalid_mcp_name", name: request.name });
+            return readRegistryServer(request.registryName, request.version, opts.registry)
+                .mapErr((e): CustomizationError => e)
+                .andThen((server) =>
+                    planInstall(server, request.install, request.inputs, (key) => credentialNameOf(request.name, key)).mapErr((e): CustomizationError => e),
+                )
+                .andThen((plan) => addServerWithSecrets(request.name, plan.entry, plan.secrets));
         },
 
         setMcpEnabled: (name, enabled) => {
@@ -1008,4 +1295,5 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             return signOut(name, url.value);
         },
     };
+    return service;
 }

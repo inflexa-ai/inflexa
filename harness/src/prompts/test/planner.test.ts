@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
 
 import { formatPriorPlan } from "../../tools/research/generate-plan.js";
-import { packagesSection, plannerPrompt } from "../planner.js";
+import { packagesSection, plannerPrompt, plannerSystemPrompt } from "../planner.js";
 
 describe("plannerPrompt — the packages of each step", () => {
     it("the prompt names the prefix", () => {
         // The spec scenario of the same name. The census marks a both-track
         // name with the two forms, and this section is what turns that mark
         // into the string the planner writes.
-        const prompt = plannerPrompt("- agent-a: does a thing");
+        const prompt = plannerSystemPrompt(plannerPrompt, "- agent-a: does a thing");
 
         expect(prompt).toContain("under a Python section AND under an R");
         expect(prompt).toContain('"python:igraph"');
@@ -24,7 +24,7 @@ describe("plannerPrompt — the packages of each step", () => {
 
         expect(section).toContain('"python:igraph"');
         expect(section).toContain('"r:igraph"');
-        expect(plannerPrompt("- agent-a: does a thing")).toContain(section);
+        expect(plannerSystemPrompt(plannerPrompt, "- agent-a: does a thing")).toContain(section);
     });
 });
 
@@ -49,6 +49,14 @@ describe("the revision rules ride the prior plan block", () => {
 
         expect(block).toContain("Each step keeps its id, its agent, and its order, also a step that the user asked to change");
         expect(block).toContain("Give a new id to new work only.");
-        expect(plannerPrompt("- agent-a: does a thing")).not.toContain("Prior Plan");
+        expect(plannerSystemPrompt(plannerPrompt, "- agent-a: does a thing")).not.toContain("Prior Plan");
+    });
+});
+
+describe("plannerSystemPrompt", () => {
+    it("puts the agents of the catalog after the body, thus a custom body keeps the list", () => {
+        const prompt = plannerSystemPrompt("You plan lipidomics analyses.", "- lipid-analyst: lipids");
+
+        expect(prompt).toBe("You plan lipidomics analyses.\n\n## Available Agents\n\n- lipid-analyst: lipids\n");
     });
 });

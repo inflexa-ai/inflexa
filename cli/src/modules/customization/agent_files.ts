@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
-import type { CustomAgent } from "@inflexa-ai/harness";
+import { AGENT_ROLES, type CustomAgent } from "@inflexa-ai/harness";
 import { err, ok, Result } from "neverthrow";
 import { z } from "zod";
 
@@ -9,7 +9,7 @@ import { messageOf } from "../../lib/cause.ts";
 
 /**
  * The frontmatter of a custom agent file. The field names are those of Claude Code subagents where a field exists,
- * plus `role` and `connectors`. `tools` is a field of a foreign file: in a file of the agents directory it is a gap,
+ * plus `role` and `connectors`. `role` names one role of the harness, and its default is `executor`. `tools` is a field of a foreign file: in a file of the agents directory it is a gap,
  * because a user attaches connectors and MCP servers, never single tools. `model` is accepted and ignored, because the
  * role models of the config choose the model of each agent.
  */
@@ -31,7 +31,7 @@ export type AgentFileGap =
     | { readonly type: "name_mismatch"; readonly name: string }
     | { readonly type: "builtin_id" }
     | { readonly type: "duplicate_id" }
-    | { readonly type: "role_not_allowed"; readonly role: string }
+    | { readonly type: "unknown_role"; readonly role: string }
     | { readonly type: "unknown_connector"; readonly name: string }
     | { readonly type: "unknown_mcp_server"; readonly name: string }
     | { readonly type: "inline_mcp_server"; readonly name: string }
@@ -115,11 +115,11 @@ export function checkAgentFile(id: string, path: string, text: string, known: Kn
     if (parsed.isErr()) return { status: "draft", id, path, gaps: [parsed.error] };
     const { frontmatter, body } = parsed.value;
     const servers = mcpServerNamesOf(frontmatter.mcpServers);
-    const role = frontmatter.role ?? "executor";
+    const role = AGENT_ROLES.find((candidate) => candidate === (frontmatter.role ?? "executor"));
     const definition: CustomAgent = {
         id,
         name: frontmatter.name,
-        role: "executor",
+        role: role ?? "executor",
         description: frontmatter.description,
         prompt: body,
         connectors: frontmatter.connectors ?? [],
@@ -129,7 +129,7 @@ export function checkAgentFile(id: string, path: string, text: string, known: Kn
     const gaps: AgentFileGap[] = [];
     if (frontmatter.name !== id) gaps.push({ type: "name_mismatch", name: frontmatter.name });
     if (known.builtinIds.has(id)) gaps.push({ type: "builtin_id" });
-    if (role !== "executor") gaps.push({ type: "role_not_allowed", role });
+    if (role === undefined) gaps.push({ type: "unknown_role", role: frontmatter.role ?? "" });
     for (const name of definition.connectors) if (!known.connectors.has(name)) gaps.push({ type: "unknown_connector", name });
     for (const name of servers.named) if (!known.mcpServers.has(name)) gaps.push({ type: "unknown_mcp_server", name });
     for (const name of servers.inline) gaps.push({ type: "inline_mcp_server", name });
@@ -178,7 +178,7 @@ export function renderAgentFile(definition: CustomAgent, unmappedTools: readonly
     const frontmatter: Record<string, unknown> = {
         name: definition.id,
         description: definition.description,
-        role: "executor",
+        role: definition.role,
         connectors: [...definition.connectors],
         mcpServers: [...definition.mcp],
         skills: [...definition.skills],

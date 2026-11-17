@@ -64,8 +64,22 @@ export type ConnectorContext = {
     readonly webSearch?: WebSearchEngine;
 };
 
+/** The group of a connector in a list for a person. */
+export type ConnectorCategory =
+    | "literature"
+    | "code-and-docs"
+    | "web"
+    | "knowledge"
+    | "genes-and-proteins"
+    | "variants-and-disease"
+    | "datasets"
+    | "chemistry-and-drugs"
+    | "targets-and-safety"
+    | "clinical-and-regulatory";
+
 export type ConnectorDefinition = {
     readonly id: string;
+    readonly category: ConnectorCategory;
     readonly description: string;
     /** The outside service that the planner reads as a live lookup, or `null` for a service that holds no data. */
     readonly liveSource: string | null;
@@ -93,6 +107,7 @@ export const KNOWLEDGE_CONNECTOR_ID = "knowledge";
 const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     defineConnector({
         id: "pubmed",
+        category: "literature",
         description: "PubMed literature: search, article details and full text.",
         liveSource: "PubMed",
         credentials: { ncbi: optional },
@@ -100,6 +115,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "citations",
+        category: "literature",
         description: "Verification of one citation against Crossref, PubMed, arXiv and Semantic Scholar.",
         liveSource: "Crossref, PubMed, arXiv, and Semantic Scholar",
         credentials: {},
@@ -107,6 +123,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "semantic-scholar",
+        category: "literature",
         description: "Semantic Scholar: papers and the citation graph across fields.",
         liveSource: "Semantic Scholar",
         credentials: { "semantic-scholar": optional },
@@ -114,6 +131,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "arxiv",
+        category: "literature",
         description: "arXiv preprints.",
         liveSource: "arXiv",
         credentials: {},
@@ -121,6 +139,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "github",
+        category: "code-and-docs",
         description: "GitHub repository search for published pipelines and code.",
         liveSource: "GitHub",
         credentials: { github: optional },
@@ -128,6 +147,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "context7",
+        category: "code-and-docs",
         description: "Context7: the documentation of a software library.",
         liveSource: null,
         credentials: {},
@@ -135,6 +155,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "web-search",
+        category: "web",
         description: "Web search through a SearXNG instance.",
         liveSource: null,
         credentials: {},
@@ -145,6 +166,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "web-fetch",
+        category: "web",
         description: "A guarded fetch of one public web page.",
         liveSource: null,
         credentials: {},
@@ -152,6 +174,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: KNOWLEDGE_CONNECTOR_ID,
+        category: "knowledge",
         description: "The Inflexa knowledge plane: tested procedures and script templates.",
         liveSource: null,
         credentials: {},
@@ -159,6 +182,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "gene-search",
+        category: "genes-and-proteins",
         description: "Gene identifiers from Ensembl and NCBI Gene.",
         liveSource: "Ensembl and NCBI Gene",
         credentials: {},
@@ -166,6 +190,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "protein-search",
+        category: "genes-and-proteins",
         description: "UniProt protein entries.",
         liveSource: "UniProt",
         credentials: {},
@@ -173,6 +198,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "mygene",
+        category: "genes-and-proteins",
         description: "MyGene.info: the mapping across the symbol, Entrez, Ensembl and UniProt identifier spaces.",
         liveSource: "MyGene.info",
         credentials: {},
@@ -180,6 +206,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "annotations",
+        category: "genes-and-proteins",
         description: "Functional annotation from GO, KEGG and Reactome.",
         liveSource: "GO, KEGG, and Reactome annotation",
         credentials: {},
@@ -187,6 +214,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "string",
+        category: "genes-and-proteins",
         description: "STRING protein interaction networks and enrichment.",
         liveSource: "STRING",
         credentials: {},
@@ -194,6 +222,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "humanbase",
+        category: "genes-and-proteins",
         description: "HumanBase tissue- and process-specific functional networks.",
         liveSource: "HumanBase tissue networks",
         credentials: {},
@@ -201,6 +230,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "alphafold",
+        category: "genes-and-proteins",
         description: "AlphaFold DB structure predictions.",
         liveSource: "AlphaFold DB",
         credentials: {},
@@ -208,6 +238,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "interpro",
+        category: "genes-and-proteins",
         description: "InterPro domains of a protein, with their residue ranges.",
         liveSource: "InterPro",
         credentials: {},
@@ -215,6 +246,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "gnomad",
+        category: "variants-and-disease",
         description: "gnomAD population allele frequencies of short variants.",
         liveSource: "gnomAD",
         credentials: {},
@@ -222,6 +254,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "geo",
+        category: "datasets",
         description: "NCBI GEO gene-expression datasets.",
         liveSource: "GEO",
         credentials: {},
@@ -229,6 +262,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "chembl",
+        category: "chemistry-and-drugs",
         description: "ChEMBL compounds, mechanisms, bioactivity and targets.",
         liveSource: "ChEMBL",
         credentials: {},
@@ -236,6 +270,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "pubchem",
+        category: "chemistry-and-drugs",
         description: "PubChem compounds, cross-references and assays.",
         liveSource: "PubChem",
         credentials: {},
@@ -243,6 +278,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "opentargets",
+        category: "targets-and-safety",
         description: "Open Targets target assessment.",
         liveSource: "Open Targets",
         credentials: {},
@@ -250,6 +286,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "target-safety",
+        category: "targets-and-safety",
         description: "Target-level safety: a curated panel and the liabilities of Open Targets.",
         liveSource: "a curated target safety panel",
         credentials: {},
@@ -257,6 +294,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "preclinical",
+        category: "targets-and-safety",
         description: "Bgee baseline expression and IMPC mouse knockouts.",
         liveSource: "Bgee expression and IMPC knockouts",
         credentials: {},
@@ -264,6 +302,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "faers",
+        category: "targets-and-safety",
         description: "FDA adverse event reports (FAERS).",
         liveSource: "FAERS",
         credentials: {},
@@ -271,6 +310,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "clinical-trials",
+        category: "clinical-and-regulatory",
         description: "ClinicalTrials.gov studies.",
         liveSource: "ClinicalTrials.gov",
         credentials: {},
@@ -278,6 +318,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "gene-disease-evidence",
+        category: "variants-and-disease",
         description: "Gene–disease evidence from the GWAS Catalog, DisGeNET, ClinVar and cBioPortal.",
         liveSource: "GWAS Catalog, DisGeNET, and ClinVar",
         credentials: { disgenet: { required: false, unlocks: "DisGeNET" }, ncbi: optional },
@@ -287,6 +328,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "drug-gene-interactions",
+        category: "chemistry-and-drugs",
         description: "Drug–gene interactions from DGIdb, DrugBank and PharmGKB.",
         liveSource: "DGIdb, DrugBank, and PharmGKB",
         credentials: { drugbank: { required: false, unlocks: "DrugBank" } },
@@ -294,6 +336,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "comptox",
+        category: "chemistry-and-drugs",
         description: "EPA CompTox toxicology, hazard, chemical and exposure data.",
         liveSource: "EPA CompTox",
         credentials: { "epa-ccte": required },
@@ -301,6 +344,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "regulatory-approvals",
+        category: "clinical-and-regulatory",
         description: "FDA and EMA authorizations with their label text (Amass).",
         liveSource: "FDA and EMA approvals",
         credentials: { amass: required },
@@ -308,6 +352,7 @@ const CONNECTOR_LIST: readonly ConnectorDefinition[] = [
     }),
     defineConnector({
         id: "patents",
+        category: "clinical-and-regulatory",
         description: "Patents (Amass).",
         liveSource: null,
         credentials: { amass: required },
@@ -322,6 +367,6 @@ export const CONNECTORS: ReadonlyMap<string, ConnectorDefinition> = new Map(CONN
 export const CONNECTOR_IDS: readonly string[] = CONNECTOR_LIST.map((connector) => connector.id);
 
 /** The connectors that a host can show: the id, the description, and the credential slots of each. */
-export function describeConnectors(): readonly Pick<ConnectorDefinition, "id" | "description" | "credentials" | "defaultEndpoint">[] {
-    return CONNECTOR_LIST.map(({ id, description, credentials, defaultEndpoint }) => ({ id, description, credentials, defaultEndpoint }));
+export function describeConnectors(): readonly Pick<ConnectorDefinition, "id" | "category" | "description" | "credentials" | "defaultEndpoint">[] {
+    return CONNECTOR_LIST.map(({ id, category, description, credentials, defaultEndpoint }) => ({ id, category, description, credentials, defaultEndpoint }));
 }

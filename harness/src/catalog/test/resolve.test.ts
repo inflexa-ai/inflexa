@@ -121,7 +121,7 @@ describe("resolveCatalog", () => {
         ]);
     });
 
-    it("refuses a custom agent with a built-in id, a duplicate id, or another role", async () => {
+    it("refuses a custom agent with a built-in id or a duplicate id", async () => {
         const resolved = await resolveCatalog(
             createInMemoryCatalog({
                 skills,
@@ -129,18 +129,51 @@ describe("resolveCatalog", () => {
                     { kind: "custom", enabled: true, definition: custom({ id: "analyst" }) },
                     { kind: "custom", enabled: true, definition: custom({ id: "twin" }) },
                     { kind: "custom", enabled: true, definition: custom({ id: "twin" }) },
-                    { kind: "custom", enabled: true, definition: custom({ id: "chatty", role: "chat" }) },
                 ],
             }),
         );
         expect(resolved.agents.get("analyst")?.builtin).toBe(true);
         expect(resolved.agents.has("twin")).toBe(false);
-        expect(resolved.agents.has("chatty")).toBe(false);
         expect(resolved.gaps).toEqual([
             { reason: "builtin_id", subject: "analyst" },
             { reason: "duplicate_id", subject: "twin" },
             { reason: "duplicate_id", subject: "twin" },
-            { reason: "role_not_allowed", subject: "chatty", reference: "chat" },
+        ]);
+    });
+
+    it("makes a custom agent of a role the active agent of the role when the host chooses it", async () => {
+        const chatty = custom({ id: "chatty", role: "chat", prompt: "You are a terse lab assistant." });
+        const unchosen = await resolveCatalog(createInMemoryCatalog({ skills, agents: [{ kind: "custom", enabled: true, definition: chatty }] }));
+        const chosen = await resolveCatalog(
+            createInMemoryCatalog({ skills, agents: [{ kind: "custom", enabled: true, definition: chatty }], roles: { chat: "chatty" } }),
+        );
+
+        expect(agentOfRole(unchosen, "chat")?.id).toBe("inflexa");
+        expect(agentOfRole(chosen, "chat")?.prompt).toBe("You are a terse lab assistant.");
+        expect(executorsOf(chosen).map((agent) => agent.id)).not.toContain("chatty");
+    });
+
+    it("keeps the built-in agent of a role when the chosen agent is off, absent, or of a different role", async () => {
+        const resolved = await resolveCatalog(
+            createInMemoryCatalog({
+                skills,
+                agents: [
+                    { kind: "custom", enabled: false, definition: custom({ id: "quiet-planner", role: "planner" }) },
+                    { kind: "custom", enabled: true, definition: custom({ id: "lipid-analyst" }) },
+                ],
+                roles: { planner: "quiet-planner", synthesizer: "lipid-analyst", reporter: "nobody" },
+            }),
+        );
+
+        expect([...resolved.roles.entries()].filter(([role]) => ["planner", "synthesizer", "reporter"].includes(role))).toEqual([
+            ["planner", "planner"],
+            ["synthesizer", "synthesizer"],
+            ["reporter", "reporter"],
+        ]);
+        expect(resolved.gaps).toEqual([
+            { reason: "role_agent_unavailable", subject: "planner", reference: "quiet-planner" },
+            { reason: "role_agent_unavailable", subject: "synthesizer", reference: "lipid-analyst" },
+            { reason: "role_agent_unavailable", subject: "reporter", reference: "nobody" },
         ]);
     });
 

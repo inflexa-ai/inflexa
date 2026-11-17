@@ -15,7 +15,7 @@ Each command of the groups `inflexa agent`, `inflexa skill`, `inflexa connector`
 
 ### Requirement: The agent list shows built-in agents, custom agents and drafts
 
-`GET /api/v1/catalog/agents` MUST list each built-in agent, each custom agent and each draft. Each item MUST give its id, its role, its kind (built-in or custom), `enabled`, its resolved attachments and its gaps. A built-in item MUST give its release defaults and the change of the user. A built-in item MUST NOT let a client change its prompt.
+`GET /api/v1/catalog/agents` MUST list each built-in agent, each custom agent and each draft, and each role that one agent fills with its active agent. Each item MUST give its id, its role, its kind (built-in or custom), `enabled`, `active`, its resolved attachments and its gaps. A built-in item MUST give its release defaults and the change of the user. A built-in item MUST NOT let a client change its prompt.
 
 #### Scenario: A built-in agent shows the change of the user
 
@@ -61,3 +61,23 @@ Each new command MUST declare an agent policy by its risk, not by read or write.
 
 - **WHEN** the user adds a server
 - **THEN** the output holds the warning before the confirmation
+
+### Requirement: The user imports an MCP server of another harness
+
+`inflexa mcp find` and `GET /api/v1/mcp/found` MUST list the MCP servers in the configs of Claude Code, Claude Desktop, Cursor, Windsurf and VS Code on the machine. The list MUST give the keys of `env` and `headers`, never their values. `inflexa mcp import` and `POST /api/v1/mcp/import` MUST copy one server, store each value of its `env` and `headers` as a stored credential, and put a `${cred:<name>}` reference in its place.
+
+#### Scenario: Import keeps the values out of the config
+
+- **GIVEN** a Claude Code server `lims` with `env: { LIMS_TOKEN: "s" }`
+- **WHEN** the user imports it
+- **THEN** the entry holds `LIMS_TOKEN: "${cred:lims-lims-token}"`, and the store holds `s`
+
+### Requirement: The user installs an MCP server of the MCP Registry
+
+`inflexa mcp search` and `GET /api/v1/mcp/registry` MUST search the official MCP Registry through the server. `inflexa mcp install` and `POST /api/v1/mcp/install` MUST build the entry of one install option: an npm, PyPI or OCI package that a local command runs, or a remote with the streamable HTTP transport. A secret input MUST go to a stored credential, and each other input MUST go into the entry.
+
+#### Scenario: Install from the registry
+
+- **GIVEN** a registry server with an npm package and a secret variable
+- **WHEN** the user installs it with the value of the variable
+- **THEN** the entry runs `npx -y <package>@<version>`, and the variable references a stored credential

@@ -10,28 +10,37 @@ import {
     type McpRevocationView,
     type McpServerView,
     type PutCredentialRequest,
+    type RegistryServerView,
     type SkillList,
 } from "../../api/customization.ts";
-import { fail } from "../../lib/cli.ts";
+import { fail, promptSecret } from "../../lib/cli.ts";
 import { describeClientError, DEFAULT_CLIENT_OPTS, type ClientError, type ClientOpts } from "../api.ts";
 import {
     addMcpServer,
+    chooseRoleAgent,
     cloneAgent,
     deleteAgent,
+    deleteCredential,
     deleteMcpServer,
     fetchAgent,
     fetchAgents,
     fetchConnectors,
     fetchCredentials,
+    fetchFoundSkills,
+    fetchMcpCandidates,
     fetchMcpServers,
+    fetchSkill,
     fetchSkills,
     findSkills,
     importAgent,
+    importMcpServer,
+    installMcpServer,
     importSkill,
     patchAgent,
     patchConnector,
     patchMcpServer,
     putCredential,
+    searchMcpRegistry,
     signInMcpServer,
     signOutMcpServer,
 } from "../customization.ts";
@@ -91,7 +100,8 @@ function printGaps(agent: AgentView, indent: string): void {
 }
 
 function printAgent(agent: AgentDetail): void {
-    console.log(`\n  ${agent.id}  (${agentKindLabel(agent)}, ${agent.role}, ${agent.enabled ? "on" : "off"})`);
+    const active = agent.active && agent.role !== "executor" ? ", active" : "";
+    console.log(`\n  ${agent.id}  (${agentKindLabel(agent)}, ${agent.role}, ${agent.enabled ? "on" : "off"}${active})`);
     if (agent.description.length > 0) console.log(`  ${agent.description}`);
     if (agent.path !== undefined) console.log(`  file: ${agent.path}`);
     printAttachments("attachments:", agent.attachments);
@@ -105,18 +115,25 @@ function printAgent(agent: AgentDetail): void {
 
 /** `inflexa agent ls`: the built-in agents, the custom agents, and the drafts with their gaps. */
 export async function agentLs(flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const { agents } = (await fetchAgents(opts)).match(identity, failOn);
+    const list = (await fetchAgents(opts)).match(identity, failOn);
     if (flags.json === true) {
-        printJson({ agents });
+        printJson(list);
         return;
     }
+    const { agents, roles } = list;
     const width = Math.max(...agents.map((agent) => agent.id.length));
     console.log();
     for (const agent of agents) {
+        const active = agent.active && agent.role !== "executor" ? "  (active)" : "";
         console.log(
-            `  ${agent.id.padEnd(width)}  ${agentKindLabel(agent).padEnd(8)}  ${agent.role.padEnd(11)}  ${agent.enabled ? "on " : "off"}  ${agent.description}`,
+            `  ${agent.id.padEnd(width)}  ${agentKindLabel(agent).padEnd(8)}  ${agent.role.padEnd(11)}  ${agent.enabled ? "on " : "off"}  ${agent.description}${active}`,
         );
         printGaps(agent, `  ${" ".repeat(width)}  `);
+    }
+    console.log("\n  Roles:");
+    for (const role of roles) {
+        console.log(`    ${role.role.padEnd(11)}  ${role.activeAgentId ?? "(off)"}`);
+        for (const gap of role.gaps) console.log(`    ${" ".repeat(11)}  ! ${gap.message}`);
     }
     console.log();
 }
@@ -131,10 +148,20 @@ export async function agentShow(id: string, flags: JsonFlag, opts: ClientOpts = 
     printAgent(agent);
 }
 
-/** `inflexa agent clone <id> <new-id>`: copy a built-in executor into a new agent file. */
+/** `inflexa agent clone <id> <new-id>`: copy an agent into a new agent file of the same role. */
 export async function agentClone(id: string, newId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
     const agent = (await cloneAgent(id, newId, opts)).match(identity, failOn);
-    console.log(`Cloned "${id}" to ${agent.path ?? agent.id}. Edit the file to change the prompt.`);
+    const use = agent.role === "executor" ? "" : ` \`inflexa agent use ${agent.id}\` makes it the ${agent.role} agent.`;
+    console.log(`Cloned "${id}" to ${agent.path ?? agent.id}. Edit the file to change the prompt.${use}`);
+}
+
+/** `inflexa agent use <id>`: make an agent the active agent of its role. The built-in agent of the role restores the default. */
+export async function agentUse(id: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const agent = (await fetchAgent(id, opts)).match(identity, failOn);
+    if (agent.role === "executor")
+        fail(`"${id}" is an executor. Each executor that is on is available to the plans, thus \`inflexa agent enable ${id}\` is enough.`);
+    const role = (await chooseRoleAgent(agent.role, id, opts)).match(identity, failOn);
+    console.log(`The ${role.role} agent is "${role.activeAgentId ?? id}".`);
 }
 
 /** `inflexa agent import <file>`: convert the agent file of another harness. A file with gaps is kept as a draft. */
@@ -172,7 +199,10 @@ function printSkills(list: SkillList): void {
     console.log();
     if (list.skills.length === 0) console.log("  No skills.");
     for (const skill of list.skills) {
-        console.log(`  ${skill.name.padEnd(width)}  ${skill.kind.padEnd(8)}  ${skill.directory}`);
+        const title = skill.title === undefined ? "" : `${skill.title}  `;
+        console.log(
+            `  ${skill.name.padEnd(width)}  ${skill.kind.padEnd(8)}  ${title}${skill.category === undefined ? "" : `[${skill.category}]  `}${skill.directory}`,
+        );
         if (skill.conflict !== undefined) console.log(`  ${" ".repeat(width)}  ! ${skill.conflict}`);
     }
     for (const problem of list.problems) console.log(`  ! ${problem.directory}: ${problem.message}`);
@@ -189,9 +219,24 @@ export async function skillLs(flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIENT
     printSkills(list);
 }
 
-/** `inflexa skill find <dir>`: the skills in a directory that the user names. */
-export async function skillFind(dir: string, flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const list = (await findSkills(resolve(dir), opts)).match(identity, failOn);
+/** `inflexa skill show <name>`: one skill with its text. */
+export async function skillShow(name: string, flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const skill = (await fetchSkill(name, opts)).match(identity, failOn);
+    if (flags.json === true) {
+        printJson(skill);
+        return;
+    }
+    console.log(`\n  ${skill.title ?? skill.name}  (${skill.kind}${skill.category === undefined ? "" : `, ${skill.category}`})`);
+    console.log(`  ${skill.directory}`);
+    if (skill.tags.length > 0) console.log(`  tags: ${skill.tags.join(", ")}`);
+    if (skill.files.length > 0) console.log(`  files: ${skill.files.join(", ")}`);
+    console.log(`\n${skill.body}`);
+}
+
+/** `inflexa skill find [dir]`: the skills in a directory, or in the usual skill directories of other harnesses. */
+export async function skillFind(dir: string | undefined, flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const found = dir === undefined ? await fetchFoundSkills(opts) : await findSkills(resolve(dir), opts);
+    const list = found.match(identity, failOn);
     if (flags.json === true) {
         printJson(list);
         return;
@@ -213,9 +258,13 @@ export async function connectorLs(flags: JsonFlag, opts: ClientOpts = DEFAULT_CL
         return;
     }
     const width = Math.max(...connectors.map((connector) => connector.id.length));
-    console.log();
+    let category = "";
     for (const connector of connectors) {
-        console.log(`  ${connector.id.padEnd(width)}  ${connector.enabled ? "on " : "off"}  ${connector.description}`);
+        if (connector.category !== category) {
+            category = connector.category;
+            console.log(`\n  ${category}`);
+        }
+        console.log(`  ${connector.id.padEnd(width)}  ${connector.description}`);
         const endpoint = connector.endpoint ?? connector.defaultEndpoint;
         if (endpoint !== undefined) console.log(`  ${" ".repeat(width)}  endpoint: ${endpoint}${connector.endpoint === undefined ? "" : " (yours)"}`);
         for (const slot of connector.slots) {
@@ -229,16 +278,14 @@ export async function connectorLs(flags: JsonFlag, opts: ClientOpts = DEFAULT_CL
 }
 
 /** The flags of `inflexa connector set`. */
-export type ConnectorSetFlags = { enable?: boolean; disable?: boolean; endpoint?: string; credential?: string[] };
+export type ConnectorSetFlags = { endpoint?: string; credential?: string[] };
 
-/** `inflexa connector set <id>`: turn a connector on or off, point it at an endpoint, and name its credentials. */
+/** `inflexa connector set <id>`: point a connector at an endpoint, and name its credentials. Each agent chooses its connectors. */
 export async function connectorSet(id: string, flags: ConnectorSetFlags, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    if (flags.enable === true && flags.disable === true) fail("Give --enable or --disable, not both.");
     const credentials = Object.fromEntries((flags.credential ?? []).map((text) => keyValue("--credential", text)));
-    const enabled = flags.enable === true ? true : flags.disable === true ? false : undefined;
-    const body = { enabled, endpoint: flags.endpoint, credentials: Object.keys(credentials).length === 0 ? undefined : credentials };
+    const body = { endpoint: flags.endpoint, credentials: Object.keys(credentials).length === 0 ? undefined : credentials };
     const connector = (await patchConnector(id, body, opts)).match(identity, failOn);
-    console.log(`The connector "${connector.id}" is ${connector.enabled ? "on" : "off"}.`);
+    console.log(`Changed the connector "${connector.id}".`);
 }
 
 /** `inflexa credential ls`: each credential, where its value comes from, and whether it gives one. Never the value. */
@@ -255,7 +302,12 @@ export async function credentialLs(flags: JsonFlag, opts: ClientOpts = DEFAULT_C
             console.log(`  ${credential.name}  ! ${credential.problem}`);
             continue;
         }
-        const from = credential.source.kind === "env" ? `env ${credential.source.var}` : `command ${credential.source.command}`;
+        const from =
+            credential.source.kind === "env"
+                ? `env ${credential.source.var}`
+                : credential.source.kind === "command"
+                  ? `command ${credential.source.command}`
+                  : "stored";
         console.log(`  ${credential.name}  ${from}  (${credential.resolves ? "gives a value" : "gives no value"})`);
     }
     console.log();
@@ -264,11 +316,17 @@ export async function credentialLs(flags: JsonFlag, opts: ClientOpts = DEFAULT_C
 /** The flags of `inflexa credential set`. */
 export type CredentialSetFlags = { env?: string; command?: string; format?: string; ttlMs?: string };
 
-/** `inflexa credential set <name>`: declare an environment variable or a helper command as the source of a credential. */
+/**
+ * `inflexa credential set <name>`: declare an environment variable or a helper command as the source of a credential,
+ * or, with neither, type the value in a masked prompt. The Keychain or a `0600` file keeps a typed value.
+ */
 export async function credentialSet(name: string, flags: CredentialSetFlags, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    if ((flags.env === undefined) === (flags.command === undefined)) fail("Give --env <VAR> or --command <command>, and only one.");
+    if (flags.env !== undefined && flags.command !== undefined) fail("Give --env <VAR> or --command <command>, not both.");
     let source: PutCredentialRequest;
-    if (flags.env !== undefined) {
+    if (flags.env === undefined && flags.command === undefined) {
+        // A typed value needs a person at a terminal, thus the chat agent, which runs with no terminal, can never give one.
+        source = { kind: "stored", value: await promptSecret(`The value of "${name}"`) };
+    } else if (flags.env !== undefined) {
         source = { kind: "env", var: flags.env };
     } else {
         const format =
@@ -284,6 +342,12 @@ export async function credentialSet(name: string, flags: CredentialSetFlags, opt
     const credential = (await putCredential(name, source, opts)).match(identity, failOn);
     const state = "resolves" in credential && credential.resolves ? "It gives a value now." : "It gives no value now.";
     console.log(`Set the credential "${name}". ${state}`);
+}
+
+/** `inflexa credential rm <name>`: remove a credential and its stored value. */
+export async function credentialRm(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    (await deleteCredential(name, opts)).match(identity, failOn);
+    console.log(`Removed the credential "${name}".`);
 }
 
 function mcpEntryText(entry: McpEntryView): string {
@@ -378,4 +442,78 @@ function revocationText(revocation: McpRevocationView): string {
 export async function mcpLogout(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
     const { revocation } = (await signOutMcpServer(name, opts)).match(identity, failOn);
     console.log(`Signed out of "${name}". ${revocationText(revocation)}`);
+}
+
+/** `inflexa mcp find`: the MCP servers in the configs of other harnesses on this machine. */
+export async function mcpFind(flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const list = (await fetchMcpCandidates(opts)).match(identity, failOn);
+    if (flags.json === true) {
+        printJson(list);
+        return;
+    }
+    console.log();
+    if (list.candidates.length === 0) console.log("  No MCP servers in the configs of other harnesses.");
+    for (const candidate of list.candidates) {
+        const target = candidate.type === "stdio" ? [candidate.command ?? "", ...(candidate.args ?? [])].join(" ") : (candidate.url ?? "");
+        console.log(`  ${candidate.name}  ${candidate.source}  ${candidate.type}  ${target}`);
+        console.log(`    ${candidate.sourcePath}`);
+        const keys = [...candidate.envKeys, ...candidate.headerKeys];
+        if (keys.length > 0) console.log(`    values to store as credentials: ${keys.join(", ")}`);
+        if (candidate.conflict !== undefined) console.log(`    ! ${candidate.conflict}`);
+    }
+    console.log();
+}
+
+/** `inflexa mcp import <source-path> <name>`: copy a server of a different harness, each value as a stored credential. */
+export async function mcpImport(sourcePath: string, name: string, flags: { as?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const server = (await importMcpServer({ sourcePath: resolve(sourcePath), name, as: flags.as }, opts)).match(identity, failOn);
+    console.log(MCP_REPEAT_WARNING);
+    console.log(`Added the MCP server "${server.name}". Its values are stored credentials.`);
+}
+
+function printRegistryServer(server: RegistryServerView): void {
+    console.log(`  ${server.name}  ${server.version}${server.title === undefined ? "" : `  ${server.title}`}`);
+    if (server.description.length > 0) console.log(`    ${server.description}`);
+    for (const install of server.installs) {
+        const inputs = install.inputs.map((input) => `${input.name}${input.secret ? " (secret)" : ""}${input.required ? "" : "?"}`);
+        console.log(`    [${install.id}] ${install.kind}  ${install.label}${inputs.length === 0 ? "" : `  needs: ${inputs.join(", ")}`}`);
+    }
+}
+
+/** `inflexa mcp search <text>`: the servers of the official MCP Registry whose name or description holds the text. */
+export async function mcpSearch(text: string, flags: JsonFlag, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const page = (await searchMcpRegistry(text, undefined, opts)).match(identity, failOn);
+    if (flags.json === true) {
+        printJson(page);
+        return;
+    }
+    console.log();
+    if (page.servers.length === 0) console.log("  No servers.");
+    for (const server of page.servers) printRegistryServer(server);
+    console.log();
+}
+
+/** The flags of `inflexa mcp install`. */
+export type McpInstallFlags = { as?: string; option?: string; input?: string[] };
+
+/**
+ * `inflexa mcp install <registry-name>`: add a server of the MCP Registry. A person at a terminal types each secret in
+ * a masked prompt. With no terminal, for example from the chat agent, a secret stays empty, and
+ * `inflexa credential set` gives it later.
+ */
+export async function mcpInstall(registryName: string, flags: McpInstallFlags, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const page = (await searchMcpRegistry(registryName, undefined, opts)).match(identity, failOn);
+    const server = page.servers.find((candidate) => candidate.name === registryName) ?? fail(`No server "${registryName}" in the MCP Registry.`);
+    const optionId = flags.option === undefined ? server.installs[0]?.id : Number(flags.option);
+    const install =
+        server.installs.find((candidate) => candidate.id === optionId) ?? fail(`The server "${registryName}" has no install option ${flags.option ?? ""}.`);
+    const inputs: Record<string, string> = Object.fromEntries((flags.input ?? []).map((text) => keyValue("--input", text)));
+    for (const input of install.inputs) {
+        if (input.secret && inputs[input.name] === undefined && process.stdin.isTTY)
+            inputs[input.name] = await promptSecret(`${input.name}${input.description === undefined ? "" : ` (${input.description})`}`);
+    }
+    const name = flags.as ?? registryName.slice(registryName.lastIndexOf("/") + 1).toLowerCase();
+    const added = (await installMcpServer({ registryName, version: server.version, install: install.id, name, inputs }, opts)).match(identity, failOn);
+    console.log(MCP_REPEAT_WARNING);
+    console.log(`Added the MCP server "${added.name}" from the MCP Registry.`);
 }

@@ -1,6 +1,8 @@
 import { credentialSourceSchema, readConfig, type CredentialSourceConfig } from "../../lib/config.ts";
 import { createCredentialSource, credentialErrorMessage, type CredentialSource } from "../../lib/credential.ts";
+import { env } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
+import { createSecretStore, type SecretStore, type SecretStoreOpts } from "./secret_store.ts";
 
 /** Reads the value of a named credential from its source in the config. */
 export type CredentialReader = {
@@ -8,27 +10,49 @@ export type CredentialReader = {
     readonly read: (name: string) => Promise<string | undefined>;
 };
 
+/** Where a credential reader reads: the `credentials` block of the config, and the store of the typed values. */
+export type CredentialReaderOpts = {
+    readonly declarations: () => Record<string, unknown> | undefined;
+    readonly stored: Pick<SecretStore, "read">;
+};
+
+/** The Keychain service of the stored credentials. */
+const KEYCHAIN_SERVICE = "inflexa-credential";
+
+/** The store of the values that a user typed for a `stored` credential. */
+export function createCredentialStore(opts: Partial<Omit<SecretStoreOpts, "service">> = {}): SecretStore {
+    return createSecretStore({ ...opts, service: KEYCHAIN_SERVICE, filePath: opts.filePath ?? env.credentialsPath });
+}
+
+const DEFAULT_CREDENTIAL_READER_OPTS: CredentialReaderOpts = {
+    declarations: () => readConfig().credentials,
+    stored: createCredentialStore(),
+};
+
 /**
  * A reader over the `credentials` block of the config. Each credential keeps one cached source for as long as its
- * declaration stays the same, thus a helper command runs only when its token ages out. A source that fails gives
- * `undefined`, and the tool that needs the key reports the missing key.
+ * declaration stays the same, thus a helper command runs only when its token ages out. A `stored` credential reads
+ * the store at each read, thus a new value applies at once. A source that fails gives `undefined`, and the tool that
+ * needs the key reports the missing key.
  */
-export function createCredentialReader(read: () => Record<string, unknown> | undefined = () => readConfig().credentials): CredentialReader {
+export function createCredentialReader(opts: CredentialReaderOpts = DEFAULT_CREDENTIAL_READER_OPTS): CredentialReader {
     const sources = new Map<string, { readonly declaration: string; readonly source: CredentialSource }>();
     const log = getLogger("credentials");
     return {
         read: async (name) => {
-            const raw = read()?.[name];
+            const raw = opts.declarations()?.[name];
             if (raw === undefined) return undefined;
             const parsed = credentialSourceSchema.safeParse(raw);
             if (!parsed.success) {
                 log.warn({ credential: name }, "the declaration of a credential does not parse");
                 return undefined;
             }
-            const declaration = JSON.stringify(parsed.data);
+            const declared = parsed.data;
+            if (declared.kind === "stored") return opts.stored.read(name);
+            const declaration = JSON.stringify(declared);
             let entry = sources.get(name);
             if (entry === undefined || entry.declaration !== declaration) {
-                entry = { declaration, source: createCredentialSource(asAuthConfig(parsed.data)) };
+                entry = { declaration, source: createCredentialSource(asAuthConfig(declared)) };
                 sources.set(name, entry);
             }
             const credential = await entry.source.get();
@@ -44,7 +68,7 @@ export function createCredentialReader(read: () => Record<string, unknown> | und
 }
 
 /** A credential source of the config as the source of a model credential: the scheme names only a wire header, and no consumer here sends one. */
-function asAuthConfig(source: CredentialSourceConfig): Parameters<typeof createCredentialSource>[0] {
+function asAuthConfig(source: Exclude<CredentialSourceConfig, { kind: "stored" }>): Parameters<typeof createCredentialSource>[0] {
     return { ...source, scheme: "bearer" };
 }
 

@@ -94,19 +94,30 @@ export type {
     CustomAgent,
     McpServerConfig,
     McpTransportConfig,
+    RoleAssignments,
+    SingleAgentRole,
     SkillInfo,
     SkillStore,
 } from "./catalog/types.js";
 export { BUILTIN_AGENTS, BUILTIN_AGENT_IDS, DEFAULT_EXECUTOR_ID } from "./catalog/builtins.js";
 export type { BuiltinAgent } from "./catalog/builtins.js";
-export { resolveCatalog, executorsOf, agentOfRole, agentIdentityOf, canAnswerApproval, promptHash } from "./catalog/resolve.js";
+export {
+    AGENT_ROLES,
+    SINGLE_AGENT_ROLES,
+    resolveCatalog,
+    executorsOf,
+    agentOfRole,
+    agentIdentityOf,
+    canAnswerApproval,
+    promptHash,
+} from "./catalog/resolve.js";
 export type { CatalogGap, CatalogGapReason, ResolvedAgent, ResolvedCatalog } from "./catalog/resolve.js";
 export { createInMemoryCatalog, createInMemorySkillStore } from "./catalog/memory.js";
 export type { InMemoryCatalogContent, InMemorySkill } from "./catalog/memory.js";
 export { createDirectorySkillStore, parseSkillFrontmatter, scanSkillRoots } from "./catalog/skill-files.js";
 export type { ScannedSkill, SkillFrontmatterProblem, SkillRootProblem } from "./catalog/skill-files.js";
 export { CONNECTOR_IDS, describeConnectors } from "./connectors/registry.js";
-export type { CredentialSlot } from "./connectors/registry.js";
+export type { ConnectorCategory, CredentialSlot } from "./connectors/registry.js";
 
 // Seam: run authorization.
 export { createLocalRunAuthorizer } from "./auth/local-run-authorizer.js";
@@ -799,7 +810,8 @@ export { pipeFoldedRunEvents } from "./execution/run-event-parts.js";
 // outside a run builds it with the same functions.
 export { buildProfilerAgent, buildStepAgent, createSandboxAgent } from "./agents/sandbox/index.js";
 export type { SandboxAgentDeps, SandboxAgentSpec, SandboxStepCoords } from "./agents/sandbox/index.js";
-export type { AgentEquipment, CatalogServices, McpAgentTools, McpToolSource } from "./catalog/equip.js";
+export { requiredRoleSetup, roleSetupOf } from "./catalog/equip.js";
+export type { AgentEquipment, CatalogServices, McpAgentTools, McpToolSource, RoleSetup } from "./catalog/equip.js";
 // The OAuth sign-in of an MCP server. The host stores the tokens and opens the browser; the harness runs the protocol.
 export { revokeMcpSignIn, signInToMcpServer } from "./mcp/oauth.js";
 export type {

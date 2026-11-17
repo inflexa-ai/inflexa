@@ -4,6 +4,7 @@ description: Read before you do gene set enrichment, over-representation, per-sa
 metadata:
   version: 1.0.0
   tags: [enrichment, gsea, ora, pathway, go, functional-annotation, gseapy, decoupler]
+  category: integration-and-networks
 ---
 
 # Enrichment & Functional Annotation

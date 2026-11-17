@@ -4,6 +4,7 @@ description: Read before you grade adverse events or lab values, screen off-targ
 metadata:
   version: 1.1.0
   tags: [safety, toxicology, CTCAE, hERG, hepatotoxicity, CYP, DDI, adverse-events, biomarkers, matched-negatives]
+  category: drugs-and-safety
 ---
 
 # Translational Safety

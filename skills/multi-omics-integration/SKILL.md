@@ -4,6 +4,7 @@ description: Read before you combine two or more omics types for the same sample
 metadata:
   version: 1.0.0
   tags: [multi-omics, integration, mofa, diablo, snf, factor-analysis, cross-modality]
+  category: integration-and-networks
 ---
 
 # Multi-Omics Integration

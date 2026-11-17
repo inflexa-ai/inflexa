@@ -11,7 +11,7 @@
 import { Pool } from "pg";
 
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
-import { equipmentOf } from "../../catalog/memory.js";
+import { setupOf } from "../../catalog/memory.js";
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -171,7 +171,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             resolveWorkspaceRoot: (id) => Promise.resolve(join(base, id)),
             workspaceFs: makeFakeWorkspaceFs(),
             synthesisModel: "claude-test",
-            synthesisEquipment: () => Promise.resolve(equipmentOf()),
+            synthesisSetup: () => Promise.resolve(setupOf("synthesizer")),
         },
         get embedderCalls() {
             return embedderCalls;

@@ -4,6 +4,7 @@ description: Read before you analyze mass spectrometry or affinity proteomics da
 metadata:
   version: 1.0.0
   tags: [proteomics, dda, dia, tmt, olink, somascan, mass-spectrometry]
+  category: proteomics-and-metabolomics
 ---
 
 # Proteomics Analysis

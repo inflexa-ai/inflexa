@@ -26,7 +26,7 @@
  */
 
 import type { ScriptRuntime } from "../tools/script/run-script.js";
-import type { AgentEquipment } from "../catalog/equip.js";
+import type { RoleSetup } from "../catalog/equip.js";
 import { createSkillTools } from "../tools/sandbox/skills.js";
 import { open, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -52,7 +52,6 @@ import {
 import { normalizeCitationKey } from "../contracts/report-reference.js";
 import type { RunStepMethods } from "./run-methods.js";
 import { citationKeyOfSource } from "./step-methods.js";
-import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { composeSystemPrompt } from "../agents/system-prompt.js";
 import type { RunSynthesisPart } from "../contracts/chat-parts.js";
 import type { StepSummary } from "../schemas/step-summary.js";
@@ -403,8 +402,8 @@ export type GenerateRunSynthesisInput = {
     readonly provider: ChatProvider;
     readonly session: RunSession;
     readonly model: string;
-    /** What the synthesizer gets from the catalog: its lookups (the connector tools, which run in `run_script`), its skills, and its MCP tools. */
-    readonly equipment: AgentEquipment;
+    /** The active synthesizer: its prompt body, and its lookups (the connector tools, which run in `run_script`), skills, and MCP tools. */
+    readonly setup: RoleSetup;
     /** Where the VM of `run_script` comes from. See {@link ScriptRuntime}. */
     readonly scriptRuntime?: ScriptRuntime;
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
@@ -435,7 +434,7 @@ export type SynthesizerWorkspace = ReadSurfaceDeps & { readonly resolveWorkspace
 /** What the synthesizer agent is built from, for a consumer that runs the agent outside `generateRunSynthesis`. */
 export type SynthesizerAgentInput = Pick<
     GenerateRunSynthesisInput,
-    "model" | "equipment" | "scriptRuntime" | "toolOutputStore" | "summaries" | "workspace" | "methods"
+    "model" | "setup" | "scriptRuntime" | "toolOutputStore" | "summaries" | "workspace" | "methods"
 >;
 
 /**
@@ -448,9 +447,9 @@ export function synthesizerAgentOf(input: SynthesizerAgentInput): AgentDefinitio
     const innerCtx: InnerToolContext = { knownStepIds, lookedUpPmids, methodSources: methodSourcesOf(input.methods ?? []) };
 
     const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
-    const { equipment } = input;
+    const { equipment } = input.setup;
     const skillTools = Object.values(createSkillTools({ store: equipment.skillStore, skills: equipment.skills }));
-    const prompt = equipment.skillIndex === undefined ? synthesisAgentPrompt : `${synthesisAgentPrompt}\n\n${equipment.skillIndex}`;
+    const prompt = equipment.skillIndex === undefined ? input.setup.agent.prompt : `${input.setup.agent.prompt}\n\n${equipment.skillIndex}`;
     // The lookups run in `run_script`, which gives the PMID record of each nested call to its lookup.
     return {
         id: SYNTHESIS_AGENT_ID,

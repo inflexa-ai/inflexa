@@ -4,6 +4,7 @@ description: Read before you analyze methylation array or bisulfite data (DMP or
 metadata:
   version: 1.0.0
   tags: [methylation, 450k, epic, bisulfite-seq, wgbs, rrbs, dmp, dmr]
+  category: epigenomics
 ---
 
 # DNA Methylation Analysis

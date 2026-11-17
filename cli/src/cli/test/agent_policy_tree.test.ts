@@ -57,7 +57,6 @@ function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
 // or safeFlags change surfaces here as a one-file diff that a reviewer must consciously accept. Sorted by
 // grantKey.
 const EXPECTED_DEV_OFF: Record<string, string> = {
-    inflexa: "blocked",
     "inflexa agent attach": "auto()",
     "inflexa agent clone": "auto()",
     "inflexa agent detach": "auto()",
@@ -67,14 +66,16 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa agent ls": "auto(json)",
     "inflexa agent rm": "approval",
     "inflexa agent show": "auto(json)",
+    "inflexa agent use": "auto()",
     "inflexa analysis set-project": "approval",
     "inflexa auth login": "blocked",
     "inflexa auth logout": "approval",
     "inflexa auth whoami": "auto()",
     "inflexa config": "blocked",
     "inflexa connector ls": "auto(json)",
-    "inflexa connector set": "auto(enable,disable,credential)+exact",
+    "inflexa connector set": "auto(credential)+exact",
     "inflexa credential ls": "auto(json)",
+    "inflexa credential rm": "approval",
     "inflexa credential set": "auto(env)+exact",
     "inflexa down": "blocked",
     "inflexa geo download": "approval+transfer",
@@ -88,9 +89,13 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa mcp auth": "blocked",
     "inflexa mcp disable": "auto()",
     "inflexa mcp enable": "auto()",
+    "inflexa mcp find": "auto(json)",
+    "inflexa mcp import": "approval+exact",
+    "inflexa mcp install": "approval+exact",
     "inflexa mcp logout": "blocked",
     "inflexa mcp ls": "auto(json)",
     "inflexa mcp rm": "approval",
+    "inflexa mcp search": "auto(json)",
     "inflexa new": "blocked",
     "inflexa open": "approval",
     "inflexa project ls": "auto()",
@@ -120,6 +125,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa skill find": "auto(json)",
     "inflexa skill import": "auto()",
     "inflexa skill ls": "auto(json)",
+    "inflexa skill show": "auto(json)",
     "inflexa status": "approval",
     "inflexa store add": "approval",
     "inflexa store cancel": "approval",
@@ -133,6 +139,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa usage runs": "auto(analysis)",
     "inflexa usage sessions": "auto(analysis)",
     "inflexa usage steps": "auto(analysis,run)",
+    inflexa: "blocked",
 };
 
 // The full surface (dev channel ON) — the release table plus the dev-only entry points. `chat` is a
@@ -161,7 +168,6 @@ function kindTable(rows: readonly PolicyRow[]): Record<string, string> {
 // server. `instance` is a client of the server, `machine` prepares or controls the machine or the server,
 // `standalone` needs no instance. The release surface is the same table without the dev-only entries.
 const EXPECTED_KINDS: Record<string, string> = {
-    inflexa: "instance",
     "inflexa agent attach": "instance",
     "inflexa agent clone": "instance",
     "inflexa agent detach": "instance",
@@ -171,6 +177,7 @@ const EXPECTED_KINDS: Record<string, string> = {
     "inflexa agent ls": "instance",
     "inflexa agent rm": "instance",
     "inflexa agent show": "instance",
+    "inflexa agent use": "instance",
     "inflexa analysis set-project": "instance",
     "inflexa auth login": "machine",
     "inflexa auth logout": "machine",
@@ -180,6 +187,7 @@ const EXPECTED_KINDS: Record<string, string> = {
     "inflexa connector ls": "instance",
     "inflexa connector set": "instance",
     "inflexa credential ls": "instance",
+    "inflexa credential rm": "instance",
     "inflexa credential set": "instance",
     "inflexa down": "machine",
     "inflexa geo download": "instance",
@@ -193,9 +201,13 @@ const EXPECTED_KINDS: Record<string, string> = {
     "inflexa mcp auth": "instance",
     "inflexa mcp disable": "instance",
     "inflexa mcp enable": "instance",
+    "inflexa mcp find": "instance",
+    "inflexa mcp import": "instance",
+    "inflexa mcp install": "instance",
     "inflexa mcp logout": "instance",
     "inflexa mcp ls": "instance",
     "inflexa mcp rm": "instance",
+    "inflexa mcp search": "instance",
     "inflexa new": "instance",
     "inflexa open": "instance",
     "inflexa profile": "instance",
@@ -227,6 +239,7 @@ const EXPECTED_KINDS: Record<string, string> = {
     "inflexa skill find": "instance",
     "inflexa skill import": "instance",
     "inflexa skill ls": "instance",
+    "inflexa skill show": "instance",
     "inflexa status": "instance",
     "inflexa store add": "machine",
     "inflexa store cancel": "machine",
@@ -240,6 +253,7 @@ const EXPECTED_KINDS: Record<string, string> = {
     "inflexa usage runs": "instance",
     "inflexa usage sessions": "instance",
     "inflexa usage steps": "instance",
+    inflexa: "instance",
 };
 
 describe("agent policy — tree-walk exhaustiveness (both channels)", () => {

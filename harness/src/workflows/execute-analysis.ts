@@ -71,7 +71,7 @@ import { textOf } from "../lib/unknown-text.js";
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
 import { DEFAULT_EXECUTOR_ID } from "../catalog/builtins.js";
 import type { AgentIdentity } from "../catalog/types.js";
-import type { AgentEquipment } from "../catalog/equip.js";
+import type { RoleSetup } from "../catalog/equip.js";
 import { isWorkflowCancellation } from "../runtime/dbos.js";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { mkdir } from "node:fs/promises";
@@ -286,7 +286,7 @@ export type ExecuteAnalysisDeps = {
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
     /** What the synthesizer of one run gets from the agent catalog, read when the synthesis starts. */
-    readonly synthesisEquipment: () => Promise<AgentEquipment>;
+    readonly synthesisSetup: () => Promise<RoleSetup>;
     /** Where the VM of `run_script` comes from, for the lookups of the synthesizer. */
     readonly scriptRuntime?: ScriptRuntime;
     /** Run-level billing-bracket seam (managed: external bracket; OSS: no-op). */
@@ -839,7 +839,7 @@ export function synthesizeFindings(args: {
             resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
             workspaceFs: deps.workspaceFs,
             synthesisModel: deps.synthesisModel,
-            synthesisEquipment: deps.synthesisEquipment,
+            synthesisSetup: deps.synthesisSetup,
             scriptRuntime: deps.scriptRuntime,
             usageRecorder: deps.usageRecorder,
             toolOutputStore: deps.toolOutputStore,

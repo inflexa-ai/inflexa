@@ -4,6 +4,15 @@ A connector is a bundle of shipped tools that reach one outside service, with an
 
 ## ADDED Requirements
 
+### Requirement: Each connector has a category
+
+Each connector of the registry MUST have a category, for example `literature` or `chemistry-and-drugs`. `describeConnectors()` MUST give the category, thus a host can group the connectors in a list for a person.
+
+#### Scenario: The categories of two connectors
+
+- **WHEN** a host lists the connectors
+- **THEN** `pubmed` has the category `literature`, and `chembl` has the category `chemistry-and-drugs`
+
 ### Requirement: A connector bundles the shipped tools of an outside service
 
 The harness MUST define each connector with `defineConnector`. A connector MUST have an `id`, a `description`, its tools, its credential slots and an optional default endpoint. The connector registry MUST be closed: a host MUST NOT define a connector. Each shipped tool that reaches an outside service MUST belong to exactly one connector.

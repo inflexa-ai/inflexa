@@ -4,6 +4,7 @@ description: Read before you analyze compound structures (SAR, library profiles,
 metadata:
   version: 1.1.0
   tags: [cheminformatics, rdkit, datamol, mordred, deepchem, sar, qsar, drug-discovery, molecular-properties, scaffold, pains, target-engagement, cmap, selectivity, kinase-selectivity]
+  category: drugs-and-safety
 ---
 
 # Cheminformatics

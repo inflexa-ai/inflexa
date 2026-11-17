@@ -38,19 +38,20 @@ export const builtinAgentChangeSchema = z.object({
     remove: attachmentsChangeSchema.optional(),
 });
 
-/** The settings of one connector: on or off, an endpoint, and the credential name of each slot. */
+/** The settings of one connector: an endpoint, and the credential name of each slot. Each agent chooses its connectors. */
 export const connectorSettingsSchema = z.object({
-    enabled: z.boolean().optional(),
     endpoint: z.string().optional(),
     credentials: z.record(z.string(), z.string()).optional(),
 });
 
 /**
- * Where the value of a named credential comes from: an environment variable, or a helper command whose output is the
- * value. The block never holds the value itself.
+ * Where the value of a named credential comes from: an environment variable, a helper command whose output is the
+ * value, or a value that the user typed, which the macOS Keychain or a `0600` file keeps. The block never holds the
+ * value itself.
  */
 export const credentialSourceSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("env"), var: z.string().min(1) }),
+    z.object({ kind: z.literal("stored") }),
     z.object({
         kind: z.literal("command"),
         command: z.string().min(1),
@@ -207,6 +208,9 @@ const configSchema = z.object({
     mcp: z.record(z.string(), z.unknown()).optional().catch(undefined),
     connectors: z.record(z.string(), connectorSettingsSchema.catch({})).optional().catch(undefined),
     credentials: z.record(z.string(), z.unknown()).optional().catch(undefined),
+    // The agent that the user chose for each role that one agent fills, by id. The customization module checks each
+    // role and each id, thus an unknown one is reported by name.
+    roles: z.record(z.string(), z.string()).optional().catch(undefined),
     embedding: z
         .object({
             mode: z.enum(["local", "api-key", "off"]).optional().catch(undefined),

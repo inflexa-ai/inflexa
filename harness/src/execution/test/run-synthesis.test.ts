@@ -27,7 +27,7 @@ import type { LoopStep } from "../../loop/run-loop.js";
 import type { ToolCallOutput } from "../../loop/tool-adapter.js";
 import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
-import { equipmentOf } from "../../catalog/memory.js";
+import { setupOf } from "../../catalog/memory.js";
 import type { RunSession } from "../../auth/types.js";
 import {
     __buildInnerToolsForTest,
@@ -161,7 +161,7 @@ function synthesize(script: readonly ScriptStep[], extra: Partial<GenerateRunSyn
         provider: model.provider,
         session: makeRunSession(),
         model: "claude-test",
-        equipment: equipmentOf({ connectorTools: [pubmedLookup] }),
+        setup: setupOf("synthesizer", { connectorTools: [pubmedLookup] }),
         workspace: {
             workspaceFs: makeFakeWorkspaceFs(),
             pool: { query: () => Promise.resolve({ rows: [], rowCount: 0 }) },
@@ -532,7 +532,7 @@ describe("synthesizerAgentOf", () => {
     it("gives the synthesizer the read-only workspace, and the script reads of a PDF, a table, and a compressed file", () => {
         const agent = synthesizerAgentOf({
             model: "claude-test",
-            equipment: equipmentOf({ connectorTools: [pubmedLookup] }),
+            setup: setupOf("synthesizer", { connectorTools: [pubmedLookup] }),
             summaries: [{ stepId: "T1S1", agentId: "analyst", markdown: "## results" }],
             workspace: {
                 workspaceFs: makeFakeWorkspaceFs(),

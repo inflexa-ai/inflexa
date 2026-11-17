@@ -352,12 +352,12 @@ describe("readConfig — the customization blocks", () => {
             JSON.stringify({
                 telemetry: true,
                 agents: { analyst: { enabled: "yes" }, reporter: { add: { skills: ["omics-general"] } } },
-                connectors: { drugbank: { enabled: 3 }, chembl: { enabled: false } },
+                connectors: { drugbank: { endpoint: 3 }, chembl: { endpoint: "https://chembl.example" } },
             }),
         );
         const cfg = readConfig();
         expect(cfg.agents).toEqual({ analyst: {}, reporter: { add: { skills: ["omics-general"] } } });
-        expect(cfg.connectors).toEqual({ drugbank: {}, chembl: { enabled: false } });
+        expect(cfg.connectors).toEqual({ drugbank: {}, chembl: { endpoint: "https://chembl.example" } });
         expect(cfg.telemetry).toBe(true);
     });
 

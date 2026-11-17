@@ -1,11 +1,17 @@
 /**
- * The built-in agents. A host can add and remove the attachments of each one, and it cannot change a prompt. The
- * default attachments of each agent are the tool sets that it held before connectors, expressed as connectors.
+ * The built-in agents. A host can add and remove the attachments of each one, and it cannot change a prompt: a custom
+ * agent of the same role, a clone for example, changes it. The default attachments of each agent are the tool sets
+ * that it held before connectors, expressed as connectors.
  */
 
+import { analogicalReasonerPrompt } from "../prompts/analogical-reasoner.js";
+import { conversationPrompt } from "../prompts/conversation.js";
+import { plannerPrompt } from "../prompts/planner.js";
+import { reportSessionPrompt } from "../prompts/report-session.js";
 import { analystPrompt } from "../prompts/sandbox/analyst.js";
 import { dataProfilerPrompt } from "../prompts/sandbox/data-profiler.js";
 import { drugAnalystPrompt } from "../prompts/sandbox/drug-analyst.js";
+import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import type { AgentAttachments, AgentRole, BuiltinAgentId } from "./types.js";
 
 export type BuiltinAgent = {
@@ -13,8 +19,8 @@ export type BuiltinAgent = {
     readonly name: string;
     readonly role: AgentRole;
     readonly description: string;
-    /** The prompt body of an agent that the catalog builds: an executor or the profiler. The other roles compose their own. */
-    readonly prompt?: string;
+    /** The prompt body. The harness adds the parts that each agent of the role shares, for example the tools and the skills. */
+    readonly prompt: string;
     readonly defaults: AgentAttachments;
     readonly canDisable: boolean;
     readonly defaultMaxSteps?: number;
@@ -27,6 +33,7 @@ export const BUILTIN_AGENTS: readonly BuiltinAgent[] = [
         id: "inflexa",
         name: "Inflexa",
         role: "chat",
+        prompt: conversationPrompt,
         description: "The agent that the user talks to. It plans, starts and reads analyses.",
         defaults: {
             connectors: [
@@ -65,6 +72,7 @@ export const BUILTIN_AGENTS: readonly BuiltinAgent[] = [
         id: "planner",
         name: "Planner",
         role: "planner",
+        prompt: plannerPrompt,
         description: "Makes the analysis plan from the data profile and the research question.",
         defaults: { connectors: ["geo", "pubmed", "arxiv", "semantic-scholar", "github", "context7", "knowledge"], mcp: [], skills: [] },
         canDisable: false,
@@ -169,6 +177,7 @@ export const BUILTIN_AGENTS: readonly BuiltinAgent[] = [
         id: "synthesizer",
         name: "Synthesizer",
         role: "synthesizer",
+        prompt: synthesisAgentPrompt,
         description: "Writes the literature-grounded synthesis of a run.",
         defaults: {
             connectors: ["gene-search", "protein-search", "annotations", "string", "pubmed", "citations", "drug-gene-interactions", "preclinical"],
@@ -181,6 +190,7 @@ export const BUILTIN_AGENTS: readonly BuiltinAgent[] = [
         id: "analogy",
         name: "Analogy reasoner",
         role: "analogy",
+        prompt: analogicalReasonerPrompt,
         description: "Finds analogous problems and methods in other fields.",
         defaults: { connectors: ["semantic-scholar", "arxiv", "github", "pubmed"], mcp: [], skills: [] },
         canDisable: true,
@@ -189,6 +199,7 @@ export const BUILTIN_AGENTS: readonly BuiltinAgent[] = [
         id: "reporter",
         name: "Reporter",
         role: "reporter",
+        prompt: reportSessionPrompt,
         description: "Composes a report with the user in a report session.",
         defaults: { connectors: [], mcp: [], skills: [] },
         canDisable: false,

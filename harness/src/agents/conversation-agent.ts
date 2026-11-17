@@ -41,13 +41,11 @@ import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { createEditIntentStore } from "../state/edit-intents.js";
-import { conversationPrompt } from "../prompts/conversation.js";
 import { composeSystemPrompt } from "./system-prompt.js";
 
 import type { KnowledgeClient } from "../tools/knowledge/index.js";
 import { plannerCatalogOf } from "./sandbox-catalog.js";
-import { builtinAgent } from "../catalog/builtins.js";
-import { equipAttachments, type CatalogServices } from "../catalog/equip.js";
+import { requiredRoleSetup, type CatalogServices } from "../catalog/equip.js";
 import { agentOfRole, resolveCatalog } from "../catalog/resolve.js";
 import { createSkillTools } from "../tools/sandbox/skills.js";
 import type { TurnAgent } from "./turn-agent.js";
@@ -303,8 +301,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): Conversati
 
     const forTurn = async (): Promise<AgentDefinition> => {
         const resolved = await resolveCatalog(services.catalog);
-        const attachments = agentOfRole(resolved, "chat")?.attachments ?? builtinAgent("inflexa").defaults;
-        const equipment = await equipAttachments(services, resolved, attachments);
+        const { agent: chat, equipment } = await requiredRoleSetup(services, resolved, "chat");
         const analogyOn = agentOfRole(resolved, "analogy") !== undefined;
 
         // The lookups and the light work on tables run in a script (`run_script`). Each tool asks no approval.
@@ -382,7 +379,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): Conversati
             ...(hostTools ?? []),
         ];
 
-        const prompt = equipment.skillIndex === undefined ? conversationPrompt : `${conversationPrompt}\n\n${equipment.skillIndex}`;
+        const prompt = equipment.skillIndex === undefined ? chat.prompt : `${chat.prompt}\n\n${equipment.skillIndex}`;
         return {
             id: CONVERSATION_AGENT_ID,
             systemPrompt: composeSystemPrompt(prompt, { identity: true, conversational: true }),

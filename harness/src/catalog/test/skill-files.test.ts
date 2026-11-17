@@ -9,7 +9,23 @@ describe("parseSkillFrontmatter", () => {
     it("reads a plain name and description", () => {
         expect(parseSkillFrontmatter("---\nname: enrichment\ndescription: Functional enrichment\nversion: 1.0.0\n---\n\n# Enrichment\n")).toEqual({
             ok: true,
-            skill: { name: "enrichment", description: "Functional enrichment" },
+            skill: { name: "enrichment", description: "Functional enrichment", title: "Enrichment" },
+        });
+    });
+
+    it("reads the category and the tags under metadata, and the first heading as the title", () => {
+        const text =
+            "---\nname: enrichment\ndescription: Read before you rank a gene list.\nmetadata:\n  category: integration-and-networks\n  tags: [gsea, ora]\n---\n\nIntro.\n\n# Enrichment & Annotation\n";
+
+        expect(parseSkillFrontmatter(text)).toEqual({
+            ok: true,
+            skill: {
+                name: "enrichment",
+                description: "Read before you rank a gene list.",
+                title: "Enrichment & Annotation",
+                category: "integration-and-networks",
+                tags: ["gsea", "ora"],
+            },
         });
     });
 

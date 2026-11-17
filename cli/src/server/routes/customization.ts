@@ -5,6 +5,11 @@ import {
     ATTACHMENT_KINDS,
     type AgentDetail,
     type AgentList,
+    type DeleteCredentialResponse,
+    type McpCandidateList,
+    type RegistryServerList,
+    type RoleView,
+    type SkillDetail,
     type ConnectorList,
     type ConnectorView,
     type CredentialList,
@@ -19,13 +24,13 @@ import {
     type SkillView,
 } from "../../api/customization.ts";
 import type { ApiErrorCode } from "../../api/common.ts";
-import { credentialSourceSchema, mcpServerEntrySchema } from "../../lib/config.ts";
+import { mcpServerEntrySchema } from "../../lib/config.ts";
 import { customizationErrorMessage, type CustomizationError, type CustomizationService } from "../../modules/customization/service.ts";
 import { apiError, holdConnection, internalError, readBody, type ServerEnv } from "../http.ts";
 
 const attachmentChangeSchema = z.object({ kind: z.enum(ATTACHMENT_KINDS), name: z.string().min(1) });
 
-/** The body of `PATCH /catalog/agents/:id`. `prompt` is read only to refuse it with a reason. */
+/** The body of `PATCH /catalog/agents/:id`. A `prompt` applies to a custom agent only: a built-in prompt is read-only. */
 const patchAgentBody = z.object({
     enabled: z.boolean().optional(),
     attach: attachmentChangeSchema.optional(),
@@ -36,12 +41,30 @@ const patchAgentBody = z.object({
 const cloneAgentBody = z.object({ newId: z.string() });
 const importBody = z.object({ path: z.string().min(1) });
 const patchConnectorBody = z.object({
-    enabled: z.boolean().optional(),
     endpoint: z.string().nullable().optional(),
     credentials: z.record(z.string(), z.string().nullable()).optional(),
 });
 const addMcpBody = z.object({ name: z.string(), entry: mcpServerEntrySchema });
 const patchMcpBody = z.object({ enabled: z.boolean() });
+const chooseRoleBody = z.object({ agentId: z.string().min(1) });
+const putCredentialBody = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("env"), var: z.string().min(1) }),
+    z.object({
+        kind: z.literal("command"),
+        command: z.string().min(1),
+        format: z.enum(["raw", "exec-credential"]).optional(),
+        ttlMs: z.number().int().positive().optional(),
+    }),
+    z.object({ kind: z.literal("stored"), value: z.string().min(1) }),
+]);
+const importMcpBody = z.object({ sourcePath: z.string().min(1), name: z.string().min(1), as: z.string().min(1).optional() });
+const installMcpBody = z.object({
+    registryName: z.string().min(1),
+    version: z.string().min(1),
+    install: z.number().int().nonnegative(),
+    name: z.string().min(1),
+    inputs: z.record(z.string(), z.string()),
+});
 
 /** The code of each {@link CustomizationError} that a client can act on. `null` marks a failure of the server itself. */
 function codeOf(e: CustomizationError): ApiErrorCode | null {
@@ -50,6 +73,9 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
         case "unknown_connector":
         case "unknown_mcp_server":
         case "skill_dir_missing":
+        case "unknown_skill":
+        case "unknown_credential":
+        case "unknown_candidate":
             return "not_found";
         case "agent_exists":
         case "skill_exists":
@@ -59,7 +85,6 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
         case "builtin_agent":
             return "forbidden";
         case "invalid_agent_id":
-        case "not_an_executor":
         case "draft_unreadable":
         case "unknown_reference":
         case "approval_needs_a_person":
@@ -71,8 +96,13 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
         case "invalid_mcp_entry":
         case "mcp_server_invalid":
         case "not_oauth":
+        case "unknown_role":
+        case "role_mismatch":
+        case "unknown_install":
+        case "missing_input":
             return "validation_error";
         case "sign_in_failed":
+        case "registry_unavailable":
             return "unavailable";
         case "io_failed":
         case "config_write_failed":
@@ -98,7 +128,7 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
 
     routes.get("/catalog/agents", async (c) =>
         (await service.listAgents()).match(
-            (agents) => c.json({ agents } satisfies AgentList),
+            (list) => c.json(list satisfies AgentList),
             (e) => customizationError(c, e),
         ),
     );
@@ -137,19 +167,29 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         if (prompt !== undefined) {
             const current = await service.showAgent(id);
             if (current.isErr()) return customizationError(c, current.error);
-            return current.value.kind === "builtin"
-                ? apiError(
-                      c,
-                      "forbidden",
-                      `The prompt of the built-in agent "${id}" is read-only. \`inflexa agent clone ${id} <new-id>\` makes a copy whose prompt you can edit.`,
-                  )
-                : apiError(c, "validation_error", `Edit the prompt of "${id}" in its file: ${current.value.path ?? "the agents directory"}.`);
+            if (current.value.kind === "builtin")
+                return apiError(
+                    c,
+                    "forbidden",
+                    `The prompt of the built-in agent "${id}" is read-only. \`inflexa agent clone ${id} <new-id>\` makes a copy whose prompt you can edit.`,
+                );
         }
         let result = enabled === undefined ? service.showAgent(id) : service.setAgentEnabled(id, enabled);
+        if (prompt !== undefined) result = result.andThen(() => service.setAgentPrompt(id, prompt));
         if (attach !== undefined) result = result.andThen(() => service.attach(id, attach.kind, attach.name));
         if (detach !== undefined) result = result.andThen(() => service.detach(id, detach.kind, detach.name));
         return (await result).match(
             (agent) => c.json(agent satisfies AgentDetail),
+            (e) => customizationError(c, e),
+        );
+    });
+
+    // The built-in agent of the role clears the choice.
+    routes.put("/catalog/roles/:role", async (c) => {
+        const body = await readBody(c, chooseRoleBody);
+        if (body.isErr()) return body.error;
+        return (await service.chooseRoleAgent(c.req.param("role"), body.value.agentId)).match(
+            (role) => c.json(role satisfies RoleView),
             (e) => customizationError(c, e),
         );
     });
@@ -169,6 +209,21 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
             (e) => customizationError(c, e),
         );
     });
+
+    // The skills in the usual skill directories of other harnesses. The read never writes.
+    routes.get("/skills/found", async (c) =>
+        (await service.findSkills(undefined)).match(
+            (list) => c.json(list satisfies SkillList),
+            (e) => customizationError(c, e),
+        ),
+    );
+
+    routes.get("/skills/:name", async (c) =>
+        (await service.showSkill(c.req.param("name"))).match(
+            (skill) => c.json(skill satisfies SkillDetail),
+            (e) => customizationError(c, e),
+        ),
+    );
 
     routes.post("/skills/import", async (c) => {
         const body = await readBody(c, importBody);
@@ -203,10 +258,51 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
     );
 
     routes.put("/credentials/:name", async (c) => {
-        const body = await readBody(c, credentialSourceSchema);
+        const body = await readBody(c, putCredentialBody);
         if (body.isErr()) return body.error;
         return (await service.setCredential(c.req.param("name"), body.value)).match(
             (credential) => c.json(credential satisfies CredentialView),
+            (e) => customizationError(c, e),
+        );
+    });
+
+    routes.delete("/credentials/:name", async (c) =>
+        (await service.removeCredential(c.req.param("name"))).match(
+            () => c.json({ deleted: true } satisfies DeleteCredentialResponse),
+            (e) => customizationError(c, e),
+        ),
+    );
+
+    // The MCP servers in the configs of other harnesses on this machine. The values of their env and headers stay here.
+    routes.get("/mcp/found", async (c) =>
+        (await service.findMcp()).match(
+            (candidates) => c.json({ candidates } satisfies McpCandidateList),
+            (e) => customizationError(c, e),
+        ),
+    );
+
+    routes.post("/mcp/import", async (c) => {
+        const body = await readBody(c, importMcpBody);
+        if (body.isErr()) return body.error;
+        return (await service.importMcp(body.value)).match(
+            (server) => c.json(server satisfies McpServerView, 201),
+            (e) => customizationError(c, e),
+        );
+    });
+
+    // A page of the official MCP Registry. The server asks the registry, thus the GUI needs no network of its own.
+    routes.get("/mcp/registry", async (c) =>
+        (await service.searchRegistry(c.req.query("search") ?? "", c.req.query("cursor"))).match(
+            (page) => c.json(page satisfies RegistryServerList),
+            (e) => customizationError(c, e),
+        ),
+    );
+
+    routes.post("/mcp/install", async (c) => {
+        const body = await readBody(c, installMcpBody);
+        if (body.isErr()) return body.error;
+        return (await service.installMcp(body.value)).match(
+            (server) => c.json(server satisfies McpServerView, 201),
             (e) => customizationError(c, e),
         );
     });

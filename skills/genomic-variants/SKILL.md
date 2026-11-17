@@ -4,6 +4,7 @@ description: Read before you filter, annotate, or test called variants or genoty
 metadata:
   version: 1.0.0
   tags: [wgs, wes, gwas, variant-annotation, population-genetics, plink2]
+  category: genomics
 ---
 
 # Genomic Variant Analysis

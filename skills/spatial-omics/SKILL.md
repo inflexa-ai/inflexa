@@ -4,6 +4,7 @@ description: Read before you analyze spatial transcriptomics or spatial proteomi
 metadata:
   version: 1.0.0
   tags: [visium, merfish, slide-seq, codex, spatial, squidpy, spatialdata]
+  category: transcriptomics
 ---
 
 # Spatial Omics Analysis

@@ -4,6 +4,7 @@ description: Read before you estimate immune cell composition, score immune sign
 metadata:
   version: 1.0.0
   tags: [immunology, immuno-oncology, deconvolution, immune-signatures, TME, checkpoint, TCR, BCR, IO-response]
+  category: transcriptomics
 ---
 
 # Immune Profiling

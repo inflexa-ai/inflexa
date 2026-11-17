@@ -4,6 +4,7 @@ description: Read before you analyze single cells with two or more modalities (R
 metadata:
   version: 1.0.0
   tags: [cite-seq, multiome, tea-seq, dogma-seq, mudata, multimodal]
+  category: transcriptomics
 ---
 
 # Multimodal Single-Cell Analysis

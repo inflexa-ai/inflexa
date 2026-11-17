@@ -29,12 +29,28 @@ A custom skill whose `name` equals a built-in skill name MUST be left out of the
 - **WHEN** the user runs `inflexa skill ls`
 - **THEN** the list shows the custom `single-cell` with a collision error, and agents read the built-in `single-cell`
 
-### Requirement: The user names each directory to search or import
+### Requirement: Find searches a directory, or the skill folders of other harnesses
 
-`inflexa skill find <dir>` MUST list the skills in the directory that the user names. `inflexa skill import <dir>` MUST copy one skill directory into `~/.config/inflexa/skills/`. The CLI MUST NOT search a directory of another harness on its own.
+`inflexa skill find <dir>` MUST list the skills in the directory that the user names. With no directory, it MUST list the skills in the usual skill folders of other harnesses: `~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills` and `~/.config/opencode/skills`. `inflexa skill import <dir>` MUST copy one skill directory into `~/.config/inflexa/skills/`.
+
+#### Scenario: Find with no directory
+
+- **GIVEN** a skill `plate-reader` in `~/.claude/skills`
+- **WHEN** the user runs `inflexa skill find`
+- **THEN** the list holds `plate-reader` with no conflict
 
 #### Scenario: Import a skill
 
 - **GIVEN** a directory with a valid `SKILL.md` whose `name` is `plate-reader`
 - **WHEN** the user runs `inflexa skill import <dir>`
 - **THEN** `~/.config/inflexa/skills/plate-reader/` holds a copy of the directory
+
+### Requirement: A skill shows its text
+
+`inflexa skill show <name>` and `GET /api/v1/skills/<name>` MUST give the title, the category, the tags, the description, the text of the `SKILL.md`, and the paths of the other files of the skill.
+
+#### Scenario: Show a built-in skill
+
+- **WHEN** the user runs `inflexa skill show single-cell`
+- **THEN** the output holds the title "Single-Cell Analysis", the category `transcriptomics` and the text of the skill
+

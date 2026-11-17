@@ -35,6 +35,15 @@ Each `SKILL.md` MUST start with YAML frontmatter that holds `name` and `descript
 - **WHEN** the built-in skills are listed
 - **THEN** `omics-general` is a skill id, and `shared/omics-general` is not
 
+### Requirement: A skill gives a title, a category and tags for a person
+
+The frontmatter parse MUST give the first `# ` heading of the body as the title, `metadata.category` as the category, and `metadata.tags` as the tags. Each one is optional. The description stays the text for the agent, which opens with "Read before you". Each built-in skill MUST have a category.
+
+#### Scenario: The title and the category of a built-in skill
+
+- **WHEN** a host lists the skills
+- **THEN** `single-cell` has the title "Single-Cell Analysis" and the category `transcriptomics`
+
 ### Requirement: Each role gets the skill tools
 
 Each agent of each role MUST get `skill_search`, `skill_read`, and an index of its attached skills in its system prompt. The index MUST hold the id and the description of each attached skill. Both tools MUST be confined to the attached skills. An agent with no attached skill MUST get the tools, and each call MUST return the `no_skills` data variant.

@@ -30,7 +30,7 @@
 
 import { dbosRecvRecorder, dbosWriteStreamRecorder } from "./__fixtures__/dbos-event-mocks.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
-import { equipmentOf } from "../../catalog/memory.js";
+import { setupOf } from "../../catalog/memory.js";
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { collapseWhitespace } from "../../lib/text.js";
 import { errorOf } from "../../lib/thrown.js";
@@ -561,7 +561,7 @@ function makeDeps(opts: {
             },
         }),
         synthesisModel: "test-synthesis-model",
-        synthesisEquipment: () => Promise.resolve(equipmentOf()),
+        synthesisSetup: () => Promise.resolve(setupOf("synthesizer")),
         runCharge: {
             open: () => okAsync(undefined),
             close: ({ outcome }) => {

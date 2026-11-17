@@ -4,6 +4,7 @@ description: Read before you analyze ATAC-seq, ChIP-seq, CUT&Tag, or scATAC data
 metadata:
   version: 1.0.0
   tags: [atac-seq, chip-seq, cut-and-tag, cut-and-run, peaks, diffbind, chromatin]
+  category: epigenomics
 ---
 
 # Chromatin Regulation Analysis

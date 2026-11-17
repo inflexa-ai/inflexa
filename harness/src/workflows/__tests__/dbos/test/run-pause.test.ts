@@ -32,7 +32,7 @@ import { createLocalRunAuthorizer } from "../../../../auth/local-run-authorizer.
 import { createWork } from "../../../../app/work.js";
 import { makeLocalAuth } from "../../../../auth/local-auth-context.js";
 import type { RunChargeOutcome } from "../../../../billing/run-charge.js";
-import { createInMemoryCatalog, equipmentOf } from "../../../../catalog/memory.js";
+import { createInMemoryCatalog, setupOf } from "../../../../catalog/memory.js";
 import type { ArtifactRegistry } from "../../../../execution/artifact-registry.js";
 import { createRunCanceler } from "../../../../execution/run-canceler.js";
 import type { GateFailure } from "../../../../lib/hooks.js";
@@ -141,7 +141,7 @@ function parentDeps(current: RunCase): ExecuteAnalysisDeps {
         workspaceFs: makeFakeWorkspaceFs(),
         workingMemory: createWorkingMemory(rig.pool),
         synthesisModel: "test-model",
-        synthesisEquipment: () => Promise.resolve(equipmentOf()),
+        synthesisSetup: () => Promise.resolve(setupOf("synthesizer")),
         runCharge: current.runCharge,
         runAuthorizer: {
             authorize() {
