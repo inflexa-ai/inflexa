@@ -17,6 +17,8 @@ slots, and the values that the plan binds.
   run that ends with exit code 0.
 - When a run fails, read its streams, correct the inputs or the slot values,
   and run the template again.
+- The template decides the files and the formats of its outputs. Keep them as
+  the template writes them.
 - Do not edit the rendered script after it runs, and do not run a different
   script in its place. To change what the script does, send different slot
   values. The provenance of the step names the template of the results.
