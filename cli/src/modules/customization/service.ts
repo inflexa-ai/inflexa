@@ -276,13 +276,14 @@ export type CustomizationService = {
     /** Make an agent the active agent of its role. The built-in agent of the role clears the choice. */
     readonly chooseRoleAgent: (role: string, agentId: string) => ResultAsync<RoleView, CustomizationError>;
     readonly showAgent: (id: string) => ResultAsync<AgentDetail, CustomizationError>;
-    readonly cloneAgent: (sourceId: string, newId: string) => ResultAsync<AgentDetail, CustomizationError>;
+    /** Copy an agent into a new agent file. A `description` replaces the description of the source. */
+    readonly cloneAgent: (sourceId: string, newId: string, description?: string) => ResultAsync<AgentDetail, CustomizationError>;
     /** The agent files in the user agent directories of other harnesses. */
     readonly findAgents: () => ResultAsync<FoundAgentList, CustomizationError>;
     readonly importAgent: (path: string, role: AgentRole) => ResultAsync<AgentDetail, CustomizationError>;
     readonly setAgentEnabled: (id: string, enabled: boolean) => ResultAsync<AgentDetail, CustomizationError>;
-    /** Replace the prompt body of a custom agent in its file. A built-in prompt is read-only. */
-    readonly setAgentPrompt: (id: string, prompt: string) => ResultAsync<AgentDetail, CustomizationError>;
+    /** Replace the description or the prompt body of a custom agent in its file. A built-in agent is read-only. */
+    readonly editAgent: (id: string, edit: AgentEdit) => ResultAsync<AgentDetail, CustomizationError>;
     readonly attach: (id: string, kind: AttachmentKind, name: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly detach: (id: string, kind: AttachmentKind, name: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly removeAgent: (id: string) => ResultAsync<void, CustomizationError>;
@@ -531,6 +532,9 @@ async function listSkillFiles(directory: string): Promise<string[]> {
         .filter((path) => path !== "SKILL.md")
         .sort();
 }
+
+/** A change to a custom agent. Each field that is absent stays as the file has it. */
+export type AgentEdit = { readonly description?: string; readonly prompt?: string };
 
 /** An agent directory of another harness. */
 export type AgentDir = { readonly source: string; readonly dir: string };
@@ -992,7 +996,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         listAgents: () =>
             loadAgents().map((state): AgentList => ({ agents: agentDetails(state).map(({ prompt: _prompt, ...view }) => view), roles: roleViews(state) })),
 
-        setAgentPrompt: (id, prompt) =>
+        editAgent: (id, edit) =>
             loadAgents()
                 .andThen((state): Result<void, CustomizationError> => {
                     if (BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent", id });
@@ -1001,7 +1005,14 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                     return readFileResult(file.path, "read the agent file").andThen((text): Result<void, CustomizationError> => {
                         const split = splitFrontmatter(text);
                         if (split === null) return err({ type: "draft_unreadable", id, path: file.path });
-                        return writeFileResult(file.path, `---\n${split.yaml}\n---\n\n${prompt.trim()}\n`, "write the agent file");
+                        let yaml = split.yaml;
+                        if (edit.description !== undefined) {
+                            const frontmatter = parseYamlRecord(yaml);
+                            if (frontmatter === undefined) return err({ type: "draft_unreadable", id, path: file.path });
+                            yaml = Bun.YAML.stringify({ ...frontmatter, description: edit.description.trim() }, null, 2).trimEnd();
+                        }
+                        const body = edit.prompt === undefined ? split.body : edit.prompt.trim();
+                        return writeFileResult(file.path, `---\n${yaml}\n---\n\n${body}\n`, "write the agent file");
                     });
                 })
                 .andThen(() => findDetail(id)),
@@ -1028,14 +1039,15 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
 
         showAgent: findDetail,
 
-        cloneAgent: (sourceId, newId) =>
+        cloneAgent: (sourceId, newId, description) =>
             loadAgents()
                 .andThen((state): Result<void, CustomizationError> => {
                     const path = checkNewAgentId(newId, state.files);
                     if (path.isErr()) return err(path.error);
                     const cloned = cloneDefinition(cloneSource(state, sourceId), sourceId, newId);
                     if (cloned.isErr()) return err({ type: "unknown_agent", id: sourceId });
-                    return writeNewAgentFile(newId, path.value, renderAgentFile(cloned.value));
+                    const definition = description === undefined ? cloned.value : { ...cloned.value, description: description.trim() };
+                    return writeNewAgentFile(newId, path.value, renderAgentFile(definition));
                 })
                 .andThen(() => findDetail(newId)),
 

@@ -32,15 +32,16 @@ import { apiError, holdConnection, internalError, readBody, type ServerEnv } fro
 
 const attachmentChangeSchema = z.object({ kind: z.enum(ATTACHMENT_KINDS), name: z.string().min(1) });
 
-/** The body of `PATCH /catalog/agents/:id`. A `prompt` applies to a custom agent only: a built-in prompt is read-only. */
+/** The body of `PATCH /catalog/agents/:id`. A `description` and a `prompt` apply to a custom agent only: a built-in agent is read-only. */
 const patchAgentBody = z.object({
     enabled: z.boolean().optional(),
     attach: attachmentChangeSchema.optional(),
     detach: attachmentChangeSchema.optional(),
+    description: z.string().trim().min(1).optional(),
     prompt: z.string().optional(),
 });
 
-const cloneAgentBody = z.object({ newId: z.string() });
+const cloneAgentBody = z.object({ newId: z.string(), description: z.string().trim().min(1).optional() });
 const importBody = z.object({ path: z.string().min(1) });
 const importAgentBody = z.object({ path: z.string().min(1), role: z.string().optional() });
 const patchConnectorBody = z.object({
@@ -166,30 +167,30 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
     routes.post("/catalog/agents/:id/clone", async (c) => {
         const body = await readBody(c, cloneAgentBody);
         if (body.isErr()) return body.error;
-        return (await service.cloneAgent(c.req.param("id"), body.value.newId)).match(
+        return (await service.cloneAgent(c.req.param("id"), body.value.newId, body.value.description)).match(
             (agent) => c.json(agent satisfies AgentDetail, 201),
             (e) => customizationError(c, e),
         );
     });
 
-    // The fields apply in a fixed order: `enabled`, then `attach`, then `detach`. A body with no field reads the agent.
+    // The fields apply in a fixed order: `enabled`, then `description` and `prompt`, then `attach`, then `detach`. A body with no field reads the agent.
     routes.patch("/catalog/agents/:id", async (c) => {
         const id = c.req.param("id");
         const body = await readBody(c, patchAgentBody);
         if (body.isErr()) return body.error;
-        const { enabled, attach, detach, prompt } = body.value;
-        if (prompt !== undefined) {
+        const { enabled, attach, detach, description, prompt } = body.value;
+        if (description !== undefined || prompt !== undefined) {
             const current = await service.showAgent(id);
             if (current.isErr()) return customizationError(c, current.error);
             if (current.value.kind === "builtin")
                 return apiError(
                     c,
                     "forbidden",
-                    `The prompt of the built-in agent "${id}" is read-only. \`inflexa agent clone ${id} <new-id>\` makes a copy whose prompt you can edit.`,
+                    `The built-in agent "${id}" is read-only. \`inflexa agent clone ${id} <new-id>\` makes a copy that you can edit.`,
                 );
         }
         let result = enabled === undefined ? service.showAgent(id) : service.setAgentEnabled(id, enabled);
-        if (prompt !== undefined) result = result.andThen(() => service.setAgentPrompt(id, prompt));
+        if (description !== undefined || prompt !== undefined) result = result.andThen(() => service.editAgent(id, { description, prompt }));
         if (attach !== undefined) result = result.andThen(() => service.attach(id, attach.kind, attach.name));
         if (detach !== undefined) result = result.andThen(() => service.detach(id, detach.kind, detach.name));
         return (await result).match(

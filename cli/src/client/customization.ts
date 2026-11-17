@@ -3,6 +3,7 @@ import type { ResultAsync } from "neverthrow";
 import type {
     AddMcpServerRequest,
     AgentDetail,
+    CloneAgentRequest,
     FoundAgentList,
     ImportAgentRequest,
     AgentList,
@@ -42,8 +43,14 @@ export function fetchAgent(id: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): 
 }
 
 /** `POST /api/v1/catalog/agents/:id/clone`: copy a built-in executor into a new agent file. 409 `conflict` for a taken id. */
-export function cloneAgent(id: string, newId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
-    return request<AgentDetail>("POST", `/api/v1/catalog/agents/${encodeURIComponent(id)}/clone`, { body: { newId } }, opts);
+export function cloneAgent(
+    id: string,
+    newId: string,
+    description: string | undefined,
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): ResultAsync<AgentDetail, ClientError> {
+    const body: CloneAgentRequest = description === undefined ? { newId } : { newId, description };
+    return request<AgentDetail>("POST", `/api/v1/catalog/agents/${encodeURIComponent(id)}/clone`, { body }, opts);
 }
 
 /** `GET /api/v1/catalog/agents/found`: the agent files in the agent directories of other harnesses. */

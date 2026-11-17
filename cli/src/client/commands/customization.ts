@@ -9,6 +9,7 @@ import {
     type McpEntryView,
     type McpRevocationView,
     type McpServerView,
+    type PatchAgentRequest,
     type PutCredentialRequest,
     type RegistryServerView,
     type SkillList,
@@ -150,8 +151,8 @@ export async function agentShow(id: string, flags: JsonFlag, opts: ClientOpts = 
 }
 
 /** `inflexa agent clone <id> <new-id>`: copy an agent into a new agent file of the same role. */
-export async function agentClone(id: string, newId: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    const agent = (await cloneAgent(id, newId, opts)).match(identity, failOn);
+export async function agentClone(id: string, newId: string, flags: { description?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const agent = (await cloneAgent(id, newId, flags.description, opts)).match(identity, failOn);
     const use = agent.role === "executor" ? "" : ` \`inflexa agent use ${agent.id}\` makes it the ${agent.role} agent.`;
     console.log(`Cloned "${id}" to ${agent.path ?? agent.id}. Edit the file to change the prompt.${use}`);
 }
@@ -191,6 +192,19 @@ export async function agentImport(file: string, flags: { role?: string }, opts: 
         console.log("The agent is a draft until you correct these gaps in the file:");
         printGaps(agent, "  ");
     }
+}
+
+/** `inflexa agent set <id>`: change the description or the prompt body of a custom agent. */
+export async function agentSet(id: string, flags: { description?: string; prompt?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    if (flags.description === undefined && flags.prompt === undefined) fail("Give --description, --prompt, or both.");
+    const body: PatchAgentRequest = {};
+    if (flags.description !== undefined) body.description = flags.description;
+    if (flags.prompt !== undefined) body.prompt = flags.prompt;
+    const agent = (await patchAgent(id, body, opts)).match(identity, failOn);
+    console.log(
+        `Changed the ${[flags.description === undefined ? "" : "description", flags.prompt === undefined ? "" : "prompt"].filter((part) => part.length > 0).join(" and ")} of "${agent.id}".`,
+    );
+    printGaps(agent, "  ");
 }
 
 /** `inflexa agent enable <id>` and `inflexa agent disable <id>`. */

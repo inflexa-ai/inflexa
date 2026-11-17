@@ -204,6 +204,14 @@ describe("/catalog/roles, /skills/:name, stored credentials, and /mcp/found", ()
         expect((await send("PATCH", "/catalog/agents/planner", { prompt: "You plan." })).status).toBe(403);
     });
 
+    test("PATCH with a description rewrites a custom agent, a built-in description stays read-only, and an empty one is 400", async () => {
+        await send("POST", "/catalog/agents/analyst/clone", { newId: "lipid-analyst", description: "Lipids." });
+
+        expect(await jsonBody(send("PATCH", "/catalog/agents/lipid-analyst", { description: "Lipidomics." }))).toMatchObject({ description: "Lipidomics." });
+        expect((await send("PATCH", "/catalog/agents/analyst", { description: "Lipidomics." })).status).toBe(403);
+        expect((await send("PATCH", "/catalog/agents/lipid-analyst", { description: "  " })).status).toBe(400);
+    });
+
     test("GET a skill gives its text, and an unknown skill is 404", async () => {
         expect(await jsonBody(send("GET", "/skills/single-cell"))).toMatchObject({ name: "single-cell", kind: "builtin" });
         expect((await send("GET", "/skills/nope")).status).toBe(404);
