@@ -199,7 +199,7 @@ describe("import", () => {
             "---\nname: Reviewer\ndescription: Reviews code.\ntools: Read, Bash, mcp__github__search_code, NotebookEdit\nmodel: sonnet\n---\nReview it.\n",
         );
 
-        const agent = await awaitOk(service.importAgent(source));
+        const agent = await awaitOk(service.importAgent(source, "executor"));
 
         const path = join(fixture.agentsDir, "reviewer.md");
         expect(frontmatterOf(path)).toEqual({
@@ -212,11 +212,44 @@ describe("import", () => {
             tools: ["NotebookEdit"],
         });
         expect(agent).toMatchObject({ id: "reviewer", draft: true, gaps: [{ reason: "tool_not_mapped", reference: "NotebookEdit" }] });
-        expect((await service.importAgent(source))._unsafeUnwrapErr()).toEqual({ type: "agent_exists", id: "reviewer" });
+        expect((await service.importAgent(source, "executor"))._unsafeUnwrapErr()).toEqual({ type: "agent_exists", id: "reviewer" });
+    });
+
+    test("the import gives the agent the role that the user chose", async () => {
+        const source = join(fixture.root, "lab-reporter.md");
+        writeFileSync(source, "---\nname: lab-reporter\ndescription: Lab reports.\n---\nWrite the report.\n");
+
+        const agent = await awaitOk(service.importAgent(source, "reporter"));
+
+        expect(agent).toMatchObject({ id: "lab-reporter", role: "reporter", draft: false, prompt: "Write the report." });
+    });
+
+    test("find lists the agent files of other harnesses, with a conflict for a taken id and a problem for a file that does not convert", async () => {
+        const [claude, gemini] = fixture.agentDirs.map((entry) => entry.dir);
+        mkdirSync(claude ?? "", { recursive: true });
+        mkdirSync(gemini ?? "", { recursive: true });
+        writeFileSync(join(claude ?? "", "reviewer.md"), "---\nname: Reviewer\ndescription: Reviews code.\n---\nReview it.\n");
+        writeFileSync(join(claude ?? "", "notes.txt"), "not an agent");
+        writeFileSync(join(gemini ?? "", "planner.md"), "---\nname: planner\ndescription: Plans.\n---\nPlan it.\n");
+        writeFileSync(join(gemini ?? "", "broken.md"), "no front matter\n");
+
+        const list = await awaitOk(service.findAgents());
+
+        expect(list.agents).toEqual([
+            { id: "reviewer", description: "Reviews code.", source: "Claude Code", path: join(claude ?? "", "reviewer.md") },
+            {
+                id: "planner",
+                description: "Plans.",
+                source: "Gemini CLI",
+                path: join(gemini ?? "", "planner.md"),
+                conflict: 'An agent "planner" exists already. Select a different id.',
+            },
+        ]);
+        expect(list.problems.map((problem) => problem.path)).toEqual([join(gemini ?? "", "broken.md")]);
     });
 
     test("a file that does not exist is `import_failed`", async () => {
-        expect((await service.importAgent(join(fixture.root, "absent.md")))._unsafeUnwrapErr()).toMatchObject({ type: "import_failed" });
+        expect((await service.importAgent(join(fixture.root, "absent.md"), "executor"))._unsafeUnwrapErr()).toMatchObject({ type: "import_failed" });
     });
 });
 

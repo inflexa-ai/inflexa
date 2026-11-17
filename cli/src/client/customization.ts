@@ -3,6 +3,8 @@ import type { ResultAsync } from "neverthrow";
 import type {
     AddMcpServerRequest,
     AgentDetail,
+    FoundAgentList,
+    ImportAgentRequest,
     AgentList,
     ConnectorList,
     ConnectorView,
@@ -44,9 +46,15 @@ export function cloneAgent(id: string, newId: string, opts: ClientOpts = DEFAULT
     return request<AgentDetail>("POST", `/api/v1/catalog/agents/${encodeURIComponent(id)}/clone`, { body: { newId } }, opts);
 }
 
-/** `POST /api/v1/catalog/agents/import`: convert the agent file of another harness. `path` is absolute. */
-export function importAgent(path: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
-    return request<AgentDetail>("POST", "/api/v1/catalog/agents/import", { body: { path } }, opts);
+/** `GET /api/v1/catalog/agents/found`: the agent files in the agent directories of other harnesses. */
+export function fetchFoundAgents(opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<FoundAgentList, ClientError> {
+    return request<FoundAgentList>("GET", "/api/v1/catalog/agents/found", {}, opts);
+}
+
+/** `POST /api/v1/catalog/agents/import`: convert the agent file of another harness. `path` is absolute. Absent `role`: `executor`. */
+export function importAgent(path: string, role: string | undefined, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
+    const body: ImportAgentRequest = role === undefined ? { path } : { path, role };
+    return request<AgentDetail>("POST", "/api/v1/catalog/agents/import", { body }, opts);
 }
 
 /** `PATCH /api/v1/catalog/agents/:id`: turn an agent on or off, or attach or detach a connector, an MCP server, or a skill. */

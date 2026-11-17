@@ -76,6 +76,25 @@ The CLI MUST ignore a `model` field in an agent file. The role models of the CLI
 - **WHEN** an imported file names `mcp__lims__query`, `lims/query`, `mcp_lims_*` or `lims_query` with a server `lims` in `config.json`
 - **THEN** the new file lists `lims` under `mcpServers`
 
+### Requirement: Import gives the role that the user chooses
+
+An imported agent MUST get the role that the user chooses with `--role`. With no choice, it MUST get the role `executor`.
+
+#### Scenario: The user chooses the role
+
+- **WHEN** the user imports a foreign agent file with `--role reporter`
+- **THEN** the new file has the role `reporter`, and an unknown role is refused with the list of the roles
+
+### Requirement: Find lists the agent files of other harnesses
+
+`inflexa agent find` MUST list the Markdown agent files in the user agent folders of other harnesses: `~/.claude/agents`, `~/.config/opencode/agents`, `~/.cursor/agents`, `~/.copilot/agents` and `~/.gemini/agents`. Each item MUST give the id that an import gives, the description, the harness and the path. An item whose id an agent has already MUST carry a conflict. A file that does not convert MUST show as a problem. The find MUST NOT write.
+
+#### Scenario: A taken id
+
+- **GIVEN** `~/.gemini/agents/planner.md`
+- **WHEN** the user runs `inflexa agent find`
+- **THEN** the list has `planner` from Gemini CLI with a conflict, because the built-in planner has the id
+
 ### Requirement: Clone copies an agent of each role
 
 `inflexa agent clone <id> <new-id>` MUST write `agents/<new-id>.md` with the role, the prompt body, the description and the resolved attachments of the agent `<id>`. The clone MUST have no link to its source. A user can clone a built-in agent of each role and a custom agent.

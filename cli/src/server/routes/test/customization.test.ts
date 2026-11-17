@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -81,6 +82,26 @@ describe("/catalog/agents", () => {
         const response = await send("POST", "/catalog/agents/import", { path: join(fixture.root, "absent.md") });
         expect(response.status).toBe(400);
         expect(await errorBody(response)).toMatchObject({ error: "validation_error" });
+    });
+
+    test("GET found lists the agent files of other harnesses, and POST import takes the role that the body names", async () => {
+        const dir = fixture.agentDirs[0]?.dir ?? "";
+        mkdirSync(dir, { recursive: true });
+        const source = join(dir, "lab-reporter.md");
+        writeFileSync(source, "---\nname: lab-reporter\ndescription: Lab reports.\n---\nWrite the report.\n");
+
+        expect(await jsonBody(send("GET", "/catalog/agents/found"))).toEqual({
+            agents: [{ id: "lab-reporter", description: "Lab reports.", source: "Claude Code", path: source }],
+            problems: [],
+        });
+        const refused = await send("POST", "/catalog/agents/import", { path: source, role: "wizard" });
+        expect(refused.status).toBe(400);
+        const error = await errorBody(refused);
+        expect(error.error).toBe("validation_error");
+        expect(error.message).toContain('No role "wizard"');
+        const imported = await send("POST", "/catalog/agents/import", { path: source, role: "reporter" });
+        expect(imported.status).toBe(201);
+        expect(await imported.json()).toMatchObject({ id: "lab-reporter", role: "reporter" });
     });
 
     test("DELETE removes a custom agent, and refuses a built-in agent", async () => {

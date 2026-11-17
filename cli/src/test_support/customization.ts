@@ -11,7 +11,7 @@ import { createCredentialReader } from "../modules/customization/credentials.ts"
 import type { FoundMcpServer, RegistryOpts } from "../modules/customization/mcp_sources.ts";
 import { createMcpTokenStore, type McpTokenStore } from "../modules/customization/mcp_tokens.ts";
 import type { SecretStore } from "../modules/customization/secret_store.ts";
-import type { CustomizationOpts } from "../modules/customization/service.ts";
+import type { AgentDir, CustomizationOpts } from "../modules/customization/service.ts";
 
 /** The customization state of one test: temporary directories, a config in memory, and a token file. */
 export type CustomizationFixture = {
@@ -28,6 +28,8 @@ export type CustomizationFixture = {
     readonly registry: Map<string, unknown>;
     /** The usual skill directories of other harnesses. */
     readonly skillDirs: string[];
+    /** The agent directories of other harnesses. */
+    readonly agentDirs: AgentDir[];
     /** The URLs that the service asked the browser to open. */
     readonly opened: URL[];
     config: Config;
@@ -76,6 +78,10 @@ export function customizationFixture(): CustomizationFixture {
         },
     };
     const skillDirs = [join(root, "claude-skills"), join(root, "codex-skills")];
+    const agentDirs: AgentDir[] = [
+        { source: "Claude Code", dir: join(root, "claude-agents") },
+        { source: "Gemini CLI", dir: join(root, "gemini-agents") },
+    ];
     const fixture: CustomizationFixture = {
         root,
         agentsDir,
@@ -86,6 +92,7 @@ export function customizationFixture(): CustomizationFixture {
         found: [],
         registry: registryAnswers,
         skillDirs,
+        agentDirs,
         opened,
         config: { telemetry: false, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } },
         opts: {
@@ -103,6 +110,7 @@ export function customizationFixture(): CustomizationFixture {
             findMcpServers: () => fixture.found,
             registry,
             skillDirs,
+            agentDirs,
             openBrowser: (url) => {
                 opened.push(url);
             },

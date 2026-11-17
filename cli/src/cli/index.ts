@@ -694,14 +694,28 @@ export function buildProgram(): Command {
 
     registerAction(
         agent
+            .command("find")
+            .description("List the agent files in the agent directories of other harnesses, for `agent import`")
+            .option("--json", "Print the list as JSON"),
+        "instance",
+        { kind: "auto", safeFlags: ["json"] },
+        async (options: { json?: boolean }) => {
+            const { agentFind } = await import("../client/commands/customization.ts");
+            await agentFind(options);
+        },
+    );
+
+    registerAction(
+        agent
             .command("import")
             .description("Convert the agent file of another harness into an agent file of Inflexa")
-            .argument("<file>", "The agent file to convert"),
+            .argument("<file>", "The agent file to convert")
+            .option("--role <role>", "The role of the new agent, for example reporter (default: executor)"),
         "instance",
-        { kind: "auto", safeFlags: [] },
-        async (file: string) => {
+        { kind: "auto", safeFlags: ["role"] },
+        async (file: string, options: { role?: string }) => {
             const { agentImport } = await import("../client/commands/customization.ts");
-            await agentImport(file);
+            await agentImport(file, options);
         },
     );
 

@@ -86,6 +86,32 @@ export type CloneAgentRequest = {
 /** The body of `POST /api/v1/catalog/agents/import`. The path is absolute, on the machine of the server. */
 export type ImportAgentRequest = {
     path: string;
+    /** The role of the new agent. Absent: `executor`. */
+    role?: string;
+};
+
+/** One agent file in the agent directory of another harness. */
+export type FoundAgentView = {
+    /** The id that an import gives the agent. */
+    id: string;
+    description: string;
+    /** The harness of the directory, for example `Claude Code`. */
+    source: string;
+    path: string;
+    /** The reason that an import refuses the file, for example an id that an agent already has. */
+    conflict?: string;
+};
+
+/** An agent file that does not convert. */
+export type FoundAgentProblemView = {
+    path: string;
+    message: string;
+};
+
+/** The body of `GET /api/v1/catalog/agents/found`. */
+export type FoundAgentList = {
+    agents: FoundAgentView[];
+    problems: FoundAgentProblemView[];
 };
 
 /** One attachment that a `PATCH` adds or removes. */

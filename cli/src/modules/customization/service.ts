@@ -35,6 +35,8 @@ import type {
     AttachmentsView,
     ConnectorView,
     CredentialView,
+    FoundAgentList,
+    FoundAgentView,
     ImportMcpServerRequest,
     InstallMcpServerRequest,
     McpCandidateView,
@@ -67,7 +69,7 @@ import { getLogger } from "../../lib/log.ts";
 import { openExternal } from "../../lib/open_external.ts";
 import { runAfter } from "../../lib/timer.ts";
 import { resolveHarnessConfig } from "../harness/config.ts";
-import { agentIdOf, cloneDefinition, convertForeignAgent } from "./agent_import.ts";
+import { agentIdOf, cloneDefinition, convertForeignAgent, type ImportedAgent } from "./agent_import.ts";
 import { renderAgentFile, splitFrontmatter, type AgentFile, type AgentFileGap } from "./agent_files.ts";
 import { createFileCatalog, isValidMcpServerName, mcpRecordsOf, type FileCatalog } from "./catalog.ts";
 import { createCredentialReader, createCredentialStore, type CredentialReader } from "./credentials.ts";
@@ -227,6 +229,8 @@ export type CustomizationOpts = {
     readonly registry: RegistryOpts;
     /** The usual skill directories of other harnesses, for `skill find` with no directory. */
     readonly skillDirs: readonly string[];
+    /** The user agent directories of other harnesses, for `agent find`. */
+    readonly agentDirs: readonly AgentDir[];
     /** Open the authorization page of a sign-in. */
     readonly openBrowser: (url: URL) => void;
     readonly signIn: typeof signInToMcpServer;
@@ -253,6 +257,7 @@ export function defaultCustomizationOpts(): CustomizationOpts {
         findMcpServers: () => findMcpServers(),
         registry: DEFAULT_REGISTRY_OPTS,
         skillDirs: knownSkillDirs(),
+        agentDirs: knownAgentDirs(),
         openBrowser: (url) => {
             openExternal(url.toString()).match(
                 () => undefined,
@@ -272,7 +277,9 @@ export type CustomizationService = {
     readonly chooseRoleAgent: (role: string, agentId: string) => ResultAsync<RoleView, CustomizationError>;
     readonly showAgent: (id: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly cloneAgent: (sourceId: string, newId: string) => ResultAsync<AgentDetail, CustomizationError>;
-    readonly importAgent: (path: string) => ResultAsync<AgentDetail, CustomizationError>;
+    /** The agent files in the user agent directories of other harnesses. */
+    readonly findAgents: () => ResultAsync<FoundAgentList, CustomizationError>;
+    readonly importAgent: (path: string, role: AgentRole) => ResultAsync<AgentDetail, CustomizationError>;
     readonly setAgentEnabled: (id: string, enabled: boolean) => ResultAsync<AgentDetail, CustomizationError>;
     /** Replace the prompt body of a custom agent in its file. A built-in prompt is read-only. */
     readonly setAgentPrompt: (id: string, prompt: string) => ResultAsync<AgentDetail, CustomizationError>;
@@ -525,6 +532,35 @@ async function listSkillFiles(directory: string): Promise<string[]> {
         .sort();
 }
 
+/** An agent directory of another harness. */
+export type AgentDir = { readonly source: string; readonly dir: string };
+
+/**
+ * The user agent directories of other harnesses that keep an agent as a Markdown file with front matter. Codex keeps
+ * an agent as TOML, which the import does not read.
+ */
+export function knownAgentDirs(home: string = homedir()): readonly AgentDir[] {
+    return [
+        { source: "Claude Code", dir: join(home, ".claude", "agents") },
+        { source: "OpenCode", dir: join(home, ".config", "opencode", "agents") },
+        { source: "Cursor", dir: join(home, ".cursor", "agents") },
+        { source: "GitHub Copilot", dir: join(home, ".copilot", "agents") },
+        { source: "Gemini CLI", dir: join(home, ".gemini", "agents") },
+    ];
+}
+
+/** The Markdown files of each agent directory that exists, in the order of the directories and then by name. */
+async function listAgentFiles(dirs: readonly AgentDir[]): Promise<{ source: string; path: string }[]> {
+    const files: { source: string; path: string }[] = [];
+    for (const { source, dir } of dirs) {
+        if (!existsSync(dir)) continue;
+        const entries = await readdir(dir, { withFileTypes: true });
+        const names = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).map((entry) => entry.name);
+        for (const name of names.sort()) files.push({ source, path: join(dir, name) });
+    }
+    return files;
+}
+
 /** The usual skill directories of other harnesses: Claude Code, Codex, and the shared `.agents` folder. */
 export function knownSkillDirs(home: string = homedir()): readonly string[] {
     return [join(home, ".claude", "skills"), join(home, ".codex", "skills"), join(home, ".agents", "skills"), join(home, ".config", "opencode", "skills")];
@@ -680,6 +716,18 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         });
 
     const writeConfigChange = (config: Config): Result<void, CustomizationError> => opts.writeConfig(config);
+
+    /** Read and convert the agent file of another harness. */
+    const convertAgentFile = (state: AgentState, path: string, role: AgentRole): Result<ImportedAgent, CustomizationError> => {
+        const text = readFileResult(path, "read the agent file to import");
+        if (text.isErr()) return err({ type: "import_failed", path, detail: messageOf(text.error.cause) });
+        const knownServers = new Set(mcpRecordsOf(state.config).map((record) => record.name));
+        return convertForeignAgent(text.value, knownServers, role).mapErr((e): CustomizationError => ({
+            type: "import_failed",
+            path,
+            detail: e.type === "no_id" ? "the name gives no agent id" : fileGapView(e.gap).message,
+        }));
+    };
 
     /** Refuse a new agent id that is not a clean id, that a built-in agent has, or that a file of the directory gives. */
     const checkNewAgentId = (id: string, files: readonly AgentFile[]): Result<string, CustomizationError> => {
@@ -991,22 +1039,38 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 })
                 .andThen(() => findDetail(newId)),
 
-        importAgent: (path) =>
-            loadAgents()
-                .andThen((state): Result<string, CustomizationError> => {
-                    const text = readFileResult(path, "read the agent file to import");
-                    if (text.isErr()) return err({ type: "import_failed", path, detail: messageOf(text.error.cause) });
-                    const knownServers = new Set(mcpRecordsOf(state.config).map((record) => record.name));
-                    const converted = convertForeignAgent(text.value, knownServers);
-                    if (converted.isErr()) {
-                        const detail = converted.error.type === "no_id" ? "the name gives no agent id" : fileGapView(converted.error.gap).message;
-                        return err({ type: "import_failed", path, detail });
+        findAgents: () =>
+            loadAgents().andThen((state) =>
+                ResultAsync.fromPromise(listAgentFiles(opts.agentDirs), (cause): CustomizationError => ({
+                    type: "io_failed",
+                    op: "read the agent directories",
+                    cause,
+                })).map((files): FoundAgentList => {
+                    const found: FoundAgentList = { agents: [], problems: [] };
+                    for (const { source, path } of files) {
+                        const converted = convertAgentFile(state, path, "executor");
+                        if (converted.isErr()) {
+                            found.problems.push({ path, message: customizationErrorMessage(converted.error) });
+                            continue;
+                        }
+                        const { id, definition } = converted.value;
+                        const taken = checkNewAgentId(id, state.files);
+                        const agent: FoundAgentView = { id, description: definition.description, source, path };
+                        found.agents.push(taken.isErr() ? { ...agent, conflict: customizationErrorMessage(taken.error) } : agent);
                     }
-                    const { id, definition, unmappedTools } = converted.value;
-                    const target = checkNewAgentId(id, state.files);
-                    if (target.isErr()) return err(target.error);
-                    return writeNewAgentFile(id, target.value, renderAgentFile(definition, unmappedTools)).map(() => id);
-                })
+                    return found;
+                }),
+            ),
+
+        importAgent: (path, role) =>
+            loadAgents()
+                .andThen((state): Result<string, CustomizationError> =>
+                    convertAgentFile(state, path, role).andThen(({ id, definition, unmappedTools }) =>
+                        checkNewAgentId(id, state.files).andThen((target) =>
+                            writeNewAgentFile(id, target, renderAgentFile(definition, unmappedTools)).map(() => id),
+                        ),
+                    ),
+                )
                 .andThen((id) => findDetail(id)),
 
         setAgentEnabled: (id, enabled) =>

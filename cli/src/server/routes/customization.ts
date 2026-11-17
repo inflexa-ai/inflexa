@@ -1,3 +1,4 @@
+import { AGENT_ROLES } from "@inflexa-ai/harness";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 
@@ -6,6 +7,7 @@ import {
     type AgentDetail,
     type AgentList,
     type DeleteCredentialResponse,
+    type FoundAgentList,
     type McpCandidateList,
     type RegistryServerList,
     type RoleView,
@@ -40,6 +42,7 @@ const patchAgentBody = z.object({
 
 const cloneAgentBody = z.object({ newId: z.string() });
 const importBody = z.object({ path: z.string().min(1) });
+const importAgentBody = z.object({ path: z.string().min(1), role: z.string().optional() });
 const patchConnectorBody = z.object({
     endpoint: z.string().nullable().optional(),
     credentials: z.record(z.string(), z.string().nullable()).optional(),
@@ -133,10 +136,21 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         ),
     );
 
+    // The agent files in the agent directories of other harnesses. The read never writes.
+    routes.get("/catalog/agents/found", async (c) =>
+        (await service.findAgents()).match(
+            (list) => c.json(list satisfies FoundAgentList),
+            (e) => customizationError(c, e),
+        ),
+    );
+
     routes.post("/catalog/agents/import", async (c) => {
-        const body = await readBody(c, importBody);
+        const body = await readBody(c, importAgentBody);
         if (body.isErr()) return body.error;
-        return (await service.importAgent(body.value.path)).match(
+        const wanted = body.value.role ?? "executor";
+        const role = AGENT_ROLES.find((candidate) => candidate === wanted);
+        if (role === undefined) return apiError(c, "validation_error", `No role "${wanted}". A role is one of: ${AGENT_ROLES.join(", ")}.`);
+        return (await service.importAgent(body.value.path, role)).match(
             (agent) => c.json(agent satisfies AgentDetail, 201),
             (e) => customizationError(c, e),
         );
