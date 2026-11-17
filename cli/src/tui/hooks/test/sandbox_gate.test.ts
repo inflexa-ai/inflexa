@@ -122,6 +122,6 @@ describe("the store poll", () => {
         });
 
         expect(await awaitTransfersSettled(gate)).toBe("blocked");
-        expect(notices.map((notice) => notice.text).join("\n")).toContain("inflexa serve");
+        expect(notices.map((notice) => notice.text).join("\n")).toContain("inflexa server status");
     });
 });

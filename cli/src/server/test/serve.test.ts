@@ -124,9 +124,15 @@ describe("spawnDetachedServer", () => {
     });
 });
 
-test("the registry declares the hidden child flag of `serve` with the spelling that the spawn uses", () => {
-    const serve = buildProgram().commands.find((command) => command.name() === "serve");
-    expect(serve?.options.map((option) => option.long)).toContain(SERVE_DETACHED_CHILD_FLAG);
+test("the registry declares the hidden child flag of `server start` with the spelling that the spawn uses", () => {
+    const start = buildProgram()
+        .commands.find((command) => command.name() === "server")
+        ?.commands.find((command) => command.name() === "start");
+    expect(start?.options.map((option) => option.long)).toContain(SERVE_DETACHED_CHILD_FLAG);
+});
+
+test("the registry has no `serve` command: the server starts in the background only", () => {
+    expect(buildProgram().commands.map((command) => command.name())).not.toContain("serve");
 });
 
 test("the help of `server` lists its commands and not the hidden walk child", () => {

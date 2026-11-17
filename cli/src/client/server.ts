@@ -151,7 +151,7 @@ export type EnsureServerOpts = ServerWaitOpts & {
     readonly autoStart: boolean;
     readonly acquireSpawnLock: () => LockOutcome;
     readonly releaseSpawnLock: () => void;
-    /** Run `inflexa serve --detach`, and settle at its exit. The error channel holds why it failed. */
+    /** Run `inflexa server start`, and settle at its exit. The error channel holds why it failed. */
     readonly startServer: () => Promise<Result<void, string>>;
     /** Tells the person why the command waits. */
     readonly notice: (line: string) => void;
@@ -178,7 +178,7 @@ export const DEFAULT_ENSURE_SERVER_OPTS: EnsureServerOpts = {
  *
  * A server that answers in any phase counts, because the SQLite routes work before the runtime is ready. With
  * no answer, the client removes a stale discovery file, takes the `server-spawn` lock, reads the file again,
- * and runs `inflexa serve --detach`. A client that finds the lock held starts nothing, and waits for the
+ * and runs `inflexa server start`. A client that finds the lock held starts nothing, and waits for the
  * answer of the server that the holder starts. A server with a different `apiVersion` is refused: its routes
  * can send bodies that this client does not know.
  */
@@ -246,28 +246,28 @@ function sameApiVersion(server: ConnectedServer): Result<ConnectedServer, Server
     return server.state.apiVersion === API_VERSION ? ok(server) : err({ type: "api_mismatch", discovery: server.discovery, state: server.state });
 }
 
-/** How long a client waits for the exit of `inflexa serve --detach`: its own start limit, and a margin for its startup. */
+/** How long a client waits for the exit of `inflexa server start`: its own start limit, and a margin for its startup. */
 const START_COMMAND_WAIT_MS = SERVER_START_WAIT_MS + 15_000;
 
 /**
- * Run `inflexa serve --detach` with the same executable: the compiled binary, or `bun` and the source entry in a
+ * Run `inflexa server start` with the same executable: the compiled binary, or `bun` and the source entry in a
  * dev checkout. Its stdout would mix into the output of the command, thus only its stderr reaches the person:
  * `inherit` prints it in the terminal of a command, and `pipe` puts it into the error, for a TUI that owns the
  * terminal.
  */
 export async function startDetachedServer(stderr: "inherit" | "pipe" = "inherit"): Promise<Result<void, string>> {
     const spawned = Result.fromThrowable(
-        () => Bun.spawn({ cmd: selfInvocation(["serve", "--detach", CLIENT_START_FLAG]), stdin: "ignore", stdout: "ignore", stderr }),
+        () => Bun.spawn({ cmd: selfInvocation(["server", "start", CLIENT_START_FLAG]), stdin: "ignore", stdout: "ignore", stderr }),
         (cause) => describeCause(cause),
     )();
-    if (spawned.isErr()) return err(`the spawn of \`inflexa serve --detach\` failed (${spawned.error})`);
+    if (spawned.isErr()) return err(`the spawn of \`inflexa server start\` failed (${spawned.error})`);
     const child = spawned.value;
     const code = await Promise.race([child.exited, Promise.sleep(START_COMMAND_WAIT_MS).then(() => null)]);
-    if (code === null) return err(`\`inflexa serve --detach\` did not finish within ${START_COMMAND_WAIT_MS / 1000} s`);
+    if (code === null) return err(`\`inflexa server start\` did not finish within ${START_COMMAND_WAIT_MS / 1000} s`);
     if (code === 0) return ok(undefined);
     const said =
         child.stderr instanceof ReadableStream ? (await ResultAsync.fromPromise(new Response(child.stderr).text(), () => null)).unwrapOr("").trim() : "";
-    return err(`\`inflexa serve --detach\` exited with code ${code}${said === "" ? "" : `: ${said}`}`);
+    return err(`\`inflexa server start\` exited with code ${code}${said === "" ? "" : `: ${said}`}`);
 }
 
 /** One message for a person, for each {@link ServerError}. */
@@ -278,7 +278,7 @@ export function describeServerError(e: ServerError): string {
         case "refused":
             return `The Inflexa server at ${serverBaseUrl(e.discovery.port)} (pid ${e.discovery.pid}) refused the request: ${describeClientError(e.error)}`;
         case "not_running":
-            return `No Inflexa server runs: ${e.path} names none. Start the server with \`inflexa serve\`, then try again.`;
+            return `No Inflexa server runs: ${e.path} names none. Start the server with \`inflexa server start\`, then try again.`;
         case "api_mismatch":
             return (
                 `The Inflexa server (pid ${e.discovery.pid}) is inflexa ${e.state.version} with API version ${e.state.apiVersion}, ` +

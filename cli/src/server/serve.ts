@@ -29,7 +29,7 @@ import { createServerLifecycle, DEFAULT_SERVER_LIFECYCLE_OPTS } from "./lifecycl
 import { defaultInputDriftOpts, watchInputDrift } from "./profile_queue.ts";
 import { createPageGrantStore, createSessionPagePublisherFactory } from "./report_page_grants.ts";
 
-/** The exit code after Ctrl+C: 128 + SIGINT. */
+/** The exit code after SIGINT: 128 + 2. */
 const SIGINT_EXIT_CODE = 130;
 
 /**
@@ -60,7 +60,7 @@ export type DetachedServerSpawnOptions = {
 };
 
 /**
- * What `inflexa serve --detach` starts its child with. Tests replace it. The spawn starts a process of type `C`:
+ * What `inflexa server start` starts its child with. Tests replace it. The spawn starts a process of type `C`:
  * {@link spawnDetachedServer} reads only `unref` of it, thus a test gives a small stand-in for `C`.
  */
 export type ServeDetachedOpts<C extends Pick<Subprocess, "unref"> = Subprocess> = {
@@ -74,22 +74,17 @@ export const DEFAULT_SERVE_DETACHED_OPTS: ServeDetachedOpts = {
 };
 
 /**
- * How `inflexa serve` runs. `foreground` is a server in the terminal of the person. `detached` is the child
- * of `inflexa serve --detach`: it runs in a session of its own, and its stdout and stderr are the server log.
- */
-export type ServeMode = "foreground" | "detached";
-
-/**
- * `inflexa serve`: the composition root of the local server. It binds `127.0.0.1` on the fixed server port of
+ * The detached child of `inflexa server start`: the composition root of the local server. It runs in a session of its
+ * own, and its stdout and stderr are the server log. It binds `127.0.0.1` on the fixed server port of
  * this build channel, writes the discovery file with a new bearer token, then boots the harness runtime behind
- * the routes. The process runs until `POST /api/v1/server/shutdown`, Ctrl+C, SIGTERM, or SIGHUP. Each of these
+ * the routes. The process runs until `POST /api/v1/server/shutdown`, SIGINT, SIGTERM, or SIGHUP. Each of these
  * runs the shutdown hooks: the runtime shutdown and the provenance flush. Then the exit hooks remove the
  * discovery file and release the instance locks.
  *
  * The listener stays open until the exit: no new server can bind the port while this one still holds the
  * runtime lock, and the discovery file exists exactly while its process holds the port.
  */
-export async function runServe(mode: ServeMode): Promise<void> {
+export async function runServe(): Promise<void> {
     const startedAt = new Date();
     const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
     const pageGrants = createPageGrantStore();
@@ -123,7 +118,7 @@ export async function runServe(mode: ServeMode): Promise<void> {
     // At exit, after the shutdown hooks released the runtime lock: a client that finds no file starts a new
     // server, and that server must find the lock free.
     process.on("exit", () => removeOwnDiscovery(env.serverFilePath));
-    // The first hook of the stop, for each path to it: a client request, Ctrl+C, SIGTERM, or SIGHUP. Without
+    // The first hook of the stop, for each path to it: a client request, SIGINT, SIGTERM, or SIGHUP. Without
     // it the log of a detached server ends with no word of why or when the server stopped.
     onShutdown(() => {
         console.log(serverStopLine(lifecycle.stoppedBySignal() ? null : lifecycle.stopping(), process.pid, new Date()));
@@ -151,16 +146,14 @@ export async function runServe(mode: ServeMode): Promise<void> {
         stopPendingFlush();
         return Promise.resolve();
     });
-    if (mode === "detached") {
-        const stopLogBound = boundServerLog(env.serverLogPath);
-        onShutdown(() => {
-            stopLogBound();
-            return Promise.resolve();
-        });
-    }
+    const stopLogBound = boundServerLog(env.serverLogPath);
+    onShutdown(() => {
+        stopLogBound();
+        return Promise.resolve();
+    });
 
-    // src/index.ts leaves SIGINT to each command. For the server, Ctrl+C is the stop. A second Ctrl+C
-    // while the shutdown hooks drain exits at once.
+    // src/index.ts leaves SIGINT to each command. For the server, SIGINT is the stop. A second SIGINT while the
+    // shutdown hooks drain exits at once.
     let interrupted = false;
     process.on("SIGINT", () => {
         if (interrupted) process.exit(SIGINT_EXIT_CODE);
@@ -171,16 +164,12 @@ export async function runServe(mode: ServeMode): Promise<void> {
     const url = serverBaseUrl(env.serverPort);
     // The requested size, not the measured one: the runtime clamps the value, and it gives no reader of its pool.
     const pool = fsPoolSize() ?? "default";
-    console.log(
-        mode === "foreground"
-            ? `\n  Inflexa server at ${url}, file pool ${pool}. Ctrl+C stops it.\n  Booting the harness runtime…`
-            : `Inflexa server ${pkg.version} at ${url}, pid ${process.pid}, file pool ${pool}, started ${startedAt.toISOString()}. \`inflexa server stop\` stops it.`,
-    );
+    console.log(`Inflexa server ${pkg.version} at ${url}, pid ${process.pid}, file pool ${pool}, started ${startedAt.toISOString()}. \`inflexa server stop\` stops it.`);
     await boot.start();
 }
 
 /**
- * `inflexa serve --detach`: start the server as a detached child, wait until it answers, and exit. The child
+ * `inflexa server start`: start the server as a detached child, wait until it answers, and exit. The child
  * runs in a new session, thus the close of the terminal does not stop it, and its stdout and stderr go to the
  * server log. When a server already answers, this starts none.
  */
@@ -311,7 +300,7 @@ function boundServerLog(path: string): () => void {
 }
 
 /**
- * Spawn the detached child of `inflexa serve --detach`, with its stdout and stderr appended to `logPath`. Its
+ * Spawn the detached child of `inflexa server start`, with its stdout and stderr appended to `logPath`. Its
  * working folder is the home folder, so that a long-lived server holds no folder of the person open. Its environment
  * requests the file pool of the server, which the runtime of the child reads at its first file call.
  */
@@ -320,9 +309,9 @@ export function spawnDetachedServer<C extends Pick<Subprocess, "unref">>(logPath
         let fd: number | undefined;
         try {
             fd = openSync(logPath, "a", 0o600);
-            writeSync(fd, `\n--- inflexa serve ${pkg.version}, started ${new Date().toISOString()} ---\n`);
+            writeSync(fd, `\n--- inflexa server ${pkg.version}, started ${new Date().toISOString()} ---\n`);
             const child = serveOpts.spawn({
-                cmd: selfInvocation(["serve", SERVE_DETACHED_CHILD_FLAG]),
+                cmd: selfInvocation(["server", "start", SERVE_DETACHED_CHILD_FLAG]),
                 cwd: homedir(),
                 env: serverChildEnv(undefined),
                 detached: true,

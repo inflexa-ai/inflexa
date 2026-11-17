@@ -192,8 +192,8 @@ async function bootServerRuntime(
     const connection = resolveModelConnection();
     if (connection.configError) return err(fromHarnessBootError({ type: "model_connection_invalid", issues: connection.configError.issues }));
 
-    // The boot never asks for a provider login, even when the terminal of `inflexa serve` is interactive: a
-    // prompt there would stop the boot until someone answers it. A missing or dead login fails the boot with
+    // The boot never asks for a provider login: the server runs in the background, and a prompt would stop the
+    // boot until someone answers it. A missing or dead login fails the boot with
     // the remedy. The user runs `inflexa up`, which signs in and then sends `POST /api/v1/server/boot`.
     const infra = await ensureProxyReady(connection.mode, { interactiveLogin: false, onStep: progress.onStep, onPullProgress: progress.onPullProgress });
     if (infra.isErr()) {

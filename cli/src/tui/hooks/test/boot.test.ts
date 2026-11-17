@@ -245,7 +245,7 @@ describe("the start of a server from the chat", () => {
 
     test("a start that failed offers the start again, with its reason, and reads nothing", async () => {
         await watchServerBoot(scripted([() => errAsync(unreachable)]).opts);
-        const reason = "Could not start the Inflexa server: `inflexa serve --detach` exited with code 1. See its log: /logs/server.log";
+        const reason = "Could not start the Inflexa server: `inflexa server start` exited with code 1. See its log: /logs/server.log";
         const { opts, calls } = loggedRecoveryOpts([() => okAsync(ready("never"))], { startServer: () => Promise.resolve(err(reason)) });
 
         await recoverServerBoot("start_server", opts);

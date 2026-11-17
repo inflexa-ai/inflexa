@@ -786,7 +786,7 @@ describe("POST {A}/chat", () => {
         });
         const response = await routes.request(`/${A}/chat`, json("POST", { threadId: T, message: "hi" }));
         const turnId = present(response.headers.get(TURN_ID_HEADER));
-        // A detached server holds the port, thus `inflexa serve` cannot start a second one: the remedy stops the
+        // A detached server holds the port, thus `inflexa server start` cannot start a second one: the remedy stops the
         // server, and the next command starts one that reads the key again.
         const message =
             "The anthropic endpoint rejected your API key — check INFLEXA_MODEL_API_KEY, then run `inflexa server stop`. The next `inflexa` command starts the server with the new key.";
@@ -797,7 +797,7 @@ describe("POST {A}/chat", () => {
         expect(summary.failure?.detailLines.length).toBeGreaterThan(0);
     });
 
-    test("a refused `cliproxy` login names `inflexa up`, the command that signs in, and not `inflexa serve`", async () => {
+    test("a refused `cliproxy` login names `inflexa up`, the command that signs in, and not `inflexa server start`", async () => {
         const routes = routesWith({
             connection: () => ({ provider: "anthropic", mode: "cliproxy" }),
             runTurn: (args) => {
@@ -809,7 +809,7 @@ describe("POST {A}/chat", () => {
         const error = frames.find((frame) => frame.type === "error");
         const text = error?.type === "error" ? error.message : "";
         expect(text).toContain("run `inflexa up` in a terminal to sign in again");
-        expect(text).not.toContain("inflexa serve");
+        expect(text).not.toContain("inflexa server start");
     });
 
     test("a failed `cliproxy` turn names a rate limit that the proxy reports", async () => {

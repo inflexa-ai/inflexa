@@ -90,7 +90,7 @@ export function getAgentPolicy(command: Command): AgentPolicy | undefined {
  * - `instance` — the command is a client of the server. Before its action, it connects to the server, and starts
  *   one in the background when none answers.
  * - `machine` — the command prepares or controls the machine, its package store, or the server itself
- *   (`setup`, `up`, `serve`, `store download`), thus it runs without a server.
+ *   (`setup`, `up`, `server start`, `store download`), thus it runs without a server.
  * - `standalone` — a helper that reads a local file or prints a value, and needs no instance.
  *
  * The object form is an `instance` command with options that make it a `machine` command for one run, for

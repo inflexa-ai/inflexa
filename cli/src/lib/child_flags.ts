@@ -2,13 +2,13 @@
 // registry, and the start code of the entry read them from here, thus a spawn site cannot drift from the gate that
 // recognizes its child. This module imports nothing: the registry and the entry load it at each start.
 
-/** The hidden flag of `inflexa serve` that runs the detached child of `inflexa serve --detach`. */
+/** The hidden flag of `inflexa server start` that runs the server itself, as the detached child of the start. */
 export const SERVE_DETACHED_CHILD_FLAG = "--run-detached";
 
 /**
- * The hidden flag that a client adds when it starts `inflexa serve --detach` for itself. The argv cannot otherwise
- * tell such a start from the `inflexa serve --detach` of a person, and the client start would read the update again,
- * thus the person would see the update notice two times. `serve` accepts the flag and ignores it.
+ * The hidden flag that a client adds when it starts `inflexa server start` for itself. The argv cannot otherwise
+ * tell such a start from the `inflexa server start` of a person, and the client start would read the update again,
+ * thus the person would see the update notice two times. `server start` accepts the flag and ignores it.
  */
 export const CLIENT_START_FLAG = "--for-client";
 

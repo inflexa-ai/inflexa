@@ -15,8 +15,8 @@ import {
 
 describe("isSelfStartedChild", () => {
     test("names each child that the CLI starts for itself, with the argv of its spawn site", () => {
-        expect(isSelfStartedChild(["serve", SERVE_DETACHED_CHILD_FLAG])).toBe(true);
-        expect(isSelfStartedChild(["serve", "--detach", CLIENT_START_FLAG])).toBe(true);
+        expect(isSelfStartedChild(["server", "start", SERVE_DETACHED_CHILD_FLAG])).toBe(true);
+        expect(isSelfStartedChild(["server", "start", CLIENT_START_FLAG])).toBe(true);
         expect(isSelfStartedChild(["sandbox", "pull", IMAGE_TRANSFER_FLAG, "runtime_image"])).toBe(true);
         expect(isSelfStartedChild(["store", "download", CATALOG_TRANSFER_FLAG])).toBe(true);
         expect(isSelfStartedChild(["store", "download", "--update", CATALOG_TRANSFER_FLAG])).toBe(true);
@@ -27,8 +27,7 @@ describe("isSelfStartedChild", () => {
     test("a command of a person is not such a child", () => {
         expect(isSelfStartedChild(["ls"])).toBe(false);
         expect(isSelfStartedChild([])).toBe(false);
-        expect(isSelfStartedChild(["serve"])).toBe(false);
-        expect(isSelfStartedChild(["serve", "--detach"])).toBe(false);
+        expect(isSelfStartedChild(["server", "start"])).toBe(false);
         expect(isSelfStartedChild(["store", "add", "numpy", "--queued"])).toBe(false);
         expect(isSelfStartedChild(["up"])).toBe(false);
         expect(isSelfStartedChild(["server", "status"])).toBe(false);
@@ -48,8 +47,8 @@ describe("the registry", () => {
     }
 
     test("declares each hidden child flag on the command that its spawn site runs", () => {
-        expect(longs(["serve"])).toContain(SERVE_DETACHED_CHILD_FLAG);
-        expect(longs(["serve"])).toContain(CLIENT_START_FLAG);
+        expect(longs(["server", "start"])).toContain(SERVE_DETACHED_CHILD_FLAG);
+        expect(longs(["server", "start"])).toContain(CLIENT_START_FLAG);
         expect(longs(["sandbox", "pull"])).toContain(IMAGE_TRANSFER_FLAG);
         expect(longs(["store", "download"])).toContain(CATALOG_TRANSFER_FLAG);
         expect(longs(["store", "add"])).toContain(STORE_FLUSH_FLAG);
