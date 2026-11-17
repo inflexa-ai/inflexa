@@ -727,7 +727,7 @@ export function buildProgram(): Command {
             .description("Convert the agent file of another harness into an agent file of Inflexa")
             .argument("<file...>", "The agent files to convert: absolute, or relative to the working directory")
             .option("--role <role>", "The role of each new agent, for example reporter (default: executor)")
-            .option("--analysis <id|name>", "With --analysis, a relative path reads inside the workspace of that analysis; a chat passes its own analysis")
+            .option("--analysis <id|name>", "Read a relative path inside the workspace of this analysis")
             .option("--replace", "Overwrite a custom agent of the same id; a built-in agent stays refused"),
         "instance",
         { kind: "auto", safeFlags: ["role"], exactGrant: true, workspacePaths: true },
@@ -842,7 +842,7 @@ export function buildProgram(): Command {
             .command("import")
             .description("Copy skill directories into your custom skills")
             .argument("<dir...>", "The skill directories, each with its SKILL.md: absolute, or relative to the working directory")
-            .option("--analysis <id|name>", "With --analysis, a relative path reads inside the workspace of that analysis; a chat passes its own analysis")
+            .option("--analysis <id|name>", "Read a relative path inside the workspace of this analysis")
             .option("--replace", "Overwrite a custom skill of the same name; a built-in skill stays refused"),
         "instance",
         { kind: "auto", safeFlags: [], exactGrant: true, workspacePaths: true },
