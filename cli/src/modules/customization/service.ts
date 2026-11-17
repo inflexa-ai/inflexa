@@ -5,7 +5,6 @@ import { join, relative, resolve, sep } from "node:path";
 
 import {
     AGENT_ROLES,
-    BUILTIN_AGENTS,
     canAnswerApproval,
     CONNECTOR_IDS,
     describeConnectors,
@@ -69,6 +68,7 @@ import { getLogger } from "../../lib/log.ts";
 import { openExternal } from "../../lib/open_external.ts";
 import { runAfter } from "../../lib/timer.ts";
 import { resolveHarnessConfig } from "../harness/config.ts";
+import { LOCAL_BUILTIN_AGENTS } from "./local_builtins.ts";
 import { agentIdOf, cloneDefinition, convertForeignAgent, type ImportedAgent } from "./agent_import.ts";
 import { renderAgentFile, splitFrontmatter, type AgentFile, type AgentFileGap } from "./agent_files.ts";
 import { createFileCatalog, isValidMcpServerName, mcpRecordsOf, type FileCatalog } from "./catalog.ts";
@@ -639,7 +639,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
 
     const roleViews = (state: AgentState): RoleView[] =>
         SINGLE_AGENT_ROLES.map((role): RoleView => {
-            const builtin = BUILTIN_AGENTS.find((agent) => agent.role === role);
+            const builtin = LOCAL_BUILTIN_AGENTS.find((agent) => agent.role === role);
             const view: RoleView = {
                 role,
                 activeAgentId: state.resolved.roles.get(role) ?? null,
@@ -702,14 +702,14 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
     /** The agent to clone. A built-in agent that the user turned off is absent from the resolution, thus it is merged here. */
     const cloneSource = (state: AgentState, id: string): ResolvedAgent | undefined => {
         const resolved = state.resolved.agents.get(id);
-        const builtin = BUILTIN_AGENTS.find((agent) => agent.id === id);
+        const builtin = LOCAL_BUILTIN_AGENTS.find((agent) => agent.id === id);
         if (resolved !== undefined || builtin === undefined) return resolved;
         const attachments = mergedAttachments(builtin, state.config.agents?.[id]);
         return { id, name: builtin.name, role: builtin.role, description: builtin.description, prompt: builtin.prompt, builtin: true, attachments };
     };
 
     const agentDetails = (state: AgentState): AgentDetail[] => [
-        ...BUILTIN_AGENTS.map((agent) => builtinDetail(agent, state)),
+        ...LOCAL_BUILTIN_AGENTS.map((agent) => builtinDetail(agent, state)),
         ...state.files.map((file) => customDetail(file, state)),
     ];
 
@@ -736,7 +736,8 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
     /** Refuse a new agent id that is not a clean id, that a built-in agent has, or that a file of the directory gives. */
     const checkNewAgentId = (id: string, files: readonly AgentFile[]): Result<string, CustomizationError> => {
         if (id.length === 0 || agentIdOf(id) !== id) return err({ type: "invalid_agent_id", id });
-        if (BUILTIN_AGENTS.some((agent) => agent.id === id) || files.some((file) => file.id.toLowerCase() === id)) return err({ type: "agent_exists", id });
+        if (LOCAL_BUILTIN_AGENTS.some((agent) => agent.id === id) || files.some((file) => file.id.toLowerCase() === id))
+            return err({ type: "agent_exists", id });
         return ok(join(opts.agentsDir, `${id}.md`));
     };
 
@@ -783,7 +784,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 ResultAsync.fromSafePromise(attach ? knownReference(state.config, state.catalog, kind, name) : Promise.resolve(true)).andThen(
                     (known): Result<void, CustomizationError> => {
                         if (!known) return err({ type: "unknown_reference", kind, name });
-                        const builtin = BUILTIN_AGENTS.find((agent) => agent.id === id);
+                        const builtin = LOCAL_BUILTIN_AGENTS.find((agent) => agent.id === id);
                         if (attach && kind === "mcp") {
                             const entry = mcpEntryOf(state.config, name);
                             const role = builtin?.role ?? state.files.find((candidate) => candidate.id === id)?.definition?.role ?? "executor";
@@ -999,7 +1000,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         editAgent: (id, edit) =>
             loadAgents()
                 .andThen((state): Result<void, CustomizationError> => {
-                    if (BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent", id });
+                    if (LOCAL_BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent", id });
                     const file = state.files.find((candidate) => candidate.id === id);
                     if (file === undefined) return err({ type: "unknown_agent", id });
                     return readFileResult(file.path, "read the agent file").andThen((text): Result<void, CustomizationError> => {
@@ -1088,7 +1089,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         setAgentEnabled: (id, enabled) =>
             loadAgents()
                 .andThen((state): Result<void, CustomizationError> => {
-                    const builtin = BUILTIN_AGENTS.find((agent) => agent.id === id);
+                    const builtin = LOCAL_BUILTIN_AGENTS.find((agent) => agent.id === id);
                     if (builtin !== undefined && !enabled && !builtin.canDisable) return err({ type: "cannot_disable", id });
                     if (builtin === undefined && !state.files.some((file) => file.id === id)) return err({ type: "unknown_agent", id });
                     const config = opts.readConfig();
@@ -1103,7 +1104,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
 
         removeAgent: (id) =>
             loadAgents().andThen((state): Result<void, CustomizationError> => {
-                if (BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent", id });
+                if (LOCAL_BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent", id });
                 const file = state.files.find((candidate) => candidate.id === id);
                 if (file === undefined) return err({ type: "unknown_agent", id });
                 return rmResult(file.path, "delete the agent file").andThen(() => {

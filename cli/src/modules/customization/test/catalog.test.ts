@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { executorsOf, resolveCatalog, type McpOAuthProvider } from "@inflexa-ai/harness";
+import { executorsOf, resolveCatalog, type AgentEntry, type McpOAuthProvider } from "@inflexa-ai/harness";
 
 import type { Config } from "../../../lib/config.ts";
 import { DEFAULT_THEME_ID } from "../../../lib/design_system.ts";
@@ -46,6 +46,11 @@ function catalogOver(current: () => Config, mcpAuth?: (server: string, url: stri
     return createFileCatalog({ builtinSkillsDir, userSkillsDir, agentsDir, credentials, mcpAuth, readConfig: current });
 }
 
+/** The custom entries of a catalog: the built-in entries hold the local additions of the CLI as well. */
+async function customEntries(catalog: FileCatalog): Promise<AgentEntry[]> {
+    return (await catalog.agents()).filter((entry) => entry.kind === "custom");
+}
+
 describe("createFileCatalog — agents", () => {
     test("a change of a built-in agent becomes a builtin entry, and a key that is no built-in id is left out", async () => {
         const catalog = catalogOver(() =>
@@ -61,7 +66,16 @@ describe("createFileCatalog — agents", () => {
         expect(await catalog.agents()).toEqual([
             { kind: "builtin", id: "analyst", enabled: true, add: { skills: ["lab-protocols"] }, remove: { connectors: ["chembl"] } },
             { kind: "builtin", id: "planner", enabled: false, add: {}, remove: {} },
+            { kind: "builtin", id: "inflexa", enabled: true, add: { skills: ["skill-creator"] }, remove: {} },
         ]);
+    });
+
+    test("the chat agent gets the skill creator from the CLI, and a removal of the user takes it away", async () => {
+        const kept = catalogOver(() => config());
+        const removed = catalogOver(() => config({ agents: { inflexa: { remove: { skills: ["skill-creator"] } } } }));
+
+        expect(await kept.agents()).toEqual([{ kind: "builtin", id: "inflexa", enabled: true, add: { skills: ["skill-creator"] }, remove: {} }]);
+        expect(await removed.agents()).toEqual([{ kind: "builtin", id: "inflexa", enabled: true, add: {}, remove: { skills: ["skill-creator"] } }]);
     });
 
     test("a valid agent file becomes a custom entry, and a draft is left out", async () => {
@@ -69,7 +83,7 @@ describe("createFileCatalog — agents", () => {
         writeAgent("lims-analyst", ["description: d", "mcpServers: [lipidmaps]"]);
         const catalog = catalogOver(() => config());
 
-        expect(await catalog.agents()).toEqual([
+        expect(await customEntries(catalog)).toEqual([
             {
                 kind: "custom",
                 enabled: true,
@@ -95,7 +109,7 @@ describe("createFileCatalog — agents", () => {
         writeAgent("lipid-analyst", ["description: d"]);
         const catalog = catalogOver(() => config({ agents: { "lipid-analyst": { enabled: false } } }));
 
-        expect(await catalog.agents()).toMatchObject([{ kind: "custom", enabled: false, definition: { id: "lipid-analyst" } }]);
+        expect(await customEntries(catalog)).toMatchObject([{ kind: "custom", enabled: false, definition: { id: "lipid-analyst" } }]);
     });
 
     test("an agent file added after a first resolve is an executor of the next resolve, which the planner lists", async () => {
@@ -112,11 +126,11 @@ describe("createFileCatalog — agents", () => {
     test("an edit of an agent file applies at the next read", async () => {
         writeAgent("lipid-analyst", ["description: d"], "The first prompt.");
         const catalog = catalogOver(() => config());
-        expect(await catalog.agents()).toMatchObject([{ definition: { prompt: "The first prompt." } }]);
+        expect(await customEntries(catalog)).toMatchObject([{ definition: { prompt: "The first prompt." } }]);
 
         writeAgent("lipid-analyst", ["description: d"], "The second prompt.");
 
-        expect(await catalog.agents()).toMatchObject([{ definition: { prompt: "The second prompt." } }]);
+        expect(await customEntries(catalog)).toMatchObject([{ definition: { prompt: "The second prompt." } }]);
     });
 
     test("an agent file resolves a server, a skill, and a connector that the catalog knows", async () => {
@@ -124,7 +138,7 @@ describe("createFileCatalog — agents", () => {
         writeAgent("lims-analyst", ["description: d", "connectors: [pubmed]", "mcpServers: [lims]", "skills: [lab-protocols]"]);
         const catalog = catalogOver(() => config({ mcp: { lims: { type: "stdio", command: "lims-mcp" } } }));
 
-        expect(await catalog.agents()).toMatchObject([{ kind: "custom", definition: { id: "lims-analyst", mcp: ["lims"], skills: ["lab-protocols"] } }]);
+        expect(await customEntries(catalog)).toMatchObject([{ kind: "custom", definition: { id: "lims-analyst", mcp: ["lims"], skills: ["lab-protocols"] } }]);
     });
 });
 

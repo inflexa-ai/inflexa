@@ -54,3 +54,11 @@ A custom skill whose `name` equals a built-in skill name MUST be left out of the
 - **WHEN** the user runs `inflexa skill show single-cell`
 - **THEN** the output holds the title "Single-Cell Analysis", the category `transcriptomics` and the text of the skill
 
+### Requirement: The chat agent has the skill creator in a local install
+
+The CLI MUST add the built-in skill `skill-creator` to the default skills of the chat agent `inflexa`. The harness defaults MUST stay the same, because a managed deployment cannot import a custom skill. A user MUST be able to detach the skill like a different default.
+
+#### Scenario: The user detaches the skill creator
+
+- **WHEN** the user runs `inflexa agent detach inflexa skill skill-creator`
+- **THEN** the chat agent no longer has the skill, and `config.json` records the removal
