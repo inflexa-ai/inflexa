@@ -10,11 +10,11 @@
 ### Requirement: Unknown tool names fail at composition time
 
 `createSandboxAgent` MUST throw at composition time when a connector of the
-registry names a `SandboxToolName` that the tool registry does not realize. One
-member is the exception: `knowledgeTemplate` MUST resolve to nothing when the
-embedder binds no knowledge client or the agent holds no mutator. The absence
-of the knowledge plane is the default state of the open-source host, and never
-a wiring fault.
+registry names a `SandboxToolName` that the tool registry does not realize.
+`SandboxToolName` MUST have no member for the template tool, and no connector
+MUST name it. `run_template` follows the kind of the step and not the agent:
+`createSandboxAgent` attaches it to the agent of a template step only (see the
+knowledge-plane-tools spec).
 
 An unknown connector id in a catalog entry is a gap, not a throw (refer to the
 `agent-catalog` capability).
@@ -26,16 +26,10 @@ An unknown connector id in a catalog entry is a gap, not a throw (refer to the
 - **THEN** construction throws and names the tool
 - **AND** no agent definition is produced
 
-#### Scenario: The template tool is absent without a client
+#### Scenario: The template tool is not in the allowlist
 
-- **GIVEN** an executor that attaches the `knowledge` connector and deps without a knowledge client
-- **WHEN** the agent is built
-- **THEN** construction succeeds and the tool list holds no `knowledge_template`
-
-#### Scenario: Each agent lists the template tool
-
-- **WHEN** the default connectors of each built-in executor are read
-- **THEN** each holds the `knowledge` connector
+- **WHEN** the connectors of the registry and the role tools are read
+- **THEN** no list names a template tool
 
 ### Requirement: A built-in executor declares its default connectors
 

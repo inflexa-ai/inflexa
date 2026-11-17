@@ -679,8 +679,18 @@ export const envDoc: Readonly<
 > = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "anchors, analyses, projects, and their input refs (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "one file per local day, 7-day retention", baseVar: dataVar },
-    mcpTokensPath: { kind: "path", label: "MCP sign-ins", description: "MCP OAuth tokens when the macOS Keychain is not available (mode 0600)", baseVar: dataVar },
-    credentialsPath: { kind: "path", label: "stored credentials", description: "the values of stored credentials when the macOS Keychain is not available (mode 0600)", baseVar: dataVar },
+    mcpTokensPath: {
+        kind: "path",
+        label: "MCP sign-ins",
+        description: "MCP OAuth tokens when the macOS Keychain is not available (mode 0600)",
+        baseVar: dataVar,
+    },
+    credentialsPath: {
+        kind: "path",
+        label: "stored credentials",
+        description: "the values of stored credentials when the macOS Keychain is not available (mode 0600)",
+        baseVar: dataVar,
+    },
     refsDir: {
         kind: "path",
         label: "references",

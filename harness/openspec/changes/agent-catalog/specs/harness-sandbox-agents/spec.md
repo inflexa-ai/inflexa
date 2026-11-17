@@ -141,26 +141,28 @@ SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS` (50). A custom executor MUST use
 - **THEN** `maxIterations` MUST be `35`
 - **AND** an agent with no `defaultMaxSteps` MUST use `SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS` (50)
 
-### Requirement: Sandbox agent system prompt is a pure function of the agent type
+### Requirement: Sandbox agent system prompt is a pure function of the agent type and the kind of the step
 
 Each sandbox `AgentDefinition.systemPrompt` MUST be assembled at construction
 time by `composeSystemPrompt` (with the conversational style disabled). The
 composition concatenates the prompt of the agent identity, the skill index of
 its attached skills, the orient core, and `sandboxAnalysisStepStandardsPrompt`
-(the last omitted under `appendAnalysisStepStandards: false`). The composed
-string MUST be a pure function of the agent identity, its attached skills and the declared
-`toolchainSource`. Nothing from `SandboxStepCoords` MUST reach it: no path, no
-`analysisId`/`runId`/`stepId`, and no placeholder for one. Two steps of one run
-with one agent identity send a byte-identical prefix.
+(the last omitted under `appendAnalysisStepStandards: false`). The agent of a
+template step also gets the template-step section after them. The composed
+string MUST be a pure function of the agent identity, its attached skills, the
+declared `toolchainSource`, and the kind of the step. From `SandboxStepCoords`,
+only the presence of a step template MUST reach it: no path, no
+`analysisId`/`runId`/`stepId`, no template reference, and no placeholder for
+one. Two steps of one kind with one agent identity send a byte-identical prefix.
 
 This is a **prompt-cache** invariant, not a style rule. The cache keys on an
 exact prefix. A single interpolated id or path makes the system string of each
 step unique. Then each step pays a full cache write and reads nothing back.
 The per-step values belong in the step's seed
 (`harness/src/prompts/briefing.ts`), which names the working directory, the
-analysis root, the dataset, and each dependency's output. The prompt MUST be
-a frozen string by the time `runLoop` sees it — there is no request-time
-processor pipeline.
+analysis root, the dataset, and the summary and the work directory of each
+dependency. The prompt MUST be a frozen string by the time `runLoop` sees it —
+there is no request-time processor pipeline.
 
 The orient core MUST key its text on the `toolchainSource` of the sandbox
 client, and on no field of the agent deps. With `"store"`, it is
@@ -174,10 +176,17 @@ client, and on no field of the agent deps. With `"store"`, it is
 
 #### Scenario: The prompt is byte-identical across steps and leaks no per-step value
 
-- **GIVEN** one agent identity built twice with different `SandboxStepCoords` (different run, step, and write prefix)
+- **GIVEN** one agent identity built twice for two open steps with different `SandboxStepCoords` (different run, step, and write prefix)
 - **WHEN** the two `systemPrompt` strings are compared
 - **THEN** they are byte-identical
 - **AND** neither contains a step path, a `runId`/`stepId`/`analysisId`, or an unsubstituted `{{…}}` placeholder
+
+#### Scenario: A template step adds one section
+
+- **GIVEN** the same sandbox agent built for an open step and for a template step
+- **WHEN** the two `systemPrompt` strings are compared
+- **THEN** the prompt of the template step holds the template-step section, and the prompt of the open step does not
+- **AND** neither holds a template reference
 
 #### Scenario: The legacy embedder keeps its prefix
 
