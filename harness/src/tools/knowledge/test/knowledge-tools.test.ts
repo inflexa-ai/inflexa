@@ -14,7 +14,15 @@ import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { callTools, reply, scriptedModel, text, toolCall } from "../../../testing.js";
 import { GroundingSchema } from "../../../schemas/workflow-state.js";
 import type { EnvironmentStorePaths, PoolInventoryRead } from "../../../config/environment-stores.js";
-import { fakeKnowledgeClient, limitAnswer, notAssessedCheckAnswer, recommendAnswer, SNAPSHOT, substitutionAnswer } from "../__fixtures__/fake-client.js";
+import {
+    fakeKnowledgeClient,
+    limitAnswer,
+    notAssessedCheckAnswer,
+    outsideWalkCheckAnswer,
+    recommendAnswer,
+    SNAPSHOT,
+    substitutionAnswer,
+} from "../__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "../check.js";
 import { createClaimShelf, createKnowledgeClaimsTool } from "../claims.js";
 import { joinEnvironment } from "../environment.js";
@@ -701,6 +709,32 @@ describe("knowledge_check", () => {
         ).toBe("1 violation(s), 0 warning(s), 1 not assessed");
     });
 
+    it("gives the steps outside the walk of the question to the model, and counts them beside the findings", async () => {
+        const fake = fakeKnowledgeClient({ check: outsideWalkCheckAnswer() });
+        const tools = createKnowledgeTools({ client: fake.client });
+        const check = presentFind(tools, (tool) => tool.id === "knowledge_check");
+        const input = { ...SITUATION, steps: [{ step_type: "enrichment", method: "Over-representation analysis" }] };
+        const model = scriptedModel([callTools(toolCall("k1", "knowledge_check", input)), reply([text("Checked.")])]);
+        const agent = { id: "planner", systemPrompt: "Plan.", model: "scripted-model", tools, maxIterations: 3 };
+
+        await runLoop(agent, [{ role: "user", content: "Check the draft." }], makeSession(), {
+            provider: model.provider,
+            emit: () => undefined,
+            signal: new AbortController().signal,
+        });
+
+        const read = z
+            .object({ type: z.literal("json"), value: z.looseObject({ ok: z.boolean(), outside_walk: z.array(z.looseObject({ step_type: z.string() })) }) })
+            .parse(toolResultIn(presentAt(model.calls, 1), "k1"));
+        expect(read.value.ok).toBe(true);
+        expect(read.value.outside_walk).toEqual(outsideWalkCheckAnswer().outside_walk ?? []);
+        const checked = { checked: true } as const;
+        expect(check.describeResult?.(input, withToolCallRecord(outsideWalkCheckAnswer(), checked))).toBe("ok, 1 outside the walk");
+        expect(
+            check.describeResult?.(input, withToolCallRecord({ ...outsideWalkCheckAnswer(), not_assessed: notAssessedCheckAnswer().not_assessed }, checked)),
+        ).toBe("ok, 1 not assessed, 1 outside the walk");
+    });
+
     it("passes a stated outcome through to the service", async () => {
         const { client, calls } = fakeKnowledgeClient({ check: { ok: true, snapshot: SNAPSHOT, violations: [], warnings: [] } });
         const tool = createKnowledgeCheckTool({ client });
@@ -739,6 +773,22 @@ describe("the situation of knowledge_recommend", () => {
                 .success,
         ).toBe(true);
         expect(recommend?.inputSchema.safeParse({ ...SITUATION, covariates: ["age_years"] }).success).toBe(false);
+    });
+
+    it("takes the enrichment as an extra analysis and a computed score as a covariate role, and still refuses a column name", () => {
+        const tools = createKnowledgeTools({ client: fakeKnowledgeClient().client });
+        for (const id of ["knowledge_recommend", "knowledge_check"]) {
+            const tool = presentFind(tools, (candidate) => candidate.id === id);
+            const takes = (fields: Record<string, unknown>): boolean =>
+                tool.inputSchema.safeParse({ ...SITUATION, steps: [{ step_type: "enrichment", method: "Over-representation analysis" }], ...fields }).success;
+            expect({
+                tool: id,
+                enrichment: takes({ extra_analyses: ["enrichment"], enrichment_input: "gene_list" }),
+                derived_score: takes({ covariates: ["sex", "derived_score"] }),
+            }).toEqual({ tool: id, enrichment: true, derived_score: true });
+            expect(takes({ covariates: ["purity_estimate"] })).toBe(false);
+            expect(takes({ extra_analyses: ["gene_set_test"] })).toBe(false);
+        }
     });
 });
 

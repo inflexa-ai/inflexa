@@ -87,11 +87,14 @@ const DraftedStepSchema = z.object({
         .describe("The outcome the step states when a flag of `knowledge_recommend` removes inference, copied from the flag, for example `descriptive_only`."),
 });
 
-/** `ok`, or the counts of the findings, plus the steps the check did not assess when there are any. */
+/** `ok`, or the counts of the findings, plus the steps the check did not assess and the steps outside the walk of the question when there are any. */
 function describeFindings(result: CheckResponse): string {
-    const findings = result.ok ? "ok" : `${result.violations.length} violation(s), ${result.warnings.length} warning(s)`;
+    const parts = [result.ok ? "ok" : `${result.violations.length} violation(s), ${result.warnings.length} warning(s)`];
     const notAssessed = result.not_assessed?.length ?? 0;
-    return notAssessed > 0 ? `${findings}, ${notAssessed} not assessed` : findings;
+    const outsideWalk = result.outside_walk?.length ?? 0;
+    if (notAssessed > 0) parts.push(`${notAssessed} not assessed`);
+    if (outsideWalk > 0) parts.push(`${outsideWalk} outside the walk`);
+    return parts.join(", ");
 }
 
 const KnowledgeCheckInputSchema = SituationFieldsSchema.extend({
@@ -112,6 +115,8 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps): Tool<z.infer
             "The answer lists `violations` (a forbidden method, or an inferential test on a design that a flag limits) and `warnings` (a method outside the set the rules name, a parameter that differs from a sourced default, or a required parameter that the step does not state), each with the rule id and the permitted alternatives. " +
             "Revise a violated step once, then submit. A warning is advice: keep the step when the data gives a reason, and state the reason in the step. `ok: true` means no finding on the assessed steps. " +
             "`not_assessed` lists the steps that no rule covers; the check neither passed nor failed them, so submit them as drafted. " +
+            "`outside_walk` lists the assessed steps that the `knowledge_recommend` answer of this situation does not hold, thus that answer gave no claim of such a step; the `message` of the entry names the request that adds the step, or says that none does. " +
+            "The plan can cite no claim for such a step until a `knowledge_recommend` call with the named request gives its claims and its script. An entry is not a finding, and it does not change `ok`. " +
             "`match: unavailable` means the service did not answer, and `match: snapshot_mismatch` means the service moved to another release than the one your recommend answer came from; in both cases submit the draft as it is. " +
             `The host accepts ${CHECK_CALL_LIMIT} checks per plan; after that the tool refuses and you submit with the findings you have.`,
         inputSchema: KnowledgeCheckInputSchema,

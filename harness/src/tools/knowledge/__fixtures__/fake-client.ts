@@ -169,6 +169,26 @@ export function notAssessedCheckAnswer(): CheckResponse {
     };
 }
 
+/** A clean check of a drafted enrichment step that the walk of the question does not hold: the entry names the request that adds the step. */
+export function outsideWalkCheckAnswer(): CheckResponse {
+    return {
+        ok: true,
+        snapshot: SNAPSHOT,
+        violations: [],
+        warnings: [],
+        not_assessed: [],
+        outside_walk: [
+            {
+                step_type: "enrichment",
+                extra_analysis: "enrichment",
+                message:
+                    "The walk of the question differential_expression holds no enrichment step, thus the recommend answer of this situation holds no claim of it. " +
+                    'A recommend request of the same situation with extra_analyses: ["enrichment"] adds the step to the walk, and its answer holds the claims and the script that the rules give for the step.',
+            },
+        ],
+    };
+}
+
 /** The marked render of the two-group template: the count path is a local slot, thus the service leaves its marker. */
 export function renderAnswer(): RenderResponse {
     return {

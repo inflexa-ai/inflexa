@@ -31,7 +31,7 @@ import type { SituationFieldsSchema } from "./situation.js";
 /** The role of the blocking factor. A role and never a column name, because the situation leaves the machine. */
 export type BlockingRole = "individual" | "cell_line" | "litter" | "site" | "pair" | "plate" | "other";
 /** The role of a covariate of the design. A role and never a column name. */
-export type CovariateRole = "sex" | "age" | "clinical" | "technical" | "other";
+export type CovariateRole = "sex" | "age" | "clinical" | "technical" | "derived_score" | "other";
 /** The role of the numeric variable of interest when the question is a trend, not a comparison of groups. */
 export type PredictorRole = "dose" | "time" | "age" | "score" | "other";
 
@@ -134,6 +134,13 @@ const FindingSchema = z.looseObject({
 /** A drafted step that no rule covers in the situation: neither passed nor failed. */
 const NotAssessedSchema = z.looseObject({ step_type: z.string(), reason: z.string(), message: z.string() });
 
+/**
+ * A drafted step that the check assessed and that the walk of the question does not hold, thus the recommend answer
+ * of the situation gave no claim of it. `message` names the request that adds the step, and `extra_analysis` the
+ * value of `extra_analyses` when one adds it. The entry is no finding.
+ */
+const OutsideWalkSchema = z.looseObject({ step_type: z.string(), message: z.string(), extra_analysis: z.string().optional() });
+
 export const CheckResponseSchema = z.looseObject({
     /** True when the assessed steps carry no violation and no warning. A step in `not_assessed` does not count. */
     ok: z.boolean(),
@@ -141,6 +148,8 @@ export const CheckResponseSchema = z.looseObject({
     violations: z.array(FindingSchema),
     warnings: z.array(FindingSchema),
     not_assessed: z.array(NotAssessedSchema).optional(),
+    /** Absent in the answer of a service that does not know the key. */
+    outside_walk: z.array(OutsideWalkSchema).optional(),
 });
 export type CheckResponse = z.infer<typeof CheckResponseSchema>;
 
