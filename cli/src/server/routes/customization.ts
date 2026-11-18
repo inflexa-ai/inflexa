@@ -7,6 +7,7 @@ import {
     type AgentDetail,
     type AgentList,
     type DeleteCredentialResponse,
+    type ExportSkillResponse,
     type FoundAgentList,
     type McpCandidateList,
     type RegistryServerList,
@@ -39,6 +40,8 @@ const patchAgentBody = z.object({
     detach: attachmentChangeSchema.optional(),
     description: z.string().trim().min(1).optional(),
     prompt: z.string().optional(),
+    promptPath: z.string().min(1).optional(),
+    analysis: z.string().min(1).optional(),
 });
 
 const cloneAgentBody = z.object({ newId: z.string(), description: z.string().trim().min(1).optional() });
@@ -84,6 +87,7 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
             return "not_found";
         case "agent_exists":
         case "skill_exists":
+        case "path_exists":
         case "mcp_server_exists":
             return "conflict";
         case "cannot_disable":
@@ -98,6 +102,7 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
         case "linked_entry":
         case "too_many_files":
         case "path_outside_workspace":
+        case "prompt_file_too_large":
         case "unknown_slot":
         case "invalid_credential_name":
         case "invalid_mcp_name":
@@ -188,8 +193,10 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         const id = c.req.param("id");
         const body = await readBody(c, patchAgentBody);
         if (body.isErr()) return body.error;
-        const { enabled, attach, detach, description, prompt } = body.value;
-        if (description !== undefined || prompt !== undefined) {
+        const { enabled, attach, detach, description, prompt, promptPath, analysis } = body.value;
+        if (prompt !== undefined && promptPath !== undefined) return apiError(c, "validation_error", "Give a prompt or a prompt file, not both.");
+        const edits = description !== undefined || prompt !== undefined || promptPath !== undefined;
+        if (edits) {
             const current = await service.showAgent(id);
             if (current.isErr()) return customizationError(c, current.error);
             if (current.value.kind === "builtin")
@@ -200,7 +207,7 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
                 );
         }
         let result = enabled === undefined ? service.showAgent(id) : service.setAgentEnabled(id, enabled);
-        if (description !== undefined || prompt !== undefined) result = result.andThen(() => service.editAgent(id, { description, prompt }));
+        if (edits) result = result.andThen(() => service.editAgent(id, { description, prompt, promptPath, analysis }));
         if (attach !== undefined) result = result.andThen(() => service.attach(id, attach.kind, attach.name));
         if (detach !== undefined) result = result.andThen(() => service.detach(id, detach.kind, detach.name));
         return (await result).match(
@@ -249,6 +256,15 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
             (e) => customizationError(c, e),
         ),
     );
+
+    routes.post("/skills/:name/export", async (c) => {
+        const body = await readBody(c, importBody);
+        if (body.isErr()) return body.error;
+        return (await service.exportSkill(c.req.param("name"), body.value.path, importOptionsOf(body.value))).match(
+            (exported) => c.json(exported satisfies ExportSkillResponse, 201),
+            (e) => customizationError(c, e),
+        );
+    });
 
     routes.post("/skills/import", async (c) => {
         const body = await readBody(c, importBody);

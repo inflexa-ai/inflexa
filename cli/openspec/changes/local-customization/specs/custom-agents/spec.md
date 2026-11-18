@@ -126,13 +126,37 @@ An imported agent MUST get the role that the user chooses with `--role`. With no
 - **WHEN** the user runs `inflexa agent use lab-planner`
 - **THEN** `config.json` holds `roles.planner: "lab-planner"`, and the next plan uses the prompt of `lab-planner`
 
-### Requirement: The prompt of a custom agent is editable through its route
+### Requirement: The description and the prompt of a custom agent are editable
 
-`PATCH /api/v1/catalog/agents/<id>` with a `prompt` MUST replace the body of the file of a custom agent and keep its frontmatter. The same request for a built-in agent MUST be refused, because a built-in prompt is read-only.
+`PATCH /api/v1/catalog/agents/<id>` with a `prompt` MUST replace the body of the file of a custom agent and keep its frontmatter. The same request with a `description` MUST replace the description in the frontmatter and keep the body. `inflexa agent set <id> --description <text> --prompt <text>` MUST send the same request. A request for a built-in agent MUST be refused, because a built-in agent is read-only.
 
 #### Scenario: The GUI edits a clone
 
 - **GIVEN** a clone `lab-planner`
 - **WHEN** a client sends a new prompt for `lab-planner`
 - **THEN** the file holds the new body under the same frontmatter
+
+#### Scenario: The chat agent describes a new executor
+
+- **GIVEN** a clone `lipidomics-analyst` of `analyst`
+- **WHEN** the chat agent runs `inflexa agent set lipidomics-analyst --description "Lipidomics."`
+- **THEN** the file holds the new description with the same body, and the next plan reads it
+
+### Requirement: A clone takes a description
+
+`inflexa agent clone <id> <new-id> --description <text>` MUST write the new agent with that description in place of the description of the source.
+
+#### Scenario: A clone with a description
+
+- **WHEN** the user clones `analyst` to `lipid-analyst` with `--description "Lipidomics."`
+- **THEN** `agents/lipid-analyst.md` has the description `Lipidomics.` and the prompt body of `analyst`
+
+### Requirement: A chat edits a custom agent with no file outside its workspace
+
+`inflexa agent show` MUST print the prompt body. `inflexa agent set --prompt-file <path>` MUST read the prompt body from a file. With `--analysis`, a relative path MUST read inside the workspace of that analysis, and a linked file or a file larger than 256 KiB MUST be refused. `inflexa agent clone --use` MUST make the new agent the active agent of its role.
+
+#### Scenario: The chat adds a rule to a copy of the chat agent
+
+- **WHEN** the chat clones `inflexa` with `--use`, reads the prompt with `agent show`, writes it with one more rule to `prompts/sketch.md`, and runs `agent set inflexa-sketch --prompt-file prompts/sketch.md`
+- **THEN** each call runs with no approval prompt, and the next message uses the new prompt
 

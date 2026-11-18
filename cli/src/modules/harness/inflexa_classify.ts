@@ -239,7 +239,13 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
                 const src = leaf.getOptionValueSourceWithGlobals(attr);
                 if (src !== undefined && src !== "default") setOptions.push(attr);
             }
-            return { kind: "action", argv: args, path, grantKey: path.join(" "), policy: getAgentPolicy(leaf), setOptions, operands: leaf.args };
+            const policy = getAgentPolicy(leaf);
+            // A path in an option of a workspace-path command counts as an operand, thus the same check covers it.
+            const pathFlagValues = (policy?.kind === "auto" ? (policy.workspacePathFlags ?? []) : []).flatMap((attr): string[] => {
+                const value: unknown = leaf.getOptionValue(attr);
+                return typeof value === "string" ? [value] : [];
+            });
+            return { kind: "action", argv: args, path, grantKey: path.join(" "), policy, setOptions, operands: [...leaf.args, ...pathFlagValues] };
         }
         if (e instanceof CommanderError) {
             if (INTROSPECTION_CODES.has(e.code)) return { kind: "introspection", argv: args };

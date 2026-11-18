@@ -52,12 +52,15 @@ export type GrantTrait = {
 };
 
 /**
- * The trait of an `auto` command whose operands are paths that it copies into the state that an agent reads: an
- * import. It runs with no prompt only while each operand is a relative path, which a chat reads inside its own
- * workspace. An absolute path, a home path, or a path with `..` asks, because it names a folder of the host.
+ * The trait of an `auto` command whose operands are paths that it reads into, or writes from, the state that an agent
+ * reads: an import, an export, or a prompt file. It runs with no prompt only while each operand, and the value of each
+ * option of `workspacePathFlags`, is a relative path, which a chat reads inside its own workspace. An absolute path, a
+ * home path, or a path with `..` asks, because it names a place of the host.
  */
 export type WorkspacePathTrait = {
     readonly workspacePaths?: true;
+    /** The options, by attribute name, whose value is a path of the workspace. */
+    readonly workspacePathFlags?: readonly string[];
 };
 
 /**

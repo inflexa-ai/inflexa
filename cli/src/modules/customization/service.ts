@@ -112,6 +112,8 @@ export type CustomizationError =
     | { readonly type: "linked_entry"; readonly path: string; readonly entry: string }
     | { readonly type: "too_many_files"; readonly path: string; readonly limit: number }
     | { readonly type: "path_outside_workspace"; readonly path: string }
+    | { readonly type: "path_exists"; readonly path: string }
+    | { readonly type: "prompt_file_too_large"; readonly path: string; readonly limit: number }
     | { readonly type: "workspace_unavailable"; readonly analysis: string; readonly detail: string }
     | { readonly type: "unknown_connector"; readonly id: string }
     | { readonly type: "unknown_slot"; readonly id: string; readonly slot: string }
@@ -174,6 +176,10 @@ export function customizationErrorMessage(e: CustomizationError): string {
             return `"${e.entry}" in ${e.path} is a link or a special file. An import takes only folders and regular files, because a link can point to a file outside the folder.`;
         case "too_many_files":
             return `${e.path} holds more than ${String(e.limit)} entries. A skill is a small folder.`;
+        case "path_exists":
+            return `${e.path} exists already. An export with \`--replace\` overwrites it.`;
+        case "prompt_file_too_large":
+            return `${e.path} is larger than ${String(e.limit)} bytes. A prompt body is text of some pages.`;
         case "path_outside_workspace":
             return `The path "${e.path}" leaves the workspace of the analysis. Give a path inside the workspace, or an absolute path.`;
         case "workspace_unavailable":
@@ -306,6 +312,8 @@ export type CustomizationService = {
     readonly removeAgent: (id: string) => ResultAsync<void, CustomizationError>;
     readonly listSkills: () => ResultAsync<SkillList, CustomizationError>;
     readonly showSkill: (name: string) => ResultAsync<SkillDetail, CustomizationError>;
+    /** Copy a skill, built-in or custom, to `dir`, for example into a workspace to edit it and import it again. */
+    readonly exportSkill: (name: string, dir: string, options?: ExportOptions) => ResultAsync<{ readonly path: string }, CustomizationError>;
     /** The skills of a directory, or of the usual skill directories of other harnesses when `dir` is absent. */
     readonly findSkills: (dir: string | undefined) => ResultAsync<SkillList, CustomizationError>;
     readonly importSkill: (dir: string, options?: ImportOptions) => ResultAsync<SkillView, CustomizationError>;
@@ -603,7 +611,19 @@ async function firstLinkedEntry(directory: string): Promise<LinkedEntry | undefi
 }
 
 /** A change to a custom agent. Each field that is absent stays as the file has it. */
-export type AgentEdit = { readonly description?: string; readonly prompt?: string };
+export type AgentEdit = {
+    readonly description?: string;
+    readonly prompt?: string;
+    /** A file that holds the new prompt body. With `analysis`, a relative path reads inside its workspace. */
+    readonly promptPath?: string;
+    readonly analysis?: string;
+};
+
+/** The largest prompt file that `agent set --prompt-file` reads. A prompt body is text of some pages. */
+export const PROMPT_FILE_LIMIT = 256 * 1024;
+
+/** Where `skill export` writes, and whether it overwrites. */
+export type ExportOptions = { readonly analysis?: string; readonly replace?: boolean };
 
 /** An agent directory of another harness. */
 export type AgentDir = { readonly source: string; readonly dir: string };
@@ -677,6 +697,13 @@ function realPathOf(path: string): string {
         () => realpathSync(path),
         () => path,
     )().unwrapOr(path);
+}
+
+/** The real path of `path`, resolved through its nearest folder that exists, as for the target of an export. */
+function realPathThroughNearest(path: string): string {
+    let existing = path;
+    while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
+    return join(realPathOf(existing), relative(existing, path));
 }
 
 /** Whether `path` is a link. `lstatSync` throws on each failure. */
@@ -829,12 +856,31 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             .mapErr((detail): CustomizationError => ({ type: "workspace_unavailable", analysis, detail }))
             .andThen((root): Result<string, CustomizationError> => {
                 const full = resolve(root, path);
-                const realRoot = realPathOf(root);
-                const realFull = realPathOf(full);
+                const realRoot = realPathThroughNearest(root);
+                const realFull = realPathThroughNearest(full);
                 const inside = (candidate: string, base: string): boolean => candidate === base || isInside(candidate, base);
                 if (!inside(full, root) || !inside(realFull, realRoot)) return err({ type: "path_outside_workspace", path });
                 return ok(full);
             });
+    };
+
+    /** The new prompt body of an edit: the inline text, or the text of the prompt file. A linked file is refused. */
+    const promptOf = (edit: AgentEdit): ResultAsync<string | undefined, CustomizationError> => {
+        if (edit.promptPath === undefined) return okAsync(edit.prompt);
+        return importPathOf(edit.promptPath, edit.analysis).andThen((path): Result<string, CustomizationError> => {
+            if (isLink(path)) return err({ type: "linked_entry", path: dirname(path), entry: relative(dirname(path), path) });
+            const size = Result.fromThrowable(
+                () => lstatSync(path).size,
+                (cause): CustomizationError => ({ type: "import_failed", path, detail: messageOf(cause) }),
+            )();
+            if (size.isErr()) return err(size.error);
+            if (size.value > PROMPT_FILE_LIMIT) return err({ type: "prompt_file_too_large", path: edit.promptPath ?? path, limit: PROMPT_FILE_LIMIT });
+            return readFileResult(path, "read the prompt file").mapErr((e): CustomizationError => ({
+                type: "import_failed",
+                path,
+                detail: messageOf(e.cause),
+            }));
+        });
     };
 
     /** Read and convert the agent file of another harness. */
@@ -1114,8 +1160,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             loadAgents().map((state): AgentList => ({ agents: agentDetails(state).map(({ prompt: _prompt, ...view }) => view), roles: roleViews(state) })),
 
         editAgent: (id, edit) =>
-            loadAgents()
-                .andThen((state): Result<void, CustomizationError> => {
+            promptOf(edit)
+                .andThen((prompt) => loadAgents().map((state) => ({ prompt, state })))
+                .andThen(({ prompt, state }): Result<void, CustomizationError> => {
                     if (LOCAL_BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent", id });
                     const file = state.files.find((candidate) => candidate.id === id);
                     if (file === undefined) return err({ type: "unknown_agent", id });
@@ -1128,7 +1175,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                             if (frontmatter === undefined) return err({ type: "draft_unreadable", id, path: file.path });
                             yaml = Bun.YAML.stringify({ ...frontmatter, description: edit.description.trim() }, null, 2).trimEnd();
                         }
-                        const body = edit.prompt === undefined ? split.body : edit.prompt.trim();
+                        const body = prompt === undefined ? split.body : prompt.trim();
                         return writeFileResult(file.path, `---\n${yaml}\n---\n\n${body}\n`, "write the agent file");
                     });
                 })
@@ -1332,6 +1379,19 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                             .orElse(discard)
                             .map((): SkillView => skillView(skill, "custom"));
                     });
+            }),
+
+        exportSkill: (name, dir, options = {}) =>
+            scanSkills().andThen(({ list }) => {
+                const skill = list.skills.find((candidate) => candidate.name === name);
+                if (skill === undefined) return errAsync<{ readonly path: string }, CustomizationError>({ type: "unknown_skill", name });
+                return importPathOf(dir, options.analysis).andThen((target): Result<{ readonly path: string }, CustomizationError> => {
+                    if (existsSync(target) && options.replace !== true) return err({ type: "path_exists", path: dir });
+                    return rmResult(target, "remove the replaced export")
+                        .andThen(() => mkdirResult(dirname(target), "make the folder of the export"))
+                        .andThen(() => copyDirectory(skill.directory, target))
+                        .map(() => ({ path: target }));
+                });
             }),
 
         listConnectors: () => {

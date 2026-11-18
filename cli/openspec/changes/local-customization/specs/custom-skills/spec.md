@@ -55,6 +55,15 @@ A custom skill whose `name` equals a built-in skill name MUST be left out of the
 - **WHEN** the chat runs `inflexa skill import skills/lipidomics-lcms`
 - **THEN** the skill is in the custom skills, with no approval prompt
 
+### Requirement: Export copies a skill to a folder
+
+`inflexa skill export <name> <dir>` MUST copy a built-in or a custom skill to `<dir>`. With `--analysis`, a relative path MUST write inside the workspace of that analysis. An existing folder MUST be refused, and `--replace` MUST overwrite it.
+
+#### Scenario: The chat edits a custom skill
+
+- **WHEN** the chat exports `lab-protocols` to `skills/lab-protocols`, changes the copy, and imports it with `--replace`
+- **THEN** the custom skill holds the change, and no call asks for approval except the import with `--replace`
+
 ### Requirement: An import takes no link
 
 An import MUST refuse a skill folder that holds a link or a special file, and an agent file that is a link. The copy MUST NOT follow a link, and a refused copy MUST leave no folder in the custom skills. `skill find` MUST give a conflict for a found skill that holds a link.

@@ -12,7 +12,7 @@ import { customizationFixture, writeAgentFile, writeSkill, type CustomizationFix
 import { awaitOk } from "../../../test_support/result.ts";
 import { splitFrontmatter } from "../agent_files.ts";
 import { createMcpOAuthProvider } from "../mcp_tokens.ts";
-import { createCustomizationService, type CustomizationService } from "../service.ts";
+import { createCustomizationService, PROMPT_FILE_LIMIT, type CustomizationService } from "../service.ts";
 
 let fixture: CustomizationFixture;
 let service: CustomizationService;
@@ -684,6 +684,52 @@ describe("imports from a workspace, links, and replace", () => {
         expect((await service.importAgent("agents/linked.md", "reporter", { analysis: "lab" }))._unsafeUnwrapErr()).toMatchObject({
             type: "linked_entry",
             entry: "linked.md",
+        });
+    });
+});
+
+describe("edits through the workspace", () => {
+    test("a prompt file of the workspace becomes the prompt of a custom agent, and a link or a large file is refused", async () => {
+        const workspace = join(fixture.root, "workspace");
+        fixture.workspaces.set("lab", workspace);
+        mkdirSync(join(workspace, "prompts"), { recursive: true });
+        writeFileSync(join(workspace, "prompts", "sketch.md"), "You draw the approach first.\n");
+        symlinkSync(join(workspace, "prompts", "sketch.md"), join(workspace, "prompts", "linked.md"));
+        writeFileSync(join(workspace, "prompts", "huge.md"), "x".repeat(PROMPT_FILE_LIMIT + 1));
+        await awaitOk(service.cloneAgent("inflexa", "inflexa-sketch"));
+
+        const agent = await awaitOk(service.editAgent("inflexa-sketch", { promptPath: "prompts/sketch.md", analysis: "lab" }));
+
+        expect(agent.prompt).toBe("You draw the approach first.");
+        expect((await service.editAgent("inflexa-sketch", { promptPath: "prompts/linked.md", analysis: "lab" }))._unsafeUnwrapErr()).toMatchObject({
+            type: "linked_entry",
+        });
+        expect((await service.editAgent("inflexa-sketch", { promptPath: "prompts/huge.md", analysis: "lab" }))._unsafeUnwrapErr()).toMatchObject({
+            type: "prompt_file_too_large",
+        });
+        expect((await service.editAgent("inflexa", { promptPath: "prompts/sketch.md", analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "builtin_agent",
+            id: "inflexa",
+        });
+    });
+
+    test("export copies a skill into the workspace, refuses an existing folder, and replace overwrites it", async () => {
+        const workspace = join(fixture.root, "workspace");
+        fixture.workspaces.set("lab", workspace);
+
+        const exported = await awaitOk(service.exportSkill("single-cell", "skills/single-cell", { analysis: "lab" }));
+
+        expect(exported.path).toBe(join(workspace, "skills", "single-cell"));
+        expect(readFileSync(join(workspace, "skills", "single-cell", "SKILL.md"), "utf8")).toContain("name: single-cell");
+        expect((await service.exportSkill("single-cell", "skills/single-cell", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "path_exists",
+            path: "skills/single-cell",
+        });
+        await awaitOk(service.exportSkill("single-cell", "skills/single-cell", { analysis: "lab", replace: true }));
+        expect((await service.exportSkill("nope", "skills/nope", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({ type: "unknown_skill", name: "nope" });
+        expect((await service.exportSkill("single-cell", "../out", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "path_outside_workspace",
+            path: "../out",
         });
     });
 });
