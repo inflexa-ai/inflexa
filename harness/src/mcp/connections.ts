@@ -142,7 +142,10 @@ export function createMcpConnections(deps: McpConnectionsDeps = {}): McpConnecti
     };
 
     const toolOf = (config: McpServerConfig, tool: McpTool, name: string): Tool<Record<string, unknown>, McpToolOutput> => {
-        const jsonSchema: Record<string, unknown> = { ...tool.inputSchema, type: "object" };
+        // The Anthropic API refuses `oneOf`, `anyOf` and `allOf` at the top level of a tool schema, and one refused
+        // tool fails each model request of the agent. The MCP server still checks the arguments of each call.
+        const { oneOf: _oneOf, anyOf: _anyOf, allOf: _allOf, ...accepted } = tool.inputSchema;
+        const jsonSchema: Record<string, unknown> = { ...accepted, type: "object" };
         const built: Tool<Record<string, unknown>, McpToolOutput> = {
             id: name,
             description: tool.description ?? tool.title ?? `The tool ${tool.name} of the MCP server ${config.name}.`,
