@@ -688,6 +688,17 @@ describe("imports from a workspace, links, and replace", () => {
     });
 });
 
+describe("MCP start failures", () => {
+    test("a server that did not start gives its reason and its time in the list", async () => {
+        fixture.config = { ...fixture.config, mcp: { lims: LIMS } };
+        fixture.mcpFailures.set("lims", { server: "lims", at: new Date("2026-11-18T10:00:00Z"), reason: "Connection closed" });
+
+        const servers = await awaitOk(service.listMcp());
+
+        expect(servers).toMatchObject([{ name: "lims", startFailure: { at: "2026-11-18T10:00:00.000Z", reason: "Connection closed" } }]);
+    });
+});
+
 describe("edits through the workspace", () => {
     test("a prompt file of the workspace becomes the prompt of a custom agent, and a link or a large file is refused", async () => {
         const workspace = join(fixture.root, "workspace");

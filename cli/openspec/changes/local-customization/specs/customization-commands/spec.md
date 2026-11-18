@@ -76,6 +76,16 @@ Each new command MUST declare an agent policy by its risk, not by read or write.
 - **WHEN** the chat runs `inflexa skill import /home/u/.claude/skills/x`
 - **THEN** the user approves the exact command before it runs
 
+### Requirement: The MCP list shows a failed start
+
+`inflexa mcp ls` and `GET /api/v1/mcp` MUST give the last failed start of each server, with its time and its reason, as the runtime of the local server reports it.
+
+#### Scenario: A server that ends at start
+
+- **GIVEN** an attached server whose process ended before it answered in the last turn
+- **WHEN** the user runs `inflexa mcp ls`
+- **THEN** the line of the server shows the time and the reason of the failure
+
 ### Requirement: A command that acts on one item at a time takes many items
 
 `agent attach`, `agent detach`, `agent enable`, `agent disable`, `agent import`, `agent rm`, `skill import`, `credential rm`, `mcp enable`, `mcp disable` and `mcp rm` MUST take one or more values. The command MUST apply the values in order and stop at the first failure. A command of the policy `approval` MUST ask one time for all its values.

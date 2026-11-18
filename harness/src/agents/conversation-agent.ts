@@ -45,7 +45,7 @@ import { composeSystemPrompt } from "./system-prompt.js";
 
 import type { KnowledgeClient } from "../tools/knowledge/index.js";
 import { plannerCatalogOf } from "./sandbox-catalog.js";
-import { requiredRoleSetup, type CatalogServices } from "../catalog/equip.js";
+import { mcpFailureNotice, requiredRoleSetup, type CatalogServices } from "../catalog/equip.js";
 import { agentOfRole, resolveCatalog } from "../catalog/resolve.js";
 import { createSkillTools } from "../tools/sandbox/skills.js";
 import type { TurnAgent } from "./turn-agent.js";
@@ -379,7 +379,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): Conversati
             ...(hostTools ?? []),
         ];
 
-        const prompt = equipment.skillIndex === undefined ? chat.prompt : `${chat.prompt}\n\n${equipment.skillIndex}`;
+        const prompt = [chat.prompt, equipment.skillIndex, mcpFailureNotice(equipment.mcp.unavailable)].filter((part) => part !== undefined).join("\n\n");
         return {
             id: CONVERSATION_AGENT_ID,
             systemPrompt: composeSystemPrompt(prompt, { identity: true, conversational: true }),

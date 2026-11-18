@@ -101,13 +101,23 @@ The text blocks of a result MUST become the text of the tool output. `structured
 
 ### Requirement: A server that does not answer removes only its tools
 
-When the harness builds an agent and a server does not answer, the tools of that server MUST be absent. The harness MUST log a warning that names the server. The agent MUST run with its other tools.
+When the harness builds an agent and a server does not answer, the tools of that server MUST be absent. The harness MUST log a warning that names the server and the reason. The reason MUST hold the last error output of a local server. The agent MUST run with its other tools.
 
 #### Scenario: A stopped server
 
 - **GIVEN** an executor that attaches two MCP servers, and one server does not start
 - **WHEN** the step agent is built
 - **THEN** the agent holds the tools of the other server, and the log names the server that did not start
+
+### Requirement: A failed start reaches the agent and the host
+
+The system prompt of the chat agent and of the reporter MUST name each attached server that did not start, with the reason. The runtime MUST give the last start failure of each server to the host, and a later start MUST clear it.
+
+#### Scenario: The chat agent learns why a server is absent
+
+- **GIVEN** a chat agent that attaches a local server whose process ends before it answers
+- **WHEN** a turn starts
+- **THEN** the system prompt names the server with the reason, and the host lists the failure for the server
 
 ### Requirement: The host owns the MCP sign-in
 

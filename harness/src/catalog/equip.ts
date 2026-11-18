@@ -14,7 +14,31 @@ import type { AgentAttachments, AgentCatalog, SingleAgentRole, SkillStore } from
 export type McpAgentTools = {
     readonly direct: readonly Tool[];
     readonly script: readonly Tool[];
+    /** The attached servers that did not start, with the reason. Their tools are absent. */
+    readonly unavailable: readonly McpServerFailure[];
 };
+
+/** An MCP server that did not start or did not list its tools. */
+export type McpServerFailure = {
+    readonly server: string;
+    readonly at: Date;
+    readonly reason: string;
+};
+
+/**
+ * The part of a system prompt that names each attached MCP server that did not start, or `undefined` when each one
+ * started. Without it, an agent that misses the tools of a server guesses a reason.
+ */
+export function mcpFailureNotice(unavailable: readonly McpServerFailure[]): string | undefined {
+    if (unavailable.length === 0) return undefined;
+    return [
+        "## MCP Servers That Did Not Start",
+        "",
+        "These attached MCP servers did not start for this turn, thus their tools are absent:",
+        "",
+        ...unavailable.map((failure) => `- \`${failure.server}\`: ${failure.reason}`),
+    ].join("\n");
+}
 
 /** The MCP side of the catalog services. The harness connects to each server at its first use. */
 export type McpToolSource = {
@@ -37,7 +61,7 @@ export type AgentEquipment = {
     readonly mcp: McpAgentTools;
 };
 
-const NO_MCP_TOOLS: McpAgentTools = { direct: [], script: [] };
+const NO_MCP_TOOLS: McpAgentTools = { direct: [], script: [], unavailable: [] };
 
 /** The equipment of the attachments of one agent. */
 export async function equipAttachments(services: CatalogServices, resolved: ResolvedCatalog, attachments: AgentAttachments): Promise<AgentEquipment> {

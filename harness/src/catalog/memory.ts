@@ -70,6 +70,6 @@ export function equipmentOf(
             skills.map((skill) => skill.name),
         ),
         skillStore: createInMemorySkillStore(skills),
-        mcp: { direct: [], script: [] },
+        mcp: { direct: [], script: [], unavailable: [] },
     };
 }

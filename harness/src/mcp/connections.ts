@@ -9,7 +9,7 @@ import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotoc
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
-import type { McpAgentTools, McpToolSource } from "../catalog/equip.js";
+import type { McpAgentTools, McpServerFailure, McpToolSource } from "../catalog/equip.js";
 import type { ResolvedCatalog } from "../catalog/resolve.js";
 import type { McpServerConfig } from "../catalog/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -30,17 +30,20 @@ function fingerprintOf(config: McpServerConfig): string {
         : JSON.stringify(["http", transport.url, transport.headers]);
 }
 
-function transportOf(config: McpServerConfig): StdioClientTransport | StreamableHTTPClientTransport {
+function transportOf(config: McpServerConfig, onStderr: (text: string) => void): StdioClientTransport | StreamableHTTPClientTransport {
     const { transport } = config;
     if (transport.kind === "stdio") {
-        return new StdioClientTransport({
+        const stdio = new StdioClientTransport({
             command: transport.command,
             args: [...transport.args],
             // The default environment of the SDK (HOME, PATH, and a few more) and the env of the config. Nothing else of
             // the harness process reaches the server.
             env: { ...getDefaultEnvironment(), ...transport.env },
-            stderr: "ignore",
+            stderr: "pipe",
         });
+        // A piped stream that nobody reads fills its buffer and stops the server, thus each chunk is read.
+        stdio.stderr?.on("data", (chunk: Buffer | string) => onStderr(chunk.toString()));
+        return stdio;
     }
     return new StreamableHTTPClientTransport(new URL(transport.url), {
         requestInit: { headers: { ...transport.headers } },
@@ -70,7 +73,19 @@ type Connection = {
 export type McpConnections = McpToolSource & {
     /** Close each connection. The assembly calls it at shutdown. */
     readonly close: () => Promise<void>;
+    /** The last start failure of each server, by name. A later start of the server clears it. */
+    readonly failures: () => ReadonlyMap<string, McpServerFailure>;
 };
+
+/** The most characters of the error output of a local server that a failure keeps: its last lines. */
+const STDERR_TAIL_CHARS = 2000;
+
+/** The reason of a failed start: the error, and the last error output of a local server when it wrote some. */
+function failureReasonOf(failure: unknown, stderrTail: string | undefined): string {
+    const message = errorMessageOf(failure) ?? "the server did not start";
+    const tail = stderrTail?.trim();
+    return tail === undefined || tail.length === 0 ? message : `${message}. The last error output of the server: ${tail}`;
+}
 
 export type McpConnectionsDeps = {
     readonly logger?: Logger;
@@ -85,6 +100,12 @@ export function createMcpConnections(deps: McpConnectionsDeps = {}): McpConnecti
     // The config of each server as the catalog gave it last. A tool of an earlier turn reaches the server through it,
     // thus a changed config replaces the process once, and an old tool does not bring the old process back.
     const latest = new Map<string, McpServerConfig>();
+    const failures = new Map<string, McpServerFailure>();
+    // The last error output of each local server, for the reason of a failed start.
+    const stderrTails = new Map<string, string>();
+    const keepStderr = (server: string, text: string): void => {
+        stderrTails.set(server, ((stderrTails.get(server) ?? "") + text).slice(-STDERR_TAIL_CHARS));
+    };
 
     const closeConnection = async (name: string): Promise<void> => {
         const connection = connections.get(name);
@@ -105,7 +126,11 @@ export function createMcpConnections(deps: McpConnectionsDeps = {}): McpConnecti
         if (current !== undefined) return current.client;
         const client = (async () => {
             const made = new Client(clientInfo);
-            await made.connect(transportOf(config), { timeout: CONNECT_TIMEOUT_MS });
+            stderrTails.delete(config.name);
+            await made.connect(
+                transportOf(config, (text) => keepStderr(config.name, text)),
+                { timeout: CONNECT_TIMEOUT_MS },
+            );
             return made;
         })();
         connections.set(config.name, { fingerprint, client });
@@ -152,6 +177,7 @@ export function createMcpConnections(deps: McpConnectionsDeps = {}): McpConnecti
     const toolsFor = async (servers: readonly string[], resolved: ResolvedCatalog): Promise<McpAgentTools> => {
         const direct: Tool[] = [];
         const script: Tool[] = [];
+        const unavailable: McpServerFailure[] = [];
         for (const server of servers) {
             const config = resolved.mcpServers.get(server);
             if (config === undefined) continue;
@@ -161,11 +187,15 @@ export function createMcpConnections(deps: McpConnectionsDeps = {}): McpConnecti
                 const client = await clientOf(config);
                 listed = (await client.listTools(undefined, { timeout: CONNECT_TIMEOUT_MS })).tools;
             } catch (failure) {
-                // An absent server is a normal state: the agent runs with its other tools.
-                logger.warn("an MCP server did not answer; its tools are absent", { server, ...logger.errorFields(failure) });
+                // An absent server is a normal state: the agent runs with its other tools, and it learns the reason.
+                const recorded: McpServerFailure = { server, at: new Date(), reason: failureReasonOf(failure, stderrTails.get(server)) };
+                failures.set(server, recorded);
+                unavailable.push(recorded);
+                logger.warn("an MCP server did not answer; its tools are absent", { server, reason: recorded.reason, ...logger.errorFields(failure) });
                 await closeConnection(server);
                 continue;
             }
+            failures.delete(server);
             const names = mcpToolNames(
                 server,
                 listed.map((tool) => tool.name),
@@ -176,11 +206,12 @@ export function createMcpConnections(deps: McpConnectionsDeps = {}): McpConnecti
                 if (config.scriptable) script.push(built);
             }
         }
-        return { direct, script };
+        return { direct, script, unavailable };
     };
 
     return {
         toolsFor,
+        failures: () => new Map(failures),
         close: async () => {
             await Promise.all([...connections.keys()].map((name) => closeConnection(name)));
         },

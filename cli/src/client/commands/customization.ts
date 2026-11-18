@@ -460,6 +460,8 @@ function printMcpServer(server: McpServerView): void {
     }
     const signIn = server.signedIn === undefined ? "" : server.signedIn ? "  signed in" : "  not signed in";
     console.log(`  ${server.name}  ${server.entry.enabled ? "on " : "off"}  ${mcpEntryText(server.entry)}${signIn}`);
+    if (server.startFailure !== undefined)
+        console.log(`  ${" ".repeat(server.name.length)}  ! did not start at ${server.startFailure.at}: ${server.startFailure.reason}`);
 }
 
 /** `inflexa mcp ls`: each MCP server of the config, valid or with its problem, and the sign-in state of each OAuth server. */
