@@ -129,6 +129,7 @@ export type { TurnTerminal, ApplyFrameResult, ChatPartCheck } from "./chat-frame
 export { createSubAgentActivityTracker, SUBAGENT_ACTIVITY_MAX_ENTRIES } from "./subagent-activity.js";
 export type { SubAgentActivityTracker } from "./subagent-activity.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./part-registry.js";
+export { repeatedPlanIndexes, supersededFileReferences } from "./repeated-cards.js";
 export type { ChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./part-registry.js";
 
 export { AnalogyCoverageSchema, AnalogyReportSchema, AnalogyReportErrorSchema, AnalogicalReasonerOutputSchema } from "./analogy-report.js";

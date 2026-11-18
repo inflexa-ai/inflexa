@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
+import { createSignal } from "solid-js";
 
 import type { CompactionPart } from "@inflexa-ai/harness/contracts/index.js";
 
@@ -306,5 +307,57 @@ describe("MessageBlock report render", () => {
         );
         expect(frame).toContain("Page rendered: Interferon response");
         expect(frame).not.toContain("part:data-report-rendered");
+    });
+});
+
+// The harness rules decide which cards of one turn repeat an earlier card: the first plan card of an id stays, and the
+// latest file card keeps each file.
+describe("MessageBlock repeated cards", () => {
+    const plan: Part = { type: "data-plan", id: "pres-a", planId: "pln-0000000a", title: "Interferon plan" };
+    function fileCard(id: string, ...paths: string[]): Part {
+        return { type: "data-file-reference", id, files: paths.map((path) => ({ path })) };
+    }
+    function occurrences(frame: string, needle: string): number {
+        return frame.split(needle).length - 1;
+    }
+
+    test("a show_plan card of the plan that generate_plan showed in the turn renders nothing", async () => {
+        const parts: Part[] = [plan, { type: "tool-call", toolCallId: "c2", toolName: "show_plan", outcome: "ok" }, plan];
+        const frame = await frameWith(
+            () => <MessageBlock index={1} role="assistant" parts={parts} streamPartId={() => null} streamText={() => ""} />,
+            "Interferon plan",
+            { width: 80, height: 20 },
+        );
+
+        expect(frame).toContain("show_plan");
+        expect(occurrences(frame, "Interferon plan")).toBe(1);
+    });
+
+    test("a file card loses a file to a card that the turn shows later", async () => {
+        const [parts, setParts] = createSignal<Part[]>([fileCard("fr-a", "s/brief.pdf", "s/c1.js")]);
+        const setup = await testRender(
+            () => (
+                <WithTerminalSize>
+                    <WorkspaceContext.Provider value={buildWorkspace()}>
+                        <MessageBlock index={1} role="assistant" parts={parts()} streamPartId={() => null} streamText={() => ""} />
+                    </WorkspaceContext.Provider>
+                </WithTerminalSize>
+            ),
+            { width: 80, height: 20 },
+        );
+        try {
+            await setup.renderOnce();
+            const before = setup.captureCharFrame();
+            expect(before.indexOf("brief.pdf")).toBeLessThan(before.indexOf("c1.js"));
+
+            setParts((prev) => [...prev, fileCard("fr-b", "s/brief.pdf")]);
+            await setup.renderOnce();
+            const after = setup.captureCharFrame();
+            expect(occurrences(after, "brief.pdf")).toBe(1);
+            expect(occurrences(after, "c1.js")).toBe(1);
+            expect(after.indexOf("c1.js")).toBeLessThan(after.indexOf("brief.pdf"));
+        } finally {
+            setup.renderer.destroy();
+        }
     });
 });
