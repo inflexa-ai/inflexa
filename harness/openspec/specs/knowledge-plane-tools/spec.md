@@ -192,7 +192,7 @@ The input of `knowledge_recommend` and `knowledge_check` MUST be the flat situat
 
 - **GIVEN** a call with `blocking_factor: "donor_id"`
 - **WHEN** the tool validates the input
-- **THEN** the schema refuses the value, and the permitted roles are `individual`, `cell_line`, `litter`, `site`, `pair`, and `other`
+- **THEN** the schema refuses the value, and the permitted roles are `individual`, `cell_line`, `litter`, `site`, `pair`, `plate`, and `other`
 
 ### Requirement: A plan step is a template step or an open step
 

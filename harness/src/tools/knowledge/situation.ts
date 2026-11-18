@@ -27,6 +27,7 @@ export const SituationFieldsSchema = z.object({
         .describe(
             "What the plan needs a procedure for. `full_plan` returns QC, filtering, the model, the test, shrinkage, multiple testing, enrichment, and the report in one answer. " +
                 "Use `differential_expression` when the research question does not ask for pathways or gene sets; an enrichment step the user did not ask for is unasked scope. " +
+                "When the plan needs a test of gene sets or of a gene list beside its question, keep the question and add `enrichment` to `extra_analyses`: the answer then gives the rules of that step. " +
                 "Use `enrichment` when a results table is the input and no new test is fitted, and `qc` when the question stops at the sample structure. " +
                 "Use `tf_activity` for regulator or pathway activity, `deconvolution` for cell type proportions, `coexpression` for modules, `clustering` for sample subgroups, `survival` for an outcome association, " +
                 "and `signature_scoring` for a per-sample score, or with `classifier: true` for a classifier of the samples. " +
@@ -129,12 +130,13 @@ export const SituationFieldsSchema = z.object({
             "The batch structure: none; a known batch whose levels each hold every condition; a known batch whose levels coincide with the conditions; a known batch whose levels do not each hold every condition but at least one level holds two conditions (estimable, unbalanced); or a suspected structure (dates, lanes, plates) the metadata does not name.",
         ),
     covariates: z
-        .array(z.enum(["sex", "age", "clinical", "technical", "other"]))
+        .array(z.enum(["sex", "age", "clinical", "technical", "derived_score", "other"]))
         .optional()
         .describe(
             'The role of each other sample covariate that the Data Context or the user request names as a candidate for the design, one entry per covariate and never a column name, for example ["sex", "age"]: `clinical` for a stage, a grade, or a diagnosis; `technical` for a variable that is not the batch, for example the RNA integrity. ' +
+                "A score that an earlier step of the plan computes from the data, for example a composition estimate or a signature score, is also a candidate when the plan considers it for the design: send `derived_score` for it. " +
                 "Send a candidate also when it is not balanced across the conditions, or when the design has too few samples to hold it: the rules then say whether the fit holds it, and how the plan states it. " +
-                "Omit only when the Data Context and the user request name no such covariate. The column names stay in the step.",
+                "Omit only when the Data Context and the user request name no such covariate and the plan computes no such score. The column names stay in the step.",
         ),
     n_timepoints: z.number().int().min(1).nullable().optional().describe("The number of time points when the design is a time course. Omit otherwise."),
     continuous_predictor: z
@@ -189,6 +191,7 @@ export const SituationFieldsSchema = z.object({
     extra_analyses: z
         .array(
             z.enum([
+                "enrichment",
                 "variance_partition",
                 "tf_activity",
                 "pathway_activity",
@@ -206,6 +209,7 @@ export const SituationFieldsSchema = z.object({
         .optional()
         .describe(
             "Analyses the research question asks for beside the question kind, for example a regulator activity beside a differential expression. Each joins the procedure at its place. " +
+                "Add `enrichment` when the research question asks for a test of gene sets or of a gene list beside the question kind; `enrichment_input` then selects what the step takes. " +
                 "Add `annotation` when the rows of the count table are not gene symbols (Ensembl or Entrez identifiers) and a later step needs symbols: the identifier map is then a vetted step with its own template, and no other step rebuilds it. " +
                 "Add `reference_module_score` for a score of each sample against a reference co-expression module set, and `classifier_call` for the call of a validated classifier on each sample. " +
                 "Each of the two contrasts two levels of the group column, thus either one needs two or more groups, a time course, or a numeric predictor. Omit when none.",
@@ -220,7 +224,7 @@ export const SituationFieldsSchema = z.object({
         .enum(["ranked_list", "gene_list", "sample_scores"])
         .optional()
         .describe(
-            "What the enrichment step takes: `ranked_list` for every tested gene ranked by a statistic (the default), `gene_list` for a discrete list such as the significant genes, `sample_scores` for a pathway score per sample. Omit when the question has no enrichment.",
+            "What the enrichment step takes: `ranked_list` for every tested gene ranked by a statistic (the default), `gene_list` for a discrete list such as the significant genes, `sample_scores` for a pathway score per sample. Omit when neither the question nor `extra_analyses` asks for an enrichment.",
         ),
     quality_flags: z
         .array(

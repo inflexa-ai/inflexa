@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 import { z } from "zod";
 
-import { createHttpKnowledgeClient, RecommendResponseSchema, type KnowledgeSituation } from "../client.js";
+import { CheckResponseSchema, createHttpKnowledgeClient, RecommendResponseSchema, type KnowledgeSituation } from "../client.js";
 import { SituationFieldsSchema } from "../situation.js";
 import { parseUnknownRecord } from "../../../lib/unknown-containers.js";
 import {
@@ -10,6 +10,7 @@ import {
     fakeKnowledgeClient,
     limitAnswer,
     notAssessedCheckAnswer,
+    outsideWalkCheckAnswer,
     recommendAnswer,
     SNAPSHOT,
     substituteRenderAnswer,
@@ -78,7 +79,11 @@ function stubService() {
                 }
                 return Response.json(recommendAnswer());
             }
-            if (url.pathname === "/v1/check") return Response.json(notAssessedCheckAnswer());
+            if (url.pathname === "/v1/check") {
+                const body = z.object({ steps: z.array(z.object({ step_type: z.string() })) }).parse(await request.json());
+                const draftsEnrichment = body.steps.some((step) => step.step_type === "enrichment");
+                return Response.json(draftsEnrichment ? outsideWalkCheckAnswer() : notAssessedCheckAnswer());
+            }
             if (url.pathname === "/v1/template/render") {
                 const body = z.object({ template: z.string() }).parse(await request.json());
                 if (body.template === "tpl-x") return Response.json({ error: "server", message: "boom" }, { status: 500 });
@@ -313,5 +318,20 @@ describe("createHttpKnowledgeClient", () => {
                 message: "No rule of the snapshot covers shrink_lfc in this situation. The check did not assess it.",
             },
         ]);
+    });
+
+    it("parses the steps outside the walk of the question in a check answer, and an answer with no such key", async () => {
+        const answer = await client().check(SITUATION, [{ step_type: "enrichment", method: "Over-representation analysis", method_id: "M-0011" }]);
+        if (!("ok" in answer)) throw new Error("expected a check answer");
+        expect(answer.outside_walk).toEqual(outsideWalkCheckAnswer().outside_walk);
+        // A service that does not know the key sends none.
+        const older = await client().check(SITUATION, [{ step_type: "shrink_lfc", method: "apeglm" }]);
+        if (!("ok" in older)) throw new Error("expected a check answer");
+        expect(older.ok).toBe(true);
+        expect(older.outside_walk).toBeUndefined();
+        // An entry names the extra analysis only when one adds the step, and it always carries its message.
+        const noRequest = { step_type: "cohort_assembly", message: "No request adds the step." };
+        expect(CheckResponseSchema.parse({ ...outsideWalkCheckAnswer(), outside_walk: [noRequest] }).outside_walk).toEqual([noRequest]);
+        expect(CheckResponseSchema.safeParse({ ...outsideWalkCheckAnswer(), outside_walk: [{ step_type: "enrichment" }] }).success).toBe(false);
     });
 });
