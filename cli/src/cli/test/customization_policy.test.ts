@@ -164,6 +164,25 @@ describe("run_inflexa — the customization commands", () => {
         expect(agent.asked.length).toBe(1);
     });
 
+    test("`agent set --prompt-file` of a workspace path runs with no prompt, and a host path asks", async () => {
+        const workspace = await run(["agent", "set", "inflexa-sketch", "--prompt-file", "prompts/sketch.md"]);
+        const host = await run(["agent", "set", "inflexa-sketch", "--prompt-file", "/etc/hosts"]);
+
+        expect(workspace.asked).toEqual([]);
+        expect(workspace.spawned).toEqual([
+            ["/bin/bun", "/app/src/index.ts", "agent", "set", "inflexa-sketch", "--prompt-file", "prompts/sketch.md", "--analysis", "an-test"],
+        ]);
+        expect(host.asked.map((request) => request.grantKey)).toEqual([undefined]);
+    });
+
+    test("`skill export` to the workspace runs with no prompt, and `agent clone --use` too", async () => {
+        const exported = await run(["skill", "export", "single-cell", "skills/single-cell"]);
+        const cloned = await run(["agent", "clone", "inflexa", "inflexa-sketch", "--use"]);
+
+        expect(exported.asked).toEqual([]);
+        expect(cloned.asked).toEqual([]);
+    });
+
     test("`agent ls --json` runs with no prompt", async () => {
         const { asked, spawned } = await run(["agent", "ls", "--json"]);
 

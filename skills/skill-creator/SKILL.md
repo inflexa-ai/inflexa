@@ -53,6 +53,6 @@ These patterns help in the built-in skills:
 
 ## Save and try the skill
 
-Write the folder in the workspace, then import it into the custom skills of the user. An import of a skill that exists already needs the replace option. Then attach the skill to the agents that need it. Tell the user where the skill is and which agents use it.
+Write the folder in the workspace, then import it into the custom skills of the user. To change a skill that exists, copy it into the workspace, change the copy, and import it again with the replace option. Then attach the skill to the agents that need it. Tell the user where the skill is and which agents use it.
 
 A chat agent gets a new skill from the next message of the user. To try the skill, ask the user for a real request from the lab, and look at how the agent uses the skill. If the agent does not read the skill, the description does not match the request. If the agent reads it but the result does not improve, the body does not give what the task needs. Change the skill and import it again.

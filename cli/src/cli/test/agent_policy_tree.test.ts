@@ -61,7 +61,7 @@ function policyTable(rows: readonly PolicyRow[]): Record<string, string> {
 // grantKey.
 const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa agent attach": "auto()",
-    "inflexa agent clone": "auto(description)",
+    "inflexa agent clone": "auto(description,use)",
     "inflexa agent detach": "auto()",
     "inflexa agent disable": "auto()",
     "inflexa agent enable": "auto()",
@@ -69,7 +69,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa agent import": "auto(role)+exact+workspace",
     "inflexa agent ls": "auto(json)",
     "inflexa agent rm": "approval",
-    "inflexa agent set": "auto(description,prompt)",
+    "inflexa agent set": "auto(description,prompt,promptFile)+exact+workspace",
     "inflexa agent show": "auto(json)",
     "inflexa agent use": "auto()",
     "inflexa analysis set-project": "approval",
@@ -127,6 +127,7 @@ const EXPECTED_DEV_OFF: Record<string, string> = {
     "inflexa server stop": "blocked",
     "inflexa server walk": "blocked",
     "inflexa setup": "blocked",
+    "inflexa skill export": "auto()+exact+workspace",
     "inflexa skill find": "auto(json)",
     "inflexa skill import": "auto()+exact+workspace",
     "inflexa skill ls": "auto(json)",
@@ -243,6 +244,7 @@ const EXPECTED_KINDS: Record<string, string> = {
     "inflexa server stop": "machine",
     "inflexa server walk": "standalone",
     "inflexa setup": "machine",
+    "inflexa skill export": "instance",
     "inflexa skill find": "instance",
     "inflexa skill import": "instance",
     "inflexa skill ls": "instance",

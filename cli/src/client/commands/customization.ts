@@ -38,6 +38,7 @@ import {
     importMcpServer,
     installMcpServer,
     importSkill,
+    exportSkill,
     patchAgent,
     patchConnector,
     patchMcpServer,
@@ -112,6 +113,8 @@ function printAgent(agent: AgentDetail): void {
         printAttachments("removed by you:", agent.change.remove);
     }
     printGaps(agent, "  ");
+    console.log(`\n  prompt${agent.kind === "builtin" ? " (read-only)" : ""}:\n`);
+    console.log(agent.prompt ?? "  (none: the file of the draft has no body)");
     console.log();
 }
 
@@ -151,10 +154,21 @@ export async function agentShow(id: string, flags: JsonFlag, opts: ClientOpts = 
 }
 
 /** `inflexa agent clone <id> <new-id>`: copy an agent into a new agent file of the same role. */
-export async function agentClone(id: string, newId: string, flags: { description?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+export async function agentClone(
+    id: string,
+    newId: string,
+    flags: { description?: string; use?: boolean },
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): Promise<void> {
     const agent = (await cloneAgent(id, newId, flags.description, opts)).match(identity, failOn);
-    const use = agent.role === "executor" ? "" : ` \`inflexa agent use ${agent.id}\` makes it the ${agent.role} agent.`;
-    console.log(`Cloned "${id}" to ${agent.path ?? agent.id}. Edit the file to change the prompt.${use}`);
+    console.log(`Cloned "${id}" to "${agent.id}". \`inflexa agent set ${agent.id}\` changes its description and its prompt.`);
+    if (agent.role === "executor") return;
+    if (flags.use !== true) {
+        console.log(`\`inflexa agent use ${agent.id}\` makes it the ${agent.role} agent.`);
+        return;
+    }
+    const role = (await chooseRoleAgent(agent.role, agent.id, opts)).match(identity, failOn);
+    console.log(`The ${role.role} agent is "${role.activeAgentId ?? agent.id}".`);
 }
 
 /** `inflexa agent use <id>`: make an agent the active agent of its role. The built-in agent of the role restores the default. */
@@ -212,16 +226,27 @@ export async function agentImport(files: readonly string[], flags: ImportFlags &
 }
 
 /** `inflexa agent set <id>`: change the description or the prompt body of a custom agent. */
-export async function agentSet(id: string, flags: { description?: string; prompt?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    if (flags.description === undefined && flags.prompt === undefined) fail("Give --description, --prompt, or both.");
+export async function agentSet(
+    id: string,
+    flags: { description?: string; prompt?: string; promptFile?: string; analysis?: string },
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): Promise<void> {
+    const promptGiven = flags.prompt !== undefined || flags.promptFile !== undefined;
+    if (flags.description === undefined && !promptGiven) fail("Give --description, --prompt, or --prompt-file.");
+    if (flags.prompt !== undefined && flags.promptFile !== undefined) fail("Give --prompt or --prompt-file, not both.");
     const body: PatchAgentRequest = {};
     if (flags.description !== undefined) body.description = flags.description;
     if (flags.prompt !== undefined) body.prompt = flags.prompt;
+    if (flags.promptFile !== undefined) {
+        // With `--analysis`, the server reads a relative path inside the workspace of the analysis.
+        body.promptPath = flags.analysis === undefined ? resolve(flags.promptFile) : flags.promptFile;
+        if (flags.analysis !== undefined) body.analysis = flags.analysis;
+    }
     const agent = (await patchAgent(id, body, opts)).match(identity, failOn);
-    console.log(
-        `Changed the ${[flags.description === undefined ? "" : "description", flags.prompt === undefined ? "" : "prompt"].filter((part) => part.length > 0).join(" and ")} of "${agent.id}".`,
-    );
+    const changed = [flags.description === undefined ? "" : "description", promptGiven ? "prompt" : ""].filter((part) => part.length > 0).join(" and ");
+    console.log(`Changed the ${changed} of "${agent.id}".`);
     printGaps(agent, "  ");
+    if (agent.role === "chat") console.log("The chat agent gets the change from the next message of the user.");
 }
 
 /** `inflexa agent enable <id>` and `inflexa agent disable <id>`. */
@@ -303,6 +328,14 @@ export async function skillFind(dir: string | undefined, flags: JsonFlag, opts: 
         return;
     }
     printSkills(list);
+}
+
+/** `inflexa skill export <name> <dir>`: copy a skill, for example into a workspace to edit it and import it again. */
+export async function skillExport(name: string, dir: string, flags: ImportFlags, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const exported = (await exportSkill(name, importBodyOf(dir, flags), opts)).match(identity, failOn);
+    console.log(
+        `Copied the skill "${name}" to ${flags.analysis === undefined ? exported.path : dir}. \`inflexa skill import\` with \`--replace\` takes the edited copy back.`,
+    );
 }
 
 /** `inflexa skill import <dir>`: copy a skill directory into the custom skills. */

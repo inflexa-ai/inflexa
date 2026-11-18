@@ -404,9 +404,9 @@ describe("run_inflexa — the described surface tracks the registry", () => {
         }
     });
 
-    test("a read-only command and an approval-gated one land in different groups", () => {
+    test("a command with no prompt and an approval-gated one land in different groups", () => {
         const { description } = createRunInflexaTool();
-        const free = description.indexOf("Read-only, and normally run without interrupting the user");
+        const free = description.indexOf("Run with no prompt to the user");
         const gated = description.indexOf("Always stop for the user's approval first");
         const blocked = description.indexOf("Not available through this tool at all");
         expect(free).toBeGreaterThan(-1);

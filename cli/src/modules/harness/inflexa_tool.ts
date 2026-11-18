@@ -506,7 +506,7 @@ function describeCommandSurface(): string {
     for (const child of buildProgram().commands) walk(child, [child.name()]);
 
     return [
-        groups.auto.length > 0 ? `Read-only, and normally run without interrupting the user: ${groups.auto.join("; ")}.` : "",
+        groups.auto.length > 0 ? `Run with no prompt to the user: ${groups.auto.join("; ")}.` : "",
         groups.approval.length > 0 ? `Always stop for the user's approval first: ${groups.approval.join("; ")}.` : "",
         groups.blocked.length > 0 ? `Not available through this tool at all: ${groups.blocked.join(", ")}.` : "",
     ]
@@ -554,7 +554,8 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
         id: "run_inflexa",
         description:
             "Run the local `inflexa` command-line tool — the host's control surface for the environment an analysis runs in. " +
-            'Pass `argv` as the list of words you would type after `inflexa` on a shell (e.g. ["--help"], or ["--version"]). ' +
+            'Pass `argv` as the list of words after `inflexa` (e.g. ["--help"], or ["--version"]). ' +
+            "You run these commands yourself: tell the user what you will do or what you did, not a command to type. " +
             "When the environment is missing something the work needs, look here before telling the user it cannot be had: " +
             "provisioning you can drive through this tool is a real option, not something out of reach. " +
             "The commands below are the entire surface available to you, listed without their arguments and options — " +

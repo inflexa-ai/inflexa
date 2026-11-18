@@ -671,10 +671,11 @@ export function buildProgram(): Command {
             .description("Copy an agent into a new agent file of the same role, whose prompt you can edit")
             .argument("<id>", "The agent to copy: a built-in agent of any role, or a custom agent")
             .argument("<new-id>", "The id of the new agent: lowercase letters, digits, and hyphens")
-            .option("--description <text>", "The description of the new agent; the planner reads it to give steps to an executor"),
+            .option("--description <text>", "The description of the new agent; the planner reads it to give steps to an executor")
+            .option("--use", "Make the new agent the active agent of its role"),
         "instance",
-        { kind: "auto", safeFlags: ["description"] },
-        async (id: string, newId: string, options: { description?: string }) => {
+        { kind: "auto", safeFlags: ["description", "use"] },
+        async (id: string, newId: string, options: { description?: string; use?: boolean }) => {
             const { agentClone } = await import("../client/commands/customization.ts");
             await agentClone(id, newId, options);
         },
@@ -686,10 +687,12 @@ export function buildProgram(): Command {
             .description("Change the description or the prompt of a custom agent")
             .argument("<id>", "The custom agent; a built-in agent is read-only")
             .option("--description <text>", "The new description; the planner reads it to give steps to an executor")
-            .option("--prompt <text>", "The new prompt body"),
+            .option("--prompt <text>", "The new prompt body")
+            .option("--prompt-file <path>", "A file that holds the new prompt body")
+            .option("--analysis <id|name>", "Read a relative --prompt-file path inside the workspace of this analysis"),
         "instance",
-        { kind: "auto", safeFlags: ["description", "prompt"] },
-        async (id: string, options: { description?: string; prompt?: string }) => {
+        { kind: "auto", safeFlags: ["description", "prompt", "promptFile"], exactGrant: true, workspacePaths: true, workspacePathFlags: ["promptFile"] },
+        async (id: string, options: { description?: string; prompt?: string; promptFile?: string; analysis?: string }) => {
             const { agentSet } = await import("../client/commands/customization.ts");
             await agentSet(id, options);
         },
@@ -834,6 +837,22 @@ export function buildProgram(): Command {
         async (name: string, options: { json?: boolean }) => {
             const { skillShow } = await import("../client/commands/customization.ts");
             await skillShow(name, options);
+        },
+    );
+
+    registerAction(
+        skill
+            .command("export")
+            .description("Copy a skill to a folder, for example to edit it and import it again")
+            .argument("<name>", "The skill, built-in or custom")
+            .argument("<dir>", "The folder to write: absolute, or relative to the working directory")
+            .option("--analysis <id|name>", "Write a relative path inside the workspace of this analysis")
+            .option("--replace", "Overwrite the folder if it exists"),
+        "instance",
+        { kind: "auto", safeFlags: [], exactGrant: true, workspacePaths: true },
+        async (name: string, dir: string, options: { analysis?: string; replace?: boolean }) => {
+            const { skillExport } = await import("../client/commands/customization.ts");
+            await skillExport(name, dir, options);
         },
     );
 

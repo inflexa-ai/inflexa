@@ -7,6 +7,8 @@ import type {
     FoundAgentList,
     ImportAgentRequest,
     ImportSkillRequest,
+    ExportSkillRequest,
+    ExportSkillResponse,
     AgentList,
     ConnectorList,
     ConnectorView,
@@ -92,6 +94,11 @@ export function fetchFoundSkills(opts: ClientOpts = DEFAULT_CLIENT_OPTS): Result
 
 export function findSkills(dir: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillList, ClientError> {
     return request<SkillList>("GET", `/api/v1/skills?dir=${encodeURIComponent(dir)}`, {}, opts);
+}
+
+/** `POST /api/v1/skills/:name/export`: copy one skill to a folder. */
+export function exportSkill(name: string, body: ExportSkillRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<ExportSkillResponse, ClientError> {
+    return request<ExportSkillResponse>("POST", `/api/v1/skills/${encodeURIComponent(name)}/export`, { body }, opts);
 }
 
 /** `POST /api/v1/skills/import`: copy one skill directory into the custom skills. */

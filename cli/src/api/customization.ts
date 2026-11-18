@@ -140,6 +140,10 @@ export type PatchAgentRequest = {
     description?: string;
     /** The prompt body of a custom agent. */
     prompt?: string;
+    /** A file that holds the prompt body, in place of `prompt`. Absolute, or relative to the workspace of `analysis`. */
+    promptPath?: string;
+    /** The analysis, by id or name, whose workspace holds a relative `promptPath`. */
+    analysis?: string;
 };
 
 /** The body of a `DELETE /api/v1/catalog/agents/:id` response. */
@@ -180,6 +184,14 @@ export type SkillProblemView = {
 export type SkillList = {
     skills: SkillView[];
     problems: SkillProblemView[];
+};
+
+/** The body of `POST /api/v1/skills/:name/export`: the folder to write, with the same fields as an import. */
+export type ExportSkillRequest = ImportSkillRequest;
+
+/** The body of a `POST /api/v1/skills/:name/export` response: the folder that holds the copy. */
+export type ExportSkillResponse = {
+    path: string;
 };
 
 /** The body of `POST /api/v1/skills/import`, on the machine of the server. */
