@@ -112,6 +112,18 @@ describe("resolveInvocation", () => {
 });
 
 describe("run_inflexa — execute", () => {
+    test("appends the analysis of the chat to an import that names none", async () => {
+        const sub = recordingSubprocess();
+        await awaitOk(runCall(makeTool(sub.fn), { argv: ["skill", "import", "my-skill"] }));
+        expect(sub.calls[0]).toEqual(["/bin/bun", "/app/src/index.ts", "skill", "import", "my-skill", "--analysis", "an-test"]);
+    });
+
+    test("keeps an import that names its analysis with the `=` form as it is", async () => {
+        const sub = recordingSubprocess();
+        await awaitOk(runCall(makeTool(sub.fn), { argv: ["skill", "import", "my-skill", "--analysis=an-test"] }));
+        expect(sub.calls[0]).toEqual(["/bin/bun", "/app/src/index.ts", "skill", "import", "my-skill", "--analysis=an-test"]);
+    });
+
     test("introspection runs immediately without asking", async () => {
         const sub = recordingSubprocess();
         const ask = recordingAsk();

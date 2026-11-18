@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { z } from "zod";
@@ -55,15 +56,26 @@ export function createSecretStore(opts: SecretStoreOpts): SecretStore {
     const log = getLogger("secret-store");
 
     const readFile = (): Record<string, string> => {
+        if (!existsSync(opts.filePath)) return {};
         try {
-            return JSON.parseWith(readFileSync(opts.filePath, "utf8"), SecretFileSchema) ?? {};
+            const entries = JSON.parseWith(readFileSync(opts.filePath, "utf8"), SecretFileSchema);
+            if (entries !== null) return entries;
         } catch {
-            return {};
+            // A file that cannot be read is moved aside below, the same as a file that does not parse.
         }
+        // The next write replaces the file, thus the secrets that it holds go to a copy that the user can restore.
+        const kept = `${opts.filePath}.unreadable-${Date.now()}`;
+        try {
+            renameSync(opts.filePath, kept);
+            log.warn({ kept }, "the secret file cannot be read; it moved aside");
+        } catch {
+            // A different caller moved the file first.
+        }
+        return {};
     };
     const writeFile = (entries: Record<string, string>): void => {
         mkdirSync(dirname(opts.filePath), { recursive: true });
-        const tmp = `${opts.filePath}.tmp`;
+        const tmp = `${opts.filePath}.${randomUUID()}.tmp`;
         writeFileSync(tmp, `${JSON.stringify(entries, null, 2)}\n`, { mode: 0o600 });
         renameSync(tmp, opts.filePath);
     };

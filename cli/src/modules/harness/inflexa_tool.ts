@@ -677,12 +677,12 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}): Tool<{ argv
             if (argv[0] === "store" && argv[1] === "add") {
                 const scoped = ctx.session.scope;
                 const extra = ["--queued"];
-                if (!argv.includes("--analysis")) extra.push("--analysis", scoped.analysisId);
+                if (analysisValuesOf(argv).length === 0) extra.push("--analysis", scoped.analysisId);
                 argv = [...argv, ...extra];
             }
             // An import of the chat reads a relative path inside the workspace of its own analysis, the place where
             // its file tools write. The analysis comes from the trusted session scope, as for `store add` above.
-            if (c.kind === "action" && isWorkspacePathPolicy(c.policy) && !argv.includes("--analysis"))
+            if (c.kind === "action" && isWorkspacePathPolicy(c.policy) && analysisValuesOf(argv).length === 0)
                 argv = [...argv, "--analysis", ctx.session.scope.analysisId];
             const cmd = resolveInvocation(argv, { isDevelopment, execPath, scriptPath });
             // Run the child in the analysis's own folder, so a command that resolves its target from the
