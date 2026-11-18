@@ -23,6 +23,16 @@ const tools = [
     { name: "fail", description: "Always fails.", inputSchema: { type: "object", properties: {} } },
     { name: "whoami", description: "The tag of this server process.", inputSchema: { type: "object", properties: {} } },
     { name: "picture", description: "A text and an image.", inputSchema: { type: "object", properties: {} } },
+    {
+        name: "either",
+        description: "Takes one of two fields.",
+        inputSchema: {
+            type: "object",
+            properties: { family: { type: "string" }, capability: { type: "string" } },
+            oneOf: [{ required: ["family"] }, { required: ["capability"] }],
+            additionalProperties: false,
+        },
+    },
 ];
 
 function reply(id: string | number, result: unknown): void {

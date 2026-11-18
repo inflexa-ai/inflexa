@@ -80,10 +80,19 @@ describe("mcpOutputOf", () => {
 describe("createMcpConnections", () => {
     it("gives the tools of an attached stdio server, and calls them in the harness process", async () => {
         const tools = await toolsOf([stdio("lims", "one")], ["lims"]);
-        expect(tools.direct.map((tool) => tool.id).sort()).toEqual(["mcp__lims__echo_upper", "mcp__lims__fail", "mcp__lims__picture", "mcp__lims__whoami"]);
+        expect(tools.direct.map((tool) => tool.id).sort()).toEqual(["mcp__lims__echo_upper", "mcp__lims__either", "mcp__lims__fail", "mcp__lims__picture", "mcp__lims__whoami"]);
         expect(tools.script).toEqual([]);
         const result = await toolNamed(tools.direct, "mcp__lims__echo_upper").execute({ text: "hi" }, context);
         expect(result._unsafeUnwrap()).toEqual({ text: "HI" });
+    });
+
+    it("removes the top-level combinators that a provider refuses, and keeps the properties", async () => {
+        const tools = await toolsOf([stdio("lims", "one")], ["lims"]);
+        expect(toolNamed(tools.direct, "mcp__lims__either").jsonSchema).toEqual({
+            type: "object",
+            properties: { family: { type: "string" }, capability: { type: "string" } },
+            additionalProperties: false,
+        });
     });
 
     it("turns an error result into a tool error", async () => {
@@ -110,7 +119,7 @@ describe("createMcpConnections", () => {
         const broken: McpServerConfig = { ...stdio("broken", "x"), transport: { kind: "stdio", command: "/no/such/command", args: [], env: {} } };
         const tools = await toolsOf([broken, stdio("lims", "one")], ["broken", "lims"]);
         expect(tools.direct.every((tool) => tool.id.startsWith("mcp__lims__"))).toBe(true);
-        expect(tools.direct.length).toBe(4);
+        expect(tools.direct.length).toBe(5);
     });
 
     it("names a server that does not start, with its last error output, and a later start clears it", async () => {

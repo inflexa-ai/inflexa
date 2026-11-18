@@ -44,6 +44,15 @@ The name of an MCP tool MUST be `mcp__<server>__<tool>`. Each character outside 
 - **WHEN** a server gives a tool whose prefixed name has 90 characters
 - **THEN** the agent sees a name of at most 64 characters that ends with a hash
 
+### Requirement: An MCP tool schema fits each provider
+
+The input schema of an MCP tool MUST NOT have `oneOf`, `anyOf` or `allOf` at the top level, because a provider refuses such a tool and then each request of the agent fails. The properties of the schema MUST stay. The MCP server checks the arguments of each call.
+
+#### Scenario: A top-level oneOf
+
+- **WHEN** a server gives a tool whose schema has the properties `family` and `capability` and a top-level `oneOf`
+- **THEN** the agent sees the tool with the two properties and with no `oneOf`
+
 ### Requirement: Approval is a setting of the server
 
 With `approval: "always"`, each call to a tool of the server MUST go through the tool-approval gate. With `approval: "never"`, no call MUST ask. The harness MUST NOT use the annotations of a server, for example `readOnlyHint`, to decide approval.
