@@ -54,7 +54,7 @@ import type { ProvenanceSeam } from "../provenance/seam.js";
 import type { SyncSessionFile } from "../workspace/session-files.js";
 import { createAskGateway, type AskGateway } from "../tools/approval/gateway.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
-import { requiredRoleSetup, type CatalogServices, type RoleSetup } from "../catalog/equip.js";
+import { requiredRoleSetup, type CatalogServices, type McpServerFailure, type RoleSetup } from "../catalog/equip.js";
 import { resolveCatalog } from "../catalog/resolve.js";
 import type { AgentCatalog } from "../catalog/types.js";
 import type { TurnAgent } from "../agents/turn-agent.js";
@@ -349,6 +349,8 @@ export type CoreRuntime = {
     readonly runCanceler: RunCanceler;
     /** Close the connection of each MCP server. The shutdown of the boot calls it. */
     readonly closeMcpConnections: () => Promise<void>;
+    /** The last start failure of each MCP server, by name, for a host that shows the state of each server. */
+    readonly mcpServerFailures: () => ReadonlyMap<string, McpServerFailure>;
     /**
      * Approve a stored plan by its id and start its run with no model call. It runs over the deps that
      * reach the `execute_analysis` tool of the conversation agent, thus the approval and the tool launch
@@ -568,6 +570,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         agents: agentResolver,
         runCanceler,
         closeMcpConnections: () => mcp.close(),
+        mcpServerFailures: () => mcp.failures(),
         askGateway,
         chatTurns,
         work: createWork({

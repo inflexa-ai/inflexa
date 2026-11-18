@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
+import type { McpServerFailure } from "@inflexa-ai/harness";
 import { Hono, type MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 
@@ -64,7 +65,9 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     app.route("/api/v1/projects", projectRoutes());
     app.route("/api/v1", machineRoutes());
     app.route("/api/v1", storeRoutes());
-    app.route("/api/v1", customizationRoutes(createCustomizationService(defaultCustomizationOpts())));
+    // The MCP connections live in the runtime, thus a server that is still booting reports no start failure.
+    const mcpFailures = (): ReadonlyMap<string, McpServerFailure> => deps.boot.runtime()?.mcpServerFailures() ?? new Map();
+    app.route("/api/v1", customizationRoutes(createCustomizationService(defaultCustomizationOpts(mcpFailures))));
     app.route("/api/v1/anchors", anchorRoutes(deps.boot, DEFAULT_ANCHOR_ROUTE_OPTS));
     app.route("/api/v1/analyses", analysisCollectionRoutes(deps.boot, DEFAULT_ANALYSIS_LIST_OPTS));
     app.route("/api/v1/attention", attentionRoutes(deps.boot, DEFAULT_ATTENTION_ROUTE_OPTS));

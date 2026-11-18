@@ -298,8 +298,16 @@ export type McpServerView =
           entry: McpEntryView;
           /** For an HTTP server with OAuth: true when the token store holds tokens for its URL. */
           signedIn?: boolean;
+          /** The last failed start of the server in this server process. A later start clears it. */
+          startFailure?: McpStartFailureView;
       }
     | { name: string; problem: string };
+
+/** Why an MCP server did not start, and when. `at` is an ISO 8601 time. */
+export type McpStartFailureView = {
+    at: string;
+    reason: string;
+};
 
 /** The body of `GET /api/v1/mcp`. */
 export type McpServerList = {

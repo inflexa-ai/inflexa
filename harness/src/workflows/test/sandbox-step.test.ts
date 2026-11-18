@@ -338,7 +338,7 @@ function stepServices(tools: readonly Tool[] = [], prompt = STEP_AGENT_PROMPT): 
             mcpServers: [{ name: TEST_TOOLS_SERVER, transport: { kind: "stdio", command: "unused", args: [], env: {} }, approval: "never", scriptable: false }],
         }),
         connectorBase: {},
-        mcp: { toolsFor: () => Promise.resolve({ direct: tools, script: [] }) },
+        mcp: { toolsFor: () => Promise.resolve({ direct: tools, script: [], unavailable: [] }) },
     };
 }
 

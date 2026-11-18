@@ -811,7 +811,8 @@ export { pipeFoldedRunEvents } from "./execution/run-event-parts.js";
 export { buildProfilerAgent, buildStepAgent, createSandboxAgent } from "./agents/sandbox/index.js";
 export type { SandboxAgentDeps, SandboxAgentSpec, SandboxStepCoords } from "./agents/sandbox/index.js";
 export { requiredRoleSetup, roleSetupOf } from "./catalog/equip.js";
-export type { AgentEquipment, CatalogServices, McpAgentTools, McpToolSource, RoleSetup } from "./catalog/equip.js";
+export type { AgentEquipment, CatalogServices, McpAgentTools, McpServerFailure, McpToolSource, RoleSetup } from "./catalog/equip.js";
+export { mcpFailureNotice } from "./catalog/equip.js";
 // The OAuth sign-in of an MCP server. The host stores the tokens and opens the browser; the harness runs the protocol.
 export { revokeMcpSignIn, signInToMcpServer } from "./mcp/oauth.js";
 export type {

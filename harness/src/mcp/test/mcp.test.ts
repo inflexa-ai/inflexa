@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 
+import { mcpFailureNotice } from "../../catalog/equip.js";
 import { createInMemoryCatalog } from "../../catalog/memory.js";
 import { resolveCatalog } from "../../catalog/resolve.js";
 import type { McpServerConfig } from "../../catalog/types.js";
@@ -110,6 +111,29 @@ describe("createMcpConnections", () => {
         const tools = await toolsOf([broken, stdio("lims", "one")], ["broken", "lims"]);
         expect(tools.direct.every((tool) => tool.id.startsWith("mcp__lims__"))).toBe(true);
         expect(tools.direct.length).toBe(4);
+    });
+
+    it("names a server that does not start, with its last error output, and a later start clears it", async () => {
+        const crashing: McpServerConfig = {
+            ...stdio("crashing", "x"),
+            transport: { kind: "stdio", command: process.execPath, args: ["-e", "console.error('missing module mermaid-cli'); process.exit(3)"], env: {} },
+        };
+        connections = createMcpConnections();
+        const failed = await connections.toolsFor(["crashing"], await resolveCatalog(createInMemoryCatalog({ mcpServers: [crashing] })));
+
+        expect(failed.direct).toEqual([]);
+        expect(failed.unavailable.map((failure) => failure.server)).toEqual(["crashing"]);
+        expect(failed.unavailable[0]?.reason).toContain("missing module mermaid-cli");
+        expect(connections.failures().get("crashing")?.reason).toContain("missing module mermaid-cli");
+
+        const fixed = await connections.toolsFor(["crashing"], await resolveCatalog(createInMemoryCatalog({ mcpServers: [stdio("crashing", "one")] })));
+        expect(fixed.unavailable).toEqual([]);
+        expect(connections.failures().has("crashing")).toBe(false);
+    });
+
+    it("gives the notice of the servers that did not start, and no notice when each started", () => {
+        expect(mcpFailureNotice([])).toBeUndefined();
+        expect(mcpFailureNotice([{ server: "mermaid", at: new Date(0), reason: "Connection closed" }])).toContain("- `mermaid`: Connection closed");
     });
 
     it("gives no tool of a server that the agent does not attach", async () => {

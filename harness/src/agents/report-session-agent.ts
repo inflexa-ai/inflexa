@@ -24,7 +24,7 @@
  * across threads, and the provider cache reuses it.
  */
 
-import { requiredRoleSetup, type CatalogServices } from "../catalog/equip.js";
+import { mcpFailureNotice, requiredRoleSetup, type CatalogServices } from "../catalog/equip.js";
 import { resolveCatalog } from "../catalog/resolve.js";
 import { createSkillTools } from "../tools/sandbox/skills.js";
 import type { TurnAgent } from "./turn-agent.js";
@@ -258,7 +258,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): TurnAgen
 
     const forTurn = async (): Promise<AgentDefinition> => {
         const { agent: reporter, equipment } = await requiredRoleSetup(deps.services, await resolveCatalog(deps.services.catalog), "reporter");
-        const prompt = equipment.skillIndex === undefined ? reporter.prompt : `${reporter.prompt}\n\n${equipment.skillIndex}`;
+        const prompt = [reporter.prompt, equipment.skillIndex, mcpFailureNotice(equipment.mcp.unavailable)].filter((part) => part !== undefined).join("\n\n");
         return {
             id: REPORT_SESSION_AGENT_ID,
             systemPrompt: composeSystemPrompt(prompt, { identity: true, conversational: true }),

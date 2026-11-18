@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { signInToMcpServer } from "@inflexa-ai/harness";
+import { signInToMcpServer, type McpServerFailure } from "@inflexa-ai/harness";
 import { errAsync, ok, okAsync } from "neverthrow";
 
 import type { Config } from "../lib/config.ts";
@@ -32,6 +32,8 @@ export type CustomizationFixture = {
     readonly agentDirs: AgentDir[];
     /** The workspace folder of each analysis, by id or name. An absent analysis has no workspace. */
     readonly workspaces: Map<string, string>;
+    /** The last start failure of each MCP server, as the runtime gives it. */
+    readonly mcpFailures: Map<string, McpServerFailure>;
     /** The URLs that the service asked the browser to open. */
     readonly opened: URL[];
     config: Config;
@@ -81,6 +83,7 @@ export function customizationFixture(): CustomizationFixture {
     };
     const skillDirs = [join(root, "claude-skills"), join(root, "codex-skills")];
     const workspaces = new Map<string, string>();
+    const mcpFailures = new Map<string, McpServerFailure>();
     const agentDirs: AgentDir[] = [
         { source: "Claude Code", dir: join(root, "claude-agents") },
         { source: "Gemini CLI", dir: join(root, "gemini-agents") },
@@ -97,6 +100,7 @@ export function customizationFixture(): CustomizationFixture {
         skillDirs,
         agentDirs,
         workspaces,
+        mcpFailures,
         opened,
         config: { telemetry: false, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } },
         opts: {
@@ -115,6 +119,7 @@ export function customizationFixture(): CustomizationFixture {
             registry,
             skillDirs,
             agentDirs,
+            mcpFailures: () => mcpFailures,
             workspaceRoot: (analysis) => {
                 const root = workspaces.get(analysis);
                 return root === undefined ? errAsync(`no analysis ${analysis}`) : okAsync(root);

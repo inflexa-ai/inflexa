@@ -245,6 +245,7 @@ function recordingSeams(calls: string[]): BootSeams {
                     approvePlan: () => errAsync({ type: "thread_not_found" }),
                     // The offline boot opens no MCP connection, thus there is nothing to close.
                     closeMcpConnections: () => Promise.resolve(),
+                    mcpServerFailures: () => new Map(),
                 },
                 shutdown: async () => {},
             };

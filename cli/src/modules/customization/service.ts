@@ -19,6 +19,7 @@ import {
     type BuiltinAgent,
     type CatalogGap,
     type McpAuthorizationCallback,
+    type McpServerFailure,
     type ResolvedAgent,
     type ResolvedCatalog,
     type ScannedSkill,
@@ -40,6 +41,7 @@ import type {
     ImportMcpServerRequest,
     InstallMcpServerRequest,
     McpCandidateView,
+    McpEntryView,
     McpRevocationView,
     McpServerView,
     PatchConnectorRequest,
@@ -251,6 +253,8 @@ export type CustomizationOpts = {
     readonly skillDirs: readonly string[];
     /** The user agent directories of other harnesses, for `agent find`. */
     readonly agentDirs: readonly AgentDir[];
+    /** The last start failure of each MCP server, from the runtime of this server process. */
+    readonly mcpFailures: () => ReadonlyMap<string, McpServerFailure>;
     /** The workspace folder of an analysis, by id or name. A relative import path from a chat reads inside it. */
     readonly workspaceRoot: (analysis: string) => ResultAsync<string, string>;
     /** Open the authorization page of a sign-in. */
@@ -265,7 +269,7 @@ export type CustomizationOpts = {
 const AUTH_TIMEOUT_MS = 5 * 60_000;
 
 /** The production {@link CustomizationOpts}: the paths of `env`, the config file, and the token store of this platform. */
-export function defaultCustomizationOpts(): CustomizationOpts {
+export function defaultCustomizationOpts(mcpFailures: CustomizationOpts["mcpFailures"] = () => new Map()): CustomizationOpts {
     const log = getLogger("customization");
     return {
         agentsDir: env.agentsDir,
@@ -280,6 +284,7 @@ export function defaultCustomizationOpts(): CustomizationOpts {
         registry: DEFAULT_REGISTRY_OPTS,
         skillDirs: knownSkillDirs(),
         agentDirs: knownAgentDirs(),
+        mcpFailures,
         workspaceRoot: (analysis) => workspaceRootForAnalysisId(analysis).mapErr((e) => ("message" in e ? e.message : e.type)),
         openBrowser: (url) => {
             openExternal(url.toString()).match(
@@ -1031,11 +1036,11 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
     };
 
     const mcpView = async (name: string, entry: McpServerEntry): Promise<McpServerView> => {
-        if (entry.type === "http" && entry.auth === "oauth") {
-            const stored = await opts.tokenStore.read(entry.url);
-            return { name, entry, signedIn: stored?.tokens !== undefined };
-        }
-        return { name, entry };
+        const view: Extract<McpServerView, { entry: McpEntryView }> = { name, entry };
+        if (entry.type === "http" && entry.auth === "oauth") view.signedIn = (await opts.tokenStore.read(entry.url))?.tokens !== undefined;
+        const failure = opts.mcpFailures().get(name);
+        if (failure !== undefined) view.startFailure = { at: failure.at.toISOString(), reason: failure.reason };
+        return view;
     };
 
     /** The valid entry of a server, or the reason that the config has none. */

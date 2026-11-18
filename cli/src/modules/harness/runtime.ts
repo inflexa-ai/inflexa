@@ -20,6 +20,7 @@ import {
     type AgentSession,
     type AiSdkProviderConfig,
     type AskGateway,
+    type McpServerFailure,
     backfillMessageIds,
     type ChatProvider,
     type ConversationAssemblyDeps,
@@ -169,6 +170,8 @@ export type HarnessRuntime = {
      * hoc from the pool.
      */
     readonly askGateway: AskGateway;
+    /** The last start failure of each MCP server, by name. */
+    readonly mcpServerFailures: () => ReadonlyMap<string, McpServerFailure>;
     /** Ready-to-use deps for `triggerDataProfile`. */
     readonly triggerDeps: DataProfileTriggerDeps;
     /** Ready-to-use deps for the analysis-run trigger flow. */
@@ -1450,6 +1453,7 @@ async function bootHarnessRuntimeOnce(
             utility: utilityBackend,
             pool,
             askGateway: core.askGateway,
+            mcpServerFailures: () => core.mcpServerFailures(),
             triggerDeps: { pool, runAuthorizer, runLauncher, workflow: core.workflows.dataProfile },
             runTriggerDeps: {
                 pool,
