@@ -14,6 +14,7 @@ import {
     type PausePart,
     type TokenUsageRollup,
     type ToolCallPart,
+    supersededFileReferences,
 } from "@inflexa-ai/harness/contracts/index.js";
 
 import { MAX_TRANSCRIPT_TURNS, type MessageList, type RetractResponse, type ThreadSummary, type TurnList, type TurnSummary } from "../../api/conversation.ts";
@@ -1720,8 +1721,13 @@ function openableEntries(part: Part): OpenableEntry[] {
 export function sessionOpenables(analysisId: string): SessionOpenable[] {
     const out: SessionOpenable[] = [];
     for (const message of [...messages].reverse()) {
-        for (const part of [...message.parts].reverse()) {
-            for (const entry of openableEntries(part).reverse()) {
+        // A file that a later card of the same message shows again lists one time, as the transcript shows it.
+        const superseded = supersededFileReferences(message.parts);
+        for (const [index, part] of [...message.parts.entries()].reverse()) {
+            const kept = superseded.get(index);
+            const card = kept === undefined ? part : kept;
+            if (card === null) continue;
+            for (const entry of openableEntries(card).reverse()) {
                 if (entry.target.kind !== "unavailable") out.push({ analysisId, entry });
             }
         }

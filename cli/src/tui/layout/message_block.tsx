@@ -1,7 +1,8 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import { unwrap } from "solid-js/store";
-import type { AnalogyReportPart, ChatMessage, SubAgentActivityEntry, TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
+import type { AnalogyReportPart, ChatMessage, FileReferencePart, SubAgentActivityEntry, TokenUsageRollup } from "@inflexa-ai/harness/contracts/index.js";
+import { repeatedPlanIndexes, supersededFileReferences } from "@inflexa-ai/harness/contracts/index.js";
 import type { ToolCallOutcome } from "@inflexa-ai/harness/contracts/chat-events.js";
 
 import { syntaxStyle, theme } from "../theme.ts";
@@ -21,7 +22,7 @@ import { AnalogyReportBlock, type AnalogyReportView } from "../components/analog
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { reportChildren } from "../hooks/report_children.ts";
-import { isKnownPart, readFileReference, readPlanCard, readPresentation } from "../../modules/harness/chat_printer.ts";
+import { isKnownPart, readFileReference, readPlanCard, readPresentation, type FileReferenceReadout } from "../../modules/harness/chat_printer.ts";
 import type { ResolvedArtifact } from "../../api/artifacts.ts";
 import { resolveArtifacts } from "../../client/artifacts.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
@@ -183,6 +184,13 @@ export function nestedCallsByCall(parts: readonly Part[]): ReadonlyMap<string, N
     return byCall;
 }
 
+/** Whether two file cards show the same files, thus an earlier card keeps its resolved rows when a later part lands. */
+function sameFiles(a: FileReferencePart | null, b: FileReferencePart | null): boolean {
+    if (a === b) return true;
+    if (a === null || b === null || a.files.length !== b.files.length) return false;
+    return a.files.every((file, i) => file.path === b.files[i]?.path);
+}
+
 /** The one-line tagged mention of a part that has no renderer here — observed, never swallowed. */
 function mention(type: string): string {
     return `[part:${type}]`;
@@ -251,9 +259,12 @@ export function MessageBlock(props: MessageBlockProps): JSX.Element {
     // A part object never changes in place: each edit of the store gives a fresh object, which `<For>`
     // mounts as a new item. Thus a card reads its part through the shared reader one time, here.
     const nestedByCall = (): ReadonlyMap<string, NestedCalls> => nestedCallsByCall(props.parts);
+    // A card that repeats an earlier card of the turn shows less, or nothing. See the harness rule of each one.
+    const repeatedPlans = createMemo(() => repeatedPlanIndexes(props.parts));
+    const supersededFiles = createMemo(() => supersededFileReferences(props.parts));
     const parts = (): JSX.Element => (
         <For each={props.parts}>
-            {(part): JSX.Element => {
+            {(part, index): JSX.Element => {
                 // The parts the part registry does not hold — the core text and tool-call parts, the mock
                 // parts, and a newer emitter's `data-*` record. The registry guard runs BEFORE the
                 // discriminant switch, because every known part is also assignable to the passthrough record
@@ -290,7 +301,11 @@ export function MessageBlock(props: MessageBlockProps): JSX.Element {
                 switch (part.type) {
                     case "data-plan": {
                         const plan = readPlanCard(part);
-                        return <PlanCardBlock planId={plan.planId} title={plan.title} steps={plan.steps} />;
+                        return (
+                            <Show when={!repeatedPlans().has(index())}>
+                                <PlanCardBlock planId={plan.planId} title={plan.title} steps={plan.steps} />
+                            </Show>
+                        );
                     }
                     case "data-run-card":
                         return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} state={resolveRunCardState(part.runId)} />;
@@ -309,8 +324,24 @@ export function MessageBlock(props: MessageBlockProps): JSX.Element {
                     case "data-analogy-report":
                         return <AnalogyReportBlock view={analogyReportViewOf(part)} />;
                     case "data-file-reference": {
-                        const view = readFileReference(part);
-                        return <OpenableCard title={view.title} entries={view.entries} folderPath={view.folderPath} />;
+                        // A later card of the turn can take a file after this card mounts, thus the kept files stay reactive.
+                        const kept = createMemo(
+                            (): FileReferencePart | null => {
+                                const superseded = supersededFiles().get(index());
+                                return superseded === undefined ? part : superseded;
+                            },
+                            undefined,
+                            { equals: sameFiles },
+                        );
+                        const view = createMemo((): FileReferenceReadout | null => {
+                            const card = kept();
+                            return card === null ? null : readFileReference(card);
+                        });
+                        return (
+                            <Show when={view()}>
+                                {(v): JSX.Element => <OpenableCard title={v().title} entries={v().entries} folderPath={v().folderPath} />}
+                            </Show>
+                        );
                     }
                     case "data-ask":
                         return <AskCard part={part} />;
