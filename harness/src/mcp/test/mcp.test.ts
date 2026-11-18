@@ -80,7 +80,13 @@ describe("mcpOutputOf", () => {
 describe("createMcpConnections", () => {
     it("gives the tools of an attached stdio server, and calls them in the harness process", async () => {
         const tools = await toolsOf([stdio("lims", "one")], ["lims"]);
-        expect(tools.direct.map((tool) => tool.id).sort()).toEqual(["mcp__lims__echo_upper", "mcp__lims__either", "mcp__lims__fail", "mcp__lims__picture", "mcp__lims__whoami"]);
+        expect(tools.direct.map((tool) => tool.id).sort()).toEqual([
+            "mcp__lims__echo_upper",
+            "mcp__lims__either",
+            "mcp__lims__fail",
+            "mcp__lims__picture",
+            "mcp__lims__whoami",
+        ]);
         expect(tools.script).toEqual([]);
         const result = await toolNamed(tools.direct, "mcp__lims__echo_upper").execute({ text: "hi" }, context);
         expect(result._unsafeUnwrap()).toEqual({ text: "HI" });
