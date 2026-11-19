@@ -1,30 +1,10 @@
 # Spatial Transcriptomics → MDV
 
-Build one SpatialData store that holds the images and one curated table. Then
+Build one SpatialData store for each slide, with the images and one curated table. Then
 `write_spatial_project` makes the project, and the view "Tissue" draws the cells on the image.
 Process the cells like single-cell data, and make the asset with `asset-route.md`.
 
-## The gotchas of this route
-
-- **One table in the store.** mdvtools merges every table of a store into one `cells` table.
-  `put_table` puts the asset into the store as its only table.
-- **One project for each Visium HD bin size.** The reader gives one table for each bin size, and
-  one for the segmented cells if the run has them. Select one table for each project.
-- **The region column and the instance column keep their SpatialData names.** `put_table` copies
-  them from the old table. A readable label goes into `uns["mdv_labels"]`, never into a column
-  name, because SpatialData refuses a column name with a space or a unit.
-- **The store is copied into the project.** mdvtools copies the full store into `spatial/`.
-  `drop_unused` removes the points (the transcripts). Run it before you write the store.
-- **Keep the shapes and the labels.** For Xenium, mdvtools converts the cell positions with the
-  transform of a Xenium shape (`cell_circles`, `cell_boundaries`, `nucleus_boundaries`). Without
-  one, it reads the µm of `obsm["spatial"]` as image pixels. Then the cells do not sit on the
-  image, and no check reports an error.
-- **Do not flip y.** The tissue chart draws the cells on the image in the coordinates of the
-  image. Keep `obsm["spatial"]` as the reader gives it.
-- **One slide in each project.** Make one store and one project for each slide.
-
-The project holds a copy of the store. Thus the work store is not part of the deliverable. Write
-it outside the deliverable.
+The project holds a copy of the store. Thus write the work store outside the deliverable.
 
 ## Platform decision tree
 
@@ -46,8 +26,7 @@ Platform?
 ```
 
 After the reader, make sure that the store has an image, and that the table has
-`obsm["spatial"]` or annotates shapes. If the store has no image, the project has no tissue view.
-Then make a project with `spatial=False` in `add_views`, and say so in the README.
+`obsm["spatial"]` or annotates shapes.
 
 Negative-control probes and false codes are QC columns, never genes. Some panels merge paralogs
 into one target with `/` in the name (`HBA1/2`). That is permitted as a gene name, but not as a
@@ -117,11 +96,10 @@ def put_table(sdata, curated, table_name="table"):
 
 
 def drop_unused(sdata):
-    """Remove the points (the transcripts), which MDV does not show. Returns the names of the removed elements.
+    """Remove the points (the transcripts), which MDV does not show, and keep the shapes and the labels.
 
-    mdvtools copies the whole store into the project. Keep the shapes and the labels: for Xenium, mdvtools converts
-    the cell positions with the transform of a Xenium shape (cell_circles, cell_boundaries, nucleus_boundaries).
-    Without one, it reads the µm of obsm["spatial"] as image pixels, and the cells do not sit on the image.
+    Returns the names of the removed elements. A Xenium store needs its shapes: mdvtools places the cells on the
+    image with the transform of cell_circles, cell_boundaries, or nucleus_boundaries.
     """
     removed = list(sdata.points)
     for name in removed:
@@ -486,12 +464,5 @@ Process the cells as single-cell data (single-cell pack), with these differences
 
 ## The FOV table
 
-Add the FOV table to the project with `add_table`. Give these columns:
-
-- the FOV, and the FOV center in slide µm
-- the cells, and the cells after QC
-- the median transcripts per cell
-- the fraction of transcripts in cells
-- the negative-probe transcripts
-
-A low fraction of transcripts in cells shows where the segmentation failed.
+Add the `fovs` table of `asset-route.md`, "Context tables", with `add_table`. A low fraction of
+transcripts in cells shows where the segmentation failed.

@@ -22,8 +22,8 @@ otherwise). The asset holds:
 | gene activity, normalized + log1p, sparse | SnapATAC2 `make_gene_matrix` or Signac `GeneActivity` | X |
 | gene symbols (unique, no `|` / `(`) | the gene annotation of the genome build | `var_names` |
 
-MDV labels X "Gene Scores". Write in the README that the Gene Scores of this project are
-gene-activity scores, not expression.
+MDV labels X "Gene Scores". In the README and in each label, call them gene-activity scores, not
+expression.
 
 ## Multiome (RNA + ATAC in the same cells)
 
@@ -38,7 +38,7 @@ asset = build_asset(rna_s, OBS_LABELS, obsm_keys={"X_umap": "UMAP"}, layers={"ac
 ```
 
 MDV shows X as "Gene Scores" (RNA) and the layer as "Gene activity". The layer key (`act`) is a
-field, so it obeys the field rule of the asset contract. Before you write the asset, make sure
+field, so it must be a safe field. Before you write the asset, make sure
 that the cells of the two modalities are the same (`act.obs_names` equals `rna.obs_names`). Also
 make sure that the two matrices are sparse and log-normalized. Write in the README how many genes
 each modality loses to the intersection.
@@ -51,10 +51,3 @@ Motif deviations (chromVAR) and peaks do not fit the gene table. Add them as tab
 The `peaks` table: chromosome, start, end, width, the nearest gene, and the accessibility of each
 cluster. MDV stores the positions as float32 numbers, which rounds values above 16,777,216. Thus
 keep the positions as text in a `Location` column (`chr1:1234567-1235067`) as well.
-
-## Anti-patterns
-
-- Peaks as the features of the project.
-- A raw (not normalized) gene-activity matrix.
-- The word "expression" for gene activity, in a label or in the README.
-- Multiome layers whose rows or genes are not in the order of X.

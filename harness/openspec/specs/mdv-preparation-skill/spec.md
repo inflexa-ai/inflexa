@@ -14,7 +14,7 @@ The system MUST give the pack at `skills/mdv-preparation/`, with a `SKILL.md` ma
 
 - **WHEN** `skills/mdv-preparation/` is listed
 - **THEN** `SKILL.md` exists
-- **AND** `references/` holds the asset contract, the asset route, the validation, and one reference for each modality group
+- **AND** `references/` holds the asset route, the validation, and one reference for each modality group
 
 ### Requirement: The pack defines an MDV-ready asset
 
