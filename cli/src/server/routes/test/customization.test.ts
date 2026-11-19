@@ -252,3 +252,55 @@ describe("/catalog/roles, /skills/:name, stored credentials, and /mcp/found", ()
         });
     });
 });
+
+describe("the file routes of agents and skills", () => {
+    test("PUT /catalog/agents/:id/file makes a draft, GET gives its text, and a built-in agent is 403", async () => {
+        const put = await send("PUT", "/catalog/agents/plate-runner/file", { content: "no frontmatter" });
+        expect(put.status).toBe(200);
+        expect(await jsonBody(put)).toMatchObject({ id: "plate-runner", draft: true });
+
+        const read = await send("GET", "/catalog/agents/plate-runner/file");
+        expect(await jsonBody(read)).toMatchObject({ id: "plate-runner", content: "no frontmatter" });
+
+        const builtin = await send("GET", "/catalog/agents/analyst/file");
+        expect(builtin.status).toBe(403);
+        expect(await errorBody(builtin)).toMatchObject({ error: "forbidden" });
+    });
+
+    test("POST /catalog/agents/:id/export writes the file to an absolute path", async () => {
+        writeAgentFile(fixture, "lipid-analyst", "---\nname: lipid-analyst\ndescription: Lipids.\n---\nThe prompt.\n");
+        const target = join(fixture.root, "out", "lipid-analyst.md");
+
+        const response = await send("POST", "/catalog/agents/lipid-analyst/export", { path: target });
+
+        expect(response.status).toBe(201);
+        expect(await jsonBody(response)).toEqual({ path: target });
+    });
+
+    test("PUT, GET, and DELETE /skills/:name/file act on one file, and DELETE /skills/:name removes the skill", async () => {
+        writeSkill(fixture.userSkillsDir, "lab-protocols");
+
+        const put = await send("PUT", "/skills/lab-protocols/file", { path: "references/pcr.md", content: "Run the PCR." });
+        expect(put.status).toBe(200);
+        const read = await send("GET", "/skills/lab-protocols/file?path=references%2Fpcr.md");
+        expect(await jsonBody(read)).toEqual({ skill: "lab-protocols", path: "references/pcr.md", content: "Run the PCR." });
+        const removedFile = await send("DELETE", "/skills/lab-protocols/file?path=references%2Fpcr.md");
+        expect(await jsonBody(removedFile)).toEqual({ deleted: true });
+        const keep = await send("DELETE", "/skills/lab-protocols/file?path=SKILL.md");
+        expect(keep.status).toBe(400);
+
+        const removed = await send("DELETE", "/skills/lab-protocols");
+        expect(await jsonBody(removed)).toEqual({ deleted: true });
+        expect((await send("GET", "/skills/lab-protocols")).status).toBe(404);
+    });
+
+    test("a write to a built-in skill is 403, and a path that leaves the skill is 400", async () => {
+        const builtin = await send("PUT", "/skills/single-cell/file", { path: "notes.md", content: "x" });
+        expect(builtin.status).toBe(403);
+
+        writeSkill(fixture.userSkillsDir, "lab-protocols");
+        const escape = await send("GET", "/skills/lab-protocols/file?path=..%2Fx.md");
+        expect(escape.status).toBe(400);
+        expect(await errorBody(escape)).toMatchObject({ error: "validation_error" });
+    });
+});

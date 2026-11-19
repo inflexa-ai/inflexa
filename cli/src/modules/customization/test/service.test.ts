@@ -331,12 +331,14 @@ describe("skills", () => {
 
         const skill = await awaitOk(service.importSkill(source));
 
-        expect(skill).toEqual({
+        expect(skill.modifiedAt).toBeString();
+        expect({ ...skill, modifiedAt: undefined }).toEqual({
             name: "plate-reader",
             description: "The plate-reader skill.",
             kind: "custom",
             tags: [],
             directory: join(fixture.userSkillsDir, "plate-reader"),
+            modifiedAt: undefined,
         });
         expect(readFileSync(join(fixture.userSkillsDir, "plate-reader", "references", "notes.md"), "utf8")).toBe("notes");
         expect((await service.importSkill(source))._unsafeUnwrapErr()).toEqual({ type: "skill_exists", name: "plate-reader", builtin: false });
@@ -642,7 +644,7 @@ describe("imports from a workspace, links, and replace", () => {
         expect(list.skills.find((skill) => skill.name === "leaky")?.conflict).toContain('"key" is a link');
     });
 
-    test("replace overwrites a custom skill and refuses a built-in name", async () => {
+    test("replace overwrites a custom skill, keeps the replaced version, and refuses a built-in name", async () => {
         workspaceWithSkill("lab-protocols", "The first text.");
         await awaitOk(service.importSkill("skills/lab-protocols", { analysis: "lab" }));
         writeSkill(join(fixture.root, "workspace", "skills"), "lab-protocols", "The second text.");
@@ -656,6 +658,10 @@ describe("imports from a workspace, links, and replace", () => {
 
         expect(replaced.description).toBe("The second text.");
         expect(readFileSync(join(fixture.userSkillsDir, "lab-protocols", "SKILL.md"), "utf8")).toContain("The second text.");
+        expect(replaced.previous).toBe(join(fixture.opts.replacedDir, "skills", "lab-protocols"));
+        expect(readFileSync(join(fixture.opts.replacedDir, "skills", "lab-protocols", "SKILL.md"), "utf8")).toContain("The first text.");
+        const restored = await awaitOk(service.importSkill(replaced.previous ?? "", { replace: true }));
+        expect(restored.description).toBe("The first text.");
         const builtin = writeSkill(join(fixture.root, "copies"), "single-cell");
         expect((await service.importSkill(builtin, { replace: true }))._unsafeUnwrapErr()).toEqual({
             type: "skill_exists",
@@ -664,7 +670,7 @@ describe("imports from a workspace, links, and replace", () => {
         });
     });
 
-    test("an agent import reads the workspace, refuses a linked file, and replace overwrites a custom agent", async () => {
+    test("an agent import reads the workspace, refuses a linked file, and replace overwrites a custom agent and keeps its file", async () => {
         const workspace = join(fixture.root, "workspace");
         fixture.workspaces.set("lab", workspace);
         mkdirSync(join(workspace, "agents"), { recursive: true });
@@ -680,11 +686,145 @@ describe("imports from a workspace, links, and replace", () => {
         });
         expect(await awaitOk(service.importAgent("agents/lab-reporter.md", "reporter", { analysis: "lab", replace: true }))).toMatchObject({
             description: "Second.",
+            previous: join(fixture.opts.replacedDir, "agents", "lab-reporter.md"),
         });
+        expect(readFileSync(join(fixture.opts.replacedDir, "agents", "lab-reporter.md"), "utf8")).toContain("description: First.");
         expect((await service.importAgent("agents/linked.md", "reporter", { analysis: "lab" }))._unsafeUnwrapErr()).toMatchObject({
             type: "linked_entry",
             entry: "linked.md",
         });
+    });
+});
+
+describe("agent files", () => {
+    test("export copies the file of a custom agent into the workspace, and refuses a built-in agent and an existing file", async () => {
+        const workspace = join(fixture.root, "workspace");
+        fixture.workspaces.set("lab", workspace);
+        writeAgentFile(fixture, "lipid-analyst", "---\nname: lipid-analyst\ndescription: Lipids.\n---\nThe prompt.\n");
+
+        const exported = await awaitOk(service.exportAgent("lipid-analyst", "agents/lipid-analyst.md", { analysis: "lab" }));
+
+        expect(exported.path).toBe(join(workspace, "agents", "lipid-analyst.md"));
+        expect(readFileSync(exported.path, "utf8")).toContain("The prompt.");
+        expect((await service.exportAgent("lipid-analyst", "agents/lipid-analyst.md", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "path_exists",
+            path: "agents/lipid-analyst.md",
+        });
+        expect((await service.exportAgent("analyst", "agents/analyst.md", { analysis: "lab" }))._unsafeUnwrapErr()).toEqual({
+            type: "builtin_agent_file",
+            id: "analyst",
+        });
+    });
+
+    test("a write replaces the whole file, a new id makes a file, and a file that does not resolve stays a draft", async () => {
+        writeAgentFile(fixture, "lipid-analyst", "---\nname: lipid-analyst\ndescription: Lipids.\n---\nThe prompt.\n");
+
+        const changed = await awaitOk(service.writeAgentFile("lipid-analyst", "---\nname: lipid-analyst\ndescription: Fats.\n---\nA new prompt.\n"));
+        const created = await awaitOk(service.writeAgentFile("plate-runner", "---\nname: plate-runner\ndescription: Plates.\n---\nRun.\n"));
+        const draft = await awaitOk(service.writeAgentFile("broken", "no frontmatter"));
+
+        expect(changed).toMatchObject({ description: "Fats.", prompt: "A new prompt.", draft: false });
+        expect(created).toMatchObject({ id: "plate-runner", kind: "custom", draft: false });
+        expect(draft).toMatchObject({ id: "broken", draft: true, gaps: [{ reason: "no_frontmatter" }] });
+        expect(await awaitOk(service.readAgentFile("broken"))).toEqual({ id: "broken", path: join(fixture.agentsDir, "broken.md"), content: "no frontmatter" });
+        expect(created.modifiedAt).toBeString();
+    });
+
+    test("a built-in agent has no file, an unclean new id is refused, and a file past the limit is refused", async () => {
+        expect((await service.readAgentFile("analyst"))._unsafeUnwrapErr()).toEqual({ type: "builtin_agent_file", id: "analyst" });
+        expect((await service.writeAgentFile("analyst", "x"))._unsafeUnwrapErr()).toEqual({ type: "builtin_agent_file", id: "analyst" });
+        expect((await service.writeAgentFile("Bad Id", "x"))._unsafeUnwrapErr()).toEqual({ type: "invalid_agent_id", id: "Bad Id" });
+        expect((await service.writeAgentFile("big", "x".repeat(PROMPT_FILE_LIMIT + 1)))._unsafeUnwrapErr()).toEqual({
+            type: "agent_file_too_large",
+            id: "big",
+            limit: PROMPT_FILE_LIMIT,
+        });
+    });
+});
+
+describe("skill files", () => {
+    test("a write changes a file of a custom skill, adds a nested file, and a read gives each file back", async () => {
+        writeSkill(fixture.userSkillsDir, "lab-protocols");
+
+        await awaitOk(service.writeSkillFile("lab-protocols", "references/pcr.md", "Run the PCR."));
+        const read = await awaitOk(service.readSkillFile("lab-protocols", "references/pcr.md"));
+        const detail = await awaitOk(service.showSkill("lab-protocols"));
+
+        expect(read).toEqual({ skill: "lab-protocols", path: "references/pcr.md", content: "Run the PCR." });
+        expect(detail.files).toEqual(["references/pcr.md"]);
+        expect(detail.modifiedAt).toBeString();
+    });
+
+    test("a SKILL.md for a new name makes a custom skill, and a SKILL.md with a different name or bad frontmatter is refused", async () => {
+        const created = await awaitOk(service.writeSkillFile("plate-reader", "SKILL.md", "---\nname: plate-reader\ndescription: Read before you read a plate.\n---\n\nBody.\n"));
+
+        expect(created.skill).toBe("plate-reader");
+        expect((await awaitOk(service.listSkills())).skills.find((skill) => skill.name === "plate-reader")?.kind).toBe("custom");
+        expect((await service.writeSkillFile("plate-reader", "SKILL.md", "---\nname: other\ndescription: Read.\n---\n"))._unsafeUnwrapErr()).toMatchObject({
+            type: "invalid_skill",
+            path: "plate-reader/SKILL.md",
+        });
+        expect((await service.writeSkillFile("plate-reader", "SKILL.md", "no frontmatter"))._unsafeUnwrapErr()).toMatchObject({ type: "invalid_skill" });
+        expect((await service.writeSkillFile("nope", "notes.md", "x"))._unsafeUnwrapErr()).toEqual({ type: "unknown_skill", name: "nope" });
+    });
+
+    test("a custom skill whose SKILL.md does not parse can still be read and corrected", async () => {
+        const dir = join(fixture.userSkillsDir, "lab-protocols");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "SKILL.md"), "no frontmatter");
+
+        expect(await awaitOk(service.readSkillFile("lab-protocols", "SKILL.md"))).toMatchObject({ content: "no frontmatter" });
+        await awaitOk(service.writeSkillFile("lab-protocols", "SKILL.md", "---\nname: lab-protocols\ndescription: Read before you run a protocol.\n---\n"));
+        expect((await awaitOk(service.listSkills())).skills.some((skill) => skill.name === "lab-protocols")).toBe(true);
+    });
+
+    test("a built-in skill reads, and refuses each write and each deletion", async () => {
+        expect(await awaitOk(service.readSkillFile("single-cell", "SKILL.md"))).toMatchObject({ skill: "single-cell", path: "SKILL.md" });
+        expect((await service.writeSkillFile("single-cell", "notes.md", "x"))._unsafeUnwrapErr()).toEqual({ type: "builtin_skill", name: "single-cell" });
+        expect((await service.removeSkillFile("single-cell", "notes.md"))._unsafeUnwrapErr()).toEqual({ type: "builtin_skill", name: "single-cell" });
+        expect((await service.removeSkill("single-cell"))._unsafeUnwrapErr()).toEqual({ type: "builtin_skill", name: "single-cell" });
+    });
+
+    test.each([["../escape.md"], ["/etc/hosts"], ["references/../../x.md"], ["./SKILL.md"], [""]])("the path %p is refused", async (path) => {
+        writeSkill(fixture.userSkillsDir, "lab-protocols");
+
+        expect((await service.readSkillFile("lab-protocols", path))._unsafeUnwrapErr()).toEqual({ type: "invalid_skill_path", name: "lab-protocols", path });
+        expect((await service.writeSkillFile("lab-protocols", path, "x"))._unsafeUnwrapErr()).toEqual({ type: "invalid_skill_path", name: "lab-protocols", path });
+    });
+
+    test("a path through a link that leaves the skill is refused, and a binary or a missing file does not read", async () => {
+        const dir = writeSkill(fixture.userSkillsDir, "lab-protocols");
+        const outside = join(fixture.root, "outside");
+        mkdirSync(outside, { recursive: true });
+        writeFileSync(join(outside, "secret.md"), "secret");
+        symlinkSync(outside, join(dir, "linked"));
+        writeFileSync(join(dir, "image.bin"), new Uint8Array([0x89, 0x50, 0x00, 0xff]));
+
+        expect((await service.readSkillFile("lab-protocols", "linked/secret.md"))._unsafeUnwrapErr()).toMatchObject({ type: "invalid_skill_path" });
+        expect((await service.writeSkillFile("lab-protocols", "linked/new.md", "x"))._unsafeUnwrapErr()).toMatchObject({ type: "invalid_skill_path" });
+        expect((await service.readSkillFile("lab-protocols", "image.bin"))._unsafeUnwrapErr()).toEqual({
+            type: "not_text_file",
+            name: "lab-protocols",
+            path: "image.bin",
+        });
+        expect((await service.readSkillFile("lab-protocols", "nope.md"))._unsafeUnwrapErr()).toEqual({
+            type: "unknown_skill_file",
+            name: "lab-protocols",
+            path: "nope.md",
+        });
+    });
+
+    test("a deletion removes a file, keeps the SKILL.md, and removes a whole custom skill", async () => {
+        writeSkill(fixture.userSkillsDir, "lab-protocols");
+        await awaitOk(service.writeSkillFile("lab-protocols", "notes.md", "Notes."));
+
+        await awaitOk(service.removeSkillFile("lab-protocols", "notes.md"));
+
+        expect(existsSync(join(fixture.userSkillsDir, "lab-protocols", "notes.md"))).toBe(false);
+        expect((await service.removeSkillFile("lab-protocols", "SKILL.md"))._unsafeUnwrapErr()).toEqual({ type: "skill_md_required", name: "lab-protocols" });
+        await awaitOk(service.removeSkill("lab-protocols"));
+        expect(existsSync(join(fixture.userSkillsDir, "lab-protocols"))).toBe(false);
+        expect((await service.removeSkill("lab-protocols"))._unsafeUnwrapErr()).toEqual({ type: "unknown_skill", name: "lab-protocols" });
     });
 });
 

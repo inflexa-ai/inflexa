@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { cpSync, existsSync, lstatSync, realpathSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { opendir, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -30,6 +30,7 @@ import { z } from "zod";
 
 import type {
     AgentDetail,
+    AgentFileView,
     AgentGapView,
     AgentList,
     AttachmentKind,
@@ -38,7 +39,9 @@ import type {
     CredentialView,
     FoundAgentList,
     FoundAgentView,
+    ImportAgentResponse,
     ImportMcpServerRequest,
+    ImportSkillResponse,
     InstallMcpServerRequest,
     McpCandidateView,
     McpEntryView,
@@ -49,6 +52,7 @@ import type {
     RegistryServerList,
     RoleView,
     SkillDetail,
+    SkillFileView,
     SkillList,
     SkillProblemView,
     SkillView,
@@ -104,6 +108,8 @@ export type CustomizationError =
     | { readonly type: "missing_input"; readonly name: string }
     | { readonly type: "cannot_disable"; readonly id: string }
     | { readonly type: "builtin_agent"; readonly id: string }
+    | { readonly type: "builtin_agent_file"; readonly id: string }
+    | { readonly type: "agent_file_too_large"; readonly id: string; readonly limit: number }
     | { readonly type: "draft_unreadable"; readonly id: string; readonly path: string }
     | { readonly type: "unknown_reference"; readonly kind: AttachmentKind; readonly name: string }
     | { readonly type: "approval_needs_a_person"; readonly id: string; readonly name: string }
@@ -111,6 +117,12 @@ export type CustomizationError =
     | { readonly type: "skill_dir_missing"; readonly path: string }
     | { readonly type: "invalid_skill"; readonly path: string; readonly detail: string }
     | { readonly type: "skill_exists"; readonly name: string; readonly builtin: boolean }
+    | { readonly type: "builtin_skill"; readonly name: string }
+    | { readonly type: "invalid_skill_path"; readonly name: string; readonly path: string }
+    | { readonly type: "unknown_skill_file"; readonly name: string; readonly path: string }
+    | { readonly type: "not_text_file"; readonly name: string; readonly path: string }
+    | { readonly type: "skill_file_too_large"; readonly name: string; readonly path: string; readonly limit: number }
+    | { readonly type: "skill_md_required"; readonly name: string }
     | { readonly type: "linked_entry"; readonly path: string; readonly entry: string }
     | { readonly type: "too_many_files"; readonly path: string; readonly limit: number }
     | { readonly type: "path_outside_workspace"; readonly path: string }
@@ -158,6 +170,10 @@ export function customizationErrorMessage(e: CustomizationError): string {
             return `The built-in agent "${e.id}" must stay on.`;
         case "builtin_agent":
             return `"${e.id}" is a built-in agent. Only a custom agent can be removed. \`inflexa agent disable\` turns off a built-in agent that can be off.`;
+        case "builtin_agent_file":
+            return `"${e.id}" is a built-in agent, and it has no file. \`inflexa agent clone\` copies it into a custom agent.`;
+        case "agent_file_too_large":
+            return `The file of the agent "${e.id}" must be at most ${String(e.limit)} bytes.`;
         case "draft_unreadable":
             return `The frontmatter of ${e.path} does not parse. Correct the file in a text editor first.`;
         case "unknown_reference":
@@ -174,6 +190,18 @@ export function customizationErrorMessage(e: CustomizationError): string {
             return e.builtin
                 ? `The name "${e.name}" belongs to a built-in skill. A custom skill needs a different name.`
                 : `A custom skill "${e.name}" exists already. An import with \`--replace\` overwrites it.`;
+        case "builtin_skill":
+            return `"${e.name}" is a built-in skill, and it is read-only. \`inflexa skill export\` copies it, and an import of the copy under a different name makes a custom skill.`;
+        case "invalid_skill_path":
+            return `"${e.path}" is not a file path inside the skill "${e.name}". Give a relative path with no "..".`;
+        case "unknown_skill_file":
+            return `The skill "${e.name}" has no file "${e.path}".`;
+        case "not_text_file":
+            return `The file "${e.path}" of the skill "${e.name}" is not UTF-8 text.`;
+        case "skill_file_too_large":
+            return `The file "${e.path}" of the skill "${e.name}" is larger than ${String(e.limit)} bytes.`;
+        case "skill_md_required":
+            return `A skill keeps its SKILL.md. \`inflexa skill rm ${e.name}\` deletes the skill "${e.name}".`;
         case "linked_entry":
             return `"${e.entry}" in ${e.path} is a link or a special file. An import takes only folders and regular files, because a link can point to a file outside the folder.`;
         case "too_many_files":
@@ -238,6 +266,8 @@ function referenceNoun(kind: AttachmentKind): string {
 export type CustomizationOpts = {
     readonly agentsDir: string;
     readonly userSkillsDir: string;
+    /** The last copy of each custom agent and skill that a replace overwrote. */
+    readonly replacedDir: string;
     /** The built-in skills of this build, read at each call. `null` when the build has none, which a boot refuses. */
     readonly builtinSkillsDir: () => string | null;
     readonly readConfig: () => Config;
@@ -274,6 +304,7 @@ export function defaultCustomizationOpts(mcpFailures: CustomizationOpts["mcpFail
     return {
         agentsDir: env.agentsDir,
         userSkillsDir: env.userSkillsDir,
+        replacedDir: env.replacedDir,
         builtinSkillsDir: () => resolveHarnessConfig().skillsDir,
         readConfig,
         writeConfig,
@@ -308,7 +339,13 @@ export type CustomizationService = {
     readonly cloneAgent: (sourceId: string, newId: string, description?: string) => ResultAsync<AgentDetail, CustomizationError>;
     /** The agent files in the user agent directories of other harnesses. */
     readonly findAgents: () => ResultAsync<FoundAgentList, CustomizationError>;
-    readonly importAgent: (path: string, role: AgentRole, options?: ImportOptions) => ResultAsync<AgentDetail, CustomizationError>;
+    readonly importAgent: (path: string, role: AgentRole, options?: ImportOptions) => ResultAsync<ImportAgentResponse, CustomizationError>;
+    /** Copy the file of a custom agent to `path`, for example into a workspace to edit it and import it again. */
+    readonly exportAgent: (id: string, path: string, options?: ExportOptions) => ResultAsync<{ readonly path: string }, CustomizationError>;
+    /** The text of the file of a custom agent or a draft, as it is on disk. */
+    readonly readAgentFile: (id: string) => ResultAsync<AgentFileView, CustomizationError>;
+    /** Write the whole file of a custom agent, or make the file for a new id. A file that does not resolve stays a draft. */
+    readonly writeAgentFile: (id: string, content: string) => ResultAsync<AgentDetail, CustomizationError>;
     readonly setAgentEnabled: (id: string, enabled: boolean) => ResultAsync<AgentDetail, CustomizationError>;
     /** Replace the description or the prompt body of a custom agent in its file. A built-in agent is read-only. */
     readonly editAgent: (id: string, edit: AgentEdit) => ResultAsync<AgentDetail, CustomizationError>;
@@ -321,7 +358,12 @@ export type CustomizationService = {
     readonly exportSkill: (name: string, dir: string, options?: ExportOptions) => ResultAsync<{ readonly path: string }, CustomizationError>;
     /** The skills of a directory, or of the usual skill directories of other harnesses when `dir` is absent. */
     readonly findSkills: (dir: string | undefined) => ResultAsync<SkillList, CustomizationError>;
-    readonly importSkill: (dir: string, options?: ImportOptions) => ResultAsync<SkillView, CustomizationError>;
+    readonly importSkill: (dir: string, options?: ImportOptions) => ResultAsync<ImportSkillResponse, CustomizationError>;
+    readonly readSkillFile: (name: string, path: string) => ResultAsync<SkillFileView, CustomizationError>;
+    /** Write one file of a custom skill. A `SKILL.md` for a name that no skill has makes a new custom skill. */
+    readonly writeSkillFile: (name: string, path: string, content: string) => ResultAsync<SkillFileView, CustomizationError>;
+    readonly removeSkillFile: (name: string, path: string) => ResultAsync<void, CustomizationError>;
+    readonly removeSkill: (name: string) => ResultAsync<void, CustomizationError>;
     readonly listConnectors: () => ResultAsync<ConnectorView[], CustomizationError>;
     readonly setConnector: (id: string, patch: PatchConnectorRequest) => ResultAsync<ConnectorView, CustomizationError>;
     readonly listCredentials: () => ResultAsync<CredentialView[], CustomizationError>;
@@ -528,8 +570,18 @@ function skillProblemMessage(problem: SkillRootProblem, builtinRoot: string | nu
     }
 }
 
+/** The last change to a file as an ISO 8601 time, or `undefined` when the file cannot be read. `statSync` throws on each failure. */
+function modifiedAtOf(path: string): string | undefined {
+    return Result.fromThrowable(
+        () => statSync(path).mtime.toISOString(),
+        () => undefined,
+    )().unwrapOr(undefined);
+}
+
 function skillView(skill: ScannedSkill, kind: SkillView["kind"]): SkillView {
     const view: SkillView = { name: skill.name, description: skill.description, kind, directory: skill.directory, tags: [...(skill.tags ?? [])] };
+    const modifiedAt = modifiedAtOf(join(skill.directory, "SKILL.md"));
+    if (modifiedAt !== undefined) view.modifiedAt = modifiedAt;
     if (skill.title !== undefined) view.title = skill.title;
     if (skill.category !== undefined) view.category = skill.category;
     return view;
@@ -627,6 +679,12 @@ export type AgentEdit = {
 /** The largest prompt file that `agent set --prompt-file` reads. A prompt body is text of some pages. */
 export const PROMPT_FILE_LIMIT = 256 * 1024;
 
+/** The largest skill file that the file routes read or write. The skill tools of the harness read no larger file. */
+export const SKILL_FILE_LIMIT = 512 * 1024;
+
+/** The file of a skill that holds its frontmatter. */
+const SKILL_MD = "SKILL.md";
+
 /** Where `skill export` writes, and whether it overwrites. */
 export type ExportOptions = { readonly analysis?: string; readonly replace?: boolean };
 
@@ -689,11 +747,22 @@ function parseYamlRecord(yaml: string): Record<string, unknown> | undefined {
 }
 
 /** `cpSync` throws on each failure. */
-function copyDirectory(from: string, to: string): Result<void, CustomizationError> {
+function copyDirectory(from: string, to: string, op = "copy the skill directory"): Result<void, CustomizationError> {
     return Result.fromThrowable(
         () => cpSync(from, to, { recursive: true, errorOnExist: true, force: false, dereference: false, verbatimSymlinks: true }),
-        (cause): CustomizationError => ({ type: "io_failed", op: "copy the skill directory", cause }),
+        (cause): CustomizationError => ({ type: "io_failed", op, cause }),
     )();
+}
+
+/** The text of `bytes`, or `undefined` when the bytes are not UTF-8 text. A NUL byte marks a binary file. */
+function textOf(bytes: Uint8Array): string | undefined {
+    let text: string;
+    try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+        return undefined;
+    }
+    return text.includes("\u0000") ? undefined : text;
 }
 
 /** The real path, with each link resolved, or `path` itself when it does not exist. `realpathSync` throws on each failure. */
@@ -813,6 +882,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             canDisable: true,
             active: file.status === "ok" && isActive(state, file.id, definition?.role ?? "executor"),
             path: file.path,
+            modifiedAt: modifiedAtOf(file.path),
             prompt: definition?.prompt ?? null,
         };
         if (file.status === "draft") {
@@ -992,6 +1062,79 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 })),
             },
         }));
+    };
+
+    /** Keep the file or the folder at `path` as the replaced copy `<kind>/<name>`, in place of an older copy. */
+    const keepReplaced = (path: string, kind: "agents" | "skills", name: string): Result<string, CustomizationError> => {
+        const target = join(opts.replacedDir, kind, name);
+        return rmResult(target, "remove the older replaced copy")
+            .andThen(() => mkdirResult(dirname(target), "make the folder of the replaced copies"))
+            .andThen(() => copyDirectory(path, target, "keep the replaced copy"))
+            .map(() => target);
+    };
+
+    /** The file of a custom agent or a draft. A built-in agent has no file. */
+    const customFileOf = (id: string): ResultAsync<AgentFile, CustomizationError> =>
+        loadAgents().andThen((state): Result<AgentFile, CustomizationError> => {
+            if (LOCAL_BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent_file", id });
+            const file = state.files.find((candidate) => candidate.id === id);
+            return file === undefined ? err({ type: "unknown_agent", id }) : ok(file);
+        });
+
+    type SkillPlace = { readonly directory: string; readonly kind: "builtin" | "custom" };
+
+    /**
+     * The folder of a skill, by name. A custom folder whose `SKILL.md` does not parse is not in the list of the skills,
+     * and an edit must still reach it to correct the file.
+     */
+    const skillPlaceOf = (name: string): ResultAsync<SkillPlace | undefined, CustomizationError> =>
+        scanSkills().map(({ list }): SkillPlace | undefined => {
+            const skill = list.skills.find((candidate) => candidate.name === name);
+            if (skill !== undefined) return { directory: skill.directory, kind: skill.kind === "builtin" ? "builtin" : "custom" };
+            const custom = join(opts.userSkillsDir, name);
+            return agentIdOf(name) === name && existsSync(custom) ? { directory: custom, kind: "custom" } : undefined;
+        });
+
+    /** The full path of `path` inside the folder of a skill. A path that leaves the folder, also through a link, is refused. */
+    const skillFilePath = (place: SkillPlace, name: string, path: string): Result<string, CustomizationError> => {
+        const segments = path.split("/");
+        if (isAbsolute(path) || path.includes("\\") || segments.some((segment) => segment === "" || segment === "." || segment === ".."))
+            return err({ type: "invalid_skill_path", name, path });
+        const full = join(place.directory, path);
+        if (!isInside(realPathThroughNearest(full), realPathThroughNearest(place.directory))) return err({ type: "invalid_skill_path", name, path });
+        return ok(full);
+    };
+
+    /** Whether `path` is a regular file. A link is not: the file routes never follow one. `lstatSync` throws on each failure. */
+    const isRegularFile = (path: string): boolean =>
+        Result.fromThrowable(
+            () => lstatSync(path).isFile(),
+            () => false,
+        )().unwrapOr(false);
+
+    const readSkillText = (name: string, path: string, full: string): Result<string, CustomizationError> => {
+        const stats = Result.fromThrowable(
+            () => lstatSync(full),
+            () => undefined,
+        )().unwrapOr(undefined);
+        if (stats === undefined || !stats.isFile()) return err({ type: "unknown_skill_file", name, path });
+        if (stats.size > SKILL_FILE_LIMIT) return err({ type: "skill_file_too_large", name, path, limit: SKILL_FILE_LIMIT });
+        return Result.fromThrowable(
+            () => readFileSync(full),
+            (cause): CustomizationError => ({ type: "io_failed", op: "read the skill file", cause }),
+        )().andThen((bytes): Result<string, CustomizationError> => {
+            const text = textOf(bytes);
+            return text === undefined ? err({ type: "not_text_file", name, path }) : ok(text);
+        });
+    };
+
+    /** The refusal of a new `SKILL.md` text: frontmatter that does not parse, or a `name` that is not the skill name. */
+    const checkSkillMd = (name: string, content: string): Result<void, CustomizationError> => {
+        const parsed = parseSkillFrontmatter(content);
+        const path = `${name}/${SKILL_MD}`;
+        if (!parsed.ok) return err({ type: "invalid_skill", path, detail: `the frontmatter of the SKILL.md is not correct (${parsed.problem})` });
+        if (parsed.skill.name !== name) return err({ type: "invalid_skill", path, detail: `the name "${parsed.skill.name}" is not the skill name "${name}"` });
+        return ok(undefined);
     };
 
     const connectorView = async (definition: ReturnType<typeof describeConnectors>[number], config: Config): Promise<ConnectorView> => {
@@ -1246,17 +1389,48 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         importAgent: (path, role, options = {}) =>
             importPathOf(path, options.analysis)
                 .andThen((source) => loadAgents().map((state) => ({ source, state })))
-                .andThen(({ source, state }): Result<string, CustomizationError> => {
+                .andThen(({ source, state }): Result<{ readonly id: string; readonly previous?: string }, CustomizationError> => {
                     if (isLink(source)) return err({ type: "linked_entry", path: dirname(source), entry: relative(dirname(source), source) });
                     return convertAgentFile(state, source, role).andThen(({ id, definition, unmappedTools }) => {
                         const text = renderAgentFile(definition, unmappedTools);
                         const existing = state.files.find((file) => file.id.toLowerCase() === id);
                         if (options.replace === true && existing !== undefined)
-                            return writeFileResult(existing.path, text, "write the agent file").map(() => id);
-                        return checkNewAgentId(id, state.files).andThen((target) => writeNewAgentFile(id, target, text).map(() => id));
+                            return keepReplaced(existing.path, "agents", `${existing.id}.md`).andThen((previous) =>
+                                writeFileResult(existing.path, text, "write the agent file").map(() => ({ id, previous })),
+                            );
+                        return checkNewAgentId(id, state.files).andThen((target) => writeNewAgentFile(id, target, text).map(() => ({ id })));
                     });
                 })
-                .andThen((id) => findDetail(id)),
+                .andThen(({ id, previous }) => findDetail(id).map((detail): ImportAgentResponse => (previous === undefined ? detail : { ...detail, previous }))),
+
+        exportAgent: (id, path, options = {}) =>
+            customFileOf(id).andThen((file) =>
+                importPathOf(path, options.analysis).andThen((target): Result<{ readonly path: string }, CustomizationError> => {
+                    if (existsSync(target) && options.replace !== true) return err({ type: "path_exists", path });
+                    return readFileResult(file.path, "read the agent file")
+                        .andThen((text) =>
+                            mkdirResult(dirname(target), "make the folder of the export").andThen(() => writeFileResult(target, text, "write the agent export")),
+                        )
+                        .map(() => ({ path: target }));
+                }),
+            ),
+
+        readAgentFile: (id) =>
+            customFileOf(id).andThen((file) =>
+                readFileResult(file.path, "read the agent file").map((content): AgentFileView => ({ id, path: file.path, content })),
+            ),
+
+        writeAgentFile: (id, content) => {
+            if (Buffer.byteLength(content, "utf8") > PROMPT_FILE_LIMIT) return errAsync({ type: "agent_file_too_large", id, limit: PROMPT_FILE_LIMIT });
+            return loadAgents()
+                .andThen((state): Result<void, CustomizationError> => {
+                    if (LOCAL_BUILTIN_AGENTS.some((agent) => agent.id === id)) return err({ type: "builtin_agent_file", id });
+                    const file = state.files.find((candidate) => candidate.id === id);
+                    if (file !== undefined) return writeFileResult(file.path, content, "write the agent file");
+                    return checkNewAgentId(id, state.files).andThen((target) => writeNewAgentFile(id, target, content));
+                })
+                .andThen(() => findDetail(id));
+        },
 
         setAgentEnabled: (id, enabled) =>
             loadAgents()
@@ -1363,7 +1537,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                         return ok({ skill: { ...parsed.skill, directory: target }, target, taken });
                     })
                     .andThen((plan) => checkImportFolder(root, path).map(() => plan))
-                    .andThen(({ skill, target, taken }) => {
+                    .andThen(({ skill, target, taken }): ResultAsync<ImportSkillResponse, CustomizationError> => {
                         // The copy goes to a folder beside the skills, then a rename puts it in place. Thus a refused
                         // copy leaves no half skill, and a replace swaps the whole folder.
                         const staging = join(dirname(opts.userSkillsDir), `.skill-import-${randomUUID()}`);
@@ -1379,10 +1553,19 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                         return mkdirResult(opts.userSkillsDir, "make the skills directory")
                             .andThen(() => copyDirectory(root, staging))
                             .asyncAndThen(() => checkImportFolder(staging, path))
-                            .andThen(() => (taken ? rmResult(target, "remove the replaced skill") : ok(undefined)))
-                            .andThen(() => renameResult(staging, target, "move the skill copy into place"))
+                            .andThen((): Result<string | undefined, CustomizationError> =>
+                                taken && existsSync(target)
+                                    ? keepReplaced(target, "skills", skill.name).andThen((previous) =>
+                                          rmResult(target, "remove the replaced skill").map(() => previous),
+                                      )
+                                    : ok(undefined),
+                            )
+                            .andThen((previous) => renameResult(staging, target, "move the skill copy into place").map(() => previous))
                             .orElse(discard)
-                            .map((): SkillView => skillView(skill, "custom"));
+                            .map((previous): ImportSkillResponse => {
+                                const view = skillView(skill, "custom");
+                                return previous === undefined ? view : { ...view, previous };
+                            });
                     });
             }),
 
@@ -1397,6 +1580,51 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                         .andThen(() => copyDirectory(skill.directory, target))
                         .map(() => ({ path: target }));
                 });
+            }),
+
+        readSkillFile: (name, path) =>
+            skillPlaceOf(name).andThen((place): Result<SkillFileView, CustomizationError> => {
+                if (place === undefined) return err({ type: "unknown_skill", name });
+                return skillFilePath(place, name, path)
+                    .andThen((full) => readSkillText(name, path, full))
+                    .map((content) => ({ skill: name, path, content }));
+            }),
+
+        writeSkillFile: (name, path, content) =>
+            skillPlaceOf(name).andThen((found): Result<SkillFileView, CustomizationError> => {
+                const isSkillMd = path === SKILL_MD;
+                if (found?.kind === "builtin") return err({ type: "builtin_skill", name });
+                if (found === undefined && !isSkillMd) return err({ type: "unknown_skill", name });
+                // The name becomes the folder name of a new skill, thus it must be a clean single path segment.
+                if (found === undefined && agentIdOf(name) !== name)
+                    return err({ type: "invalid_skill", path: name, detail: `the name "${name}" must be lowercase letters, digits, and hyphens` });
+                if (Buffer.byteLength(content, "utf8") > SKILL_FILE_LIMIT) return err({ type: "skill_file_too_large", name, path, limit: SKILL_FILE_LIMIT });
+                const checked = isSkillMd ? checkSkillMd(name, content) : ok(undefined);
+                if (checked.isErr()) return err(checked.error);
+                const place: SkillPlace = found ?? { directory: join(opts.userSkillsDir, name), kind: "custom" };
+                return skillFilePath(place, name, path)
+                    .andThen((full) =>
+                        mkdirResult(dirname(full), "make the folder of the skill file").andThen(() => writeFileResult(full, content, "write the skill file")),
+                    )
+                    .map(() => ({ skill: name, path, content }));
+            }),
+
+        removeSkillFile: (name, path) =>
+            skillPlaceOf(name).andThen((place): Result<void, CustomizationError> => {
+                if (place === undefined) return err({ type: "unknown_skill", name });
+                if (place.kind === "builtin") return err({ type: "builtin_skill", name });
+                if (path === SKILL_MD) return err({ type: "skill_md_required", name });
+                return skillFilePath(place, name, path).andThen((full): Result<void, CustomizationError> => {
+                    if (!isRegularFile(full)) return err({ type: "unknown_skill_file", name, path });
+                    return rmResult(full, "delete the skill file");
+                });
+            }),
+
+        removeSkill: (name) =>
+            skillPlaceOf(name).andThen((place): Result<void, CustomizationError> => {
+                if (place === undefined) return err({ type: "unknown_skill", name });
+                if (place.kind === "builtin") return err({ type: "builtin_skill", name });
+                return rmResult(place.directory, "delete the skill");
             }),
 
         listConnectors: () => {

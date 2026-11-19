@@ -731,12 +731,29 @@ export function buildProgram(): Command {
             .argument("<file...>", "The agent files to convert: absolute, or relative to the working directory")
             .option("--role <role>", "The role of each new agent, for example reporter (default: executor)")
             .option("--analysis <id|name>", "Read a relative path inside the workspace of this analysis")
-            .option("--replace", "Overwrite a custom agent of the same id; a built-in agent stays refused"),
+            .option("--replace", "Overwrite a custom agent of the same id, and keep the replaced version; a built-in agent stays refused"),
         "instance",
-        { kind: "auto", safeFlags: ["role"], exactGrant: true, workspacePaths: true },
+        // `--replace` keeps the replaced version, which an import of it restores, thus it runs with no prompt.
+        { kind: "auto", safeFlags: ["role", "replace"], exactGrant: true, workspacePaths: true },
         async (files: string[], options: { role?: string; analysis?: string; replace?: boolean }) => {
             const { agentImport } = await import("../client/commands/customization.ts");
             await agentImport(files, options);
+        },
+    );
+
+    registerAction(
+        agent
+            .command("export")
+            .description("Copy the file of a custom agent, for example to edit it and import it again")
+            .argument("<id>", "The custom agent")
+            .argument("<file>", "The file to write: absolute, or relative to the working directory")
+            .option("--analysis <id|name>", "Write a relative path inside the workspace of this analysis")
+            .option("--replace", "Overwrite the file if it exists"),
+        "instance",
+        { kind: "auto", safeFlags: [], exactGrant: true, workspacePaths: true },
+        async (id: string, file: string, options: { analysis?: string; replace?: boolean }) => {
+            const { agentExport } = await import("../client/commands/customization.ts");
+            await agentExport(id, file, options);
         },
     );
 
@@ -862,12 +879,23 @@ export function buildProgram(): Command {
             .description("Copy skill directories into your custom skills")
             .argument("<dir...>", "The skill directories, each with its SKILL.md: absolute, or relative to the working directory")
             .option("--analysis <id|name>", "Read a relative path inside the workspace of this analysis")
-            .option("--replace", "Overwrite a custom skill of the same name; a built-in skill stays refused"),
+            .option("--replace", "Overwrite a custom skill of the same name, and keep the replaced version; a built-in skill stays refused"),
         "instance",
-        { kind: "auto", safeFlags: [], exactGrant: true, workspacePaths: true },
+        // `--replace` keeps the replaced version, which an import of it restores, thus it runs with no prompt.
+        { kind: "auto", safeFlags: ["replace"], exactGrant: true, workspacePaths: true },
         async (dirs: string[], options: { analysis?: string; replace?: boolean }) => {
             const { skillImport } = await import("../client/commands/customization.ts");
             await skillImport(dirs, options);
+        },
+    );
+
+    registerAction(
+        skill.command("rm").description("Delete custom skills").argument("<name...>", "The custom skills to delete"),
+        "instance",
+        { kind: "approval" },
+        async (names: string[]) => {
+            const { skillRm } = await import("../client/commands/customization.ts");
+            await skillRm(names);
         },
     );
 

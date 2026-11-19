@@ -117,6 +117,9 @@ The CLI builds the `SkillStore` over two roots: the built-in skills and `~/.conf
 | `skill find` (no directory) | `GET /api/v1/skills/found` | auto |
 | `skill show <name>` | `GET /api/v1/skills/:name` | auto |
 | `skill import <dir>` | `POST /api/v1/skills/import` | auto |
+| `skill rm <name>` | `DELETE /api/v1/skills/:name` | approval |
+| `agent export <id> <file>` | `POST /api/v1/catalog/agents/:id/export` | auto |
+| (no command) | `GET`, `PUT` and `DELETE /api/v1/skills/:name/file`, `GET` and `PUT /api/v1/catalog/agents/:id/file` | none, the GUI uses them |
 | `connector ls` | `GET /api/v1/connectors` | auto |
 | `connector set <id>` | `PATCH /api/v1/connectors/:id` | auto, `--endpoint` asks for the exact command |
 | `mcp ls` | `GET /api/v1/mcp` | auto |

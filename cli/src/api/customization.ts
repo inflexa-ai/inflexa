@@ -45,6 +45,8 @@ export type AgentView = {
     change?: { add: AttachmentsView; remove: AttachmentsView };
     /** The file of a custom agent or a draft. */
     path?: string;
+    /** The last change to the file of a custom agent or a draft, as an ISO 8601 time. Absent for a built-in agent. */
+    modifiedAt?: string;
     gaps: AgentGapView[];
 };
 
@@ -146,6 +148,42 @@ export type PatchAgentRequest = {
     analysis?: string;
 };
 
+/** The body of a `POST /api/v1/catalog/agents/import` response. */
+export type ImportAgentResponse = AgentDetail & {
+    /** The copy of the file that a `replace` overwrote. An import of this path with `replace` restores it. */
+    previous?: string;
+};
+
+/** The body of `POST /api/v1/catalog/agents/:id/export`: the file to write, on the machine of the server. */
+export type ExportAgentRequest = {
+    /** Absolute, or relative to the workspace of `analysis`. */
+    path: string;
+    /** The analysis, by id or name, whose workspace holds a relative `path`. */
+    analysis?: string;
+    /** Overwrite the file if it exists. */
+    replace?: boolean;
+};
+
+/** The body of a `POST /api/v1/catalog/agents/:id/export` response: the file that holds the copy. */
+export type ExportAgentResponse = {
+    path: string;
+};
+
+/** The body of `GET /api/v1/catalog/agents/:id/file`: the text of the file of a custom agent or a draft, as it is on disk. */
+export type AgentFileView = {
+    id: string;
+    path: string;
+    content: string;
+};
+
+/**
+ * The body of `PUT /api/v1/catalog/agents/:id/file`. The server writes `content` as the file of the agent, and makes
+ * the file when the id has none. A file that does not resolve stays as a draft with its gaps. A built-in id is refused.
+ */
+export type PutAgentFileRequest = {
+    content: string;
+};
+
 /** The body of a `DELETE /api/v1/catalog/agents/:id` response. */
 export type DeleteAgentResponse = {
     deleted: true;
@@ -163,6 +201,8 @@ export type SkillView = {
     tags: string[];
     kind: "builtin" | "custom" | "found";
     directory: string;
+    /** The last change to the `SKILL.md`, as an ISO 8601 time. Absent when the file cannot be read. */
+    modifiedAt?: string;
     /** For a found skill: the reason that an import refuses it, for example a name that a skill already has. */
     conflict?: string;
 };
@@ -192,6 +232,41 @@ export type ExportSkillRequest = ImportSkillRequest;
 /** The body of a `POST /api/v1/skills/:name/export` response: the folder that holds the copy. */
 export type ExportSkillResponse = {
     path: string;
+};
+
+/** The body of a `POST /api/v1/skills/import` response. */
+export type ImportSkillResponse = SkillView & {
+    /** The copy of the folder that a `replace` overwrote. An import of this path with `replace` restores it. */
+    previous?: string;
+};
+
+/**
+ * The body of `GET /api/v1/skills/:name/file?path=<path>`: one text file of a skill. `path` is relative to the skill
+ * folder, for example `SKILL.md` or `references/api.md`.
+ */
+export type SkillFileView = {
+    skill: string;
+    path: string;
+    content: string;
+};
+
+/**
+ * The body of `PUT /api/v1/skills/:name/file`. Only a custom skill takes a write. A `SKILL.md` for a name that no skill
+ * has makes a new custom skill. A `SKILL.md` must keep correct frontmatter, with `name` equal to the skill name.
+ */
+export type PutSkillFileRequest = {
+    path: string;
+    content: string;
+};
+
+/** The body of a `DELETE /api/v1/skills/:name/file?path=<path>` response. The `SKILL.md` of a skill cannot be deleted. */
+export type DeleteSkillFileResponse = {
+    deleted: true;
+};
+
+/** The body of a `DELETE /api/v1/skills/:name` response. Only a custom skill can be deleted. */
+export type DeleteSkillResponse = {
+    deleted: true;
 };
 
 /** The body of `POST /api/v1/skills/import`, on the machine of the server. */

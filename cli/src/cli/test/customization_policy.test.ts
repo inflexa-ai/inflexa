@@ -156,12 +156,26 @@ describe("run_inflexa — the customization commands", () => {
         },
     );
 
-    test("`skill import --replace` and `agent import --replace` ask, because each overwrites a custom copy", async () => {
+    test("`skill import --replace` and `agent import --replace` of a workspace path run with no prompt, because each keeps the replaced version", async () => {
         const skill = await run(["skill", "import", "skills/x", "--replace"]);
         const agent = await run(["agent", "import", "agents/x.md", "--replace"]);
 
-        expect(skill.asked.length).toBe(1);
-        expect(agent.asked.length).toBe(1);
+        expect(skill.asked).toEqual([]);
+        expect(agent.asked).toEqual([]);
+    });
+
+    test("`agent import --replace` of a host path asks for the exact command", async () => {
+        const { asked } = await run(["agent", "import", "/home/u/.claude/agents/x.md", "--replace"]);
+
+        expect(asked.map((request) => request.grantKey)).toEqual([undefined]);
+    });
+
+    test("`agent export` to the workspace runs with no prompt, and `skill rm` asks", async () => {
+        const exported = await run(["agent", "export", "lipid-analyst", "agents/lipid-analyst.md"]);
+        const removed = await run(["skill", "rm", "lab-protocols"]);
+
+        expect(exported.asked).toEqual([]);
+        expect(removed.asked.length).toBe(1);
     });
 
     test("`agent set --prompt-file` of a workspace path runs with no prompt, and a host path asks", async () => {
