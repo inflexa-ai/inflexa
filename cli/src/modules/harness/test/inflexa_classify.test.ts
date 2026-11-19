@@ -222,8 +222,9 @@ describe("classifyInflexaArgv — policy + setOptions", () => {
             argv,
             path: ["inflexa", "store", "add"],
             grantKey: "inflexa store add",
-            policy: { kind: "approval" },
+            policy: { kind: "approval", ownAnalysisOnly: true },
             setOptions: ["version"],
+            operands: ["polars"],
         });
     });
 
