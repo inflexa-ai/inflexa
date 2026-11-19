@@ -149,8 +149,8 @@ before you write the store: the transcript points of a full Xenium or CosMx run 
 than the images.
 
 The import of MDV 1.3.0 refuses a zip above 20,000 MiB, and the server reads the full zip into
-memory. For a larger project, write in the README that the user must copy the project folder into
-the MDV container. Make the project smaller first: drop the layers, select a larger `downsample`
+memory. For a larger project, write in the README that the operator must unzip it into the
+projects directory of the server (`mdv-asset-contract.md`). Make the project smaller first: drop the layers, select a larger `downsample`
 for a stitched image, or make one project for each sample.
 
 ## Browser limits

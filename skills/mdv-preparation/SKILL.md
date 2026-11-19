@@ -9,8 +9,7 @@ metadata:
 
 # MDV Project Preparation
 
-The deliverable is an MDV project: the project folder and its zip, which the user imports into
-MDV. `inflexa-mdvtools` makes the project from a curated AnnData, the asset. For spatial data, it
+The deliverable is an MDV project: the project folder and its zip, which the user adds to MDV. `inflexa-mdvtools` makes the project from a curated AnnData, the asset. For spatial data, it
 makes the project from a SpatialData store that holds the asset and the tissue images.
 
 An asset is **MDV-ready** when:
@@ -37,7 +36,9 @@ A project is ready for delivery when its asset is MDV-ready and the project chec
 - **One table in a spatial store**, with `obsm["spatial"]` or with shapes that it annotates.
   mdvtools merges each table of a store into one `cells` table.
 - **The import of MDV 1.3.0** refuses a zip above 20,000 MiB, and an entry with `..` or an
-  absolute path. `zip_project` writes the correct layout.
+  absolute path. `zip_project` writes the correct layout. A production build of MDV 1.3.0 hides
+  the import. Then the operator unzips the zip into the projects directory of the server
+  (`mdv-asset-contract.md`).
 - **mdvtools copies the full store into the project.** `drop_unused` removes the transcript
   points. Keep the shapes and the labels: for Xenium, mdvtools places the cells on the image with
   the transform of a Xenium shape.

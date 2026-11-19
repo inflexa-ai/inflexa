@@ -34,10 +34,19 @@ The spatial conversion also does these things:
 - A table without `obsm["spatial"]` has no position. Its cells get the region "ND" and no image.
 - It adds the column `object_source` to `genes`.
 
-## The import into MDV
+## The way into MDV
 
-The user imports `<name>.mdv.zip` with "Import an existing project". The import of MDV 1.3.0 has
-these rules:
+A deployment of MDV adds the project in one of two ways:
+
+- **"Import an existing project".** The user imports `<name>.mdv.zip` from the catalog. MDV 1.3.0
+  shows this tile only in a development build. In the upstream code after 1.3.0, a production
+  build shows it only when the build sets `VITE_SHOW_PROJECT_CREATION=true`.
+- **The projects directory.** The operator of the server unzips the zip into a new folder of the
+  projects directory (`/app/mdv` in the MDV image). Then "Rescan Projects" in the catalog, or a
+  restart of the server, adds the project. With authentication, only an administrator can rescan.
+  The name of the folder becomes the name of the project.
+
+The import of MDV 1.3.0 has these rules:
 
 - It refuses a zip above 20,000 MiB.
 - It refuses an entry with `..` or an absolute path.
@@ -45,8 +54,7 @@ these rules:
   folder.
 - The server reads the full zip into memory.
 
-For a larger project, the MDV documentation tells the user to copy the project folder into the
-MDV container.
+The projects directory does not go through the import, so the import limit does not apply to it.
 
 ## What the conversion does with each slot
 
