@@ -1,21 +1,35 @@
-# Asset Route: from an analysis-ready AnnData to an MDV-ready asset
+# Project Route: from an analysis-ready AnnData to an MDV project
 
-MDV loads an AnnData through its upload: it reads the file with `scanpy.read` and converts it
-with `mdvtools.convert_scanpy_to_mdv(project_dir, adata)` and every default. The asset is the
-AnnData that this default conversion turns into a correct, readable project. You do not run the
-conversion; every rule below follows from what it does (`mdv-asset-contract.md`).
+Every route ends in an MDV project. `inflexa-mdvtools` converts a curated AnnData (the asset) into
+the `cells` and `genes` tables of the project. For spatial data, it converts a SpatialData store
+that holds the asset and the images (`spatial-transcriptomics.md`). Then the helper module of this
+file sets the labels, the views that open first, and the zip.
+
+## The package
+
+`inflexa-mdvtools` is a fork of `mdvtools` 1.3.0. Its pins hold the versions of the package store,
+and its import name is `mdvtools`.
+
+- Put `inflexa-mdvtools` in the packages of each step that builds a project.
+- Never use `mdvtools`. Its exact pins (anndata 0.12.2, numpy < 2.3, spatialdata < 0.8) conflict
+  with the package store.
+- If `import mdvtools` fails, link `inflexa-mdvtools` into the step. If the store does not hold the
+  package, report it. Then deliver the asset, the validator report, and for spatial data the
+  SpatialData store, and say that the project is not built.
 
 ## The deliverable
 
-| File | What the user does with it in MDV |
+| File | What it is |
 |---|---|
-| `<name>.mdv.h5ad` | uploads it: MDV makes a `cells` table and a `genes` table, with expression linked to cells |
-| `<table>.tsv` (context tables, optional) | uploads each as one more table |
-| `README.md` | reads it: MDV has no column description field, so the README is the glossary |
-| `<name>.mdv.validation.json` | the validator report, with zero errors |
+| `<name>/` | the project folder: `datafile.h5`, `datasources.json`, `views.json`, `state.json`, `README.md`. A spatial project also has `spatial/` (the SpatialData store with the images) and `images/` (the shapes of each region) |
+| `<name>.mdv.zip` | the project files at the root of the zip. The user imports it in MDV with "Import an existing project" |
+| `README.md` | the README of the project, also next to the zip |
+| `<name>.mdv.h5ad` | the asset that the table validator reads |
+| `<name>.mdv.validation.json` | the report of the table validator, with zero errors |
+| `<name>.mdv.check.json` | the report of the project check, with zero errors |
 
-Keep the full analysis AnnData (standard keys, raw counts) as a separate output. The asset is
-for MDV only: readable labels instead of snake_case keys, nothing MDV would show as noise.
+Keep the full analysis AnnData (standard keys, raw counts) as a separate output. The asset is for
+MDV only: readable labels, and nothing that MDV shows as noise.
 
 ## 1. Pre-flight
 
@@ -23,13 +37,18 @@ Fix the AnnData before you build the asset if one of these fails (`preflight` ch
 
 | Check | Why |
 |---|---|
-| X is sparse | MDV stores a dense matrix in full: 4 bytes × cells × genes |
-| X is log-normalised (no negative values, max well below 50) | MDV shows X as "Gene Scores", as stored |
-| `obs_names` and `var_names` are unique | duplicates multiply rows silently |
+| X is sparse | mdvtools stores a dense matrix in full: 4 bytes × cells × genes |
+| X is log-normalized (no negative values, max well below 50) | MDV shows X as "Gene Scores", as stored |
+| `obs_names` and `var_names` are unique | duplicates multiply rows with no error |
 | no `|` or `(` in `var_names` | gene columns in MDV break |
 | grouping columns have ≤ 256 categories | above 256 a column becomes `text16`, which most category charts refuse |
 
 ## 2. Readable labels
+
+MDV shows the label of a column as its name. `build_asset` keeps each column under its source name,
+which is the field of the column. It puts the label in `uns["mdv_labels"]`, and the project
+helpers give each label to MDV. A field uses only letters, digits, `_`, `.`, and `-`, because
+SpatialData refuses other names. A label can use words, spaces, and units.
 
 Never ship a bare cluster id. Number the clusters by size and add the label:
 
@@ -41,7 +60,7 @@ adata.obs["cluster"] = adata.obs["leiden"].map(lambda c: f"C{rank[c]:02d} {label
 
 When labels come from markers, use the cluster's own differentially expressed genes, not an
 absolute marker score. A gene that is high everywhere (myelin transcripts in white matter,
-haemoglobin in blood-rich tissue) spills into neighbouring segments and wins an absolute score in
+hemoglobin in blood-rich tissue) spills into neighboring segments and wins an absolute score in
 every cluster. DE is relative to the other clusters, so the spill does not decide the call.
 
 ```python
@@ -92,34 +111,40 @@ def annotate_clusters(adata, groupby, markers, top_n=50, max_cells_per_group=100
     return calls
 ```
 
-Choose the marker lists for the tissue (adult human cortex, PBMC, tumour, …), and keep only
-the genes in the panel. Keep the evidence: it becomes the `clusters` context table.
+Choose the marker lists for the tissue (adult human cortex, PBMC, tumor, …), and keep only the
+genes in the panel. Keep the evidence: it becomes the `clusters` table of the project.
 
-## 3. The helper module
+## 3. The helper modules
 
-Copy this module into the step's scripts and import it.
+Copy these modules into the scripts of the step and import them. `mdv_asset.py` makes the asset.
+`mdv_project.py` makes the project from it.
 
 ```python
 # file: mdv_asset.py
-"""Build and write an MDV-ready AnnData: the asset that MDV converts with its default upload."""
+"""Build and write the curated AnnData that mdvtools converts into the cells and genes of the MDV project."""
 import os
-import re
 
 import anndata as ad
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-RESERVED_OBS = {"mdv_cell_id"}   # MDV adds it from obs_names
-RESERVED_VAR = {"name"}          # MDV overwrites it with var_names
+RESERVED_OBS = {"mdv_cell_id", "x", "y", "spatial_region", "spatialdata_path", "table_name"}   # mdvtools writes them
+RESERVED_VAR = {"name"}                                                                    # mdvtools writes var_names
+
+
+def safe_field(name):
+    """True for a column name that SpatialData and MDV accept as a field."""
+    return (isinstance(name, str) and name not in ("", ".", "..") and not name.startswith("__")
+            and all(c.isalnum() or c in "_-." for c in name))
 
 
 def _safe_label(label):
-    return isinstance(label, str) and label != "" and "|" not in label and "/" not in label
+    return isinstance(label, str) and label.strip() != "" and "|" not in label
 
 
 def preflight(adata, grouping=()):
-    """Raise on the conditions that corrupt or abort MDV's conversion of the asset."""
+    """Raise on the conditions that corrupt or stop the conversion of mdvtools."""
     problems = []
     if not sp.issparse(adata.X):
         problems.append("X is dense: give a sparse log-normalised matrix")
@@ -144,8 +169,8 @@ def sanitise_frame(df):
     """Every column becomes numeric (int8-64, uint8-32, float32/64) or a categorical of plain str.
 
     Text is always categorical: a plain string column can be written as a nullable string array,
-    which MDV's reader turns into a pandas 'string' dtype that its conversion does not map.
-    Booleans become Yes/No; nullable numbers become float64 (NaN for missing).
+    which the reader of mdvtools turns into a pandas 'string' dtype that its conversion does not map.
+    Booleans become Yes/No. Nullable numbers become float64 (NaN for missing).
     """
     out = pd.DataFrame(index=df.index)
     for c in df.columns:
@@ -176,22 +201,30 @@ def round_columns(df, digits):
 
 
 def build_asset(adata, obs_labels, var_labels=None, obsm_keys=None, layers=None, uns=None):
-    """A new AnnData holding only what MDV should show, under readable labels.
+    """A new AnnData that holds only what MDV must show. The labels go to uns["mdv_labels"].
 
-    obs_labels: {obs column: readable label}, in display order (others are dropped).
+    obs_labels: {obs column: readable label}, in display order (others are dropped). The column keeps its name
+                as the MDV field. The label becomes the name that MDV shows.
     var_labels: {var column: readable label} (others dropped; the index stays the gene name).
-    obsm_keys:  {obsm key: readable key}; 2-D only; MDV makes "<key>_1", "<key>_2" (max 3 columns).
+    obsm_keys:  {obsm key: MDV key}; 2-D only; MDV makes "<key>_1", "<key>_2" (max 3 columns).
     layers:     {layer: readable label}; each becomes one more expression set in MDV. Sparse only.
-    uns:        small dict of provenance strings (MDV ignores uns; people and tools read it).
+    uns:        small dict of provenance strings.
     """
-    for label in list(obs_labels.values()) + list((var_labels or {}).values()) + list((obsm_keys or {}).values()) \
-            + list((layers or {}).values()):
-        if not _safe_label(label):
-            raise ValueError(f"label {label!r} must be a non-empty string without '|' or '/'")
-    if RESERVED_OBS & set(obs_labels.values()) or RESERVED_VAR & set((var_labels or {}).values()):
-        raise ValueError("labels 'mdv_cell_id' (obs) and 'name' (var) are reserved by MDV")
-    obs = sanitise_frame(adata.obs[list(obs_labels)]).rename(columns=obs_labels)
-    var = sanitise_frame(adata.var[list(var_labels or {})]).rename(columns=var_labels or {})
+    frames = (("obs", obs_labels, RESERVED_OBS), ("var", var_labels or {}, RESERVED_VAR),
+              ("obsm", {v: v for v in (obsm_keys or {}).values()}, set()), ("layers", layers or {}, set()))
+    for slot, labels, reserved in frames:
+        for field, label in labels.items():
+            if not safe_field(field):
+                raise ValueError(f"{slot} name {field!r} must use only letters, digits, '_', '.', '-': rename it")
+            if field in reserved:
+                raise ValueError(f"{slot} name {field!r} is reserved by mdvtools: rename it")
+            if not _safe_label(label):
+                raise ValueError(f"label {label!r} must be a non-empty string without '|'")
+        lower = [f.lower() for f in labels]
+        if len(set(lower)) != len(lower):
+            raise ValueError(f"{slot} names must be unique without regard to case: {list(labels)}")
+    obs = sanitise_frame(adata.obs[list(obs_labels)])
+    var = sanitise_frame(adata.var[list(var_labels or {})])
     var.index = pd.Index([str(g) for g in adata.var_names], dtype=object)
     obs.index = pd.Index([str(c) for c in adata.obs_names], dtype=object)   # pandas 3 would write a nullable string array
     X = adata.X if sp.isspmatrix_csr(adata.X) else sp.csr_matrix(adata.X)
@@ -201,36 +234,26 @@ def build_asset(adata, obs_labels, var_labels=None, obsm_keys=None, layers=None,
         if m.ndim != 2:
             raise ValueError(f"obsm[{key!r}] is not 2-D")
         asset.obsm[label] = m[:, :3]
-    for key, label in (layers or {}).items():
+    for key in (layers or {}):
         layer = adata.layers[key]
         if not sp.issparse(layer):
             raise ValueError(f"layer {key!r} is dense: MDV would store it in full")
-        asset.layers[label] = sp.csr_matrix(layer, dtype=np.float32)
+        asset.layers[key] = sp.csr_matrix(layer, dtype=np.float32)
+    asset.uns["mdv_labels"] = {"cells": dict(obs_labels), "genes": dict(var_labels or {}), "layers": dict(layers or {})}
     if uns:
         asset.uns["mdv_asset"] = {k: str(v) for k, v in uns.items()}
     return asset
 
 
 def write_asset(asset, path):
-    """Write the asset; returns the size in GB. MDV asks for an upload below 5 GB."""
+    """Write the curated AnnData for the table validator; returns the size in GB."""
     asset.write_h5ad(path, compression="gzip")
     return os.path.getsize(path) / 1e9
 
 
-def write_table(df, path, labels=None):
-    """A context table as TSV with readable headers, ready for MDV's upload."""
-    t = sanitise_frame(df.reset_index(drop=True)).rename(columns=labels or {})
-    for c in t.columns:
-        if not _safe_label(c):
-            raise ValueError(f"column {c!r} must be a non-empty string without '|' or '/'")
-    t.to_csv(path, sep="\t", index=False)
-
-
-def write_readme(path, title, sections):
-    """sections: [(heading, markdown body)]."""
-    text = f"# {title}\n\n" + "\n\n".join(f"## {h}\n\n{b.strip()}" for h, b in sections) + "\n"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+def readme(title, sections):
+    """sections: [(heading, markdown body)] -> the markdown of the README."""
+    return f"# {title}\n\n" + "\n\n".join(f"## {h}\n\n{b.strip()}" for h, b in sections) + "\n"
 
 
 def glossary(rows):
@@ -238,15 +261,213 @@ def glossary(rows):
     return "| Column | Meaning |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows)
 ```
 
-## 4. Build and write
+```python
+# file: mdv_project.py
+"""Build the MDV project with inflexa-mdvtools: the conversion, the labels, the views that open first, the zip."""
+import copy
+import os
+import tempfile
+import zipfile
+
+import anndata as ad
+import numpy as np
+
+OBS, VAR = "cells", "genes"
+REGION_CHART = "VivMdvRegionReact"
+MDVTOOLS_LABELS = {"x": "Image x (px)", "y": "Image y (px)", "spatial_region": "Region",
+                   "spatialdata_path": "SpatialData store", "table_name": "SpatialData table", "mdv_cell_id": "Cell name",
+                   "spatial_1": "Slide x", "spatial_2": "Slide y"}
+GENE_CHARTS = [
+    {"type": "selection_dialog", "title": "Find genes", "legend": "", "param": ["name"], "filters": {"name": None},
+     "order": {}, "noClearFilters": False, "size": [375, 293], "position": [5, 5]},
+    {"type": "table_chart_react", "title": "Genes", "legend": "", "param": ["name"], "column_widths": {},
+     "size": [375, 293], "position": [5, 303]},
+]
+
+
+def _rename(mdv, ds, wanted):
+    meta = mdv.get_datasource_metadata(ds)
+    for column in meta["columns"]:
+        if column["field"] in wanted:
+            column["name"] = str(wanted[column["field"]])
+    return meta
+
+
+def label_columns(mdv, labels):
+    """Set the names that MDV shows. labels: {"cells": {field: label}, "genes": {...}, "layers": {layer: label}}."""
+    meta = _rename(mdv, OBS, {**MDVTOOLS_LABELS, **(labels.get(OBS) or {})})
+    groups = meta.get("links", {}).get(VAR, {}).get("rows_as_columns", {}).get("subgroups", {})
+    for stub, label in (labels.get("layers") or {}).items():
+        if stub in groups:
+            groups[stub]["label"] = str(label)
+    mdv.set_datasource_metadata(meta)
+    mdv.set_datasource_metadata(_rename(mdv, VAR, {"object_source": "SpatialData store", **(labels.get(VAR) or {})}))
+
+
+def write_project(asset, out_dir):
+    """The project of a curated AnnData (build_asset), or of the path of its .h5ad. Replaces out_dir."""
+    from mdvtools.conversions import convert_scanpy_to_mdv
+    os.makedirs(os.path.dirname(os.path.abspath(out_dir)), exist_ok=True)
+    adata = ad.read_h5ad(asset) if isinstance(asset, str) else asset
+    labels = copy.deepcopy(dict(adata.uns.get("mdv_labels", {})))
+    mdv = convert_scanpy_to_mdv(out_dir, adata, delete_existing=True)
+    label_columns(mdv, labels)
+    return mdv
+
+
+def write_spatial_project(sdata_path, out_dir):
+    """The project of one SpatialData store (put_table): its table, images, and regions. Replaces out_dir."""
+    import spatialdata as sd
+    from mdvtools.spatial.conversion import SpatialDataConversionArgs, convert_spatialdata_to_mdv
+    os.makedirs(os.path.dirname(os.path.abspath(out_dir)), exist_ok=True)
+    tables = sd.read_zarr(sdata_path, selection=("tables",)).tables
+    if len(tables) != 1:
+        raise ValueError(f"the store has {len(tables)} tables: MDV merges them into one cells table; keep one (put_table)")
+    labels = copy.deepcopy(dict(next(iter(tables.values())).uns.get("mdv_labels", {})))
+    with tempfile.TemporaryDirectory() as tmp:
+        mdv = convert_spatialdata_to_mdv(SpatialDataConversionArgs(
+            spatialdata_path=os.path.abspath(sdata_path), output_folder=os.path.abspath(out_dir), temp_folder=tmp,
+            output_geojson=True, link=False))
+    label_columns(mdv, labels)
+    return mdv
+
+
+def add_table(mdv, name, df, labels=None):
+    """One more datasource of the project, for a context table (clusters, samples, FOVs). labels: {column: label}."""
+    from mdv_asset import sanitise_frame
+    mdv.add_datasource(name, sanitise_frame(df.reset_index(drop=True)))
+    mdv.set_datasource_metadata(_rename(mdv, name, labels or {}))
+
+
+def _field(columns, key):
+    """The field of a column given by its field or by the name that MDV shows."""
+    if key in columns:
+        return key
+    named = [f for f, c in columns.items() if c.get("name") == key]
+    if len(named) != 1:
+        raise ValueError(f"no single column {key!r} in {OBS}: give the field or the label as the project has it")
+    return named[0]
+
+
+def _chart(cid, kind, title, param, gssize, gsposition, **extra):
+    return {"id": cid, "type": kind, "title": title, "legend": "", "param": param,
+            "size": [gssize[0] * 100, gssize[1] * 100], "gssize": gssize, "gsposition": gsposition, **extra}
+
+
+def _scatter(cid, title, x, y, color_by, legend, gssize, gsposition):
+    return _chart(cid, "wgl_scatter_plot", title, [x, y], gssize, gsposition, color_by=color_by,
+                  color_legend={"display": legend, "pos": [5, 5]}, radius=2, opacity=0.8, brush="poly",
+                  on_filter="hide", tooltip={"show": False}, default_color="#377eb8")
+
+
+def _cell_radius(mdv, sample=50000, seed=0):
+    """Half the median distance from a cell to its nearest neighbor, in image pixels: the dot size on the image."""
+    from scipy.spatial import cKDTree
+    xy = np.column_stack([np.asarray(mdv.get_column(OBS, c), dtype=float) for c in ("x", "y")])
+    xy = xy[np.isfinite(xy).all(axis=1)]
+    if len(xy) < 2:
+        raise ValueError("fewer than 2 cells have a position on the image")
+    query = xy[np.random.default_rng(seed).choice(len(xy), min(sample, len(xy)), replace=False)]
+    dist = cKDTree(xy).query(query, k=2)[0][:, 1]
+    return float(np.median(dist[dist > 0]) / 2)
+
+
+def _region(template, cid, title, color_by, gssize, gsposition, radius):
+    chart = copy.deepcopy(template)
+    chart.update(id=cid, title=title, color_by=color_by, color_legend={"display": True}, radius=radius, opacity=0.8,
+                 gssize=gssize, gsposition=gsposition, size=[gssize[0] * 100, gssize[1] * 100])
+    chart.pop("position", None)
+    return chart
+
+
+def add_views(mdv, cell_type, embedding, qc, spatial, readme_md):
+    """Replace the views of the conversion with "Tissue" (or "Cells"), "QC", and "About this project".
+
+    cell_type: the cell-type column. embedding: the obsm key of the UMAP ("UMAP" gives UMAP_1, UMAP_2).
+    qc: {role: column}. "counts" (transcripts or UMIs per cell) is necessary. "sample" (text) groups a violin.
+        Each other numeric column gets a histogram. A column is its field or its label.
+    readme_md: the README of the project. It is the only text of "About this project".
+    """
+    columns = {c["field"]: c for c in mdv.get_datasource_metadata(OBS)["columns"]}
+    if "counts" not in qc:
+        raise ValueError("qc needs a 'counts' column")
+    cell_type = _field(columns, cell_type)
+    qc = {role: _field(columns, key) for role, key in qc.items()}
+    x, y = _field(columns, f"{embedding}_1"), _field(columns, f"{embedding}_2")
+    name = lambda f: columns[f].get("name", f)
+    views, state = mdv.views, mdv.state
+    template = None
+    if spatial:
+        template = next((c for v in views.values() for c in v.get("initialCharts", {}).get(OBS, [])
+                         if c.get("type") == REGION_CHART), None)
+        if template is None:
+            raise ValueError("the conversion made no tissue chart: the store has no image region for the table")
+        radius = _cell_radius(mdv)
+
+    first = "Tissue" if spatial else "Cells"
+    if spatial:
+        main = [_region(template, "tis01", "Tissue", cell_type, [8, 6], [0, 0], radius),
+                _scatter("tis02", "UMAP", x, y, cell_type, False, [4, 3], [8, 0]),
+                _chart("tis03", "row_chart", name(cell_type), [cell_type], [4, 3], [8, 3])]
+    else:
+        main = [_scatter("cel01", "UMAP", x, y, cell_type, True, [8, 6], [0, 0]),
+                _chart("cel02", "row_chart", name(cell_type), [cell_type], [4, 6], [8, 0])]
+    genes = [dict(copy.deepcopy(c), id=f"gen{i:02d}") for i, c in enumerate(GENE_CHARTS, 1)]
+
+    qc_charts, n = [], 0
+    for role, field in qc.items():
+        meta = columns[field]
+        if role == "sample" or meta.get("datatype") not in ("double", "integer", "int32"):
+            continue
+        lo, hi = (meta.get("minMax") or [0, 1])[:2]
+        qc_charts.append(_chart(f"qc{n + 1:02d}", "bar_chart", name(field), [field], [4, 3], [4 * (n % 3), 3 * (n // 3)],
+                                bin_number=50, display_min=lo, display_max=hi))
+        n += 1
+    row = 3 * ((n + 2) // 3)
+    if spatial:
+        qc_charts.append(_region(template, "qc90", f"Tissue by {name(qc['counts'])}", qc["counts"], [8, 6], [0, row], radius))
+    if "sample" in qc:
+        qc_charts.append(_chart("qc91", "violin_plot", f"{name(qc['counts'])} by {name(qc['sample'])}",
+                                [qc["sample"], qc["counts"]], [4, 6], [8 if spatial else 0, row]))
+
+    text = readme_md.strip()
+    about = _chart("abo01", "text_box_chart", "About this project", [], [12, 8], [0, 0], text=text)
+    grid = {"layout": "gridstack", "panelWidth": 70}
+    mdv.views = {
+        first: {"initialCharts": {OBS: main, VAR: genes},
+                "dataSources": {OBS: grid, VAR: {"layout": "absolute", "panelWidth": 30}}},
+        "QC": {"initialCharts": {OBS: qc_charts}, "dataSources": {OBS: dict(grid, panelWidth=100)}},
+        "About this project": {"initialCharts": {OBS: [about]}, "dataSources": {OBS: dict(grid, panelWidth=100)}},
+    }
+    state["all_views"] = [first, "QC", "About this project"]
+    state["initial_view"] = first
+    mdv.state = state
+    with open(os.path.join(mdv.dir, "README.md"), "w", encoding="utf-8") as f:
+        f.write(text + "\n")
+
+
+def zip_project(out_dir):
+    """<out_dir>.mdv.zip with the project files at its root, the layout that the import of MDV reads."""
+    out_dir = os.path.abspath(out_dir)
+    path = out_dir + ".mdv.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
+        for root, _, files in os.walk(out_dir):
+            for name in sorted(files):
+                full = os.path.join(root, name)
+                z.write(full, os.path.relpath(full, out_dir))
+    return path
+```
+
+## 4. Build the project
 
 ```python
-import anndata as ad, numpy as np
-from mdv_asset import preflight, build_asset, round_columns, write_asset, write_table, write_readme, glossary
+import anndata as ad
+from mdv_asset import preflight, build_asset, round_columns, write_asset, readme, glossary
+from mdv_project import write_project, add_table, add_views, zip_project
 
 adata = ad.read_h5ad(PROCESSED_H5AD)        # large files: read X with read_csr_rows (memory-and-scale.md)
 preflight(adata, grouping=["cell_type", "cluster", "sample"])
-OBS = {                                     # source column -> label people read, in display order
+CELLS = {                                   # field -> label that people read, in display order
     "cell_type": "Cell type (putative)",
     "cluster": "Cluster",
     "sample": "Sample",
@@ -255,45 +476,71 @@ OBS = {                                     # source column -> label people read
     "pct_counts_mt": "Mitochondrial reads (%)",
 }
 round_columns(adata.obs, {"pct_counts_mt": 2})
-asset = build_asset(adata, OBS,
+asset = build_asset(adata, CELLS,
                     var_labels={"highly_variable": "Highly variable"},
                     obsm_keys={"X_umap": "UMAP"},           # MDV columns UMAP_1, UMAP_2
                     uns={"title": TITLE, "expression": "normalize_total (median) + log1p"})
-size_gb = write_asset(asset, f"{OUT}/{NAME}.mdv.h5ad")
-write_table(cluster_table, f"{OUT}/clusters.tsv", labels={"cluster": "Cluster", "top_genes": "Top DE genes"})
+write_asset(asset, f"{OUT}/{NAME}.mdv.h5ad")                 # run the table validator on it (validation.md)
+mdv = write_project(f"{OUT}/{NAME}.mdv.h5ad", f"{OUT}/{NAME}")
+add_table(mdv, "clusters", cluster_table, {"cluster": "Cluster", "top_genes": "Top DE genes"})
+add_views(mdv, "Cell type (putative)", "UMAP",
+          {"counts": "UMIs per cell", "genes": "Genes detected", "mito": "Mitochondrial reads (%)", "sample": "Sample"},
+          spatial=False, readme_md=README_TEXT)
+zip_project(f"{OUT}/{NAME}")                                 # run the project check on it (validation.md)
 ```
+
+Convert the file that the validator read, not the AnnData in memory. Then the validator and the
+conversion see the same encodings. For spatial data, put the asset into the SpatialData store and
+use `write_spatial_project` in place of `write_project` (`spatial-transcriptomics.md`).
 
 Decide each slot on purpose:
 
 | Slot | Rule |
 |---|---|
-| `obs` | only the columns a person needs; labels with words and units; ids and codes as words |
-| `obsm` | the embeddings to plot (UMAP); spatial positions as two readable `obs` columns instead (`spatial-transcriptomics.md`); never `X_pca` (three meaningless columns) |
-| `var` | readable labels; no column named `name` |
+| `obs` | only the columns that a person needs. Labels with words and units. IDs and codes as words |
+| `obsm` | the embeddings to plot (UMAP). Never `X_pca` (three meaningless columns). For spatial data, `put_table` keeps `obsm["spatial"]` of the store |
+| `var` | readable labels. No column named `name` |
 | `varm`, `obsp`, `raw` | leave out |
-| `layers` | none by default (each layer doubles the expression data in MDV); add one only when the user needs it, sparse, with a readable label such as "Raw counts" |
-| `uns` | small provenance strings only |
+| `layers` | none by default, because each layer adds one more expression set as large as X. Add a layer only when the user asks for it: sparse, with a readable label such as "Raw counts" |
+| `uns` | small provenance strings only. `build_asset` writes `uns["mdv_labels"]` |
 
-## 5. Context tables
+## 5. The views
 
-Small tables that answer "can I trust this?" go next to the asset as TSV. MDV's upload accepts
-CSV and TSV, and each file becomes one table:
+`add_views` replaces the views of the conversion. The project opens on the first view:
+
+| View | Charts |
+|---|---|
+| "Tissue" (spatial) | the cells on the image, colored by the cell type, with a legend. The UMAP in the same colors. A row chart of the cell types. The gene table and the gene finder |
+| "Cells" (not spatial) | the UMAP colored by the cell type, with a legend. A row chart of the cell types. The gene table and the gene finder |
+| "QC" | a histogram of each numeric QC column. For spatial data, the cells on the image colored by the counts. A violin of the counts for each sample |
+| "About this project" | the README only. The conversion summary of mdvtools holds the git details of the host and local paths, so `add_views` leaves it out |
+
+On the image, the dot of a cell has a radius of half the median distance to the nearest cell. Thus
+the colors show at the zoom that opens first. A click on a cell type in the row chart filters the
+other charts of the view. Give each column by
+its label or by its field. If a column is not in the project, `add_views` stops with an error. The
+user can change and save the views in MDV.
+
+## 6. Context tables
+
+Small tables that answer "can I trust this?" go into the project as more datasources, with
+`add_table`:
 
 | Table | One row is | Columns |
 |---|---|---|
-| `clusters.tsv` | a cluster | label, cells, top DE genes, marker evidence |
-| `samples.tsv` | a sample / slide / donor | design factors, cells before and after QC, median counts |
-| `fovs.tsv` (CosMx and other FOV platforms) | a field of view | slide position, cells, transcripts, fraction of transcripts in cells, negative probes |
+| `clusters` | a cluster | label, cells, top DE genes, marker evidence |
+| `samples` | a sample, a slide, or a donor | design factors, cells before and after QC, median counts |
+| `fovs` (CosMx and other FOV platforms) | a field of view | slide position, cells, transcripts, fraction of transcripts in cells, negative probes |
 
-## 6. The README
+## 7. The README
 
-Write `README.md` next to the asset with these sections:
+Give the README text to `add_views`, and write the same text next to the zip. Use these sections:
 
-1. **Contents** — each file, its rows, and what one row is.
-2. **Loading into MDV** — upload the `.h5ad` (MDV makes the `cells` and `genes` tables); upload
-   each TSV as one more table. MDV lists `.h5ad` upload for its local development deployment;
-   files above 5 GB must be imported as a project instead.
-3. **Processing** — the steps with their parameters, thresholds, seeds, and package versions; the
-   QC counts (cells in, cells kept, reasons).
-4. **Column glossary** — every column of every file, with units.
-5. **Caveats** — what is putative, what was dropped, what is not in the asset (raw counts).
+1. **Contents** — the views, each table of the project, its rows, and what one row is.
+2. **Opening in MDV** — import the zip with "Import an existing project". The import of MDV 1.3.0
+   accepts a zip of up to 20,000 MiB. Copy a larger project folder into the MDV container, as the
+   MDV documentation tells.
+3. **Processing** — the steps with their parameters, thresholds, seeds, and package versions. The
+   QC counts: the cells in, the cells kept, and the reasons.
+4. **Column glossary** — each column of each table, with units.
+5. **Caveats** — what is putative, what was dropped, what is not in the project (raw counts).
