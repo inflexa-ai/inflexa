@@ -250,17 +250,25 @@ export async function reconcileAndRegisterStepArtifacts(
 }
 
 /**
+ * Items embedded and upserted per round trip. The embeddings API refuses a
+ * request over 300,000 tokens, and one input can hold 8,191, so 32 full
+ * inputs still fit in one request.
+ */
+const VECTOR_INDEX_BATCH_SIZE = 32;
+
+/**
  * Vector-index the threaded file descriptions + the step summary into the
  * per-analysis pgvector store. Best-effort (see the artifact-manifest spec):
  * indexing degrades without failing the step.
  *
  * Degradation is per-item. Index setup (ensuring the index exists and building
  * the store) is all-or-nothing — a setup failure logs and skips the stage,
- * because without an index there is nowhere to index into. Past setup, each
- * file description and the summary is embedded and upserted under its own
- * failure boundary, so one rejected input (e.g. an over-length document the
- * embedding backend rejects) costs only its own entry and every other item is
- * still attempted. A partial index is invisible at the search surface — it
+ * because without an index there is nowhere to index into. Past setup, the
+ * file descriptions and the summary are embedded and upserted in batches. A
+ * failed batch is tried again item by item, each under its own failure
+ * boundary, so one rejected input (e.g. an over-length document the embedding
+ * backend rejects) costs only its own entry and every other item is still
+ * attempted. A partial index is invisible at the search surface — it
  * returns fewer hits, never an error — so each per-item failure logs the item
  * id and input text length, and when any item fails a final record carries the
  * indexed/failed counts as the only signal that degradation occurred.
@@ -282,55 +290,83 @@ export async function vectorIndexStepOutputs(deps: PostStepPipelineDeps, postCtx
         return;
     }
 
-    const embedOne = async (text: string): Promise<number[]> => {
-        const [vec] = unwrapOrThrow(await deps.embedding.embed([text], postCtx.session));
-        if (!vec) throw new Error("vectorIndexStepOutputs: empty embedding response");
-        return vec;
+    type IndexItem = { id: string; text: string; metadata: Record<string, unknown> };
+
+    const indexBatch = async (items: readonly IndexItem[]): Promise<void> => {
+        const vectors = unwrapOrThrow(
+            await deps.embedding.embed(
+                items.map((item) => item.text),
+                postCtx.session,
+            ),
+        );
+        if (vectors.length !== items.length) throw new Error(`vectorIndexStepOutputs: embedding returned ${vectors.length} vectors for ${items.length} items`);
+        unwrapOrThrow(
+            await vectorStore.upsert({
+                indexName,
+                vectors,
+                metadata: items.map((item) => item.metadata),
+                ids: items.map((item) => item.id),
+            }),
+        );
     };
 
     /** Index one item, absorbing its failure so the rest of the step still lands. */
-    const indexOne = async (id: string, text: string, metadata: Record<string, unknown>): Promise<boolean> => {
+    const indexOne = async (item: IndexItem): Promise<boolean> => {
         try {
-            const embedding = await embedOne(text);
-            unwrapOrThrow(await vectorStore.upsert({ indexName, vectors: [embedding], metadata: [metadata], ids: [id] }));
+            await indexBatch([item]);
             return true;
         } catch (err) {
             // Text length rides as a field because over-length input is the known
             // failure driver, and the description/summary itself stays out of logs.
-            logger.warn("indexing failed", { id, textLength: text.length, ...logger.errorFields(err) });
+            logger.warn("indexing failed", { id: item.id, textLength: item.text.length, ...logger.errorFields(err) });
             return false;
         }
     };
 
     const dbPathPrefix = `runs/${input.runId}/${input.stepId}/`;
     const survivingPaths = new Set(reconciledManifest.map((a) => a.path));
-    const liveMetadata = metadataEntries.filter((e) => survivingPaths.has(e.dbPath.slice(dbPathPrefix.length)));
-
-    let indexed = 0;
-    let failed = 0;
-    for (const entry of liveMetadata) {
-        const ok = await indexOne(`/${input.analysisId}/${entry.dbPath}`, entry.description, {
+    const items: IndexItem[] = metadataEntries
+        .filter((e) => survivingPaths.has(e.dbPath.slice(dbPathPrefix.length)))
+        .map((entry) => ({
+            id: `/${input.analysisId}/${entry.dbPath}`,
             text: entry.description,
-            type: "output",
-            ...entry.metadata,
-            path: entry.dbPath,
-        });
-        if (ok) indexed++;
-        else failed++;
-    }
+            metadata: { text: entry.description, type: "output", ...entry.metadata, path: entry.dbPath },
+        }));
 
     if (summary && summary.markdown.trim().length > 0) {
         const [relPath] = stepSummaryPaths(input.runId, input.stepId);
-        const ok = await indexOne(`/${input.analysisId}/${relPath}`, summary.markdown, {
+        items.push({
+            id: `/${input.analysisId}/${relPath}`,
             text: summary.markdown,
-            type: "summary",
-            stepId: input.stepId,
-            runId: input.runId,
-            agentId: input.agentId,
-            path: relPath,
+            metadata: {
+                text: summary.markdown,
+                type: "summary",
+                stepId: input.stepId,
+                runId: input.runId,
+                agentId: input.agentId,
+                path: relPath,
+            },
         });
-        if (ok) indexed++;
-        else failed++;
+    }
+
+    let indexed = 0;
+    let failed = 0;
+    for (let start = 0; start < items.length; start += VECTOR_INDEX_BATCH_SIZE) {
+        const batch = items.slice(start, start + VECTOR_INDEX_BATCH_SIZE);
+        if (batch.length > 1) {
+            try {
+                await indexBatch(batch);
+                indexed += batch.length;
+                continue;
+            } catch {
+                // One rejected input fails its whole batch, so the items of the
+                // batch are tried again one by one to find it.
+            }
+        }
+        for (const item of batch) {
+            if (await indexOne(item)) indexed++;
+            else failed++;
+        }
     }
 
     // A partial index is invisible at the search surface — it returns fewer hits,

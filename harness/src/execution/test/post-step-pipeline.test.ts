@@ -281,6 +281,37 @@ describe("vectorIndexStepOutputs — per-item isolation", () => {
         expect(summaryWarn?.fields.indexed).toBe(2);
         expect(summaryWarn?.fields.failed).toBe(1);
     });
+
+    it("embeds the items in batches of 32, and indexes each of them", async () => {
+        const analysisId = uniqueAnalysisId();
+        const { pool, drop } = await withSchema("vec-batches");
+        cleanups.push(drop);
+
+        const rels = Array.from({ length: 40 }, (_, i) => `output/f${String(i).padStart(2, "0")}.csv`);
+        const artifacts: PostStepArtifacts = {
+            metadataEntries: rels.map((rel) => fileEntry(rel, `description of ${rel}`)),
+            reconciledManifest: rels.map(manifestEntry),
+            summary: summaryOf("## step summary"),
+        };
+        const batchSizes: number[] = [];
+        const embedding = embeddingRejecting(() => false);
+        const deps = makeDeps(
+            pool,
+            {
+                dimensions: embedding.dimensions,
+                embed: (texts, session) => {
+                    batchSizes.push(texts.length);
+                    return embedding.embed(texts, session);
+                },
+            },
+            createCapturingLogger(),
+        );
+
+        await vectorIndexStepOutputs(deps, makePostCtx(analysisId), artifacts);
+
+        expect(batchSizes).toEqual([32, 9]);
+        expect(await readIndex(pool, analysisId)).toHaveLength(41);
+    });
 });
 
 describe("generateStepFileMetadata", () => {
