@@ -5,17 +5,7 @@ converts it. The project check reads the project folder and its zip, after `zip_
 errors in both is the bar. Then read the warnings: they make the difference between a project that
 opens and a project that is useful.
 
-mdvtools converts the asset with no check. A dtype that it cannot map stops the conversion, a
-duplicate name multiplies rows, and a bare cluster ID shows as a number. MDV opens the views with
-no check. A view that names a column that is not in the project opens as an empty chart, with no
-error.
-
 ## The table validator
-
-| Kind | Checks |
-|---|---|
-| errors | the file is an AnnData. Each HDF5 encoding is one that the reader knows (no nullable arrays). X is sparse, float, and log-scale. The obs and var names are unique. The gene names have no `\|` or `(`. Each obs and var column is a number type that MDV maps, or categorical text. Each field is safe and unique without regard to case. No column uses a reserved field. The layers are sparse. anndata can read the file |
-| warnings | `uns["mdv_labels"]` is missing, or a column has no readable label. Categories that are bare numbers. More than 256 categories (text16). Plain text that is not categorical. Booleans that show as True/False. Integers above 2^24. Columns with no value. obsm entries that are not 2-D, have more than 3 columns, or are PCA. Layers. varm, obsp, varp, raw |
 
 ```
 python validate_mdv_asset.py <name>.mdv.h5ad > <name>.mdv.validation.json
@@ -206,11 +196,6 @@ if __name__ == "__main__":
 ```
 
 ## The project check
-
-| Kind | Checks |
-|---|---|
-| errors | a project file is missing. A datasource has no group in `datafile.h5`, or a column has no data. A region image is not under `spatial/`, or the shapes file of a region is missing. `state.json` names a view that `views.json` does not have. The first view is not "Tissue" or "Cells", or a project with regions does not open on "Tissue". A chart names a column or a region that the project does not have. The zip is missing, has an entry with `..` or an absolute path, or does not hold the project files at its root |
-| warnings | columns that MDV shows by their field, with no label. `README.md` is missing in the project. The zip is above the import limit of MDV: the README must give the projects directory of the server (`mdv-asset-contract.md`) |
 
 ```
 python check_mdv_project.py <name> > <name>.mdv.check.json

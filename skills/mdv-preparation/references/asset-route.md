@@ -5,24 +5,12 @@ the `cells` and `genes` tables of the project. For spatial data, it converts a S
 that holds the asset and the images (`spatial-transcriptomics.md`). Then the helper module of this
 file sets the labels, the views that open first, and the zip.
 
-## The package
-
-`inflexa-mdvtools` is a fork of `mdvtools` 1.3.0. Its pins hold the versions of the package store,
-and its import name is `mdvtools`.
-
-- Put `inflexa-mdvtools` in the packages of each step that builds a project.
-- Never use `mdvtools`. Its exact pins (anndata 0.12.2, numpy < 2.3, spatialdata < 0.8) conflict
-  with the package store.
-- If `import mdvtools` fails, link `inflexa-mdvtools` into the step. If the store does not hold the
-  package, report it. Then deliver the asset, the validator report, and for spatial data the
-  SpatialData store, and say that the project is not built.
-
 ## The deliverable
 
 | File | What it is |
 |---|---|
 | `<name>/` | the project folder: `datafile.h5`, `datasources.json`, `views.json`, `state.json`, `README.md`. A spatial project also has `spatial/` (the SpatialData store with the images) and `images/` (the shapes of each region) |
-| `<name>.mdv.zip` | the project files at the root of the zip, for an import or for the projects directory of the server (`mdv-asset-contract.md`) |
+| `<name>.mdv.zip` | the project files at the root of the zip, for an import or for the projects directory of the server ("The way into MDV") |
 | `README.md` | the README of the project, also next to the zip |
 | `<name>.mdv.h5ad` | the asset that the table validator reads |
 | `<name>.mdv.validation.json` | the report of the table validator, with zero errors |
@@ -31,26 +19,9 @@ and its import name is `mdvtools`.
 Keep the full analysis AnnData (standard keys, raw counts) as a separate output. The asset is for
 MDV only: readable labels, and nothing that MDV shows as noise.
 
-## 1. Pre-flight
+## 1. Readable labels
 
-Fix the AnnData before you build the asset if one of these fails (`preflight` checks them):
-
-| Check | Why |
-|---|---|
-| X is sparse | mdvtools stores a dense matrix in full: 4 bytes × cells × genes |
-| X is log-normalized (no negative values, max well below 50) | MDV shows X as "Gene Scores", as stored |
-| `obs_names` and `var_names` are unique | duplicates multiply rows with no error |
-| no `|` or `(` in `var_names` | gene columns in MDV break |
-| grouping columns have ≤ 256 categories | above 256 a column becomes `text16`, which most category charts refuse |
-
-## 2. Readable labels
-
-MDV shows the label of a column as its name. `build_asset` keeps each column under its source name,
-which is the field of the column. It puts the label in `uns["mdv_labels"]`, and the project
-helpers give each label to MDV. A field uses only letters, digits, `_`, `.`, and `-`, because
-SpatialData refuses other names. A label can use words, spaces, and units.
-
-Never ship a bare cluster id. Number the clusters by size and add the label:
+Number the clusters by size, the largest first, and add the label:
 
 ```python
 sizes = adata.obs["leiden"].value_counts()
@@ -114,7 +85,7 @@ def annotate_clusters(adata, groupby, markers, top_n=50, max_cells_per_group=100
 Choose the marker lists for the tissue (adult human cortex, PBMC, tumor, …), and keep only the
 genes in the panel. Keep the evidence: it becomes the `clusters` table of the project.
 
-## 3. The helper modules
+## 2. The helper modules
 
 Copy these modules into the scripts of the step and import them. `mdv_asset.py` makes the asset.
 `mdv_project.py` makes the project from it.
@@ -249,16 +220,6 @@ def write_asset(asset, path):
     """Write the curated AnnData for the table validator; returns the size in GB."""
     asset.write_h5ad(path, compression="gzip")
     return os.path.getsize(path) / 1e9
-
-
-def readme(title, sections):
-    """sections: [(heading, markdown body)] -> the markdown of the README."""
-    return f"# {title}\n\n" + "\n\n".join(f"## {h}\n\n{b.strip()}" for h, b in sections) + "\n"
-
-
-def glossary(rows):
-    """rows: [(column label, meaning)] -> markdown table."""
-    return "| Column | Meaning |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in rows)
 ```
 
 ```python
@@ -458,11 +419,11 @@ def zip_project(out_dir):
     return path
 ```
 
-## 4. Build the project
+## 3. Build the project
 
 ```python
 import anndata as ad
-from mdv_asset import preflight, build_asset, round_columns, write_asset, readme, glossary
+from mdv_asset import preflight, build_asset, round_columns, write_asset
 from mdv_project import write_project, add_table, add_views, zip_project
 
 adata = ad.read_h5ad(PROCESSED_H5AD)        # large files: read X with read_csr_rows (memory-and-scale.md)
@@ -493,18 +454,7 @@ Convert the file that the validator read, not the AnnData in memory. Then the va
 conversion see the same encodings. For spatial data, put the asset into the SpatialData store and
 use `write_spatial_project` in place of `write_project` (`spatial-transcriptomics.md`).
 
-Decide each slot on purpose:
-
-| Slot | Rule |
-|---|---|
-| `obs` | only the columns that a person needs. Labels with words and units. IDs and codes as words |
-| `obsm` | the embeddings to plot (UMAP). Never `X_pca` (three meaningless columns). For spatial data, `put_table` keeps `obsm["spatial"]` of the store |
-| `var` | readable labels. No column named `name` |
-| `varm`, `obsp`, `raw` | leave out |
-| `layers` | none by default, because each layer adds one more expression set as large as X. Add a layer only when the user asks for it: sparse, with a readable label such as "Raw counts" |
-| `uns` | small provenance strings only. `build_asset` writes `uns["mdv_labels"]` |
-
-## 5. The views
+## 4. The views
 
 `add_views` replaces the views of the conversion. The project opens on the first view:
 
@@ -513,15 +463,12 @@ Decide each slot on purpose:
 | "Tissue" (spatial) | the cells on the image, colored by the cell type, with a legend. The UMAP in the same colors. A row chart of the cell types. The gene table and the gene finder |
 | "Cells" (not spatial) | the UMAP colored by the cell type, with a legend. A row chart of the cell types. The gene table and the gene finder |
 | "QC" | a histogram of each numeric QC column. For spatial data, the cells on the image colored by the counts. A violin of the counts for each sample |
-| "About this project" | the README only. The conversion summary of mdvtools holds the git details of the host and local paths, so `add_views` leaves it out |
+| "About this project" | the README |
 
-On the image, the dot of a cell has a radius of half the median distance to the nearest cell. Thus
-the colors show at the zoom that opens first. A click on a cell type in the row chart filters the
-other charts of the view. Give each column by
-its label or by its field. If a column is not in the project, `add_views` stops with an error. The
-user can change and save the views in MDV.
+A click on a cell type in the row chart filters the other charts of the view. The user can change
+and save the views in MDV.
 
-## 6. Context tables
+## 5. Context tables
 
 Small tables that answer "can I trust this?" go into the project as more datasources, with
 `add_table`:
@@ -530,18 +477,61 @@ Small tables that answer "can I trust this?" go into the project as more datasou
 |---|---|---|
 | `clusters` | a cluster | label, cells, top DE genes, marker evidence |
 | `samples` | a sample, a slide, or a donor | design factors, cells before and after QC, median counts |
-| `fovs` (CosMx and other FOV platforms) | a field of view | slide position, cells, transcripts, fraction of transcripts in cells, negative probes |
+| `fovs` (CosMx and other FOV platforms) | a field of view | the FOV center in slide µm, cells, cells after QC, median transcripts per cell, fraction of transcripts in cells, negative-probe transcripts |
 
-## 7. The README
+## 6. The README
 
 Give the README text to `add_views`, and write the same text next to the zip. Use these sections:
 
 1. **Contents** — the views, each table of the project, its rows, and what one row is.
-2. **Opening in MDV** — give both ways of `mdv-asset-contract.md`, "The way into MDV". "Import an
-   existing project" shows only in a development build of MDV 1.3.0, and it accepts a zip of up to
-   20,000 MiB. On a production server, the operator unzips the zip into a new folder of the
-   projects directory, then uses "Rescan Projects".
+2. **Opening in MDV** — both ways of "The way into MDV".
 3. **Processing** — the steps with their parameters, thresholds, seeds, and package versions. The
    QC counts: the cells in, the cells kept, and the reasons.
 4. **Column glossary** — each column of each table, with units.
 5. **Caveats** — what is putative, what was dropped, what is not in the project (raw counts).
+
+## The way into MDV
+
+A deployment of MDV adds the project in one of two ways:
+
+- **"Import an existing project".** The user imports `<name>.mdv.zip` from the catalog. MDV 1.3.0
+  shows this tile only in a development build.
+- **The projects directory.** The operator of the server unzips the zip into a new folder of the
+  projects directory (`/app/mdv` in the MDV image). Then "Rescan Projects" in the catalog, or a
+  restart of the server, adds the project. With authentication, only an administrator can rescan.
+  The name of the folder becomes the name of the project.
+
+The import of MDV 1.3.0 has these rules:
+
+- It refuses a zip above 20,000 MiB.
+- It refuses an entry with `..` or an absolute path.
+- It finds `views.json`, `state.json`, and `datasources.json` at the root of the zip, or under one
+  folder.
+- The server reads the full zip into memory.
+
+The projects directory does not go through the import, so the import limit does not apply to it.
+
+## What the conversion does with each slot
+
+The conventions of `SKILL.md` give the rules, and `build_asset`, `put_table`, and the table
+validator enforce them. These are the facts behind the rules.
+
+| AnnData slot | In MDV |
+|---|---|
+| `obs` columns | columns of `cells`. The label in `uns["mdv_labels"]` is the name that MDV shows |
+| `obs_names` | the column `mdv_cell_id` (`unique`) |
+| `obsm[k]` (2-D) | the columns `k_1`, `k_2`, `k_3` (the first 3 only). In a spatial table, `obsm["spatial"]` gives `spatial_1` and `spatial_2` |
+| `var` columns, `var_names` | columns of `genes`. `var_names` gives the column `name`, which replaces a `name` column |
+| `varm[k]` | the columns `k_1…k_3` of `genes` |
+| `X` | the expression set "Gene Scores", sparse when X is sparse |
+| `layers[k]` | one more expression set for each layer, as large as X, with the label of `uns["mdv_labels"]` |
+| `uns`, `raw`, `obsp`, `varp` | not used. MDV ignores the colors in `uns["*_colors"]` and uses its default palette, so the user sets the colors in MDV |
+
+## The dtypes
+
+| Stored as | MDV datatype |
+|---|---|
+| int8, int16, int64, uint8, uint16, uint32 | `integer` (float32, exact to 2^24) |
+| int32, float32, float64 | `double` |
+| categorical text, object text, bool | `text` (`text16` above 256 values, `unique` above 65,536) |
+| uint64, float16, nullable Int/Float/boolean, pandas `string`, complex | **KeyError: the conversion stops** |

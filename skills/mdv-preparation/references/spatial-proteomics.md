@@ -36,12 +36,12 @@ adata.layers["raw"] = sp.csr_matrix(raw)
 If a reader gives the table, its X holds the raw mean intensities. Move them to the layer `raw`,
 and put the transformed values in X.
 
-- **Transform.** `arcsinh(x / cofactor)`. Use a cofactor of 5 for CyTOF-like IMC counts, and
-  about 150 for fluorescence (CODEX). Write it in the README. Store X sparse, also when it is
-  almost full: the asset contract tells you to, and a cells × markers matrix is small.
+- **Transform.** `arcsinh(x / cofactor)`, because the dynamic range of raw intensities hides
+  most markers in each color scale. Use a cofactor of 5 for CyTOF-like IMC counts, and about 150
+  for fluorescence (CODEX). Write it in the README. Store X sparse, also when it is almost full:
+  `preflight` refuses a dense X, and a cells × markers matrix is small.
 - **Marker names.** Readable and unique: `CD3e`, not `Er170Di_CD3e`. Never `|` or `(`
   (`Ki-67` is permitted, `Ki67 (clone X)` is not). Keep the channel tag as a `var` column.
-- **Coordinates.** Keep the coordinates of the store. Do not flip y.
 - **Clusters.** Use the markers that define lineages, not the functional or DNA channels. Run
   Leiden on a kNN graph of the scaled lineage markers. Label the clusters with lineage markers
   (`annotate_clusters` with the marker lists of the tissue). There is no HVG selection.
@@ -78,9 +78,3 @@ Use the project route, with these changes:
   person compares the raw and the transformed values.
 - QC columns: the cell area, the total intensity, and the DNA intensity.
 - Add a `rois` table with the cells of each ROI (`add_table`).
-
-## Anti-patterns
-
-- Raw intensities as X: the dynamic range hides most markers in each color scale.
-- DNA, background, or empty channels as markers in the clusters.
-- Some ROIs in one project: the view "Tissue" opens on one region only.

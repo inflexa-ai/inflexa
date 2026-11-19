@@ -28,7 +28,6 @@ grant is smaller, use the patterns below. They keep the peak near one copy.
 | `sc.pp.pca(mask_var=...)` | X[:, hvg] copy. Python does not give the freed memory back to the OS | park X on disk while the graph, UMAP and Leiden run |
 | `sc.tl.rank_genes_groups` on all cells | per-group copies | ≤ 1,000 cells per group (`annotate_clusters`) |
 | `build_asset` + `write_h5ad` | none when X is CSR float32 (`astype(copy=False)`) | build the asset from a fresh AnnData that holds only what it needs |
-| the import of MDV (on the MDV server) | the full zip in memory | keep the zip below the import limit (below). Give the size in the README |
 | `sc.pp.normalize_total`, `sc.pp.log1p` | none on sparse X (in place) | — |
 
 ## Helpers
@@ -136,22 +135,13 @@ On two cores, 183,000 cells: PCA about 1.5 min, UMAP about 4 min, Leiden under 3
 | `spatial/` | the copy of the store. An image pyramid is about 4/3 × the bytes of the full-resolution image, before compression |
 | the zip | the project folder, compressed. Images do not get smaller in the zip, because they are compressed already |
 
-Measured projects:
-
-| Project | Rows | Non-zeros | `datafile.h5` | `spatial/` | zip |
-|---|---|---|---|---|---|
-| Visium CytAssist, human breast | 4,169 spots | 21.9 M | 175.6 MB | 45.7 MB | 133.8 MB |
-| Xenium, human breast, 2 FOVs | 7,163 cells | 0.32 M | 3.0 MB | 169.2 MB | 170.7 MB |
-
 A spatial project is on disk three times before delivery: the work store, the copy in the
-project, and the zip. Plan the disk for 3 × the store, plus `datafile.h5`. Run `drop_unused`
-before you write the store: the transcript points of a full Xenium or CosMx run can be larger
-than the images.
+project, and the zip. Plan the disk for 3 × the store, plus `datafile.h5`.
 
-The import of MDV 1.3.0 refuses a zip above 20,000 MiB, and the server reads the full zip into
-memory. For a larger project, write in the README that the operator must unzip it into the
-projects directory of the server (`mdv-asset-contract.md`). Make the project smaller first: drop the layers, select a larger `downsample`
-for a stitched image, or make one project for each sample.
+Above the import limit of MDV (`asset-route.md`, "The way into MDV"), make the project
+smaller first: drop the layers, select a larger `downsample` for a stitched image, or make one
+project for each sample. If the zip stays above the limit, the README gives the projects directory
+of the server as the way in.
 
 ## Browser limits
 
