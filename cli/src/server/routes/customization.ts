@@ -5,7 +5,14 @@ import { z } from "zod";
 import {
     ATTACHMENT_KINDS,
     type AgentDetail,
+    type AgentFileView,
     type AgentList,
+    type DeleteSkillFileResponse,
+    type DeleteSkillResponse,
+    type ExportAgentResponse,
+    type ImportAgentResponse,
+    type ImportSkillResponse,
+    type SkillFileView,
     type DeleteCredentialResponse,
     type ExportSkillResponse,
     type FoundAgentList,
@@ -24,7 +31,6 @@ import {
     type McpServerList,
     type McpServerView,
     type SkillList,
-    type SkillView,
 } from "../../api/customization.ts";
 import type { ApiErrorCode } from "../../api/common.ts";
 import { mcpServerEntrySchema } from "../../lib/config.ts";
@@ -48,6 +54,8 @@ const cloneAgentBody = z.object({ newId: z.string(), description: z.string().tri
 const importOptions = { analysis: z.string().min(1).optional(), replace: z.boolean().optional() };
 const importBody = z.object({ path: z.string().min(1), ...importOptions });
 const importAgentBody = z.object({ path: z.string().min(1), role: z.string().optional(), ...importOptions });
+const putAgentFileBody = z.object({ content: z.string() });
+const putSkillFileBody = z.object({ path: z.string().min(1), content: z.string() });
 const patchConnectorBody = z.object({
     endpoint: z.string().nullable().optional(),
     credentials: z.record(z.string(), z.string().nullable()).optional(),
@@ -84,6 +92,7 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
         case "unknown_skill":
         case "unknown_credential":
         case "unknown_candidate":
+        case "unknown_skill_file":
             return "not_found";
         case "agent_exists":
         case "skill_exists":
@@ -92,6 +101,8 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
             return "conflict";
         case "cannot_disable":
         case "builtin_agent":
+        case "builtin_agent_file":
+        case "builtin_skill":
             return "forbidden";
         case "invalid_agent_id":
         case "draft_unreadable":
@@ -103,6 +114,11 @@ function codeOf(e: CustomizationError): ApiErrorCode | null {
         case "too_many_files":
         case "path_outside_workspace":
         case "prompt_file_too_large":
+        case "agent_file_too_large":
+        case "invalid_skill_path":
+        case "not_text_file":
+        case "skill_file_too_large":
+        case "skill_md_required":
         case "unknown_slot":
         case "invalid_credential_name":
         case "invalid_mcp_name":
@@ -167,7 +183,7 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         const role = AGENT_ROLES.find((candidate) => candidate === wanted);
         if (role === undefined) return apiError(c, "validation_error", `No role "${wanted}". A role is one of: ${AGENT_ROLES.join(", ")}.`);
         return (await service.importAgent(body.value.path, role, importOptionsOf(body.value))).match(
-            (agent) => c.json(agent satisfies AgentDetail, 201),
+            (agent) => c.json(agent satisfies ImportAgentResponse, 201),
             (e) => customizationError(c, e),
         );
     });
@@ -184,6 +200,32 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         if (body.isErr()) return body.error;
         return (await service.cloneAgent(c.req.param("id"), body.value.newId, body.value.description)).match(
             (agent) => c.json(agent satisfies AgentDetail, 201),
+            (e) => customizationError(c, e),
+        );
+    });
+
+    routes.post("/catalog/agents/:id/export", async (c) => {
+        const body = await readBody(c, importBody);
+        if (body.isErr()) return body.error;
+        return (await service.exportAgent(c.req.param("id"), body.value.path, importOptionsOf(body.value))).match(
+            (exported) => c.json(exported satisfies ExportAgentResponse, 201),
+            (e) => customizationError(c, e),
+        );
+    });
+
+    routes.get("/catalog/agents/:id/file", async (c) =>
+        (await service.readAgentFile(c.req.param("id"))).match(
+            (file) => c.json(file satisfies AgentFileView),
+            (e) => customizationError(c, e),
+        ),
+    );
+
+    // The whole file of a custom agent. A new id makes the file, and a file that does not resolve stays a draft.
+    routes.put("/catalog/agents/:id/file", async (c) => {
+        const body = await readBody(c, putAgentFileBody);
+        if (body.isErr()) return body.error;
+        return (await service.writeAgentFile(c.req.param("id"), body.value.content)).match(
+            (agent) => c.json(agent satisfies AgentDetail),
             (e) => customizationError(c, e),
         );
     });
@@ -257,6 +299,37 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         ),
     );
 
+    routes.delete("/skills/:name", async (c) =>
+        (await service.removeSkill(c.req.param("name"))).match(
+            () => c.json({ deleted: true } satisfies DeleteSkillResponse),
+            (e) => customizationError(c, e),
+        ),
+    );
+
+    routes.get("/skills/:name/file", async (c) =>
+        (await service.readSkillFile(c.req.param("name"), c.req.query("path") ?? "")).match(
+            (file) => c.json(file satisfies SkillFileView),
+            (e) => customizationError(c, e),
+        ),
+    );
+
+    // A `SKILL.md` for a name that no skill has makes a new custom skill.
+    routes.put("/skills/:name/file", async (c) => {
+        const body = await readBody(c, putSkillFileBody);
+        if (body.isErr()) return body.error;
+        return (await service.writeSkillFile(c.req.param("name"), body.value.path, body.value.content)).match(
+            (file) => c.json(file satisfies SkillFileView),
+            (e) => customizationError(c, e),
+        );
+    });
+
+    routes.delete("/skills/:name/file", async (c) =>
+        (await service.removeSkillFile(c.req.param("name"), c.req.query("path") ?? "")).match(
+            () => c.json({ deleted: true } satisfies DeleteSkillFileResponse),
+            (e) => customizationError(c, e),
+        ),
+    );
+
     routes.post("/skills/:name/export", async (c) => {
         const body = await readBody(c, importBody);
         if (body.isErr()) return body.error;
@@ -270,7 +343,7 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         const body = await readBody(c, importBody);
         if (body.isErr()) return body.error;
         return (await service.importSkill(body.value.path, importOptionsOf(body.value))).match(
-            (skill) => c.json(skill satisfies SkillView, 201),
+            (skill) => c.json(skill satisfies ImportSkillResponse, 201),
             (e) => customizationError(c, e),
         );
     });

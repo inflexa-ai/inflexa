@@ -69,7 +69,7 @@ Each new command MUST declare an agent policy by its risk, not by read or write.
 
 ### Requirement: An import from the chat asks for a folder of the host
 
-`skill import` and `agent import` MUST run from the chat with no approval prompt only while each path is relative. An absolute path, a home path, or a path with `..` MUST ask for the exact command. `--replace` MUST ask.
+`skill import` and `agent import` MUST run from the chat with no approval prompt only while each path is relative. An absolute path, a home path, or a path with `..` MUST ask for the exact command. `--replace` MUST NOT ask, because the CLI keeps the replaced version.
 
 #### Scenario: The chat imports a folder of a different app
 
@@ -123,3 +123,13 @@ Each new command MUST declare an agent policy by its risk, not by read or write.
 - **GIVEN** a registry server with an npm package and a secret variable
 - **WHEN** the user installs it with the value of the variable
 - **THEN** the entry runs `npx -y <package>@<version>`, and the variable references a stored credential
+
+### Requirement: The terminal shows the customizations, and edits only the connectors and the credentials
+
+The palette of the terminal UI MUST have a Customize group with the commands Agents, Skills, MCP servers, Connectors and Credentials. Agents, Skills and MCP servers MUST be read-only. The lists MUST show the custom agents and the custom skills first, the newest first. A skill MUST open the list of its files, and a file MUST open its text. Connectors MUST edit the endpoint and the credential of each slot. Credentials MUST add, change and remove a credential that reads an environment variable or a command. The terminal MUST NOT take a stored value, because its dialog does not hide the text.
+
+#### Scenario: The user sees a skill that the chat added
+
+- **GIVEN** a chat that imported `lipidomics-lcms`
+- **WHEN** the user opens Customize, Skills
+- **THEN** `lipidomics-lcms` is the first row, and its files open as text

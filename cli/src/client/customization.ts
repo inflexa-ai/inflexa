@@ -9,6 +9,12 @@ import type {
     ImportSkillRequest,
     ExportSkillRequest,
     ExportSkillResponse,
+    ExportAgentRequest,
+    ExportAgentResponse,
+    ImportAgentResponse,
+    ImportSkillResponse,
+    DeleteSkillResponse,
+    SkillFileView,
     AgentList,
     ConnectorList,
     ConnectorView,
@@ -31,7 +37,6 @@ import type {
     PatchConnectorRequest,
     PutCredentialRequest,
     SkillList,
-    SkillView,
 } from "../api/customization.ts";
 import { DEFAULT_CLIENT_OPTS, request, type ClientError, type ClientOpts } from "./api.ts";
 
@@ -62,8 +67,13 @@ export function fetchFoundAgents(opts: ClientOpts = DEFAULT_CLIENT_OPTS): Result
 }
 
 /** `POST /api/v1/catalog/agents/import`: convert the agent file of another harness. Absent `role`: `executor`. */
-export function importAgent(body: ImportAgentRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentDetail, ClientError> {
-    return request<AgentDetail>("POST", "/api/v1/catalog/agents/import", { body }, opts);
+export function importAgent(body: ImportAgentRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<ImportAgentResponse, ClientError> {
+    return request<ImportAgentResponse>("POST", "/api/v1/catalog/agents/import", { body }, opts);
+}
+
+/** `POST /api/v1/catalog/agents/:id/export`: copy the file of a custom agent. 403 `forbidden` for a built-in agent. */
+export function exportAgent(id: string, body: ExportAgentRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<ExportAgentResponse, ClientError> {
+    return request<ExportAgentResponse>("POST", `/api/v1/catalog/agents/${encodeURIComponent(id)}/export`, { body }, opts);
 }
 
 /** `PATCH /api/v1/catalog/agents/:id`: turn an agent on or off, or attach or detach a connector, an MCP server, or a skill. */
@@ -81,7 +91,6 @@ export function fetchSkills(opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync
     return request<SkillList>("GET", "/api/v1/skills", {}, opts);
 }
 
-/** `GET /api/v1/skills?dir=<dir>`: the skills in a directory that the user names. `dir` is absolute. */
 /** `GET /api/v1/skills/:name`: one skill with its text and the paths of its other files. */
 export function fetchSkill(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillDetail, ClientError> {
     return request<SkillDetail>("GET", `/api/v1/skills/${encodeURIComponent(name)}`, {}, opts);
@@ -92,6 +101,7 @@ export function fetchFoundSkills(opts: ClientOpts = DEFAULT_CLIENT_OPTS): Result
     return request<SkillList>("GET", "/api/v1/skills/found", {}, opts);
 }
 
+/** `GET /api/v1/skills?dir=<dir>`: the skills in a directory that the user names. `dir` is absolute. */
 export function findSkills(dir: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillList, ClientError> {
     return request<SkillList>("GET", `/api/v1/skills?dir=${encodeURIComponent(dir)}`, {}, opts);
 }
@@ -102,8 +112,18 @@ export function exportSkill(name: string, body: ExportSkillRequest, opts: Client
 }
 
 /** `POST /api/v1/skills/import`: copy one skill directory into the custom skills. */
-export function importSkill(body: ImportSkillRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillView, ClientError> {
-    return request<SkillView>("POST", "/api/v1/skills/import", { body }, opts);
+export function importSkill(body: ImportSkillRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<ImportSkillResponse, ClientError> {
+    return request<ImportSkillResponse>("POST", "/api/v1/skills/import", { body }, opts);
+}
+
+/** `GET /api/v1/skills/:name/file?path=<path>`: one text file of a skill, by its path inside the skill folder. */
+export function fetchSkillFile(name: string, path: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<SkillFileView, ClientError> {
+    return request<SkillFileView>("GET", `/api/v1/skills/${encodeURIComponent(name)}/file?path=${encodeURIComponent(path)}`, {}, opts);
+}
+
+/** `DELETE /api/v1/skills/:name`: delete a custom skill. 403 `forbidden` for a built-in skill. */
+export function deleteSkill(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<DeleteSkillResponse, ClientError> {
+    return request<DeleteSkillResponse>("DELETE", `/api/v1/skills/${encodeURIComponent(name)}`, {}, opts);
 }
 
 /** `GET /api/v1/connectors`: each connector with its settings and the state of each credential slot. */

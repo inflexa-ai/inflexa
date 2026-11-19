@@ -415,6 +415,8 @@ export const env = Object.freeze({
      * See src/lib/lock.ts.
      */
     locksDir: join(dataDir(), "inflexa", "locks"),
+    /** The last copy of each custom agent and skill that an import with `--replace` overwrote. An import of the copy restores it. */
+    replacedDir: join(dataDir(), "inflexa", "replaced"),
     /**
      * The record of the last shown update ask: when it showed, and the release it named. See
      * src/modules/update/notice.ts, which reads it to hold the ask to one time a day.
@@ -710,6 +712,12 @@ export const envDoc: Readonly<
         baseVar: dataVar,
     },
     locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
+    replacedDir: {
+        kind: "path",
+        label: "replaced",
+        description: "the last copy of each custom agent and skill that an import with --replace overwrote",
+        baseVar: dataVar,
+    },
     updateStatePath: {
         kind: "path",
         label: "update state",

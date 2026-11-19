@@ -18,6 +18,7 @@ import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme, theme, type Notice } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
 import { FailedFlightDialog } from "./components/dialog/failed_flight_dialog.tsx";
+import { customizeCommands } from "./customize_commands.tsx";
 import { storeFlightLines } from "./hooks/sandbox_gate.tsx";
 
 import { agentModels, bootState, refreshAgentModels, type BootState } from "./hooks/boot.ts";
@@ -89,7 +90,7 @@ import type { Analysis } from "../types/analysis.ts";
 // co-located here as single-caller helpers; the reusable dialog shells live in `components/`.
 
 /** The categories a command groups under in the palette. A domain type, never a raw string. */
-export type CommandCategory = "Analysis" | "Session" | "Project" | "View" | "Provider" | "Sandbox" | "App";
+export type CommandCategory = "Analysis" | "Session" | "Project" | "View" | "Provider" | "Customize" | "Sandbox" | "App";
 
 /** A stable, dotted command id (e.g. `analysis.new`), decoupled from the display `title`. */
 export type CommandId = string;
@@ -3229,6 +3230,7 @@ export const commands: Command[] = [
         category: "Provider",
         run: (ctx) => openModelPicker(ctx, "utility"),
     },
+    ...customizeCommands,
     {
         id: "app.quit",
         title: "Quit",

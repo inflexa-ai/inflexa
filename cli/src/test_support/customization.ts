@@ -106,6 +106,7 @@ export function customizationFixture(): CustomizationFixture {
         opts: {
             agentsDir,
             userSkillsDir,
+            replacedDir: join(root, "replaced"),
             builtinSkillsDir: () => builtinSkillsDir,
             readConfig: () => fixture.config,
             writeConfig: (config) => {

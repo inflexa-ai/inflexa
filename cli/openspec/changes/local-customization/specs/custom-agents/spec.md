@@ -160,3 +160,21 @@ An imported agent MUST get the role that the user chooses with `--role`. With no
 - **WHEN** the chat clones `inflexa` with `--use`, reads the prompt with `agent show`, writes it with one more rule to `prompts/sketch.md`, and runs `agent set inflexa-sketch --prompt-file prompts/sketch.md`
 - **THEN** each call runs with no approval prompt, and the next message uses the new prompt
 
+
+### Requirement: Export copies the file of a custom agent
+
+`inflexa agent export <id> <file>` and `POST /api/v1/catalog/agents/<id>/export` MUST copy the file of a custom agent or a draft to `<file>`. With `--analysis`, a relative path MUST write inside the workspace of that analysis. An existing file MUST be refused, and `--replace` MUST overwrite it. A built-in agent MUST be refused, because it has no file.
+
+#### Scenario: The chat edits the frontmatter and the prompt of a custom agent
+
+- **WHEN** the chat exports `lipid-analyst` to `agents/lipid-analyst.md`, changes the copy, and imports it with `--replace`
+- **THEN** the custom agent holds the change, and no call asks for approval
+
+### Requirement: A client reads and writes the whole file of a custom agent
+
+`GET /api/v1/catalog/agents/<id>/file` MUST give the text of the file of a custom agent or a draft, as it is on disk. `PUT /api/v1/catalog/agents/<id>/file` MUST write the whole file, and MUST make the file when no agent has the id. A file that does not resolve MUST stay as a draft with its gaps. A built-in id MUST be refused, and a file larger than 256 KiB MUST be refused.
+
+#### Scenario: The GUI saves a file with a parse error
+
+- **WHEN** a client writes text with no frontmatter to `plate-runner`
+- **THEN** the response is the draft `plate-runner` with the gap `no_frontmatter`, and a later read gives the same text

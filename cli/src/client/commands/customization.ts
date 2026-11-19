@@ -34,6 +34,8 @@ import {
     fetchSkills,
     findSkills,
     importAgent,
+    exportAgent,
+    deleteSkill,
     fetchFoundAgents,
     importMcpServer,
     installMcpServer,
@@ -212,12 +214,26 @@ function importBodyOf(path: string, flags: ImportFlags): { path: string; analysi
     return body;
 }
 
+/** The line for the copy that a replace kept. An import of that path with `--replace` restores it. */
+function printPrevious(previous: string | undefined): void {
+    if (previous !== undefined) console.log(`The replaced version is in ${previous}. An import of that path with \`--replace\` restores it.`);
+}
+
+/** `inflexa agent export <id> <file>`: copy the file of a custom agent, for example into a workspace to edit it and import it again. */
+export async function agentExport(id: string, file: string, flags: ImportFlags, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    const exported = (await exportAgent(id, importBodyOf(file, flags), opts)).match(identity, failOn);
+    console.log(
+        `Copied the agent "${id}" to ${flags.analysis === undefined ? exported.path : file}. \`inflexa agent import\` with \`--replace\` takes the edited copy back.`,
+    );
+}
+
 /** `inflexa agent import <file...>`: convert agent files of other harnesses. A file with gaps is kept as a draft. */
 export async function agentImport(files: readonly string[], flags: ImportFlags & { role?: string }, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
     for (const file of files) {
         const body = importBodyOf(file, flags);
         const agent = (await importAgent(flags.role === undefined ? body : { ...body, role: flags.role }, opts)).match(identity, failOn);
         console.log(`Imported "${agent.id}" as a ${agent.role} agent to ${agent.path ?? agent.id}.`);
+        printPrevious(agent.previous);
         if (agent.draft) {
             console.log("The agent is a draft until you correct these gaps in the file:");
             printGaps(agent, "  ");
@@ -343,6 +359,15 @@ export async function skillImport(dirs: readonly string[], flags: ImportFlags, o
     for (const dir of dirs) {
         const skill = (await importSkill(importBodyOf(dir, flags), opts)).match(identity, failOn);
         console.log(`Imported the skill "${skill.name}" to ${skill.directory}.`);
+        printPrevious(skill.previous);
+    }
+}
+
+/** `inflexa skill rm <name...>`: delete custom skills. */
+export async function skillRm(names: readonly string[], opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    for (const name of names) {
+        (await deleteSkill(name, opts)).match(identity, failOn);
+        console.log(`Removed the skill "${name}".`);
     }
 }
 
