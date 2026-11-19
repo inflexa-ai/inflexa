@@ -209,8 +209,8 @@ if __name__ == "__main__":
 
 | Kind | Checks |
 |---|---|
-| errors | a project file is missing. A datasource has no group in `datafile.h5`, or a column has no data. A region image is not under `spatial/`, or the shapes file of a region is missing. `state.json` names a view that `views.json` does not have. The first view is not "Tissue" or "Cells", or a project with regions does not open on "Tissue". A chart names a column or a region that the project does not have. The zip is missing, has an entry with `..` or an absolute path, does not hold the project files at its root, or is above the import limit of MDV |
-| warnings | columns that MDV shows by their field, with no label. `README.md` is missing in the project |
+| errors | a project file is missing. A datasource has no group in `datafile.h5`, or a column has no data. A region image is not under `spatial/`, or the shapes file of a region is missing. `state.json` names a view that `views.json` does not have. The first view is not "Tissue" or "Cells", or a project with regions does not open on "Tissue". A chart names a column or a region that the project does not have. The zip is missing, has an entry with `..` or an absolute path, or does not hold the project files at its root |
+| warnings | columns that MDV shows by their field, with no label. `README.md` is missing in the project. The zip is above the import limit of MDV: the README must give the projects directory of the server (`mdv-asset-contract.md`) |
 
 ```
 python check_mdv_project.py <name> > <name>.mdv.check.json
@@ -337,7 +337,8 @@ def main(project_dir):
         if not set(REQUIRED) <= set(names):
             err("the zip does not hold the project files at its root")
         if summary["zip_mb"] > IMPORT_LIMIT_MB:
-            err(f"the zip is {summary['zip_mb']:.0f} MB: the import of MDV refuses a zip above {IMPORT_LIMIT_MB:.0f} MB")
+            warn(f"the zip is {summary['zip_mb']:.0f} MB: the import of MDV refuses a zip above {IMPORT_LIMIT_MB:.0f} MB. "
+                 "The README must give the projects directory of the server as the way in")
     return report(errors, warnings, summary)
 
 

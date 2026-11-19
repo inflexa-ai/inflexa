@@ -22,7 +22,7 @@ and its import name is `mdvtools`.
 | File | What it is |
 |---|---|
 | `<name>/` | the project folder: `datafile.h5`, `datasources.json`, `views.json`, `state.json`, `README.md`. A spatial project also has `spatial/` (the SpatialData store with the images) and `images/` (the shapes of each region) |
-| `<name>.mdv.zip` | the project files at the root of the zip. The user imports it in MDV with "Import an existing project" |
+| `<name>.mdv.zip` | the project files at the root of the zip, for an import or for the projects directory of the server (`mdv-asset-contract.md`) |
 | `README.md` | the README of the project, also next to the zip |
 | `<name>.mdv.h5ad` | the asset that the table validator reads |
 | `<name>.mdv.validation.json` | the report of the table validator, with zero errors |
@@ -537,9 +537,10 @@ Small tables that answer "can I trust this?" go into the project as more datasou
 Give the README text to `add_views`, and write the same text next to the zip. Use these sections:
 
 1. **Contents** — the views, each table of the project, its rows, and what one row is.
-2. **Opening in MDV** — import the zip with "Import an existing project". The import of MDV 1.3.0
-   accepts a zip of up to 20,000 MiB. Copy a larger project folder into the MDV container, as the
-   MDV documentation tells.
+2. **Opening in MDV** — give both ways of `mdv-asset-contract.md`, "The way into MDV". "Import an
+   existing project" shows only in a development build of MDV 1.3.0, and it accepts a zip of up to
+   20,000 MiB. On a production server, the operator unzips the zip into a new folder of the
+   projects directory, then uses "Rescan Projects".
 3. **Processing** — the steps with their parameters, thresholds, seeds, and package versions. The
    QC counts: the cells in, the cells kept, and the reasons.
 4. **Column glossary** — each column of each table, with units.
