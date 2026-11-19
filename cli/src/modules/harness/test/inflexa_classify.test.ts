@@ -211,6 +211,28 @@ describe("classifyInflexaArgv — policy + setOptions", () => {
         expect(result.setOptions).toEqual(["project"]);
     });
 
+    // `store add` declares its own `--version <version>`, and the root declares a boolean `--version` that
+    // prints the CLI version. A pinned add is the gated action, never introspection.
+    test("`store add <pkg> --version <v>` is the approval-gated store add action, not introspection", async () => {
+        const argv = ["store", "add", "polars", "--version", "1.2.0"];
+        const result = await classifyInflexaArgv(argv);
+        expect(result).toEqual({
+            kind: "action",
+            argv,
+            path: ["inflexa", "store", "add"],
+            grantKey: "inflexa store add",
+            policy: { kind: "approval" },
+            setOptions: ["version"],
+        });
+    });
+
+    test("`store add <pkg> --version` with no value is malformed, not introspection", async () => {
+        const result = await classifyInflexaArgv(["store", "add", "polars", "--version"]);
+        expect(result.kind).toBe("malformed");
+        if (result.kind !== "malformed") throw new Error("expected malformed");
+        expect(result.message).toContain("option '--version <version>' argument missing");
+    });
+
     test("an inherited root-only option counts as set on the leaf (`ls --analysis`)", async () => {
         // `--analysis` is declared ONLY on the root, never on `ls`, so it is absent from `leaf.options`
         // entirely and the root consumes it. The chain walk reaches the root's declaration; the flag counts
