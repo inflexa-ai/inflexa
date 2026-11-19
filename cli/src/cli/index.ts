@@ -1,4 +1,4 @@
-import { Command, Option } from "commander";
+import { Command, Option, type ParseOptionsResult } from "commander";
 
 import pkg from "../../package.json";
 import { CATALOG_TRANSFER_FLAG, CLIENT_START_FLAG, IMAGE_TRANSFER_FLAG, SERVE_DETACHED_CHILD_FLAG, STORE_FLUSH_FLAG } from "../lib/child_flags.ts";
@@ -58,6 +58,79 @@ function renderEnvHelp(): string {
 }
 
 /**
+ * The root of the registry. With positional options off, the root parse takes each option that the root
+ * declares at any place on the line, before a subcommand parses. The boolean `--version` of `.version()`
+ * prints the CLI version and exits there, so a subcommand that declares its own `--version <value>`
+ * (`store add`) never runs. `enablePositionalOptions()` would end the capture, but it also refuses a root
+ * flag after a subcommand that does not declare it (see `hydrateFromAncestors` in `agent_policy.ts`).
+ *
+ * The override gives that flag to its command before the root parse: after the word of a command that
+ * declares a `--version` with a required value, each `--version <v>` becomes `--version=<v>`. The root
+ * takes the `=` form only for an option with a value, so Commander passes it to the subcommand. Each
+ * other `--version`, and `-V`, stays with the root. Subcommands are plain `Command`s (`createCommand`),
+ * so only the root parse joins.
+ */
+class RootCommand extends Command {
+    override parseOptions(argv: string[]): ParseOptionsResult {
+        return super.parseOptions(joinOwnVersionValues(this, argv));
+    }
+}
+
+/**
+ * `argv` with each `--version <v>` of a command that declares its own `--version <value>` joined as
+ * `--version=<v>`. The walk descends the command words as Commander dispatches them, and it skips the value
+ * of each option of the chain, so a value never counts as a command word or as the flag. Below the root, the
+ * outermost command of the chain that declares the flag owns it, because each level parses greedily, the
+ * outermost first. A trailing `--version` with no value fails as Commander fails a missing option argument.
+ */
+function joinOwnVersionValues(root: Command, argv: readonly string[]): string[] {
+    const joined: string[] = [];
+    const chain: Command[] = [root];
+    let command: Command = root;
+    let operandSeen = false;
+    for (let i = 0; i < argv.length; i++) {
+        const arg = present(argv[i], "an argument of the command line");
+        if (arg === "--") {
+            joined.push(...argv.slice(i));
+            break;
+        }
+        const next = argv[i + 1];
+        if (arg === "--version") {
+            const owned = chain
+                .slice(1)
+                .flatMap((owner) => owner.options.filter((option) => option.long === "--version" && option.required).map((option) => ({ owner, option })))[0];
+            if (owned !== undefined) {
+                if (next === undefined)
+                    return owned.owner.error(`error: option '${owned.option.flags}' argument missing`, { code: "commander.optionMissingArgument" });
+                joined.push(`--version=${next}`);
+                i++;
+                continue;
+            }
+        }
+        joined.push(arg);
+        if (arg.length > 1 && arg.startsWith("-")) {
+            const option = chain.flatMap((member) => member.options).find((candidate) => candidate.long === arg || candidate.short === arg);
+            const nextIsOption = next !== undefined && next.length > 1 && next.startsWith("-");
+            if (next !== undefined && option !== undefined && (option.required || (option.optional && !nextIsOption))) {
+                joined.push(next);
+                i++;
+            }
+            continue;
+        }
+        if (!operandSeen) {
+            const sub = command.commands.find((candidate) => candidate.name() === arg || candidate.aliases().includes(arg));
+            if (sub !== undefined) {
+                command = sub;
+                chain.push(sub);
+                continue;
+            }
+        }
+        operandSeen = true;
+    }
+    return joined;
+}
+
+/**
  * Builds a fresh commander root — name/description/version, `exitOverride`, and
  * every command with its lazy-imported action — and returns it. A factory rather
  * than a module singleton so the whole tree can be constructed more than once: a
@@ -68,7 +141,7 @@ function renderEnvHelp(): string {
  * was built.
  */
 export function buildProgram(): Command {
-    const cli = new Command();
+    const cli = new RootCommand();
 
     cli.name(pkg.name).description("Launch the interactive TUI (default), or run one of the commands below.").version(pkg.version);
 

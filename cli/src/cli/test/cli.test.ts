@@ -135,6 +135,26 @@ describe("inflexa help & usage (e2e)", () => {
         expect(printed !== "" && versionPrefix(printed) === printed).toBe(false);
     });
 
+    // `store add` declares its own `--version <version>`. A version in the argument that disagrees with the
+    // flag is the cheap proof that the value arrived: the refusal names both, before any store or network work.
+    test("`store add --version <v>` reaches the store add handler, not the root --version", () => {
+        const result = runCli(["store", "add", "polars==1.2.0", "--version", "1.3.0"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("`--version 1.3.0` name two versions");
+    });
+
+    test("`store add --version` with no value fails with the missing-argument error", () => {
+        const result = runCli(["store", "add", "polars", "--version"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("option '--version <version>' argument missing");
+    });
+
+    test("`--version` after a command that declares none still prints the CLI version", () => {
+        const result = runCli(["store", "--version"]);
+        expect(result.exitCode).toBe(0);
+        expect(versionPrefix(result.stdout.trim())).not.toBe("");
+    });
+
     // Regression for the reverted `enablePositionalOptions()`: it made a root-style flag
     // placed AFTER a subcommand (`inflexa project ls --project x`) hard-fail "unknown option",
     // breaking existing invocations. Without it, the shape parses again and runs the command.
