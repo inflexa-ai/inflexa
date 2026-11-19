@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { AgentDetail, AgentList, AgentView, ConnectorView, SkillList, SkillView } from "../../api/customization.ts";
 import { commands } from "../commands.tsx";
-import { agentDetailLines, agentItems, connectorMenuItems, credentialItems, mcpLines, skillItems } from "../customize_commands.tsx";
+import { agentDetailLines, agentItems, connectorMenuItems, credentialItems, mcpLines, skillItems, usedByText } from "../customize_commands.tsx";
 
 function agent(id: string, overrides: Partial<AgentView> = {}): AgentView {
     return {
@@ -34,22 +34,41 @@ describe("the Customize group", () => {
 });
 
 describe("agentItems", () => {
-    test("the custom agents come first, the newest first, then the built-in agents, and a draft says so", () => {
-        const list: AgentList = {
-            agents: [
-                agent("analyst", { kind: "builtin" }),
-                agent("old", { modifiedAt: "2026-11-01T10:00:00.000Z" }),
-                agent("new", { modifiedAt: "2026-11-19T10:00:00.000Z" }),
-                agent("broken", { draft: true }),
-            ],
-            roles: [],
-        };
+    const list: AgentList = {
+        agents: [
+            agent("inflexa", { kind: "builtin", role: "chat" }),
+            agent("inflexa-sketch", { role: "chat", active: false, modifiedAt: "2026-11-19T10:00:00.000Z" }),
+            agent("analyst", { kind: "builtin" }),
+            agent("drug-analyst", { kind: "builtin", enabled: false, active: false }),
+            agent("old", { modifiedAt: "2026-11-01T10:00:00.000Z", active: false, enabled: false }),
+            agent("new", { modifiedAt: "2026-11-19T10:00:00.000Z", attachments: { connectors: ["pubmed"], mcp: [], skills: ["a", "b"] } }),
+            agent("broken", { draft: true, active: false, gaps: [{ reason: "invalid_yaml", message: "The frontmatter does not parse." }] }),
+        ],
+        roles: [],
+    };
 
+    test("the agents sit under one header for each role, the active agents first, then the custom agents, the newest first", () => {
         const items = agentItems(list);
 
-        expect(items.map((item) => item.value)).toEqual(["new", "old", "broken", "analyst"]);
-        expect(items.find((item) => item.value === "broken")?.description).toContain("draft");
-        expect(items.find((item) => item.value === "analyst")?.description).toStartWith("built-in");
+        expect(items.map((item) => `${item.categoryLabel ?? ""}/${item.value}`)).toEqual([
+            "Chat/inflexa",
+            "Chat/inflexa-sketch",
+            "Executors/new",
+            "Executors/analyst",
+            "Executors/old",
+            "Executors/broken",
+            "Executors/drug-analyst",
+        ]);
+    });
+
+    test("a mark and a hint give the state of each agent, and a draft is a warning", () => {
+        const byId = new Map(agentItems(list).map((item) => [item.value, item]));
+
+        expect(byId.get("inflexa")).toMatchObject({ prefix: "●", hint: "active" });
+        expect(byId.get("inflexa-sketch")).toMatchObject({ prefix: "○", hint: "not chosen · custom" });
+        expect(byId.get("drug-analyst")).toMatchObject({ prefix: "○", hint: "off" });
+        expect(byId.get("broken")).toMatchObject({ prefix: "!", hint: "draft · custom · 1 gap", tone: "warning" });
+        expect(byId.get("new")?.description).toContain("2 skills, 1 connector, 0 MCP servers");
     });
 });
 
@@ -73,20 +92,44 @@ describe("agentDetailLines", () => {
 });
 
 describe("skillItems", () => {
-    test("the custom skills come first, the newest first, then the built-in skills, then each folder that does not load", () => {
-        const list: SkillList = {
-            skills: [
-                skill("single-cell", { kind: "builtin", title: "Single-Cell Analysis" }),
-                skill("old", { modifiedAt: "2026-11-01T10:00:00.000Z" }),
-                skill("new", { modifiedAt: "2026-11-19T10:00:00.000Z" }),
-            ],
-            problems: [{ directory: "/skills/broken", kind: "custom", message: "The SKILL.md does not open with YAML frontmatter." }],
-        };
+    const list: SkillList = {
+        skills: [
+            skill("single-cell", { kind: "builtin", title: "Single-Cell Analysis" }),
+            skill("old", { modifiedAt: "2026-11-01T10:00:00.000Z" }),
+            skill("new", { modifiedAt: "2026-11-19T10:00:00.000Z" }),
+        ],
+        problems: [{ directory: "/skills/broken", kind: "custom", message: "The SKILL.md does not open with YAML frontmatter." }],
+    };
+    const agents: AgentList = {
+        agents: [
+            agent("inflexa", { kind: "builtin", role: "chat", attachments: { connectors: [], mcp: [], skills: ["new", "single-cell"] } }),
+            agent("analyst", { kind: "builtin", attachments: { connectors: [], mcp: [], skills: ["single-cell"] } }),
+            agent("drug-analyst", { kind: "builtin", enabled: false, active: false, attachments: { connectors: [], mcp: [], skills: ["old"] } }),
+        ],
+        roles: [],
+    };
 
-        const items = skillItems(list);
+    test("the skills sit under Custom, Built-in and Not loaded, the newest custom skill first", () => {
+        const items = skillItems(list, agents);
 
-        expect(items.map((item) => item.title)).toEqual(["new", "old", "single-cell", "/skills/broken"]);
+        expect(items.map((item) => `${item.categoryLabel ?? ""}/${item.title}`)).toEqual(["Custom/new", "Custom/old", "Built-in/single-cell", "Not loaded//skills/broken"]);
         expect(items[3]?.value).toEqual({ kind: "problem", directory: "/skills/broken", message: "The SKILL.md does not open with YAML frontmatter." });
+    });
+
+    test("a mark and a hint name the active agents that use each skill, and an agent that is off uses none", () => {
+        const byTitle = new Map(skillItems(list, agents).map((item) => [item.title, item]));
+
+        expect(byTitle.get("new")).toMatchObject({ prefix: "●", hint: "used by inflexa" });
+        expect(byTitle.get("single-cell")).toMatchObject({ prefix: "●", hint: "used by inflexa, analyst" });
+        expect(byTitle.get("old")).toMatchObject({ prefix: "○", hint: "not attached" });
+    });
+
+    test("with no agents, the rows give no mark and no use", () => {
+        expect(skillItems(list, undefined)[0]).not.toHaveProperty("hint");
+    });
+
+    test("the hint counts the agents past two", () => {
+        expect(usedByText(["a", "b", "c", "d"])).toBe("used by a, b +2");
     });
 });
 

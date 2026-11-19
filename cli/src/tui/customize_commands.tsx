@@ -1,6 +1,6 @@
 import type { JSX } from "solid-js";
 
-import type { AgentDetail, AgentList, ConnectorView, CredentialView, McpServerView, SkillList } from "../api/customization.ts";
+import type { AgentDetail, AgentList, AgentView, ConnectorView, CredentialView, McpServerView, SkillList } from "../api/customization.ts";
 import { describeClientError, DEFAULT_CLIENT_OPTS, type ClientError, type ClientOpts } from "../client/api.ts";
 import {
     deleteCredential,
@@ -46,21 +46,65 @@ function shortTime(iso: string | undefined): string | undefined {
     return iso === undefined ? undefined : new Date(iso).toLocaleString();
 }
 
-function stateOf(agent: { readonly draft: boolean; readonly enabled: boolean; readonly active: boolean }): string {
+/** The header of each role in the list of the agents, in the order of the list. */
+const ROLE_GROUPS: readonly { readonly role: string; readonly label: string }[] = [
+    { role: "chat", label: "Chat" },
+    { role: "planner", label: "Planner" },
+    { role: "executor", label: "Executors" },
+    { role: "profiler", label: "Profiler" },
+    { role: "synthesizer", label: "Synthesizer" },
+    { role: "analogy", label: "Analogy" },
+    { role: "reporter", label: "Reporter" },
+];
+
+type AgentState = { readonly draft: boolean; readonly enabled: boolean; readonly active: boolean };
+
+/** The state word of an agent. An agent that is on but not chosen fills no role: a role takes one agent. */
+function stateOf(agent: AgentState): string {
     if (agent.draft) return "draft";
     if (!agent.enabled) return "off";
-    return agent.active ? "active" : "on";
+    return agent.active ? "active" : "not chosen";
 }
 
-/** The agents of the list: the custom agents and the drafts first, the newest first, then the built-in agents. */
+/** The mark before the name: the agent works now, does not work now, or does not resolve. */
+function agentMark(agent: AgentState): string {
+    if (agent.draft) return "!";
+    return agent.active ? GLYPHS.circle : GLYPHS.circleHollow;
+}
+
+function countText(count: number, noun: string): string {
+    return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * The agents of the list, under one header for each role. In a role, the active agents come first, then the custom
+ * agents, the newest first, then the built-in agents. A mark and a hint give the state of each row.
+ */
 export function agentItems(list: AgentList): SelectItem<string>[] {
-    const custom = list.agents.filter((agent) => agent.kind === "custom").sort(byNewest);
-    const builtin = list.agents.filter((agent) => agent.kind === "builtin");
-    return [...custom, ...builtin].map((agent) => {
-        const changed = shortTime(agent.modifiedAt);
-        const parts = [agent.kind === "builtin" ? "built-in" : "custom", agent.role, stateOf(agent), ...(changed === undefined ? [] : [`changed ${changed}`])];
-        return { value: agent.id, title: agent.id, description: parts.join(` ${GLYPHS.middot} `) };
-    });
+    const rank = (agent: AgentView): number => (agent.active ? 0 : agent.kind === "custom" ? 1 : 2);
+    const known = new Set(ROLE_GROUPS.map((group) => group.role));
+    const groups = [...ROLE_GROUPS, ...[...new Set(list.agents.map((agent) => agent.role))].filter((role) => !known.has(role)).map((role) => ({ role, label: role }))];
+    return groups.flatMap(({ role, label }) =>
+        list.agents
+            .filter((agent) => agent.role === role)
+            .sort((a, b) => rank(a) - rank(b) || byNewest(a, b))
+            .map((agent): SelectItem<string> => {
+                const hint = [
+                    stateOf(agent),
+                    ...(agent.kind === "custom" ? ["custom"] : []),
+                    ...(agent.gaps.length > 0 ? [countText(agent.gaps.length, "gap")] : []),
+                ].join(` ${GLYPHS.middot} `);
+                const changed = shortTime(agent.modifiedAt);
+                const { connectors, mcp, skills } = agent.attachments;
+                const description = [
+                    agent.description,
+                    `${countText(skills.length, "skill")}, ${countText(connectors.length, "connector")}, ${countText(mcp.length, "MCP server")}`,
+                    ...(changed === undefined ? [] : [`changed ${changed}`]),
+                ].join(` ${GLYPHS.middot} `);
+                const item: SelectItem<string> = { value: agent.id, title: agent.id, prefix: agentMark(agent), hint, description, category: role, categoryLabel: label };
+                return agent.draft ? { ...item, tone: "warning" } : item;
+            }),
+    );
 }
 
 function listLine(label: string, items: readonly string[]): string {
@@ -87,20 +131,59 @@ export function agentDetailLines(agent: AgentDetail): string[] {
 /** A skill row, or a custom skill folder that the store leaves out, with its problem. */
 export type SkillChoice = { readonly kind: "skill"; readonly name: string } | { readonly kind: "problem"; readonly directory: string; readonly message: string };
 
-/** The skills of the list: the custom skills first, the newest first, then the built-in skills, then each problem. */
-export function skillItems(list: SkillList): SelectItem<SkillChoice>[] {
+/** The active agents that attach each skill, by skill name. An agent that is off or not chosen uses no skill. */
+export function skillUsers(agents: AgentList): ReadonlyMap<string, readonly string[]> {
+    const users = new Map<string, string[]>();
+    for (const agent of agents.agents) {
+        if (!agent.active) continue;
+        for (const skill of agent.attachments.skills) users.set(skill, [...(users.get(skill) ?? []), agent.id]);
+    }
+    return users;
+}
+
+/** The most agent names that a hint gives before it counts the rest. */
+const USED_BY_NAMES = 2;
+
+/** The agents that use a skill, for a hint, or `not attached`. */
+export function usedByText(users: readonly string[] | undefined): string {
+    if (users === undefined || users.length === 0) return "not attached";
+    const rest = users.length - USED_BY_NAMES;
+    return `used by ${users.slice(0, USED_BY_NAMES).join(", ")}${rest > 0 ? ` +${String(rest)}` : ""}`;
+}
+
+/**
+ * The skills of the list, under the headers Custom, Built-in and Not loaded. The custom skills come newest first. With
+ * the agents, a mark and a hint say which active agents use each skill.
+ */
+export function skillItems(list: SkillList, agents: AgentList | undefined): SelectItem<SkillChoice>[] {
+    const users = agents === undefined ? undefined : skillUsers(agents);
     const custom = list.skills.filter((skill) => skill.kind === "custom").sort(byNewest);
     const builtin = list.skills.filter((skill) => skill.kind !== "custom");
     const skills = [...custom, ...builtin].map((skill): SelectItem<SkillChoice> => {
-        const changed = skill.kind === "custom" ? shortTime(skill.modifiedAt) : undefined;
-        const parts = [skill.kind === "custom" ? "custom" : "built-in", ...(skill.title === undefined ? [] : [skill.title]), ...(changed === undefined ? [] : [`changed ${changed}`])];
-        return { value: { kind: "skill", name: skill.name }, title: skill.name, description: parts.join(` ${GLYPHS.middot} `) };
+        const isCustom = skill.kind === "custom";
+        const changed = isCustom ? shortTime(skill.modifiedAt) : undefined;
+        const description = [skill.title ?? skill.description, ...(changed === undefined ? [] : [`changed ${changed}`])].join(` ${GLYPHS.middot} `);
+        const item: SelectItem<SkillChoice> = {
+            value: { kind: "skill", name: skill.name },
+            title: skill.name,
+            description,
+            category: isCustom ? "custom" : "builtin",
+            categoryLabel: isCustom ? "Custom" : "Built-in",
+        };
+        if (users === undefined) return item;
+        const used = users.get(skill.name);
+        return { ...item, prefix: used === undefined ? GLYPHS.circleHollow : GLYPHS.circle, hint: usedByText(used) };
     });
     const problems = list.problems.map(
         (problem): SelectItem<SkillChoice> => ({
             value: { kind: "problem", directory: problem.directory, message: problem.message },
             title: problem.directory,
-            description: `not loaded ${GLYPHS.middot} ${problem.message}`,
+            description: problem.message,
+            category: "problem",
+            categoryLabel: "Not loaded",
+            prefix: users === undefined ? undefined : "!",
+            hint: "not loaded",
+            tone: "warning",
         }),
     );
     return [...skills, ...problems];
@@ -201,7 +284,14 @@ export async function openAgents(ws: Workspace, opts: ClientOpts = DEFAULT_CLIEN
 
 /** Open the list of the skills. A skill opens the list of its files, and a file opens its text. */
 export async function openSkills(ws: Workspace, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
+    // The skills stay readable when the agents do not load: the rows then give no mark and no hint.
+    const agentsPending = fetchAgents(opts).match(
+        (value): AgentList | undefined => value,
+        () => undefined,
+    );
     const list = await fetchSkills(opts);
+    const agentList = await agentsPending;
+    const users = agentList === undefined ? undefined : skillUsers(agentList);
     if (list.isErr()) {
         notifyError(list.error);
         return;
@@ -210,7 +300,7 @@ export async function openSkills(ws: Workspace, opts: ClientOpts = DEFAULT_CLIEN
         <SelectDialog
             title="Skills"
             placeholder={`Search skills${GLYPHS.ellipsis}`}
-            items={skillItems(list.value)}
+            items={skillItems(list.value, agentList)}
             emptyText="No skills"
             onCancel={() => ws.closeDialog()}
             onSelect={(choice: SkillChoice) => {
@@ -218,13 +308,13 @@ export async function openSkills(ws: Workspace, opts: ClientOpts = DEFAULT_CLIEN
                     ws.openDialog(() => <ResultsDialog title={choice.directory} lines={[choice.message]} emptyText="" onClose={() => ws.closeDialog()} />);
                     return;
                 }
-                void openSkillFiles(ws, choice.name, opts);
+                void openSkillFiles(ws, choice.name, users === undefined ? undefined : usedByText(users.get(choice.name)), opts);
             }}
         />
     ));
 }
 
-async function openSkillFiles(ws: Workspace, name: string, opts: ClientOpts): Promise<void> {
+async function openSkillFiles(ws: Workspace, name: string, usedBy: string | undefined, opts: ClientOpts): Promise<void> {
     const skill = await fetchSkill(name, opts);
     if (skill.isErr()) {
         notifyError(skill.error);
@@ -233,7 +323,7 @@ async function openSkillFiles(ws: Workspace, name: string, opts: ClientOpts): Pr
     const files = ["SKILL.md", ...skill.value.files];
     ws.openDialog(() => (
         <SelectDialog
-            title={`${name} (${skill.value.kind === "custom" ? "custom" : "built-in"})`}
+            title={[name, skill.value.kind === "custom" ? "custom" : "built-in", ...(usedBy === undefined ? [] : [usedBy])].join(` ${GLYPHS.middot} `)}
             placeholder={`Search files${GLYPHS.ellipsis}`}
             items={files.map((path) => ({ value: path, title: path }))}
             emptyText="No files"

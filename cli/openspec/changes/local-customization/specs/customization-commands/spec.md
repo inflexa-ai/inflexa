@@ -126,7 +126,7 @@ Each new command MUST declare an agent policy by its risk, not by read or write.
 
 ### Requirement: The terminal shows the customizations, and edits only the connectors and the credentials
 
-The palette of the terminal UI MUST have a Customize group with the commands Agents, Skills, MCP servers, Connectors and Credentials. Agents, Skills and MCP servers MUST be read-only. The lists MUST show the custom agents and the custom skills first, the newest first. A skill MUST open the list of its files, and a file MUST open its text. Connectors MUST edit the endpoint and the credential of each slot. Credentials MUST add, change and remove a credential that reads an environment variable or a command. The terminal MUST NOT take a stored value, because its dialog does not hide the text.
+The palette of the terminal UI MUST have a Customize group with the commands Agents, Skills, MCP servers, Connectors and Credentials. Agents, Skills and MCP servers MUST be read-only. Agents MUST group the agents by role and mark each agent as active, off, not chosen or draft. Skills MUST group the skills into Custom and Built-in, the newest custom skill first, and MUST name the active agents that use each skill. A skill MUST open the list of its files, and a file MUST open its text. Connectors MUST edit the endpoint and the credential of each slot. Credentials MUST add, change and remove a credential that reads an environment variable or a command. The terminal MUST NOT take a stored value, because its dialog does not hide the text.
 
 #### Scenario: The user sees a skill that the chat added
 
