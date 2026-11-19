@@ -1,91 +1,138 @@
 # MDV Asset Contract
 
-What MDV does with an uploaded AnnData, and the rules an asset must obey so that the result is
-correct and readable. "MUST" items abort the conversion or silently show wrong data. "SHOULD" items
-separate a loadable asset from a useful one. The facts come from the mdvtools source (1.3.0) and
-the MDV documentation.
+What `inflexa-mdvtools` does with the asset, and the rules that the asset must obey so that the
+project is correct and readable. A "MUST" item stops the conversion or shows wrong data with no
+error. A "SHOULD" item makes the difference between a project that opens and a project that is
+useful. The facts come from the source of mdvtools 1.3.0, the source of MDV 1.3.0, and the MDV
+documentation.
 
-## How MDV loads files
+## The project
 
-| File | MDV route | Result |
+| Path | Content |
+|---|---|
+| `datafile.h5` | the data of each column of each datasource, and the expression sets |
+| `datasources.json` | each datasource (`cells`, `genes`, the context tables) with its columns. A column has a `field` (its ID in `datafile.h5` and in the views) and a `name` (the label that MDV shows) |
+| `views.json` | the charts of each view |
+| `state.json` | the list of views, and the view that opens first |
+| `README.md` | the README, also in the view "About this project" |
+| `spatial/<store>.zarr` | a copy of the SpatialData store, with the images (spatial projects only) |
+| `images/<region>.geo.json` | the shapes of the cells of each region (spatial projects only) |
+
+## The conversions
+
+| Input | Function | Result |
 |---|---|---|
-| `.h5ad` | upload: `scanpy.read(file)`, then `convert_scanpy_to_mdv(project_dir, adata)` with every default | a `cells` table and a `genes` table; expression linked to cells |
-| `.csv`, `.tsv`, `.txt` | upload | one table per file |
-| project `.zip` | import | a full project (built with mdvtools; not this route) |
+| the asset (`.mdv.h5ad`) | `convert_scanpy_to_mdv` (`write_project`) | a `cells` datasource and a `genes` datasource, with the expression linked to the cells |
+| a SpatialData store with one table | `convert_spatialdata_to_mdv` (`write_spatial_project`) | the same datasources, plus one region for each annotated element, with its image |
 
-- MDV's documentation lists `.h5ad` upload for its local development deployment, and CSV, TSV,
-  and TXT for production. Say so in the README.
-- An AnnData above 5 GB must come in as a project. Keep the asset below 5 GB.
-- The upload holds the whole AnnData in memory and makes one more copy of X: about
-  2 × (8 bytes × non-zeros) on the MDV server.
-- One AnnData per project: a second upload into a project that has a `cells` table fails.
-- The new project opens on one view with a table for each table. The user adds charts in MDV.
+The spatial conversion also does these things:
+
+- It merges every table of the store into one `cells` datasource. Thus the store must hold one table.
+- It adds the columns `x` and `y` (the position on the image, in pixels), `spatial_region`,
+  `spatialdata_path`, and `table_name`.
+- It selects the image `morphology_focus` first, if the store has it.
+- A table without `obsm["spatial"]` has no position. Its cells get the region "ND" and no image.
+- It adds the column `object_source` to `genes`.
+
+## The import into MDV
+
+The user imports `<name>.mdv.zip` with "Import an existing project". The import of MDV 1.3.0 has
+these rules:
+
+- It refuses a zip above 20,000 MiB.
+- It refuses an entry with `..` or an absolute path.
+- It finds `views.json`, `state.json`, and `datasources.json` at the root of the zip, or under one
+  folder.
+- The server reads the full zip into memory.
+
+For a larger project, the MDV documentation tells the user to copy the project folder into the
+MDV container.
 
 ## What the conversion does with each slot
 
 | AnnData slot | In MDV |
 |---|---|
-| `obs` columns | columns of `cells`; the **column label is the name people see** |
-| `obs_names` | column `mdv_cell_id` (`unique`) |
-| `obsm[k]` (2-D) | columns `k_1`, `k_2`, `k_3` (first 3 only) |
-| `var` columns, `var_names` | columns of `genes`; a column `name` from `var_names` (it overwrites a `name` column) |
-| `varm[k]` | columns `k_1…k_3` of `genes` |
+| `obs` columns | columns of `cells`. The label in `uns["mdv_labels"]` is the name that MDV shows |
+| `obs_names` | the column `mdv_cell_id` (`unique`) |
+| `obsm[k]` (2-D) | the columns `k_1`, `k_2`, `k_3` (the first 3 only). In a spatial table, `obsm["spatial"]` gives `spatial_1` and `spatial_2` |
+| `var` columns, `var_names` | columns of `genes`. `var_names` gives the column `name`, which replaces a `name` column |
+| `varm[k]` | the columns `k_1…k_3` of `genes` |
 | `X` | the expression set "Gene Scores", sparse when X is sparse |
-| `layers[k]` | one more expression set per layer, labelled `k`, as large as X |
-| `uns`, `raw`, `obsp`, `varp` | ignored (colours in `uns` are lost) |
+| `layers[k]` | one more expression set for each layer, as large as X, with the label of `uns["mdv_labels"]` |
+| `uns`, `raw`, `obsp`, `varp` | not used (MDV does not keep the colors in `uns`) |
 
 ## MUST
 
-1. **Unique `obs_names` and `var_names`.** The conversion joins embeddings on the index;
-   duplicates multiply rows with no error.
-2. **Only mapped dtypes.** As MDV's reader sees them (anndata 0.12, pandas 2.3):
+1. **Unique `obs_names` and `var_names`.** The conversion joins the embeddings on the index.
+   A duplicate multiplies rows with no error.
+2. **Only mapped dtypes:**
 
    | Stored as | MDV datatype |
    |---|---|
-   | int8, int16, int64, uint8, uint16, uint32 | `integer` (float32; exact to 2^24) |
+   | int8, int16, int64, uint8, uint16, uint32 | `integer` (float32, exact to 2^24) |
    | int32, float32, float64 | `double` |
-   | categorical text, object text, bool | `text` (auto-promoted to `text16` above 256 values, `unique` above 65,536) |
-   | uint64, float16, nullable Int/Float/boolean, pandas `string`, complex | **KeyError: the conversion aborts** |
+   | categorical text, object text, bool | `text` (`text16` above 256 values, `unique` above 65,536) |
+   | uint64, float16, nullable Int/Float/boolean, pandas `string`, complex | **KeyError: the conversion stops** |
 
-   With pandas ≥ 3, anndata writes `obs_names`, `var_names`, and any text column it does not make
-   categorical (all-unique values) as a nullable string array. MDV's reader turns that into the
-   `string` dtype, and the conversion aborts (`KeyError: 'string'`). Write the names as plain `str`
-   (object) and every text column as categorical. `build_asset` does both.
-3. **Column labels:** non-empty strings, unique, without `|` (MDV splits virtual column ids on
-   it) and without `/` (an HDF5 path separator; anndata refuses it).
-4. **Gene names without `|` or `(`**: they name the virtual gene columns.
-5. **Reserved labels:** no `obs` column `mdv_cell_id`, no `var` column `name`.
-6. **Sparse X and layers.** A dense matrix is stored in full: 4 bytes × cells × genes.
+   With pandas ≥ 3, anndata writes `obs_names`, `var_names`, and a text column that is not
+   categorical as a nullable string array. The reader gives the `string` dtype, and the
+   conversion stops (`KeyError: 'string'`). Write the names as plain `str` (object) and each text
+   column as categorical. `build_asset` does both.
+3. **Safe fields.** A column name and a key of `obsm` or `layers` use only letters, digits, `_`,
+   `.`, and `-`. A name does not start with `__`. The names of one slot are unique without regard
+   to case. SpatialData refuses a table that breaks these rules, so the AnnData route obeys them
+   too.
+4. **Labels:** non-empty strings without `|`, because MDV divides the IDs of virtual columns at
+   `|`.
+5. **Gene names without `|` or `(`**, because they name the virtual gene columns.
+6. **Reserved fields.** mdvtools writes these columns itself:
+   - `obs`: `mdv_cell_id`, `x`, `y`, `spatial_region`, `spatialdata_path`, `table_name`
+   - `var`: `name`
+7. **Sparse X and layers.** mdvtools stores a dense matrix in full: 4 bytes × cells × genes.
+8. **One table in a spatial store**, with `obsm["spatial"]` or with shapes that it annotates. The
+   region column and the instance column keep their SpatialData names. `put_table` does this.
 
 ## SHOULD
 
-1. **Readable labels as column names**: words and units (`Cell area (µm²)`, `Transcripts per
-   cell`). MDV has no separate display name and no column description field.
-2. **Readable categories**: no bare cluster ids, no float ids (`"1.0"`), booleans as words.
-   Inferred labels carry "putative" in the column label; keep their evidence in a context table.
-3. **Grouping columns at ≤ 256 categories**, so they stay `text`. Stacked row, violin, box, heat
-   map, pie, and Sankey charts accept only `text`.
-4. **X log-normalised**: MDV shows "Gene Scores" as stored.
+1. **Readable labels**: words and units (`Cell area (µm²)`, `Transcripts per cell`), in
+   `uns["mdv_labels"]` (`build_asset`). MDV has no column description field. Thus the README is the
+   glossary.
+2. **Readable categories**: no bare cluster IDs, no float IDs (`"1.0"`), and booleans as words.
+   An inferred label has "putative" in its column label. Keep its evidence in a context table.
+3. **Grouping columns with ≤ 256 categories**, so that they stay `text`. The stacked row, violin,
+   box, heat map, pie, and Sankey charts accept only `text`.
+4. **X log-normalized**, because MDV shows "Gene Scores" as stored.
 5. **Only useful embeddings in `obsm`**: `UMAP`, not `X_pca` (three meaningless columns). Name
-   the key for people: MDV makes `UMAP_1`, `UMAP_2` from the key `UMAP`.
-6. **Spatial positions as two readable `obs` columns** in micrometres, with y pointing up
-   (`image height − y`): MDV scatter plots draw y upwards.
-7. **No layers by default**: each one doubles the expression data in the project.
-8. **No `varm`, `obsp`, `raw`**: noise or dead weight.
-9. **A README next to the asset** with the column glossary and the processing record.
-10. **Context tables as TSV**: per cluster, per sample, per FOV.
+   the key for a person: MDV makes `UMAP_1` and `UMAP_2` from the key `UMAP`.
+6. **The positions of the store as they are.** The tissue chart draws the cells on the image in
+   the coordinates of the image. Do not flip y.
+7. **No layers by default.** Each layer adds one more expression set as large as X.
+8. **No `varm`, `obsp`, or `raw`**: they are noise or dead weight.
+9. **A README** in the project and next to the zip, with the column glossary and the record of
+   the processing.
+10. **Context tables as datasources** of the project (`add_table`): one for the clusters, one for
+    the samples, and one for the FOVs.
 
 ## Limits that stay
 
-- Category colours: MDV uses its default palette (it ignores `uns["*_colors"]`); the user sets
-  colours in MDV.
-- Views: the user builds them. The README names the charts to make first.
-- No tissue image under the cells: images need a project.
-- More than 65,536 features (peaks) make the gene name column `unique`, and MDV warns about the
-  link. Keep the feature set to genes.
+- Category colors: MDV uses its default palette, and it ignores `uns["*_colors"]`. The user sets
+  the colors in MDV.
+- More than 65,536 features (peaks) make the gene name column `unique`, and MDV shows a warning
+  about the link. Keep the features to genes.
+- The views of `add_views` are the first views. The user can change and save them in MDV.
 
-## Compatibility checked
+## Compatibility
 
-An asset written with anndata 0.13.2 and pandas 2.3.3 (the sandbox) was read and converted by
-mdvtools 1.3.0 with anndata 0.12.2, pandas 2.3.2, and scanpy 1.11.4 (MDV's pins): every column
-mapped as listed above, and the project opened in a browser.
+`inflexa-mdvtools` 1.3.0.post1 ran on the versions of the package store: anndata 0.13.2,
+pandas 2.3.3, scanpy 1.12.4, numpy 2.5.2, spatialdata 0.8.0, spatialdata-io 0.7.1, and zarr
+3.3.0. The project check gave zero errors for these projects:
+
+- Xenium (`Xenium_V1_human_Breast_2fov`), with the image `morphology_focus`
+- Visium HD (`Visium_HD_Tiny_3prime_Dataset`), the 16 µm bins and the segmented cells
+- Visium CytAssist (`CytAssist_FFPE_Protein_Expression_Human_Breast_Cancer`)
+- a synthetic raw CosMx run, with the stitched image
+- a synthetic AnnData with no positions
+
+The Xenium project and the synthetic AnnData project opened in the MDV 1.3.0 frontend that
+mdvtools serves. On the tissue image, the Xenium cells sat on the nuclei. The import of a zip into
+an MDV server was not part of these runs.

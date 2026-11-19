@@ -2,8 +2,8 @@
 
 Estimate before you load. A sparse float32 CSR matrix costs about **8 bytes per non-zero**
 (4 data + 4 index). A 6K-panel CosMx run of 194,000 cells has about 105 million non-zeros:
-0.84 GB per copy. Several common steps hold two or three copies at once, and the step is killed
-without a Python error when the sandbox runs out of memory.
+0.84 GB per copy. Some common steps hold two or three copies at once. When the sandbox has no
+more memory, the step stops with no Python error.
 
 ## Estimate
 
@@ -16,7 +16,7 @@ gb_per_copy = nnz * 8 / 1e9
 ```
 
 Plan for 3 × `gb_per_copy` + 1 GB. Ask for that much memory when you acquire the sandbox. If the
-grant is smaller, use the patterns below; they keep the peak near one copy.
+grant is smaller, use the patterns below. They keep the peak near one copy.
 
 ## Where the copies come from
 
@@ -25,10 +25,10 @@ grant is smaller, use the patterns below; they keep the peak near one copy.
 | `adata[mask].copy()` after QC | old + new X | read only the kept rows (`read_csr_rows`) |
 | backed `adata[mask].to_memory()` on a compressed h5ad | decompresses and copies X more than once | `read_csr_rows` |
 | `sc.pp.highly_variable_genes(flavor="seurat_v3")` | a boolean-indexed copy + a float64 copy of X | rank HVGs on a subsample of ≤ 50,000 cells, copy the flags back |
-| `sc.pp.pca(mask_var=...)` | X[:, hvg] copy; freed memory is not returned to the OS | park X on disk while the graph, UMAP and Leiden run |
+| `sc.pp.pca(mask_var=...)` | X[:, hvg] copy. Python does not give the freed memory back to the OS | park X on disk while the graph, UMAP and Leiden run |
 | `sc.tl.rank_genes_groups` on all cells | per-group copies | ≤ 1,000 cells per group (`annotate_clusters`) |
 | `build_asset` + `write_h5ad` | none when X is CSR float32 (`astype(copy=False)`) | build the asset from a fresh AnnData that holds only what it needs |
-| MDV's upload (on the MDV server) | the whole file + a CSC copy of X | keep the asset below 5 GB; say the size in the README |
+| the import of MDV (on the MDV server) | the full zip in memory | keep the zip below the import limit (below). Give the size in the README |
 | `sc.pp.normalize_total`, `sc.pp.log1p` | none on sparse X (in place) | — |
 
 ## Helpers
@@ -126,10 +126,35 @@ del adata.obsp["distances"], adata.obsp["connectivities"]
 release(); restore()
 ```
 
-On two cores, 183,000 cells: PCA about 1.5 min, UMAP about 4 min, Leiden under 30 s; peak 2.9 GB.
+On two cores, 183,000 cells: PCA about 1.5 min, UMAP about 4 min, Leiden under 30 s, peak 2.9 GB.
+
+## The size of the project
+
+| Part | Size |
+|---|---|
+| `datafile.h5` | about 8 bytes for each non-zero of X, not compressed, plus the same again for each layer |
+| `spatial/` | the copy of the store. An image pyramid is about 4/3 × the bytes of the full-resolution image, before compression |
+| the zip | the project folder, compressed. Images do not get smaller in the zip, because they are compressed already |
+
+Measured projects:
+
+| Project | Rows | Non-zeros | `datafile.h5` | `spatial/` | zip |
+|---|---|---|---|---|---|
+| Visium CytAssist, human breast | 4,169 spots | 21.9 M | 175.6 MB | 45.7 MB | 133.8 MB |
+| Xenium, human breast, 2 FOVs | 7,163 cells | 0.32 M | 3.0 MB | 169.2 MB | 170.7 MB |
+
+A spatial project is on disk three times before delivery: the work store, the copy in the
+project, and the zip. Plan the disk for 3 × the store, plus `datafile.h5`. Run `drop_unused`
+before you write the store: the transcript points of a full Xenium or CosMx run can be larger
+than the images.
+
+The import of MDV 1.3.0 refuses a zip above 20,000 MiB, and the server reads the full zip into
+memory. For a larger project, write in the README that the user must copy the project folder into
+the MDV container. Make the project smaller first: drop the layers, select a larger `downsample`
+for a stitched image, or make one project for each sample.
 
 ## Browser limits
 
 The browser holds every loaded column as a typed array of N values, and each gene a user looks
 at as one more. A few hundred thousand cells are fine. Above about 2 million cells, keep the
-charts light (no all-gene charts) and consider one asset per sample.
+charts light (no all-gene charts), and make one project for each sample.

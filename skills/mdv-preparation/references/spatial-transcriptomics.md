@@ -1,47 +1,158 @@
 # Spatial Transcriptomics → MDV
 
-Build one cell-level (or spot-level) AnnData with slide coordinates in micrometres, process it
-like single-cell data, then write it through the asset route. In MDV the user plots the two
-slide-coordinate columns against each other to see the tissue.
+Build one SpatialData store that holds the images and one curated table. Then
+`write_spatial_project` makes the project, and the view "Tissue" draws the cells on the image.
+Process the cells like single-cell data, and make the asset with `asset-route.md`.
 
-## What the asset needs from a spatial dataset
+## The gotchas of this route
 
-| Item | Where it goes |
-|---|---|
-| cell × gene counts → log-normalised sparse X | "Gene Scores" in MDV |
-| slide coordinates (µm), y flipped upwards | two `obs` columns: `Slide x (µm)`, `Slide y (µm, up)` |
-| the slide or sample of each cell (several slides) | a categorical `obs` column, ≤ 256 values |
-| per-cell QC: counts, genes, negative-control probes, area | `obs` |
-| morphology stain intensities, if the platform gives them | `obs` (`<stain> mean intensity`) |
-| per-FOV or per-sample QC | `fovs.tsv` / `samples.tsv` |
+- **One table in the store.** mdvtools merges every table of a store into one `cells` table.
+  `put_table` puts the asset into the store as its only table.
+- **One project for each Visium HD bin size.** The reader gives one table for each bin size, and
+  one for the segmented cells if the run has them. Select one table for each project.
+- **The region column and the instance column keep their SpatialData names.** `put_table` copies
+  them from the old table. A readable label goes into `uns["mdv_labels"]`, never into a column
+  name, because SpatialData refuses a column name with a space or a unit.
+- **The store is copied into the project.** mdvtools copies the full store into `spatial/`.
+  `drop_unused` removes the points (the transcripts). Run it before you write the store.
+- **Keep the shapes and the labels.** For Xenium, mdvtools converts the cell positions with the
+  transform of a Xenium shape (`cell_circles`, `cell_boundaries`, `nucleus_boundaries`). Without
+  one, it reads the µm of `obsm["spatial"]` as image pixels. Then the cells do not sit on the
+  image, and no check reports an error.
+- **Do not flip y.** The tissue chart draws the cells on the image in the coordinates of the
+  image. Keep `obsm["spatial"]` as the reader gives it.
+- **One slide in each project.** Make one store and one project for each slide.
 
-Flip y once, for every coordinate (cells and FOV centres), with the same height:
-`y_up = slide_height_um − y_image_um`. Several slides in one asset: offset each slide in x so
-they do not overlap, and say so in the README.
+The project holds a copy of the store. Thus the work store is not part of the deliverable. Write
+it outside the deliverable.
 
 ## Platform decision tree
 
 ```
 Platform?
-├── CosMx (NanoString/Bruker SMI)
-│   ├── AtoMx flat-file export: *exprMat_file.csv, *metadata_file.csv, *fov_positions_file.csv (+ tx_file, polygons)
-│   │   → spatialdata_io.cosmx(path) or pandas; global coordinates are already in the metadata
-│   │     (CenterX_global_px / CenterY_global_px, or x_slide_mm / y_slide_mm)
+├── Xenium → spatialdata_io.xenium(path): table "table", cells as the labels "cell_labels",
+│            image "morphology_focus" (mdvtools selects it first)
+├── Visium → spatialdata_io.visium(path): spots as circles, the hires and lowres images
+├── Visium HD → spatialdata_io.visium_hd(path): one table for each bin size (square_016um, …)
+│            and "cell_segmentations"; one project for each table
+├── CosMx
+│   ├── AtoMx flat-file export: *exprMat_file.csv, *metadata_file.csv, *fov_positions_file.csv
+│   │   → spatialdata_io.cosmx(path)
 │   └── Raw instrument output: RunSummary/, CellStatsDir/FOVnnn/, a decoded run directory with
 │       FOVnnn/*complete_code_cell_target_call_coord.csv
 │       → cosmx_raw.py below; run the orientation check before you trust the layout
-├── Xenium → spatialdata_io.xenium(path): table "table" (cells), obsm["spatial"] in µm,
-│            image "morphology_focus"; use cell_id as the cell id
-├── Visium / Visium HD → spots/bins are rows; coordinates in full-resolution pixels
-│            (scalefactors give µm via the 55 µm spot diameter);
-│            one asset per bin size for HD
-└── MERSCOPE / MERFISH → cell_by_gene.csv + cell_metadata.csv (center_x, center_y in µm);
+└── MERSCOPE / MERFISH → spatialdata_io.merscope(path);
              "Blank-*" barcodes are negative controls, not genes
 ```
 
-Always: negative-control probes and false codes are QC columns, never genes. Panels merge some
-paralogues into one target with `/` in the name (`HBA1/2`); that is fine as a gene name, but
-never as a column field or an h5 key.
+After the reader, make sure that the store has an image, and that the table has
+`obsm["spatial"]` or annotates shapes. If the store has no image, the project has no tissue view.
+Then make a project with `spatial=False` in `add_views`, and say so in the README.
+
+Negative-control probes and false codes are QC columns, never genes. Some panels merge paralogs
+into one target with `/` in the name (`HBA1/2`). That is permitted as a gene name, but not as a
+column field.
+
+## Put the asset into the store
+
+```python
+# file: mdv_spatial.py
+"""Put the curated table into a SpatialData store, so that the MDV project draws the cells on the image."""
+import anndata as ad
+import numpy as np
+import pandas as pd
+
+
+def _centers(sdata, table, region, region_key, instance_key):
+    """Cell centers from the annotated shapes, in the coordinates of the shapes."""
+    xy = np.full((table.n_obs, 2), np.nan)
+    labels = table.obs[region_key].astype(str).to_numpy()
+    for r in ([region] if isinstance(region, str) else list(region)):
+        if r not in sdata.shapes:
+            raise ValueError(f"the table has no obsm['spatial'] and its region {r!r} is not shapes: give the cell centers")
+        centroid = sdata.shapes[r].geometry.centroid
+        mask = labels == r
+        pos = centroid.index.get_indexer(pd.Index(table.obs[instance_key].to_numpy()[mask]).astype(centroid.index.dtype))
+        if (pos < 0).any():
+            raise ValueError(f"{int((pos < 0).sum())} cells have no shape in {r!r}")
+        xy[mask] = np.column_stack([centroid.x.to_numpy()[pos], centroid.y.to_numpy()[pos]])
+    return xy
+
+
+def put_table(sdata, curated, table_name="table"):
+    """Make the curated AnnData the only table of sdata, in place of sdata.tables[table_name].
+
+    Every curated cell must be a cell of the old table. The SpatialData attributes, the region column, the
+    instance column, and obsm["spatial"] come from the old table under their own names. The labels of
+    build_asset (uns["mdv_labels"]) go with the table. The old table must have
+    obsm["spatial"], or annotate shapes (the centers of the shapes are used). MDV merges every table of a store
+    into one cells table, so the other tables are removed.
+    """
+    from spatialdata.models import TableModel, get_table_keys
+    old = sdata.tables[table_name]
+    region, region_key, instance_key = get_table_keys(old)
+    absent = ~curated.obs_names.isin(old.obs_names)
+    if absent.any():
+        raise ValueError(f"{int(absent.sum())} curated cells are not in table {table_name!r}: {list(curated.obs_names[absent][:3])}")
+    rows = old.obs_names.get_indexer(curated.obs_names)
+    layers = {k: v for k, v in curated.layers.items() if k is not None}   # anndata 0.13 also lists X under None
+    table = ad.AnnData(X=curated.X, obs=curated.obs.copy(), var=curated.var, obsm=dict(curated.obsm), layers=layers)
+    keys = {region_key: pd.Categorical(old.obs[region_key].astype(str).to_numpy()[rows]),
+            instance_key: old.obs[instance_key].to_numpy()[rows]}
+    for key, values in keys.items():
+        if key in table.obs.columns and not (table.obs[key].astype(str).to_numpy() == np.asarray(values).astype(str)).all():
+            raise ValueError(f"curated column {key!r} has the name of a SpatialData key and other values: rename it")
+        table.obs[key] = values
+    labels = {k: dict(v) for k, v in dict(curated.uns.get("mdv_labels", {})).items()}
+    labels.setdefault("cells", {}).setdefault(region_key, "SpatialData region")
+    labels["cells"].setdefault(instance_key, "Cell ID")
+    table.uns["mdv_labels"] = labels
+    if "spatial" in old.obsm:
+        table.obsm["spatial"] = np.asarray(old.obsm["spatial"])[rows]
+    else:
+        table.obsm["spatial"] = _centers(sdata, table, region, region_key, instance_key)
+    for name in list(sdata.tables):
+        del sdata.tables[name]
+    sdata.tables[table_name] = TableModel.parse(table, region=region, region_key=region_key, instance_key=instance_key)
+
+
+def drop_unused(sdata):
+    """Remove the points (the transcripts), which MDV does not show. Returns the names of the removed elements.
+
+    mdvtools copies the whole store into the project. Keep the shapes and the labels: for Xenium, mdvtools converts
+    the cell positions with the transform of a Xenium shape (cell_circles, cell_boundaries, nucleus_boundaries).
+    Without one, it reads the µm of obsm["spatial"] as image pixels, and the cells do not sit on the image.
+    """
+    removed = list(sdata.points)
+    for name in removed:
+        del sdata.points[name]
+    return removed
+```
+
+```python
+import spatialdata_io
+from mdv_asset import preflight, build_asset, write_asset
+from mdv_spatial import put_table, drop_unused
+from mdv_project import write_spatial_project, add_views, zip_project
+
+sdata = spatialdata_io.xenium(XENIUM_OUTS)                  # the reader of the platform
+adata = sdata.tables["table"].copy()
+# QC, normalization, embedding, clusters, and labels ("Processing for spatial cell data")
+preflight(adata, grouping=["cell_type", "cluster"])
+asset = build_asset(adata, CELLS, obsm_keys={"X_umap": "UMAP"})
+write_asset(asset, f"{OUT}/{NAME}.mdv.h5ad")                 # run the table validator on it
+put_table(sdata, asset)
+drop_unused(sdata)
+sdata.write(f"{WORK}/{NAME}.zarr", overwrite=True)
+mdv = write_spatial_project(f"{WORK}/{NAME}.zarr", f"{OUT}/{NAME}")
+add_views(mdv, "Cell type (putative)", "UMAP",
+          {"counts": "Transcripts per cell", "genes": "Genes detected", "area": "Cell area (µm²)"},
+          spatial=True, readme_md=README_TEXT)
+zip_project(f"{OUT}/{NAME}")                                 # run the project check on it
+```
+
+`put_table` refuses a curated cell that is not in the old table. Thus filter the cells, but do
+not rename them.
 
 ## CosMx raw instrument output
 
@@ -51,34 +162,37 @@ The run has no cell × gene matrix. Build it from the decoded transcript calls:
 |---|---|
 | `RunSummary/*ExptConfig.txt` | `ImPixel_nm` (pixel size), `Image Rows/Cols`, run identity |
 | `RunSummary/latest.fovs.csv` | no header: slide, X_mm, Y_mm, Z_mm, ZOffset_mm, ROI, FOV, order |
-| `CellStatsDir/FOVnnn/*_Cell_Stats_Fnnn.csv` | per cell: Area (px), AspectRatio, CenterX/Y (FOV px), Width, Height, Mean-/Max-<stain> |
-| `CellStatsDir/FOVnnn/CellLabels_Fnnn.tif` | segmentation labels; label value = CellId |
-| `CellStatsDir/RnD/*_Summary_Fnnn.csv` | first line names the morphology kit |
-| `CellStatsDir/CellComposite/CellComposite_Fnnn.jpg` | per-FOV false-colour composite (FOV pixel size) |
-| `<run>/FOVnnn/*__complete_code_cell_target_call_coord.csv` | one row per transcript: CellId (0 = not in a cell), codeclass (Endogenous / Negative / SystemControl), target, x, y (FOV px) |
+| `CellStatsDir/FOVnnn/*_Cell_Stats_Fnnn.csv` | for each cell: Area (px), AspectRatio, CenterX/Y (FOV px), Width, Height, Mean-/Max-<stain> |
+| `CellStatsDir/FOVnnn/CellLabels_Fnnn.tif` | segmentation labels. The label value is the CellId |
+| `CellStatsDir/RnD/*_Summary_Fnnn.csv` | the first line names the morphology kit |
+| `CellStatsDir/CellComposite/CellComposite_Fnnn.jpg` | the false-color composite of each FOV, at the FOV pixel size |
+| `<run>/FOVnnn/*__complete_code_cell_target_call_coord.csv` | one row for each transcript: CellId (0 = not in a cell), codeclass (Endogenous / Negative / SystemControl), target, x, y (FOV px) |
 
-Facts to rely on, checked on a 6K-panel run:
+These facts come from a 6K-panel run:
 
-- `CellId 1` in Cell_Stats is a whole-FOV placeholder with `Area 0`. Drop rows with `Area == 0`.
-- Transcript `(x, y)` and `CellLabels[y, x]` agree (about 99 %); Cell_Stats `Area` equals the
+- `CellId 1` in Cell_Stats is a whole-FOV placeholder with `Area 0`. Drop the rows with
+  `Area == 0`.
+- Transcript `(x, y)` and `CellLabels[y, x]` agree (about 99 %). Cell_Stats `Area` is equal to the
   label pixel count. All three are in the same FOV pixel frame.
-- `CellComp` in the transcript file can be empty; do not rely on compartments.
-- The morphology kit file (`*.mkit`, `Morphology_ChannelID_Dictionary.txt`) can be stale. The
+- `CellComp` in the transcript file can be empty. Do not use the compartments.
+- The morphology kit file (`*.mkit`, `Morphology_ChannelID_Dictionary.txt`) can be old. The
   `Mean-<stain>` column names of Cell_Stats are the stains of the run. A channel named only by a
-  letter has no target: say so in its display name.
+  letter has no target. Say so in its label.
 
 ### The orientation check (mandatory)
 
-The sign between FOV image axes and stage axes is not documented in the run files and differs
-between instruments and software versions. A wrong sign scrambles the tissue with no error. On
-the checked run, **image right = stage −X and image down = stage +Y** (a 180° rotation, no
-mirror). Do not copy that: measure it. `check_orientation` scores the four sign hypotheses by
-the continuity of the composite images across the seams of neighbouring FOVs, and refuses when
-the best hypothesis does not clearly win. Then stitch a thumbnail and look at it.
+The run files do not give the sign between the FOV image axes and the stage axes. The sign is
+different between instruments and software versions, and a wrong sign scrambles the tissue with
+no error. On the measured run, **image right = stage −X and image down = stage +Y** (a 180°
+turn, no mirror). Do not copy that: measure it.
+
+`check_orientation` scores the four sign hypotheses by the continuity of the composite images
+across the seams of neighbor FOVs. It refuses when the best hypothesis does not clearly win. Then
+stitch a thumbnail and look at it.
 
 ```python
 # file: cosmx_raw.py
-"""Raw CosMx SMI run -> cell x gene AnnData, FOV orientation check, stitched thumbnail to look at."""
+"""Raw CosMx SMI run -> cell x gene AnnData, FOV orientation check, thumbnail to look at, mosaic for the project."""
 import glob
 import json
 import os
@@ -179,7 +293,7 @@ def stitch(run_root, out_stem, sign_x, sign_y, tile_px=256):
     """Mosaic of the CellComposite JPEGs on the slide; writes <out_stem>.jpg and .json (extent in µm).
 
     Look at it to confirm the orientation: one continuous tissue, no seam that cuts a structure.
-    The extent gives the slide height for the y flip. Use tile_px=64 for a quick look."""
+    Use tile_px=64 for a quick look."""
     cfg, _ = read_config(run_root)
     px_um = float(cfg["ImPixel_nm"]) / 1000.0
     fov_px = int(cfg.get("Image Cols", 4256))
@@ -279,56 +393,105 @@ def build_anndata(run_root, sign_x, sign_y, fovs=None):
                         "n_false_codes": sum(v == "SystemControl" for v in target_class.values()),
                         "orientation": {"sign_x": sign_x, "sign_y": sign_y}}
     return adata
+
+
+def stitch_image(run_root, sign_x, sign_y, work_dir, downsample=1, chunk=1024):
+    """The mosaic of the CellComposite images on the slide, as a multiscale image in µm.
+
+    downsample=1 keeps the full resolution; 2 halves each axis (a quarter of the bytes). The mosaic is
+    written tile by tile into <work_dir>/mosaic.zarr, so the peak memory is about one FOV image. Keep
+    work_dir until the SpatialData store is written: the image reads from it.
+    """
+    import dask.array as da
+    import zarr
+    from spatialdata.models import Image2DModel
+    from spatialdata.transformations import Scale
+    cfg, _ = read_config(run_root)
+    px_um = float(cfg["ImPixel_nm"]) / 1000.0
+    fov_px = int(cfg.get("Image Cols", 4256))
+    pos = fov_positions(run_root, sign_x, sign_y, px_um)
+    tile_px = int(round(fov_px / downsample))
+    H = int(np.ceil(pos.y_offset_px.max() / downsample)) + tile_px
+    W = int(np.ceil(pos.x_offset_px.max() / downsample)) + tile_px
+    os.makedirs(work_dir, exist_ok=True)
+    mosaic = zarr.open_array(os.path.join(work_dir, "mosaic.zarr"), mode="w", shape=(3, H, W),
+                             chunks=(3, chunk, chunk), dtype="uint8", fill_value=0)
+    for f, r in pos.iterrows():
+        p = os.path.join(run_root, "CellStatsDir", "CellComposite", f"CellComposite_F{int(f):03d}.jpg")
+        if not os.path.exists(p):
+            continue
+        im = Image.open(p).convert("RGB")
+        if downsample != 1:
+            im = im.resize((tile_px, tile_px), Image.LANCZOS)
+        tile = np.asarray(im, dtype=np.uint8).transpose(2, 0, 1)
+        y0, x0 = int(round(r.y_offset_px / downsample)), int(round(r.x_offset_px / downsample))
+        mosaic[:, y0:y0 + tile.shape[1], x0:x0 + tile.shape[2]] = tile
+    um_per_px = px_um * downsample
+    return Image2DModel.parse(da.from_zarr(mosaic), dims=("c", "y", "x"), c_coords=["r", "g", "b"],
+                              scale_factors=[2, 2, 2, 2],
+                              transformations={"global": Scale([um_per_px, um_per_px], axes=("y", "x"))})
+
+
+def to_spatialdata(adata, image):
+    """SpatialData of a raw run: the mosaic, one circle per cell (centers and areas in µm), the cell table."""
+    import spatialdata as sd
+    from spatialdata.models import ShapesModel, TableModel
+    from spatialdata.transformations import Identity
+    ids = np.arange(adata.n_obs)
+    radius = np.sqrt(adata.obs["area_um2"].to_numpy() / np.pi)
+    cells = ShapesModel.parse(np.asarray(adata.obsm["spatial"], dtype=float), geometry=0, radius=radius,
+                              index=pd.Index(ids, name="cell"), transformations={"global": Identity()})
+    table = ad.AnnData(X=adata.X, obs=adata.obs.copy(), var=adata.var, obsm=dict(adata.obsm))   # no copy of X
+    table.obs["region"] = pd.Categorical(["cells"] * adata.n_obs)
+    table.obs["instance_id"] = ids
+    table = TableModel.parse(table, region="cells", region_key="region", instance_key="instance_id")
+    return sd.SpatialData(images={"composite": image}, shapes={"cells": cells}, tables={"table": table})
 ```
 
 Use it in this order:
 
 ```python
-from cosmx_raw import check_orientation, stitch, build_anndata
+from cosmx_raw import check_orientation, stitch, build_anndata, stitch_image, to_spatialdata
 o = check_orientation(RUN)                       # raises when ambiguous
-extent = stitch(RUN, f"{OUT}/slide_composite", o["sign_x"], o["sign_y"])
-# look at slide_composite.jpg: one continuous tissue, no seams cutting structures
+extent = stitch(RUN, f"{WORK}/slide_composite", o["sign_x"], o["sign_y"])
+# look at slide_composite.jpg: one continuous tissue, no seams that cut structures
 adata = build_anndata(RUN, o["sign_x"], o["sign_y"])
-adata.write_h5ad(f"{OUT}/raw_counts.h5ad", compression="gzip")
+image = stitch_image(RUN, o["sign_x"], o["sign_y"], f"{WORK}/mosaic", downsample=DOWNSAMPLE)
+sdata = to_spatialdata(adata, image)             # then process adata and put the asset into sdata
 ```
 
-Reading every transcript file is I/O bound (pyarrow reads about 300 MB/s); a 400-FOV 6K run
-takes about 10 minutes on two cores and peaks near one copy of the final matrix.
+Each transcript file is read in full, so the build is I/O bound (pyarrow reads about 300 MB/s).
+A 400-FOV 6K run takes about 10 minutes on two cores, and its peak is near one copy of the final
+matrix.
+
+Select `downsample` before the stitch. The image pyramid of the mosaic is about
+3 × FOVs × (FOV px / downsample)² × 4/3 bytes before compression. For 400 FOVs of 4256 px, this
+is about 29 GB at `downsample=1` and about 7 GB at `downsample=2`. Use the smallest value that
+gives 8 GB or less. Then the zip stays below the import limit of MDV. Write the value in the
+README.
+
+`stitch_image` writes the mosaic one FOV at a time, so its peak memory is about one FOV image.
+Keep `WORK` until the store is written, because the image reads from it.
 
 ## Processing for spatial cell data
 
-Same as single-cell (single-cell pack), with these differences:
+Process the cells as single-cell data (single-cell pack), with these differences:
 
-- QC thresholds scale with the panel. Keep cells with at least max(20, 5th percentile) counts,
-  at least 10 genes, a negative-probe fraction ≤ 0.1, and an area below
-  median + 5 × IQR (oversized segments are merged cells).
-- HVG selection (`seurat_v3` on counts) on a subsample of up to 50,000 cells.
-- Do not regress out FOV: FOV effects are real QC signal; show them in the QC view.
-- Label clusters with tissue markers (`anndata-route.md`, `annotate_clusters`).
+- QC thresholds change with the panel. Keep the cells with at least max(20, 5th percentile)
+  counts, at least 10 genes, a negative-probe fraction ≤ 0.1, and an area below
+  median + 5 × IQR. An oversized segment is a group of merged cells.
+- Select the HVGs (`seurat_v3` on counts) on a subsample of up to 50,000 cells.
+- Do not regress out the FOV. FOV effects are a real QC signal, and the QC view shows them.
+- Label the clusters with tissue markers (`asset-route.md`, `annotate_clusters`).
 
-## Writing the asset
+## The FOV table
 
-Follow `asset-route.md`, plus:
+Add the FOV table to the project with `add_table`. Give these columns:
 
-```python
-H = extent["height_um"]                                   # one height for every y in the asset
-adata.obs["x_um"] = adata.obsm["spatial"][:, 0]
-adata.obs["y_um"] = H - adata.obsm["spatial"][:, 1]       # MDV scatter plots draw y upwards
-asset = build_asset(adata, {"cell_type": "Cell type (putative)", "cluster": "Cluster",
-                            "x_um": "Slide x (µm)", "y_um": "Slide y (µm, up)", ...},
-                    obsm_keys={"X_umap": "UMAP"})         # not "spatial": the two obs columns replace it
-```
+- the FOV, and the FOV center in slide µm
+- the cells, and the cells after QC
+- the median transcripts per cell
+- the fraction of transcripts in cells
+- the negative-probe transcripts
 
-The FOV table becomes `fovs.tsv`: FOV, FOV centre (`Slide x (µm)`, `Slide y (µm, up)`, flipped
-the same way), cells, cells after QC, median transcripts per cell, fraction of transcripts in
-cells, negative-probe transcripts. In MDV, a scatter of the FOV centres coloured by the fraction
-of transcripts in cells shows where segmentation failed.
-
-In the README, name the first chart: a scatter plot of `Slide x (µm)` against `Slide y (µm, up)`
-coloured by `Cell type (putative)`. It is the tissue map.
-
-## What an asset cannot carry
-
-A tissue image under the cells, and the SpatialData viewer of MDV, need an MDV project that
-mdvtools builds. They are outside this route. Keep the stitched thumbnail as a deliverable
-figure only if the user asks for it.
+A low fraction of transcripts in cells shows where the segmentation failed.

@@ -2,13 +2,13 @@
 
 ## The problem with peaks
 
-A peak set has 100,000–500,000 features. As the features of an MDV asset this breaks down:
+A peak set has 100,000–500,000 features. As the features of an MDV project, a peak set fails:
 
-- above 65,536 rows MDV makes the feature name column `unique` and warns about the link;
-- people look up genes, not genomic intervals.
+- Above 65,536 rows, MDV makes the feature name column `unique`, and it shows a warning about the link.
+- A person looks up genes, not genomic intervals.
 
-So the features of the asset are **genes**, through a gene-activity matrix. Peaks, if the user
-needs them, go in a separate TSV.
+Thus the features of the project are **genes**, through a gene-activity matrix. If the user asks
+for the peaks, add them as one more table of the project (`add_table`).
 
 ## scATAC-seq alone
 
@@ -19,15 +19,15 @@ otherwise). The asset holds:
 |---|---|---|
 | cells, QC (fragments, TSS enrichment, FRiP, doublet score) | the ATAC object | `obs`, readable labels |
 | UMAP, clusters, labels | the ATAC object (spectral embedding / LSI) | `obsm["UMAP"]`, `obs` |
-| gene activity, normalised + log1p, sparse | SnapATAC2 `make_gene_matrix` or Signac `GeneActivity` | X |
+| gene activity, normalized + log1p, sparse | SnapATAC2 `make_gene_matrix` or Signac `GeneActivity` | X |
 | gene symbols (unique, no `|` / `(`) | the gene annotation of the genome build | `var_names` |
 
-MDV labels X "Gene Scores". Say in the README that the Gene Scores of this asset are gene-activity
-scores, not expression.
+MDV labels X "Gene Scores". Write in the README that the Gene Scores of this project are
+gene-activity scores, not expression.
 
 ## Multiome (RNA + ATAC in the same cells)
 
-One asset, one gene table, two expression sets:
+One project, one gene table, two expression sets:
 
 ```python
 shared = rna.var_names.intersection(activity.var_names)          # genes in both
@@ -37,23 +37,24 @@ rna_s.layers["act"] = act.X                                       # sparse, norm
 asset = build_asset(rna_s, OBS_LABELS, obsm_keys={"X_umap": "UMAP"}, layers={"act": "Gene activity"})
 ```
 
-MDV shows X as "Gene Scores" (RNA) and the layer as "Gene activity". Check before you write:
-the cells of both modalities are the same (`act.obs_names` equals `rna.obs_names`), and both
-matrices are sparse and log-normalised. Report in the README how many genes each modality loses
-to the intersection.
+MDV shows X as "Gene Scores" (RNA) and the layer as "Gene activity". The layer key (`act`) is a
+field, so it obeys the field rule of the asset contract. Before you write the asset, make sure
+that the cells of the two modalities are the same (`act.obs_names` equals `rna.obs_names`). Also
+make sure that the two matrices are sparse and log-normalized. Write in the README how many genes
+each modality loses to the intersection.
 
-Motif deviations (chromVAR) and peaks do not fit the gene table. Write them as TSV files: one row
-per motif or peak, with per-cluster summaries.
+Motif deviations (chromVAR) and peaks do not fit the gene table. Add them as tables of the project
+(`add_table`): one row for each motif or peak, with a summary for each cluster.
 
-## Peaks (optional TSV)
+## Peaks (an optional table)
 
-`peaks.tsv`: chromosome, start, end, width, the nearest gene, and per-cluster accessibility. MDV
-reads positions as numbers stored as float32, which rounds values above 16,777,216; keep the
-positions as text in a `Location` column (`chr1:1234567-1235067`) as well.
+The `peaks` table: chromosome, start, end, width, the nearest gene, and the accessibility of each
+cluster. MDV stores the positions as float32 numbers, which rounds values above 16,777,216. Thus
+keep the positions as text in a `Location` column (`chr1:1234567-1235067`) as well.
 
 ## Anti-patterns
 
-- Peaks as the features of the asset.
-- A raw (not normalised) gene-activity matrix.
-- Calling gene activity "expression" in labels or the README.
+- Peaks as the features of the project.
+- A raw (not normalized) gene-activity matrix.
+- The word "expression" for gene activity, in a label or in the README.
 - Multiome layers whose rows or genes are not in the order of X.
