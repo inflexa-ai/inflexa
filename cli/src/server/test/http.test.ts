@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { BootStepRunning, ServerBootState } from "../../api/server.ts";
 import { errorBody } from "../../test_support/response_body.ts";
 import type { ServerBoot } from "../boot.ts";
-import { apiError, listEnvelope, parseCount, parsePage, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
+import { apiError, listEnvelope, loggedPath, parseCount, parsePage, requireRuntime, sseResponse, type ServerEnv } from "../http.ts";
 import { present } from "../../lib/present.ts";
 import { describeCause } from "../../lib/cause.ts";
 
@@ -24,6 +24,17 @@ describe("apiError", () => {
         expect(await detailed.json()).toEqual({ error: "busy", message: "work runs", details: { reasons: ["turn"] } });
 
         expect((await app.request("/down")).status).toBe(503);
+    });
+});
+
+describe("loggedPath", () => {
+    test("the token after the grant segment becomes `<token>`", () => {
+        expect(loggedPath("/report-sessions/a1/t1/.grant/abc123/assets/fig.png")).toBe("/report-sessions/a1/t1/.grant/<token>/assets/fig.png");
+    });
+
+    test("a path with no grant segment, or with nothing after it, stays as it is", () => {
+        expect(loggedPath("/api/v1/analyses/a1")).toBe("/api/v1/analyses/a1");
+        expect(loggedPath("/report-sessions/a1/t1/.grant")).toBe("/report-sessions/a1/t1/.grant");
     });
 });
 

@@ -8,7 +8,7 @@ import { getLogger } from "../lib/log.ts";
 import { createCustomizationService, defaultCustomizationOpts } from "../modules/customization/service.ts";
 import type { ServerBoot } from "./boot.ts";
 import { createBrowserSessionStore, SIGN_IN_AGAIN_MESSAGE, SIGN_IN_PATH, sessionCookieName, type BrowserSessionStore } from "./browser_session.ts";
-import { apiError, listenerPort, type ServerEnv } from "./http.ts";
+import { apiError, listenerPort, loggedPath, type ServerEnv } from "./http.ts";
 import type { ServerLifecycle } from "./lifecycle.ts";
 import type { PageGrantStore } from "./report_page_grants.ts";
 import { analysisGuard } from "./analysis_guard.ts";
@@ -92,7 +92,7 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     // A handler gives its failures as error bodies. This is the net for a throw past that, for example from
     // a harness call, and it keeps the internal cause out of the response.
     app.onError((cause, c) => {
-        getLogger("server").error({ err: cause, method: c.req.method, path: c.req.path }, "a route failed");
+        getLogger("server").error({ err: cause, method: c.req.method, path: loggedPath(c.req.path) }, "a route failed");
         return apiError(c, "internal_error", "The server failed to handle the request.");
     });
     return app;
