@@ -642,8 +642,10 @@ export function agentProviderConfig(args: {
     const requestBounds = pickRequestBounds(connection);
     const fallbacks = connection.fallbacks === undefined ? {} : { fallbacks: connection.fallbacks };
     // `imageToolResults` is a fact about the endpoint, thus each arm states its own value. The proxy
-    // translates each request onto the account that `inflexa setup` authenticated. That account can be
-    // a model of a different vendor, and such a wire carries no picture inside a tool result. A direct
+    // sends each request to the account that `inflexa setup` authenticated. A Claude account gets the
+    // Messages body with no translation, thus an image block inside a `tool_result` reaches the model.
+    // An account of a different vendor gets a translated body, and that wire carries no picture inside a
+    // tool result. Without the picture, the report agent cannot see the page that it renders. A direct
     // endpoint with the Anthropic protocol speaks the Messages wire, which renders an image block
     // inside a `tool_result`, and the Responses wire of the `openai` protocol renders one inside a
     // function-call output. The chat-completions wire carries a tool result as text, unless the
@@ -656,7 +658,7 @@ export function agentProviderConfig(args: {
             apiKey,
             model,
             reasoning: effort,
-            capabilities: { toolCalling: true, imageToolResults: false },
+            capabilities: { toolCalling: true, imageToolResults: connection.provider === "anthropic" },
             ...requestBounds,
             ...fallbacks,
         };
