@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { buildReportSessionUrl } from "@inflexa-ai/harness/contracts/content-url.js";
 import { PAGE_ASSETS } from "@inflexa-ai/harness/report-render/assets.js";
 import { Hono, type Context } from "hono";
-import { getCookie } from "hono/cookie";
 import { err, ok, ResultAsync, type Result } from "neverthrow";
 
 import type { ReportSessionAccess } from "../../api/conversation.ts";
@@ -17,11 +16,16 @@ import { apiError, holdConnection, internalError, listenerPort, type ServerEnv }
 import type { PageGrantStore } from "../report_page_grants.ts";
 import { DEFAULT_FILE_ROUTE_OPTS, serveFile, type FileRouteOpts } from "./files.ts";
 
-/** The cookie that carries the page grant after the entry request. The managed content server uses the same name. */
-const PAGE_COOKIE = "__ic";
-
 /** The folder of the workspace root that holds one folder for each report session. */
 const SESSIONS_DIR = "report-sessions";
+
+/**
+ * The path segment before the token of a grant: `/report-sessions/{a}/{t}/.grant/{token}/<path>`. The page runs in
+ * a sandbox with an opaque origin, and the browser sends no `SameSite` cookie on a request of such a page. Thus the
+ * token rides in the path, and each relative link of the page carries it. The route never serves a segment that
+ * starts with `.`, thus no file of a session can have this path.
+ */
+const GRANT_SEGMENT = ".grant";
 
 const UNAUTHORIZED_MESSAGE = "The link of this report page is not valid, or it expired. Open the report page again from Inflexa.";
 
@@ -131,9 +135,10 @@ function unauthorized(c: Context<ServerEnv>): Response {
  * path (404), the proof (401), then the file (404 and 403). A request with no proof never learns whether a guarded
  * file exists.
  *
- * The proof is the cookie swap of the managed content server. The query value `t` wins and sets the cookie `__ic`.
- * Else a public file of the page asset manifest passes. Else the cookie must hold a live grant of the session.
- * Each response carries the sandbox headers of {@link PAGE_HEADERS}.
+ * The entry URL keeps the shape of the harness contract, `<path>?t={token}`. A live token in `t` gets a redirect to
+ * the same file under {@link GRANT_SEGMENT}, and the query value wins over each other proof. A path under the
+ * grant segment must name a live grant of the session. Else a public file of the page asset manifest passes. Each
+ * response carries the sandbox headers of {@link PAGE_HEADERS}.
  */
 export function reportPageRoutes(grants: PageGrantStore, opts: FileRouteOpts = DEFAULT_FILE_ROUTE_OPTS): Hono<ServerEnv> {
     const routes = new Hono<ServerEnv>();
@@ -147,47 +152,38 @@ export function reportPageRoutes(grants: PageGrantStore, opts: FileRouteOpts = D
 
     routes.get("/*", async (c) => {
         const segments = pathSegments(c);
-        const [analysisId = "", threadId = "", ...tail] = segments ?? [];
+        const [analysisId = "", threadId = "", ...rest] = segments ?? [];
+        const grantToken = rest[0] === GRANT_SEGMENT ? (rest[1] ?? "") : null;
+        const tail = grantToken === null ? rest : rest.slice(2);
         if (segments === null || tail.length === 0 || !isSafeId(analysisId) || !isSafeId(threadId) || !tail.every(isServedSegment)) {
             return apiError(c, "not_found", "No file at the path.");
         }
 
         const publicFile = PUBLIC_FILES.has(tail.join("/"));
         const queryToken = c.req.query("t");
-        let entrySeconds: number | null = null;
         if (queryToken !== undefined) {
-            entrySeconds = grants.remainingSeconds(queryToken, analysisId, threadId);
-            if (entrySeconds === null) return unauthorized(c);
+            if (grants.remainingSeconds(queryToken, analysisId, threadId) === null) return unauthorized(c);
+            const grantPath = [SESSIONS_DIR, analysisId, threadId, GRANT_SEGMENT, queryToken, ...tail].map(encodeURIComponent).join("/");
+            return c.redirect(`/${grantPath}`, 302);
+        }
+        if (grantToken !== null) {
+            if (grants.remainingSeconds(grantToken, analysisId, threadId) === null) return unauthorized(c);
         } else if (!publicFile) {
-            const cookie = getCookie(c, PAGE_COOKIE);
-            if (cookie === undefined || grants.remainingSeconds(cookie, analysisId, threadId) === null) return unauthorized(c);
+            return unauthorized(c);
         }
 
         // The real path of a file on a hung mount can take more than 10 s.
         holdConnection(c);
         const folder = await locateSessionFolder(analysisId, threadId);
-        let response: Response;
-        if (folder.isErr()) {
-            response = sessionFolderFailure(c, folder.error);
-        } else {
-            const target = join(folder.value.text, ...tail);
-            response =
-                publicFile && (await isLinkedPublicFile(folder.value, tail, target))
-                    ? apiError(c, "forbidden", PUBLIC_LINK_MESSAGE)
-                    : await serveFile(c, opts, [folder.value], target, tail[tail.length - 1] ?? "", {
-                          download: false,
-                          headers: publicFile ? { ...PAGE_HEADERS, ...PUBLIC_FILE_HEADERS } : PAGE_HEADERS,
-                          notAFile: (context) => apiError(context, "not_found", "No file at the path."),
-                      });
-        }
-
-        // The token of the entry request is the one that passed, thus the cookie holds the same token. The path of
-        // the cookie names the session, and a cookie of one session never reaches a different session.
-        if (queryToken !== undefined && entrySeconds !== null) {
-            const path = `/${SESSIONS_DIR}/${encodeURIComponent(analysisId)}/${encodeURIComponent(threadId)}/`;
-            response.headers.append("Set-Cookie", `${PAGE_COOKIE}=${queryToken}; Path=${path}; HttpOnly; SameSite=Lax; Max-Age=${entrySeconds}`);
-        }
-        return response;
+        if (folder.isErr()) return sessionFolderFailure(c, folder.error);
+        const target = join(folder.value.text, ...tail);
+        return publicFile && (await isLinkedPublicFile(folder.value, tail, target))
+            ? apiError(c, "forbidden", PUBLIC_LINK_MESSAGE)
+            : await serveFile(c, opts, [folder.value], target, tail[tail.length - 1] ?? "", {
+                  download: false,
+                  headers: publicFile ? { ...PAGE_HEADERS, ...PUBLIC_FILE_HEADERS } : PAGE_HEADERS,
+                  notAFile: (context) => apiError(context, "not_found", "No file at the path."),
+              });
     });
 
     return routes;

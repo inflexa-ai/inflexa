@@ -78,9 +78,14 @@ function sessionFile(thread: string, rel: string, content: string): string {
     return abs;
 }
 
-/** Mint a live grant for `a1` and `t1`, and give the `Cookie` header of a browser that did the entry request. */
-function cookieFor(thread = "t1"): string {
-    return `__ic=${grants.mint("a1", thread).token}`;
+/** The path of a file of a session under the grant of the token, the path that the entry request redirects to. */
+function grantPath(token: string, path: string, thread = "t1"): string {
+    return `/report-sessions/a1/${thread}/.grant/${token}/${path}`;
+}
+
+/** Request a file of a session under a new live grant of that session. */
+function granted(path: string, init?: RequestInit, thread = "t1"): Promise<Response> | Response {
+    return app.request(grantPath(grants.mint("a1", thread).token, path, thread), init);
 }
 
 function page(path: string, init?: RequestInit): Promise<Response> | Response {
@@ -102,66 +107,91 @@ function expectSandbox(response: Response): void {
 }
 
 describe("the entry request", () => {
-    test("a live token serves the page and sets the cookie of the session", async () => {
+    test("a live token redirects to the same file under the grant path, and sets no cookie", async () => {
         const { token } = grants.mint("a1", "t1");
         const response = await page(`index.html?t=${token}`);
+        expect(response.status).toBe(302);
+        expect(response.headers.get("Location")).toBe(grantPath(token, "index.html"));
+        expect(response.headers.get("Set-Cookie")).toBeNull();
+        expectSandbox(response);
+    });
+
+    test("the redirect target serves the page, and a relative asset of the page loads with no cookie", async () => {
+        const { token } = grants.mint("a1", "t1");
+        const entry = await page(`index.html?t=${token}`);
+        const target = new URL(present(entry.headers.get("Location")), "http://127.0.0.1:8436");
+        const response = await app.request(target.pathname);
         expect(response.status).toBe(200);
         expect(await response.text()).toBe("<html>page t1</html>");
-        expect(response.headers.get("Set-Cookie")).toBe(`__ic=${token}; Path=/report-sessions/a1/t1/; HttpOnly; SameSite=Lax; Max-Age=900`);
-        expect(response.headers.get("Set-Cookie")).not.toContain("Secure");
         expect(response.headers.get("Content-Type")).toStartWith("text/html");
+        const asset = await app.request(new URL("assets/fig.png", target).pathname);
+        expect(asset.status).toBe(200);
+        expect(await asset.text()).toBe("png-bytes");
     });
 
-    test("the Max-Age is the whole seconds that the grant still lives, rounded down", async () => {
+    test("the redirect keeps each segment of the path encoded", async () => {
         const { token } = grants.mint("a1", "t1");
-        now += 100_500;
-        const response = await page(`index.html?t=${token}`);
-        expect(response.headers.get("Set-Cookie")).toContain("Max-Age=799");
+        sessionFile("t1", "assets/a b.csv", "spaced");
+        const response = await page(`assets/a%20b.csv?t=${token}`);
+        expect(response.headers.get("Location")).toBe(grantPath(token, "assets/a%20b.csv"));
+        expect(await (await app.request(present(response.headers.get("Location")))).text()).toBe("spaced");
     });
 
-    test("a token of a different session gives 401 with the exact message, and no cookie", async () => {
+    test("a token of a different session gives 401 with the exact message, and no redirect", async () => {
         const { token } = grants.mint("a1", "t1");
         const response = await app.request(`/report-sessions/a1/t2/index.html?t=${token}`);
         const body = await expectError(response, 401, "unauthorized");
         expect(body.message).toBe(UNAUTHORIZED_MESSAGE);
-        expect(response.headers.get("Set-Cookie")).toBeNull();
+        expect(response.headers.get("Location")).toBeNull();
     });
 
-    test("an expired token gives 401, and no cookie", async () => {
+    test("an expired token gives 401, and no redirect", async () => {
         const { token } = grants.mint("a1", "t1");
         now += 900_001;
         const response = await page(`index.html?t=${token}`);
         await expectError(response, 401, "unauthorized");
-        expect(response.headers.get("Set-Cookie")).toBeNull();
+        expect(response.headers.get("Location")).toBeNull();
     });
 
-    test("the query token wins: a bad token gives 401 even with a live cookie and for a public file", async () => {
-        const cookie = cookieFor();
-        await expectError(await page("index.html?t=nope", { headers: { Cookie: cookie } }), 401, "unauthorized");
+    test("the query token wins: a bad token gives 401 even for a public file", async () => {
+        await expectError(await page("index.html?t=nope"), 401, "unauthorized");
         await expectError(await page(`assets/${FONT}?t=nope`), 401, "unauthorized");
     });
 });
 
-describe("the cookie and the public files", () => {
-    test("an asset loads with the cookie and no token", async () => {
-        const response = await page("assets/fig.png", { headers: { Cookie: cookieFor() } });
+describe("the grant path and the public files", () => {
+    test("an asset loads under the grant path with no cookie", async () => {
+        const response = await granted("assets/fig.png");
         expect(response.status).toBe(200);
         expect(await response.text()).toBe("png-bytes");
         expect(response.headers.get("Set-Cookie")).toBeNull();
         expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
     });
 
-    test("an asset with no cookie gives 401 with the exact message", async () => {
+    test("an asset with no grant gives 401 with the exact message", async () => {
         const body = await expectError(await page("assets/fig.png"), 401, "unauthorized");
         expect(body.message).toBe(UNAUTHORIZED_MESSAGE);
     });
 
-    test("a cookie of a different session, an expired cookie, and a bad cookie give 401", async () => {
-        await expectError(await page("assets/fig.png", { headers: { Cookie: cookieFor("t2") } }), 401, "unauthorized");
-        await expectError(await page("assets/fig.png", { headers: { Cookie: "__ic=nope" } }), 401, "unauthorized");
-        const cookie = cookieFor();
+    test("a grant of a different session, an unknown token, and an expired grant give 401", async () => {
+        const other = grants.mint("a1", "t2").token;
+        await expectError(await app.request(grantPath(other, "assets/fig.png")), 401, "unauthorized");
+        await expectError(await app.request(grantPath("nope", "assets/fig.png")), 401, "unauthorized");
+        const { token } = grants.mint("a1", "t1");
         now += 900_001;
-        await expectError(await page("assets/fig.png", { headers: { Cookie: cookie } }), 401, "unauthorized");
+        await expectError(await app.request(grantPath(token, "assets/fig.png")), 401, "unauthorized");
+    });
+
+    test("a grant path with no file after the token gives 404", async () => {
+        const { token } = grants.mint("a1", "t1");
+        await expectError(await app.request(`/report-sessions/a1/t1/.grant/${token}`), 404, "not_found");
+        await expectError(await app.request(`/report-sessions/a1/t1/.grant/${token}/`), 404, "not_found");
+        await expectError(await app.request("/report-sessions/a1/t1/.grant"), 404, "not_found");
+    });
+
+    test("the cookie of a grant gives no access", async () => {
+        const { token } = grants.mint("a1", "t1");
+        await expectError(await page("assets/fig.png", { headers: { Cookie: `__ic=${token}` } }), 401, "unauthorized");
     });
 
     test("a font of the manifest needs no token, and it has the CORS header", async () => {
@@ -172,9 +202,15 @@ describe("the cookie and the public files", () => {
         expectSandbox(response);
     });
 
+    test("a font of the manifest under the grant path has the CORS header", async () => {
+        const response = await granted(`assets/${FONT}`, { headers: { Origin: "null" } });
+        expect(response.status).toBe(200);
+        expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    });
+
     test("a file under deps that the manifest does not carry needs a grant", async () => {
         await expectError(await page("assets/deps/notes.csv"), 401, "unauthorized");
-        const response = await page("assets/deps/notes.csv", { headers: { Cookie: cookieFor() } });
+        const response = await granted("assets/deps/notes.csv");
         expect(response.status).toBe(200);
         expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
     });
@@ -193,11 +229,11 @@ describe("the cookie and the public files", () => {
 
 describe("the headers", () => {
     test("the page and a ranged answer run in a sandbox with no store", async () => {
-        const cookie = cookieFor();
-        const full = await page("index.html", { headers: { Cookie: cookie } });
+        const { token } = grants.mint("a1", "t1");
+        const full = await app.request(grantPath(token, "index.html"));
         expect(full.status).toBe(200);
         expectSandbox(full);
-        const ranged = await page("index.html", { headers: { Cookie: cookie, Range: "bytes=0-5" } });
+        const ranged = await app.request(grantPath(token, "index.html"), { headers: { Range: "bytes=0-5" } });
         expect(ranged.status).toBe(206);
         expect(await ranged.text()).toBe("<html>");
         expectSandbox(ranged);
@@ -205,17 +241,17 @@ describe("the headers", () => {
 
     test("an error response carries the headers too", async () => {
         expectSandbox(await page("index.html"));
-        expectSandbox(await page("missing.html", { headers: { Cookie: cookieFor() } }));
+        expectSandbox(await granted("missing.html"));
         expectSandbox(await page(".state"));
         expectSandbox(await app.request("/report-sessions/a1/t1/"));
     });
 
     test("a 304 keeps the sandbox, the referrer policy, and the cache policy", async () => {
-        const cookie = cookieFor();
-        const first = await page("assets/fig.png", { headers: { Cookie: cookie } });
+        const { token } = grants.mint("a1", "t1");
+        const first = await app.request(grantPath(token, "assets/fig.png"));
         const etag = first.headers.get("ETag");
         expect(etag).not.toBeNull();
-        const response = await page("assets/fig.png", { headers: { Cookie: cookie, "If-None-Match": present(etag) } });
+        const response = await app.request(grantPath(token, "assets/fig.png"), { headers: { "If-None-Match": present(etag) } });
         expect(response.status).toBe(304);
         expectSandbox(response);
     });
@@ -229,9 +265,9 @@ describe("the headers", () => {
     });
 
     test("HEAD gives the status and the headers of GET, and no body", async () => {
-        const cookie = cookieFor();
-        const get = await page("assets/fig.png", { headers: { Cookie: cookie } });
-        const head = await page("assets/fig.png", { method: "HEAD", headers: { Cookie: cookie } });
+        const { token } = grants.mint("a1", "t1");
+        const get = await app.request(grantPath(token, "assets/fig.png"));
+        const head = await app.request(grantPath(token, "assets/fig.png"), { method: "HEAD" });
         expect(head.status).toBe(200);
         expect(head.headers.get("Content-Length")).toBe(get.headers.get("Content-Length"));
         expect(head.headers.get("ETag")).toBe(get.headers.get("ETag"));
@@ -242,19 +278,19 @@ describe("the headers", () => {
         expectSandbox(refused);
     });
 
-    test("HEAD of the entry request sets the cookie", async () => {
+    test("HEAD of the entry request redirects to the grant path", async () => {
         const { token } = grants.mint("a1", "t1");
         const head = await page(`index.html?t=${token}`, { method: "HEAD" });
-        expect(head.status).toBe(200);
-        expect(head.headers.get("Set-Cookie")).toContain(`__ic=${token}; Path=/report-sessions/a1/t1/`);
+        expect(head.status).toBe(302);
+        expect(head.headers.get("Location")).toBe(grantPath(token, "index.html"));
     });
 });
 
 describe("the form of the ids and of the path", () => {
     test("a hidden file gives 404, also without a grant", async () => {
-        await expectError(await page(".state", { headers: { Cookie: cookieFor() } }), 404, "not_found");
+        await expectError(await granted(".state"), 404, "not_found");
         await expectError(await page(".state"), 404, "not_found");
-        await expectError(await page("assets/.hidden/x.txt", { headers: { Cookie: cookieFor() } }), 404, "not_found");
+        await expectError(await granted("assets/.hidden/x.txt"), 404, "not_found");
     });
 
     test("an id with a separator, a NUL byte, or a bad escape gives 404 before the proof", async () => {
@@ -269,32 +305,30 @@ describe("the form of the ids and of the path", () => {
     });
 
     test("a folder, the root of the session, and an absent file give 404", async () => {
-        const headers = { Cookie: cookieFor() };
-        await expectError(await page("assets", { headers }), 404, "not_found");
-        await expectError(await page("assets/", { headers }), 404, "not_found");
-        await expectError(await app.request("/report-sessions/a1/t1", { headers }), 404, "not_found");
-        await expectError(await page("assets/absent.png", { headers }), 404, "not_found");
+        await expectError(await granted("assets"), 404, "not_found");
+        await expectError(await granted("assets/"), 404, "not_found");
+        await expectError(await app.request("/report-sessions/a1/t1"), 404, "not_found");
+        await expectError(await granted("assets/absent.png"), 404, "not_found");
     });
 
     test("an encoded `..` in the path reaches no file outside the session", async () => {
-        const headers = { Cookie: cookieFor() };
-        const response = await page("assets%2F..%2F..%2Ft2%2Fassets%2Fother.txt", { headers });
+        const response = await granted("assets%2F..%2F..%2Ft2%2Fassets%2Fother.txt");
         expect(response.status).toBe(404);
         expect(await response.text()).not.toContain("TOP-SECRET-T2");
     });
 
     test("an unknown analysis and a lost workspace give 404", async () => {
         const { token } = grants.mint("ghost", "t1");
-        await expectError(await app.request(`/report-sessions/ghost/t1/index.html?t=${token}`), 404, "not_found");
-        const cookie = cookieFor();
+        await expectError(await app.request(`/report-sessions/ghost/t1/.grant/${token}/index.html`), 404, "not_found");
+        const { token: live } = grants.mint("a1", "t1");
         rmSync(home, { recursive: true, force: true });
         invalidateWorkspaceRoot();
-        await expectError(await page("index.html", { headers: { Cookie: cookie } }), 404, "not_found");
+        await expectError(await app.request(grantPath(live, "index.html")), 404, "not_found");
     });
 
     test("a session with no folder gives 404", async () => {
         const { token } = grants.mint("a1", "t9");
-        await expectError(await app.request(`/report-sessions/a1/t9/index.html?t=${token}`), 404, "not_found");
+        await expectError(await app.request(`/report-sessions/a1/t9/.grant/${token}/index.html`), 404, "not_found");
     });
 });
 
@@ -302,16 +336,16 @@ describe("the confinement to the session folder", () => {
     test("a session folder that is a link gives 403 and no byte", async () => {
         sessionFile("real", "index.html", "TOP-SECRET-REAL");
         symlinkSync(join(root, "report-sessions", "real"), join(root, "report-sessions", "linked"));
-        const response = await app.request("/report-sessions/a1/linked/index.html", { headers: { Cookie: cookieFor("linked") } });
+        const response = await granted("index.html", undefined, "linked");
         await expectError(response, 403, "forbidden");
         // The verdict of the folder comes before the file: a name that is absent gives 403 too, and no 404 that leaks the target.
-        await expectError(await app.request("/report-sessions/a1/linked/absent.html", { headers: { Cookie: cookieFor("linked") } }), 403, "forbidden");
+        await expectError(await granted("absent.html", undefined, "linked"), 403, "forbidden");
     });
 
     test("a session folder that is a link to a folder outside the workspace gives 403", async () => {
         writeFileSync(join(outside, "index.html"), "TOP-SECRET-OUTSIDE");
         symlinkSync(outside, join(root, "report-sessions", "away"));
-        const response = await app.request("/report-sessions/a1/away/index.html", { headers: { Cookie: cookieFor("away") } });
+        const response = await granted("index.html", undefined, "away");
         const body = await expectError(response, 403, "forbidden");
         expect(JSON.stringify(body)).not.toContain("TOP-SECRET");
     });
@@ -322,25 +356,25 @@ describe("the confinement to the session folder", () => {
         writeFileSync(join(outside, "t1", "index.html"), "TOP-SECRET-OUTSIDE");
         rmSync(join(root, "report-sessions"), { recursive: true });
         symlinkSync(outside, join(root, "report-sessions"));
-        await expectError(await page("index.html", { headers: { Cookie: cookieFor() } }), 403, "forbidden");
+        await expectError(await granted("index.html"), 403, "forbidden");
     });
 
     test("a link that leaves the session folder gives 403 and no byte of the target", async () => {
         writeFileSync(join(outside, "secret.txt"), "TOP-SECRET");
         symlinkSync(join(outside, "secret.txt"), join(root, "report-sessions", "t1", "assets", "leak.txt"));
-        const body = await expectError(await page("assets/leak.txt", { headers: { Cookie: cookieFor() } }), 403, "forbidden");
+        const body = await expectError(await granted("assets/leak.txt"), 403, "forbidden");
         expect(JSON.stringify(body)).not.toContain("TOP-SECRET");
     });
 
     test("a link to a file of a different session gives 403", async () => {
         symlinkSync(join(root, "report-sessions", "t2", "assets", "other.txt"), join(root, "report-sessions", "t1", "assets", "peer.txt"));
-        const response = await page("assets/peer.txt", { headers: { Cookie: cookieFor() } });
+        const response = await granted("assets/peer.txt");
         await expectError(response, 403, "forbidden");
     });
 
     test("a link to a folder of a different session gives 403 for a file under it", async () => {
         symlinkSync(join(root, "report-sessions", "t2"), join(root, "report-sessions", "t1", "assets", "peer"));
-        await expectError(await page("assets/peer/assets/other.txt", { headers: { Cookie: cookieFor() } }), 403, "forbidden");
+        await expectError(await granted("assets/peer/assets/other.txt"), 403, "forbidden");
     });
 
     test("a link at a public path gives 403 and no byte of its target, with no grant", async () => {
@@ -362,7 +396,7 @@ describe("the confinement to the session folder", () => {
         const sessions = join(root, "report-sessions");
         chmodSync(sessions, 0o000);
         try {
-            const response = await page("index.html", { headers: { Cookie: cookieFor() } });
+            const response = await granted("index.html");
             const body = await expectError(response, 500, "internal_error");
             expect(JSON.stringify(body)).not.toContain(root);
             expect(JSON.stringify(body)).not.toContain("EACCES");
@@ -374,7 +408,7 @@ describe("the confinement to the session folder", () => {
 
     test("a link that stays inside the session folder serves its target", async () => {
         symlinkSync(join(root, "report-sessions", "t1", "assets", "fig.png"), join(root, "report-sessions", "t1", "assets", "same.png"));
-        const response = await page("assets/same.png", { headers: { Cookie: cookieFor() } });
+        const response = await granted("assets/same.png");
         expect(response.status).toBe(200);
         expect(await response.text()).toBe("png-bytes");
     });
@@ -403,15 +437,16 @@ describe("POST /api/v1/analyses/:analysisId/report-sessions/:threadId/access", (
         expect(accessBody.parse(await jsonBody(response)).url).toStartWith("http://127.0.0.1:9123/report-sessions/a1/t1/index.html?t=");
     });
 
-    test("the URL of the answer opens the page through the page route, and the cookie opens an asset", async () => {
+    test("the URL of the answer opens the page through the page route, and a relative asset of the page loads", async () => {
         const body = accessBody.parse(await jsonBody(access()));
         const url = new URL(body.url);
         const entry = await app.request(`${url.pathname}${url.search}`);
-        expect(entry.status).toBe(200);
-        expect(await entry.text()).toBe("<html>page t1</html>");
-        const cookie = entry.headers.get("Set-Cookie")?.split(";")[0];
-        expect(cookie).toStartWith("__ic=");
-        const asset = await page("assets/fig.png", { headers: { Cookie: present(cookie) } });
+        expect(entry.status).toBe(302);
+        const target = new URL(present(entry.headers.get("Location")), url);
+        const response = await app.request(target.pathname);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("<html>page t1</html>");
+        const asset = await app.request(new URL("assets/fig.png", target).pathname);
         expect(asset.status).toBe(200);
         expect(await asset.text()).toBe("png-bytes");
     });
@@ -420,8 +455,9 @@ describe("POST /api/v1/analyses/:analysisId/report-sessions/:threadId/access", (
         const publisher = createSessionPagePublisherFactory(grants, "http://127.0.0.1:8436")({ analysisId: "a1", auth: makeLocalAuth() });
         const minted = (await publisher.mintSessionPageAccess("t1"))._unsafeUnwrap();
         const entry = await app.request(`/report-sessions/a1/t1/index.html?t=${minted.token}`);
-        expect(entry.status).toBe(200);
-        expect(await entry.text()).toBe("<html>page t1</html>");
+        expect(entry.status).toBe(302);
+        const response = await app.request(present(entry.headers.get("Location")));
+        expect(await response.text()).toBe("<html>page t1</html>");
     });
 
     test("the session cookie of a browser sign-in gives the access too", async () => {

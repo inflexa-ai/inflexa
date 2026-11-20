@@ -2045,11 +2045,16 @@ One store MUST serve each mint of the server process: the mint of the report pre
 
 ### Requirement: The server serves the page of a report session
 
-The server MUST serve `GET` and `HEAD` of `/report-sessions/{analysisId}/{threadId}/<path>`. This route is outside `/api`. Thus the bearer token and the session cookie of the browser sign-in give no access to it. Only a page grant gives access. The route does the cookie swap of the managed content server:
+The server MUST serve `GET` and `HEAD` of `/report-sessions/{analysisId}/{threadId}/<path>` and of `/report-sessions/{analysisId}/{threadId}/.grant/{token}/<path>`. This route is outside `/api`. Thus the bearer token and the session cookie of the browser sign-in give no access to it. Only a page grant gives access.
 
-- A request with the query value `t` MUST carry the token of a live grant for the analysis and the thread of its path. Otherwise the server MUST answer 401 `unauthorized` with the message `The link of this report page is not valid, or it expired. Open the report page again from Inflexa.` A request that passes MUST get `Set-Cookie: __ic=<token>; Path=/report-sessions/{analysisId}/{threadId}/; HttpOnly; SameSite=Lax; Max-Age=<the whole seconds that the grant still lives, rounded down>`. The cookie has no `Secure` attribute, because the server is plain HTTP on the loopback interface.
-- A request with no `t` MUST need no grant when its path is `assets/<file>`, for a `file` of the page asset manifest of the harness (`PAGE_ASSETS`). These public files are the libraries and the fonts that the preview stages under `assets/deps/` beside each page. A sandboxed page fetches a font in CORS mode, and that fetch carries no cookie. Each other file under `assets/deps/` needs a grant. A public file MUST be a regular file at its own path. A symbolic link at a public path MUST get 403 `forbidden`, because its bytes are not the bytes that the preview staged.
-- Each other request with no `t` MUST carry the cookie `__ic`. The cookie MUST hold the token of a live grant for the analysis and the thread of its path. Otherwise the server MUST answer 401 `unauthorized`, with the same message.
+The page runs in a sandbox, thus it has an opaque origin. A browser sends no `SameSite` cookie on a request of such a page. Thus the token of the grant rides in the path, and each relative link of the page carries it. The route MUST NOT read a cookie as a proof.
+
+- A request with the query value `t` MUST carry the token of a live grant for the analysis and the thread of its path. Otherwise the server MUST answer 401 `unauthorized` with the message `The link of this report page is not valid, or it expired. Open the report page again from Inflexa.` A request that passes MUST get 302 to `/report-sessions/{analysisId}/{threadId}/.grant/{token}/<path>`, with each segment percent-encoded. It MUST set no cookie. The query value wins over each other proof.
+- A request under `.grant/{token}/` MUST carry the token of a live grant for the analysis and the thread of its path. Otherwise the server MUST answer 401 `unauthorized`, with the same message. A request that names no file after the token MUST get 404 `not_found`.
+- A request with no `t` and no grant segment MUST need no grant when its path is `assets/<file>`, for a `file` of the page asset manifest of the harness (`PAGE_ASSETS`). These public files are the libraries and the fonts that the preview stages under `assets/deps/` beside each page. Each other file under `assets/deps/` needs a grant. A public file MUST be a regular file at its own path. A symbolic link at a public path MUST get 403 `forbidden`, because its bytes are not the bytes that the preview staged.
+- Each other request MUST get 401 `unauthorized`, with the same message.
+
+The route never serves a segment that starts with `.`. Thus no file of a session can have the path of the grant segment.
 
 The route MUST serve a file only when its real path is inside the real path of the session folder. The session folder is `report-sessions/{threadId}/` under the workspace root. The real path of the session folder MUST be the real path of the workspace root joined with `report-sessions/{threadId}`. Otherwise the route MUST answer 403 `forbidden`, because a link moved the folder. A session folder that does not exist gets 404 `not_found`. The test resolves each symbolic link of the path, and it is boundary-safe: `/a/bc` is not inside `/a/b`. A symbolic link that leaves that folder MUST give no byte of its target. A symbolic link that replaces the last part of the path after the test MUST NOT give the bytes of its target.
 
@@ -2075,78 +2080,84 @@ A response for a public file MUST also have `Access-Control-Allow-Origin: *`. Wi
 
 The route MUST give these parts as the read route of the file system (`GET /api/v1/fs/read`) gives them: the content type, the `ETag`, the `If-None-Match` answer, the `Range` answer, and the streamed body. A `HEAD` request MUST get the status and the headers of the `GET`, and no body.
 
-#### Scenario: The entry request sets the cookie
+#### Scenario: The entry request redirects to the grant path
 
 - **GIVEN** a live grant for analysis `a1` and thread `t1`, and the page of that session on disk
 - **WHEN** a browser requests `/report-sessions/a1/t1/index.html?t=<token>`
-- **THEN** the server answers 200 with the page, and it sets the cookie `__ic` with `Path=/report-sessions/a1/t1/`, `HttpOnly`, and `SameSite=Lax`
+- **THEN** the server answers 302 to `/report-sessions/a1/t1/.grant/<token>/index.html`, and it sets no cookie
 
-#### Scenario: An asset loads with the cookie
+#### Scenario: A relative asset of the page loads
 
-- **GIVEN** a browser that holds the cookie of a live grant for analysis `a1` and thread `t1`
-- **WHEN** the browser requests `/report-sessions/a1/t1/assets/fig.png` with the cookie and no `t`
+- **GIVEN** a page that the browser opened at `/report-sessions/a1/t1/.grant/<token>/index.html`
+- **WHEN** the page requests `assets/fig.png`, with no cookie
 - **THEN** the server answers 200 with the bytes of the figure
 
-#### Scenario: An asset with no cookie
+#### Scenario: An asset with no grant
 
-- **WHEN** a browser requests `/report-sessions/a1/t1/assets/fig.png` with no `t` and no cookie
+- **WHEN** a browser requests `/report-sessions/a1/t1/assets/fig.png` with no `t` and no grant segment
+- **THEN** the server answers 401 `unauthorized`
+
+#### Scenario: A cookie is not a proof
+
+- **GIVEN** a live grant for analysis `a1` and thread `t1`
+- **WHEN** a browser requests `/report-sessions/a1/t1/assets/fig.png` with the cookie `__ic=<token>`, no `t`, and no grant segment
 - **THEN** the server answers 401 `unauthorized`
 
 #### Scenario: A token of a different session
 
 - **GIVEN** a live grant for analysis `a1` and thread `t1`
 - **WHEN** a browser requests `/report-sessions/a1/t2/index.html` with the token of that grant in `t`
-- **THEN** the server answers 401 `unauthorized`, and it sets no cookie
+- **THEN** the server answers 401 `unauthorized`, and it gives no redirect
 
 #### Scenario: An expired token
 
 - **GIVEN** a grant that expired
-- **WHEN** a browser requests the page with its token in `t`
-- **THEN** the server answers 401 `unauthorized`, and it sets no cookie
+- **WHEN** a browser requests the page with its token in `t`, or under the grant segment
+- **THEN** the server answers 401 `unauthorized`
 
 #### Scenario: A font needs no token
 
-- **WHEN** a browser requests `/report-sessions/a1/t1/assets/deps/font.woff2` with `Origin: null`, no `t`, and no cookie
+- **WHEN** a browser requests `/report-sessions/a1/t1/assets/deps/font.woff2` with `Origin: null`, no `t`, and no grant segment
 - **THEN** the server answers 200 with the font and `Access-Control-Allow-Origin: *`
 
 #### Scenario: An unlisted file under deps needs a grant
 
-- **WHEN** a browser requests `/report-sessions/a1/t1/assets/deps/notes.csv`, a name that the manifest does not carry, with no `t` and no cookie
+- **WHEN** a browser requests `/report-sessions/a1/t1/assets/deps/notes.csv`, a name that the manifest does not carry, with no `t` and no grant segment
 - **THEN** the server answers 401 `unauthorized`
 
 #### Scenario: A link at a public path
 
 - **GIVEN** a symbolic link at `report-sessions/t1/assets/<file of the manifest>` to `report-sessions/t1/assets/notes.csv`
-- **WHEN** a browser requests that public path with no `t` and no cookie
+- **WHEN** a browser requests that public path with no `t` and no grant segment
 - **THEN** the server answers 403 `forbidden`, and it gives no byte of `notes.csv`
 
 #### Scenario: A session folder that is a link
 
 - **GIVEN** a folder `report-sessions/t1` that is a symbolic link to a different folder
-- **WHEN** a browser with a live cookie for the session requests a file of it
+- **WHEN** a browser requests a file of it under a live grant of the session
 - **THEN** the server answers 403 `forbidden`, and it gives no byte
 
 #### Scenario: A 304 keeps the sandbox
 
-- **GIVEN** a browser with a live cookie that sends `If-None-Match` with the current tag of the page
+- **GIVEN** a browser that requests the page under a live grant, and sends `If-None-Match` with the current tag of the page
 - **WHEN** the route answers 304
 - **THEN** the response has the `Content-Security-Policy`, `Referrer-Policy`, and `Cache-Control` headers of the route
 
 #### Scenario: A link that leaves the session folder
 
 - **GIVEN** a symbolic link `report-sessions/t1/assets/leak.txt` to a file outside that folder
-- **WHEN** a browser with a live cookie for the session requests it
+- **WHEN** a browser requests it under a live grant of the session
 - **THEN** the server answers 403 `forbidden`, and it gives no byte of the target
 
 #### Scenario: A link to a different session
 
 - **GIVEN** a symbolic link in `report-sessions/t1/assets/` to a file of `report-sessions/t2/`
-- **WHEN** a browser with a live cookie for thread `t1` requests it
+- **WHEN** a browser requests it under a live grant for thread `t1`
 - **THEN** the server answers 403 `forbidden`
 
 #### Scenario: A hidden file
 
-- **WHEN** a browser with a live cookie requests `/report-sessions/a1/t1/.state`
+- **WHEN** a browser requests `/report-sessions/a1/t1/.grant/<token>/.state` under a live grant
 - **THEN** the server answers 404 `not_found`
 
 #### Scenario: The page runs in a sandbox
@@ -2157,7 +2168,7 @@ The route MUST give these parts as the read route of the file system (`GET /api/
 #### Scenario: The API credentials give no access
 
 - **GIVEN** a browser that signed in through `inflexa gui`, and a client with the bearer token
-- **WHEN** each requests `/report-sessions/a1/t1/index.html` with no `t` and no `__ic` cookie
+- **WHEN** each requests `/report-sessions/a1/t1/index.html` with no `t` and no grant segment
 - **THEN** the server answers 401 `unauthorized` to each
 
 ### Requirement: The server mints the access of a report-session page
@@ -2182,7 +2193,7 @@ The route MUST give these errors, and it MUST mint no grant for them:
 
 - **GIVEN** a URL that the access route gave
 - **WHEN** a browser requests that URL
-- **THEN** the page route answers 200 with the page, and it sets the cookie `__ic`
+- **THEN** the page route answers 302 to the grant path of the page, and the grant path answers 200 with the page
 
 #### Scenario: A session with no page
 
