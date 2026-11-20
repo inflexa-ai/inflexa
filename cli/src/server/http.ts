@@ -60,11 +60,30 @@ export function apiError(c: Context, code: ApiErrorCode, message: string, detail
 }
 
 /**
+ * The path segment before the token of a grant: `/report-sessions/{a}/{t}/.grant/{token}/<path>`. A report page
+ * runs in a sandbox with an opaque origin, and the browser sends no `SameSite` cookie on a request of such a page.
+ * Thus the token rides in the path, and each relative link of the page carries it. The page route never serves a
+ * segment that starts with `.`, thus no file of a session can have this path.
+ */
+export const GRANT_SEGMENT = ".grant";
+
+/**
+ * The path of a request as the log records it. The segment after {@link GRANT_SEGMENT} is a live page grant, and
+ * the log reaches the telemetry export, thus the token becomes `<token>`.
+ */
+export function loggedPath(path: string): string {
+    const segments = path.split("/");
+    const at = segments.indexOf(GRANT_SEGMENT);
+    if (at === -1 || at + 1 >= segments.length) return path;
+    return [...segments.slice(0, at + 1), "<token>", ...segments.slice(at + 2)].join("/");
+}
+
+/**
  * The 500 `internal_error` response for a module or db `Result` that failed for a reason that the client
  * cannot act on, for example a `DbError` of type `query_failed`. The cause goes to the log only.
  */
 export function internalError(c: Context, cause: unknown, action: string): Response {
-    getLogger("server").error({ err: cause, method: c.req.method, path: c.req.path }, `could not ${action}`);
+    getLogger("server").error({ err: cause, method: c.req.method, path: loggedPath(c.req.path) }, `could not ${action}`);
     return apiError(c, "internal_error", "The server failed to handle the request.");
 }
 

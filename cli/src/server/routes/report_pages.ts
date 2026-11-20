@@ -12,20 +12,12 @@ import { env } from "../../lib/env.ts";
 import { errnoCode } from "../../lib/fs.ts";
 import { classifyRealPath, workspaceReadRoot, type ReadRoot } from "../../modules/analysis/boundary.ts";
 import type { WorkspaceError } from "../../modules/analysis/output.ts";
-import { apiError, holdConnection, internalError, listenerPort, type ServerEnv } from "../http.ts";
+import { apiError, GRANT_SEGMENT, holdConnection, internalError, listenerPort, type ServerEnv } from "../http.ts";
 import type { PageGrantStore } from "../report_page_grants.ts";
 import { DEFAULT_FILE_ROUTE_OPTS, serveFile, type FileRouteOpts } from "./files.ts";
 
 /** The folder of the workspace root that holds one folder for each report session. */
 const SESSIONS_DIR = "report-sessions";
-
-/**
- * The path segment before the token of a grant: `/report-sessions/{a}/{t}/.grant/{token}/<path>`. The page runs in
- * a sandbox with an opaque origin, and the browser sends no `SameSite` cookie on a request of such a page. Thus the
- * token rides in the path, and each relative link of the page carries it. The route never serves a segment that
- * starts with `.`, thus no file of a session can have this path.
- */
-const GRANT_SEGMENT = ".grant";
 
 const UNAUTHORIZED_MESSAGE = "The link of this report page is not valid, or it expired. Open the report page again from Inflexa.";
 

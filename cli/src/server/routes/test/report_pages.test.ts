@@ -12,6 +12,7 @@ import type { ReportSessionAccess } from "../../../api/conversation.ts";
 import { mintReportSessionAccess } from "../../../client/conversation.ts";
 import { insertAnalysis, insertAnchor } from "../../../db/primary_mutation.ts";
 import { releaseInstanceLock } from "../../../lib/lock.ts";
+import { addLogStream, flushLogs } from "../../../lib/log.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../../../modules/analysis/output.ts";
 import { writeMarker } from "../../../modules/anchor/marker.ts";
@@ -404,6 +405,29 @@ describe("the confinement to the session folder", () => {
         } finally {
             chmodSync(sessions, 0o755);
         }
+    });
+
+    test.skipIf(process.getuid?.() === 0)("a failed request under the grant path logs its path with no token", async () => {
+        const records: string[] = [];
+        let open = true;
+        addLogStream({
+            write(chunk: string): void {
+                if (open && chunk.includes("could not read the session folder")) records.push(chunk);
+            },
+        });
+        const sessions = join(root, "report-sessions");
+        const { token } = grants.mint("a1", "t1");
+        chmodSync(sessions, 0o000);
+        try {
+            await expectError(await app.request(grantPath(token, "index.html")), 500, "internal_error");
+            await flushLogs();
+        } finally {
+            chmodSync(sessions, 0o755);
+            open = false;
+        }
+        expect(records).toHaveLength(1);
+        expect(records[0]).toContain('"path":"/report-sessions/a1/t1/.grant/<token>/index.html"');
+        expect(records[0]).not.toContain(token);
     });
 
     test("a link that stays inside the session folder serves its target", async () => {
