@@ -731,12 +731,25 @@ describe("bootHarnessRuntime", () => {
     });
 
     // `imageToolResults` is a fact about the endpoint, not about the wire dialect the config names, and
-    // the harness reads it as "absent means cannot carry". These three pin what each arm states, so a
+    // the harness reads it as "absent means cannot carry". These tests pin what each arm states, so a
     // silent over-assertion (base64 the model never sees) cannot return through a default.
-    test("cliproxy mode states that the wire carries no picture inside a tool result", async () => {
+    test("cliproxy mode over a Claude account states that the wire carries the picture", async () => {
         const calls: string[] = [];
         const runtime = (
             await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig(), connection: cliproxyConnection("anthropic") })
+        )._unsafeUnwrap();
+
+        expect(runtime.conversation.provider.capabilities.imageToolResults).toBe(true);
+    });
+
+    test("cliproxy mode over an account of a different vendor states that the wire carries no picture", async () => {
+        const calls: string[] = [];
+        const runtime = (
+            await bootHarnessRuntime({
+                seams: recordingSeams(calls),
+                config: testConfig(),
+                connection: cliproxyConnection("openai", { conversation: "gpt-5", sandbox: "gpt-5", utility: "gpt-5" }),
+            })
         )._unsafeUnwrap();
 
         expect(runtime.conversation.provider.capabilities.imageToolResults).toBe(false);
