@@ -3,7 +3,7 @@ import { err, errAsync, ok, okAsync, type ResultAsync } from "neverthrow";
 import { createRoot } from "solid-js";
 
 import type { AgentList, AgentSelection } from "../../../api/machine.ts";
-import type { BootProgress, ServerDiscovery, ServerState } from "../../../api/server.ts";
+import { API_VERSION, type BootProgress, type ServerDiscovery, type ServerState } from "../../../api/server.ts";
 import type { ClientError } from "../../../client/api.ts";
 import { describeServerError } from "../../../client/server.ts";
 import { env } from "../../../lib/env.ts";
@@ -27,7 +27,7 @@ import { present } from "../../../lib/present.ts";
 
 afterEach(() => __resetBootForTest());
 
-const identity = { version: "0.0.0-test", apiVersion: 1, startedAt: "2026-10-02T00:00:00.000Z", stopping: null } as const;
+const identity = { version: "0.0.0-test", apiVersion: API_VERSION, startedAt: "2026-10-02T00:00:00.000Z", stopping: null } as const;
 const noBoot: BootProgress = { attemptStartedAt: identity.startedAt, step: null, done: [] };
 const failedAt = { attemptStartedAt: identity.startedAt, failedAt: identity.startedAt, failedStep: null } as const;
 const starting: ServerState = { ...identity, phase: "starting", boot: noBoot };
@@ -39,7 +39,7 @@ const DISCOVERY: ServerDiscovery = {
     port: 8436,
     token: "t".repeat(64),
     version: "0.0.0-test",
-    apiVersion: 1,
+    apiVersion: API_VERSION,
     startedAt: "2026-10-02T00:00:00.000Z",
     channel: "development",
     host: null,
@@ -359,7 +359,7 @@ describe("the probe of the server at each poll tick", () => {
         const newer: ServerState = {
             ...later,
             version: "9.9.9",
-            apiVersion: 2,
+            apiVersion: API_VERSION + 1,
             phase: "ready",
             connection: { provider: "anthropic", mode: "cliproxy", model: "m2" },
         };

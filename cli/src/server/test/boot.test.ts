@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { err, ok, type Result } from "neverthrow";
 
-import type { ServerBootError, ServerBootState } from "../../api/server.ts";
+import { API_VERSION, type ServerBootError, type ServerBootState } from "../../api/server.ts";
 import * as harnessConfig from "../../modules/harness/config.ts";
 import * as harnessRuntime from "../../modules/harness/runtime.ts";
 import * as setup from "../../modules/infra/setup.ts";
@@ -79,7 +79,7 @@ describe("createServerBoot", () => {
         const startingState: unknown = boot.state();
         expect(startingState).toEqual({
             version: anyOf(String),
-            apiVersion: 1,
+            apiVersion: API_VERSION,
             startedAt: STARTED_AT.toISOString(),
             phase: "starting",
             boot: { attemptStartedAt: STARTED_AT.toISOString(), step: null, done: [] },
