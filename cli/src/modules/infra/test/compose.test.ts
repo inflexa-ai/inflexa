@@ -425,6 +425,8 @@ describe("entry-point compose regeneration wiring", () => {
         // neverthrow lint counts as handled, rather than an unconsumed Result passed as an argument.
         spies.push(spyOn(config, "ensureRuntime").mockImplementation(() => Promise.resolve(ok(runtimes.docker))));
         spies.push(spyOn(compose, "composeAvailable").mockResolvedValue(true));
+        // The data-root check of the gate inspects the Postgres container. No container is no conflict.
+        spies.push(spyOn(container, "capture").mockImplementation(() => Promise.resolve({ code: 1, stdout: "", stderr: "stub: no such container" })));
         spies.push(spyOn(compose, "composePullIfMissing").mockImplementation(() => Promise.resolve(ok(undefined))));
         spies.push(spyOn(compose, "composeProxyRunning").mockImplementation(() => Promise.resolve(ok(false))));
         let composeAtHandoff = "";
