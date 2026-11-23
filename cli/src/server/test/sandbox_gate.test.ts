@@ -12,7 +12,7 @@ import { env } from "../../lib/env.ts";
 import { catalogFarmPath, composeFullFarm, takeFarmCompositionFailure } from "../../modules/libs/composition.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import type { TransferReport } from "../../modules/libs/transfers.ts";
-import type { TransferKind, TransferStatus } from "../../types/store.ts";
+import type { TransferKind, TransferPhase, TransferStatus } from "../../types/store.ts";
 import {
     INPUT_DRIFT_SANDBOX_GATE_OPTS,
     readMachineSandboxReadiness,
@@ -25,7 +25,13 @@ import { anyOf } from "../../test_support/matchers.ts";
 import { present } from "../../lib/present.ts";
 
 /** One transfer report as `readTransferReports` gives it, with everything else quiet. */
-function report(kind: TransferKind, state: TransferStatus | null, live: boolean, message: string | null = null): TransferReport {
+function report(
+    kind: TransferKind,
+    state: TransferStatus | null,
+    live: boolean,
+    message: string | null = null,
+    phase: TransferPhase | null = null,
+): TransferReport {
     const row =
         state === null
             ? null
@@ -41,7 +47,7 @@ function report(kind: TransferKind, state: TransferStatus | null, live: boolean,
                   digest: null,
                   message,
                   holderPid: live ? 4242 : null,
-                  phase: null,
+                  phase,
               };
     return { kind, row, state, live, holderPid: live ? 4242 : null };
 }
@@ -83,8 +89,34 @@ describe("sandboxRefusal", () => {
         expect(await sandboxRefusal("a1", gate)).toBeNull();
     });
 
-    test("a live transfer refuses before the machine read, thus a recorded farm failure stays for the next check", async () => {
-        const gate = opts({ transfers: () => [report("catalog", "running", true)], readiness: unexpected("readiness") });
+    test("a catalog transfer that unpacks refuses before the machine read, thus a recorded farm failure stays for the next check", async () => {
+        const gate = opts({ transfers: () => [report("catalog", "running", true, null, "unpacking")], readiness: unexpected("readiness") });
+        expect(await sandboxRefusal("a1", gate)).toContain("`inflexa sandbox status`");
+    });
+
+    test("a catalog transfer that downloads over a complete store and image gives no refusal", async () => {
+        const gate = opts({ transfers: () => [report("catalog", "running", true, null, "download")] });
+        expect(await sandboxRefusal("a1", gate)).toBeNull();
+    });
+
+    test("an image pull over a present image gives no refusal", async () => {
+        const gate = opts({ transfers: () => [report("runtime_image", "running", true)] });
+        expect(await sandboxRefusal("a1", gate)).toBeNull();
+    });
+
+    test("an image pull refuses with the watch command when the image is absent", async () => {
+        const gate = opts({
+            transfers: () => [report("runtime_image", "running", true)],
+            readiness: () => Promise.resolve(machine({ image: { state: "absent", image: "ghcr.io/inflexa-ai/sandbox-base:latest" } })),
+        });
+        expect(await sandboxRefusal("a1", gate)).toContain("`inflexa sandbox status`");
+    });
+
+    test("a catalog transfer that downloads refuses with the watch command when the store is incomplete", async () => {
+        const gate = opts({
+            transfers: () => [report("catalog", "running", true, null, "download")],
+            readiness: () => Promise.resolve(machine({ store: "incomplete" })),
+        });
         expect(await sandboxRefusal("a1", gate)).toContain("`inflexa sandbox status`");
     });
 
@@ -131,8 +163,8 @@ describe("sandboxRefusal", () => {
         expect(taken).toEqual(["a1"]);
     });
 
-    test("a refusal for a live transfer does not take the record", async () => {
-        const gate = opts({ transfers: () => [report("catalog", "running", true)], readFarmFailure: unexpected("readFarmFailure") });
+    test("a refusal for a catalog transfer that unpacks does not take the record", async () => {
+        const gate = opts({ transfers: () => [report("catalog", "running", true, null, "unpacking")], readFarmFailure: unexpected("readFarmFailure") });
         expect(await sandboxRefusal("a1", gate)).toContain("`inflexa sandbox status`");
     });
 });
