@@ -98,6 +98,11 @@ export const PersistedSandboxRefSchema = z.object({
     host: z.string(),
     port: z.number(),
     backend: z.enum(["docker", "k8s"]),
+    /**
+     * The exec token of the machine. A machine from before the token has none, and an exec on it gives the synthetic
+     * failure `sandbox-no-exec-token`, thus the lease replaces it.
+     */
+    execToken: z.string().optional(),
 });
 export type PersistedSandboxRef = z.infer<typeof PersistedSandboxRefSchema>;
 

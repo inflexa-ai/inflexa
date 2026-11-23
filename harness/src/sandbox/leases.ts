@@ -765,8 +765,9 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
             noteExecOutcome(leaseKey, summarizeExec(result));
             const failure = result.syntheticFailure;
             if (failure === undefined) return ok(result);
-            if (failure.reason === "sandbox-dead" || failure.reason === "sandbox-oom-killed") {
-                // The row forgets the dead machine before the exec returns, thus the next exec asks for a new one.
+            if (failure.reason === "sandbox-dead" || failure.reason === "sandbox-oom-killed" || failure.reason === "sandbox-no-exec-token") {
+                // The row forgets the dead or untokened machine before the exec returns, thus the next exec asks for a
+                // new one.
                 const lost = unwrapOrThrow(await clearMachine(pool, lease.leaseWorkflowId, machineGeneration));
                 if (lost !== undefined) {
                     const dbos = await engine();

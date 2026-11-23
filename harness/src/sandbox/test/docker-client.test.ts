@@ -77,6 +77,7 @@ type CreatedContainer = {
     portBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
     memory?: number;
     memorySwap?: number;
+    pidsLimit?: number;
 };
 
 type CreateOpts = {
@@ -97,11 +98,17 @@ type CreateOpts = {
         PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
         Memory?: number;
         MemorySwap?: number;
+        PidsLimit?: number;
     };
 };
 
 function notFound(): Error & { statusCode: number } {
     return Object.assign(new Error("no such container"), { statusCode: 404 });
+}
+
+/** True for 32 bytes as lowercase hex: the shape of a minted exec token. */
+function isHexToken(token: string | undefined): boolean {
+    return token !== undefined && token.length === 64 && Buffer.from(token, "hex").toString("hex") === token;
 }
 
 const sandboxPredicate = (c: CreatedContainer) => c.labels?.role === "sandbox";
@@ -192,6 +199,7 @@ function stubDocker(): {
                 portBindings: opts.HostConfig?.PortBindings,
                 memory: opts.HostConfig?.Memory,
                 memorySwap: opts.HostConfig?.MemorySwap,
+                pidsLimit: opts.HostConfig?.PidsLimit,
             });
             labelsByName.set(opts.name, opts.Labels ?? {});
             return Promise.resolve(makeContainer(opts.name));
@@ -495,6 +503,49 @@ describe("docker createSandbox — confinement", () => {
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("container_create_failed");
         expect(removed.length).toBeGreaterThan(0);
+    });
+});
+
+describe("docker createSandbox — the exec token and the process limit", () => {
+    const ops = (docker: DockerEngine) =>
+        createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
+            farmSource,
+            docker,
+            fetch: okFetch,
+        });
+
+    test("each machine gets a new random token in its env, and its ref carries the same token", async () => {
+        const { docker, created } = stubDocker();
+        const first = (await ops(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+        const second = (await ops(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#2"), {}))._unsafeUnwrap();
+
+        expect(isHexToken(first.execToken)).toBe(true);
+        expect(second.execToken).not.toBe(first.execToken);
+        expect(envMapOf(presentAt(created, 0)).SANDBOX_EXEC_TOKEN).toBe(first.execToken);
+        expect(envMapOf(presentAt(created, 1)).SANDBOX_EXEC_TOKEN).toBe(second.execToken);
+    });
+
+    test("the extra env of a spec cannot set the exec token", async () => {
+        const { docker, created } = stubDocker();
+        const ref = (
+            await ops(docker).createSandbox(
+                ...splitSpawn({ ...META, extraEnv: { SANDBOX_EXEC_TOKEN: "chosen" } }),
+                keyedSandboxIdentity("run-1", "lease#1"),
+                {},
+            )
+        )._unsafeUnwrap();
+
+        expect(envMapOf(sandboxOfCreated(created)).SANDBOX_EXEC_TOKEN).toBe(ref.execToken);
+        expect(ref.execToken).not.toBe("chosen");
+    });
+
+    test("the container has a process limit", async () => {
+        const { docker, created } = stubDocker();
+        (await ops(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+
+        expect(sandboxOfCreated(created).pidsLimit).toBe(4096);
     });
 });
 
@@ -1308,7 +1359,7 @@ const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
  * container. Models the recovery re-run: create fails, then the reconcile
  * inspects the checkpointed name.
  */
-function reconcileDocker(opts: { createStatus: number; standing: { labels: Record<string, string>; running: boolean } | null }): {
+function reconcileDocker(opts: { createStatus: number; standing: { labels: Record<string, string>; running: boolean; env?: string[] } | null }): {
     docker: DockerEngine;
     created: string[];
     removed: string[];
@@ -1339,7 +1390,7 @@ function reconcileDocker(opts: { createStatus: number; standing: { labels: Recor
         inspect: () => {
             if (!standing) return Promise.reject(notFound());
             return Promise.resolve({
-                Config: { Labels: standing.labels },
+                Config: { Labels: standing.labels, Env: standing.env },
                 NetworkSettings: { Ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] } },
                 State: { Running: standing.running, OOMKilled: false },
             });
@@ -1355,7 +1406,7 @@ function reconcileDocker(opts: { createStatus: number; standing: { labels: Recor
                 return Promise.reject(Object.assign(new Error("that name is already in use"), { statusCode: opts.createStatus }));
             }
             created.push(o.name);
-            standing = { labels: o.Labels ?? {}, running: false };
+            standing = { labels: o.Labels ?? {}, running: false, env: o.Env };
             return Promise.resolve(container(o.name));
         },
         getContainer: (id: string) => container(id),
@@ -1392,6 +1443,26 @@ describe("docker createSandbox — recovery reconciliation", () => {
         // Adopted as-is: no create landed and nothing was removed.
         expect(created).toEqual([]);
         expect(removed).toEqual([]);
+    });
+
+    test("an adopted container keeps the exec token in its env, because a new token would not match its server", async () => {
+        const standingToken = "b".repeat(64);
+        const { docker } = reconcileDocker({
+            createStatus: 409,
+            standing: { labels: ownedLabels, running: true, env: ["OMP_NUM_THREADS=1", `SANDBOX_EXEC_TOKEN=${standingToken}`] },
+        });
+
+        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+
+        expect(ref.execToken).toBe(standingToken);
+    });
+
+    test("an adopted container with no exec token gives a ref with no token, which the exec refuses clearly", async () => {
+        const { docker } = reconcileDocker({ createStatus: 409, standing: { labels: ownedLabels, running: true, env: ["OMP_NUM_THREADS=1"] } });
+
+        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+
+        expect(ref.execToken).toBeUndefined();
     });
 
     test("adopts a running owned container when the engine answers the duplicate create with 409 (Docker's shape)", async () => {

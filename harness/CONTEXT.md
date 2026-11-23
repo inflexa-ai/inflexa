@@ -66,7 +66,7 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   harness submits a command with `POST /exec`, and then it polls
   `GET /exec/{execId}?since={cursor}` for `{ status, events[], cursor, result? }`.
   It does not hold a long-lived `/exec` stream. The sandbox initiates nothing, and
-  the endpoints carry no credential.
+  each request carries the exec token of the machine.
 - **Exec step (`sandbox.exec`)** — One sandbox exec, in one DBOS step
   (`sandbox/exec.ts`). The exec id is `${workflowId}:${stepId}`, from the step
   that runs the exec, thus one step holds one exec. The step submits the command,

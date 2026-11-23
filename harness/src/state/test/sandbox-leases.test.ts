@@ -235,6 +235,17 @@ describe("the machine of a lease", () => {
         expect((await readLease(pool, "lw-1"))._unsafeUnwrap()?.machine).toEqual(MACHINE);
     });
 
+    it("keeps the exec token of a machine, and reads a machine from before the token with no token", async () => {
+        await granted();
+        (await setMachine(pool, "lw-1", { ...MACHINE, execToken: "d".repeat(64) }, 2))._unsafeUnwrap();
+        expect((await readLease(pool, "lw-1"))._unsafeUnwrap()?.machine?.execToken).toBe("d".repeat(64));
+
+        await pool.query({ text: "UPDATE cortex_sandbox_leases SET machine = $1::jsonb", values: [JSON.stringify(MACHINE)] });
+        const old = (await readLease(pool, "lw-1"))._unsafeUnwrap()?.machine;
+        expect(old?.sandboxId).toBe("sbx-1");
+        expect(old?.execToken).toBeUndefined();
+    });
+
     it("clears nothing for a report of an old machine generation", async () => {
         await granted();
         (await setMachine(pool, "lw-1", { ...MACHINE, sandboxId: "sbx-2" }, 2))._unsafeUnwrap();

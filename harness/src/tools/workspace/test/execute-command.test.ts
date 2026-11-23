@@ -8,7 +8,7 @@ import { readToolCallRecord } from "../../define-tool.js";
 import { ProvenanceCollector } from "../../../provenance/collector.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
 import type { ExecEmit, ExecRequest, ExecResult, SandboxRef } from "../../../sandbox/types.js";
-import { createExecuteCommandTool } from "../execute-command.js";
+import { createExecuteCommandTool, execNote } from "../execute-command.js";
 import { leaseOverClient } from "../../../sandbox/__fixtures__/leases.js";
 import { EXEC_STREAM_BYTE_CAP } from "../result-bounds.js";
 import { presentAt } from "../../../lib/present.js";
@@ -288,5 +288,26 @@ describe("execute_command with no lease", () => {
         expect(out.isErr()).toBe(true);
         expect(out._unsafeUnwrapErr().error).toContain("acquire_sandbox");
         expect(client.execs).toHaveLength(0);
+    });
+});
+
+describe("execNote — a machine with no exec token", () => {
+    it("says that the command did not run, not that the sandbox ended under it", () => {
+        const note = execNote({
+            execId: "e1",
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            durationMs: null,
+            timedOut: false,
+            syntheticFailure: { reason: "sandbox-no-exec-token" },
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutTotalLength: 0,
+            stderrTotalLength: 0,
+        });
+
+        expect(note).toContain("did not run");
+        expect(note).not.toContain("ended under the command");
     });
 });

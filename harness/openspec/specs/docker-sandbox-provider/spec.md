@@ -470,6 +470,21 @@ A resolved root that does not live under `sessionPvcRoot` cannot be addressed as
 - **WHEN** a sandbox is created
 - **THEN** creation throws, because the `subPath` of a workspace root cannot be derived
 
+### Requirement: The container has a process limit
+
+`createSandbox` MUST set `HostConfig.PidsLimit` to 4096. Linux counts each
+thread in the limit. The thread env gives each pool one thread and each worker
+pool one worker for each cpu. Thus a parallel R or Python job holds some
+hundred tasks at the largest cpu request, and 4096 leaves headroom. A fork bomb
+then stops at the limit of the container, not at the limit of the host. The
+pod spec of K8s has no field for a process limit. There the kubelet setting
+`podPidsLimit` of the cluster applies.
+
+#### Scenario: Each container gets the process limit
+
+- **WHEN** `createSandbox` makes the container
+- **THEN** `HostConfig.PidsLimit` is 4096
+
 ### Requirement: The container confines its own egress
 
 `createSandbox` MUST start each container as root on the default bridge, with

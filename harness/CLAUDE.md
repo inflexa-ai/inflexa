@@ -328,8 +328,8 @@ read-only at `/mnt/libs`, with the farm of the analysis at `/mnt/libs/farm`.
 sandbox-server keeps each exec record in memory, and it writes each record to
 the records directory of the lease (`EXEC_RECORD_DIR`). A new machine of the
 lease reads them at its start. Each exec gets its own `TMPDIR`. There is no
-`kill` route. The endpoints carry no credential, thus confinement is the
-boundary:
+`kill` route. Each endpoint but `/health` needs the exec token of the machine,
+which the harness mints for each machine. Confinement is the second boundary:
 
 - On Docker, the exec port is published on `127.0.0.1` only. The root
   entrypoint installs an egress-deny firewall, and then it drops to the
@@ -358,9 +358,10 @@ is an embedder concern.
   `RunSession` that the `RunAuthorizer` seam minted. The credential, if there is
   one, rides opaque inside the `RunSession` in the DBOS workflow input. A workflow
   body never mints it again, and it never reads it back from the DB.
-- **Outbound to sandbox-server** — an idempotent submit, then a poll. The
-  requests carry no credential. Confinement keeps each other peer away from the
-  exec port ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)).
+- **Outbound to sandbox-server** — an idempotent submit, then a poll. Each
+  request carries the exec token of the machine. The token and confinement keep
+  each other peer away from the exec port
+  ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)).
 
 ### Key Components
 

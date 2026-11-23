@@ -137,7 +137,12 @@ export async function runExec(
     if (request.cwd !== undefined) body.cwd = request.cwd;
     if (request.env !== undefined) body.env = { ...request.env };
     if (request.timeoutSeconds !== undefined) body.timeoutSeconds = request.timeoutSeconds;
-    const submitted = await submitExec(fetchImpl, ref, body);
+    // A machine from before the exec token refuses each request of this host, or it takes each request of each local
+    // process. Neither is a machine to run on, thus the exec fails before a request leaves the host.
+    const { execToken } = ref;
+    if (execToken === undefined) return syntheticFailureResult(execId, "sandbox-no-exec-token");
+    const authorization = `Bearer ${execToken}`;
+    const submitted = await submitExec(fetchImpl, ref, body, authorization);
     if (submitted.kind === "unreachable") {
         // A machine that died between two execs, for example in a restart of the engine, refuses the submit. Only a
         // dead verdict gives the synthetic failure, thus the lease clears the machine and the next exec gets a new one.
@@ -147,7 +152,7 @@ export async function runExec(
         if (verdict?.kind === "dead") return syntheticFailureResult(execId, syntheticFailureReason({ oomKilled: false }));
         throw submitted.cause;
     }
-    return pollExec(ref, execId, emit, deadlineMs, deps);
+    return pollExec(ref, execId, emit, deadlineMs, deps, authorization);
 }
 
 /** A submit that got no answer: the request did not reach sandbox-server, or the answer did not come back. */
@@ -158,7 +163,7 @@ type SubmitOutcome = { readonly kind: "accepted" } | { readonly kind: "unreachab
  * The server dedups on `execId`: a submit of an exec that it already holds
  * returns 202 with the stored status and runs nothing.
  */
-async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: SubmitExecBody): Promise<SubmitOutcome> {
+async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: SubmitExecBody, authorization: string): Promise<SubmitOutcome> {
     const controller = new AbortController();
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a deadline guard, not a wait: it aborts the controller of the in-flight submit, and the finally clears it.
     const timer = setTimeout(() => controller.abort(), SUBMIT_HTTP_TIMEOUT_MS);
@@ -167,7 +172,7 @@ async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: Submit
         try {
             res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec`, {
                 method: "POST",
-                headers: { "content-type": "application/json" },
+                headers: { "content-type": "application/json", authorization },
                 body: JSON.stringify(body),
                 signal: controller.signal,
             });
@@ -189,20 +194,26 @@ async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: Submit
 /**
  * One poll of `GET /exec/{execId}?since={cursor}`.
  *
- * Never throws: a failed poll is not a failed exec, thus every failure is
- * `unavailable` and the loop keeps waiting (bounded by the deadline).
+ * Never throws: a failed poll is not a failed exec, thus every failure but a
+ * 401 is `unavailable` and the loop keeps waiting (bounded by the deadline).
+ * A 401 is `refused`: the server refused the exec token.
  */
-type PolledSnapshot = { readonly kind: "ok"; readonly raw: string } | { readonly kind: "unavailable"; readonly detail: string };
+type PolledSnapshot = { readonly kind: "ok"; readonly raw: string } | { readonly kind: "unavailable"; readonly detail: string } | { readonly kind: "refused" };
 
-async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string, cursor: number): Promise<PolledSnapshot> {
+async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string, cursor: number, authorization: string): Promise<PolledSnapshot> {
     const controller = new AbortController();
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a deadline guard, not a wait: it aborts the controller of the in-flight poll, and the finally clears it.
     const timer = setTimeout(() => controller.abort(), POLL_HTTP_TIMEOUT_MS);
     try {
         const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}?since=${cursor}`, {
             method: "GET",
+            headers: { authorization },
             signal: controller.signal,
         });
+        if (res.status === 401) {
+            await res.text().catch(() => "");
+            return { kind: "refused" };
+        }
         if (!res.ok) {
             await res.text().catch(() => "");
             return { kind: "unavailable", detail: `status ${res.status}` };
@@ -224,7 +235,7 @@ async function pollOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string
  * observably dead machine fails the exec, because the result lives in that
  * machine and nowhere else.
  */
-async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, deps: ExecDeps): Promise<ExecResult> {
+async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, deps: ExecDeps, authorization: string): Promise<ExecResult> {
     const fetchImpl = deps.fetch ?? fetch;
     const now = deps.clock?.now.bind(deps.clock) ?? systemClock.now.bind(systemClock);
     const wait = deps.clock?.wait.bind(deps.clock) ?? systemClock.wait.bind(systemClock);
@@ -238,7 +249,9 @@ async function pollExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlin
 
     for (;;) {
         pollAttempt += 1;
-        const polled = await pollOnce(fetchImpl, ref, execId, cursor);
+        const polled = await pollOnce(fetchImpl, ref, execId, cursor, authorization);
+        // The token of a machine does not change, thus a refusal does not pass with time.
+        if (polled.kind === "refused") throw new Error(`exec[${execId}]: sandbox-server refused the exec token of machine ${ref.sandboxId}`);
 
         if (polled.kind === "ok") {
             const resp = parseJsonAs(polled.raw, PollResponseSchema);

@@ -413,6 +413,38 @@ describe("the machine of a lease", () => {
         expect(backend.torn).toContain(presentAt(backend.spawned, 0).sandboxId);
     }, 60_000);
 
+    it("replaces a machine with no exec token: the exec gives the reason, and the next exec runs on a new machine", async () => {
+        let execs = 0;
+        backend.exec = (_ref, request) => {
+            execs += 1;
+            if (execs === 1) {
+                return Promise.resolve({
+                    execId: "e1",
+                    exitCode: null,
+                    stdout: "",
+                    stderr: "",
+                    durationMs: null,
+                    timedOut: false,
+                    syntheticFailure: { reason: "sandbox-no-exec-token" },
+                });
+            }
+            return Promise.resolve({ execId: request.command.join(" "), exitCode: 0, stdout: "ok", stderr: "", durationMs: 1, timedOut: false });
+        };
+        const run = start(rig.nextWorkflowId("an-"), async (lease) => {
+            await lease.acquire(SMALL);
+            const refused = (await lease.exec({ command: ["ls"] }, () => {}))._unsafeUnwrap();
+            const next = (await lease.exec({ command: ["ls"] }, () => {}))._unsafeUnwrap();
+            await lease.release();
+            return { refused, next };
+        });
+
+        const outcome = await run.result;
+
+        expect(outcome).toMatchObject({ refused: { syntheticFailure: { reason: "sandbox-no-exec-token" } }, next: { exitCode: 0 } });
+        expect(backend.spawned).toHaveLength(2);
+        expect(backend.torn).toContain(presentAt(backend.spawned, 0).sandboxId);
+    }, 60_000);
+
     it("moves an idle lease to idle, and the next exec waits for the grant and a new machine", async () => {
         backend.runningExecs = 0;
         const waits: string[] = [];

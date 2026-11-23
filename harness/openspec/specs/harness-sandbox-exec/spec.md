@@ -27,10 +27,10 @@ The step reads the cancel state of its workflow. After failed polls, it probes
 the liveness of the machine, and a dead machine ends the exec with a synthetic
 failure. No callback and no watchdog exist.
 
-**Confinement is the control on the exec endpoints.** The requests and the
-responses carry no signature, and the sandbox holds no secret. A sandbox has no
-egress. On Docker, the exec port is published on `127.0.0.1` only, and the
-entrypoint installs an egress-deny firewall. On K8s, a NetworkPolicy admits
+**An exec token and confinement control the exec endpoints.** Each machine
+gets its own exec token, and each submit and each poll carries it. A sandbox
+has no egress. On Docker, the exec port is published on `127.0.0.1` only, and
+the entrypoint installs an egress-deny firewall. On K8s, a NetworkPolicy admits
 only Cortex to the exec port, and it denies each egress of the sandbox.
 
 **The spawn is checkpoint-idempotent, and a reaper is the only orphan
@@ -452,12 +452,50 @@ of the step.
 - **THEN** the exec gives the two events to `emit` again
 - **AND** each file-tree part that the body writes is a whole tree under the same reconciling id
 
+### Requirement: An exec token opens the exec endpoints of one machine
+
+The backend MUST mint an exec token for each machine: 32 random bytes from a
+cryptographic source, as hex. A new machine generation gets a new token. The
+backend MUST give the token to the machine in the env `SANDBOX_EXEC_TOKEN`,
+after the extra env of the spec, and it MUST remove that key from the extra
+env. On Docker the env is the container env, and on K8s it is the pod env.
+
+The token MUST ride on the `SandboxRef` and on the persisted ref in the lease
+row. Thus an exec that a recovery runs again after a restart of the host
+reaches the same machine with the same token. A recovery that adopts a machine
+MUST take the token from the env of that machine, because a new token does not
+match its server.
+
+The exec MUST send `Authorization: Bearer <token>` on each submit and on each
+poll. A poll that the server refuses with 401 MUST end the exec with an error
+that names the exec token. A persisted ref with no token is a machine from
+before the token. Then the exec MUST NOT send a request, it MUST give the
+synthetic failure `sandbox-no-exec-token`, and the lease MUST replace the
+machine.
+
+#### Scenario: Each request carries the token of the machine
+
+- **GIVEN** a machine whose ref carries an exec token
+- **WHEN** an exec submits a command and polls it
+- **THEN** each request carries `Authorization: Bearer <token>`
+
+#### Scenario: A machine from before the token is replaced
+
+- **GIVEN** a lease row whose machine has no exec token
+- **WHEN** an exec runs on the lease
+- **THEN** the exec gives the synthetic failure `sandbox-no-exec-token`, no request leaves the host, and the next exec runs on a new machine
+
+#### Scenario: A recovery adopts the machine with its token
+
+- **GIVEN** a spawn step that runs again and adopts the running machine of the earlier attempt
+- **WHEN** the backend makes the ref
+- **THEN** the ref carries the token from the env of that machine
+
 ### Requirement: A sandbox has no egress
 
 A sandbox MUST NOT start a network connection. The host connects to the
-sandbox, and the sandbox answers on that connection. The exec endpoints carry no
-signature. Thus confinement is the only control that keeps a different peer away
-from the exec endpoints of a sandbox.
+sandbox, and the sandbox answers on that connection. The exec token and
+confinement keep a different peer away from the exec endpoints of a sandbox.
 
 - On the Docker backend, the client MUST publish the exec port on `127.0.0.1`
   only. The entrypoint of the image MUST install the egress-deny firewall before
