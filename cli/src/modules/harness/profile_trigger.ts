@@ -16,6 +16,7 @@ import {
 } from "@inflexa-ai/harness";
 import type { Querier } from "@inflexa-ai/harness/state/db.js";
 
+import type { ProfileOutcome } from "../../api/runs.ts";
 import { getLogger } from "../../lib/log.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
@@ -61,63 +62,6 @@ export function seedProfileLedger(pool: Querier, analysisId: string, staged: rea
     const inputSummary = summarizeStagedInputs(staged);
     return upsertAnalysis(pool, analysisId, null, inputSummary.count).map(() => ({ auth: makeLocalAuth(), analysisId, inputSummary }));
 }
-
-/**
- * The outcome of a parity (or force) check, as a discriminated union the caller maps to UI feedback:
- * - `triggered` — a profile workflow was started; `restarted` is true iff it superseded a prior profile
- *   (a re-profile / retry), so the UI can word "Re-profiling…" vs a first-time "Profiling…";
- * - `already_profiled` — a completed profile already covers exactly the current input set, so nothing ran;
- * - `already_running` — a profile is already in flight (the ledger showed `running`, the trigger's CAS
- *   lost to another attempt, or a clear/retry raced a run that had just started), so nothing new ran;
- * - `cleared` — the input set was emptied, so the now-stale profile (it described files the analysis no
- *   longer has) was removed and the UI falls back to "not profiled";
- * - `skipped_failed` — a `failed` profile row was left untouched because the input set that failed is
- *   still the one on disk: under managed parity, retrying a failure against the same inputs is
- *   deliberate ({@link forceReprofile}), so the auto-check never silently resurrects it;
- * - `no_inputs` — the analysis has no resolvable inputs (and none was ever profiled); skipped silently;
- * - `failed` — a step faulted (enumerate, ledger read, clear, staging, seed, or the trigger/retry
- *   itself); `reason` is a one-line, user-facing explanation the caller surfaces as a warning.
- *
- * `kind` describes the PROFILE decision only. The orthogonal `materialized` flag reports the materialization
- * STATE the check finished in — "the current input set is on disk" — NOT whether this drive did the
- * writing. So `already_profiled` (a completed profile at parity) and `skipped_failed` (a `failed` row the
- * predicate found materialized) both carry `materialized: true` having written nothing, which is the point: a
- * caller can tell "the files are on disk but profiling did not run" from "nothing happened".
- *
- * `materialized` is FIXED for five of the seven kinds, so the type pins each to a literal rather than `boolean`
- * — the union states which states are bivalent instead of a comment claiming it. A path that reached a
- * (re-)trigger always materialized first (`triggered` → `true`); the two write-nothing-but-on-disk cases
- * above are `true`; `cleared`/`no_inputs` describe an empty set with nothing to stage (`false`). Only two
- * kinds genuinely take either value, which is where the flag earns its keep:
- *   - `already_running` — `false` when the live-run gate suppressed staging up front (the sandbox is
- *     reading the tree staging would reconcile-delete), but `true` when THIS drive staged and then lost
- *     the trigger's CAS to a run that claimed the row concurrently;
- *   - `failed` — `false` for a fault before or during materialization (enumerate, ledger read, dataDir
- *     resolve, the staging write itself), `true` for a fault AFTER the files landed (seed, trigger, retry).
- * Kinds for each staging×profile combination were rejected — they would multiply the union and every
- * consumer's switch to express two facts that compose.
- *
- * No consumer branches on `materialized` today; the drivers (`tui/hooks/profile_parity.ts`) switch on `kind`
- * alone. It is reported now because the check is the only place that knows it, so that a later
- * caller — a "files staged, profiling deferred" affordance — reads a recorded fact instead of
- * re-deriving one. Populated and tested on every variant so that consumer inherits a correct value, not
- * a retrofit.
- */
-export type ProfileParityOutcome = (
-    | { kind: "triggered"; restarted: boolean; materialized: true }
-    | { kind: "already_profiled"; materialized: true }
-    | { kind: "already_running"; materialized: boolean }
-    | { kind: "cleared"; materialized: false }
-    | { kind: "skipped_failed"; materialized: true }
-    | { kind: "no_inputs"; materialized: false }
-    | { kind: "failed"; reason: string; materialized: boolean }
-) & {
-    /**
-     * Present when the drive met a source that it could not read or reach: each line names one. Staging skipped
-     * such a source and kept the files that an earlier pass staged for it, and the profile stays.
-     */
-    warnings?: readonly string[];
-};
 
 /** The part of the runtime that the drives read: the ledger pool, and the dependencies that they hand to the trigger. */
 export type ProfileRuntime = Pick<HarnessRuntime, "triggerDeps"> & { readonly pool: Querier };
@@ -246,7 +190,7 @@ async function retryFailedRow(
     analysis: Analysis,
     params: DataProfileTriggerParams,
     seams: ProfileParitySeams,
-): Promise<ProfileParityOutcome> {
+): Promise<ProfileOutcome> {
     const claimResult = await seams.retryClaim(runtime.pool, analysis.id);
     // `tryRetryDataProfile` is a `failed → running` CAS UPDATE, not a read; a `DbError`
     // here is a CAS-failure query fault, not a ledger-read miss (the caller already read
@@ -261,8 +205,8 @@ async function retryFailedRow(
     // completed), and it settles the row as `failed` before an `err` (see its doc). A resurrected
     // failure is a re-profile, hence `restarted: true`.
     return (await seams.run(runtime.triggerDeps, params)).match(
-        (): ProfileParityOutcome => ({ kind: "triggered", restarted: true, materialized: true }),
-        (e): ProfileParityOutcome => ({ kind: "failed", reason: describeDataProfileStartError(e), materialized: true }),
+        (): ProfileOutcome => ({ kind: "triggered", restarted: true, materialized: true }),
+        (e): ProfileOutcome => ({ kind: "failed", reason: describeDataProfileStartError(e), materialized: true }),
     );
 }
 
@@ -271,7 +215,7 @@ async function retryFailedRow(
  * differently. The trigger's CAS claims only pending/completed rows, so a `failed` result names a row
  * that needs the `failed → running` retry claim.
  */
-type FailedRowPolicy = (params: DataProfileTriggerParams) => Promise<ProfileParityOutcome>;
+type FailedRowPolicy = (params: DataProfileTriggerParams) => Promise<ProfileOutcome>;
 
 /**
  * Parity's policy: the ladder already routed the row it read as `failed` to the retry claim, so a
@@ -307,7 +251,7 @@ async function dispatchProfileWorkflow(
     rowFailedAtRead: boolean,
     resolveFailedRow: FailedRowPolicy,
     warnings: Set<string>,
-): Promise<ProfileParityOutcome> {
+): Promise<ProfileOutcome> {
     const stagedResult = await materializeInputs(analysis, dataDir, seams, warnings);
     if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, materialized: false };
     // The enumeration gated an empty set, but a source can become unreadable between the two walks. A seed and a
@@ -390,18 +334,13 @@ export type ProfileDriveCause = "open" | "inputs_changed";
  * Chat is never gated on the profile, so this returns as soon as the trigger is dispatched — it never
  * waits for completion. NO terminal/TUI output: the caller maps the outcome.
  */
-async function runProfileLadder(
-    runtime: ProfileRuntime,
-    analysis: Analysis,
-    cause: ProfileDriveCause,
-    seams: ProfileParitySeams,
-): Promise<ProfileParityOutcome> {
+async function runProfileLadder(runtime: ProfileRuntime, analysis: Analysis, cause: ProfileDriveCause, seams: ProfileParitySeams): Promise<ProfileOutcome> {
     const warnings = new Set<string>();
     return withWarnings(await profileLadder(runtime, analysis, cause, seams, warnings), warnings);
 }
 
 /** `outcome` with the warnings of its drive, when the drive met any. */
-function withWarnings(outcome: ProfileParityOutcome, warnings: ReadonlySet<string>): ProfileParityOutcome {
+function withWarnings(outcome: ProfileOutcome, warnings: ReadonlySet<string>): ProfileOutcome {
     return warnings.size === 0 ? outcome : { ...outcome, warnings: [...warnings] };
 }
 
@@ -431,7 +370,7 @@ async function profileLadder(
     cause: ProfileDriveCause,
     seams: ProfileParitySeams,
     warnings: Set<string>,
-): Promise<ProfileParityOutcome> {
+): Promise<ProfileOutcome> {
     // Best-effort self-heal of a wedged `running` row (step 0 above); a reconcile hiccup must not abort
     // parity — the status read still runs and the trigger's CAS remains the final arbiter.
     (await seams.reconcile(runtime.pool, analysis.id)).match(
@@ -528,11 +467,7 @@ async function profileLadder(
  * has never been profiled, but never RE-profile one that has. Fire-and-forget; `seams` is injected only
  * by tests.
  */
-export async function ensureProfileAtParity(
-    runtime: ProfileRuntime,
-    analysis: Analysis,
-    seams: ProfileParitySeams = realParitySeams,
-): Promise<ProfileParityOutcome> {
+export async function ensureProfileAtParity(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams = realParitySeams): Promise<ProfileOutcome> {
     return await runProfileLadder(runtime, analysis, "open", seams);
 }
 
@@ -547,7 +482,7 @@ export async function reprofileForInputChange(
     runtime: ProfileRuntime,
     analysis: Analysis,
     seams: ProfileParitySeams = realParitySeams,
-): Promise<ProfileParityOutcome> {
+): Promise<ProfileOutcome> {
     return await runProfileLadder(runtime, analysis, "inputs_changed", seams);
 }
 
@@ -565,12 +500,12 @@ export async function reprofileForInputChange(
  * which the trigger's pending/completed CAS never claims — takes {@link retryFailedRow}, the same
  * recovery the input-mutation drive reaches for a `failed` row.
  */
-export async function forceReprofile(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams = realParitySeams): Promise<ProfileParityOutcome> {
+export async function forceReprofile(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams = realParitySeams): Promise<ProfileOutcome> {
     const warnings = new Set<string>();
     return withWarnings(await forceSteps(runtime, analysis, seams, warnings), warnings);
 }
 
-async function forceSteps(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams, warnings: Set<string>): Promise<ProfileParityOutcome> {
+async function forceSteps(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams, warnings: Set<string>): Promise<ProfileOutcome> {
     (await seams.reconcile(runtime.pool, analysis.id)).match(
         () => {},
         (e) => getLogger("harness").warn({ analysisId: analysis.id, err: e }, "orphaned-profile reconcile failed"),

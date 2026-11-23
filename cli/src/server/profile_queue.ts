@@ -4,7 +4,8 @@ import { Bus } from "../lib/bus.ts";
 import { getLogger } from "../lib/log.ts";
 import { runAfter } from "../lib/timer.ts";
 import { findAnalysesByRef } from "../db/primary_query.ts";
-import { reprofileForInputChange, type ProfileParityOutcome } from "../modules/harness/profile_trigger.ts";
+import type { ProfileOutcome } from "../api/runs.ts";
+import { reprofileForInputChange } from "../modules/harness/profile_trigger.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { StampedEvent } from "../types/events.ts";
@@ -96,7 +97,7 @@ export type InputDriftOpts<R = HarnessRuntime> = {
     /** The analysis row, or `null` when it is gone. */
     readonly analysis: (analysisId: string) => Analysis | null;
     /** The re-profile after an input change. Real: {@link reprofileForInputChange}. */
-    readonly reprofile: (runtime: R, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    readonly reprofile: (runtime: R, analysis: Analysis) => Promise<ProfileOutcome>;
     /** Why a sandbox cannot start for the analysis now, or `null`. Real: {@link sandboxRefusal}. */
     readonly sandboxRefusal: (analysisId: string) => Promise<string | null>;
     /** Arm a one-shot timer, and give its cancel. */
