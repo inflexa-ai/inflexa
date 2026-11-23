@@ -10,7 +10,7 @@
  */
 
 import { mkdir, open, type FileHandle } from "node:fs/promises";
-import { basename, dirname, resolve, sep } from "node:path";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
 import { Unzip, UnzipInflate, unzipSync } from "fflate";
@@ -186,8 +186,21 @@ export function readArchiveEntry(kind: ArchiveKind, path: string, content: Buffe
 /** Why a streamed extraction stopped. `unsafe_entry` names an entry whose path leaves the directory of the extraction. */
 export type ExtractRefusal = { readonly kind: "unsafe_entry"; readonly entry: string } | { readonly kind: "unparsable"; readonly detail: string };
 
-/** What a streamed extraction wrote, and the link entries that it skipped. */
-export type ExtractSummary = { readonly files: number; readonly directories: number; readonly skippedLinks: number };
+/** The most file paths that an extraction summary names. */
+export const EXTRACT_SUMMARY_MAX_PATHS = 50;
+
+/** What a streamed extraction wrote, and the link entries that it skipped. `paths` names the first files, relative to the directory of the extraction. */
+export type ExtractSummary = {
+    readonly files: number;
+    readonly directories: number;
+    readonly skippedLinks: number;
+    readonly paths: readonly string[];
+};
+
+function countFile(summary: { files: number; paths: string[] }, dest: string, target: string): void {
+    summary.files += 1;
+    if (summary.paths.length < EXTRACT_SUMMARY_MAX_PATHS) summary.paths.push(relative(dest, target).split(sep).join("/"));
+}
 
 class ExtractStop extends Error {
     constructor(readonly refusal: ExtractRefusal) {
@@ -276,7 +289,8 @@ const TAR_META_CAP_BYTES = 1024 * 1024;
  */
 export async function extractTarStream(source: AsyncIterable<Uint8Array>, dest: string): Promise<Result<ExtractSummary, ExtractRefusal>> {
     const reader = new ChunkReader(source);
-    const summary = { files: 0, directories: 0, skippedLinks: 0 };
+    const paths: string[] = [];
+    const summary = { files: 0, directories: 0, skippedLinks: 0, paths };
     let longName: string | undefined;
     try {
         for (;;) {
@@ -309,7 +323,7 @@ export async function extractTarStream(source: AsyncIterable<Uint8Array>, dest: 
                 sink = async (chunk) => {
                     await opened.write(chunk);
                 };
-                summary.files += 1;
+                countFile(summary, dest, target);
             } else if (type === "5") {
                 await mkdir(entryTarget(dest, name), { recursive: true });
                 summary.directories += 1;
@@ -344,7 +358,8 @@ const ZIP_PIECE_BYTES = 16 * 1024;
  * stops the extraction.
  */
 export async function extractZipStream(source: AsyncIterable<Uint8Array>, dest: string): Promise<Result<ExtractSummary, ExtractRefusal>> {
-    const summary = { files: 0, directories: 0, skippedLinks: 0 };
+    const paths: string[] = [];
+    const summary = { files: 0, directories: 0, skippedLinks: 0, paths };
     const work: Array<() => Promise<void>> = [];
     const handles = new Map<string, Promise<FileHandle>>();
     let failure: ExtractRefusal | undefined;
@@ -365,7 +380,7 @@ export async function extractZipStream(source: AsyncIterable<Uint8Array>, dest: 
             });
             return;
         }
-        summary.files += 1;
+        countFile(summary, dest, target);
         work.push(async () => {
             await mkdir(dirname(target), { recursive: true });
             handles.set(target, open(target, "w"));

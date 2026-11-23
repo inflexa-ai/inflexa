@@ -12,6 +12,7 @@ import { parseJsonAs } from "../../../lib/parse-json.js";
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { makeSession } from "../../../providers/__fixtures__/session.js";
 import { createDownloadRefTool, dispositionName, type DownloadRefOpts, type DownloadRefOutput, type ResolvedAddress } from "../download-ref.js";
+import { EXTRACT_SUMMARY_MAX_PATHS } from "../../script/archive.js";
 
 type Route = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -279,7 +280,13 @@ describe("the extraction", () => {
     test("a tarball becomes a directory beside it, and the archive is gone", async () => {
         serve("unite.ut.ee/sh/unite.tgz", gzipSync(tarOf({ "unite/its.fasta": ">a\nACGT\n", README: "unite" })));
         const out = await download(["https://unite.ut.ee/sh/unite.tgz"], true);
-        expect(out.files[0]).toMatchObject({ status: "downloaded", path: "/mnt/refs/unite.ut.ee/sh/unite", extracted: true });
+        expect(out.files[0]).toMatchObject({
+            status: "downloaded",
+            path: "/mnt/refs/unite.ut.ee/sh/unite",
+            extracted: true,
+            files: ["/mnt/refs/unite.ut.ee/sh/unite/unite/its.fasta", "/mnt/refs/unite.ut.ee/sh/unite/README"],
+        });
+        expect(out.files[0]?.moreFiles).toBeUndefined();
         expect((await readdir(join(store, "unite.ut.ee/sh"))).sort()).toEqual(["unite"]);
         expect(await readFile(join(store, "unite.ut.ee/sh/unite/unite/its.fasta"), "utf8")).toBe(">a\nACGT\n");
         expect(await readFile(join(store, ".inflexa/sources.jsonl"), "utf8")).toContain('"path":"unite.ut.ee/sh/unite"');
@@ -298,11 +305,27 @@ describe("the extraction", () => {
         serve("unite.ut.ee/sh/unite.tgz", gzipSync(tarOf({ "unite/its.fasta": ">a\nACGT\n" })));
         await download(["https://unite.ut.ee/sh/unite.tgz"]);
         const out = await download(["https://unite.ut.ee/sh/unite.tgz"], true);
-        expect(out.files[0]).toMatchObject({ status: "reused", path: "/mnt/refs/unite.ut.ee/sh/unite", extracted: true });
+        expect(out.files[0]).toMatchObject({
+            status: "reused",
+            path: "/mnt/refs/unite.ut.ee/sh/unite",
+            extracted: true,
+            files: ["/mnt/refs/unite.ut.ee/sh/unite/unite/its.fasta"],
+        });
         expect(hits.get("unite.ut.ee/sh/unite.tgz")).toBe(1);
         expect(await readdir(join(store, "unite.ut.ee/sh"))).toEqual(["unite"]);
         const again = await download(["https://unite.ut.ee/sh/unite.tgz"], true);
         expect(again.files[0]).toMatchObject({ status: "reused", path: "/mnt/refs/unite.ut.ee/sh/unite" });
+    });
+
+    test("an archive with more files than the result names gives the first files and the count of the others", async () => {
+        const entries = Object.fromEntries(
+            Array.from({ length: EXTRACT_SUMMARY_MAX_PATHS + 3 }, (_, index) => [`set/${String(index).padStart(3, "0")}.tsv`, "x"]),
+        );
+        serve("unite.ut.ee/sh/many.tar", tarOf(entries));
+        const out = await download(["https://unite.ut.ee/sh/many.tar"], true);
+        expect(out.files[0]?.files).toHaveLength(EXTRACT_SUMMARY_MAX_PATHS);
+        expect(out.files[0]?.files?.[0]).toBe("/mnt/refs/unite.ut.ee/sh/many/set/000.tsv");
+        expect(out.files[0]?.moreFiles).toBe(3);
     });
 
     test("a gzip file of one file stays compressed", async () => {

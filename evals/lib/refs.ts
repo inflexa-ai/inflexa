@@ -8,7 +8,11 @@ import { posix } from "node:path";
 
 import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 import { capCodePoints } from "@inflexa-ai/harness/loop/tool-detail.js";
-import type { ReferenceInventoryEntry, ReferenceInventoryResult, ReferenceLook } from "@inflexa-ai/harness/tools/sandbox/list-available-refs.js";
+import type {
+    ReferenceInventoryEntry,
+    ReferenceInventoryResult,
+    ReferenceLook,
+} from "@inflexa-ai/harness/tools/sandbox/list-available-refs.js";
 
 import type { ToolScript } from "./agent.js";
 
@@ -84,7 +88,11 @@ function lookOfText(name: string, text: string): ReferenceLook {
         .split(delimiter)
         .slice(0, 50)
         .map((column) => column.trim())
-        .map((column) => (column.length >= 2 && column.startsWith('"') && column.endsWith('"') ? column.slice(1, -1) : column));
+        .map((column) =>
+            column.length >= 2 && column.startsWith('"') && column.endsWith('"')
+                ? column.slice(1, -1)
+                : column,
+        );
     return { format, columns, lines };
 }
 
@@ -121,11 +129,20 @@ function join(directory: string, name: string): string {
 
 function fileEntry(store: RefStore, relative: string): ReferenceInventoryEntry {
     const file = store[relative] ?? "";
-    return { path: `${REFS_ROOT}/${relative}`, kind: "file", bytes: bytesOf(file), look: lookOf(relative, file) };
+    return {
+        path: `${REFS_ROOT}/${relative}`,
+        kind: "file",
+        bytes: bytesOf(file),
+        look: lookOf(relative, file),
+    };
 }
 
 /** Each file under `directory`, in the order of the stack walk of the real search. */
-function walk(store: RefStore, tree: Map<string, Set<string>>, directory: string): ReferenceInventoryEntry[] {
+function walk(
+    store: RefStore,
+    tree: Map<string, Set<string>>,
+    directory: string,
+): ReferenceInventoryEntry[] {
     const entries: ReferenceInventoryEntry[] = [];
     const stack = [directory];
     for (let current = stack.pop(); current !== undefined; current = stack.pop()) {
@@ -146,12 +163,24 @@ function countUnder(tree: Map<string, Set<string>>, directory: string): number {
 }
 
 /** The children of `directory`, with a summary of each directory, as the real browse gives them. */
-function browse(store: RefStore, tree: Map<string, Set<string>>, directory: string): ReferenceInventoryEntry[] {
+function browse(
+    store: RefStore,
+    tree: Map<string, Set<string>>,
+    directory: string,
+): ReferenceInventoryEntry[] {
     return [...(tree.get(directory) ?? [])].sort().map((name) => {
         const child = join(directory, name);
         if (!tree.has(child)) return fileEntry(store, child);
         const files = walk(store, tree, child);
-        const fileTypes = [...new Set(files.map((file) => posix.extname(file.path).toLowerCase()).filter((suffix) => suffix !== ""))].sort().slice(0, 10);
+        const fileTypes = [
+            ...new Set(
+                files
+                    .map((file) => posix.extname(file.path).toLowerCase())
+                    .filter((suffix) => suffix !== ""),
+            ),
+        ]
+            .sort()
+            .slice(0, 10);
         return {
             path: `${REFS_ROOT}/${child}`,
             kind: "directory",
@@ -181,8 +210,14 @@ function renderLook(look: ReferenceLook): string[] {
     return rendered;
 }
 
-function render(path: string, entries: readonly ReferenceInventoryEntry[], truncated: boolean, scanned: number): string {
-    if (entries.length === 0) return `Reference store path exists but contains no reference files: ${path}`;
+function render(
+    path: string,
+    entries: readonly ReferenceInventoryEntry[],
+    truncated: boolean,
+    scanned: number,
+): string {
+    if (entries.length === 0)
+        return `Reference store path exists but contains no reference files: ${path}`;
     const lines = [`Reference files visible beneath ${path}:`];
     for (const entry of entries) {
         const details =
@@ -192,9 +227,13 @@ function render(path: string, entries: readonly ReferenceInventoryEntry[], trunc
                   ? `file, ${entry.bytes} bytes`
                   : "symlink (not followed)";
         lines.push(`- ${entry.path} (${details})`);
-        if (entry.kind === "file" && entry.look !== undefined) lines.push(...renderLook(entry.look));
+        if (entry.kind === "file" && entry.look !== undefined)
+            lines.push(...renderLook(entry.look));
     }
-    if (truncated) lines.push(`Inventory truncated after scanning ${scanned} entries. Call list_available_refs with a narrower path to drill down.`);
+    if (truncated)
+        lines.push(
+            `Inventory truncated after scanning ${scanned} entries. Call list_available_refs with a narrower path to drill down.`,
+        );
     return lines.join("\n");
 }
 
@@ -206,7 +245,10 @@ function noMatch(path: string, query: string, canDownload: boolean): string {
     return `No reference beneath ${path} matches "${query}". ${next}`;
 }
 
-function result(fields: Partial<ReferenceInventoryResult> & Pick<ReferenceInventoryResult, "state" | "path" | "content">): ReferenceInventoryResult {
+function result(
+    fields: Partial<ReferenceInventoryResult> &
+        Pick<ReferenceInventoryResult, "state" | "path" | "content">,
+): ReferenceInventoryResult {
     return {
         available: fields.state !== "out_of_scope",
         entries: [],
@@ -222,9 +264,15 @@ function result(fields: Partial<ReferenceInventoryResult> & Pick<ReferenceInvent
 }
 
 /** The store-relative directory of a `path` or `category` input, or the reason that the real tool refuses it. */
-function resolve(input: string | undefined): { readonly relative: string } | { readonly reason: string } {
+function resolve(
+    input: string | undefined,
+): { readonly relative: string } | { readonly reason: string } {
     if (input === undefined || input === "" || input === REFS_ROOT) return { relative: "." };
-    const relative = input.startsWith(`${REFS_ROOT}/`) ? input.slice(REFS_ROOT.length + 1) : input.startsWith("/") ? undefined : input;
+    const relative = input.startsWith(`${REFS_ROOT}/`)
+        ? input.slice(REFS_ROOT.length + 1)
+        : input.startsWith("/")
+          ? undefined
+          : input;
     if (relative === undefined || relative === "") return { reason: "Path is outside /mnt/refs." };
     const segments = relative.split("/");
     if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
@@ -234,23 +282,46 @@ function resolve(input: string | undefined): { readonly relative: string } | { r
 }
 
 /** The result of the real `list_available_refs` over `store` for one input. */
-export function refsListing(store: RefStore, input: unknown, opts: { readonly canDownload?: boolean } = {}): ReferenceInventoryResult {
+export function refsListing(
+    store: RefStore,
+    input: unknown,
+    opts: { readonly canDownload?: boolean } = {},
+): ReferenceInventoryResult {
     const record = parseUnknownRecord(input) ?? {};
-    const text = (key: string): string | undefined => (typeof record[key] === "string" ? record[key] : undefined);
+    const text = (key: string): string | undefined =>
+        typeof record[key] === "string" ? record[key] : undefined;
     const requested = text("path") ?? text("category");
     const resolved = resolve(requested);
-    if ("reason" in resolved) return result({ available: false, state: "out_of_scope", path: requested ?? REFS_ROOT, content: resolved.reason });
+    if ("reason" in resolved)
+        return result({
+            available: false,
+            state: "out_of_scope",
+            path: requested ?? REFS_ROOT,
+            content: resolved.reason,
+        });
     const path = resolved.relative === "." ? REFS_ROOT : `${REFS_ROOT}/${resolved.relative}`;
     const tree = treeOf(store);
     if (!tree.has(resolved.relative)) {
         return store[resolved.relative] === undefined
-            ? result({ state: "not_found", path, content: `Reference path does not exist: ${path}` })
-            : result({ state: "not_a_directory", path, content: `Reference path is not a directory: ${path}` });
+            ? result({
+                  state: "not_found",
+                  path,
+                  content: `Reference path does not exist: ${path}`,
+              })
+            : result({
+                  state: "not_a_directory",
+                  path,
+                  content: `Reference path is not a directory: ${path}`,
+              });
     }
     const query = text("query")?.trim() ?? "";
     const leaves = walk(store, tree, resolved.relative);
-    const listed = query !== "" || leaves.length <= SMALL_TREE_FILES ? leaves : browse(store, tree, resolved.relative);
-    const matched = query === "" ? listed : listed.filter((entry) => matches(entry, query.toLowerCase()));
+    const listed =
+        query !== "" || leaves.length <= SMALL_TREE_FILES
+            ? leaves
+            : browse(store, tree, resolved.relative);
+    const matched =
+        query === "" ? listed : listed.filter((entry) => matches(entry, query.toLowerCase()));
     const limit = typeof record.limit === "number" ? record.limit : MAX_ENTRIES;
     const entries = matched.slice(0, limit);
     const truncated = entries.length < matched.length;
@@ -264,7 +335,13 @@ export function refsListing(store: RefStore, input: unknown, opts: { readonly ca
         total: matched.length,
         truncated,
         hasMore: truncated,
-        categories: [...new Set(listed.filter((entry) => entry.kind === "directory").map((entry) => posix.basename(entry.path)))].sort(),
+        categories: [
+            ...new Set(
+                listed
+                    .filter((entry) => entry.kind === "directory")
+                    .map((entry) => posix.basename(entry.path)),
+            ),
+        ].sort(),
         content:
             query !== "" && matched.length === 0 && listed.length > 0
                 ? noMatch(path, query, opts.canDownload ?? true)
@@ -273,7 +350,10 @@ export function refsListing(store: RefStore, input: unknown, opts: { readonly ca
 }
 
 /** `list_available_refs` over `store`. An agent that holds `download_ref` reads the download hint of a miss. */
-export function refsTool(store: RefStore, opts: { readonly canDownload?: boolean } = {}): ToolScript {
+export function refsTool(
+    store: RefStore,
+    opts: { readonly canDownload?: boolean } = {},
+): ToolScript {
     return (input) => ({ ok: refsListing(store, input, opts) });
 }
 
@@ -298,19 +378,30 @@ export function extractedDirOf(path: string): string | undefined {
 }
 
 /** The answer of `download_ref` to one URL: a download to its store path, or a failure with the error of the tool. */
-export type DownloadAnswer = { readonly status: "downloaded" } | { readonly status: "failed"; readonly error: string };
+export type DownloadAnswer =
+    | { readonly status: "downloaded" }
+    | { readonly status: "failed"; readonly error: string };
 
 /** `download_ref`, with the answer of `answer` for each URL. The default downloads each URL. */
-export function downloadRefTool(answer: (url: string) => DownloadAnswer = () => ({ status: "downloaded" })): ToolScript {
+export function downloadRefTool(
+    answer: (url: string) => DownloadAnswer = () => ({ status: "downloaded" }),
+): ToolScript {
     return (input) => {
         const urls = parseUnknownRecord(input)?.urls;
-        const list = Array.isArray(urls) ? urls.filter((url): url is string => typeof url === "string") : [];
+        const list = Array.isArray(urls)
+            ? urls.filter((url): url is string => typeof url === "string")
+            : [];
         const [first] = list;
         if (first === undefined) return { error: "the call gives no URL" };
-        const invalid = list.find((url) => !URL.canParse(url) || new URL(url).protocol !== "https:");
+        const invalid = list.find(
+            (url) => !URL.canParse(url) || new URL(url).protocol !== "https:",
+        );
         if (invalid !== undefined) return { error: `${invalid} is not a valid HTTPS URL` };
         const hosts = new Set(list.map((url) => new URL(url).hostname.toLowerCase()));
-        if (hosts.size > 1) return { error: `a call downloads from one host, and the URLs name ${[...hosts].join(" and ")}. Make one call for each host.` };
+        if (hosts.size > 1)
+            return {
+                error: `a call downloads from one host, and the URLs name ${[...hosts].join(" and ")}. Make one call for each host.`,
+            };
         const extract = parseUnknownRecord(input)?.extract === true;
         const files = list.map((url) => {
             const reply = answer(url);
@@ -324,9 +415,17 @@ export function downloadRefTool(answer: (url: string) => DownloadAnswer = () => 
                       status: "downloaded",
                       path,
                       extracted: false,
-                      note: path.endsWith(".gz") ? "a gzip file of one file stays compressed" : "the file is not a tar or zip archive",
+                      note: path.endsWith(".gz")
+                          ? "a gzip file of one file stays compressed"
+                          : "the file is not a tar or zip archive",
                   }
-                : { url, status: "downloaded", path: extracted, extracted: true };
+                : {
+                      url,
+                      status: "downloaded",
+                      path: extracted,
+                      extracted: true,
+                      files: [`${extracted}/${posix.basename(extracted)}`],
+                  };
         });
         return { ok: { host: new URL(first).hostname.toLowerCase(), files } };
     };
@@ -334,5 +433,9 @@ export function downloadRefTool(answer: (url: string) => DownloadAnswer = () => 
 
 /** What `run_inflexa` gives for an `inflexa refs` command: the CLI blocks it for each agent. */
 export const INFLEXA_REFS_BLOCKED = {
-    ok: { status: "blocked", message: "Agents download reference data with the download_ref tool; the `inflexa refs` commands are for the user." },
+    ok: {
+        status: "blocked",
+        message:
+            "Agents download reference data with the download_ref tool; the `inflexa refs` commands are for the user.",
+    },
 };

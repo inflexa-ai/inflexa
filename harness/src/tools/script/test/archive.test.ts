@@ -115,7 +115,7 @@ describe("a streamed extraction", () => {
         const tar = tarOf({ "GSE1/meta.tsv": "a\tb\n", [longName]: "gene,n\n" });
         const withLink = Buffer.concat([tarHeader("GSE1/link", 0, "2"), tar]);
         const summary = (await extractTarStream(chunks(withLink), dest))._unsafeUnwrap();
-        expect(summary).toEqual({ files: 2, directories: 0, skippedLinks: 1 });
+        expect(summary).toEqual({ files: 2, directories: 0, skippedLinks: 1, paths: ["GSE1/meta.tsv", longName] });
         expect(await readFile(join(dest, "GSE1/meta.tsv"), "utf8")).toBe("a\tb\n");
         expect(await readFile(join(dest, longName), "utf8")).toBe("gene,n\n");
         expect(await readdir(join(dest, "GSE1"))).toEqual(["meta.tsv"]);

@@ -191,6 +191,9 @@ export type DownloadRefFile = {
     /** The path of the file, or of the directory of an extracted archive, under `/mnt/refs`. */
     readonly path?: string;
     readonly extracted?: boolean;
+    /** The first files of an extracted archive, under `/mnt/refs`, and the count of the files past them. */
+    readonly files?: readonly string[];
+    readonly moreFiles?: number;
     readonly note?: string;
     readonly error?: string;
 };
@@ -521,7 +524,7 @@ function withoutArchiveSuffix(name: string): string {
     return suffix === undefined ? name : name.slice(0, -suffix.length);
 }
 
-type Extraction = { readonly kind: "extracted"; readonly dir: string } | { readonly kind: "failed"; readonly reason: string };
+type Extraction = { readonly kind: "extracted"; readonly dir: string; readonly summary: ExtractSummary } | { readonly kind: "failed"; readonly reason: string };
 
 /**
  * Extract an archive into a directory beside it, through a `.part` directory that becomes the directory only after a
@@ -553,11 +556,18 @@ async function extractBeside(archive: string, kind: "zip" | "tar" | "tar-gzip", 
     await rm(target, { recursive: true, force: true });
     await rename(staging, target);
     await rm(archive, { force: true });
-    return { kind: "extracted", dir: target };
+    return { kind: "extracted", dir: target, summary: result.value };
 }
 
 function containerPath(storePath: string, hostPath: string): string {
     return posix.join(REFS_CONTAINER_PATH, ...relative(storePath, hostPath).split(sep));
+}
+
+/** The result fields of an extraction: the directory, and the first files in it. */
+function extractedFields(storePath: string, dir: string, summary: ExtractSummary): Pick<DownloadRefFile, "path" | "extracted" | "files" | "moreFiles"> {
+    const path = containerPath(storePath, dir);
+    const more = summary.files - summary.paths.length;
+    return { path, extracted: true, files: summary.paths.map((file) => posix.join(path, file)), moreFiles: more > 0 ? more : undefined };
 }
 
 /** Append the store path of a completed file, or of the directory of an extracted archive, to the source record. */
@@ -593,7 +603,7 @@ async function downloadOne(
         const extraction = await extractBeside(recordedPath, kind, basename(recordedPath), dirname(recordedPath));
         if (extraction.kind === "failed") return { url: target.key, status: "failed", error: extraction.reason };
         await recordSource(storePath, extraction.dir, target.key);
-        return { url: target.key, status: "reused", path: containerPath(storePath, extraction.dir), extracted: true };
+        return { url: target.key, status: "reused", ...extractedFields(storePath, extraction.dir, extraction.summary) };
     }
 
     const dir = join(storePath, target.host, ...target.segments.slice(0, -1));
@@ -610,24 +620,20 @@ async function downloadOne(
     const file = join(dir, name);
     await rename(part, file);
 
-    let stored = file;
-    let extracted: boolean | undefined;
-    let note: string | undefined;
-    if (extract) {
-        const kind = archiveKindOf(name);
-        if (isExtractable(kind)) {
-            const extraction = await extractBeside(file, kind, name, dir);
-            if (extraction.kind === "failed") return { url: target.key, status: "failed", error: extraction.reason };
-            stored = extraction.dir;
-            extracted = true;
-        } else {
-            extracted = false;
-            note = kind === "gzip" ? "a gzip file of one file stays compressed" : "the file is not a tar or zip archive";
-        }
+    if (!extract) {
+        await recordSource(storePath, file, target.key);
+        return { url: target.key, status: "downloaded", path: containerPath(storePath, file) };
     }
-
-    await recordSource(storePath, stored, target.key);
-    return { url: target.key, status: "downloaded", path: containerPath(storePath, stored), extracted, note };
+    const kind = archiveKindOf(name);
+    if (!isExtractable(kind)) {
+        await recordSource(storePath, file, target.key);
+        const note = kind === "gzip" ? "a gzip file of one file stays compressed" : "the file is not a tar or zip archive";
+        return { url: target.key, status: "downloaded", path: containerPath(storePath, file), extracted: false, note };
+    }
+    const extraction = await extractBeside(file, kind, name, dir);
+    if (extraction.kind === "failed") return { url: target.key, status: "failed", error: extraction.reason };
+    await recordSource(storePath, extraction.dir, target.key);
+    return { url: target.key, status: "downloaded", ...extractedFields(storePath, extraction.dir, extraction.summary) };
 }
 
 const DownloadRefInputSchema = z.object({
@@ -635,7 +641,9 @@ const DownloadRefInputSchema = z.object({
     extract: z
         .boolean()
         .optional()
-        .describe("Extract each tar, tar.gz, tgz, or zip file into a directory beside it, and delete the archive. A gzip file of one file stays compressed."),
+        .describe(
+            "Extract each tar, tar.gz, tgz, or zip file into a directory beside it, and delete the archive. The result gives the paths of the extracted files. A gzip file of one file stays compressed.",
+        ),
 });
 
 type DownloadRefInput = z.infer<typeof DownloadRefInputSchema>;
