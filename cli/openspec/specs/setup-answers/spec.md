@@ -204,7 +204,16 @@ host, cut to the container engine. The engine keeps 2 GB of its memory for
 Postgres and the other services, the same as at the boot. When the engine is
 a VM that is smaller than the host, setup names the VM and its figures. Setup
 then tells how to make the VM larger: the Docker Desktop or OrbStack settings,
-or `podman machine set`.
+or `podman machine set`. In the wizard, Enter keeps the current budget, and
+cuts each of its figures to the engine. A budget can have a CPU share and a
+memory share that are different, thus Enter never applies one share to the
+two figures. When Enter cuts a figure, setup says so before the question.
+
+#### Scenario: Enter keeps the memory of the current budget
+
+- **GIVEN** a budget of 4 cores and 13 GB, and an engine with 16 cores and 15 GB
+- **WHEN** the person pushes Enter at the allowance question
+- **THEN** the budget stays 4 cores and 13 GB
 
 #### Scenario: The share of a small engine VM fits the engine
 
