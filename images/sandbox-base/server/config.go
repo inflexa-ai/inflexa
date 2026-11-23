@@ -1,7 +1,11 @@
 package main
 
 import (
+	"crypto/subtle"
 	"errors"
+	"fmt"
+	"net/http"
+	"os"
 	"slices"
 )
 
@@ -9,7 +13,39 @@ const (
 	envTreeDiffRoot     = "SANDBOX_TREE_DIFF_ROOT"
 	envTreeDiffInterval = "SANDBOX_TREE_DIFF_INTERVAL_MS"
 	envEgressFirewall   = "SANDBOX_EGRESS_FIREWALL"
+	envExecToken        = "SANDBOX_EXEC_TOKEN"
 )
+
+// errNoExecToken refuses a start with no exec token: each route but /health
+// would then refuse each request.
+var errNoExecToken = errors.New(envExecToken + " is not set: the harness gives each machine an exec token, and the server refuses each exec without it")
+
+// takeExecToken reads the exec token and removes it from the env of this
+// process. A command inherits the env of the server (buildCommand), thus the
+// token must leave the env before the first exec.
+func takeExecToken() (string, error) {
+	token := os.Getenv(envExecToken)
+	if err := os.Unsetenv(envExecToken); err != nil {
+		return "", fmt.Errorf("remove %s from the env: %w", envExecToken, err)
+	}
+	if token == "" {
+		return "", errNoExecToken
+	}
+	return token, nil
+}
+
+// requireExecToken lets a request through only with `Authorization: Bearer
+// <token>`. The compare runs in constant time for a value of the right length.
+func requireExecToken(token string, next http.Handler) http.Handler {
+	want := []byte("Bearer " + token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+			writeJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "missing or wrong exec token"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 // errRootGroup is the refusal of a server that holds gid 0 of root under the firewall flag.
 var errRootGroup = errors.New("SANDBOX_EGRESS_FIREWALL=1 but the server holds gid 0 of root: the entrypoint's privilege drop kept the groups of root")

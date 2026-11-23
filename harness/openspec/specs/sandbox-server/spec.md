@@ -14,6 +14,24 @@ on port 8765, or on the port that `SANDBOX_SERVER_PORT` gives.
 It MUST serve the health, exec (submit and result), and preview endpoints. It
 MUST NOT serve a kill endpoint. It MUST send no request to the host.
 
+The exec endpoints (`/exec` and `/exec/`) and the preview endpoint MUST refuse a
+request with 401 when its `Authorization` header is not `Bearer` and the token
+of `SANDBOX_EXEC_TOKEN`. The compare MUST run in constant time. `/health` MUST
+stay open, because it tells only that the server runs and how many execs run.
+The server MUST refuse to start with no token. It MUST remove
+`SANDBOX_EXEC_TOKEN` from its env before the first exec, thus no command
+inherits the token.
+
+#### Scenario: A request with no token or a wrong token is refused
+
+- **WHEN** a request to `/exec`, to `/exec/{execId}`, or to `/preview/` carries no token or a wrong token
+- **THEN** the server answers 401, and it runs nothing
+
+#### Scenario: A command does not see the token
+
+- **WHEN** the server runs a command
+- **THEN** the env of the command holds no `SANDBOX_EXEC_TOKEN`
+
 #### Scenario: Server starts as container entrypoint
 
 - **WHEN** the sandbox container starts
