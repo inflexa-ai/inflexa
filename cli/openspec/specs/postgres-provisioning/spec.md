@@ -159,17 +159,35 @@ The CLI SHALL run `CREATE EXTENSION IF NOT EXISTS vector` in the configured data
 
 ### Requirement: Auth URL is extracted and copied to clipboard
 
-During provider authentication, the CLI SHALL capture the auth container's stdout/stderr (running without `-t` since `--no-browser` needs no PTY), extract the OAuth URL, copy it to the system clipboard, and print it as a plain unwrapped line (not inside a bordered box) so it is easily selectable. If an SSH tunnel command is detected, it SHALL be shown in a note box alongside the URL.
+During provider authentication, the CLI SHALL capture the auth container's stdout/stderr (running without `-t` since `--no-browser` needs no PTY), extract the OAuth URL, copy it to the system clipboard, and print it as a plain unwrapped line (not inside a bordered box) so it is easily selectable.
+
+When `SSH_CONNECTION` is set and the provider has a callback port, the CLI SHALL show the `ssh -L` command for the callback port in a note box before the URL. The command SHALL name the user of the session and the address from `SSH_CONNECTION`. The CLI SHALL NOT show the tunnel command of the container, because that command names `root` and the address of the container.
+
+When the provider has a callback port and stdin is a terminal, the CLI SHALL accept a pasted callback URL while it waits. The person copies the URL from the address bar of the browser after the redirect fails. The CLI SHALL send the same `GET` request to `127.0.0.1:<callback port>` of this machine, where the container publishes the port. The container gets no stdin, so that only the CLI reads the terminal.
+
+When the container exits with a code that is not 0, the CLI SHALL print the tail of the container output. When the output says that the callback port is in use, the message SHALL name the port.
 
 #### Scenario: Auth URL is captured and copied
 
 - **WHEN** the auth container prints an OAuth URL
 - **THEN** the URL is extracted, copied to clipboard, and printed as a plain indented line
 
-#### Scenario: SSH tunnel command is shown for remote scenarios
+#### Scenario: SSH tunnel command is shown for a session through SSH
 
-- **WHEN** the auth container detects a remote scenario and prints SSH tunnel instructions
-- **THEN** the SSH command is shown in a note box below the auth URL
+- **GIVEN** `SSH_CONNECTION` is set
+- **WHEN** the auth container prints an OAuth URL for a provider with a callback port
+- **THEN** the `ssh -L` command for the callback port is shown in a note box before the auth URL
+
+#### Scenario: A pasted callback URL completes the sign-in
+
+- **GIVEN** the browser of the person cannot reach the callback port
+- **WHEN** the person pastes the URL from the address bar into the terminal
+- **THEN** the CLI sends the request to the callback port of this machine, and the login container completes the sign-in
+
+#### Scenario: The callback port is in use
+
+- **WHEN** the engine cannot publish the callback port, because a different process holds it
+- **THEN** the CLI prints the exit code, names the port, and prints the output of the engine
 
 ### Requirement: Launch-time gate self-heals the Postgres substrate
 

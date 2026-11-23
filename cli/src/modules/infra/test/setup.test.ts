@@ -27,6 +27,7 @@ import {
     normalizeAdoptedBaseURL,
     pingMessagesEndpoint,
     probeCredentialSource,
+    describeLoginFailure,
     probeOnce,
     ProxyError,
     providerKindForSlug,
@@ -2824,5 +2825,25 @@ describe("ensureProxyReady — the boot steps", () => {
         expect(failure).toBeInstanceOf(ProxyError);
         expect(failure.message).toContain("Failed to start containers");
         expect(given).toBe(onPullProgress);
+    });
+});
+
+describe("describeLoginFailure", () => {
+    test("a callback port that the engine could not publish is named, with the output of the engine", () => {
+        const output = [
+            "docker: Error response from daemon: driver failed programming external connectivity on endpoint x: Bind for 127.0.0.1:1455 failed: port is already allocated.",
+        ];
+        const message = describeLoginFailure("OpenAI (Codex/GPT)", 125, output, 1455);
+        expect(message).toContain("OpenAI (Codex/GPT) login failed (exit code 125).");
+        expect(message).toContain("The callback port 1455 is in use on this machine.");
+        expect(message).toContain("port is already allocated");
+    });
+
+    test("each other failure prints the tail of the output, and names no port", () => {
+        const output = Array.from({ length: 60 }, (_, i) => `line ${i}`);
+        const message = describeLoginFailure("Claude (Anthropic)", 1, output, 54545);
+        expect(message).not.toContain("is in use");
+        expect(message).toContain("line 59");
+        expect(message).not.toContain("line 19\n");
     });
 });
