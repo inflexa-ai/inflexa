@@ -280,6 +280,7 @@ export function describeBootError(e: HarnessBootError): string {
             return [
                 `A direct model connection needs its API key, but neither \`INFLEXA_MODEL_API_KEY\` nor \`${e.providerVar}\` (the provider-conventional variable) is set.`,
                 `Export one (e.g. \`export ${e.providerVar}=…\`) — the key is read from the environment only, never from ${env.configPath}.`,
+                "The background server keeps the environment of its start. Thus after the export, run `inflexa server stop`. The next inflexa command in that shell starts a server that reads the key.",
             ].join("\n");
         case "model_unresolved":
             // `cooling_down` is a temporary all-credential block the proxy recovers from on its own —
