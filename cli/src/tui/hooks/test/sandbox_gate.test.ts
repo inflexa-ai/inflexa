@@ -38,9 +38,12 @@ function report(kind: TransferReportView["kind"], state: TransferReportView["sta
     return { kind, row, state, live, holderPid: live ? 4242 : null };
 }
 
-/** A store read that answers with `transfers` and nothing else. */
-function storeWith(transfers: readonly TransferReportView[]): ReturnType<SandboxGateSeams["readStore"]> {
-    const store: StoreState = { transfers: [...transfers], flights: [], pendingAdds: [] };
+/** A store read that answers with `transfers` and nothing else. By default each live transfer holds a sandbox. */
+function storeWith(
+    transfers: readonly TransferReportView[],
+    holdsSandbox: StoreState["holdsSandbox"] = transfers.filter((entry) => entry.live).map((entry) => entry.kind),
+): ReturnType<SandboxGateSeams["readStore"]> {
+    const store: StoreState = { transfers: [...transfers], holdsSandbox: [...holdsSandbox], flights: [], pendingAdds: [] };
     return okAsync(store);
 }
 
@@ -81,6 +84,22 @@ describe("awaitTransfersSettled", () => {
         expect(notices.filter((notice) => notice.text.includes("Waiting for the catalog transfer"))).toHaveLength(1);
     });
 
+    test("a live transfer that holds no sandbox does not hold the drive, by the rule of the server gate", async () => {
+        let reads = 0;
+        const notices: Notice[] = [];
+        const gate = seams({
+            notices,
+            readStore: () => {
+                reads += 1;
+                return storeWith([report("catalog", "running", true)], []);
+            },
+        });
+
+        expect(await awaitTransfersSettled(gate)).toBe("ready");
+        expect(reads).toBe(1);
+        expect(notices).toEqual([]);
+    });
+
     test("a terminal transfer state does not hold, because the server decides on the machine", async () => {
         const gate = seams({ readStore: () => storeWith([report("runtime_image", "failed", false, "The disk ran out.")]) });
         expect(await awaitTransfersSettled(gate)).toBe("ready");
@@ -91,6 +110,7 @@ describe("the store poll", () => {
     test("publishes the transfers, the flights, and the pending adds of one read", async () => {
         const store: StoreState = {
             transfers: [report("catalog", "running", true)],
+            holdsSandbox: [],
             flights: [
                 {
                     id: "python::polars::",

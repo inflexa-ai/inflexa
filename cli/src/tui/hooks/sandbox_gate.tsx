@@ -12,8 +12,8 @@ import { notify } from "./notice.ts";
 // The transfer state of the TUI, held here (not inside `app.tsx`) so the holder of the state is
 // decoupled from its callers. It has two jobs. It publishes the lifecycle of the three detached
 // transfers, which the sidebar renders as one row per live transfer: a poll of `GET /api/v1/store`.
-// And it holds each profile drive (`awaitTransfersSettled`) while a transfer is live, thus the drive
-// starts when the transfer ends instead of a refusal.
+// And it holds each profile drive (`awaitTransfersSettled`) while a transfer holds a sandbox, thus the drive
+// starts when the transfer ends instead of a refusal. The server names those transfers by the rule of its gate.
 //
 // The hold decides nothing about the machine. The server refuses a profile that cannot start a
 // sandbox (`server/sandbox_gate.ts`), and the drive shows that refusal. The hold never reads
@@ -80,11 +80,16 @@ export const realSandboxGateSeams: SandboxGateSeams = {
 export function refreshTransferState(
     seams: Pick<SandboxGateSeams, "readStore"> = realSandboxGateSeams,
 ): ResultAsync<readonly TransferReportView[], ClientError> {
+    return refreshStore(seams).map((store) => store.transfers);
+}
+
+/** {@link refreshTransferState}, with the whole store read. */
+function refreshStore(seams: Pick<SandboxGateSeams, "readStore">): ResultAsync<StoreState, ClientError> {
     return seams.readStore().map((store) => {
         setTransfers(store.transfers);
         setFlights(store.flights);
         setPendingAdds(store.pendingAdds.map((entry) => ({ spec: entry.spec })));
-        return store.transfers;
+        return store;
     });
 }
 
@@ -131,7 +136,8 @@ export function transferLabel(kind: TransferReportView["kind"]): string {
 let gateFlowInflight: Promise<"ready" | "blocked"> | null = null;
 
 /**
- * Hold the caller while any transfer is live, and report the wait one time.
+ * Hold the caller while a transfer holds a sandbox, and report the wait one time. The server names those transfers
+ * by the rule of its gate (`holdsSandbox`), thus a catalog update over a complete store holds no drive.
  *
  * The wait ends when the transfers end, and that bound is structural rather than a timeout: each child
  * holds its lock for its whole life, thus a process a user killed frees the lock and the next read
@@ -140,12 +146,13 @@ let gateFlowInflight: Promise<"ready" | "blocked"> | null = null;
 async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"> {
     let announced = false;
     for (;;) {
-        const read = await refreshTransferState(seams);
+        const read = await refreshStore(seams);
         if (read.isErr()) {
             seams.notify({ kind: "error", text: describeClientError(read.error) });
             return "blocked";
         }
-        const live = read.value.filter((report) => report.live);
+        const holds = new Set(read.value.holdsSandbox);
+        const live = read.value.transfers.filter((report) => report.live && holds.has(report.kind));
         if (live.length === 0) return "ready";
         if (!announced) {
             announced = true;
@@ -159,7 +166,7 @@ async function runGateFlow(seams: SandboxGateSeams): Promise<"ready" | "blocked"
 }
 
 /**
- * Hold a profile drive until no transfer is live. Gives `ready` when the drive can go to the server, which
+ * Hold a profile drive until no transfer holds a sandbox. Gives `ready` when the drive can go to the server, which
  * decides if a sandbox can start, or `blocked` when the transfer state cannot be read. The hold reports the
  * reason of a `blocked` as it decides.
  */
