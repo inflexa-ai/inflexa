@@ -246,6 +246,17 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
 }
 
 /**
+ * The idle period of a sandbox lease from `INFLEXA_SANDBOX_IDLE_MS`, in a development build only, so that an e2e run
+ * can see an idle removal in a minute instead of the 15-minute default of the harness. A production build ignores the
+ * variable. A value that is not a positive whole number gives `undefined`, and the harness default applies.
+ */
+export function sandboxIdlePeriodMs(channel: string | undefined, raw: string | undefined): number | undefined {
+    if (!isDevelopmentBuild(channel) || raw === undefined) return undefined;
+    const ms = Number(raw);
+    return raw.trim() !== "" && Number.isInteger(ms) && ms > 0 ? ms : undefined;
+}
+
+/**
  * The host ports the stack binds and the host-side mount/compose paths it binds — split into pure
  * helpers so the whole stack identity derives from ONE channel signal ({@link isDevelopmentBuild} over the
  * baked build channel, never NODE_ENV), the same signal `compose.ts` names its containers/networks from.
@@ -540,6 +551,8 @@ export const env = Object.freeze({
      * (src/modules/infra/compose.ts) and the harness skills/templates dirs (src/modules/harness/config.ts).
      */
     isDevelopment: isDevelopmentBuild(bakedEnv.buildChannel),
+    /** {@link sandboxIdlePeriodMs} of `INFLEXA_SANDBOX_IDLE_MS`. A dev-only variable, thus it is not in envDoc/--help. */
+    sandboxIdlePeriodMs: sandboxIdlePeriodMs(bakedEnv.buildChannel, process.env.INFLEXA_SANDBOX_IDLE_MS),
 });
 
 /**
@@ -676,6 +689,7 @@ export const envDoc: Readonly<
             | "contentHash"
             | "dockerHost"
             | "dataDir"
+            | "sandboxIdlePeriodMs"
         >,
         EnvDocEntry
     >
