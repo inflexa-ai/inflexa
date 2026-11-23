@@ -11,6 +11,8 @@ The CLI MUST give one shared helper that opens a file, a folder, or a URL in the
 
 The helper MUST NOT start an opener when the session has no display. A session has no display when `SSH_CONNECTION` is set, or on Linux (not WSL) when `DISPLAY` and `WAYLAND_DISPLAY` are not set. Over SSH, `xdg-open` can start and exit 0, but no browser shows on the computer of the person. The helper then MUST give a `no_display` error. The notice of the caller MUST show the URL or the path. Over SSH, for a URL of a loopback port, the notice MUST also give the `ssh -L` command that forwards the port.
 
+The browser setting MUST be able to stop each launch. The environment variable `INFLEXA_BROWSER` and the config key `browser` take the values `auto` (the default) and `never`. The variable MUST win over the key. A variable that is not one of the two values MUST be ignored. With `never`, the helper MUST NOT start an opener on any platform, and it MUST give a `no_display` error. The notice of the caller MUST show the URL or the path, and it MUST NOT say that the target opened. A person who works through SSH or on a server sets `never`.
+
 The helper detects WSL one time, for example from `microsoft` in `/proc/version`. Under WSL, the helper MUST use `wslview` first. When `wslview` is absent, it MUST use `explorer.exe` with the path that `wslpath -w` translates.
 
 Each opener of the CLI MUST use this helper: the auth login, the `inflexa open` command, the open affordances of the TUI, and the folder open of the local server (`POST /api/v1/open-directory`). The helper MUST run in the client process, because the desktop of the user belongs to the client.
@@ -29,6 +31,12 @@ In a client, a failed open MUST show a notice with the resolved path. It MUST NO
 - **GIVEN** the CLI runs in a session where `SSH_CONNECTION` is set
 - **WHEN** the user opens a report page
 - **THEN** no opener starts, and the warning shows the URL and the `ssh -L` command for its port
+
+#### Scenario: The browser setting is never
+
+- **GIVEN** `INFLEXA_BROWSER=never`, or `"browser": "never"` in config.json
+- **WHEN** the user opens an artifact, a report page, or a sign-in URL
+- **THEN** no opener starts, and the notice shows the path or the URL and names the setting
 
 #### Scenario: WSL opens via Windows
 

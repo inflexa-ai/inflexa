@@ -2,7 +2,7 @@ import { ok, type Result } from "neverthrow";
 
 import { NONCE_LIFETIME_MS } from "../../api/browser_session.ts";
 import { fail } from "../../lib/cli.ts";
-import { openByHandHint, openExternal, type OpenExternalError } from "../../lib/open_external.ts";
+import { openExternal, signInOpenHint, type OpenExternalError } from "../../lib/open_external.ts";
 import { DEFAULT_CLIENT_OPTS, describeClientError, type ClientOpts } from "../api.ts";
 import { requestSessionNonce } from "../browser_session.ts";
 
@@ -39,6 +39,6 @@ export async function gui(opts: GuiOpts = DEFAULT_GUI_OPTS): Promise<void> {
     opts.write(`This link works one time, within ${NONCE_LIFETIME_MS / 1000} s.`);
     opts.open(link).match(
         () => undefined,
-        (e) => opts.write(openByHandHint(e, link)),
+        (e) => opts.write(signInOpenHint(e, link)),
     );
 }

@@ -74,6 +74,15 @@ describe("inflexa gui", () => {
         expect(lines.at(-1)).toContain("Could not start an opener. Open it by hand:");
     });
 
+    test("with the browser setting `never`, it prints the link, opens nothing, and names the setting", async () => {
+        const { opts, lines } = guiOpts(() => err({ type: "no_display", reason: "disabled" }));
+
+        await gui(opts);
+
+        expect(lines[0]).toStartWith(`${server.baseUrl}/api/v1/session?nonce=`);
+        expect(lines.at(-1)).toContain("INFLEXA_BROWSER");
+    });
+
     test("over SSH, it prints the port-forward command for the port of the link", async () => {
         const { opts, lines } = guiOpts(() => err({ type: "no_display", reason: "ssh" }));
 
