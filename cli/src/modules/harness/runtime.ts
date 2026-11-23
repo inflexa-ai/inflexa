@@ -233,7 +233,8 @@ export type HarnessBootError =
     | { type: "model_required"; agents: readonly AgentName[] }
     | { type: "sandbox_engine_unresolved"; message: string }
     | { type: "postgres_unavailable"; cause: PostgresError }
-    | { type: "runtime_already_active"; holderPid: number }
+    /** `holderHost` is set when the holder runs on a different host that shares this data folder. */
+    | { type: "runtime_already_active"; holderPid: number; holderHost?: string }
     | { type: "runtime_boot_failed"; cause: unknown };
 
 /**
@@ -312,6 +313,12 @@ export function describeBootError(e: HarnessBootError): string {
             // One DBOS engine with the executor "local" for each machine. The local server holds it, thus the
             // holder is usually the server, and a dev `run --plan` meets this while a server runs. The message
             // cannot tell the two holders apart: this module does not read the discovery file of the client.
+            if (e.holderHost !== undefined) {
+                return (
+                    `Inflexa on the host ${e.holderHost} (pid ${e.holderPid}) holds the harness runtime of this data folder, and only one host can run it.\n` +
+                    `  Stop Inflexa on ${e.holderHost} (\`inflexa server stop\` there). If that host is gone, remove the lock file ${instanceLockPath(HARNESS_RUNTIME_LOCK_KEY)}.`
+                );
+            }
             return (
                 `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime, and only one can run on a machine.\n` +
                 "  If it is the Inflexa server (`inflexa server status` shows its pid), stop it with `inflexa server stop`. Otherwise wait for that process to end.\n" +
@@ -942,7 +949,11 @@ async function bootHarnessRuntimeOnce(
     // hard-killed prior holder's lock is reclaimed by pid, so it never wedges boot.
     const lock = acquireInstanceLock(HARNESS_RUNTIME_LOCK_KEY);
     if (!lock.acquired) {
-        return err({ type: "runtime_already_active", holderPid: lock.holderPid });
+        return err(
+            lock.holderHost === undefined
+                ? { type: "runtime_already_active", holderPid: lock.holderPid }
+                : { type: "runtime_already_active", holderPid: lock.holderPid, holderHost: lock.holderHost },
+        );
     }
 
     // Registration + launch throw on failure (DBOS SDK contract) — bridge to

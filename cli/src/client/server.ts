@@ -16,7 +16,15 @@ import { fail } from "../lib/cli.ts";
 import { selfInvocation } from "../lib/self_invocation.ts";
 import { env } from "../lib/env.ts";
 import { rmResult, type FsError } from "../lib/fs.ts";
-import { acquireInstanceLock, isProcessAlive, releaseInstanceLock, SERVER_SPAWN_LOCK_KEY, type LockOutcome, type ProcessIdentity } from "../lib/lock.ts";
+import {
+    acquireInstanceLock,
+    foreignHost,
+    isProcessAlive,
+    releaseInstanceLock,
+    SERVER_SPAWN_LOCK_KEY,
+    type LockOutcome,
+    type ProcessIdentity,
+} from "../lib/lock.ts";
 import { DEFAULT_CLIENT_OPTS, describeClientError, readServerDiscovery, request, serverBaseUrl, type ClientError, type ClientOpts } from "./api.ts";
 
 /** The upper bound of one probe of a server. A local listener answers in milliseconds. */
@@ -64,6 +72,8 @@ export type ServerError =
     | { readonly type: "refused"; readonly discovery: ServerDiscovery; readonly error: ClientError }
     /** No server answers, and this client does not start one (`INFLEXA_SERVER_FILE` names the server). */
     | { readonly type: "not_running"; readonly path: string }
+    /** The discovery file names a server on a different host, which shares this data folder. */
+    | { readonly type: "other_host"; readonly path: string; readonly discovery: ServerDiscovery; readonly host: string }
     /** The server speaks a different version of the HTTP API. */
     | { readonly type: "api_mismatch"; readonly discovery: ServerDiscovery; readonly state: ServerState }
     /** The process of the file lives, but its port gave no answer within the start limit: a busy or a hung server. */
@@ -112,6 +122,10 @@ export async function lookupServer(opts: ServerLookupOpts = DEFAULT_SERVER_LOOKU
     if (read.isErr()) return err({ type: "discovery_unreadable", path: opts.discoveryPath, cause: read.error.cause });
     const discovery = read.value;
     if (discovery === null) return ok({ kind: "none" });
+    // A server of a different host listens on the loopback address of that host, thus a probe here proves
+    // nothing. It holds the runtime lock of the shared data folder, and a server here could not boot.
+    const host = foreignHost(discoveryProcess(discovery));
+    if (host !== null) return err({ type: "other_host", path: opts.discoveryPath, discovery, host });
     const probe = await fetchServerState(serverClient(discovery, opts.fetch, opts.probeTimeoutMs));
     if (probe.isOk()) return ok({ kind: "answering", discovery, state: probe.value });
     switch (probe.error.type) {
@@ -409,6 +423,11 @@ export function describeServerError(e: ServerError): string {
             return `The Inflexa server at ${serverBaseUrl(e.discovery.port)} (pid ${e.discovery.pid}) refused the request: ${describeClientError(e.error)}`;
         case "not_running":
             return `No Inflexa server runs: ${e.path} names none. Start the server with \`inflexa server start\`, then try again.`;
+        case "other_host":
+            return (
+                `The Inflexa server of this data folder runs on the host ${e.host} (pid ${e.discovery.pid}), which shares the folder. ` +
+                `Stop Inflexa on ${e.host} (\`inflexa server stop\` there). If that host is gone, remove ${e.path}.`
+            );
         case "api_mismatch":
             return (
                 `The Inflexa server (pid ${e.discovery.pid}) is inflexa ${e.state.version} with API version ${e.state.apiVersion}, ` +

@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 
@@ -116,14 +116,17 @@ test("a live pid with a different start time is a reused pid, and its lock is re
     await proc.exited;
 });
 
-test("a holder on a different host is stale, and its lock is reclaimed", async () => {
+test("a holder on a different host holds the lock, also with a pid that is dead here, and the outcome names the host", async () => {
+    // Two hosts can share one data folder (an NFS home). This host cannot probe a pid of the other host.
     const key = "lock-test-other-host";
     const proc = Bun.spawn(["sleep", "60"]);
-    seedLockText(key, JSON.stringify({ ...processIdentity(proc.pid), host: `not-${hostname()}` }));
-    expect(acquireInstanceLock(key)).toEqual({ acquired: true });
-    releaseInstanceLock(key);
     proc.kill();
     await proc.exited;
+    const other = `not-${hostname()}`;
+    seedLockText(key, JSON.stringify({ pid: proc.pid, host: other, start: "a start on the other host" }));
+    expect(acquireInstanceLock(key)).toEqual({ acquired: false, holderPid: proc.pid, holderHost: other });
+    expect(instanceLockHolder(key)).toBe(proc.pid);
+    rmSync(instanceLockPath(key), { force: true });
 });
 
 test("a record with no known start falls back to the pid probe", async () => {

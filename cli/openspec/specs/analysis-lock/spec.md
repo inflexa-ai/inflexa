@@ -40,7 +40,7 @@ The lock SHALL be written only by a request that names the analysis. A launch pa
 
 ### Requirement: Pid-liveness reclaim of dead holders
 
-A lock SHALL record the pid, the host name, and the start time of the holding process. A pid alone is not sufficient, because after a reboot the same pid can name a different process. When acquiring a lock whose file already exists, the system SHALL read the record. The holder is dead when the host name is different, when the probe of the pid (`process.kill(pid, 0)`) throws `ESRCH`, or when the pid now has a different start time. The system SHALL reclaim the lock only if the holder is dead. A lock held by a live process SHALL block acquisition. If the system cannot read the start time of a live pid, the holder is alive. A file that is not a lock record SHALL be reclaimed. The system SHALL NOT use elapsed-time staleness to free a lock, because a holder keeps an analysis lock for the whole life of its process, and the local server lives for days.
+A lock SHALL record the pid, the host name, and the start time of the holding process. A pid alone is not sufficient, because after a reboot the same pid can name a different process. When acquiring a lock whose file already exists, the system SHALL read the record. A record of a different host names a live holder, because two hosts can share one data folder, and this host cannot probe a pid of a different host. A conflict with such a holder SHALL name the host and the lock file. For a record of this host, the holder is dead when the probe of the pid (`process.kill(pid, 0)`) throws `ESRCH`, or when the pid now has a different start time. The system SHALL reclaim the lock only if the holder is dead. A lock held by a live process SHALL block acquisition. If the system cannot read the start time of a live pid, the holder is alive. A file that is not a lock record SHALL be reclaimed. The system SHALL NOT use elapsed-time staleness to free a lock, because a holder keeps an analysis lock for the whole life of its process, and the local server lives for days.
 
 #### Scenario: A lock held by a dead pid is reclaimed
 
@@ -51,6 +51,12 @@ A lock SHALL record the pid, the host name, and the start time of the holding pr
 
 - **WHEN** the system attempts to acquire a lock whose recorded process is still alive
 - **THEN** acquisition fails and the open/switch is treated as a conflict
+
+#### Scenario: A holder on a different host keeps the lock
+
+- **GIVEN** a data folder that two hosts share, and a lock file that the other host wrote
+- **WHEN** the system attempts to acquire the lock
+- **THEN** acquisition fails, and the conflict names the other host and the lock file
 
 #### Scenario: A reused pid does not hold the lock
 
