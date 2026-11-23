@@ -812,11 +812,15 @@ describe("resolveHarnessConfig — an old config with bioKeys", () => {
 describe("clampPolicyToEngine", () => {
     const policy = { perStep: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 }, budget: { cpu: 8, memoryGb: 32 } };
 
-    test("clamps the budget and the step ceilings to an engine that is smaller than the host", () => {
-        expect(clampPolicyToEngine(policy, { cpu: 2, memoryGb: 1 })).toEqual({
-            perStep: { maxCpu: 2, maxMemoryGb: 1, maxGpuCount: 0 },
-            budget: { cpu: 2, memoryGb: 1 },
+    test("keeps 2 GB of the engine for Postgres, the proxy, SearXNG, and the daemon", () => {
+        expect(clampPolicyToEngine(policy, { cpu: 4, memoryGb: 7 })).toEqual({
+            perStep: { maxCpu: 4, maxMemoryGb: 5, maxGpuCount: 0 },
+            budget: { cpu: 4, memoryGb: 5 },
         });
+    });
+
+    test("gives at least 1 GB to the sandboxes of a small engine", () => {
+        expect(clampPolicyToEngine(policy, { cpu: 2, memoryGb: 2 }).budget).toEqual({ cpu: 2, memoryGb: 1 });
     });
 
     test("keeps the policy under an engine that is larger, and with no capacity", () => {

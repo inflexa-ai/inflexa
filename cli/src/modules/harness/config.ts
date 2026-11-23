@@ -125,13 +125,25 @@ function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): Re
 }
 
 /**
+ * The memory of the engine that the sandboxes never get. The services of Inflexa run in the same engine: Postgres
+ * with pgvector, the proxy, and SearXNG, beside the daemon and, in a VM, its kernel. Idle, they use about 1 GB
+ * (Postgres with its 128 MB of shared buffers and its index builds, SearXNG with its workers, the kernel and the
+ * daemon). 2 GB gives them twice that, thus an index build or a burst of searches does not make the OOM killer of
+ * the VM take Postgres. The cores are not kept: the engine shares them by time, and a full budget only slows the
+ * services.
+ */
+export const ENGINE_MEMORY_RESERVE_GB = 2;
+
+/**
  * Clamp a resource policy to the capacity of the container engine. The budget comes from the host, but a podman
  * machine or a Docker Desktop VM can be smaller, and a sandbox can never use more than its engine has. A budget
- * above the engine would admit a sandbox that the engine kills for its memory. No capacity keeps the policy.
+ * above the engine would admit a sandbox that the engine kills for its memory. The budget keeps
+ * {@link ENGINE_MEMORY_RESERVE_GB} of the engine for the services, and at least 1 GB. No capacity keeps the policy.
  */
 export function clampPolicyToEngine(policy: ResourcePolicy, capacity: { readonly cpu: number; readonly memoryGb: number } | undefined): ResourcePolicy {
     if (capacity === undefined) return policy;
-    const budget = { cpu: Math.min(policy.budget.cpu, capacity.cpu), memoryGb: Math.min(policy.budget.memoryGb, capacity.memoryGb) };
+    const memoryGb = Math.max(1, capacity.memoryGb - ENGINE_MEMORY_RESERVE_GB);
+    const budget = { cpu: Math.min(policy.budget.cpu, capacity.cpu), memoryGb: Math.min(policy.budget.memoryGb, memoryGb) };
     return {
         perStep: { ...policy.perStep, maxCpu: Math.min(policy.perStep.maxCpu, budget.cpu), maxMemoryGb: Math.min(policy.perStep.maxMemoryGb, budget.memoryGb) },
         budget,

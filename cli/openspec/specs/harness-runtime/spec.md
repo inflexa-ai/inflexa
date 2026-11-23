@@ -105,9 +105,10 @@ dockerode connection error surfacing mid-run.
 
 #### Scenario: The budget obeys the engine
 
-- **GIVEN** a budget of 4 cores and 8 GB, and an engine that has 2 cores and 1 GB
+- **GIVEN** a budget of 4 cores and 8 GB, and an engine that has 2 cores and 4 GB
 - **WHEN** the runtime boots
-- **THEN** the sandbox client and the harness get a budget and step ceilings of 2 cores and 1 GB
+- **THEN** the sandbox client and the harness get a budget and step ceilings of 2 cores and 2 GB
+- **AND** the engine keeps 2 GB for Postgres, the proxy, SearXNG, and the daemon
 
 #### Scenario: Unresolvable podman socket blocks boot with actionable guidance
 
