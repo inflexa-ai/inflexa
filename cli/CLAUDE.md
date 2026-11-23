@@ -697,7 +697,7 @@ spec is the contract.
   `bun run dev server stop`. The next `instance` command starts a server with the
   new code. `bun run dev server status` and `bun run dev server logs` show the
   state and the log of the server.
-- **The discovery file.** The server writes `<dataDir>/inflexa/server.dev.json`
+- **The discovery file.** The server writes `<data root>/server.dev.json`
   with mode 0600 (`server.json` for a production build). It holds the pid, the
   port, the bearer token, and the versions. A client reads it at each request.
   `INFLEXA_SERVER_FILE` names a different file, and a client under this variable

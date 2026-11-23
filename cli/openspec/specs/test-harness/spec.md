@@ -57,7 +57,8 @@ requirement's `env.ts` guard exists to backstop.
 A `bun:test` preload registered by `cli/bunfig.toml` SHALL redirect `XDG_DATA_HOME` and
 `XDG_CONFIG_HOME` into a fresh `mkdtemp` sandbox before any test module — and therefore before the
 first import of `src/lib/env.ts`, which freezes its XDG-derived paths at import — and SHALL stamp
-`INFLEXA_TEST_SANDBOX` with the sandbox root. An exit hook SHALL reap the sandbox.
+`INFLEXA_TEST_SANDBOX` with the sandbox root. The preload SHALL also remove `INFLEXA_DATA_DIR`,
+because that variable wins over `XDG_DATA_HOME`. An exit hook SHALL reap the sandbox.
 
 The repository root SHALL carry a `bunfig.toml` whose `[test].preload` aborts the process before any
 test body runs, because `bun test` from the root does not apply `cli/bunfig.toml`'s preload and would

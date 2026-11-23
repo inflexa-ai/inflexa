@@ -126,7 +126,7 @@ export type EmbeddingDefaults = {
 /** The body of `GET` and `PATCH /api/v1/settings`. A change applies at the next boot of the runtime. */
 export type ServerSettings = ServerSettingsValues & {
     embeddingDefaults: EmbeddingDefaults;
-    /** The absolute path of the data folder of Inflexa on the server machine (`<data dir>/inflexa`). A `PATCH` cannot change it. */
+    /** The absolute path of the data root of Inflexa on the server machine. A `PATCH` cannot change it. */
     dataDir: string;
     /** The absolute path of the log file of a background server of this build channel. A `PATCH` cannot change it. */
     serverLogPath: string;

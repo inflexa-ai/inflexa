@@ -1311,9 +1311,12 @@ export async function startCatalogTransfer(params: {
  */
 const PROGRESS_WRITE_INTERVAL_MS = 500;
 
-/** Whether a thrown cause, or anything it wraps, is the out-of-disk error. */
+/**
+ * Whether a thrown cause, or anything it wraps, is the out-of-disk error. A full quota (`EDQUOT`) counts: on a
+ * shared host the quota of the user, not the disk, is the usual limit, and the remedy is the same.
+ */
 function isDiskFull(cause: unknown): boolean {
-    return chainCarriesCode(cause, "ENOSPC");
+    return chainCarriesCode(cause, "ENOSPC") || chainCarriesCode(cause, "EDQUOT");
 }
 
 /** The bytes the filesystem under `path` still offers this user, or `null` when the question cannot be answered. */
@@ -1331,12 +1334,16 @@ async function availableBytes(path: string): Promise<number | null> {
  *
  * A disk that ran out gets the two figures a user needs to act. A bare "no space left" tells nobody
  * how much disk to free, and the manifest already declares exactly how much the transfer still
- * wants.
+ * wants. A full quota gets no free figure: the filesystem reports the space of the disk, not of the
+ * quota, thus the figure would contradict the failure.
  */
-async function describeTransferFailure(error: StoreDownloadError, storeRoot: string, remaining: number | null): Promise<string> {
-    if (isDiskFull("cause" in error ? error.cause : undefined)) {
-        const free = await availableBytes(storeRoot);
+export async function describeTransferFailure(error: StoreDownloadError, storeRoot: string, remaining: number | null): Promise<string> {
+    const cause = "cause" in error ? error.cause : undefined;
+    if (isDiskFull(cause)) {
         const need = remaining === null ? "the rest of the catalog" : formatIecBytes(remaining);
+        if (chainCarriesCode(cause, "EDQUOT"))
+            return `The disk quota ran out while the package store downloaded. The transfer needs ${need} more under ${storeRoot}. Free that much of the quota, or set INFLEXA_DATA_DIR to a local disk, then run \`inflexa store download\`.`;
+        const free = await availableBytes(storeRoot);
         const have = free === null ? "less than that" : formatIecBytes(free);
         return `The disk ran out while the package store downloaded. The transfer needs ${need} more and ${storeRoot} offers ${have}. Free the difference, then run \`inflexa store download\`.`;
     }

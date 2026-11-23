@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -18,6 +18,7 @@ import {
     isUnsandboxedTestRun,
     modelConnectionEnvDoc,
     providerApiKeyVar,
+    resolveDataRoot,
     resolveEmbeddingApiKey,
     resolveModelApiKey,
     sandboxIdlePeriodMs,
@@ -29,6 +30,7 @@ import {
 } from "../env.ts";
 import { clearEnvVars, unsetEnvVar } from "../../test_support/env_vars.ts";
 import { parsedJson } from "../../test_support/json.ts";
+import { keysOf } from "../types.ts";
 
 // The truth table behind env.isDevelopment: a build is development unless the baked channel is exactly
 // "production". We test the pure helper because env freezes its bakedEnv.buildChannel read at import.
@@ -140,37 +142,37 @@ describe("stackPorts", () => {
 });
 
 describe("stackPaths", () => {
-    const base = "/data";
+    const root = "/data/inflexa";
 
     test("production paths are byte-identical to their historical form", () => {
-        expect(stackPaths(base, "production")).toEqual({
-            cliproxyConfigPath: join(base, "inflexa", "cliproxy", "config.yaml"),
-            cliproxyAuthDir: join(base, "inflexa", "cliproxy", "auth"),
-            postgresDataDir: join(base, "inflexa", "postgres"),
-            searxngSettingsPath: join(base, "inflexa", "searxng", "settings.yml"),
-            composeFilePath: join(base, "inflexa", "docker-compose.yml"),
-            setupStatePath: join(base, "inflexa", "setup-state.json"),
-            serverFilePath: join(base, "inflexa", "server.json"),
-            serverLogPath: join(base, "inflexa", "logs", "server.log"),
+        expect(stackPaths(root, "production")).toEqual({
+            cliproxyConfigPath: join(root, "cliproxy", "config.yaml"),
+            cliproxyAuthDir: join(root, "cliproxy", "auth"),
+            postgresDataDir: join(root, "postgres"),
+            searxngSettingsPath: join(root, "searxng", "settings.yml"),
+            composeFilePath: join(root, "docker-compose.yml"),
+            setupStatePath: join(root, "setup-state.json"),
+            serverFilePath: join(root, "server.json"),
+            serverLogPath: join(root, "logs", "server.log"),
         });
     });
 
     test("dev paths are the sibling variants (cliproxy-dev/, postgres-dev/, searxng-dev/, docker-compose.dev.yml)", () => {
-        expect(stackPaths(base, undefined)).toEqual({
-            cliproxyConfigPath: join(base, "inflexa", "cliproxy-dev", "config.yaml"),
-            cliproxyAuthDir: join(base, "inflexa", "cliproxy-dev", "auth"),
-            postgresDataDir: join(base, "inflexa", "postgres-dev"),
-            searxngSettingsPath: join(base, "inflexa", "searxng-dev", "settings.yml"),
-            composeFilePath: join(base, "inflexa", "docker-compose.dev.yml"),
-            setupStatePath: join(base, "inflexa", "setup-state.dev.json"),
-            serverFilePath: join(base, "inflexa", "server.dev.json"),
-            serverLogPath: join(base, "inflexa", "logs", "server.dev.log"),
+        expect(stackPaths(root, undefined)).toEqual({
+            cliproxyConfigPath: join(root, "cliproxy-dev", "config.yaml"),
+            cliproxyAuthDir: join(root, "cliproxy-dev", "auth"),
+            postgresDataDir: join(root, "postgres-dev"),
+            searxngSettingsPath: join(root, "searxng-dev", "settings.yml"),
+            composeFilePath: join(root, "docker-compose.dev.yml"),
+            setupStatePath: join(root, "setup-state.dev.json"),
+            serverFilePath: join(root, "server.dev.json"),
+            serverLogPath: join(root, "logs", "server.dev.log"),
         });
     });
 
     test("no stack path is shared across channels — the whole mount/compose surface is disjoint", () => {
-        const prod = Object.values(stackPaths(base, "production"));
-        const dev = Object.values(stackPaths(base, "development"));
+        const prod = Object.values(stackPaths(root, "production"));
+        const dev = Object.values(stackPaths(root, "development"));
         // Every prod path is absent from the dev set (and vice versa), and each path of the union is distinct:
         // a single shared entry would re-open a collision (shared PGDATA, one build rewriting the other's
         // compose file, a dev failure that redirects the wizard of an installed binary, or — worst — a
@@ -371,19 +373,28 @@ describe("reference-data paths", () => {
     });
 });
 
-const resolvedPathsSchema = z.object({ dataDir: z.string(), configPath: z.string() });
+const resolvedPathsSchema = z.object({
+    env: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+    dataRoot: z.object({ path: z.string(), source: z.string(), defaultPath: z.string() }),
+});
 
 describe("the base folders of the data and the configuration", () => {
-    // env.ts reads the variables at import, thus a child process imports it with the variables under test.
-    function resolvedPaths(vars: Record<string, string>): { dataDir: string; configPath: string; home: string } {
+    type ResolvedPaths = { env: Record<string, string | number | boolean>; dataRoot: { path: string; source: string; defaultPath: string }; home: string };
+
+    // env.ts reads the variables and the config file at import, thus a child process imports it with the inputs under test.
+    function resolvedPaths(vars: Record<string, string>, configText?: string): ResolvedPaths {
         const home = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-env-")));
         try {
+            if (configText !== undefined) {
+                mkdirSync(join(home, ".config", "inflexa"), { recursive: true });
+                writeFileSync(join(home, ".config", "inflexa", "config.json"), configText);
+            }
             // The running binary, not `bun` from PATH: a shim on PATH can read HOME, which this child replaces.
             const run = Bun.spawnSync(
                 [
                     process.execPath,
                     "-e",
-                    `const { env } = await import(${JSON.stringify(join(import.meta.dir, "..", "env.ts"))}); console.log(JSON.stringify({ dataDir: env.dataDir, configPath: env.configPath }));`,
+                    `const { env, dataRoot } = await import(${JSON.stringify(join(import.meta.dir, "..", "env.ts"))}); console.log(JSON.stringify({ env, dataRoot }));`,
                 ],
                 {
                     cwd: home,
@@ -397,16 +408,84 @@ describe("the base folders of the data and the configuration", () => {
         }
     }
 
+    /** Each `env` path that lives in the data root: the documented data paths, the root itself, and the discovery file. */
+    function dataPaths(paths: ResolvedPaths): string[] {
+        const documented = keysOf(envDoc).filter((key) => {
+            const doc = envDoc[key];
+            return doc.kind === "path" && doc.baseVar === "INFLEXA_DATA_DIR";
+        });
+        const keys: string[] = [...documented, "dataDir", "serverFilePath"];
+        return keys.map((key) => String(paths.env[key]));
+    }
+
     test.skipIf(process.platform === "win32")("a relative XDG_DATA_HOME or XDG_CONFIG_HOME is ignored, as the XDG Base Directory specification says", () => {
         const paths = resolvedPaths({ XDG_DATA_HOME: "relative/data", XDG_CONFIG_HOME: "relative/config" });
-        expect(paths.dataDir).toBe(join(paths.home, ".local", "share", "inflexa"));
-        expect(paths.configPath).toBe(join(paths.home, ".config", "inflexa", "config.json"));
+        expect(paths.env.dataDir).toBe(join(paths.home, ".local", "share", "inflexa"));
+        expect(paths.env.configPath).toBe(join(paths.home, ".config", "inflexa", "config.json"));
     });
 
     test.skipIf(process.platform === "win32")("an absolute XDG_DATA_HOME and XDG_CONFIG_HOME are the base folders", () => {
         const paths = resolvedPaths({ XDG_DATA_HOME: "/srv/data", XDG_CONFIG_HOME: "/srv/config" });
-        expect(paths.dataDir).toBe("/srv/data/inflexa");
-        expect(paths.configPath).toBe("/srv/config/inflexa/config.json");
+        expect(paths.env.dataDir).toBe("/srv/data/inflexa");
+        expect(paths.env.configPath).toBe("/srv/config/inflexa/config.json");
+        expect(paths.dataRoot).toEqual({ path: "/srv/data/inflexa", source: "default", defaultPath: "/srv/data/inflexa" });
+    });
+
+    test.skipIf(process.platform === "win32")("INFLEXA_DATA_DIR moves each data path, and the config stays under the config home", () => {
+        const paths = resolvedPaths({ INFLEXA_DATA_DIR: "/scratch/u/inflexa" });
+        expect(paths.dataRoot.source).toBe("env");
+        expect(paths.env.dbPath).toBe("/scratch/u/inflexa/agent.db");
+        expect(paths.env.postgresDataDir).toBe("/scratch/u/inflexa/postgres-dev");
+        for (const path of dataPaths(paths)) expect(path.startsWith("/scratch/u/inflexa")).toBe(true);
+        expect(paths.env.configPath).toBe(join(paths.home, ".config", "inflexa", "config.json"));
+        expect(paths.env.authPath).toBe(join(paths.home, ".config", "inflexa", "auth.json"));
+    });
+
+    test.skipIf(process.platform === "win32")("the dataDir key of the config file moves each data path", () => {
+        const paths = resolvedPaths({}, JSON.stringify({ telemetry: false, dataDir: "/data/u/inflexa" }));
+        expect(paths.dataRoot.source).toBe("config");
+        for (const path of dataPaths(paths)) expect(path.startsWith("/data/u/inflexa")).toBe(true);
+    });
+
+    test.skipIf(process.platform === "win32")("INFLEXA_DATA_DIR wins over the config file", () => {
+        const paths = resolvedPaths({ INFLEXA_DATA_DIR: "/scratch/u/inflexa" }, JSON.stringify({ dataDir: "/data/u/inflexa" }));
+        expect(paths.dataRoot.path).toBe("/scratch/u/inflexa");
+        expect(paths.dataRoot.source).toBe("env");
+    });
+
+    test.skipIf(process.platform === "win32")("a config file that is not JSON names no root, and the import does not fail", () => {
+        const paths = resolvedPaths({}, "{ not json");
+        expect(paths.dataRoot.source).toBe("default");
+        expect(paths.env.dataDir).toBe(join(paths.home, ".local", "share", "inflexa"));
+    });
+});
+
+describe("resolveDataRoot", () => {
+    const fallback = "/home/u/.local/share/inflexa";
+
+    test("the variable wins over the config value, and the config value wins over the default", () => {
+        expect(resolveDataRoot("/a", "/b", fallback)).toEqual({ path: "/a", source: "env", defaultPath: fallback, ignored: null });
+        expect(resolveDataRoot(undefined, "/b", fallback)).toEqual({ path: "/b", source: "config", defaultPath: fallback, ignored: null });
+        expect(resolveDataRoot(undefined, undefined, fallback)).toEqual({ path: fallback, source: "default", defaultPath: fallback, ignored: null });
+    });
+
+    test("an empty value counts as unset", () => {
+        expect(resolveDataRoot("", "", fallback)).toEqual({ path: fallback, source: "default", defaultPath: fallback, ignored: null });
+    });
+
+    test("a relative value is ignored and reported, and the next source decides", () => {
+        expect(resolveDataRoot("scratch/inflexa", "/b", fallback)).toEqual({
+            path: "/b",
+            source: "config",
+            defaultPath: fallback,
+            ignored: { source: "env", value: "scratch/inflexa" },
+        });
+        expect(resolveDataRoot(undefined, "~/inflexa", fallback)).toEqual({
+            path: fallback,
+            source: "default",
+            defaultPath: fallback,
+            ignored: { source: "config", value: "~/inflexa" },
+        });
     });
 });
 
