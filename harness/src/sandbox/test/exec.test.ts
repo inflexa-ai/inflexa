@@ -156,6 +156,16 @@ describe("the submit", () => {
         expect(result.execId).toBe(EXEC_ID);
     });
 
+    test("a refused submit reports a dead machine, not an OOM kill, also when an earlier command left the OOM flag", async () => {
+        const result = await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
+            ...BASE,
+            fetch: refusing,
+            isAlive: () => Promise.resolve({ alive: false, oomKilled: true }),
+        });
+
+        expect(result.syntheticFailure?.reason).toBe("sandbox-dead");
+    });
+
     test("a submit that a live machine refuses throws the failure of the network", async () => {
         const run = runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
             ...BASE,
