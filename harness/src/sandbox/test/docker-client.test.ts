@@ -17,7 +17,7 @@ function fetchDouble(run: (input: string | URL | Request, init?: RequestInit) =>
     return Object.assign(run, { preconnect: fetch.preconnect });
 }
 
-import { createDockerSandboxOps, engineConnectionOptions, type DockerEngine } from "../docker-client.js";
+import { createDockerSandboxOps, ENGINE_CALL_TIMEOUT_MS, engineConnectionOptions, type DockerEngine } from "../docker-client.js";
 import { keyedSandboxIdentity } from "../identity.js";
 import type { FarmSource } from "../types.js";
 import { splitSpawn } from "../__fixtures__/spawn.js";
@@ -1408,13 +1408,39 @@ describe("docker createSandbox — recovery reconciliation", () => {
 });
 
 describe("engineConnectionOptions", () => {
-    test("maps a configured socket path to dockerode connection options", () => {
-        expect(engineConnectionOptions("/run/podman/podman.sock")).toEqual({ socketPath: "/run/podman/podman.sock" });
+    test("maps a configured socket path to dockerode connection options with the call timeout", () => {
+        expect(engineConnectionOptions("/run/podman/podman.sock")).toEqual({ socketPath: "/run/podman/podman.sock", timeout: ENGINE_CALL_TIMEOUT_MS });
     });
 
-    test("is undefined when unset so construction stays a bare new Docker() (default resolution)", () => {
-        expect(engineConnectionOptions(undefined)).toBeUndefined();
+    test("gives no socket when unset, thus dockerode keeps its default resolution", () => {
+        expect(engineConnectionOptions(undefined, 500)).toEqual({ timeout: 500 });
     });
+});
+
+describe("docker createSandbox — an engine that does not answer", () => {
+    test("fails the create after the call timeout", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "harness-engine-"));
+        const socketPath = join(dir, "engine.sock");
+        // The engine accepts each connection and never answers, as a Docker Desktop that hangs after a sleep.
+        const server = Bun.listen({ unix: socketPath, socket: { data: () => undefined } });
+        try {
+            const ops = createDockerSandboxOps({
+                image: "sandbox-base:latest",
+                resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
+                farmSource,
+                engineSocketPath: socketPath,
+                engineCallTimeoutMs: 100,
+                fetch: okFetch,
+            });
+
+            const result = await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {});
+
+            expect(result._unsafeUnwrapErr().type).toBe("container_create_failed");
+        } finally {
+            server.stop(true);
+            await rm(dir, { recursive: true, force: true });
+        }
+    }, 5_000);
 });
 
 describe("docker createSandbox — engine connection", () => {

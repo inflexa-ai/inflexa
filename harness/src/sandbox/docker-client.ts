@@ -156,6 +156,8 @@ export type DockerClientConfig = {
      * Docker socket).
      */
     engineSocketPath?: string;
+    /** The silence after which a call to the engine fails. Default {@link ENGINE_CALL_TIMEOUT_MS}. */
+    engineCallTimeoutMs?: number;
     /** Injected for tests. */
     docker?: DockerEngine;
     /** Injected for tests so `/health` polling can be stubbed. */
@@ -252,14 +254,19 @@ async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: numbe
 }
 
 /**
- * dockerode connection options for a configured engine socket, or `undefined`
- * to leave construction as a bare `new Docker()` — which preserves dockerode's
- * default resolution (`DOCKER_HOST`, then the default Docker socket). A set
- * `engineSocketPath` dials that unix socket instead (a Docker daemon or a
- * podman Docker-compat socket).
+ * The silence after which a call to the engine fails. Each call of this client is a short API call, but an engine
+ * that hangs, for example Docker Desktop after a sleep of the host, answers none of them. With no bound, the spawn
+ * of a lease then waits forever. The failure takes the path of a failed create.
  */
-export function engineConnectionOptions(engineSocketPath: string | undefined): Docker.DockerOptions | undefined {
-    return engineSocketPath === undefined ? undefined : { socketPath: engineSocketPath };
+export const ENGINE_CALL_TIMEOUT_MS = 60_000;
+
+/**
+ * dockerode connection options: the timeout of each call, and the engine socket when one is configured. With no
+ * socket, dockerode keeps its default resolution (`DOCKER_HOST`, then the default Docker socket). A set
+ * `engineSocketPath` dials that unix socket instead (a Docker daemon or a podman Docker-compat socket).
+ */
+export function engineConnectionOptions(engineSocketPath: string | undefined, timeoutMs: number = ENGINE_CALL_TIMEOUT_MS): Docker.DockerOptions {
+    return engineSocketPath === undefined ? { timeout: timeoutMs } : { socketPath: engineSocketPath, timeout: timeoutMs };
 }
 
 /**
@@ -342,9 +349,8 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     listManagedSandboxes(): ResultAsync<ManagedSandbox[], SandboxError>;
 } {
     // The injected test instance wins; otherwise a configured socket dials that
-    // engine and an unset one stays a bare `new Docker()` (default resolution).
-    const connection = engineConnectionOptions(config.engineSocketPath);
-    const docker = config.docker ?? (connection ? new Docker(connection) : new Docker());
+    // engine and an unset one keeps the default resolution of dockerode.
+    const docker = config.docker ?? new Docker(engineConnectionOptions(config.engineSocketPath, config.engineCallTimeoutMs));
     const logger = (config.logger ?? createNoopLogger()).named("docker-client");
     const fetchImpl = config.fetch ?? fetch;
     const readHostCpuinfo = config.readHostCpuinfo ?? readHostCpuinfoOnce;
