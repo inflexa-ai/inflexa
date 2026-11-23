@@ -31,13 +31,12 @@ import { createThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import type { PromptCachePolicy } from "../providers/types.js";
-import { claimThreadForTurn, closeOpenTurnRecords, releaseThreadOfTurn, turnOfAsk } from "../state/active-turns.js";
+import { claimThreadForTurn, closeOpenTurnRecords, releaseThreadOfTurn } from "../state/active-turns.js";
 import { clearPausesOfWork } from "../state/paused-work.js";
 import { workPause } from "../workflows/pause.js";
-import type { AskReply, AskRequest } from "../tools/approval/contract.js";
-import { askPartOf, type AskGateway } from "../tools/approval/gateway.js";
+import type { AskReply } from "../tools/approval/contract.js";
 import type { AnswerOutcome } from "../tools/approval/queries.js";
-import type { ApprovalDecision } from "../loop/run-loop.js";
+import { DEFAULT_ASK_WAIT_SECONDS, sendAskAnswer, workflowApproval } from "../tools/approval/workflow-approval.js";
 import { stepUuid } from "../tools/workspace/edit-file.js";
 import {
     openThread,
@@ -138,20 +137,6 @@ export type ChatTurnWorkflowDeps = RunChatTurnDeps & {
     /** How long a turn waits for the answer of an ask. Absent: {@link DEFAULT_ASK_WAIT_SECONDS}. */
     readonly askWaitSeconds?: number;
 };
-
-/** A turn waits half an hour for the answer of an ask, and then the ask expires. */
-export const DEFAULT_ASK_WAIT_SECONDS = 30 * 60;
-
-const AskReplySchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("once") }),
-    z.object({ kind: z.literal("always") }),
-    z.object({ kind: z.literal("reject"), feedback: z.string().optional() }),
-]);
-
-/** The topic of the message that carries the answer of one ask to its turn. */
-function askTopic(askId: string): string {
-    return `ask:${askId}`;
-}
 
 const ACTIVE_STATUSES: ReadonlySet<string> = new Set(["PENDING", "ENQUEUED"]);
 
@@ -256,11 +241,7 @@ export function registerChatTurns(deps: ChatTurnWorkflowDeps): ChatTurns {
 
         async answer(askId, reply) {
             if (deps.askGateway === undefined) return "not_found";
-            const outcome = await deps.askGateway.answer(askId, reply);
-            if (outcome !== "applied") return outcome;
-            const turnId = await turnOfAsk(deps.pool, askId).unwrapOr(undefined);
-            if (turnId !== undefined) await DBOS.send(turnId, reply, askTopic(askId));
-            return outcome;
+            return sendAskAnswer(deps.askGateway, askId, reply);
         },
 
         async outcome(turnId) {
@@ -272,52 +253,6 @@ export function registerChatTurns(deps: ChatTurnWorkflowDeps): ChatTurns {
                 return null;
             }
         },
-    };
-}
-
-/**
- * The approval of a turn workflow. The raise of the ask is a step, and the turn waits for the answer with a durable
- * wait of its body, thus a recovery waits again for the same ask. A stop of the turn ends the wait.
- */
-function workflowApproval(
-    gateway: AskGateway,
-    input: ChatTurnInput,
-    emitPart: (part: ReturnType<typeof askPartOf>) => Promise<void>,
-    signal: AbortSignal,
-    waitSeconds: number,
-): (request: AskRequest, call: { readonly toolCallId: string }) => Promise<ApprovalDecision> {
-    return async (request, call) => {
-        const id = stepUuid(`${input.turnId}:ask:${call.toolCallId}`);
-        const scope = { analysisId: input.analysisId, userId: input.userId, threadId: input.threadId };
-        const raised = await DBOS.runStep(() => gateway.raise(id, request, scope), { name: "chat-turn.ask" });
-        if (raised === "granted") {
-            await emitPart(askPartOf(id, request, "resolved", "always"));
-            return { kind: "approved" };
-        }
-        await emitPart(askPartOf(id, request, "pending"));
-
-        const stopped = new Promise<"stopped">((resolve) => {
-            if (signal.aborted) resolve("stopped");
-            signal.addEventListener("abort", () => resolve("stopped"), { once: true });
-        });
-        const answered = await Promise.race([DBOS.recv<unknown>(askTopic(id), waitSeconds), stopped]);
-        if (answered === "stopped") {
-            await DBOS.runStep(() => gateway.abort(id), { name: "chat-turn.ask-abort" });
-            await emitPart(askPartOf(id, request, "aborted"));
-            throw signal.reason ?? new DOMException("The user stopped the turn.", "AbortError");
-        }
-        const reply = AskReplySchema.safeParse(answered);
-        if (!reply.success) {
-            await DBOS.runStep(() => gateway.expire(id), { name: "chat-turn.ask-expire" });
-            await emitPart(askPartOf(id, request, "expired"));
-            return { kind: "denied", feedback: "The approval expired unanswered." };
-        }
-        if (reply.data.kind === "reject") {
-            await emitPart(askPartOf(id, request, "rejected", "reject"));
-            return { kind: "denied", feedback: reply.data.feedback };
-        }
-        await emitPart(askPartOf(id, request, "resolved", reply.data.kind));
-        return { kind: "approved" };
     };
 }
 
@@ -379,15 +314,17 @@ async function runTurnWorkflow(deps: ChatTurnWorkflowDeps, input: ChatTurnInput,
         approve:
             deps.askGateway === undefined
                 ? undefined
-                : workflowApproval(
-                      deps.askGateway,
-                      input,
-                      async (part) => {
+                : workflowApproval({
+                      gateway: deps.askGateway,
+                      workflowId: input.turnId,
+                      scope: { analysisId: input.analysisId, userId: input.userId, threadId: input.threadId },
+                      stepPrefix: "chat-turn",
+                      emitPart: async (part) => {
                           await writer.emit({ type: "data-ask", data: part });
                       },
                       signal,
-                      deps.askWaitSeconds ?? DEFAULT_ASK_WAIT_SECONDS,
-                  ),
+                      waitSeconds: deps.askWaitSeconds ?? DEFAULT_ASK_WAIT_SECONDS,
+                  }),
         pause: workPause({
             pool: deps.pool,
             workId: input.turnId,

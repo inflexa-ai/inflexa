@@ -59,22 +59,6 @@ export function closeOpenTurnRecords(pool: Querier, threadId: string): ResultAsy
     ).map(() => undefined);
 }
 
-const AskTurnRowSchema = z.object({ active_turn_id: z.string().nullable() });
-
-/** The turn that runs on the thread of an ask, which waits for its answer. `undefined` when no turn runs there. */
-export function turnOfAsk(pool: Querier, askId: string): ResultAsync<string | undefined, DbError> {
-    return tryQuery("activeTurns.turnOfAsk", async () => {
-        const { rows } = await pool.query(
-            `SELECT threads.active_turn_id FROM cortex_asks asks
-               JOIN cortex_analysis_threads threads ON threads.thread_id = asks.thread_id
-              WHERE asks.id = $1`,
-            [askId],
-        );
-        const row = rows[0];
-        return row === undefined ? undefined : (AskTurnRowSchema.parse(row).active_turn_id ?? undefined);
-    });
-}
-
 const TurnOfThreadRowSchema = z.object({
     analysis_id: z.string(),
     thread_id: z.string(),

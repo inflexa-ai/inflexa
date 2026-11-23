@@ -80,66 +80,62 @@ is a degradation and warns). The Kubernetes backend SHALL mount the PVC named by
 
 ### Requirement: References are discoverable via the list_available_refs tool
 
-The harness SHALL expose a dependency-bearing `list_available_refs` tool that inspects the reference store on the HOST filesystem and reports it at `/mnt/refs`, the container path a sandbox mounts it at — read where it lives, render where the caller will open it. Reading host-side is what lets the conversation agent and the planner ask what reference data exists before any sandbox is created, and a step agent asking mid-run observes the same store, because the mount and the read path are the same bytes.
+The harness MUST give a `list_available_refs` tool. The tool reads the reference store on the host file system, and it gives each path at `/mnt/refs`, where a sandbox mounts the store. Thus the conversation agent and the planner can read the store before a sandbox exists. A step agent reads the same bytes as its mount.
 
-The read root SHALL be the embedder-supplied `refStorePath` when one is given, and `/mnt/refs` otherwise. The fallback SHALL be the same container mountpoint the sandbox backends mount the store at, so a host whose own process sees the store the way a sandbox does — a Kubernetes pod holding the ref-store PVC — configures nothing. The fallback SHALL NOT change what is reported: the scan stats its root before reporting anything, so a host with nothing mounted there SHALL report the store as unavailable exactly as an omitted path always has. An embedder SHALL supply `refStorePath` only to name a location the container mountpoint does not describe, as a native process bind-mounting a host directory into Docker does.
+The read root MUST be the `refStorePath` of the embedder when the embedder gives one, and `/mnt/refs` otherwise. A host process that mounts the store at `/mnt/refs`, for example a Kubernetes pod, thus sets nothing. The tool MUST do a check of the root before it reports. A root that does not exist MUST give an unavailable store.
 
-The tool SHALL accept an optional path constrained beneath the render root: an omitted path SHALL return a bounded root summary and a supplied path SHALL drill into that subtree. Results SHALL use absolute `/mnt/refs/...` paths, SHALL NOT follow symlinks, SHALL exclude reserved installer metadata from the data inventory, and SHALL report truncation explicitly when traversal or output limits are reached.
+The tool MUST accept an optional path below the root. With no path, the tool MUST give a bounded summary of the root. With a path, it MUST give that subtree. Each result MUST use an absolute `/mnt/refs/...` path. The tool MUST NOT resolve a symlink, and it MUST NOT list the `.inflexa/` directory of the store. A result that a limit cut MUST say so.
 
-The tool SHALL distinguish an unavailable store, a present but empty store, and a populated store without throwing for any of those expected states.
+The tool MUST give an unavailable store, an empty store, and a populated store as data, with no error. The tool reads no manifest, no receipt, and no catalog. The files on disk are the whole inventory.
 
 #### Scenario: Arbitrary mounted files are available without a manifest
 
-- **WHEN** `/mnt/refs/user/cohort/reference.h5ad` exists and no `registry.json` or receipt names it
-- **THEN** `list_available_refs` reports that path through the root summary or a bounded drill-down result
+- **WHEN** `/mnt/refs/user/cohort/reference.h5ad` exists and no record names it
+- **THEN** `list_available_refs` gives that path in the root summary or in a bounded subtree result
 
 #### Scenario: Store is mounted but empty
 
 - **WHEN** the read root exists and contains no reference data
-- **THEN** the tool returns an available-but-empty result rather than a missing-store result
+- **THEN** the tool gives an empty store, not a missing store
+
+#### Scenario: A query that matches nothing with the download tool
+
+- **GIVEN** an agent that has `download_ref`
+- **WHEN** a query matches no reference in a populated store
+- **THEN** the content says that no reference matches and that the sandbox has no network
+- **AND** it says that the agent can download the reference from a source that it read
 
 #### Scenario: A query that matches nothing names the store as the only source
 
-- **WHEN** the store is populated, and a query matches no reference beneath the requested path
-- **THEN** the content says that no reference matches, that the store is the only reference data that the sandbox can read, and that the sandbox has no network
+- **GIVEN** an agent that does not have `download_ref`
+- **WHEN** a query matches no reference in a populated store
+- **THEN** the content says to report the reference as absent
 
 #### Scenario: Store is not mounted
 
 - **WHEN** the read root does not exist or is not a directory
-- **THEN** the tool returns an unavailable data variant with an actionable note, without throwing
+- **THEN** the tool gives an unavailable store with a note, and no error
 
 #### Scenario: An unconfigured embedder reads the container mountpoint
 
-- **GIVEN** an embedder that supplies no `refStorePath`
-- **WHEN** the tool scans
-- **THEN** it reads `/mnt/refs` and returns exactly what an embedder supplying `/mnt/refs` explicitly would return
+- **GIVEN** an embedder that gives no `refStorePath`
+- **WHEN** the tool reads the store
+- **THEN** it reads `/mnt/refs`, and it gives the same result as an embedder that gives `/mnt/refs`
 
 #### Scenario: Deep inventory is bounded
 
-- **WHEN** a requested subtree exceeds the traversal or output limit
-- **THEN** the tool returns the bounded entries plus an explicit truncation or drill-down hint
+- **WHEN** a subtree is larger than the limit of the scan or of the output
+- **THEN** the tool gives the bounded entries and a note to use a narrower path
 
 #### Scenario: Traversal outside the store is rejected
 
-- **WHEN** the optional path is absolute outside `/mnt/refs` or contains traversal escaping the root
-- **THEN** the tool returns an out-of-scope data result and performs no scan outside the store
+- **WHEN** the optional path is outside `/mnt/refs` or contains `..`
+- **THEN** the tool gives an out-of-scope result and reads nothing outside the store
 
-### Requirement: Catalog and store metadata only enrich filesystem discovery
+#### Scenario: The source record is not reference data
 
-When a valid harness receipt or legacy `registry.json` describes a path that exists on disk, `list_available_refs` SHALL use its dataset name, version,
-provenance, category, or descriptive fields to enrich the rendered inventory.
-Metadata SHALL NOT add nonexistent files, hide unregistered files, or override
-the observed path and size of a filesystem entry.
-
-#### Scenario: Managed and user content are merged
-
-- **WHEN** a store contains a receipted managed dataset and unregistered content under `user/`
-- **THEN** discovery reports both, enriching the managed entry and listing the user content from the filesystem
-
-#### Scenario: Stale metadata is ignored
-
-- **WHEN** metadata names a file that no longer exists
-- **THEN** discovery omits the nonexistent file and continues reporting the remaining filesystem content
+- **WHEN** the store holds `.inflexa/sources.jsonl`
+- **THEN** no listing and no search result names a path under `/mnt/refs/.inflexa`
 
 ### Requirement: No environment variables are injected for the reference store
 
@@ -154,12 +150,59 @@ paths exclusively through `list_available_refs`.
 
 ### Requirement: Sandbox agent prompts direct agents to the reference store
 
-Sandbox-agent instructions SHALL direct agents to use pre-staged reference files
-discovered via `list_available_refs`, and SHALL NOT instruct agents to test
-internet connectivity, download resources at runtime, or fall back to network
-sources.
+The instructions of a sandbox agent MUST tell the agent to find reference files with `list_available_refs`. They MUST say that the sandbox has no network. When the agent has `download_ref`, the instructions MUST tell it how to get a missing reference. The source URL must come from the user or from a page that the agent fetched.
 
 #### Scenario: Shared sandbox standards point at the ref store
 
-- **GIVEN** the shared sandbox-agent standards prompt
-- **THEN** it directs the agent to use `list_available_refs`, narrowed to the collection it needs, for pre-staged reference data, and states there is no network access for runtime downloads
+- **GIVEN** the shared standards prompt of the sandbox agents
+- **THEN** it tells the agent to use `list_available_refs`, narrowed to the collection that it needs, and it says that the sandbox has no network
+
+#### Scenario: A missing reference and the download tool
+
+- **GIVEN** a step agent with `download_ref`
+- **THEN** its instructions say to download a missing reference from a URL that the user gave or that a fetched page shows
+- **AND** they say not to use a URL from the memory of the agent
+
+### Requirement: Discovery takes a quick look at each file
+
+For each file that a listing or a search gives, `list_available_refs` MUST give a look at the start of the file. The look gives the format, and the first lines of a text file. The look MUST read at most 16 KB, and it MUST decompress the start of a gzip file. A query MUST match the path and the text of the look, with no case.
+
+#### Scenario: A file found by its content
+
+- **GIVEN** `/mnt/refs/mine/sets.gmt`, whose first line starts with `HALLMARK_APOPTOSIS`
+- **WHEN** an agent calls `list_available_refs` with the query `hallmark`
+- **THEN** the result names `/mnt/refs/mine/sets.gmt` with its first lines
+
+#### Scenario: A compressed table
+
+- **GIVEN** a `.tsv.gz` file in the store
+- **WHEN** a listing gives it
+- **THEN** its look gives the columns of the first line of the decompressed text
+
+#### Scenario: A binary file
+
+- **GIVEN** an `.h5ad` file in the store
+- **WHEN** a listing gives it
+- **THEN** its look gives the format and no text
+
+### Requirement: The look at a file is cached
+
+The tool MUST keep each look in a cache. The key is the store path, the size, and the modification time of the file. The tool MUST NOT read a file whose key is in the cache. The cache MUST be in `<store>/.inflexa/peek-cache.json` when the host can write the store, and in memory otherwise. A call MUST make at most 200 new looks. A file past that limit MUST match on its path only, and the result MUST say so.
+
+#### Scenario: A second call reads no file
+
+- **GIVEN** a call that looked at each file of the store
+- **WHEN** a second call lists the same files, and no file changed
+- **THEN** the second call reads no file content
+
+#### Scenario: A changed file
+
+- **GIVEN** a cached look of a file
+- **WHEN** a file of a different size replaces the file
+- **THEN** the next call looks at the file again
+
+#### Scenario: A read-only store
+
+- **GIVEN** a store that the host process cannot write
+- **WHEN** a call looks at files
+- **THEN** the call succeeds, and the cache stays in memory

@@ -70,6 +70,7 @@ import { createUpdateWorkingMemoryTool } from "../tools/memory/index.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../tools/sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../tools/sandbox/list-available-refs.js";
+import { createDownloadRefTool } from "../tools/sandbox/download-ref.js";
 import { createExecuteAnalysisTool } from "../tools/execute-analysis.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
@@ -227,6 +228,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): Conversati
         farmLockFile,
         imagePackagesFile,
         readPoolInventory,
+        referenceDownloads,
         usageRecorder,
         toolOutputStore,
         services,
@@ -270,6 +272,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): Conversati
             farmLockFile,
             imagePackagesFile,
             readPoolInventory,
+            referenceDownloads,
             logger: deps.logger,
         },
         deps.registerSubAgent,
@@ -321,7 +324,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): Conversati
             // and a host that does asks the user to approve the download. Deciding that
             // blind is how a user gets asked to download something already installed, or
             // told nothing is missing when it is; this is the only tool that can tell.
-            createListAvailableRefsTool({ refStorePath }),
+            createListAvailableRefsTool({ refStorePath, canDownload: referenceDownloads !== undefined }),
+            ...(referenceDownloads ? [createDownloadRefTool(referenceDownloads)] : []),
             // What the STORE holds, pool-scope where the embedder binds the reader:
             // the ask flow of this agent marks the packages the pool does not hold,
             // and the farm of a new analysis is empty — a farm view here would read

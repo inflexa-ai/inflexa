@@ -202,6 +202,41 @@ describe("createAskGateway — standing grants", () => {
         expect((await raise(GRANTED, "analysis-A", USER_B)).raised).toBe("pending");
     });
 
+    it("applies a grant with the user scope in each analysis of the user, and not to another user", async () => {
+        const download: AskRequest = {
+            title: "Download",
+            command: "https://ftp.example.org/a.fa",
+            grantKey: "download-ref:ftp.example.org",
+            grantScope: "user",
+        };
+        await grant(download, "analysis-A", USER_A);
+
+        expect(await grantCount("analysis-A", "download-ref:ftp.example.org")).toBe(0);
+        const other = { ...download, command: "https://ftp.example.org/b.fa" };
+        expect((await raise(other, "analysis-Z", USER_A)).raised).toBe("granted");
+        expect((await raise(other, "analysis-Z", USER_B)).raised).toBe("pending");
+    });
+
+    it("records the workflow that waits for the ask", async () => {
+        const id = uuidv7();
+        await gateway.raise(id, GRANTED, { ...scope(), workflowId: "wf-1" });
+
+        expect(await gateway.workflowOf(id)).toBe("wf-1");
+        expect(await gateway.workflowOf(uuidv7())).toBeNull();
+    });
+
+    it("gives the active turn of the thread for an ask that a process of an earlier release raised with no workflow", async () => {
+        const id = uuidv7();
+        await pool.query("INSERT INTO cortex_analysis_threads (thread_id, analysis_id, active_turn_id) VALUES ('old-thread', 'a1', 'turn-1')");
+        await pool.query(
+            `INSERT INTO cortex_asks (id, analysis_id, user_id, thread_id, title, command, status, created_at)
+             VALUES ($1, 'a1', 'u1', 'old-thread', 'Run', 'go', 'pending', '2026-11-01T00:00:00.000Z')`,
+            [id],
+        );
+
+        expect(await gateway.workflowOf(id)).toBe("turn-1");
+    });
+
     it("records the grant under the user the ask was raised for", async () => {
         // `answer` takes no identity — the ledger row is what names the person, so a
         // decision recorded by anyone lands on the user of the paused turn.
@@ -256,7 +291,19 @@ describe("createAskGateway — sweep", () => {
     const STALE = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
 
     function pendingRow(createdAt: string): AskRow {
-        return { id: uuidv7(), analysisId: "analysis-A", userId: USER_A, threadId: null, title: "t", command: "c", detail: null, grantKey: null, createdAt };
+        return {
+            id: uuidv7(),
+            analysisId: "analysis-A",
+            userId: USER_A,
+            threadId: null,
+            title: "t",
+            command: "c",
+            detail: null,
+            grantKey: null,
+            grantScope: null,
+            workflowId: null,
+            createdAt,
+        };
     }
 
     it("expires orphaned pending rows past the max age and returns the count swept", async () => {
@@ -307,7 +354,19 @@ describe("createAskGateway — sweep", () => {
 
 describe("createAskGateway — pendingByAnalyses", () => {
     function rowOf(id: string, analysisId: string, userId: string, createdAt: string): AskRow {
-        return { id, analysisId, userId, threadId: null, title: "t", command: `c-${id}`, detail: null, grantKey: null, createdAt };
+        return {
+            id,
+            analysisId,
+            userId,
+            threadId: null,
+            title: "t",
+            command: `c-${id}`,
+            detail: null,
+            grantKey: null,
+            grantScope: null,
+            workflowId: null,
+            createdAt,
+        };
     }
 
     async function seed(rows: readonly AskRow[]): Promise<void> {

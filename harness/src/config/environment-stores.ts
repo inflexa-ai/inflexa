@@ -75,6 +75,25 @@ export type EnvironmentStorePaths = {
      * transient.
      */
     readonly readPoolInventory?: () => Promise<PoolInventoryRead>;
+    /**
+     * The downloads of reference data. Bound, the conversation agent and each
+     * step agent get `download_ref`, and the reference listing tells an agent
+     * that it can download a missing reference. Absent, no agent can download,
+     * which is correct for a host that mounts the store read-only.
+     */
+    readonly referenceDownloads?: ReferenceDownloadOptions;
+};
+
+/** Where `download_ref` writes, and which hosts it downloads from with no question. */
+export type ReferenceDownloadOptions = {
+    /**
+     * The host path of the reference store, writable by the host process. It
+     * must hold the same bytes that `refStorePath` reads and that a sandbox
+     * mounts at `/mnt/refs`, or a downloaded file stays invisible.
+     */
+    readonly storePath: string;
+    /** Hosts added to the default auto-approve list. A host matches an entry when it is the entry or a subdomain of it. */
+    readonly autoApproveHosts?: readonly string[];
 };
 
 /**

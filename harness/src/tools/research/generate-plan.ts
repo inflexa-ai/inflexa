@@ -1373,7 +1373,7 @@ export function buildPlannerSearchTools(
         // both stores. These two tools are for the narrow second look: one
         // collection of the reference store, or one batch of the package names
         // that the census leaves unclear.
-        createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
+        createListAvailableRefsTool({ refStorePath: deps.refStorePath, canDownload: deps.referenceDownloads !== undefined }),
         // The planner is a conversation surface, thus the pool-scope reader binds
         // when the embedder gives one, and the answer names what the store HOLDS.
         createListAvailablePackagesTool({
@@ -1563,7 +1563,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps, registerSubAgent:
             // Reference data and package availability are mandatory grounding,
             // not optional planner lookups. Read both inventories host-side before
             // the loop and put their rendered content in the planner's seed.
-            const listAvailableRefs = createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath });
+            const listAvailableRefs = createListAvailableRefsTool({ refStorePath: deps.refStorePath, canDownload: deps.referenceDownloads !== undefined });
             const listAvailablePackages = createListAvailablePackagesTool({
                 farmLockFile: deps.farmLockFile,
                 imagePackagesFile: deps.imagePackagesFile,

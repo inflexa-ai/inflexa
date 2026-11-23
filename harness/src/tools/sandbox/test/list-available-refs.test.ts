@@ -1,172 +1,124 @@
 import { describe, expect, it } from "bun:test";
 
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { gzipSync } from "node:zlib";
+import { dirname, join } from "node:path";
 
-import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../../../reference-data/receipt.js";
+import { z } from "zod";
+
 import { makeToolContext } from "../../__fixtures__/tool-context.js";
 import { createListAvailableRefsTool } from "../list-available-refs.js";
+import { parseJsonAs } from "../../../lib/parse-json.js";
 import { presentAt } from "../../../lib/present.js";
-
-const HASH = "a".repeat(64);
 
 /** A store rooted at an arbitrary host path — the reported paths must still be `/mnt/refs/...`. */
 async function makeStore(label: string): Promise<string> {
     return await mkdtemp(join(tmpdir(), `refs-${label}-`));
 }
 
-function createTool(refStorePath?: string) {
-    return createListAvailableRefsTool(refStorePath === undefined ? {} : { refStorePath });
+function createTool(refStorePath?: string, canDownload?: boolean) {
+    return createListAvailableRefsTool({ refStorePath, canDownload });
 }
 
-async function writeReceipt(root: string, datasetId: string, datasetVersion: string, artifacts: { path: string; bytes: number }[]): Promise<void> {
-    const receiptArtifacts = artifacts.map((artifact) => ({ ...artifact, sha256: HASH }));
-    await mkdir(join(root, ".inflexa", "receipts"), { recursive: true });
-    await writeFile(
-        join(root, ".inflexa", "receipts", `${datasetId}.json`),
-        JSON.stringify({
-            version: REFERENCE_INSTALL_RECEIPT_VERSION,
-            datasetId,
-            datasetVersion,
-            activatedAt: "2026-07-14T10:30:00.000Z",
-            contentDigest: referenceReceiptContentDigest({ datasetId, datasetVersion, artifacts: receiptArtifacts }),
-            artifacts: receiptArtifacts,
-        }),
-    );
+/** Write a file below the store, with its parent directories. */
+async function put(root: string, relative: string, body: string | Uint8Array): Promise<string> {
+    const path = join(root, ...relative.split("/"));
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, body);
+    return path;
 }
 
-/** Stage a managed artifact at the layout the installer produces. */
-async function stageManaged(root: string, datasetId: string, version: string, file: string, body: string): Promise<void> {
-    const directory = join(root, "managed", datasetId, version);
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, file), body);
-}
+/** A fixed modification time, thus a test can write a file again with the same key. */
+const FIXED_TIME = 1_700_000_000;
 
 describe("list_available_refs", () => {
     // The whole point of the host-side read: the store lives at an arbitrary host path,
     // but every reported path is the container path the caller will actually open.
     it("reads the host store and reports container paths", async () => {
         const root = await makeStore("host-path");
-        await mkdir(join(root, "user", "cohort"), { recursive: true });
-        await writeFile(join(root, "user", "cohort", "reference.h5ad"), "reference");
+        await put(root, "user/cohort/reference.h5ad", "reference");
 
         const result = (await createTool(root).execute({ path: "user/cohort" }, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(result.entries).toEqual([{ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 }]);
+        expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 })]);
         expect(presentAt(result.entries, 0).path.startsWith(root)).toBe(false);
     });
 
     it("needs no sandbox and discovers manifest-free user files", async () => {
         const root = await makeStore("manifest-free");
-        await mkdir(join(root, "user", "cohort"), { recursive: true });
-        await writeFile(join(root, "user", "cohort", "reference.h5ad"), "reference");
+        await put(root, "user/cohort/reference.h5ad", "reference");
 
-        const tool = createTool(root);
-        const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        const result = (await createTool(root).execute({}, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(result).toMatchObject({ available: true, state: "populated", truncated: false });
+        expect(result).toMatchObject({ available: true, state: "populated", truncated: false, unlooked: 0 });
         expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user", kind: "directory", fileCount: 1, bytes: 9 })]);
-        expect(presentAt(result.entries, 0).metadata).toBeUndefined();
     });
 
-    it("merges valid receipt and legacy enrichment while retaining user files", async () => {
-        const root = await makeStore("enrich");
-        await stageManaged(root, "alpha", "2026.07", "reference.parquet", "x".repeat(12));
-        await stageManaged(root, "ncbi-gene-human", "current", "Homo_sapiens.gene_info.gz", "x".repeat(15));
-        await mkdir(join(root, "legacy"), { recursive: true });
-        await writeFile(join(root, "legacy", "pathways.gmt"), "x".repeat(13));
-        await mkdir(join(root, "user"), { recursive: true });
-        await writeFile(join(root, "user", "custom.csv"), "x".repeat(14));
+    // Skills name no reference paths, so an agent finds a file by describing what it needs. The
+    // name of a file the user added says nothing, thus the start of the file carries the meaning.
+    it("finds a file by its content from the store root, and renders its first lines", async () => {
+        const root = await makeStore("by-content");
+        const sets = "HALLMARK_APOPTOSIS\thttp://example.org\tCASP3\tBAX\nHALLMARK_HYPOXIA\thttp://example.org\tHIF1A\n";
+        await put(root, "mine/sets.gmt", sets);
+        await put(root, "mine/other.txt", "nothing to see\n");
 
-        await writeReceipt(root, "alpha", "2026.07", [{ path: "reference.parquet", bytes: 999 }]);
-        await writeReceipt(root, "ncbi-gene-human", "current", [{ path: "Homo_sapiens.gene_info.gz", bytes: 1_024 }]);
-        await writeFile(
-            join(root, "registry.json"),
-            JSON.stringify({ files: { by_category: { pathways: [{ local_path: "legacy/pathways.gmt", dataset: "legacy-pathways", rows: 200 }] } } }),
-        );
+        const result = (await createTool(root).execute({ query: "hallmark" }, makeToolContext().ctx))._unsafeUnwrap();
 
-        const tool = createTool(root);
-        const managed = (await tool.execute({ path: "managed/alpha/2026.07" }, makeToolContext().ctx))._unsafeUnwrap();
-        // Receipt for a dataset the catalog does not know: identity only, no provenance labels.
-        expect(managed.entries[0]).toMatchObject({ bytes: 12, metadata: { datasetId: "alpha", version: "2026.07" } });
-        expect(presentAt(managed.entries, 0).metadata?.title).toBeUndefined();
-
-        // Receipt for a catalog dataset: provenance is joined in from the catalog entry.
-        const catalogued = (await tool.execute({ path: "managed/ncbi-gene-human/current" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(catalogued.entries[0]).toMatchObject({
-            bytes: 15,
-            metadata: {
-                datasetId: "ncbi-gene-human",
-                version: "current",
-                title: "NCBI human gene identifiers",
-                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/",
-                license: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+        expect(result.entries).toEqual([
+            {
+                path: "/mnt/refs/mine/sets.gmt",
+                kind: "file",
+                bytes: Buffer.byteLength(sets),
+                look: {
+                    format: "gmt",
+                    lines: ["HALLMARK_APOPTOSIS\thttp://example.org\tCASP3\tBAX", "HALLMARK_HYPOXIA\thttp://example.org\tHIF1A"],
+                },
             },
+        ]);
+        expect(result.content).toContain("- /mnt/refs/mine/sets.gmt");
+        expect(result.content).toContain("    | HALLMARK_APOPTOSIS");
+    });
+
+    it("gives the columns of a compressed table from its decompressed start", async () => {
+        const root = await makeStore("gzip");
+        const rows = Array.from({ length: 20_000 }, (_, index) => `GENE${index}\t${index}\t${index * 7}`).join("\n");
+        // Larger than the look reads, thus the look decompresses a cut stream.
+        await put(root, "tables/genes.tsv.gz", gzipSync(`symbol\tentrez\tlength\n${rows}\n`));
+
+        const result = (await createTool(root).execute({ path: "tables" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(presentAt(result.entries, 0)).toMatchObject({
+            path: "/mnt/refs/tables/genes.tsv.gz",
+            look: { format: "tsv", compression: "gzip", columns: ["symbol", "entrez", "length"] },
         });
-
-        const legacy = (await tool.execute({ path: "legacy" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(legacy.entries[0]).toMatchObject({ bytes: 13, metadata: { datasetId: "legacy-pathways", category: "pathways", rows: 200 } });
-
-        const user = (await tool.execute({ path: "user" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(user.entries[0]).toEqual({ path: "/mnt/refs/user/custom.csv", kind: "file", bytes: 14 });
+        const found = (await createTool(root).execute({ query: "entrez" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(found.entries.map((entry) => entry.path)).toEqual(["/mnt/refs/tables/genes.tsv.gz"]);
     });
 
-    // Skills name no reference paths, so an agent finds a file by describing what it needs. That
-    // only works if the searchable text and the rendered answer both carry meaning, not just paths.
-    it("resolves a catalogued file by what it holds and renders how to read it", async () => {
-        const root = await makeStore("by-meaning");
-        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "x".repeat(4_096));
-        await stageManaged(root, "msigdb-hallmark-mouse", "2026.1", "mh.all.v2026.1.Mm.symbols.gmt", "x".repeat(2_048));
-        await writeReceipt(root, "collectri-human", "2.0", [{ path: "CollecTRI_regulons.csv", bytes: 4_096 }]);
-        await writeReceipt(root, "msigdb-hallmark-mouse", "2026.1", [{ path: "mh.all.v2026.1.Mm.symbols.gmt", bytes: 2_048 }]);
+    it("gives the format and no text for a binary file", async () => {
+        const root = await makeStore("binary");
+        await put(root, "atlas/cells.h5ad", new Uint8Array([0x89, 0x48, 0x44, 0x46, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0xff]));
 
-        const tool = createTool(root);
-        // "regulon" appears in neither filename; it is only in the catalog's contents description.
-        const byMeaning = (await tool.execute({ path: "managed/collectri-human/2.0", query: "regulon" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(byMeaning.entries).toHaveLength(1);
-        expect(presentAt(byMeaning.entries, 0).path).toBe("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
-        expect(presentAt(byMeaning.entries, 0).metadata).toMatchObject({ organism: "human", format: "csv", category: "regulatory-networks" });
-        // The reader and the column shape must reach the model, not just sit in structured metadata.
-        expect(byMeaning.content).toContain("csv — TF-target regulons");
-        expect(byMeaning.content).toContain("source (TF symbol)");
+        const result = (await createTool(root).execute({ path: "atlas" }, makeToolContext().ctx))._unsafeUnwrap();
 
-        // Organism is a first-class filter, so a mouse analysis cannot silently pick up human data.
-        const byOrganism = (await tool.execute({ path: "managed/msigdb-hallmark-mouse/2026.1", query: "mouse" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(byOrganism.entries.map((entry) => entry.metadata?.datasetId)).toEqual(["msigdb-hallmark-mouse"]);
-    });
-
-    // The defect this pins: a dataset's labels are joined onto its artifact deep under
-    // `managed/{id}/{version}/`, so a root listing sees only the `managed` DIRECTORY,
-    // which carries none. Searching by meaning from the root — the tool's advertised
-    // primary workflow, and the whole point of describing artifacts — found nothing.
-    it("finds a file by meaning from the store root, not just from its own directory", async () => {
-        const root = await makeStore("root-search");
-        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "source,target");
-        await writeReceipt(root, "collectri-human", "2.0", [{ path: "CollecTRI_regulons.csv", bytes: 13 }]);
-
-        // No `path` — the caller does not know the layout, which is the premise.
-        const result = (await createTool(root).execute({ query: "regulon" }, makeToolContext().ctx))._unsafeUnwrap();
-
-        expect(result.entries).toHaveLength(1);
-        expect(presentAt(result.entries, 0).path).toBe("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
-        expect(presentAt(result.entries, 0).metadata).toMatchObject({ organism: "human", format: "csv" });
+        expect(presentAt(result.entries, 0)).toEqual({ path: "/mnt/refs/atlas/cells.h5ad", kind: "file", bytes: 12, look: { format: "hdf5" } });
     });
 
     // Browsing must stay a directory summary — a recursive dump of every file is what
     // the bounding exists to prevent.
     it("browses one level when no query is given, summarizing directories", async () => {
         const root = await makeStore("browse");
-        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "source,target");
+        await put(root, "managed/collectri-human/2.0/CollecTRI_regulons.csv", "source,target");
 
         const result = (await createTool(root).execute({}, makeToolContext().ctx))._unsafeUnwrap();
 
         expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/managed", kind: "directory", fileCount: 1 })]);
     });
 
-    it("says that the store is the only reference data when a query matches nothing", async () => {
+    it("tells an agent without download_ref to report a reference that matches nothing as absent", async () => {
         const root = await makeStore("miss");
-        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "source,target");
+        await put(root, "collectri/CollecTRI_regulons.csv", "source,target");
 
         const result = (await createTool(root).execute({ query: "hallmark" }, makeToolContext().ctx))._unsafeUnwrap();
 
@@ -176,16 +128,99 @@ describe("list_available_refs", () => {
         );
     });
 
-    it("ignores invalid and stale metadata without hiding observed files", async () => {
-        const root = await makeStore("stale");
-        await mkdir(join(root, "user"), { recursive: true });
-        await writeFile(join(root, "user", "observed.csv"), "x".repeat(7));
-        await mkdir(join(root, ".inflexa", "receipts"), { recursive: true });
-        await writeFile(join(root, ".inflexa", "receipts", "bad.json"), JSON.stringify({ version: 99, datasetId: "bad" }));
-        await writeFile(join(root, "registry.json"), JSON.stringify({ files: { by_category: { stale: [{ local_path: "missing.csv" }] } } }));
+    it("tells an agent with download_ref to download a reference that matches nothing from a source that it read", async () => {
+        const root = await makeStore("miss-download");
+        await put(root, "collectri/CollecTRI_regulons.csv", "source,target");
 
-        const result = (await createTool(root).execute({ path: "user" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(result.entries).toEqual([{ path: "/mnt/refs/user/observed.csv", kind: "file", bytes: 7 }]);
+        const result = (await createTool(root, true).execute({ query: "hallmark" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.total).toBe(0);
+        expect(result.content).toBe(
+            'No reference beneath /mnt/refs matches "hallmark". The sandbox has no network. You can download the reference with download_ref from a URL that the user gave or that a page you fetched shows. Do not guess a path or a URL.',
+        );
+    });
+
+    it("lists no store metadata, and no search finds it", async () => {
+        const root = await makeStore("metadata");
+        await put(root, "user/observed.csv", "gene,score\n");
+        await put(root, ".inflexa/sources.jsonl", '{"path":"user/observed.csv","url":"https://example.org/observed.csv"}\n');
+
+        const tool = createTool(root);
+        const listed = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        expect(listed.entries.map((entry) => entry.path)).toEqual(["/mnt/refs/user"]);
+        const searched = (await tool.execute({ query: "example.org" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(searched.entries).toEqual([]);
+        const sources = (await tool.execute({ query: "sources" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(sources.entries).toEqual([]);
+    });
+
+    // A cached look is the proof that no read happened: the file below changes its bytes but
+    // keeps its size and its modification time, and the answer keeps the bytes of the first read.
+    it("reads no file content for a file whose look is in the cache, and keeps the cache in the store", async () => {
+        const root = await makeStore("cache-hit");
+        const file = await put(root, "sets/a.gmt", "ALPHA_SET\tna\tA\n");
+        await utimes(file, FIXED_TIME, FIXED_TIME);
+
+        const tool = createTool(root);
+        const first = (await tool.execute({ path: "sets" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(presentAt(first.entries, 0)).toMatchObject({ look: { lines: ["ALPHA_SET\tna\tA"] } });
+
+        await writeFile(file, "OMEGA_SET\tna\tA\n");
+        await utimes(file, FIXED_TIME, FIXED_TIME);
+        const second = (await tool.execute({ path: "sets" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(presentAt(second.entries, 0)).toMatchObject({ look: { lines: ["ALPHA_SET\tna\tA"] } });
+
+        const cache = parseJsonAs(await readFile(join(root, ".inflexa", "peek-cache.json"), "utf-8"), z.json());
+        expect(cache).toMatchObject({ version: 1, looks: { "sets/a.gmt": { bytes: 15, mtimeMs: FIXED_TIME * 1000, look: { format: "gmt" } } } });
+    });
+
+    it("looks at a file again when a file of a different size replaces it", async () => {
+        const root = await makeStore("cache-miss");
+        const file = await put(root, "sets/a.gmt", "ALPHA_SET\tna\tA\n");
+        await utimes(file, FIXED_TIME, FIXED_TIME);
+
+        const tool = createTool(root);
+        await tool.execute({ path: "sets" }, makeToolContext().ctx);
+        await writeFile(file, "OMEGA_SET\tna\tA\tB\n");
+        await utimes(file, FIXED_TIME, FIXED_TIME);
+        const second = (await tool.execute({ path: "sets" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(presentAt(second.entries, 0)).toMatchObject({ look: { lines: ["OMEGA_SET\tna\tA\tB"] } });
+    });
+
+    it("keeps the cache in memory for a store that the host cannot write", async () => {
+        const root = await makeStore("read-only");
+        const file = await put(root, "sets/a.gmt", "ALPHA_SET\tna\tA\n");
+        await utimes(file, FIXED_TIME, FIXED_TIME);
+        await chmod(root, 0o555);
+        try {
+            const tool = createTool(root);
+            const first = (await tool.execute({ path: "sets" }, makeToolContext().ctx))._unsafeUnwrap();
+            expect(first).toMatchObject({ state: "populated", unlooked: 0 });
+            expect(presentAt(first.entries, 0)).toMatchObject({ look: { lines: ["ALPHA_SET\tna\tA"] } });
+            expect(await stat(join(root, ".inflexa")).catch(() => undefined)).toBeUndefined();
+
+            await writeFile(file, "OMEGA_SET\tna\tA\n");
+            await utimes(file, FIXED_TIME, FIXED_TIME);
+            const second = (await tool.execute({ path: "sets" }, makeToolContext().ctx))._unsafeUnwrap();
+            expect(presentAt(second.entries, 0)).toMatchObject({ look: { lines: ["ALPHA_SET\tna\tA"] } });
+        } finally {
+            await chmod(root, 0o755);
+        }
+    });
+
+    it("bounds the new looks of one call, says that the rest matched on their path, and looks at them on the next call", async () => {
+        const root = await makeStore("look-bound");
+        await Promise.all(Array.from({ length: 250 }, (_, index) => put(root, `sets/${String(index).padStart(3, "0")}.gmt`, `SET_${index}\tna\tGENE\n`)));
+
+        const tool = createTool(root);
+        const first = (await tool.execute({ query: "gmt", limit: 1 }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(first.unlooked).toBe(50);
+        expect(first.content).toContain("50 files have no look yet and matched on their path only.");
+        // A file past the bound matches on its path only, thus its content finds nothing yet.
+        const unseen = (await tool.execute({ query: "set_249" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(unseen.unlooked).toBe(0);
+        expect(unseen.entries.map((entry) => entry.path)).toEqual(["/mnt/refs/sets/249.gmt"]);
     });
 
     // An omitted path reads the container mountpoint, so the two calls are the same
@@ -210,7 +245,7 @@ describe("list_available_refs", () => {
         expect(result.content).toContain("contains no reference files");
     });
 
-    it.each(["../etc", "/etc/passwd", "/mnt/refs/../etc", "user//cohort", ".inflexa/receipts"])("rejects out-of-scope path %s", async (path) => {
+    it.each(["../etc", "/etc/passwd", "/mnt/refs/../etc", "user//cohort", ".inflexa/sources.jsonl"])("rejects out-of-scope path %s", async (path) => {
         const root = await makeStore("scope");
         const result = (await createTool(root).execute({ path }, makeToolContext().ctx))._unsafeUnwrap();
         expect(result).toMatchObject({ state: "out_of_scope", available: false });
@@ -232,36 +267,36 @@ describe("list_available_refs", () => {
         await writeFile(join(outside, "secret.csv"), "x".repeat(100));
         await mkdir(join(root, "user"), { recursive: true });
         await symlink(outside, join(root, "user", "external"));
+        await symlink(join(outside, "secret.csv"), join(root, "user", "linked.csv"));
 
         const tool = createTool(root);
         const listed = (await tool.execute({ path: "user" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(listed.entries[0]).toMatchObject({ kind: "symlink", path: "/mnt/refs/user/external", bytes: 0 });
+        expect(listed.entries).toEqual([
+            { kind: "symlink", path: "/mnt/refs/user/external", bytes: 0 },
+            { kind: "symlink", path: "/mnt/refs/user/linked.csv", bytes: 0 },
+        ]);
 
         const through = (await tool.execute({ path: "user/external" }, makeToolContext().ctx))._unsafeUnwrap();
         expect(through.state).toBe("symlink");
         expect(through.entries).toEqual([]);
     });
 
-    // Installer metadata is never reference data: a symlinked .inflexa or registry.json must not
-    // become a route out of the store.
-    it("does not read installer metadata through a symlink", async () => {
+    // The store metadata directory is never a route out of the store: a symlinked .inflexa gets no cache write.
+    it("writes no cache through a symlinked metadata directory", async () => {
         const root = await makeStore("meta-symlink");
         const outside = await makeStore("meta-outside");
-        await mkdir(join(outside, "receipts"), { recursive: true });
-        await writeReceipt(outside, "collectri-human", "2.0", [{ path: "CollecTRI_regulons.csv", bytes: 4_096 }]);
-        await writeFile(join(outside, "registry.json"), JSON.stringify({ files: { by_category: { fake: [{ local_path: "user/x.csv" }] } } }));
-        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "x".repeat(4_096));
-        await symlink(join(outside, ".inflexa"), join(root, ".inflexa"));
-        await symlink(join(outside, "registry.json"), join(root, "registry.json"));
+        await put(root, "sets/a.gmt", "ALPHA_SET\tna\tA\n");
+        await symlink(outside, join(root, ".inflexa"));
 
-        const result = (await createTool(root).execute({ path: "managed/collectri-human/2.0" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(presentAt(result.entries, 0).metadata).toBeUndefined();
+        const result = (await createTool(root).execute({ path: "sets" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(presentAt(result.entries, 0)).toMatchObject({ look: { format: "gmt" } });
+        expect(await stat(join(outside, "peek-cache.json")).catch(() => undefined)).toBeUndefined();
     });
 
     it("supports directory drill-down from the root", async () => {
         const root = await makeStore("drill");
-        await mkdir(join(root, "user", "cohort"), { recursive: true });
-        await writeFile(join(root, "user", "cohort", "reference.h5ad"), "reference");
+        await put(root, "user/cohort/reference.h5ad", "reference");
 
         const tool = createTool(root);
         const rootResult = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
@@ -271,50 +306,20 @@ describe("list_available_refs", () => {
         expect(userResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user/cohort", kind: "directory", fileCount: 1 })]);
 
         const cohortResult = (await tool.execute({ path: "/mnt/refs/user/cohort" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(cohortResult.entries).toEqual([{ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 }]);
+        expect(cohortResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 })]);
     });
 
-    // A single unparseable receipt used to abort the scan loop, silently dropping every receipt
-    // that sorted after it — so one corrupt file stripped the labels off datasets that were fine.
-    it("keeps enriching from the receipts that parse when one of them is corrupt", async () => {
-        const root = await makeStore("bad-receipt");
-        await stageManaged(root, "wikipathways-human", "2026.07.10", "wikipathways_Homo_sapiens.gmt", "pathway\tdescription\tGENE");
-        await writeReceipt(root, "wikipathways-human", "2026.07.10", [{ path: "wikipathways_Homo_sapiens.gmt", bytes: 31 }]);
-        // "aaa" sorts before "wikipathways", so a loop that dies on the bad file never reaches the good one.
-        await writeFile(join(root, ".inflexa", "receipts", "aaa-corrupt.json"), "{ not json");
-
-        const result = (await createTool(root).execute({ path: "managed/wikipathways-human/2026.07.10" }, makeToolContext().ctx))._unsafeUnwrap();
-
-        expect(result.state).toBe("populated");
-        expect(result.entries[0]).toMatchObject({
-            path: "/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt",
-            kind: "file",
-            metadata: { datasetId: "wikipathways-human", title: "WikiPathways human pathways" },
-        });
-    });
-
-    it("bounds the scan and the final envelope for large subtrees and metadata", async () => {
+    it("bounds the scan and the final envelope for large subtrees", async () => {
         const root = await makeStore("large");
         await mkdir(join(root, "shards"), { recursive: true });
         for (let start = 0; start < 2_100; start += 200) {
             await Promise.all(
                 Array.from({ length: Math.min(200, 2_100 - start) }, (_, offset) => {
                     const index = start + offset;
-                    return writeFile(join(root, "shards", `${String(index).padStart(4, "0")}.parquet`), "x");
+                    return writeFile(join(root, "shards", `${String(index).padStart(4, "0")}.tsv`), `${"x".repeat(300)}\t${"y".repeat(300)}\n`);
                 }),
             );
         }
-        const huge = "x".repeat(500);
-        await writeFile(
-            join(root, "registry.json"),
-            JSON.stringify({
-                files: {
-                    by_category: {
-                        huge: Array.from({ length: 200 }, (_, index) => ({ local_path: `shards/${String(index).padStart(4, "0")}.parquet`, dataset: huge })),
-                    },
-                },
-            }),
-        );
 
         const tool = createTool(root);
         const summary = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();

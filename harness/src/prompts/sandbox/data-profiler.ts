@@ -122,10 +122,11 @@ Where else to look (in this order):
   with \`read_file\`.
 - **Filenames and folder structure** — accession prefixes (\`GSE...\`, \`SRR...\`,
   \`PRJNA...\`), organism shorthand (\`human_\`, \`hg38\`, \`mm10\`, \`macaque_\`, \`cyno_\`).
-- **Reference store** — \`list_available_refs\` labels catalogued files with the organism
-  they describe. Query it for a candidate organism as corroboration only: a hit means
-  reference data for that species is staged here, not that your data is that species, and
-  an empty store is a normal state that proves nothing either way.
+- **Reference store** — \`list_available_refs\` gives the path and the first lines of
+  each reference file, which often name the organism. Query it for a candidate organism as
+  corroboration only: a hit means reference data for that species is in the store, not
+  that your data is that species, and an empty store is a normal state that proves nothing
+  either way.
 
 How to record what you find:
 

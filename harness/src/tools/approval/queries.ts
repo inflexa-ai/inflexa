@@ -1,6 +1,6 @@
 /**
  * Postgres data access for the tool-approval ledger (`cortex_asks`) and its
- * standing grants (`cortex_ask_grants`).
+ * standing grants (`cortex_ask_grants` for one analysis, `cortex_user_grants` for each analysis of a user).
  *
  * Every operation returns `ResultAsync<T, DbError>` in the `state/` house style —
  * the `pg` throws are caught only inside `tryQuery`/`tryMutation`/`withTransaction`
@@ -68,7 +68,9 @@ const MAX_PENDING_BY_ANALYSES = 200;
 const AskScopeRowSchema = z.object({ analysis_id: z.string(), user_id: z.string().nullable() });
 
 /** The columns the guarded UPDATE returns for the standing-grant insert. */
-const GrantedRowSchema = z.object({ analysis_id: z.string(), user_id: z.string(), grant_key: z.string() });
+const GrantedRowSchema = z.object({ analysis_id: z.string(), user_id: z.string(), grant_key: z.string(), grant_scope: z.string().nullable() });
+
+const AskWorkflowRowSchema = z.object({ workflow_id: z.string().nullable() });
 
 /** Column payload shared by the pending insert and the grant short-circuit insert. */
 export type AskRow = {
@@ -81,6 +83,9 @@ export type AskRow = {
     readonly detail: string | null;
     /** Grant key an `always` keys its standing grant under; `null` falls back to `command`. */
     readonly grantKey: string | null;
+    readonly grantScope: "analysis" | "user" | null;
+    /** The workflow that waits for the answer. */
+    readonly workflowId: string | null;
     readonly createdAt: string;
 };
 
@@ -89,10 +94,22 @@ export function insertPendingAsk(querier: Querier, row: AskRow): ResultAsync<voi
     return tryMutation("asks.insertPending", async () => {
         await querier.query({
             text: `INSERT INTO cortex_asks
-              (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, status, created_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)
+              (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, grant_scope, workflow_id, status, created_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11)
               ON CONFLICT (id) DO NOTHING`,
-            values: [row.id, row.analysisId, row.userId, row.threadId, row.title, row.command, row.detail, row.grantKey ?? row.command, row.createdAt],
+            values: [
+                row.id,
+                row.analysisId,
+                row.userId,
+                row.threadId,
+                row.title,
+                row.command,
+                row.detail,
+                row.grantKey ?? row.command,
+                row.grantScope,
+                row.workflowId,
+                row.createdAt,
+            ],
         });
     });
 }
@@ -106,8 +123,8 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
     return tryMutation("asks.insertGranted", async () => {
         await querier.query({
             text: `INSERT INTO cortex_asks
-              (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, status, reply, created_at, resolved_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'resolved', $9::jsonb, $10, $11)
+              (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, grant_scope, workflow_id, status, reply, created_at, resolved_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'resolved', $11::jsonb, $12, $13)
               ON CONFLICT (id) DO NOTHING`,
             values: [
                 row.id,
@@ -118,6 +135,8 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
                 row.command,
                 row.detail,
                 row.grantKey ?? row.command,
+                row.grantScope,
+                row.workflowId,
                 JSON.stringify({ kind: "always" }),
                 row.createdAt,
                 resolvedAt,
@@ -126,11 +145,14 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
     });
 }
 
-/** Does a standing grant cover `(analysisId, userId, grantKey)` for this person? */
+/** Does a standing grant of this person cover `grantKey`, in the analysis or in each analysis of the person? */
 export function selectGrant(querier: Querier, analysisId: string, userId: string, grantKey: string): ResultAsync<boolean, DbError> {
     return tryQuery("asks.selectGrant", async () => {
         const result = await querier.query({
-            text: `SELECT 1 FROM cortex_ask_grants WHERE analysis_id = $1 AND user_id = $2 AND grant_key = $3`,
+            text: `SELECT 1 FROM cortex_ask_grants WHERE analysis_id = $1 AND user_id = $2 AND grant_key = $3
+              UNION ALL
+              SELECT 1 FROM cortex_user_grants WHERE user_id = $2 AND grant_key = $3
+              LIMIT 1`,
             values: [analysisId, userId, grantKey],
         });
         return (result.rowCount ?? 0) > 0;
@@ -204,6 +226,26 @@ export function selectPendingByAnalyses(querier: Querier, input: PendingByAnalys
     });
 }
 
+/**
+ * The workflow that waits for the ask with this id. `null` for an unknown id or a row with no workflow.
+ *
+ * A row with no `workflow_id` comes from a process of an earlier release, for example an old pod in a rolling deploy.
+ * Only a chat turn raised asks then, thus the active turn of the thread of the row is the workflow that waits.
+ */
+export function selectAskWorkflow(querier: Querier, id: string): ResultAsync<string | null, DbError> {
+    return tryQuery("asks.selectAskWorkflow", async () => {
+        const result = await querier.query({
+            text: `SELECT COALESCE(asks.workflow_id, threads.active_turn_id) AS workflow_id
+                     FROM cortex_asks asks
+                     LEFT JOIN cortex_analysis_threads threads ON threads.thread_id = asks.thread_id
+                    WHERE asks.id = $1`,
+            values: [id],
+        });
+        const row: unknown = result.rows[0];
+        return row === undefined ? null : AskWorkflowRowSchema.parse(row).workflow_id;
+    });
+}
+
 /** The analysis and the person of the ask with this id, in each status. `null` for an unknown id. */
 export function selectAskScope(querier: Querier, id: string): ResultAsync<AskScopeOfRow | null, DbError> {
     return tryQuery("asks.selectAskScope", async () => {
@@ -251,19 +293,27 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
             client.query({
                 text: `UPDATE cortex_asks SET status = $1, reply = $2::jsonb, resolved_at = $3
                   WHERE id = $4 AND status = 'pending'
-                  RETURNING analysis_id, COALESCE(user_id, '') AS user_id, COALESCE(grant_key, command) AS grant_key`,
+                  RETURNING analysis_id, COALESCE(user_id, '') AS user_id, COALESCE(grant_key, command) AS grant_key, grant_scope`,
                 values: [status, JSON.stringify(reply), now, id],
             }),
         ).andThen((updated) => {
             if ((updated.rowCount ?? 0) === 0) return discriminateMiss(client, id);
             if (reply.kind !== "always") return okAsync<AnswerOutcome, DbError>("applied");
-            // The COALESCEs make every returned field non-null: each insert writes
+            // The COALESCEs make each key field non-null: each insert writes
             // grant_key (command when the tool supplied none) and user_id (empty
             // string when the row predates the column), so the row schema below can
-            // demand all three strings; a row that misses one is refused through the
-            // transaction's `DbError` channel.
+            // demand the three key strings; a row that misses one is refused through the
+            // transaction's `DbError` channel. A NULL grant_scope grants in the analysis.
             return tryMutation("asks.answer:grant", async () => {
                 const granted = GrantedRowSchema.parse(updated.rows[0]);
+                if (granted.grant_scope === "user") {
+                    await client.query({
+                        text: `INSERT INTO cortex_user_grants (user_id, grant_key, created_at)
+                          VALUES ($1, $2, $3) ON CONFLICT (user_id, grant_key) DO NOTHING`,
+                        values: [granted.user_id, granted.grant_key, now],
+                    });
+                    return;
+                }
                 await client.query({
                     text: `INSERT INTO cortex_ask_grants (analysis_id, user_id, grant_key, created_at)
                       VALUES ($1, $2, $3, $4) ON CONFLICT (analysis_id, user_id, grant_key) DO NOTHING`,

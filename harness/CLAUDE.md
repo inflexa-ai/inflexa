@@ -516,7 +516,9 @@ The agent prompts are in `prompts/`. Each prompt obeys these conventions:
    catalog dump up front: `list_available_packages` before an import of a package
    that the agent is not sure is staged, and `list_available_refs` narrowed to the
    collection that it needs. There are no assumed paths, no runtime installs, and
-   no network.
+   no network in the sandbox. An agent that holds `download_ref` downloads a
+   missing reference into the reference store. The URL comes from the user or
+   from a page that the agent fetched.
 6. **The persisted data profile is the one record of what the data is.** No
    profile file exists on disk, because the scratch tree of the profiler is
    deleted on completion. Thus nothing hand-types a data context. The conversation

@@ -1,13 +1,9 @@
 /**
  * Reference-store discovery: `createListAvailableRefsTool`, a bounded, no-follow
- * inventory of what is ACTUALLY provisioned in the reference store (managed
- * installs and user-added files alike). Narrow with `path`/`category`, filter
- * with `query`, cap with `limit`; every response carries `returned`/`total`/
+ * inventory of the files in the reference store. Narrow with `path`/`category`,
+ * filter with `query`, cap with `limit`; every response carries `returned`/`total`/
  * `hasMore` and the `categories` present, so a listing is never an unbounded
- * dump. Symlinks are never followed. This tool only ever READS the store: the
- * analysis environment cannot fetch reference data, and staging more is the
- * host's job — so an absent dataset is a fact about this moment, not a verdict
- * that it is unobtainable.
+ * dump. Symlinks are never followed. This tool only ever READS the store.
  *
  * The store is read from the host filesystem at the embedder-supplied
  * `refStorePath` and reported at `/mnt/refs`, the container path sandboxes mount
@@ -20,28 +16,29 @@
  * is stat-verified like any other root, so a host with nothing mounted there
  * still reports the store as unavailable.
  *
- * The scan reports paths; meaning is joined on afterwards from the install
- * receipt and the catalog it names (organism, format, and each file's internal
- * shape). Callers search by what the data IS, so the store's directory layout
- * stays an installer detail rather than an interface anything encodes. Metadata
- * only ever ENRICHES an entry — a file with no receipt and no catalog match is
- * still returned, because a user-provided store is as valid as a managed one.
+ * The files on disk are the whole inventory. The meaning of a file comes from a
+ * look at its start: the format, and the first lines or the columns. A query
+ * matches the path and that look, thus a caller searches by what the data IS,
+ * and the directory layout of the store stays out of every interface. The look
+ * of a file is cached under its path, its size, and its modification time, in
+ * `.inflexa/peek-cache.json` of the store when the host can write it, and in
+ * memory always.
  */
 
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join as hostJoin, posix as posixPath } from "node:path";
 
 import { ok } from "neverthrow";
 import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { capCodePoints, DETAIL_MAX_LENGTH, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
+import { allWithConcurrency } from "../../lib/async-utils.js";
 import { errnoOf } from "../../lib/fs-result.js";
-import { parseJsonAs } from "../../lib/parse-json.js";
-import { isUnknownArray } from "../../lib/unknown-array.js";
-import { parseUnknownRecord } from "../../lib/unknown-containers.js";
-import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
-import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
+import { runHostTask, transferable } from "../../lib/host-workers.js";
+import { safeParseJsonAs } from "../../lib/parse-json.js";
+import { capCodePoints, DETAIL_MAX_LENGTH, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { REFS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { defineTool, type Tool } from "../define-tool.js";
 
@@ -55,11 +52,16 @@ const MAX_SCANNED_ENTRIES = 2_000;
 const MAX_PATH_BYTES = 40_000;
 const MAX_ENVELOPE_BYTES = 64_000;
 const MAX_INPUT_PATH_BYTES = 4_096;
-const MAX_RECEIPT_FILES = 100;
-const MAX_RECEIPT_BYTES = 16_384;
-const MAX_RECEIPT_TOTAL_BYTES = 32_768;
-const MAX_REGISTRY_BYTES = 131_072;
-const MAX_LEGACY_ENTRIES = 200;
+/** The bytes of a look: the read from the start of a file, and the decompressed start of a gzip file. */
+const PEEK_BYTES = 16_384;
+const LOOK_LINES = 5;
+const LOOK_LINE_CHARS = 200;
+const LOOK_COLUMNS = 50;
+const MAX_NEW_LOOKS = 200;
+const LOOK_READ_WIDTH = 8;
+const STORE_METADATA_DIRECTORY = ".inflexa";
+const PEEK_CACHE_FILE = "peek-cache.json";
+const MAX_PEEK_CACHE_BYTES = 8 * 1024 * 1024;
 
 const ListAvailableRefsInputSchema = z.object({
     path: z
@@ -73,13 +75,8 @@ const ListAvailableRefsInputSchema = z.object({
         .string()
         .max(MAX_INPUT_PATH_BYTES)
         .optional()
-        .describe(
-            "The name of a top-level directory of the store to inspect, the same as `path` with one segment. A label in `categories` that is not a directory reads as `not_found`; pass such a label as `query`. Ignored when `path` is given.",
-        ),
-    query: z
-        .string()
-        .optional()
-        .describe("Case-insensitive substring filter over each entry's path and its dataset, title, category, organism, and subtype labels."),
+        .describe("The name of a top-level directory of the store to inspect, the same as `path` with one segment. Ignored when `path` is given."),
+    query: z.string().optional().describe("Case-insensitive substring filter over the path of each file, its format, and its first lines or columns."),
     limit: z
         .number()
         .int()
@@ -91,51 +88,49 @@ const ListAvailableRefsInputSchema = z.object({
         ),
 });
 
-export type ListAvailableRefsDeps = Pick<EnvironmentStorePaths, "refStorePath">;
-
-export type ReferenceInventoryMetadata = {
-    readonly datasetId?: string;
-    readonly version?: string;
-    readonly title?: string;
-    readonly description?: string;
-    readonly sourceUrl?: string;
-    readonly license?: string;
-    readonly category?: string;
-    readonly subtype?: string;
-    readonly organism?: string;
-    /** Logical content format, independent of compression — which reader to reach for. */
-    readonly format?: string;
-    /** The file's internal shape (key columns, identifier space), so a caller can use it without opening it first. */
-    readonly contents?: string;
-    readonly rows?: number;
-    readonly endpoint?: string;
+export type ListAvailableRefsDeps = Pick<EnvironmentStorePaths, "refStorePath"> & {
+    /** Whether the agent holds `download_ref`. It selects what a query that matches nothing tells the agent to do. */
+    readonly canDownload?: boolean;
 };
 
-type ReferenceInventoryMetadataBuilder = {
-    -readonly [K in keyof ReferenceInventoryMetadata]?: ReferenceInventoryMetadata[K];
+/** What the start of a file shows: its format, and for a text its first lines, with the columns of a delimited table. */
+export type ReferenceLook = {
+    readonly format: string;
+    readonly compression?: "gzip";
+    readonly columns?: readonly string[];
+    readonly lines?: readonly string[];
 };
 
-type ReferenceInventoryEntryBase = {
-    readonly path: string;
-    readonly metadata?: ReferenceInventoryMetadata;
-};
+const ReferenceLookSchema = z.object({
+    format: z.string(),
+    compression: z.literal("gzip").optional(),
+    columns: z.array(z.string()).optional(),
+    lines: z.array(z.string()).optional(),
+});
+
+const PeekCacheFileSchema = z.object({
+    version: z.literal(1),
+    looks: z.record(z.string(), z.object({ bytes: z.number(), mtimeMs: z.number(), look: ReferenceLookSchema })),
+});
 
 /** A bounded, no-follow observation of the reference store. */
 export type ReferenceInventoryEntry =
-    | (ReferenceInventoryEntryBase & { readonly kind: "file"; readonly bytes: number })
-    | (ReferenceInventoryEntryBase & { readonly kind: "symlink"; readonly bytes: 0 })
-    | (ReferenceInventoryEntryBase & {
+    | { readonly path: string; readonly kind: "file"; readonly bytes: number; readonly look?: ReferenceLook }
+    | { readonly path: string; readonly kind: "symlink"; readonly bytes: 0 }
+    | {
+          readonly path: string;
           readonly kind: "directory";
           readonly bytes: number;
           readonly fileCount: number;
           readonly fileTypes: readonly string[];
           readonly truncated: boolean;
-      });
+      };
 
 /**
  * Structured result returned for every expected reference-store state. Bounding
  * is explicit: `returned`/`total`/`hasMore` describe how much of the match set
- * this response carries, and `categories` is the drill-in index.
+ * this response carries, `unlooked` counts the files that matched on their path
+ * only, and `categories` is the drill-in index.
  */
 export type ReferenceInventoryResult = {
     readonly available: boolean;
@@ -147,17 +142,20 @@ export type ReferenceInventoryResult = {
     readonly total: number;
     readonly truncated: boolean;
     readonly hasMore: boolean;
+    readonly unlooked: number;
     readonly categories: readonly string[];
     readonly content: string;
 };
 
+/** A regular file of a scan, with the key of its look. */
+type ScannedFile = { readonly relative: string; readonly bytes: number; readonly mtimeMs: number };
+
 type RawScan = {
     readonly state: "unavailable" | "empty" | "populated" | "not_found" | "not_a_directory" | "symlink";
     readonly entries: ReferenceInventoryEntry[];
+    readonly files: ScannedFile[];
     readonly scannedEntries: number;
     readonly truncated: boolean;
-    readonly receipts?: unknown[];
-    readonly legacyEntries?: unknown[];
 };
 
 function resolveRequestedPath(input: string | undefined): { ok: true; path: string } | { ok: false; reason: string } {
@@ -173,16 +171,21 @@ function resolveRequestedPath(input: string | undefined): { ok: true; path: stri
     if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
         return { ok: false, reason: "Path traversal and empty path segments are not allowed." };
     }
-    if (segments[0] === ".inflexa" || relative === "registry.json") return { ok: false, reason: "Installer metadata is not reference data." };
+    if (segments[0] === STORE_METADATA_DIRECTORY) return { ok: false, reason: "Store metadata is not reference data." };
     const normalized = posixPath.join(REFS_ROOT, relative);
     if (!normalized.startsWith(`${REFS_ROOT}/`)) return { ok: false, reason: "Path is outside /mnt/refs." };
     return { ok: true, path: normalized };
+}
+
+function isStoreMetadata(relative: string): boolean {
+    return relative === STORE_METADATA_DIRECTORY || relative.startsWith(`${STORE_METADATA_DIRECTORY}/`);
 }
 
 type ScannedName = {
     readonly name: string;
     readonly kind: "file" | "directory" | "symlink" | "other";
     readonly bytes: number;
+    readonly mtimeMs: number;
 };
 
 /**
@@ -207,10 +210,10 @@ async function cappedEntries(directory: string, limit: number): Promise<{ values
             // lstat, never stat: a symlink is reported as a symlink and never resolved,
             // so a link out of the store cannot smuggle in a foreign file's size or type.
             const stats = await lstat(hostJoin(directory, name));
-            if (stats.isSymbolicLink()) values.push({ name, kind: "symlink", bytes: 0 });
-            else if (stats.isFile()) values.push({ name, kind: "file", bytes: stats.size });
-            else if (stats.isDirectory()) values.push({ name, kind: "directory", bytes: 0 });
-            else values.push({ name, kind: "other", bytes: 0 });
+            if (stats.isSymbolicLink()) values.push({ name, kind: "symlink", bytes: 0, mtimeMs: 0 });
+            else if (stats.isFile()) values.push({ name, kind: "file", bytes: stats.size, mtimeMs: stats.mtimeMs });
+            else if (stats.isDirectory()) values.push({ name, kind: "directory", bytes: 0, mtimeMs: 0 });
+            else values.push({ name, kind: "other", bytes: 0, mtimeMs: 0 });
         } catch {
             continue;
         }
@@ -268,116 +271,18 @@ async function summarizeDirectory(
     return { bytes: totalBytes, fileCount, fileTypes: [...fileTypes].sort().slice(0, 10), truncated, scanned };
 }
 
-/** Install receipts written by the host installer under `<root>/.inflexa/receipts`. */
-async function readReceipts(root: string): Promise<unknown[]> {
-    const receiptsDirectory = hostJoin(root, ".inflexa", "receipts");
-    if (await crossesSymlink(root, ".inflexa")) return [];
-    const { values } = await cappedEntries(receiptsDirectory, MAX_RECEIPT_FILES);
-    const receipts: unknown[] = [];
-    let totalBytes = 0;
-    for (const entry of values) {
-        if (entry.kind !== "file" || entry.bytes > MAX_RECEIPT_BYTES || totalBytes + entry.bytes > MAX_RECEIPT_TOTAL_BYTES) continue;
-        // Per-file, so one unreadable or malformed receipt costs only its own labels.
-        // A shared try would abandon the loop and silently drop every receipt sorting
-        // after the bad one, quietly stripping metadata from datasets that are fine.
-        try {
-            receipts.push(parseJsonAs(await readFile(hostJoin(receiptsDirectory, entry.name), "utf-8"), z.json()));
-            totalBytes += entry.bytes;
-        } catch {
-            continue;
-        }
-    }
-    return receipts;
-}
-
 /**
- * The dataset ids the install receipts of the store report, for a caller that must know whether a
- * declared dataset is present BEFORE a run starts.
- *
- * `undefined` means the store itself could not be answered for: an unreadable root, a `.inflexa`
- * that crosses a symlink, or a receipts directory that exists and cannot be listed. That is NOT an
- * empty install, and a caller must never collapse the two — every dataset would read as absent, and
- * a launch would be refused over data that is sitting in the store.
- *
- * An empty set is a real answer: the store is readable and it holds no receipt.
- */
-export async function readInstalledDatasetIds(deps: ListAvailableRefsDeps): Promise<ReadonlySet<string> | undefined> {
-    const storeRoot = deps.refStorePath ?? REFS_ROOT;
-    try {
-        await lstat(storeRoot);
-    } catch {
-        return undefined;
-    }
-    if (await crossesSymlink(storeRoot, ".inflexa")) return undefined;
-    const receiptsDirectory = hostJoin(storeRoot, ".inflexa", "receipts");
-    let names: string[];
-    try {
-        names = (await readdir(receiptsDirectory)).slice(0, MAX_RECEIPT_FILES);
-    } catch (error) {
-        // An absent directory is a readable store with nothing installed. Any other failure is the
-        // store declining to answer, which is a different fact and gets the honest `undefined`.
-        if (errnoOf(error) === "ENOENT") return new Set();
-        return undefined;
-    }
-    const ids = new Set<string>();
-    for (const name of names) {
-        // Per-file, so one malformed receipt costs only its own dataset. A shared try would drop
-        // every receipt after the bad one and read as a store that holds almost nothing.
-        try {
-            const receipt = parseReferenceInstallReceipt(parseJsonAs(await readFile(hostJoin(receiptsDirectory, name), "utf-8"), z.json()));
-            if (receipt) ids.add(receipt.datasetId);
-        } catch {
-            continue;
-        }
-    }
-    return ids;
-}
-
-/** Labels from a `registry.json` an externally-provisioned store may carry. */
-async function readLegacyEntries(root: string): Promise<unknown[]> {
-    const legacyEntries: unknown[] = [];
-    try {
-        if (await crossesSymlink(root, "registry.json")) return [];
-        const registryPath = hostJoin(root, "registry.json");
-        if ((await lstat(registryPath)).size > MAX_REGISTRY_BYTES) return [];
-        const registry = parseJsonAs(await readFile(registryPath, "utf-8"), z.json());
-        const registryRecord = parseUnknownRecord(registry);
-        if (!registryRecord) return [];
-        const files = parseUnknownRecord(registryRecord.files);
-        const categories = parseUnknownRecord(files?.by_category);
-        if (!categories) return [];
-        for (const category of Object.keys(categories).sort()) {
-            const values = categories[category];
-            if (!isUnknownArray(values)) continue;
-            for (const item of values) {
-                if (legacyEntries.length >= MAX_LEGACY_ENTRIES) break;
-                const itemRecord = parseUnknownRecord(item);
-                if (itemRecord && typeof itemRecord.local_path === "string") {
-                    legacyEntries.push({ ...itemRecord, category });
-                }
-            }
-        }
-    } catch {
-        return legacyEntries;
-    }
-    return legacyEntries;
-}
-
-/**
- * Collect FILES anywhere beneath `directory`, bounded by the scan budget.
- *
- * Searching by meaning only works if it reaches the files that carry meaning. A
- * dataset's labels are joined onto its artifact at
- * `managed/{id}/{version}/{artifact}`, so a listing of the store root — whose only
- * entries are directories, which carry no such labels — can never match "regulon".
- * Browsing wants the directory summary; searching wants the leaves.
+ * Collect FILES anywhere beneath `directory`, bounded by the scan budget. A
+ * search matches the path and the look of a file, and a directory has no look,
+ * thus a search from the store root walks to the leaves.
  */
 async function collectFiles(
     directory: string,
     relative: string,
     budget: { scanned: number },
-): Promise<{ entries: ReferenceInventoryEntry[]; truncated: boolean }> {
+): Promise<{ entries: ReferenceInventoryEntry[]; files: ScannedFile[]; truncated: boolean }> {
     const entries: ReferenceInventoryEntry[] = [];
+    const files: ScannedFile[] = [];
     let truncated = false;
     const stack: { path: string; relative: string }[] = [{ path: directory, relative }];
 
@@ -389,20 +294,14 @@ async function collectFiles(
         for (const child of values) {
             budget.scanned += 1;
             const childRelative = current.relative === "." ? child.name : `${current.relative}/${child.name}`;
-            // Installer metadata is not reference data — it never becomes a search hit.
-            if (childRelative === ".inflexa" || childRelative.startsWith(".inflexa/") || childRelative === "registry.json") continue;
+            if (isStoreMetadata(childRelative)) continue;
             if (child.kind === "directory") {
                 stack.push({ path: hostJoin(current.path, child.name), relative: childRelative });
-            } else if (child.kind === "file" || child.kind === "symlink") {
-                if (entries.length >= MAX_ENTRIES) {
-                    truncated = true;
-                } else {
-                    entries.push(
-                        child.kind === "symlink"
-                            ? { path: `${REFS_ROOT}/${childRelative}`, kind: "symlink", bytes: 0 }
-                            : { path: `${REFS_ROOT}/${childRelative}`, kind: "file", bytes: child.bytes },
-                    );
-                }
+            } else if (child.kind === "symlink") {
+                entries.push({ path: `${REFS_ROOT}/${childRelative}`, kind: "symlink", bytes: 0 });
+            } else if (child.kind === "file") {
+                entries.push({ path: `${REFS_ROOT}/${childRelative}`, kind: "file", bytes: child.bytes });
+                files.push({ relative: childRelative, bytes: child.bytes, mtimeMs: child.mtimeMs });
             }
             if (budget.scanned >= MAX_SCANNED_ENTRIES) {
                 truncated = true;
@@ -410,18 +309,17 @@ async function collectFiles(
             }
         }
     }
-    return { entries, truncated };
+    return { entries, files, truncated };
 }
 
 /**
  * Scan the store beneath `root`, reporting every expected state as data.
  *
  * `recursive` selects the two modes: a browse lists immediate children (directories
- * summarized), a search walks to the files, because only a file carries the labels a
- * search matches on.
+ * summarized), a search walks to the files.
  */
 async function scanStore(root: string, relative: string, recursive = false): Promise<RawScan> {
-    const empty = (): Omit<RawScan, "state"> => ({ entries: [], scannedEntries: 0, truncated: false });
+    const empty = (): Omit<RawScan, "state"> => ({ entries: [], files: [], scannedEntries: 0, truncated: false });
     try {
         if (!(await lstat(root)).isDirectory()) return { state: "unavailable", ...empty() };
     } catch {
@@ -445,14 +343,14 @@ async function scanStore(root: string, relative: string, recursive = false): Pro
         return {
             state: walked.entries.length === 0 ? "empty" : "populated",
             entries: walked.entries,
+            files: walked.files,
             scannedEntries: budget.scanned,
             truncated: walked.truncated,
-            receipts: await readReceipts(root),
-            legacyEntries: await readLegacyEntries(root),
         };
     }
 
     const entries: ReferenceInventoryEntry[] = [];
+    const files: ScannedFile[] = [];
     let scanned = 0;
     let pathBytes = 0;
     const { values: children, cut } = await cappedEntries(target, Math.min(MAX_ENTRIES + 2, MAX_SCANNED_ENTRIES));
@@ -460,7 +358,7 @@ async function scanStore(root: string, relative: string, recursive = false): Pro
 
     for (const child of children) {
         const childRelative = relative === "." ? child.name : `${relative}/${child.name}`;
-        if (childRelative === ".inflexa" || childRelative.startsWith(".inflexa/") || childRelative === "registry.json") continue;
+        if (isStoreMetadata(childRelative)) continue;
         scanned += 1;
         const rendered = `${REFS_ROOT}/${childRelative}`;
 
@@ -484,6 +382,7 @@ async function scanStore(root: string, relative: string, recursive = false): Pro
         if (entry) {
             if (entries.length < MAX_ENTRIES && pathBytes + Buffer.byteLength(rendered, "utf8") <= MAX_PATH_BYTES) {
                 entries.push(entry);
+                if (entry.kind === "file") files.push({ relative: childRelative, bytes: child.bytes, mtimeMs: child.mtimeMs });
                 pathBytes += Buffer.byteLength(rendered, "utf8");
             } else {
                 truncated = true;
@@ -495,119 +394,318 @@ async function scanStore(root: string, relative: string, recursive = false): Pro
         }
     }
 
-    return {
-        state: entries.length === 0 ? "empty" : "populated",
-        entries,
-        scannedEntries: scanned,
-        truncated,
-        receipts: await readReceipts(root),
-        legacyEntries: await readLegacyEntries(root),
-    };
+    return { state: entries.length === 0 ? "empty" : "populated", entries, files, scannedEntries: scanned, truncated };
 }
 
-function stringValue(value: unknown): string | undefined {
-    return typeof value === "string" && value.length > 0 ? value : undefined;
-}
+type CachedLook = { readonly bytes: number; readonly mtimeMs: number; readonly look: ReferenceLook };
 
-function numberValue(value: unknown): number | undefined {
-    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
+/** The looks of one store. `writable` turns false at the first write that the file system refuses. */
+type PeekCache = { readonly looks: Map<string, CachedLook>; writable: boolean };
 
-function enrichEntries(entries: readonly ReferenceInventoryEntry[], raw: RawScan): ReferenceInventoryEntry[] {
-    const metadata = new Map<string, ReferenceInventoryMetadata>();
-    for (const value of raw.receipts ?? []) {
-        const receipt = parseReferenceInstallReceipt(value);
-        if (!receipt) continue;
-        const dataset = REFERENCE_DATA_CATALOG.datasets.find((candidate) => candidate.id === receipt.datasetId && candidate.version === receipt.datasetVersion);
-        for (const artifact of receipt.artifacts) {
-            // Per-artifact, not per-dataset: format and contents differ between files of the
-            // same dataset (a Seurat object and its Annoy index are read nothing alike).
-            const catalogArtifact = dataset?.artifacts.find((candidate) => candidate.path === artifact.path);
-            const managedMetadata: ReferenceInventoryMetadataBuilder = {
-                datasetId: receipt.datasetId,
-                version: receipt.datasetVersion,
-            };
-            if (dataset) {
-                managedMetadata.title = dataset.title;
-                managedMetadata.description = dataset.description;
-                managedMetadata.sourceUrl = dataset.sourceUrl;
-                managedMetadata.license = dataset.license.url ?? dataset.license.identifier;
-                managedMetadata.category = dataset.recommendation.group;
-                if (dataset.organism) managedMetadata.organism = dataset.organism;
-            }
-            if (catalogArtifact) {
-                managedMetadata.format = catalogArtifact.format;
-                managedMetadata.contents = catalogArtifact.contents;
-            }
-            metadata.set(`${REFS_ROOT}/managed/${receipt.datasetId}/${receipt.datasetVersion}/${artifact.path}`, managedMetadata);
-        }
+/** The cache of each store root of the process, thus the agents of one host share each look of a read-only store. */
+const peekCaches = new Map<string, Promise<PeekCache>>();
+
+function peekCacheOf(root: string): Promise<PeekCache> {
+    let cache = peekCaches.get(root);
+    if (cache === undefined) {
+        cache = loadPeekCache(root);
+        peekCaches.set(root, cache);
     }
+    return cache;
+}
 
-    for (const value of raw.legacyEntries ?? []) {
-        const item = parseUnknownRecord(value);
-        if (!item) continue;
-        const localPath = stringValue(item.local_path);
-        if (!localPath) continue;
-        const resolved = resolveRequestedPath(localPath);
-        if (!resolved.ok) continue;
-        const datasetId = stringValue(item.dataset);
-        const category = stringValue(item.category);
-        const subtype = stringValue(item.subtype);
-        const organism = stringValue(item.organism);
-        const rows = numberValue(item.rows);
-        const endpoint = stringValue(item.endpoint);
-        const legacyMetadata: ReferenceInventoryMetadataBuilder = {};
-        if (datasetId) legacyMetadata.datasetId = datasetId;
-        if (category) legacyMetadata.category = category;
-        if (subtype) legacyMetadata.subtype = subtype;
-        if (organism) legacyMetadata.organism = organism;
-        if (rows !== undefined) legacyMetadata.rows = rows;
-        if (endpoint) legacyMetadata.endpoint = endpoint;
-        metadata.set(resolved.path, { ...legacyMetadata, ...metadata.get(resolved.path) });
+async function loadPeekCache(root: string): Promise<PeekCache> {
+    const looks = new Map<string, CachedLook>();
+    if (await crossesSymlink(root, STORE_METADATA_DIRECTORY)) return { looks, writable: false };
+    const file = hostJoin(root, STORE_METADATA_DIRECTORY, PEEK_CACHE_FILE);
+    try {
+        const stats = await lstat(file);
+        if (!stats.isFile() || stats.size > MAX_PEEK_CACHE_BYTES) return { looks, writable: true };
+        const parsed = safeParseJsonAs(await readFile(file, "utf-8"), PeekCacheFileSchema);
+        if (parsed.success) for (const [relative, cached] of Object.entries(parsed.data.looks)) looks.set(relative, cached);
+    } catch {
+        // An absent or unreadable cache file starts an empty cache.
     }
+    return { looks, writable: true };
+}
 
-    return entries.map((entry) => {
-        const extra = metadata.get(entry.path);
-        return extra ? { ...entry, metadata: extra } : entry;
-    });
+/** Whether a write error is a store that the host cannot write, not a passing fault. */
+function isReadOnlyFault(cause: unknown): boolean {
+    const code = errnoOf(cause);
+    return code === "EROFS" || code === "EACCES" || code === "EPERM";
 }
 
 /**
- * Case-insensitive substring match over an inventory entry's path and joined metadata labels.
- * `description` and `contents` are in scope deliberately: a caller searching for what the data
- * IS ("regulon", "tf-target") should hit a file whose name says only "CollecTRI".
+ * Write the cache through a temporary file and a rename, thus a concurrent
+ * reader sees the old file or the new file, never a part. A process that
+ * writes at the same time can drop the new looks of the other process, and the
+ * next call looks at those files again.
  */
-function entryMatchesQuery(entry: ReferenceInventoryEntry, needle: string): boolean {
-    const fields = [
-        entry.path,
-        entry.metadata?.datasetId,
-        entry.metadata?.title,
-        entry.metadata?.description,
-        entry.metadata?.category,
-        entry.metadata?.subtype,
-        entry.metadata?.organism,
-        entry.metadata?.format,
-        entry.metadata?.contents,
-    ];
-    return fields.some((field) => typeof field === "string" && field.toLowerCase().includes(needle));
+async function savePeekCache(root: string, cache: PeekCache): Promise<void> {
+    if (!cache.writable || (await crossesSymlink(root, STORE_METADATA_DIRECTORY))) return;
+    const directory = hostJoin(root, STORE_METADATA_DIRECTORY);
+    const temporary = hostJoin(directory, `${PEEK_CACHE_FILE}.${randomUUID()}.tmp`);
+    try {
+        await mkdir(directory, { recursive: true });
+        await writeFile(temporary, JSON.stringify({ version: 1, looks: Object.fromEntries(cache.looks) }));
+        await rename(temporary, hostJoin(directory, PEEK_CACHE_FILE));
+    } catch (cause) {
+        if (isReadOnlyFault(cause)) cache.writable = false;
+        await rm(temporary, { force: true }).catch(() => undefined);
+    }
 }
 
-/** The drill-in index: directory groups present in the scan, plus any category labels joined from metadata. */
+/** The first bytes of a file, and the key of the bytes that the read saw. */
+type FileStart = { readonly start: Buffer; readonly bytes: number; readonly mtimeMs: number };
+
+/**
+ * Read at most {@link PEEK_BYTES} from the start of a file. `O_NOFOLLOW` keeps a
+ * file that became a symlink after the scan out of the read, and `O_NONBLOCK`
+ * keeps a file that became a FIFO from a wait.
+ */
+async function readStart(root: string, relative: string): Promise<FileStart | undefined> {
+    let handle;
+    try {
+        handle = await open(hostJoin(root, ...relative.split("/")), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+    } catch {
+        return undefined;
+    }
+    try {
+        const stats = await handle.stat();
+        if (!stats.isFile()) return undefined;
+        const buffer = Buffer.alloc(Math.min(PEEK_BYTES, stats.size));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        return { start: buffer.subarray(0, bytesRead), bytes: stats.size, mtimeMs: stats.mtimeMs };
+    } catch {
+        return undefined;
+    } finally {
+        await handle.close().catch(() => undefined);
+    }
+}
+
+function isGzip(start: Uint8Array): boolean {
+    return start[0] === 0x1f && start[1] === 0x8b;
+}
+
+function ascii(text: string): number[] {
+    return Array.from(text, (char) => char.charCodeAt(0));
+}
+
+/** The magic bytes of a binary format, at `offset` from the start. */
+const BINARY_MAGIC: readonly { readonly format: string; readonly bytes: readonly number[]; readonly offset?: number }[] = [
+    { format: "hdf5", bytes: [0x89, ...ascii("HDF\r\n"), 0x1a, 0x0a] },
+    { format: "parquet", bytes: ascii("PAR1") },
+    { format: "zip", bytes: [0x50, 0x4b, 0x03, 0x04] },
+    { format: "sqlite", bytes: ascii("SQLite format 3\0") },
+    { format: "pdf", bytes: ascii("%PDF-") },
+    { format: "bam", bytes: [...ascii("BAM"), 0x01] },
+    { format: "rds", bytes: [...ascii("X\n"), 0x00, 0x00, 0x00] },
+    { format: "rdata", bytes: ascii("RDX") },
+    { format: "arrow", bytes: ascii("ARROW1") },
+    { format: "npy", bytes: [0x93, ...ascii("NUMPY")] },
+    { format: "xz", bytes: [0xfd, ...ascii("7zXZ"), 0x00] },
+    { format: "zstd", bytes: [0x28, 0xb5, 0x2f, 0xfd] },
+    { format: "bzip2", bytes: ascii("BZh") },
+    { format: "tar", bytes: ascii("ustar"), offset: 257 },
+];
+
+/** The text format of each known suffix. A suffix of a binary format is the format of a file that no magic names. */
+const TEXT_FORMATS: Readonly<Record<string, string>> = {
+    csv: "csv",
+    tsv: "tsv",
+    tab: "tsv",
+    txt: "text",
+    gmt: "gmt",
+    gtf: "gtf",
+    gff: "gff",
+    gff3: "gff",
+    bed: "bed",
+    vcf: "vcf",
+    fa: "fasta",
+    fasta: "fasta",
+    fna: "fasta",
+    faa: "fasta",
+    fai: "fasta index",
+    fq: "fastq",
+    fastq: "fastq",
+    json: "json",
+    obo: "obo",
+    sam: "sam",
+    mtx: "matrix market",
+    xml: "xml",
+    yaml: "yaml",
+    yml: "yaml",
+    md: "markdown",
+};
+
+const DELIMITERS: Readonly<Record<string, string>> = { csv: ",", tsv: "\t" };
+
+function suffixOf(name: string): string {
+    return posixPath.extname(name).slice(1).toLowerCase();
+}
+
+function magicFormat(content: Uint8Array): string | undefined {
+    return BINARY_MAGIC.find(({ bytes, offset = 0 }) => bytes.every((byte, index) => content[offset + index] === byte))?.format;
+}
+
+/** The text of a start, or `undefined` for binary bytes. A start that ends inside a character drops that character. */
+function textOf(content: Uint8Array): string | undefined {
+    if (content.includes(0)) return undefined;
+    try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(content, { stream: true });
+    } catch {
+        return undefined;
+    }
+}
+
+function sniffTextFormat(text: string): string | undefined {
+    if (text.startsWith("##fileformat=VCF")) return "vcf";
+    if (text.startsWith("%%MatrixMarket")) return "matrix market";
+    if (text.startsWith(">")) return "fasta";
+    if (text.startsWith("{") || text.startsWith("[")) return "json";
+    return undefined;
+}
+
+/** The look of uncompressed content of the file `name`. */
+function lookOfContent(name: string, content: Uint8Array): ReferenceLook {
+    const suffix = suffixOf(name);
+    const magic = magicFormat(content);
+    const text = magic === undefined ? textOf(content) : undefined;
+    if (text === undefined) return { format: magic ?? (suffix === "" ? "binary" : suffix) };
+    const format = TEXT_FORMATS[suffix] ?? sniffTextFormat(text) ?? (suffix === "" ? "text" : suffix);
+    const lines = text
+        .split("\n")
+        .slice(0, LOOK_LINES)
+        .map((line) => capCodePoints(line.endsWith("\r") ? line.slice(0, -1) : line, LOOK_LINE_CHARS));
+    while (lines.length > 0 && lines.at(-1) === "") lines.pop();
+    const delimiter = DELIMITERS[format];
+    const header = lines[0];
+    if (delimiter === undefined || header === undefined) return { format, lines };
+    const columns = header
+        .split(delimiter)
+        .slice(0, LOOK_COLUMNS)
+        .map((column) => column.trim())
+        .map((column) => (column.length >= 2 && column.startsWith('"') && column.endsWith('"') ? column.slice(1, -1) : column));
+    return { format, columns, lines };
+}
+
+/**
+ * The look of a file from its start. `inflated` is the decompressed start of a
+ * gzip file, `undefined` when it gave no byte. The format of a gzip file is the
+ * format of its content, from the suffix below `.gz`.
+ */
+function lookOf(name: string, start: Uint8Array, inflated: Uint8Array | undefined): ReferenceLook {
+    if (!isGzip(start)) return lookOfContent(name, start);
+    const suffix = suffixOf(name);
+    const inner = suffix === "gz" || suffix === "bgz" ? name.slice(0, -(suffix.length + 1)) : name;
+    if (inflated === undefined) {
+        const innerSuffix = suffixOf(inner);
+        return { format: TEXT_FORMATS[innerSuffix] ?? (innerSuffix === "" ? "binary" : innerSuffix), compression: "gzip" };
+    }
+    return { ...lookOfContent(inner, inflated), compression: "gzip" };
+}
+
+/** The decompressed starts of the gzip starts, in one decode worker. A failed worker gives `undefined`. */
+async function inflateStarts(starts: readonly Uint8Array[], signal: AbortSignal | undefined): Promise<readonly (Uint8Array | undefined)[] | undefined> {
+    if (starts.length === 0) return [];
+    const buffers = starts.map((start) => transferable(start));
+    const answer = await runHostTask({ kind: "gzip-starts", starts: buffers, cap: PEEK_BYTES }, { transfer: buffers, signal });
+    return answer.isOk() ? answer.value.starts : undefined;
+}
+
+/**
+ * The look of each file, keyed by its store-relative path. A cached look serves
+ * a file of the same size and modification time with no read. At most
+ * {@link MAX_NEW_LOOKS} files get a new look, and `unlooked` counts the others.
+ */
+async function lookAtFiles(
+    root: string,
+    files: readonly ScannedFile[],
+    signal: AbortSignal | undefined,
+): Promise<{ readonly looks: ReadonlyMap<string, ReferenceLook>; readonly unlooked: number }> {
+    const looks = new Map<string, ReferenceLook>();
+    if (files.length === 0) return { looks, unlooked: 0 };
+    const cache = await peekCacheOf(root);
+    const pending: ScannedFile[] = [];
+    for (const file of files) {
+        const cached = cache.looks.get(file.relative);
+        if (cached !== undefined && cached.bytes === file.bytes && cached.mtimeMs === file.mtimeMs) looks.set(file.relative, cached.look);
+        else pending.push(file);
+    }
+    const taken = pending.slice(0, MAX_NEW_LOOKS);
+    if (taken.length === 0) return { looks, unlooked: 0 };
+
+    const starts = await allWithConcurrency(
+        taken.map((file) => () => readStart(root, file.relative)),
+        LOOK_READ_WIDTH,
+    );
+    const gzipIndexes = starts.flatMap((read, index) => (read !== undefined && isGzip(read.start) ? [index] : []));
+    // A copy goes to the worker, because the transfer detaches the bytes that the look reads below.
+    const inflated = await inflateStarts(
+        gzipIndexes.map((index) => Buffer.from(starts[index]?.start ?? [])),
+        signal,
+    );
+    const inflatedAt = new Map(gzipIndexes.map((index, position) => [index, inflated?.[position]]));
+
+    let added = false;
+    for (const [index, file] of taken.entries()) {
+        const read = starts[index];
+        if (read === undefined) continue;
+        const look = lookOf(posixPath.basename(file.relative), read.start, inflatedAt.get(index));
+        looks.set(file.relative, look);
+        // A look that a failed worker cut short is not the look of the file, thus the next call looks again.
+        if (inflated === undefined && inflatedAt.has(index)) continue;
+        cache.looks.set(file.relative, { bytes: read.bytes, mtimeMs: read.mtimeMs, look });
+        added = true;
+    }
+    if (added) await savePeekCache(root, cache);
+    return { looks, unlooked: pending.length - taken.length };
+}
+
+function withLooks(entries: readonly ReferenceInventoryEntry[], looks: ReadonlyMap<string, ReferenceLook>): ReferenceInventoryEntry[] {
+    return entries.map((entry) => {
+        if (entry.kind !== "file") return entry;
+        const look = looks.get(entry.path.slice(REFS_ROOT.length + 1));
+        return look === undefined ? entry : { ...entry, look };
+    });
+}
+
+/** Case-insensitive substring match over the path of an entry and the text of its look. */
+function entryMatchesQuery(entry: ReferenceInventoryEntry, needle: string): boolean {
+    if (entry.path.toLowerCase().includes(needle)) return true;
+    if (entry.kind !== "file" || entry.look === undefined) return false;
+    const { format, columns = [], lines = [] } = entry.look;
+    return [format, ...columns, ...lines].some((field) => field.toLowerCase().includes(needle));
+}
+
+/** The drill-in index: the directory groups present in the scan. */
 function collectCategories(entries: readonly ReferenceInventoryEntry[]): string[] {
     const names = new Set<string>();
-    for (const entry of entries) {
-        if (entry.kind === "directory") names.add(posixPath.basename(entry.path));
-        if (entry.metadata?.category) names.add(entry.metadata.category);
-    }
+    for (const entry of entries) if (entry.kind === "directory") names.add(posixPath.basename(entry.path));
     return [...names].sort();
 }
 
-function renderContent(path: string, scan: RawScan, entries: readonly ReferenceInventoryEntry[]): string {
+function renderLook(look: ReferenceLook): string[] {
+    const rendered = [`    ${look.format}${look.compression ? ` (${look.compression})` : ""}`];
+    if (look.columns !== undefined) {
+        rendered.push(`    columns: ${look.columns.join(", ")}`);
+        for (const line of (look.lines ?? []).slice(1)) rendered.push(`    | ${line}`);
+    } else {
+        for (const line of look.lines ?? []) rendered.push(`    | ${line}`);
+    }
+    return rendered;
+}
+
+function unlookedNote(unlooked: number): string {
+    return `${unlooked} files have no look yet and matched on their path only. Call list_available_refs again to look at them.`;
+}
+
+function renderContent(path: string, scan: RawScan, entries: readonly ReferenceInventoryEntry[], unlooked: number, canDownload: boolean): string {
     if (scan.state === "unavailable")
-        return (
-            "No reference store is provisioned for this session. Nothing in the analysis environment can fetch reference data, and a later call " +
-            "in this run gives the same answer. Plan with the data at hand, or ask for the reference by what it is."
-        );
+        return canDownload
+            ? "No reference store is readable now. To get a reference, download it with download_ref from a URL that the user gave or that a page you fetched shows."
+            : "No reference store is provisioned for this session. Nothing in the analysis environment can fetch reference data, and a later call " +
+                  "in this run gives the same answer. Plan with the data at hand, or ask for the reference by what it is.";
     if (scan.state === "not_found") return `Reference path does not exist: ${path}`;
     if (scan.state === "not_a_directory") return `Reference path is not a directory: ${path}`;
     if (scan.state === "symlink") return `Reference path crosses a symlink and was not scanned: ${path}`;
@@ -615,52 +713,56 @@ function renderContent(path: string, scan: RawScan, entries: readonly ReferenceI
 
     const lines = [`Reference files visible beneath ${path}:`];
     for (const entry of entries) {
-        const labels = entry.metadata
-            ? [entry.metadata.title ?? entry.metadata.datasetId, entry.metadata.version, entry.metadata.category, entry.metadata.organism]
-                  .filter(Boolean)
-                  .join(", ")
-            : "";
         const details =
             entry.kind === "directory"
                 ? `directory, ${entry.fileCount} files, ${entry.bytes} bytes${entry.fileTypes.length > 0 ? `, types: ${entry.fileTypes.join(", ")}` : ""}${entry.truncated ? ", summary truncated" : ""}`
                 : entry.kind === "file"
                   ? `file, ${entry.bytes} bytes`
                   : "symlink (not followed)";
-        lines.push(`- ${entry.path} (${details}${labels ? `; ${labels}` : ""})`);
-        // The deciding line: whether this file is the thing you need, and how to open it.
-        // Without it a caller is back to inferring both from the filename.
-        const shape = [entry.metadata?.format, entry.metadata?.contents].filter(Boolean).join(" — ");
-        if (shape) lines.push(`    ${shape}`);
+        lines.push(`- ${entry.path} (${details})`);
+        if (entry.kind === "file" && entry.look !== undefined) lines.push(...renderLook(entry.look));
     }
     if (scan.truncated)
         lines.push(`Inventory truncated after scanning ${scan.scannedEntries} entries. Call list_available_refs with a narrower path to drill down.`);
+    if (unlooked > 0) lines.push(unlookedNote(unlooked));
     return lines.join("\n");
 }
 
-/** Create reference discovery over the host-visible reference store. */
+function noMatchContent(path: string, query: string, unlooked: number, canDownload: boolean): string {
+    const miss = `No reference beneath ${path} matches "${query}".`;
+    const next = canDownload
+        ? `The sandbox has no network. You can download the reference with download_ref from a URL that the user gave or that a page you fetched shows. Do not guess a path or a URL.`
+        : `The store at ${REFS_ROOT} is the only reference data that the sandbox can read, and the sandbox has no network. ` +
+          "Say that the dataset is absent now. Do not guess a path, and do not use a different dataset in its place.";
+    return [miss, next, ...(unlooked > 0 ? [unlookedNote(unlooked)] : [])].join(" ");
+}
+
 /**
- * The whole enriched inventory of the store, for a host-side join: which
- * collection a procedure names is present, and where. No envelope bound,
- * because the caller keeps the join and drops the listing.
+ * The whole inventory of the store with the look of each file, for a host-side
+ * join: which collection a procedure names is present, and where. No envelope
+ * bound, because the caller keeps the join and drops the listing.
  */
 export async function readReferenceInventory(
     storeRoot: string,
 ): Promise<{ readonly available: boolean; readonly entries: readonly ReferenceInventoryEntry[] }> {
     const raw = await scanStore(storeRoot, ".", true);
-    return { available: raw.state !== "unavailable", entries: enrichEntries(raw.entries, raw) };
+    const { looks } = await lookAtFiles(storeRoot, raw.files, undefined);
+    return { available: raw.state !== "unavailable", entries: withLooks(raw.entries, looks) };
 }
 
+/** Create reference discovery over the host-visible reference store. */
 export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z.infer<typeof ListAvailableRefsInputSchema>, ReferenceInventoryResult> {
     const storeRoot = deps.refStorePath ?? REFS_ROOT;
+    const canDownload = deps.canDownload ?? false;
     return defineTool({
         id: "list_available_refs",
         concurrent: true,
         description:
-            "Find the reference data that you need, as a real path. It lists the reference data of this environment: the only reference data that an analysis script can open. " +
+            "Find the reference data that you need, as a real path. It lists the reference store of this environment: the only reference data that an analysis script can open. " +
             'Search by what the data is, with `query` (for example "hallmark", "regulon", "mouse"), not by where you expect it: the layout of the store is not a stable interface. ' +
-            "Each entry gives the organism, the format, and the internal shape of the file, and its path works verbatim in a script. " +
+            "A query matches the path of a file and a look at its start: the format, and the first lines or the columns of a table. Its path works verbatim in a script. " +
             "Pass the path to the library explicitly: nothing points a library at the store, thus a library that finds its data through an environment variable needs that variable in the `env` of the command. " +
-            "The listing does not change within a run, thus one call for each question is enough.",
+            "The listing changes only when a file is added to the store, thus one call for each question is enough.",
         inputSchema: ListAvailableRefsInputSchema,
         view: {
             input: (input) => input,
@@ -700,7 +802,7 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
             // pays for the joining space.
             return `${capCodePoints(named, DETAIL_MAX_LENGTH - Array.from(filter).length - 1)} ${filter}`;
         },
-        execute: async ({ path, category, query, limit }) => {
+        execute: async ({ path, category, query, limit }, ctx) => {
             // `category` is shorthand for a top-level path; an explicit `path` wins.
             const requestedInput = path ?? category;
             const requested = resolveRequestedPath(requestedInput);
@@ -715,21 +817,21 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
                     total: 0,
                     truncated: false,
                     hasMore: false,
+                    unlooked: 0,
                     categories: [],
                     content: requested.reason,
                 };
                 return ok(response);
             }
 
-            // A query searches the leaves; a bare listing browses this level. Without the
-            // recursive pass a search from the store root only ever sees directories,
-            // which carry no dataset labels, so "find me a regulon network" finds nothing.
+            // A query searches the leaves; a bare listing browses this level.
             const needleGiven = (query?.trim() ?? "") !== "";
             const raw = await scanStore(storeRoot, posixPath.relative(REFS_ROOT, requested.path) || ".", needleGiven);
-            const enriched = enrichEntries(raw.entries, raw);
-            const categories = collectCategories(enriched);
+            const { looks, unlooked } = await lookAtFiles(storeRoot, raw.files, ctx.signal);
+            const looked = withLooks(raw.entries, looks);
+            const categories = collectCategories(looked);
             const needle = query?.trim().toLowerCase();
-            const matched = needle ? enriched.filter((entry) => entryMatchesQuery(entry, needle)) : enriched;
+            const matched = needle ? looked.filter((entry) => entryMatchesQuery(entry, needle)) : looked;
             const total = matched.length;
             const cap = limit ?? MAX_ENTRIES;
             let boundedEntries = matched.length > cap ? matched.slice(0, cap) : matched;
@@ -746,21 +848,16 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
                     total,
                     truncated,
                     hasMore: truncated,
+                    unlooked,
                     categories,
-                    content: renderContent(contentPath, { ...raw, truncated }, list),
+                    content: renderContent(contentPath, { ...raw, truncated }, list, unlooked, canDownload),
                 };
             };
 
             let response = build(boundedEntries, requested.path);
-            // An empty answer to a query reads as "look elsewhere" unless it says that there is nowhere else.
+            // An empty answer to a query reads as "look elsewhere" unless it says where else there is.
             if (needleGiven && total === 0 && raw.state === "populated") {
-                response = {
-                    ...response,
-                    content:
-                        `No reference beneath ${requested.path} matches "${query?.trim() ?? ""}". ` +
-                        `The store at ${REFS_ROOT} is the only reference data that the sandbox can read, and the sandbox has no network. ` +
-                        "Say that the dataset is absent now. Do not guess a path, and do not use a different dataset in its place.",
-                };
+                response = { ...response, content: noMatchContent(requested.path, query?.trim() ?? "", unlooked, canDownload) };
             }
             while (Buffer.byteLength(JSON.stringify(response), "utf8") > MAX_ENVELOPE_BYTES && boundedEntries.length > 0) {
                 boundedEntries = boundedEntries.slice(0, -1);

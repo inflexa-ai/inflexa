@@ -14,7 +14,7 @@ outward `answer` and `pending` calls, over the transport that it runs.
 
 ### Requirement: The approval reply is a three-variant decision
 
-`AskReply` MUST be one of `once`, `always`, or `reject`, and it is never a boolean. `once` MUST approve the one pending invocation. `always` MUST approve the pending invocation, and it MUST record a standing grant for the matched action. That grant covers one user inside one analysis, and it lasts the lifecycle of the analysis (see the standing-grants requirement). `reject` MUST deny, and it can carry model-facing feedback text.
+`AskReply` MUST be one of `once`, `always`, or `reject`, and it is never a boolean. `once` MUST approve the one pending invocation. `always` MUST approve the pending invocation, and it MUST record a standing grant for the matched action. The scope of the request sets the reach of that grant: one user inside one analysis, or one user in each analysis (see the standing-grants requirement). `reject` MUST deny, and it can carry model-facing feedback text.
 
 #### Scenario: Approve-once returns and the tool proceeds
 
@@ -28,9 +28,11 @@ outward `answer` and `pending` calls, over the transport that it runs.
 
 ### Requirement: An always reply records a standing grant for one user
 
-When an ask is answered `always`, the harness MUST record a standing grant. The key of the grant is the analysis, the user, and the grant key of the ask. The grant key is `AskRequest.grantKey` when the request carries one, and the `command` when it does not. The user is the user of the scope that raised the ask, and not the caller that sends the answer. What the user approved as `always` MUST grant exactly that key and nothing broader. A tool that keys a grant more broadly than the displayed `command` MUST make that breadth visible in the request content that it renders.
+An `always` answer MUST record a standing grant for the user of the ask and the grant key of the ask. The grant key is `AskRequest.grantKey` when the request carries one, and the `command` otherwise. The user is the user of the scope that raised the ask, not the caller that sends the answer. The grant MUST cover exactly that key. A tool that keys a grant more broadly than the displayed `command` MUST show that breadth in the request content.
 
-When a turn raises an ask and a matching grant exists, the raise MUST settle the ask with no pause. The same analysis, the same user, and the same grant key match. No prompt reaches a surface. The ask MUST still be recorded in `cortex_asks` as `resolved`, thus the ledger stays a complete audit of each approval-gated action. The turn MUST emit one `data-ask` part that is already settled, with `status: "resolved"` and `reply: "always"`, and no pending part before it. A grant MUST last for the lifecycle of its analysis, and it MUST survive a process restart. A grant MUST never apply to another analysis or to another user.
+`AskRequest.grantScope` sets the reach of the grant. With `analysis` or no scope, the grant MUST apply only in the analysis of the ask. With `user`, the grant MUST apply in each analysis of that user.
+
+When a raise finds a matching grant, it MUST settle the ask with no wait, and no prompt reaches a surface. The ask MUST still be recorded in `cortex_asks` as `resolved`, thus the ledger stays a complete audit. The raise MUST emit one settled `data-ask` part, with `status: "resolved"` and `reply: "always"`, and no pending part before it. A grant MUST survive a process restart. A grant MUST never apply to another user.
 
 #### Scenario: A matching grant auto-approves without pausing
 
@@ -71,9 +73,15 @@ When a turn raises an ask and a matching grant exists, the raise MUST settle the
 
 #### Scenario: A grant does not cross analyses
 
-- **GIVEN** an `always` grant recorded in one analysis
+- **GIVEN** an `always` grant recorded in one analysis for a request with no scope
 - **WHEN** a turn raises an ask for the same grant key and the same user in a different analysis
 - **THEN** the ask waits for a decision as if no grant existed
+
+#### Scenario: A user grant crosses analyses
+
+- **GIVEN** an `always` grant recorded in one analysis for a request with the scope `user`
+- **WHEN** a turn raises an ask for the same grant key and the same user in a different analysis
+- **THEN** the raise settles the ask with no prompt
 
 ### Requirement: The embedder answers and enumerates asks out of band
 
@@ -132,7 +140,9 @@ An ask MUST move from `pending` to exactly one terminal status: `resolved` (appr
 
 ### Requirement: A pending ask is surfaced as a harness-defined chat part
 
-The harness MUST define a `data-ask` chat part in its part contracts (type, schema, and part-registry entry). A turn MUST emit it when a call waits for an approval. The part MUST carry the ask id, the request content, and the current status. The request content includes the exact command or operation that the user approves. The id is what a surface passes back to `answer`. The part MUST be registered as reconciling, and the turn emits it again under the same id when the ask reaches a terminal status. Thus a reader folds the pending part into its outcome, latest-wins. When some asks are pending at the same time, each MUST be its own part under its own id. Thus a surface can stack them, and the user can answer them one by one.
+The harness MUST define a `data-ask` chat part in its part contracts (type, schema, and part-registry entry). A turn MUST emit it to the stream of the turn when a call waits for an approval. A sandbox step MUST emit it to the stream of its run. The part MUST carry the ask id, the request content, and the current status. The request content includes the exact command that the user approves. The id is what a surface passes back to `answer`.
+
+The part MUST be registered as reconciling. The workflow emits it again under the same id when the ask reaches a terminal status. Thus a reader folds the pending part into its outcome, latest-wins. When some asks wait at the same time, each MUST be its own part under its own id.
 
 The terminal part MUST carry `reply`, the kind of the reply that the ledger row recorded:
 
@@ -171,13 +181,18 @@ The part MUST NOT carry the feedback of a rejection, because that text is for th
 - **WHEN** the parts are emitted
 - **THEN** each ask is a distinct part under its own id, answerable independently
 
+#### Scenario: A step ask reaches the stream of its run
+
+- **WHEN** a call of a sandbox step waits for an approval
+- **THEN** a pending `data-ask` part reaches the stream of the run of the step
+
 ### Requirement: Approval is deny-by-default when unwired
 
-An approval that no surface can answer MUST be denied. A loop outside a turn workflow, for example a step agent or a test, MUST deny each request of an approval hook. It MUST NOT wait on a surface that cannot answer.
+An approval that no surface can answer MUST be denied. A chat turn and a sandbox step each give their loop an approver. A loop with no approver, for example a test, MUST deny each request of an approval hook. It MUST NOT wait on a surface that cannot answer.
 
 #### Scenario: An unwired host denies every ask
 
-- **GIVEN** a loop that runs outside a turn workflow
+- **GIVEN** a loop with no approver
 - **WHEN** the approval hook of a tool gives a request
 - **THEN** the call gets a denied result rather than a wait
 
@@ -217,7 +232,7 @@ A tool MUST be able to declare an approval hook. The hook gets the input of the 
 
 ### Requirement: The wait for an approval is durable
 
-Inside a turn workflow, the turn MUST wait for the answer of an ask with a durable wait of the workflow, up to the time limit of the ask. The answer of the host MUST reach the waiting turn by the ask id. A wait MUST NOT run inside a step.
+A chat turn and a sandbox step MUST wait for the answer of an ask with a durable wait of their workflow. The wait ends at the time limit of the ask. Each ask row MUST record the id of the workflow that waits. The answer of the host MUST reach that workflow by the ask id. A wait MUST NOT run inside a step of DBOS.
 
 #### Scenario: An answer after a crash
 
@@ -230,14 +245,26 @@ Inside a turn workflow, the turn MUST wait for the answer of an ask with a durab
 - **WHEN** the time limit of a pending ask ends
 - **THEN** the ask row is `expired`, and the call gets a denied result
 
+#### Scenario: A step waits for an answer
+
+- **GIVEN** a step agent whose call needs an approval
+- **WHEN** the user answers the ask `once` by its id
+- **THEN** the answer reaches the workflow of the step, and the call runs
+
 ### Requirement: A denial gives the call a denied result and stops the turn
 
-A `reject` answer and an expired ask MUST give the call an `execution-denied` result with the feedback of the user. The turn MUST stop after the calls of the same reply complete, and it MUST NOT make a model request after the denial. `once` and `always` MUST let the call run.
+A `reject` answer and an expired ask MUST give the call an `execution-denied` result with the feedback of the user. In a chat turn, the turn MUST stop after the calls of the same reply complete. It MUST NOT make a model request after the denial. In a sandbox step, the loop MUST continue, thus the step agent can use a different source or report a blocker. `once` and `always` MUST let the call run.
 
 #### Scenario: A rejected command
 
 - **WHEN** the user answers `reject` with the feedback "not this file"
 - **THEN** the call result is denied with that feedback, the tool does not run, and no model request follows
+
+#### Scenario: A rejected download in a step
+
+- **GIVEN** a step agent whose download waits for an approval
+- **WHEN** the user answers `reject`
+- **THEN** the call result is denied, and the step agent makes its next model request
 
 ### Requirement: One read gives the pending asks of a list of analyses
 

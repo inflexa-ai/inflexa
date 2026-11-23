@@ -89,6 +89,8 @@ import { ProvenanceCollector } from "../provenance/collector.js";
 import { blockerOf } from "../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { hasSuccessfulTemplateRun, RUN_TEMPLATE_TOOL_ID, type StepTemplate } from "../tools/knowledge/run-template.js";
+import type { AskGateway } from "../tools/approval/gateway.js";
+import { DEFAULT_ASK_WAIT_SECONDS, workflowApproval } from "../tools/approval/workflow-approval.js";
 import { pauseAtGate, workPause } from "./pause.js";
 
 // ── Workflow input/output shapes ─────────────────────────────────────
@@ -268,6 +270,8 @@ export type SandboxStepDeps = {
     readonly pauseRetryDelaysMs?: readonly number[];
     /** The run authorizer of the runtime. A pause of the step for a person suspends the run credential through it. */
     readonly runAuthorizer: RunAuthorizer;
+    /** The ask ledger. A call of the step agent that needs an approval waits for the answer of the user. Absent: each such call is denied. */
+    readonly askGateway?: AskGateway;
     /**
      * No longer read by the step body; kept because `src/index.ts` exports
      * this type and an embedder builds it as an object literal.
@@ -662,6 +666,20 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             // A blocker ends the step: the agent declared that it cannot do the work.
             stopWhen: (done: readonly LoopStep[]) => blockerOf(done) !== null,
             pause: pause.afterFailure,
+            // The ask goes to the stream of the run, and the host answers it by its id.
+            approve:
+                deps.askGateway === undefined
+                    ? undefined
+                    : workflowApproval({
+                          gateway: deps.askGateway,
+                          workflowId: childWorkflowId,
+                          scope: { analysisId: input.analysisId, userId: input.runSession.identity.user },
+                          stepPrefix: "sandbox-step",
+                          emitPart: safeEmit,
+                          waitSeconds: DEFAULT_ASK_WAIT_SECONDS,
+                      }),
+            // A denied call leaves the step agent its other sources, or a blocker.
+            continuesAfterDenial: true,
         };
         try {
             // A template step that ends with no successful run of its template and no blocker gets one follow-up

@@ -70,7 +70,7 @@ export type StepEnvironment = {
          */
         readonly entry?: string;
     };
-    readonly collection?: { readonly name: string; readonly present: boolean; readonly path?: string; readonly title?: string };
+    readonly collection?: { readonly name: string; readonly present: boolean; readonly path?: string };
 };
 
 /** Where each fact of the environment came from: a record the host read, or nothing. */
@@ -138,12 +138,19 @@ function tokens(text: string): string[] {
     return tokens;
 }
 
-/** A collection term of the tree (`msigdb_hallmark_human`) matches an entry whose labels hold every token of the term. */
+/** The text of an entry that a collection term matches: its path, and the look at the start of a file. */
+function entryText(entry: ReferenceInventoryEntry): string {
+    if (entry.kind !== "file" || entry.look === undefined) return entry.path;
+    const { format, columns = [], lines = [] } = entry.look;
+    return [entry.path, format, ...columns, ...lines].join(" ");
+}
+
+/** A collection term of the tree (`msigdb_hallmark_human`) matches an entry whose path and look hold every token of the term. */
 function findCollection(term: string, entries: readonly ReferenceInventoryEntry[]): ReferenceInventoryEntry | undefined {
     const wanted = tokens(term);
     if (wanted.length === 0) return undefined;
     const candidates = entries.filter((entry) => {
-        const haystack = tokens([entry.path, entry.metadata?.datasetId ?? "", entry.metadata?.title ?? ""].join(" "));
+        const haystack = tokens(entryText(entry));
         return wanted.every((token) => haystack.includes(token));
     });
     // A directory entry names the dataset; a file inside it is the concrete artifact. Prefer the file.
@@ -227,12 +234,7 @@ export async function joinEnvironment(answer: RecommendResponse, paths: Environm
         const collection = step.parameters?.find((parameter) => parameter.name === "gene_set_collection");
         if (collection && typeof collection.value === "string" && entries) {
             const found = findCollection(collection.value, entries);
-            environment.collection = {
-                name: collection.value,
-                present: found !== undefined,
-                path: found?.path,
-                title: found?.metadata?.title,
-            };
+            environment.collection = { name: collection.value, present: found !== undefined, path: found?.path };
         }
         return Object.keys(environment).length > 0 ? { ...step, environment } : step;
     });

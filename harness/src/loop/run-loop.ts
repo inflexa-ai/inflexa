@@ -177,6 +177,11 @@ export type LoopOptions = {
      * call policy. Absent: no surface can answer, and the loop denies each such call.
      */
     readonly approve?: (request: AskRequest, call: { readonly toolCallId: string; readonly toolName: string }) => Promise<ApprovalDecision>;
+    /**
+     * A denial of the user gives the call a denied result, and the loop asks the model again. Absent: the denial ends
+     * the run with the finish reason `denied`, and the loop makes no request after it.
+     */
+    readonly continuesAfterDenial?: boolean;
     /** The mask of the task, the budget, and the guard of the run. A refused call does not run. */
     readonly policy?: CallPolicy;
     /** Ends the run when its outcome is final, for example a blocker of a step agent. The finish reason is `stop`. */
@@ -846,6 +851,7 @@ async function runSeries(
 ): Promise<SeriesEnd | SeriesFailure> {
     const { messages, session } = target;
     const startIndex = messages.length;
+    const endsAtDenial = (step: LoopStep): boolean => opts.continuesAfterDenial !== true && deniedByUser(step);
     if (spec.requestText !== undefined) messages.push(syntheticUserMessage(spec.requestText));
 
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
@@ -981,7 +987,7 @@ async function runSeries(
     const requestView = (): ModelMessage[] => [...withPromptCacheBreakpoint(sanitizeMessages(target.viewOf(messages)), promptCache)];
     const stops = (): boolean =>
         seriesSteps.length >= spec.maxRequests ||
-        deniedByUser(seriesSteps.at(-1) ?? { finishReason: "", calls: [] }) ||
+        endsAtDenial(seriesSteps.at(-1) ?? { finishReason: "", calls: [] }) ||
         target.stopWhen?.(target.steps) === true ||
         target.capWhen?.() === true;
 
@@ -1142,7 +1148,7 @@ async function runSeries(
     const last = seriesSteps.at(-1);
     if (last === undefined) throw new Error(`The run of the agent "${agent.id}" ended with no completed request.`);
     if (!continuesAfter(last)) return { kind: "reply", finishReason: last.finishReason, rawFinishReason: last.rawFinishReason };
-    if (deniedByUser(last)) return { kind: "denied" };
+    if (endsAtDenial(last)) return { kind: "denied" };
     if (target.stopWhen?.(target.steps) === true) return { kind: "stopped" };
     if (target.capWhen?.() === true) {
         log.warn("run stopped early by the host policy", { iterations: seriesSteps.length });

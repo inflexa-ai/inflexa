@@ -1,9 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
 import { gzipSync } from "node:zlib";
 
 import { zipSync } from "fflate";
 
-import { archiveKindOf, listArchive, readArchiveEntry } from "../archive.js";
+import { archiveKindOf, extractTarStream, extractZipStream, listArchive, readArchiveEntry } from "../archive.js";
 
 /** One tar header block for a regular file, with the checksum that a reader does not check. */
 function tarHeader(name: string, size: number, type = "0"): Buffer {
@@ -88,5 +92,60 @@ describe("a gzip-compressed file", () => {
         expect(listArchive("gzip", "runs/counts.csv.gz", gz)._unsafeUnwrap()).toEqual([{ name: "counts.csv", bytes: 14 }]);
         expect(readArchiveEntry("gzip", "runs/counts.csv.gz", gz, "counts.csv", 1024)._unsafeUnwrap().toString()).toBe("gene,n\nTP53,4\n");
         expect(readArchiveEntry("gzip", "runs/counts.csv.gz", gz, "counts.csv", 4)._unsafeUnwrapErr()).toEqual({ kind: "too_large", bytes: undefined });
+    });
+});
+
+describe("a streamed extraction", () => {
+    function chunks(data: Buffer, size = 700): Readable {
+        const pieces: Buffer[] = [];
+        for (let offset = 0; offset < data.length; offset += size) pieces.push(data.subarray(offset, offset + size));
+        return Readable.from(pieces);
+    }
+
+    let dest = "";
+    beforeEach(async () => {
+        dest = await mkdtemp(join(tmpdir(), "extract-"));
+    });
+    afterEach(async () => {
+        await rm(dest, { recursive: true, force: true });
+    });
+
+    test("a tar writes each file, also one with a long name, and skips a link", async () => {
+        const longName = `${"deep/".repeat(25)}counts.csv`;
+        const tar = tarOf({ "GSE1/meta.tsv": "a\tb\n", [longName]: "gene,n\n" });
+        const withLink = Buffer.concat([tarHeader("GSE1/link", 0, "2"), tar]);
+        const summary = (await extractTarStream(chunks(withLink), dest))._unsafeUnwrap();
+        expect(summary).toEqual({ files: 2, directories: 0, skippedLinks: 1 });
+        expect(await readFile(join(dest, "GSE1/meta.tsv"), "utf8")).toBe("a\tb\n");
+        expect(await readFile(join(dest, longName), "utf8")).toBe("gene,n\n");
+        expect(await readdir(join(dest, "GSE1"))).toEqual(["meta.tsv"]);
+    });
+
+    test("a tar entry that leaves the directory stops the extraction, and writes nothing outside", async () => {
+        const inner = join(dest, "inner");
+        await mkdir(inner);
+        const refusal = (await extractTarStream(chunks(tarOf({ "../../escape.txt": "x" })), inner))._unsafeUnwrapErr();
+        expect(refusal).toEqual({ kind: "unsafe_entry", entry: "../../escape.txt" });
+        expect(await readdir(dest)).toEqual(["inner"]);
+        expect((await extractTarStream(chunks(tarOf({ "/etc/x": "x" })), inner))._unsafeUnwrapErr()).toEqual({ kind: "unsafe_entry", entry: "/etc/x" });
+    });
+
+    test("a tar that ends inside an entry is unparsable", async () => {
+        const tar = tarOf({ "a.txt": "x".repeat(2000) });
+        const refusal = (await extractTarStream(chunks(tar.subarray(0, 1024)), dest))._unsafeUnwrapErr();
+        expect(refusal.kind).toBe("unparsable");
+    });
+
+    test("a zip writes each file and directory", async () => {
+        const zip = Buffer.from(zipSync({ "set/": {}, "set/a.gmt": new TextEncoder().encode("HALLMARK_X\tna\tTP53\n".repeat(500)) }));
+        const summary = (await extractZipStream(chunks(zip), dest))._unsafeUnwrap();
+        expect(summary.files).toBe(1);
+        expect(await readFile(join(dest, "set/a.gmt"), "utf8")).toBe("HALLMARK_X\tna\tTP53\n".repeat(500));
+    });
+
+    test("a zip entry that leaves the directory stops the extraction", async () => {
+        const zip = Buffer.from(zipSync({ "../x.txt": new TextEncoder().encode("x") }));
+        expect((await extractZipStream(chunks(zip), dest))._unsafeUnwrapErr()).toEqual({ kind: "unsafe_entry", entry: "../x.txt" });
+        expect(await readdir(dest)).toEqual([]);
     });
 });
