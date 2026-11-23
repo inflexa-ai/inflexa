@@ -45,7 +45,7 @@ import type { AgentEffort, AgentName, ResolvedHarnessConfig, ResolvedModelConnec
 import { present } from "../../../lib/present.ts";
 import { awaitOk } from "../../../test_support/result.ts";
 
-const VM_DOCKER: DetectedExecutor = { executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined };
+const VM_DOCKER: DetectedExecutor = { executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined, podmanVersion: undefined };
 
 const backfillLogRecordSchema = z.looseObject({
     msg: z.string().optional(),
@@ -843,7 +843,11 @@ describe("bootHarnessRuntime", () => {
         // Captured on an object property: a bare `let` assigned only inside the seam
         // closure gets narrowed back to `null` by control-flow analysis across the await.
         const captured: { config: CreateSandboxClientConfig | null } = { config: null };
-        const detected: DetectedExecutor = { executor: { kind: "rootless-podman", selinux: true }, ociRuntime: "crun" };
+        const detected: DetectedExecutor = {
+            executor: { kind: "rootless-podman", selinux: true, keepId: "user-and-groups" },
+            ociRuntime: "crun",
+            podmanVersion: "5.8.5",
+        };
         const seams: BootSeams = {
             ...recordingSeams(calls),
             resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () =>
@@ -859,7 +863,7 @@ describe("bootHarnessRuntime", () => {
         expect(result.isOk()).toBe(true);
         expect(captured.config).not.toBeNull();
         expect(captured.config?.engineSocketPath).toBe("/run/user/1234/podman/podman.sock");
-        expect(captured.config?.executor).toEqual({ kind: "rootless-podman", selinux: true });
+        expect(captured.config?.executor).toEqual({ kind: "rootless-podman", selinux: true, keepId: "user-and-groups" });
     });
 
     test("a docker pin dials the default socket and gives the detected executor fact", async () => {
@@ -868,6 +872,7 @@ describe("bootHarnessRuntime", () => {
         const detected: DetectedExecutor = {
             executor: { kind: "rootful", user: { uid: 1234, gid: 1234, groups: [1234, 3000] }, selinux: false },
             ociRuntime: undefined,
+            podmanVersion: undefined,
         };
         const seams: BootSeams = {
             ...recordingSeams(calls),
@@ -886,18 +891,18 @@ describe("bootHarnessRuntime", () => {
         expect(captured.config?.executor).toEqual(detected.executor);
     });
 
-    test("rootless Podman on an OCI runtime other than crun boots with a warning that names the cause and the fix", async () => {
+    /** Boot with `detected`, and give each warning record whose message holds `needle`. */
+    async function bootWarnings(detected: DetectedExecutor, needle: string): Promise<{ msg?: string }[]> {
         const calls: string[] = [];
-        const records: { msg?: string; module?: string }[] = [];
+        const records: { msg?: string }[] = [];
         let open = true;
         addLogStream({
             write(chunk: string): void {
                 if (!open) return;
                 const record = JSON.parseWith(chunk, backfillLogRecordSchema);
-                if (record?.msg?.includes("OCI runtime") === true) records.push(record);
+                if (record?.msg?.includes(needle) === true) records.push(record);
             },
         });
-        const detected: DetectedExecutor = { executor: { kind: "rootless-podman", selinux: false }, ociRuntime: "runc" };
         const seams: BootSeams = {
             ...recordingSeams(calls),
             resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () =>
@@ -907,14 +912,42 @@ describe("bootHarnessRuntime", () => {
         try {
             const result = await bootHarnessRuntime({ seams, config: testConfig() });
             await flushLogs();
-
             expect(result.isOk()).toBe(true);
-            expect(records).toHaveLength(1);
-            expect(records[0]?.msg).toContain("project group");
-            expect(records[0]?.msg).toContain("crun");
         } finally {
             open = false;
         }
+        return records;
+    }
+
+    test("rootless Podman on an OCI runtime other than crun boots with a warning that names the cause and the fix", async () => {
+        const records = await bootWarnings(
+            { executor: { kind: "rootless-podman", selinux: false, keepId: "user-and-groups" }, ociRuntime: "runc", podmanVersion: "5.8.5" },
+            "OCI runtime",
+        );
+        expect(records).toHaveLength(1);
+        expect(records[0]?.msg).toContain("project group");
+        expect(records[0]?.msg).toContain("crun");
+    });
+
+    test("rootless Podman 4.3 to 5.0 boots with a warning that names the lost project groups and the supported fix", async () => {
+        const records = await bootWarnings(
+            { executor: { kind: "rootless-podman", selinux: false, keepId: "user" }, ociRuntime: "crun", podmanVersion: "4.9.3" },
+            "Podman 4.9.3",
+        );
+        expect(records).toHaveLength(1);
+        expect(records[0]?.msg).toContain("project group");
+        expect(records[0]?.msg).toContain("Podman 5.1 or later");
+        expect(records[0]?.msg).toContain("rootful Docker");
+    });
+
+    test("rootless Podman before 4.3 boots with a warning that names the version and the fallback", async () => {
+        const records = await bootWarnings(
+            { executor: { kind: "rootless-podman", selinux: false, keepId: "unsupported" }, ociRuntime: "crun", podmanVersion: "4.2.1" },
+            "Podman 4.2.1",
+        );
+        expect(records).toHaveLength(1);
+        expect(records[0]?.msg).toContain("4.3");
+        expect(records[0]?.msg).toContain("uid 1000");
     });
 
     test("an engine smaller than the budget clamps the step ceilings of the sandbox client", async () => {

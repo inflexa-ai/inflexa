@@ -217,7 +217,7 @@ describe("resolveSandboxExecutor", () => {
     test("docker on macOS is a VM engine that masks the owner, and spawns no probe", async () => {
         const spawned: string[][] = [];
         const result = await resolveSandboxExecutor(runtimes.docker, probes({ platform: "darwin", spawned }));
-        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined });
+        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined, podmanVersion: undefined });
         expect(spawned).toEqual([]);
     });
 
@@ -271,7 +271,7 @@ describe("resolveSandboxExecutor", () => {
                 result: dockerInfo({ OperatingSystem: "Rocky Linux 9.9", SecurityOptions: ["name=seccomp,profile=builtin", "name=selinux", "name=cgroupns"] }),
             }),
         );
-        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "rootful", user: USER, selinux: true }, ociRuntime: undefined });
+        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "rootful", user: USER, selinux: true }, ociRuntime: undefined, podmanVersion: undefined });
     });
 
     test("rootless Docker is refused with the supported engines", async () => {
@@ -280,7 +280,18 @@ describe("resolveSandboxExecutor", () => {
             probes({ result: dockerInfo({ OperatingSystem: "Ubuntu 24.04", SecurityOptions: ["name=seccomp,profile=builtin", "name=rootless"] }) }),
         );
         const error = result._unsafeUnwrapErr();
-        expect(error.type).toBe("rootless_docker");
+        expect(error.type).toBe("unsupported_docker");
+        expect(error.message).toContain("Use rootful Docker, Docker Desktop, or Podman");
+    });
+
+    test("Docker with userns-remap is refused with the supported engines", async () => {
+        const result = await resolveSandboxExecutor(
+            runtimes.docker,
+            probes({ result: dockerInfo({ OperatingSystem: "Ubuntu 24.04", SecurityOptions: ["name=seccomp,profile=builtin", "name=userns"] }) }),
+        );
+        const error = result._unsafeUnwrapErr();
+        expect(error.type).toBe("unsupported_docker");
+        expect(error.message).toContain("userns-remap");
         expect(error.message).toContain("Use rootful Docker, Docker Desktop, or Podman");
     });
 
@@ -299,10 +310,37 @@ describe("resolveSandboxExecutor", () => {
         const spawned: string[][] = [];
         const result = await resolveSandboxExecutor(
             runtimes.podman,
-            probes({ spawned, result: dockerInfo({ host: { security: { rootless: true, selinuxEnabled: true }, ociRuntime: { name: "crun" } } }) }),
+            probes({
+                spawned,
+                result: dockerInfo({
+                    host: { security: { rootless: true, selinuxEnabled: true }, ociRuntime: { name: "crun" } },
+                    version: { Version: "5.1.0" },
+                }),
+            }),
         );
-        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "rootless-podman", selinux: true }, ociRuntime: "crun" });
+        expect(result._unsafeUnwrap()).toEqual({
+            executor: { kind: "rootless-podman", selinux: true, keepId: "user-and-groups" },
+            ociRuntime: "crun",
+            podmanVersion: "5.1.0",
+        });
         expect(spawned).toEqual([["info", "--format", "json"]]);
+    });
+
+    test("the Podman version selects the keep-id level, and a version that does not parse counts as old", async () => {
+        const info = (version: unknown): CaptureResult =>
+            dockerInfo({ host: { security: { rootless: true, selinuxEnabled: false }, ociRuntime: { name: "crun" } }, version: { Version: version } });
+        const keepId = async (version: unknown): Promise<string | null> => {
+            const { executor } = (await resolveSandboxExecutor(runtimes.podman, probes({ result: info(version) })))._unsafeUnwrap();
+            return executor.kind === "rootless-podman" ? executor.keepId : null;
+        };
+        expect(await keepId("4.2.1")).toBe("unsupported");
+        expect(await keepId("3.4.4")).toBe("unsupported");
+        expect(await keepId("garbage")).toBe("unsupported");
+        expect(await keepId("4.3.1")).toBe("user");
+        expect(await keepId("4.9.4-rhel")).toBe("user");
+        expect(await keepId("5.0.3")).toBe("user");
+        expect(await keepId("5.1.0")).toBe("user-and-groups");
+        expect(await keepId("6.0.0")).toBe("user-and-groups");
     });
 
     test("rootful Podman on Linux gives the host user", async () => {
@@ -310,7 +348,7 @@ describe("resolveSandboxExecutor", () => {
             runtimes.podman,
             probes({ result: dockerInfo({ host: { security: { rootless: false, selinuxEnabled: false }, ociRuntime: { name: "runc" } } }) }),
         );
-        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "rootful", user: USER, selinux: false }, ociRuntime: "runc" });
+        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "rootful", user: USER, selinux: false }, ociRuntime: "runc", podmanVersion: undefined });
     });
 
     test("a rootful engine with no readable user ids fails, and gives no fact with a fake user", async () => {

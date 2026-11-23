@@ -1152,7 +1152,7 @@ describe("askProxy — 503 cooldown discrimination", () => {
 // embedding mode is configured AHEAD of the runtime gate (so an air-gapped host with no ready runtime
 // still configures embeddings), and the in-flow embedding step does not run a second time.
 /** The executor of an engine in a VM: the stub of the engine probe for each setup run that reaches it. */
-const VM_EXECUTOR: container.DetectedExecutor = { executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined };
+const VM_EXECUTOR: container.DetectedExecutor = { executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined, podmanVersion: undefined };
 
 describe("setup() — an answered embedding mode runs ahead of the runtime gate", () => {
     const spies: { mockRestore: () => void }[] = [];
@@ -2188,7 +2188,7 @@ describe("setup() — batch orchestration", () => {
             spyOn(container, "resolveSandboxExecutor").mockImplementation(() =>
                 Promise.resolve(
                     err({
-                        type: "rootless_docker",
+                        type: "unsupported_docker",
                         message: "Rootless Docker cannot run the sandbox.\n  Use rootful Docker, Docker Desktop, or Podman, then re-run.",
                     }),
                 ),

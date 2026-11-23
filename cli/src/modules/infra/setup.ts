@@ -632,10 +632,10 @@ export async function setup(options: SetupOptions): Promise<void> {
         return;
     }
     const rt = readyResult.value;
-    // Rootless Docker cannot run the sandbox, thus setup refuses it before it provisions a stack there.
-    // Each other failure to read the engine stays with the boot, which fails on it with the same message.
+    // Rootless Docker and userns-remap cannot run the sandbox, thus setup refuses them before it provisions a
+    // stack there. Each other failure to read the engine stays with the boot, which fails on it with the same message.
     const executor = await resolveSandboxExecutor(rt);
-    if (executor.isErr() && executor.error.type === "rootless_docker") {
+    if (executor.isErr() && executor.error.type === "unsupported_docker") {
         console.error(`\n  ${executor.error.message}\n`);
         process.exitCode = 1;
         return;
