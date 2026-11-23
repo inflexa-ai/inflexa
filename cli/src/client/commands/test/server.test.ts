@@ -20,6 +20,8 @@ const DISCOVERY: ServerDiscovery = {
     apiVersion: API_VERSION,
     startedAt: "2026-10-03T08:00:00.000Z",
     channel: "development",
+    host: null,
+    processStart: null,
 };
 
 const READY: ServerState = {
@@ -79,7 +81,7 @@ function machine(): { opts: ServerCommandOpts; out: () => string; world: Machine
     const opts: ServerCommandOpts = {
         discoveryPath: "/test/server.dev.json",
         readDiscovery: () => ok(world.file),
-        isPidAlive: () => {
+        isProcessAlive: () => {
             if (world.stops.length > 0 && world.exitAfterPolls !== null && polls++ >= world.exitAfterPolls) world.live = false;
             return world.live;
         },

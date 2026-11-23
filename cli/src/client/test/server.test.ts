@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
@@ -7,7 +8,7 @@ import { err, ok, type Result } from "neverthrow";
 import pkg from "../../../package.json";
 import { API_VERSION, type ServerDiscovery, type ServerState } from "../../api/server.ts";
 import { env } from "../../lib/env.ts";
-import { acquireInstanceLock, instanceLockPath, releaseInstanceLock, SERVER_SPAWN_LOCK_KEY } from "../../lib/lock.ts";
+import { acquireInstanceLock, instanceLockPath, isProcessAlive, processIdentity, releaseInstanceLock, SERVER_SPAWN_LOCK_KEY } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { describeServerError, ensureServer, lookupServer, type EnsureServerOpts } from "../server.ts";
 
@@ -19,6 +20,8 @@ const DISCOVERY: ServerDiscovery = {
     apiVersion: API_VERSION,
     startedAt: "2026-10-03T00:00:00.000Z",
     channel: "development",
+    host: null,
+    processStart: null,
 };
 
 const STARTING: ServerState = {
@@ -78,7 +81,7 @@ function machine(): { opts: EnsureServerOpts; world: MachineWorld } {
     const opts: EnsureServerOpts = {
         discoveryPath: "/test/server.dev.json",
         readDiscovery: () => ok(world.file),
-        isPidAlive: (pid) => world.live.has(pid),
+        isProcessAlive: (process) => world.live.has(process.pid),
         fetch: (url) => {
             const port = Number(new URL(url).port);
             const listener = world.listening.get(port);
@@ -252,6 +255,21 @@ describe("lookupServer", () => {
         expect(world.removed).toEqual([]);
     });
 
+    test("a live pid with a different start time is a reused pid: the file is stale", async () => {
+        // After a reboot, the pid of the old server can name a different live process.
+        const { opts, world } = machine();
+        const other = Bun.spawn(["sleep", "60"]);
+        try {
+            const reused: ServerDiscovery = { ...DISCOVERY, pid: other.pid, host: hostname(), processStart: "a start before the reboot" };
+            world.file = reused;
+            const found = await lookupServer({ ...opts, isProcessAlive });
+            expect(found._unsafeUnwrap()).toEqual({ kind: "stale", discovery: reused });
+        } finally {
+            other.kill();
+            await other.exited;
+        }
+    });
+
     test("a discovery file that cannot be read is an error that names the path", async () => {
         const { opts } = machine();
         const e = (await lookupServer({ ...opts, readDiscovery: () => err({ type: "io_failed", op: "read", cause: new Error("EACCES") }) }))._unsafeUnwrapErr();
@@ -271,7 +289,7 @@ describe("the server-spawn lock", () => {
     test("a client finds the lock of a live client, starts nothing, and connects to the server of that client", async () => {
         mkdirSync(dirname(instanceLockPath(SERVER_SPAWN_LOCK_KEY)), { recursive: true });
         // The parent of this test process lives for the whole test, thus it reads as a live holder.
-        writeFileSync(instanceLockPath(SERVER_SPAWN_LOCK_KEY), String(process.ppid));
+        writeFileSync(instanceLockPath(SERVER_SPAWN_LOCK_KEY), JSON.stringify(processIdentity(process.ppid)));
         const { opts, world } = machine();
         world.onSleep = (sleeps) => {
             if (sleeps === 2) runServer(world);
@@ -289,7 +307,7 @@ describe("the server-spawn lock", () => {
         const { opts, world } = machine();
         let heldDuringStart = false;
         world.onStart = () => {
-            heldDuringStart = readFileSync(instanceLockPath(SERVER_SPAWN_LOCK_KEY), "utf8").trim() === String(process.pid);
+            heldDuringStart = readFileSync(instanceLockPath(SERVER_SPAWN_LOCK_KEY), "utf8") === JSON.stringify(processIdentity(process.pid));
             runServer(world);
             return ok(undefined);
         };

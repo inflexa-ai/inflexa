@@ -7,7 +7,7 @@ import { randomUUIDv7 } from "bun";
 import { z } from "zod";
 
 import { env } from "../../../lib/env.ts";
-import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../../lib/lock.ts";
+import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY, processIdentity } from "../../../lib/lock.ts";
 import { FARM_PARITY_FIXTURE } from "../../../test_support/fixtures.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { commitStagedNodes } from "../store_flight.ts";
@@ -872,7 +872,7 @@ describe("the yield to a reclamation", () => {
     function liveReclamation(): { readonly pid: number; readonly stop: () => Promise<void> } {
         const holder = Bun.spawn(["sleep", "60"]);
         mkdirSync(env.locksDir, { recursive: true });
-        writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), String(holder.pid));
+        writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), JSON.stringify(processIdentity(holder.pid)));
         return {
             pid: holder.pid,
             stop: async () => {
@@ -944,7 +944,7 @@ describe("the yield to a reclamation", () => {
         const reclamation = liveReclamation();
         await reclamation.stop();
         // The record alone, with no live process behind it.
-        writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), String(reclamation.pid));
+        writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), JSON.stringify(processIdentity(reclamation.pid)));
 
         const composed = await extendFarm({ storeRoot: root, analysisId, roots: [BETA] }, { reclaimWaitMs: 20, reclaimPollMs: 5 });
 

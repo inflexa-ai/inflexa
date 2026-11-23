@@ -9,7 +9,7 @@ import { z } from "zod";
 import { env } from "../../../lib/env.ts";
 import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import * as lockModule from "../../../lib/lock.ts";
-import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY } from "../../../lib/lock.ts";
+import { instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY, processIdentity } from "../../../lib/lock.ts";
 import { db } from "../../../db/primary.ts";
 import type { DbError } from "../../../db/errors.ts";
 import { getStoreFlight, listPendingStoreAdds } from "../../../db/primary_query.ts";
@@ -360,7 +360,7 @@ describe("flushPendingStoreAdds", () => {
         enqueueStoreAdd({ query: { spelling: "alpha", track: "python" }, analysisId: null })._unsafeUnwrap();
         const holder = Bun.spawn(["sleep", "60"]);
         mkdirSync(env.locksDir, { recursive: true });
-        writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), String(holder.pid));
+        writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), JSON.stringify(processIdentity(holder.pid)));
         let ran = 0;
         const run: ProvisionerRunner = () => {
             ran += 1;

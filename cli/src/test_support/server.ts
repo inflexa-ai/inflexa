@@ -8,6 +8,7 @@ import { ok } from "neverthrow";
 import { API_VERSION, type ServerBootState, type ServerDiscovery } from "../api/server.ts";
 import type { ClientOpts } from "../client/api.ts";
 import { env } from "../lib/env.ts";
+import { ownProcessIdentity } from "../lib/lock.ts";
 import { buildApp } from "../server/app.ts";
 import type { ServerBoot } from "../server/boot.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
@@ -101,6 +102,8 @@ export function startTestServer(opts: { boot?: ServerBoot } = {}): TestServer {
         apiVersion: state.apiVersion,
         startedAt: state.startedAt,
         channel: "development",
+        host: ownProcessIdentity().host,
+        processStart: ownProcessIdentity().start,
     };
     writeServerDiscovery(discoveryPath, discovery).match(
         () => undefined,

@@ -1,7 +1,7 @@
 # analysis-lock Specification
 
 ## Purpose
-The per-analysis advisory instance lock (`src/lib/lock.ts`): a pid-liveness-based lock file, keyed by analysis id, that keeps an analysis single-process: the local server takes it at the first request for an analysis and holds it until it exits, and the dev `run --plan`, which boots its own runtime, holds it for its run. Thus only one process emits an analysis's provenance at a time (the interim two-recorder fix of #37). Written only on deliberate actions (never a passive flow), reclaimed by pid liveness, and released ownership-checked on exit.
+The per-analysis advisory instance lock (`src/lib/lock.ts`): a process-liveness-based lock file, keyed by analysis id, that keeps an analysis single-process: the local server takes it at the first request for an analysis and holds it until it exits, and the dev `run --plan`, which boots its own runtime, holds it for its run. Thus only one process emits an analysis's provenance at a time (the interim two-recorder fix of #37). Written only on deliberate actions (never a passive flow), reclaimed by process liveness, and released ownership-checked on exit.
 
 ## Requirements
 
@@ -40,7 +40,7 @@ The lock SHALL be written only by a request that names the analysis. A launch pa
 
 ### Requirement: Pid-liveness reclaim of dead holders
 
-A lock SHALL record the holding process's pid. When acquiring a lock whose file already exists, the system SHALL determine liveness by probing the recorded pid (`process.kill(pid, 0)`). The system SHALL reclaim the lock only if the holder is dead (probe throws `ESRCH`); a lock held by a live pid SHALL block acquisition. The system SHALL NOT use elapsed-time staleness to free a lock, because a holder keeps an analysis lock for the whole life of its process, and the local server lives for days.
+A lock SHALL record the pid, the host name, and the start time of the holding process. A pid alone is not sufficient, because after a reboot the same pid can name a different process. When acquiring a lock whose file already exists, the system SHALL read the record. The holder is dead when the host name is different, when the probe of the pid (`process.kill(pid, 0)`) throws `ESRCH`, or when the pid now has a different start time. The system SHALL reclaim the lock only if the holder is dead. A lock held by a live process SHALL block acquisition. If the system cannot read the start time of a live pid, the holder is alive. A file that is not a lock record SHALL be reclaimed. The system SHALL NOT use elapsed-time staleness to free a lock, because a holder keeps an analysis lock for the whole life of its process, and the local server lives for days.
 
 #### Scenario: A lock held by a dead pid is reclaimed
 
@@ -49,12 +49,18 @@ A lock SHALL record the holding process's pid. When acquiring a lock whose file 
 
 #### Scenario: A lock held by a live pid blocks acquisition
 
-- **WHEN** the system attempts to acquire a lock whose recorded pid is still alive
+- **WHEN** the system attempts to acquire a lock whose recorded process is still alive
 - **THEN** acquisition fails and the open/switch is treated as a conflict
+
+#### Scenario: A reused pid does not hold the lock
+
+- **GIVEN** a lock file from before a reboot, whose pid now names a different live process
+- **WHEN** the system attempts to acquire the lock
+- **THEN** the start time of the pid is different, and the system reclaims the lock
 
 ### Requirement: Lock release on exit
 
-The system SHALL release each held analysis lock on process exit, the graceful stop of the local server included. The local server SHALL also release the lock of an analysis when it deletes that analysis, because no later request can name it. A client that quits SHALL release nothing, because it holds no analysis lock. Release SHALL be ownership-checked: the system SHALL only delete a lock file it still owns (recorded pid matches the current process), so it never deletes a lock another instance has reclaimed. A hard kill that bypasses all exit hooks MAY leave a stale lock file behind; such a file SHALL be reclaimable on the next acquire via the pid-liveness check.
+The system SHALL release each held analysis lock on process exit, the graceful stop of the local server included. The local server SHALL also release the lock of an analysis when it deletes that analysis, because no later request can name it. A client that quits SHALL release nothing, because it holds no analysis lock. Release SHALL be ownership-checked: the system SHALL only delete a lock file it still owns (recorded pid matches the current process), so it never deletes a lock another instance has reclaimed. A hard kill that bypasses all exit hooks MAY leave a stale lock file behind; such a file SHALL be reclaimable on the next acquire via the process-liveness check.
 
 #### Scenario: Graceful quit releases the held lock
 
@@ -88,7 +94,7 @@ The system SHALL release each held analysis lock on process exit, the graceful s
 
 ### Requirement: A command that boots its own runtime holds the analysis lock
 
-The dev `inflexa run --plan` boots a runtime in its own process and writes the provenance of its run there. It SHALL acquire the per-analysis instance lock after the analysis is resolved and before the runtime boots or any state is mutated. A conflict SHALL print a message naming the analysis and the fact that another instance holds it, and exit non-zero without booting. The lock SHALL be released through the exit hook of the process, and the pid-liveness reclaim and ownership-checked release requirements apply unchanged to this holder.
+The dev `inflexa run --plan` boots a runtime in its own process and writes the provenance of its run there. It SHALL acquire the per-analysis instance lock after the analysis is resolved and before the runtime boots or any state is mutated. A conflict SHALL print a message naming the analysis and the fact that another instance holds it, and exit non-zero without booting. The lock SHALL be released through the exit hook of the process, and the process-liveness reclaim and ownership-checked release requirements apply unchanged to this holder.
 
 A command that is a client of the local server (`inflexa profile`, `inflexa chat`, `inflexa run --status`) SHALL take no analysis lock in its own process. The local server holds the lock for each request that such a command sends.
 

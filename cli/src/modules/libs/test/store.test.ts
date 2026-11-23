@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { ok } from "neverthrow";
 
 import { env } from "../../../lib/env.ts";
-import { acquireInstanceLock, instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY, releaseInstanceLock } from "../../../lib/lock.ts";
+import { acquireInstanceLock, instanceLockPath, PACKAGE_STORE_RECLAIM_LOCK_KEY, processIdentity, releaseInstanceLock } from "../../../lib/lock.ts";
 import {
     claimPendingStoreAdds,
     claimStoreFlight,
@@ -186,12 +186,12 @@ describe("collectStoreDebris", () => {
         mkdirSync(env.locksDir, { recursive: true });
         const invocations: (readonly string[])[] = [];
         try {
-            writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), String(holder.pid));
+            writeFileSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), JSON.stringify(processIdentity(holder.pid)));
             const heldLock = (await collectStoreDebris(root, { run: countingRunner(invocations) }))._unsafeUnwrap();
             expect(heldLock.swept).toBe(false);
             rmSync(instanceLockPath(PACKAGE_STORE_RECLAIM_LOCK_KEY), { force: true });
 
-            writeFileSync(instanceLockPath(`${FARM_LOCK_KEY_PREFIX}a1`), String(holder.pid));
+            writeFileSync(instanceLockPath(`${FARM_LOCK_KEY_PREFIX}a1`), JSON.stringify(processIdentity(holder.pid)));
             const liveComposition = (await collectStoreDebris(root, { run: countingRunner(invocations) }))._unsafeUnwrap();
             expect(liveComposition.swept).toBe(false);
 

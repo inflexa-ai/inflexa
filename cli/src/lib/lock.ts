@@ -1,5 +1,8 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
+
+import { z } from "zod";
 
 import { env } from "./env.ts";
 import { errnoCode } from "./fs.ts";
@@ -11,8 +14,8 @@ import { getLogger } from "./log.ts";
 // for ~seconds during one token refresh, so an age threshold is a fine "crashed holder" proxy. These
 // locks are held for a long time (an interactive chat session, a data-profile run — possibly hours,
 // mostly idle), where an age threshold would falsely free a live, idle instance and let a second one
-// in. So a held lock records its holder's pid and a contender reclaims only when that pid is dead
-// (process.kill(pid,0) throws ESRCH). Two keys are in use today: an analysis id (one analysis open per
+// in. So a held lock records its holder's identity (the pid, the host, and the start of the process) and
+// a contender reclaims only when that process is gone (isProcessAlive). Two keys are in use today: an analysis id (one analysis open per
 // instance) and a fixed sentinel for the embedded harness runtime (one DBOS engine — executor "local"
 // — per machine, or a second process's launch-time recovery would adopt this one's in-flight
 // workflows). The key is any collision-free string; analysis ids are UUIDv7, so they never collide
@@ -80,26 +83,120 @@ export function instanceLockPath(key: string): string {
     return join(env.locksDir, `${key}${LOCK_SUFFIX}`);
 }
 
-/** Read the holding pid from a lock file, or null if it is missing or its contents aren't a finite integer (a truncated/corrupt write counts as no live holder, so it gets reclaimed). */
-function readHolderPid(path: string): number | null {
-    try {
-        const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-        return Number.isFinite(pid) ? pid : null;
-    } catch {
-        return null; // ENOENT (gone) or any read error → treat as no holder
+/**
+ * Who holds a lock or a discovery file: a pid, and what makes that pid mean one process.
+ *
+ * A pid alone is not an identity. After a reboot the kernel gives the same pid to a different process, and a
+ * lock that holds only the pid then waits for that process for ever. The host name makes a record from a
+ * different machine (a data folder on a shared home) read as foreign, and the start time makes a reused pid
+ * read as a different process.
+ */
+export type ProcessIdentity = {
+    readonly pid: number;
+    /** The host name of the machine of the process. `null` when the record does not say. */
+    readonly host: string | null;
+    /** An opaque token of the start of the process (see {@link processStartToken}). `null` when it is not known. */
+    readonly start: string | null;
+};
+
+const lockRecordSchema = z.object({
+    pid: z.number().int().positive(),
+    host: z.string().nullable(),
+    start: z.string().nullable(),
+});
+
+/**
+ * An opaque token that changes when `pid` names a different process: the start time of the process, as the
+ * operating system reports it. `null` when the process is gone or the platform does not tell.
+ *
+ * The token is compared for equality only, thus each platform uses the cheapest stable form. Linux reads
+ * `/proc`: the boot id plus the start tick of the process, because the tick counts from the boot. macOS has
+ * no `/proc`, thus it asks `ps` for the start time, under the C locale and UTC, so that a server and a client
+ * with a different locale or time zone read the same text.
+ */
+export function processStartToken(pid: number): string | null {
+    if (process.platform === "linux") {
+        try {
+            const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+            // The command name in field 2 can hold spaces and parentheses, thus the fields count from its last `)`.
+            // After it, field 3 (the state) is index 0, and field 22 (the start tick) is index 19.
+            const startTick = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+            const bootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+            return startTick === undefined ? null : `${bootId}:${startTick}`;
+        } catch {
+            return null; // ENOENT: the process is gone. Any other read error: the start is not known.
+        }
     }
+    if (process.platform === "darwin") {
+        try {
+            const ps = Bun.spawnSync(["/bin/ps", "-o", "lstart=", "-p", String(pid)], {
+                env: { LC_ALL: "C", TZ: "UTC" },
+                stdout: "pipe",
+                stderr: "ignore",
+            });
+            const start = ps.stdout.toString().trim();
+            return ps.exitCode === 0 && start !== "" ? start : null;
+        } catch {
+            return null; // The spawn failed: the start is not known.
+        }
+    }
+    return null;
+}
+
+let ownIdentity: ProcessIdentity | null = null;
+
+/** The identity of this process. Read one time, because the start of a process does not change. */
+export function ownProcessIdentity(): ProcessIdentity {
+    ownIdentity ??= { pid: process.pid, host: hostname(), start: processStartToken(process.pid) };
+    return ownIdentity;
+}
+
+/** The identity of the process `pid` of this host, as a lock file records it. */
+export function processIdentity(pid: number): ProcessIdentity {
+    return pid === process.pid ? ownProcessIdentity() : { pid, host: hostname(), start: processStartToken(pid) };
 }
 
 /**
- * Whether a pid belongs to a live process. `process.kill(pid, 0)` sends no signal — it only probes
- * existence. ESRCH is the one unambiguous "dead" answer; EPERM (exists but owned by another user) and
- * any other error are treated as ALIVE, because the dangerous direction is declaring a live holder
- * dead (that would let two instances share the resource). When in doubt, keep the lock.
+ * Whether the process of a record still lives. A record from a different host, or a pid that now has a
+ * different start time, names a process that is gone.
+ *
+ * The danger is in one direction only: to read a live holder as dead lets two instances share the resource.
+ * Thus each doubt keeps the holder alive: EPERM from the pid probe (a process of a different user), and a
+ * start time that cannot be read now.
+ */
+export function isProcessAlive(holder: ProcessIdentity): boolean {
+    if (holder.host !== null && holder.host !== hostname()) return false;
+    if (!isPidAlive(holder.pid)) return false;
+    if (holder.start === null) return true;
+    const now = processStartToken(holder.pid);
+    return now === null || now === holder.start;
+}
+
+/** Whether a record names this process: the same pid on the same host. */
+function isOwnRecord(holder: ProcessIdentity): boolean {
+    return holder.pid === process.pid && (holder.host === null || holder.host === hostname());
+}
+
+/** Read the holder from a lock file, or null if it is missing or its contents aren't a lock record (a truncated/corrupt write counts as no live holder, so it gets reclaimed). */
+function readHolder(path: string): ProcessIdentity | null {
+    let raw: string;
+    try {
+        raw = readFileSync(path, "utf8");
+    } catch {
+        return null; // ENOENT (gone) or any read error → treat as no holder
+    }
+    return JSON.parseWith(raw, lockRecordSchema);
+}
+
+/**
+ * Whether a pid belongs to a live process, by the pid alone. `process.kill(pid, 0)` sends no signal — it only
+ * probes existence. ESRCH is the one unambiguous "dead" answer; EPERM (exists but owned by another user) and
+ * any other error are treated as ALIVE. A record that this code writes uses {@link isProcessAlive}, because a
+ * pid alone cannot see a reused pid.
  *
  * Exported for the second holder-of-record in the codebase: an acquisition flight records its owner pid
  * on its own row rather than in a lock file, because a flight key is minted at runtime and a file for
- * each key would carry no more truth than that column. The probe must stay ONE implementation, so that
- * "dead" means the same thing to a lock file and to a row.
+ * each key would carry no more truth than that column.
  */
 export function isPidAlive(pid: number): boolean {
     try {
@@ -111,9 +208,9 @@ export function isPidAlive(pid: number): boolean {
 }
 
 /**
- * Claim the lock for `key`. Atomic create (`wx` = O_EXCL) wins outright; on contention the holder's
- * pid decides: ours → re-entrant success (a same-key re-acquire), a live foreign pid → conflict, a
- * dead/corrupt pid → reclaim.
+ * Claim the lock for `key`. Atomic create (`wx` = O_EXCL) wins outright; on contention the holder record
+ * decides: ours → re-entrant success (a same-key re-acquire), a live foreign process → conflict, a
+ * dead/reused/corrupt record → reclaim.
  *
  * Fails OPEN: if the lock file genuinely can't be written (broken/unwritable data dir), we log and
  * report success rather than block the user — this is an advisory UX guard, and an unwritable data
@@ -121,7 +218,7 @@ export function isPidAlive(pid: number): boolean {
  */
 export function acquireInstanceLock(key: string): LockOutcome {
     const path = instanceLockPath(key);
-    const mine = String(process.pid);
+    const mine = JSON.stringify(ownProcessIdentity());
     try {
         mkdirSync(env.locksDir, { recursive: true });
         writeFileSync(path, mine, { flag: "wx" });
@@ -134,16 +231,16 @@ export function acquireInstanceLock(key: string): LockOutcome {
         }
     }
 
-    const holderPid = readHolderPid(path);
-    if (holderPid === process.pid) {
+    const holder = readHolder(path);
+    if (holder !== null && isOwnRecord(holder)) {
         heldKeys.add(key); // already ours (re-entrant)
         return { acquired: true };
     }
-    if (holderPid !== null && isPidAlive(holderPid)) {
-        return { acquired: false, holderPid };
+    if (holder !== null && isProcessAlive(holder)) {
+        return { acquired: false, holderPid: holder.pid };
     }
 
-    // Dead or corrupt holder: reclaim. Remove then re-create exclusively so that, in the narrow
+    // Dead, reused, or corrupt holder: reclaim. Remove then re-create exclusively so that, in the narrow
     // window after a holder crash where two contenders race, the loser sees EEXIST and yields
     // instead of both believing they won.
     rmSync(path, { force: true });
@@ -153,7 +250,7 @@ export function acquireInstanceLock(key: string): LockOutcome {
         return { acquired: true };
     } catch (cause) {
         if (errnoCode(cause) === "EEXIST") {
-            return { acquired: false, holderPid: readHolderPid(path) ?? -1 };
+            return { acquired: false, holderPid: readHolder(path)?.pid ?? -1 };
         }
         getLogger("lock").warn({ err: cause, key }, "lock reclaim failed; proceeding without lock");
         return { acquired: true };
@@ -172,8 +269,8 @@ export function acquireInstanceLock(key: string): LockOutcome {
  * test. A dead or corrupt holder answers `null`, exactly as it reads to a contender.
  */
 export function instanceLockHolder(key: string): number | null {
-    const pid = readHolderPid(instanceLockPath(key));
-    return pid !== null && isPidAlive(pid) ? pid : null;
+    const holder = readHolder(instanceLockPath(key));
+    return holder !== null && isProcessAlive(holder) ? holder.pid : null;
 }
 
 /** One live hold of an instance lock: the key, and the process that holds it. */
@@ -207,9 +304,9 @@ export function liveInstanceLockHolds(prefix: string): readonly InstanceLockHold
     for (const name of names.sort()) {
         if (!name.startsWith(prefix) || !name.endsWith(LOCK_SUFFIX)) continue;
         const key = name.slice(0, name.length - LOCK_SUFFIX.length);
-        const pid = readHolderPid(instanceLockPath(key));
-        if (pid !== null && isPidAlive(pid)) {
-            live.push({ key, pid });
+        const holder = readHolder(instanceLockPath(key));
+        if (holder !== null && isProcessAlive(holder)) {
+            live.push({ key, pid: holder.pid });
             continue;
         }
         // A dead or corrupt holder is debris. The acquire reclaims it, and the release then removes the
@@ -235,7 +332,8 @@ export function holdsInstanceLock(key: string): boolean {
  * different instance — we must never delete a lock we no longer hold.
  */
 export function releaseInstanceLock(key: string): void {
-    if (readHolderPid(instanceLockPath(key)) === process.pid) {
+    const holder = readHolder(instanceLockPath(key));
+    if (holder !== null && isOwnRecord(holder)) {
         rmSync(instanceLockPath(key), { force: true });
     }
     heldKeys.delete(key);
@@ -245,7 +343,7 @@ export function releaseInstanceLock(key: string): void {
  * Release every lock this process holds. Synchronous and self-contained so it can run from the
  * `process.on("exit")` hook (src/index.ts), which only runs sync work and is the broadest exit path —
  * it fires on graceful quit (App.quit → shutdown → process.exit) and on every other process.exit.
- * A hard kill (SIGKILL) bypasses it; those stale files are reclaimed by the pid check on the next open.
+ * A hard kill (SIGKILL) bypasses it; those stale files are reclaimed by the holder check on the next open.
  */
 export function releaseHeldInstanceLocks(): void {
     for (const key of [...heldKeys]) releaseInstanceLock(key);

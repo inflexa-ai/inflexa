@@ -14,7 +14,7 @@ import type { ServerBootState } from "../../../api/server.ts";
 import { createProject, insertAnalysis, insertAnalysisInput, insertAnchor, recordAnalysisActivity, upsertLlmUsage } from "../../../db/primary_mutation.ts";
 import { getAnalysis, getAnchor, listAnalysisInputs } from "../../../db/primary_query.ts";
 import { Bus } from "../../../lib/bus.ts";
-import { instanceLockPath } from "../../../lib/lock.ts";
+import { instanceLockPath, processIdentity } from "../../../lib/lock.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { defaultOutputSubdir, disposeWorkspace, type WorkspaceDisposal, type WorkspaceError } from "../../../modules/analysis/output.ts";
 import { removeInput } from "../../../modules/analysis/analysis.ts";
@@ -519,7 +519,7 @@ describe("the analysis guard", () => {
         const a = await seedAnalysis(tmp());
         // The parent of the test process is alive for the whole run, thus its pid is a live foreign holder.
         mkdirSync(join(instanceLockPath(a.id), ".."), { recursive: true });
-        writeFileSync(instanceLockPath(a.id), String(process.ppid));
+        writeFileSync(instanceLockPath(a.id), JSON.stringify(processIdentity(process.ppid)));
         try {
             const response = await buildApp({ token: TOKEN, boot: idleBoot(), lifecycle: idleLifecycle(), pageGrants: createPageGrantStore() }).request(
                 `/api/v1/analyses/${a.id}`,

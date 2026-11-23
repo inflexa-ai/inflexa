@@ -9,14 +9,14 @@ import { err, ok, Result } from "neverthrow";
 import pkg from "../../package.json";
 import { API_VERSION, type ServerBootState, type ServerDiscovery, type ShutdownMode } from "../api/server.ts";
 import { readServerDiscovery, serverBaseUrl } from "../client/api.ts";
-import { DEFAULT_ENSURE_SERVER_OPTS, describeServerError, lookupServer, waitForServer } from "../client/server.ts";
+import { DEFAULT_ENSURE_SERVER_OPTS, describeServerError, discoveryProcess, lookupServer, waitForServer } from "../client/server.ts";
 import { describeCause } from "../lib/cause.ts";
 import { fail } from "../lib/cli.ts";
 import { selfInvocation } from "../lib/self_invocation.ts";
 import { SERVE_DETACHED_CHILD_FLAG } from "../lib/child_flags.ts";
 import { env, fsPoolSize, serverChildEnv } from "../lib/env.ts";
 import { errnoCode, mkdirResult, renameResult, rmResult, writeFileResult, type FsError } from "../lib/fs.ts";
-import { isPidAlive } from "../lib/lock.ts";
+import { isProcessAlive, ownProcessIdentity } from "../lib/lock.ts";
 import { getLogger } from "../lib/log.ts";
 import { onShutdown, setSignalStop, shutdown } from "../lib/shutdown.ts";
 import { runEvery } from "../lib/timer.ts";
@@ -110,6 +110,8 @@ export async function runServe(): Promise<void> {
         apiVersion: API_VERSION,
         startedAt: startedAt.toISOString(),
         channel: env.isDevelopment ? "development" : "production",
+        host: ownProcessIdentity().host,
+        processStart: ownProcessIdentity().start,
     };
     writeServerDiscovery(env.serverFilePath, discovery).match(
         () => undefined,
@@ -255,7 +257,7 @@ function removeOwnDiscovery(path: string): void {
 function describeBindFailure(cause: unknown): string {
     const port = env.serverPort;
     const holder = readServerDiscovery().unwrapOr(null);
-    if (holder !== null && holder.port === port && holder.pid !== process.pid && isPidAlive(holder.pid)) {
+    if (holder !== null && holder.port === port && holder.pid !== process.pid && isProcessAlive(discoveryProcess(holder))) {
         return `An Inflexa server already runs on 127.0.0.1:${port} (pid ${holder.pid}). \`inflexa server status\` shows it, and \`inflexa server stop\` stops it.`;
     }
     return (
