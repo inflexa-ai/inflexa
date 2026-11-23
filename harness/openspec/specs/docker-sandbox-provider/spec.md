@@ -258,19 +258,28 @@ and the access to the step tree from each kind:
 | absent, or `vm` with `bindOwnership: "masked"` | Docker Desktop, OrbStack | uid 1000 | none | default modes |
 | `vm` with `bindOwnership: "host-preserved"` | A Podman machine | uid 1000 | none | world-writable |
 | `rootful` | Rootful Docker or rootful Podman on Linux | the host user of the fact, with its supplementary groups | `SANDBOX_UID`, `SANDBOX_GID`, `SANDBOX_GROUPS` in the env | default modes |
-| `rootless-podman` | Rootless Podman on Linux | uid 1000, which `keep-id` maps onto the host user | `UsernsMode: keep-id:uid=1000,gid=1000`, the annotation `run.oci.keep_original_groups=1`, and `SANDBOX_KEEP_GROUPS=1` in the env | default modes |
+| `rootless-podman` with `keepId: "user-and-groups"` | Rootless Podman 5.1 or later on Linux | uid 1000, which `keep-id` maps onto the host user, with the groups of the user | `UsernsMode: keep-id:uid=1000,gid=1000`, the annotation `run.oci.keep_original_groups=1`, and `SANDBOX_KEEP_GROUPS=1` in the env | default modes |
+| `rootless-podman` with `keepId: "user"` | Rootless Podman 4.3 to 5.0 on Linux | uid 1000, which `keep-id` maps onto the host user, with the groups of the image | `UsernsMode: keep-id:uid=1000,gid=1000` | default modes |
+| `rootless-podman` with `keepId: "unsupported"` | Rootless Podman before 4.3 on Linux | uid 1000 | none | world-writable |
 
 These rules also apply:
 
 - A `rootful` fact with uid 0 MUST keep uid 1000, because sandbox-server
-  refuses root under the egress firewall. Then the step tree is world-writable.
+  refuses root under the egress firewall. A `rootful` fact with the primary
+  gid 0 MUST also keep uid 1000. Then the step tree is world-writable.
+- The gid 0 MUST NOT go into `SANDBOX_GROUPS`, because the entrypoint refuses it.
 - When the fact reports SELinux, `HostConfig.SecurityOpt` MUST add
   `label=disable`. The backend MUST NOT relabel a host file with `:z` or `:Z`.
-- The identity env MUST come after the extra env of the spec. Thus a spec
-  cannot change the workload user.
+- The backend MUST remove `SANDBOX_UID`, `SANDBOX_GID`, `SANDBOX_GROUPS`, and
+  `SANDBOX_KEEP_GROUPS` from the extra env of the spec, for each fact. Thus
+  only the fact names the workload user.
 - The Podman compat API takes `GroupAdd` as a list of group names. Thus the
   groups go through the OCI annotation that `--group-add keep-groups` makes in
   the Podman CLI. Only crun reads the annotation.
+- The compat API reads `HostConfig.Annotations` only from Podman 5.1. Thus
+  Podman 4.3 to 5.0 gets `keep-id` with no annotation and no
+  `SANDBOX_KEEP_GROUPS`. There a sandbox cannot read the data of a project
+  group. The supported fix is Podman 5.1 or later, or rootful Docker.
 
 A world-writable step tree is the work directory of the step, or the declared
 write tail, and the records directory of the lease. The client MUST apply the
